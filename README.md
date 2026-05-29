@@ -9,6 +9,11 @@ This repo sits **on top of** the core `ddharmon` library — modeled on the way
 deliberately simpler: a **single** FastAPI process serves both the built SPA and the `/api`
 routes and runs `ddharmon` in-process (no Express / Clerk / Postgres).
 
+> **Two ways to use ddharmon.** This repo is the point-and-click GUI (no code). To drive the
+> same pipeline programmatically — Jupyter notebook, Python API, or CLI — use the core library
+> directly: **[Phenome-Health/ddharmon](https://github.com/Phenome-Health/ddharmon)**. The
+> harmonization logic lives there; this repo only adds the web layer.
+
 ```
 React + Vite (frontend, :5173)  →  /api proxy  →  FastAPI (backend, :8000)  →  ddharmon
                                                    (one process; serves the built SPA in prod)
