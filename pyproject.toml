@@ -1,0 +1,73 @@
+[project]
+name = "ddharmon-ui"
+version = "1.0.0"
+description = "Web GUI for the ddharmon data-dictionary harmonization pipeline (FastAPI + React/Vite/shadcn)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Core harmonization library. Pulls the FULL ML stack via [all]
+    # (sentence-transformers, BERTopic/UMAP/HDBSCAN, anthropic, …) — the pipeline
+    # runner imports these directly, so the bare library is not enough.
+    #
+    # ddharmon is PRIVATE: installing this resolves a git dependency that needs auth
+    # (SSH deploy key or a token) on whatever machine runs `pip install`. See deploy/README.md.
+    # For local dev against a checkout instead, see README.md ("Develop against a local core").
+    "ddharmon[all] @ git+https://github.com/Phenome-Health/ddharmon.git",
+
+    # Web layer (the only thing this repo adds on top of ddharmon).
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+    "black>=24.0.0",
+    "pyright>=1.1.350",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# The GUI API mirrors the JS frontend's camelCase request bodies on purpose.
+"backend/app.py" = ["N815"]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+exclude = [
+    "frontend/",
+    "tests/",
+    ".venv/",
+]
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v"

@@ -1,0 +1,30 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# --- Node / frontend ---
+frontend/node_modules/
+frontend/dist/
+
+# --- runtime / local ---
+# ddharmon's SQLite embedding cache (created in cwd at runtime).
+.ddharmon/
+# Per-job scratch (uploads + Anthropic Batch artifacts), one subdir per jobId.
+.ddharmon_ui/
+# Embedding-model cache (sentence-transformers / HuggingFace) if kept in-repo.
+.cache/
+# CDE catalog flat TSVs — NOT shipped here; supplied on the server (see deploy/README.md).
+data/cde/
+
+# --- env / secrets ---
+.env
+
+# --- editor / OS ---
+.DS_Store
+.idea/
+.vscode/
