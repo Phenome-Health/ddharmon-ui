@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AppShell } from "@/components/AppShell";
 import HomePage from "@/pages/home";
 import DashboardPage from "@/pages/dashboard";
+import WorkbenchPage from "@/pages/workbench";
 import JobsPage from "@/pages/jobs";
 
 const queryClient = new QueryClient({
@@ -18,6 +19,7 @@ export default function App() {
         <AppShell>
           <Switch>
             <Route path="/" component={HomePage} />
+            <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
             <Route path="/job/:jobId" component={DashboardPage} />
             <Route path="/jobs" component={JobsPage} />
             <Route>
