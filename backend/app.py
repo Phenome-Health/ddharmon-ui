@@ -7,8 +7,8 @@ Endpoints (all under /api/harmonize):
     GET  /result/{job_id}   full job snapshot (REST fallback)
     GET  /jobs              list jobs (summaries)
     DELETE /jobs/{job_id}   delete a job
-    POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision
-    GET  /jobs/{job_id}/export    eitl_tsv | buckets_json | decisions_csv
+    POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision (by recordId)
+    GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv
 
 Serves the built frontend (frontend/dist) at / when present.
 """
@@ -31,13 +31,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from backend.engine import CONTRACT_VERSION
 from backend.jobs import TERMINAL_STATES, store
 from backend.runner import run_harmonization
 
 # --- CDE catalog (server-side; not uploaded) -------------------------------------------------
 # Repo root is the parent of backend/ (this file is backend/app.py). The CDE catalog is NOT
 # shipped in this repo (data/cde/ is gitignored) — supply it on the server and/or point
-# DDHARMON_CDE_DIR at it. See deploy/README.md. A run with cdeSet=none needs no catalog.
+# DDHARMON_CDE_DIR at it. See deploy/README.md. v2 REQUIRES a catalog (cdeSet must be endorsed|full).
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CDE_DIR = Path(os.environ.get("DDHARMON_CDE_DIR", _REPO_ROOT / "data" / "cde"))
 CDE_FILES = {"endorsed": _CDE_DIR / "nih_endorsed_flat.tsv", "full": _CDE_DIR / "all_cdes_flat.tsv"}
@@ -88,10 +89,14 @@ def detect(body: DetectBody) -> dict[str, Any]:
 # --- /batch ----------------------------------------------------------------------------------
 @app.post("/api/harmonize/batch")
 async def start_batch(files: Annotated[list[UploadFile], File()], config: Annotated[str, Form()]) -> dict[str, str]:
-    """Start a harmonization run. ``config`` is a JSON string:
+    """Start a v2 harmonization run. ``config`` is a JSON string:
 
-    ``{dictionaries: [{filename, cohortName, columnRoles}], cdeSet: endorsed|full|none,
-       minClusterSize: int, classifyMode: none|sync|batch, displayName?}``
+    ``{dictionaries: [{filename, cohortName, columnRoles}], cdeSet: endorsed|full,
+       runMode: batch|sync|preview, minClusterSize: int, genTransformSpecs?: bool,
+       topK?: int, retrievalFloor?: float, modelTag?: str, displayName?}``
+
+    v2 requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
+    ``endorsed`` or ``full``. ``runMode`` defaults to ``batch`` (the deployed default).
     """
     cfg = json.loads(config)
     job_id = str(uuid.uuid4())
@@ -118,23 +123,38 @@ async def start_batch(files: Annotated[list[UploadFile], File()], config: Annota
             )
         dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
+    # v2 REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
     cde_set = cfg.get("cdeSet", "endorsed")
-    cde_spec: dict[str, Any] | None = None
-    if cde_set in CDE_FILES:
-        cde_path = CDE_FILES[cde_set]
-        if not cde_path.exists():
-            raise HTTPException(
-                status_code=400, detail=f"CDE file not found: {cde_path} (run scripts/flatten_cde_repo.py)"
-            )
-        cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+    if cde_set not in CDE_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cdeSet must be one of {sorted(CDE_FILES)} — v2 harmonization requires a CDE catalog",
+        )
+    cde_path = CDE_FILES[cde_set]
+    if not cde_path.exists():
+        raise HTTPException(status_code=400, detail=f"CDE file not found: {cde_path} (see deploy/README.md)")
+    cde_spec: dict[str, Any] = {
+        "path": str(cde_path),
+        "cohort_name": CDE_COHORT,
+        "column_roles": dict(CDE_COLUMN_ROLES),
+    }
 
-    run_config = {
+    run_mode = cfg.get("runMode", "batch")
+    if run_mode not in ("batch", "sync", "preview"):
+        raise HTTPException(status_code=400, detail="runMode must be batch|sync|preview")
+    run_config: dict[str, Any] = {
+        "run_mode": run_mode,
         "min_cluster_size": int(cfg.get("minClusterSize", 15)),
-        "classify_mode": cfg.get("classifyMode", "none"),
+        "gen_transform_specs": bool(cfg.get("genTransformSpecs", True)),
         "cde_cohort": CDE_COHORT,
         "work_dir": str(work_dir),
-        "cdeSet": cde_set,
+        "cde_set": cde_set,
     }
+    # Optional advanced knobs — passed through only when set (else harmonize_leanb's own defaults apply).
+    # Adding a new knob here needs no frontend change (the run-options form posts whatever it has).
+    for cfg_key, run_key in (("topK", "top_k"), ("retrievalFloor", "retrieval_floor"), ("modelTag", "model_tag")):
+        if cfg.get(cfg_key) is not None:
+            run_config[run_key] = cfg[cfg_key]
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
     store.create(job_id, display, run_config)
     threading.Thread(
@@ -148,6 +168,14 @@ async def start_batch(files: Annotated[list[UploadFile], File()], config: Annota
 # --- SSE + result ----------------------------------------------------------------------------
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _fmt(x: float | None) -> str:
+    return "" if x is None else f"{x:.3f}"
+
+
+def _clean(s: Any) -> str:
+    return str(s).replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
 
 @app.get("/api/harmonize/stream/{job_id}")
@@ -196,7 +224,7 @@ def delete_job(job_id: str) -> None:
 
 # --- human decisions -------------------------------------------------------------------------
 class VerdictBody(BaseModel):
-    subClusterId: str
+    recordId: str
     decision: str  # approve | refine | reject
     note: str = ""
 
@@ -205,67 +233,93 @@ class VerdictBody(BaseModel):
 def submit_verdict(job_id: str, body: VerdictBody) -> dict[str, bool]:
     if body.decision not in ("approve", "refine", "reject"):
         raise HTTPException(status_code=400, detail="decision must be approve|refine|reject")
-    if not store.set_decision(job_id, body.subClusterId, body.decision, body.note):
+    if not store.set_decision(job_id, body.recordId, body.decision, body.note):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
 
 
 # --- export ----------------------------------------------------------------------------------
+# Export is built from the stable UIRecord contract (not from ddharmon) — one more place insulated from
+# pipeline churn. eitl_tsv mirrors export_leanb_eitl_queue's intent (refine→novel→adopt first).
+_EITL_COLS = [
+    "recordId", "clusterId", "groupId", "concept", "verdict", "route", "cdeId", "cdeExternalId",
+    "top1Cos", "chosenCos", "coverageGap", "floored", "crossCohort", "nMembers", "cohorts", "members",
+    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote",
+]  # fmt: skip
+_DECISIONS_COLS = ["recordId", "concept", "verdict", "cdeId", "chosenCos", "humanDecision", "humanNote"]
+_EITL_RANK = {"refine": 0, "novel": 1, "adopt": 2}
+
+
 @app.get("/api/harmonize/jobs/{job_id}/export")
 def export(job_id: str, format: str = "eitl_tsv") -> Any:
     job = store.get(job_id)
     if job is None or job.result is None:
         raise HTTPException(status_code=404, detail="Job not found or not complete")
-    verdicts: list[dict[str, Any]] = job.result["verdicts"]
+    records: list[dict[str, Any]] = job.result["records"]
+    decisions = job.decisions
 
-    if format == "buckets_json":
-        buckets: dict[str, list[dict[str, Any]]] = {}
-        for v in verdicts:
-            key = v["mode"] if v["mode"] in ("single_cohort", "cde_only", "noise") else v["verdict"]
-            buckets.setdefault(key, []).append(v)
+    if format == "records_json":
         return JSONResponse(
-            buckets, headers={"Content-Disposition": f'attachment; filename="buckets_{job_id[:8]}.json"'}
+            records, headers={"Content-Disposition": f'attachment; filename="records_{job_id[:8]}.json"'}
         )
 
-    sep = "," if format == "decisions_csv" else "\t"
-    cols = [
-        "subClusterId",
-        "label",
-        "verdict",
-        "parentCdeId",
-        "anchorDesignation",
-        "confidence",
-        "mode",
-        "nFields",
-        "cohorts",
-        "humanDecision",
-        "humanNote",
-        "evidence",
-    ]
+    if format == "decisions_csv":
+        cols, rows, sep, ext = _DECISIONS_COLS, records, ",", "csv"
+    else:
+        format = "eitl_tsv"
+        cols, sep, ext = _EITL_COLS, "\t", "tsv"
+        rows = sorted(
+            records,
+            key=lambda r: (
+                _EITL_RANK.get(r["verdict"], 3),
+                r["cosines"]["top1"] if r["cosines"]["top1"] is not None else 0.0,
+            ),
+        )
+
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=sep)
     w.writerow(cols)
-    for v in verdicts:
-        if v["mode"] in ("cde_only", "noise"):
-            continue
-        dec = job.decisions.get(v["subClusterId"], {})
-        w.writerow(
-            [
-                v["subClusterId"],
-                v["label"],
-                v["verdict"],
-                v["parentCdeId"] or "",
-                v["anchorDesignation"] or "",
-                "" if v["confidence"] is None else round(v["confidence"], 3),
-                v["mode"],
-                v["nFields"],
-                ";".join(v["cohorts"]),
-                dec.get("decision", ""),
-                dec.get("note", "").replace("\n", " "),
-                (v["evidence"] or "").replace("\n", " "),
-            ]
-        )
-    ext = "csv" if format == "decisions_csv" else "tsv"
+    for r in rows:
+        dec = decisions.get(r["id"], {})
+        cde = r["cde"] or {}
+        if format == "decisions_csv":
+            w.writerow(
+                [
+                    r["id"],
+                    _clean(r["concept"]),
+                    r["verdict"],
+                    cde.get("id", ""),
+                    _fmt(r["cosines"]["chosen"]),
+                    dec.get("decision", ""),
+                    _clean(dec.get("note", "")),
+                ]
+            )
+        else:
+            w.writerow(
+                [
+                    r["id"],
+                    r["clusterId"],
+                    r["groupId"],
+                    _clean(r["concept"]),
+                    r["verdict"],
+                    r["route"],
+                    cde.get("id", ""),
+                    cde.get("externalId", ""),
+                    _fmt(r["cosines"]["top1"]),
+                    _fmt(r["cosines"]["chosen"]),
+                    r["coverageGap"],
+                    r["floored"],
+                    r["crossCohort"],
+                    r["nMembers"],
+                    ";".join(r["cohorts"]),
+                    _clean(";".join(r["members"])),
+                    len(r["transforms"]),
+                    _clean(r["idealCde"]),
+                    _clean(r["rationale"]),
+                    dec.get("decision", ""),
+                    _clean(dec.get("note", "")),
+                ]
+            )
     media = "text/csv" if ext == "csv" else "text/tab-separated-values"
     return StreamingResponse(
         iter([buf.getvalue()]),
@@ -286,6 +340,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "version": app.version,
+        "contractVersion": CONTRACT_VERSION,
         "cde": {name: path.exists() for name, path in CDE_FILES.items()},
         "frontendBuilt": _DIST.exists(),
     }
