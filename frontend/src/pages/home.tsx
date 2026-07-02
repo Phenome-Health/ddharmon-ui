@@ -9,9 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { detectRoles, startHarmonize } from "@/lib/api";
-import { COLUMN_ROLES, type CdeSet, type ClassifyMode, type ColumnRole } from "@/types";
+import { COLUMN_ROLES, type CdeSet, type ColumnRole, type RunMode } from "@/types";
 
 const NONE = "__none__";
 
@@ -38,8 +39,9 @@ export default function HomePage() {
   const [, navigate] = useLocation();
   const [dicts, setDicts] = useState<DictFile[]>([]);
   const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
+  const [runMode, setRunMode] = useState<RunMode>("batch");
   const [minClusterSize, setMinClusterSize] = useState(15);
-  const [classifyMode, setClassifyMode] = useState<ClassifyMode>("none");
+  const [genTransformSpecs, setGenTransformSpecs] = useState(true);
   const [displayName, setDisplayName] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -93,13 +95,12 @@ export default function HomePage() {
         dictionaries: dicts.map((d) => ({
           filename: d.file.name,
           cohortName: d.cohortName,
-          columnRoles: Object.fromEntries(
-            Object.entries(d.roles).filter(([, col]) => col && col !== NONE),
-          ),
+          columnRoles: Object.fromEntries(Object.entries(d.roles).filter(([, col]) => col && col !== NONE)),
         })),
         cdeSet,
+        runMode,
         minClusterSize,
-        classifyMode,
+        genTransformSpecs,
         displayName: displayName || undefined,
       };
       const { jobId } = await startHarmonize(
@@ -118,7 +119,8 @@ export default function HomePage() {
       <div>
         <h1 className="text-2xl font-semibold text-ph-ink">New harmonization run</h1>
         <p className="text-sm text-neutral-500">
-          Upload cohort data dictionaries, map their columns, and run the clustering → CDE-anchoring pipeline.
+          Upload cohort data dictionaries, map their columns, and assign each concept to the CDE backbone
+          (adopt / refine / novel) with transform specs.
         </p>
       </div>
 
@@ -131,12 +133,12 @@ export default function HomePage() {
         <input {...getInputProps()} />
         <Upload className="mb-2 h-7 w-7 text-neutral-400" />
         <p className="text-sm font-medium text-neutral-700">Drop CSV/TSV data dictionaries here, or click to browse</p>
-        <p className="text-xs text-neutral-400">One file per cohort. CDEs are added automatically server-side.</p>
+        <p className="text-xs text-neutral-400">One file per cohort. The CDE catalog is added automatically server-side.</p>
       </div>
 
       {dicts.map((d, idx) => (
         <Card key={`${d.file.name}-${idx}`}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-2 text-base">
               {d.file.name}
               <Badge variant="secondary">{d.headers.length} cols</Badge>
@@ -178,49 +180,59 @@ export default function HomePage() {
       ))}
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader>
           <CardTitle className="text-base">Run options</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="grid gap-1.5">
-            <Label className="text-xs">CDE catalog</Label>
-            <Select value={cdeSet} onValueChange={(v) => setCdeSet(v as CdeSet)}>
-              <SelectTrigger className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="endorsed">NIH-endorsed (~174)</SelectItem>
-                <SelectItem value="full">Full repo (~22.7k)</SelectItem>
-                <SelectItem value="none">No CDE</SelectItem>
-              </SelectContent>
-            </Select>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-1.5">
+              <Label className="text-xs">CDE catalog</Label>
+              <Select value={cdeSet} onValueChange={(v) => setCdeSet(v as CdeSet)}>
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="endorsed">NIH-endorsed (~174)</SelectItem>
+                  <SelectItem value="full">Full repo (~22.7k)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Run mode</Label>
+              <Select value={runMode} onValueChange={(v) => setRunMode(v as RunMode)}>
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="batch">Batch (async, default)</SelectItem>
+                  <SelectItem value="sync">Sync (inline, needs API key)</SelectItem>
+                  <SelectItem value="preview">Preview (no LLM — clusters only)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Min cluster size</Label>
+              <Input
+                type="number"
+                min={2}
+                value={minClusterSize}
+                onChange={(e) => setMinClusterSize(Number(e.target.value) || 15)}
+                className="h-8"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Run name (optional)</Label>
+              <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-8" />
+            </div>
           </div>
-          <div className="grid gap-1.5">
-            <Label className="text-xs">Min cluster size</Label>
-            <Input
-              type="number"
-              min={2}
-              value={minClusterSize}
-              onChange={(e) => setMinClusterSize(Number(e.target.value) || 15)}
-              className="h-8"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label className="text-xs">Classify (LLM)</Label>
-            <Select value={classifyMode} onValueChange={(v) => setClassifyMode(v as ClassifyMode)}>
-              <SelectTrigger className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None (deterministic only)</SelectItem>
-                <SelectItem value="sync">Sync (needs API key)</SelectItem>
-                <SelectItem value="batch">Batch (async, hours)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-1.5">
-            <Label className="text-xs">Run name (optional)</Label>
-            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-8" />
+          <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2">
+            <div>
+              <Label className="text-sm">Generate transform specs</Label>
+              <p className="text-xs text-neutral-400">
+                Value recodes + unit/arithmetic conversions for adopt/refine assignments.
+              </p>
+            </div>
+            <Switch checked={genTransformSpecs} onCheckedChange={setGenTransformSpecs} disabled={runMode === "preview"} />
           </div>
         </CardContent>
       </Card>

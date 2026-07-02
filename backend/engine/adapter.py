@@ -1,0 +1,371 @@
+"""The v2 engine adapter — the ONLY module that imports the ddharmon pipeline.
+
+This is the churn-absorbing layer (``docs/GUI-BUILD-PLAN.md`` §1). It does **not** re-implement the
+harmonization flow — that was the v1 runner's mistake. ``harmonize_leanb`` already owns the staged
+orchestration (cluster → retrieve → generate-ideal → split → per-group assign → route → specs) and
+exposes each LLM stage as an *injectable callback*. So this adapter only:
+
+  1. loads + embeds the dictionaries (so it can report load/embed progress), then
+  2. calls ``harmonize_leanb(embedded, generate=…, split=…, classify=…, specgen=…)`` passing **our**
+     callbacks — each callback just runs its prompts (sync inline, or via the Batch API) and reports
+     progress, and
+  3. maps the returned ``LeanBRecord``s into the stable ``UIRecord`` contract.
+
+When the pipeline churns, the blast radius is confined here: a record-field rename touches
+``_record_to_ui``; a new/removed stage touches one callback wiring line; an engine swap replaces this
+file's body. The contract (and the whole frontend) is unaffected.
+
+Run modes:
+  * ``batch``   — every LLM stage via the Anthropic Batch API (async, cost-bounded). The deployed default.
+  * ``sync``    — every LLM stage inline (needs ``ANTHROPIC_API_KEY``); fast for small runs.
+  * ``preview`` — no LLM/key: cluster + retrieve + build the generate prompts, expose their counts. Yields
+                  no records (v2 needs the LLM to decide anything) — the zero-cost "what would run" path.
+
+v2 **requires a CDE backbone** (assignment to the given CDE catalog is the thesis); there is no
+``cdeSet=none`` path as there was in v1.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from backend.engine.contract import (
+    CONTRACT_VERSION,
+    PHASES_PREVIEW,
+    PHASES_RUN,
+    AtlasPoint,
+    UICandidate,
+    UIRecord,
+    UIResult,
+    UISummary,
+    UITransform,
+    empty_summary,
+)
+
+logger = logging.getLogger(__name__)
+
+# (phase, completed, total) -> None. Reported between stages and within sync stages.
+ProgressFn = Callable[[str, int, int], None]
+# list[PromptRecord] -> {id: response}. The execution strategy injected per stage.
+StageFn = Callable[[list[Any]], dict[str, Any]]
+
+# Same instruction the Batch API appends server-side, so inline (sync) output matches the schema.
+_SCHEMA_PREAMBLE = "\n\nRespond with ONLY valid JSON matching this schema (no markdown fences):\n"
+_SYNC_MAX_TOKENS = 1024
+
+
+def _noop_progress(phase: str, completed: int = 0, total: int = 0) -> None:
+    pass
+
+
+# ── ddharmon -> contract mapping (the single churn-absorbing surface) ──────────────────────
+
+
+def _transform_to_ui(t: Any) -> UITransform:
+    """Map one ``TransformSpec`` to a ``UITransform`` (kind-specific keys only when populated)."""
+    ui: UITransform = {
+        "sourceVariable": t.source_variable,
+        "targetCdeId": t.target_cde_id,
+        "kind": str(t.kind),  # TransformKind is a StrEnum
+        "confidence": t.confidence,
+        "coverage": t.coverage,
+        "needsUnits": t.needs_units,
+        "needsData": t.needs_data,
+        "needsReview": t.needs_review,
+        "rationale": t.rationale,
+        "generatedBy": t.generated_by,
+    }
+    if t.code_map:
+        ui["codeMap"] = dict(t.code_map)
+    if t.unmapped_source_codes:
+        ui["unmappedSourceCodes"] = list(t.unmapped_source_codes)
+    if t.factor is not None:
+        ui["factor"] = t.factor
+    if t.offset is not None:
+        ui["offset"] = t.offset
+    if t.source_unit:
+        ui["sourceUnit"] = t.source_unit
+    if t.target_unit:
+        ui["targetUnit"] = t.target_unit
+    if t.formula:
+        ui["formula"] = t.formula
+    if t.inputs:
+        ui["inputs"] = list(t.inputs)
+    if t.method:
+        ui["method"] = t.method
+    if t.params:
+        ui["params"] = dict(t.params)
+    return ui
+
+
+def _candidate_to_ui(c: Any) -> UICandidate:
+    return {
+        "rank": c.rank,
+        "cdeId": c.cde_id,
+        "cdeExternalId": c.cde_external_id or "",
+        "definition": c.definition,
+        "cosine": c.cosine,
+        "isChosen": c.is_chosen,
+        "llmSuggested": c.llm_suggested,
+    }
+
+
+def _record_to_ui(r: Any) -> UIRecord:
+    """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
+    return {
+        "id": r.group_id or r.cluster_id,
+        "clusterId": r.cluster_id,
+        "groupId": r.group_id,
+        "concept": r.concept,
+        "verdict": r.verdict or "unclassified",
+        "route": r.route,
+        "cde": {"id": r.cde_id, "externalId": r.cde_external_id or ""} if r.cde_id else None,
+        "idealCde": r.ideal_cde,
+        "cosines": {"top1": r.top1_cos, "chosen": r.chosen_cos},
+        "coverageGap": r.coverage_gap,
+        "floored": r.floored,
+        "crossCohort": r.cross_cohort,
+        "nMembers": r.n_members,
+        "cohorts": list(r.cohorts),
+        "members": list(r.member_variable_names),
+        "transforms": [_transform_to_ui(t) for t in r.transforms],
+        "candidates": [_candidate_to_ui(c) for c in r.candidates],
+        "rationale": r.rationale,
+        "decidedBy": r.decided_by,
+    }
+
+
+def _summarize(records: list[UIRecord]) -> UISummary:
+    if not records:
+        return empty_summary()
+    counts: dict[str, int] = {}
+    cohorts: set[str] = set()
+    for r in records:
+        counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
+        cohorts.update(r["cohorts"])
+    return {
+        "nRecords": len(records),
+        "counts": counts,
+        "nCrossCohort": sum(1 for r in records if r["crossCohort"]),
+        "nAssigned": sum(1 for r in records if r["route"] == "assigned"),
+        "nGencdeResidual": sum(1 for r in records if r["route"] == "gencde_residual"),
+        "nWithTransforms": sum(1 for r in records if r["transforms"]),
+        "cohorts": sorted(cohorts),
+    }
+
+
+def build_ui_result(
+    leanb_result: Any, *, mode: str, phases: list[str], atlas: list[AtlasPoint] | None = None
+) -> UIResult:
+    """Map a ``LeanBResult`` to the stable ``UIResult`` contract."""
+    records = [_record_to_ui(r) for r in leanb_result.records]
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "mode": mode,
+        "phases": phases,
+        "records": records,
+        "summary": _summarize(records),
+        "prompts": {
+            "ideal": len(leanb_result.ideal_prompts),
+            "split": len(leanb_result.split_prompts),
+            "groupAssign": len(leanb_result.group_assign_prompts),
+            "specgen": len(leanb_result.specgen_prompts),
+        },
+        "atlas": atlas or [],
+    }
+
+
+def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list[AtlasPoint]:
+    """Project every (non-CDE) field's embedding to 2D via PCA (SVD) for the cohort-colored atlas.
+
+    Deterministic (no random init). Downsamples evenly to ``cap`` points so the scatter stays responsive.
+    Returns [] when there are too few fields to project.
+    """
+    import numpy as np
+
+    vecs: list[Any] = []
+    meta: list[tuple[str, str]] = []
+    for ed in embedded:
+        dd = getattr(ed, "dictionary", None)
+        name = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
+        if name == cde_cohort:
+            continue
+        names = list(ed.get_variable_names())
+        mat = np.asarray(ed.get_all_vectors(), dtype=np.float32)
+        for v, row in zip(names, mat, strict=False):
+            vecs.append(row)
+            meta.append((name, v))
+    if len(vecs) < 3:
+        return []
+    matrix = np.asarray(vecs, dtype=np.float32)
+    if len(matrix) > cap:
+        idx = np.linspace(0, len(matrix) - 1, cap).astype(int)
+        matrix = matrix[idx]
+        meta = [meta[i] for i in idx]
+    centered = matrix - matrix.mean(axis=0)
+    _u, _s, vt = np.linalg.svd(centered, full_matrices=False)
+    coords = centered @ vt[:2].T
+    return [
+        {
+            "cohort": meta[i][0],
+            "variable": meta[i][1],
+            "x": round(float(coords[i, 0]), 4),
+            "y": round(float(coords[i, 1]), 4),
+        }
+        for i in range(len(meta))
+    ]
+
+
+# ── stage execution strategies (sync inline / Batch API) ──────────────────────────────────
+
+
+def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
+    """A stage callback that runs each prompt inline via the Anthropic client, reporting per-item progress."""
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        if not prompts:
+            return {}
+        n = len(prompts)
+        progress(phase, 0, n)
+        out: dict[str, Any] = {}
+        for i, rec in enumerate(prompts):
+            system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
+            out[rec.id] = client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
+            progress(phase, i + 1, n)
+        return out
+
+    return stage
+
+
+def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str) -> StageFn:
+    """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll)."""
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        if not prompts:
+            return {}
+        from ddharmon.harmonization import write_prompts_jsonl
+        from ddharmon.llm.batch import submit_and_wait
+
+        n = len(prompts)
+        progress(phase, 0, n)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        prompts_path = work_dir / f"prompts_{tag}.jsonl"
+        responses_path = work_dir / f"responses_{tag}.jsonl"
+        write_prompts_jsonl(prompts, prompts_path)
+        submit_and_wait(prompts_path, responses_path)
+        out: dict[str, Any] = {}
+        with open(responses_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    rec = json.loads(line)
+                    out[rec["id"]] = rec["response"]
+        progress(phase, n, n)
+        return out
+
+    return stage
+
+
+# ── entry point ────────────────────────────────────────────────────────────────────────────
+
+
+def run_pipeline(
+    dict_specs: list[dict[str, Any]],
+    cde_spec: dict[str, Any] | None,
+    config: dict[str, Any],
+    *,
+    progress: ProgressFn | None = None,
+    provider: Any | None = None,
+    stage_overrides: dict[str, StageFn] | None = None,
+) -> UIResult:
+    """Run the v2 pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
+
+    Args:
+        dict_specs: ``[{path, cohort_name, column_roles}]`` for the uploaded cohort dictionaries.
+        cde_spec:   ``{path, cohort_name, column_roles}`` for the CDE catalog (REQUIRED for sync/batch).
+        config:     ``{run_mode, cde_cohort, work_dir, min_cluster_size?, top_k?, retrieval_floor?,
+                    model_tag?, gen_transform_specs?}``. Unset knobs fall back to ``harmonize_leanb`` defaults.
+        progress:   ``(phase, completed, total)`` callback (wired to the JobStore by the runner).
+        provider:   embedding provider (defaults to ``SentenceTransformerProvider``; injected in tests).
+        stage_overrides: ``{generate, split, classify, specgen}`` stage callbacks (injected in tests to
+                    avoid any LLM/network); when given, the run_mode strategy is bypassed.
+    """
+    from ddharmon.embedding.service import embed_dictionary
+    from ddharmon.harmonization import harmonize_leanb
+    from ddharmon.ingestion import load_dictionary
+
+    progress = progress or _noop_progress
+    overrides = stage_overrides or {}
+    mode: str = config.get("run_mode", "batch")
+    cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
+    work_dir = Path(config.get("work_dir", "."))
+
+    # --- load ---
+    progress("loading", 0, 0)
+    specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
+    dictionaries = [load_dictionary(s["path"], cohort_name=s["cohort_name"], **s["column_roles"]) for s in specs]
+
+    # --- embed ---
+    total = len(dictionaries)
+    progress("embedding", 0, total)
+    if provider is None:
+        from ddharmon.embedding.provider import SentenceTransformerProvider
+
+        provider = SentenceTransformerProvider()
+    embedded = []
+    for i, dd in enumerate(dictionaries):
+        embedded.append(embed_dictionary(dd, provider=provider))
+        progress("embedding", i + 1, total)
+
+    # 2D projection of the field space for the embedding atlas (cheap, deterministic; no core dependency).
+    atlas = _atlas_points(embedded, cde_cohort)
+
+    # --- knobs: passthrough only (absent -> harmonize_leanb's own defaults). New knobs need no GUI change. ---
+    kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}
+    for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
+        if config.get(key) is not None:
+            kwargs[key] = config[key]
+
+    # --- preview: no LLM. generate=None makes harmonize_leanb stop after building the generate prompts. ---
+    if mode == "preview" and not overrides:
+        progress("clustering", 0, 0)
+        result = harmonize_leanb(embedded, **kwargs)
+        progress("prepared", 0, 0)
+        return build_ui_result(result, mode=mode, phases=PHASES_PREVIEW, atlas=atlas)
+
+    # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
+    if overrides:
+        stages: dict[str, StageFn] = overrides
+    elif mode == "sync":
+        from ddharmon.llm.anthropic_client import AnthropicClient
+
+        client = AnthropicClient()
+        stages = {
+            "generate": _sync_stage("generating", progress, client),
+            "split": _sync_stage("splitting", progress, client),
+            "classify": _sync_stage("assigning", progress, client),
+            "specgen": _sync_stage("specs", progress, client),
+        }
+    else:  # batch (default)
+        stages = {
+            "generate": _batch_stage("generating", progress, work_dir, "generate"),
+            "split": _batch_stage("splitting", progress, work_dir, "split"),
+            "classify": _batch_stage("assigning", progress, work_dir, "assign"),
+            "specgen": _batch_stage("specs", progress, work_dir, "specgen"),
+        }
+
+    gen_specs = config.get("gen_transform_specs", True)
+    progress("clustering", 0, 0)  # clustering + retrieval happen inside harmonize_leanb before the first callback
+    result = harmonize_leanb(
+        embedded,
+        generate=stages.get("generate"),
+        split=stages.get("split"),
+        classify=stages.get("classify"),
+        specgen=stages.get("specgen") if gen_specs else None,
+        **kwargs,
+    )
+    return build_ui_result(result, mode=mode, phases=PHASES_RUN, atlas=atlas)

@@ -26,7 +26,10 @@ class Job:
 
     job_id: str
     display_name: str
-    status: str = "pending"  # pending|loading|embedding|clustering|anchoring|classifying|complete|error
+    # pending|loading|embedding|clustering|generating|splitting|assigning|specs|prepared|complete|error.
+    # The phase set is REPORTED by the engine adapter (data-driven), not enumerated here — this comment is
+    # just the v2 set for reference; the UI renders whatever phases a run reports (see result["phases"]).
+    status: str = "pending"
     phase: str = "pending"
     completed: int = 0
     total: int = 0
@@ -57,7 +60,7 @@ class Job:
         """Lightweight view for the jobs list (omits the heavy result payload)."""
         d = self.to_dict()
         d.pop("result", None)
-        d["nVerdicts"] = len(self.result["verdicts"]) if self.result else 0
+        d["nRecords"] = len(self.result["records"]) if self.result else 0
         return d
 
 

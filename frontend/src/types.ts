@@ -1,42 +1,124 @@
-// Mirrors the camelCase shapes emitted by ui/backend (jobs.py / runner.py).
+// Mirrors the stable UIRecord/UIResult contract emitted by backend/engine/contract.py.
+// This file is the frontend half of the insulation boundary — when ddharmon's pipeline churns, only the
+// backend adapter's mapping changes; these shapes (and the views that render them) stay still. Keep in
+// sync with contract.py (CONTRACT_VERSION). See ../../docs/GUI-BUILD-PLAN.md §1/§3.
 
+export type RunMode = "batch" | "sync" | "preview";
+export type CdeSet = "endorsed" | "full";
+
+// Job lifecycle phases are REPORTED by the engine (data-driven) — this union is for hints only; the UI
+// renders whatever phase string a run reports and reads result.phases for the sequence.
 export type JobStatus =
   | "pending"
   | "loading"
   | "embedding"
   | "clustering"
-  | "anchoring"
-  | "classifying"
+  | "generating"
+  | "splitting"
+  | "assigning"
+  | "specs"
+  | "prepared"
   | "complete"
   | "error";
 
-export interface Verdict {
-  subClusterId: string;
-  parentTopicId: number;
-  subLabel: number;
-  mode: string; // harmonize | kg_only | single_cohort | cde_only | noise
-  verdict: string; // adopt | refine | novel | unaligned | pending
-  parentCdeId: string | null;
-  confidence: number | null;
-  evidence: string;
-  label: string;
+export interface CdeRef {
+  id: string;
+  externalId: string;
+}
+
+export interface Cosines {
+  top1: number | null;
+  chosen: number | null;
+}
+
+export interface UITransform {
+  sourceVariable: string;
+  targetCdeId: string;
+  kind: string; // identity | categorical | unit | arithmetic | data_dependent | none
+  confidence: number;
+  coverage: number;
+  needsUnits: boolean;
+  needsData: boolean;
+  needsReview: boolean;
+  rationale: string;
+  generatedBy: string;
+  // kind-specific (present only when relevant)
+  codeMap?: Record<string, string>;
+  unmappedSourceCodes?: string[];
+  factor?: number;
+  offset?: number;
+  sourceUnit?: string;
+  targetUnit?: string;
+  formula?: string;
+  inputs?: string[];
+  method?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface UICandidate {
+  rank: number; // 1-based, best-first
+  cdeId: string;
+  cdeExternalId: string; // "" when absent
+  definition: string;
+  cosine: number;
+  isChosen: boolean;
+  llmSuggested: boolean;
+}
+
+export interface AtlasPoint {
+  cohort: string;
+  variable: string;
+  x: number;
+  y: number;
+}
+
+export interface UIRecord {
+  id: string;
+  clusterId: string;
+  groupId: string;
+  concept: string;
+  verdict: string; // adopt | refine | novel | unclassified
+  route: string; // assigned | gencde_residual
+  cde: CdeRef | null;
+  idealCde: string;
+  cosines: Cosines;
+  coverageGap: boolean;
+  floored: boolean;
+  crossCohort: boolean;
+  nMembers: number;
   cohorts: string[];
-  nFields: number;
-  encodedFraction: number;
-  anchorDesignation: string | null;
+  members: string[];
+  transforms: UITransform[];
+  candidates: UICandidate[]; // ranked CDE candidates the assign stage saw (best-first)
+  rationale: string;
   decidedBy: string;
 }
 
+export interface PromptCounts {
+  ideal: number;
+  split: number;
+  groupAssign: number;
+  specgen: number;
+}
+
 export interface ResultSummary {
-  nVerdicts: number;
-  nLlmPrompts: number;
-  nAnchored: number;
-  counts: Record<string, number>;
+  nRecords: number;
+  counts: Record<string, number>; // verdict -> count
+  nCrossCohort: number;
+  nAssigned: number;
+  nGencdeResidual: number;
+  nWithTransforms: number;
+  cohorts: string[];
 }
 
 export interface HarmonizationResult {
-  verdicts: Verdict[];
+  contractVersion: string;
+  mode: string;
+  phases: string[];
+  records: UIRecord[];
   summary: ResultSummary;
+  prompts: PromptCounts;
+  atlas: AtlasPoint[];
 }
 
 export interface JobResult {
@@ -55,11 +137,8 @@ export interface JobResult {
 }
 
 export interface JobSummary extends Omit<JobResult, "result"> {
-  nVerdicts: number;
+  nRecords: number;
 }
-
-export type ClassifyMode = "none" | "sync" | "batch";
-export type CdeSet = "endorsed" | "full" | "none";
 
 export interface DictSpec {
   filename: string;
@@ -70,10 +149,17 @@ export interface DictSpec {
 export interface RunConfig {
   dictionaries: DictSpec[];
   cdeSet: CdeSet;
+  runMode: RunMode;
   minClusterSize: number;
-  classifyMode: ClassifyMode;
+  genTransformSpecs: boolean;
   displayName?: string;
+  // advanced passthrough knobs (optional; default to harmonize_leanb's own values)
+  topK?: number;
+  retrievalFloor?: number;
+  modelTag?: string;
 }
+
+export type ExportFormat = "eitl_tsv" | "records_json" | "decisions_csv";
 
 // load_dictionary column roles the UI lets you map (value = source column).
 export const COLUMN_ROLES = [
@@ -88,3 +174,11 @@ export const COLUMN_ROLES = [
   "standard_code",
 ] as const;
 export type ColumnRole = (typeof COLUMN_ROLES)[number];
+
+// Verdict → badge styling (Phenome Health tokens).
+export const VERDICT_STYLES: Record<string, string> = {
+  adopt: "bg-success-bg text-success border-success/30",
+  refine: "bg-warning-bg text-warning border-warning/30",
+  novel: "bg-ph-navy/10 text-ph-navy border-ph-navy/30",
+  unclassified: "bg-neutral-100 text-neutral-600 border-neutral-300",
+};

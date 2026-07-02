@@ -1,5 +1,5 @@
 // Tiny typed fetch client for the ddharmon harmonization API (replaces Orval codegen).
-import type { JobResult, JobSummary, RunConfig } from "@/types";
+import type { ExportFormat, JobResult, JobSummary, RunConfig } from "@/types";
 
 const BASE = "/api/harmonize";
 
@@ -42,7 +42,7 @@ export async function deleteJob(jobId: string): Promise<void> {
 
 export async function submitVerdict(
   jobId: string,
-  subClusterId: string,
+  recordId: string,
   decision: "approve" | "refine" | "reject",
   note = "",
 ): Promise<void> {
@@ -50,11 +50,11 @@ export async function submitVerdict(
     await fetch(`${BASE}/jobs/${jobId}/verdict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subClusterId, decision, note }),
+      body: JSON.stringify({ recordId, decision, note }),
     }),
   );
 }
 
-export function exportUrl(jobId: string, format: "eitl_tsv" | "buckets_json" | "decisions_csv"): string {
+export function exportUrl(jobId: string, format: ExportFormat): string {
   return `${BASE}/jobs/${jobId}/export?format=${format}`;
 }

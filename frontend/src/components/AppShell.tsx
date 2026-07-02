@@ -10,8 +10,10 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-        active ? "bg-ph-navy text-white" : "text-neutral-600 hover:bg-neutral-100",
+        "flex items-center gap-3 rounded px-3 py-2 text-sm transition-colors",
+        active
+          ? "bg-neutral-200 font-medium text-neutral-900"
+          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900",
       )}
     >
       {icon}
@@ -22,23 +24,36 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col bg-neutral-50">
-      <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3">
+    <div className="flex h-screen flex-col overflow-hidden bg-white">
+      {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4">
         <Link href="/" className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-ph-navy text-white">
-            <Network className="h-4 w-4" />
+          <div className="flex h-6 w-6 items-center justify-center rounded bg-ph-navy text-white">
+            <Network className="h-3.5 w-3.5" />
           </div>
-          <div className="leading-tight">
-            <div className="text-sm font-semibold text-ph-ink">ddharmon</div>
-            <div className="text-[11px] text-neutral-500">Sub-cluster-anchored CDE harmonization</div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="font-semibold text-ph-ink">ddharmon</span>
+            <span className="text-neutral-300">/</span>
+            <span className="text-neutral-500">Harmonization</span>
           </div>
         </Link>
-        <nav className="flex items-center gap-1">
-          <NavLink href="/" icon={<Plus className="h-4 w-4" />} label="New run" />
-          <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" />
-        </nav>
+        <div className="hidden text-xs text-neutral-500 sm:block">Split-aware CDE harmonization</div>
       </header>
-      <main className="mx-auto w-full max-w-screen-2xl flex-1 px-6 py-6">{children}</main>
+
+      <div className="flex min-h-0 flex-1">
+        {/* Left sidebar nav. */}
+        <aside className="hidden w-60 shrink-0 border-r border-neutral-200 bg-neutral-50 px-3 py-4 lg:block">
+          <nav className="space-y-1">
+            <NavLink href="/" icon={<Plus className="h-4 w-4" />} label="New run" />
+            <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" />
+          </nav>
+        </aside>
+
+        {/* Scrolling content region. */}
+        <main className="min-w-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-screen-2xl px-6 py-8 lg:px-8">{children}</div>
+        </main>
+      </div>
     </div>
   );
 }

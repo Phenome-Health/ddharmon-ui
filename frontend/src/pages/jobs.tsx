@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/table";
 import { deleteJob, listJobs } from "@/lib/api";
 
-const RUNNING = new Set(["pending", "loading", "embedding", "clustering", "anchoring", "classifying"]);
+// Terminal statuses; anything else is an in-flight phase (data-driven — we don't enumerate phases).
+const TERMINAL = new Set(["complete", "error"]);
 
 export default function JobsPage() {
   const qc = useQueryClient();
@@ -39,7 +40,7 @@ export default function JobsPage() {
               <TableRow>
                 <TableHead>Run</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="text-right">Sub-clusters</TableHead>
+                <TableHead className="text-right">Records</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead />
               </TableRow>
@@ -54,10 +55,10 @@ export default function JobsPage() {
                   </TableCell>
                   <TableCell>
                     <Badge variant={j.status === "complete" ? "secondary" : j.status === "error" ? "destructive" : "outline"}>
-                      {RUNNING.has(j.status) ? j.phase : j.status}
+                      {TERMINAL.has(j.status) ? j.status : j.phase}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{j.nVerdicts || "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{j.nRecords || "—"}</TableCell>
                   <TableCell className="text-sm text-neutral-500">
                     {new Date(j.createdAt * 1000).toLocaleString()}
                   </TableCell>
