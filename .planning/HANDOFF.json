@@ -1,41 +1,48 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-01T21:35:42Z",
-  "phase": "ddharmon 1.0.0 GUI buildout",
-  "phase_name": "ddharmon-ui v2 rewire + biomapper design system + visualization suite",
-  "phase_dir": "ddharmon-ui (repo); companion memory: project_ddharmon_ui_v2_buildout",
+  "timestamp": "2026-07-02T23:05:00Z",
+  "phase": "ddharmon-ui v1.1 UI features + team preview",
+  "phase_name": "Guide/tooltips/notebooks/demo/dark-mode/related-work/phenome-health + static preview deploy",
+  "phase_dir": "ddharmon-ui repo; companion memory project_ddharmon_ui_v2_buildout (v1.1 addendum)",
   "plan": 1,
-  "task": 7,
-  "total_tasks": 7,
+  "task": 12,
+  "total_tasks": 12,
   "status": "paused",
+  "branch": "feature/ui-guide-tooltips-notebook-demo (off main; UNCOMMITTED until this WIP commit)",
   "completed_tasks": [
-    {"id": 1, "name": "P0 backend: v2 engine behind a stable UI contract (engine/contract.py + engine/adapter.py; adapter drives harmonize_leanb via injected sync/batch/preview callbacks, never re-implements the flow); runner/app/jobs on the contract; 9 tests incl. real e2e", "status": "done", "commit": "4fff6e4"},
-    {"id": 2, "name": "P1 frontend: types.ts/api.ts mirror the contract; Configure (runMode batch/sync/preview, cdeSet, specs toggle) / Run (data-driven progress) / Review (records by verdict, expandable detail, approve-refine-reject, exports)", "status": "done", "commit": "e1bf4d8"},
-    {"id": 3, "name": "P2 styling: biomapper-ui shared PH design system — sidebar+topbar AppShell chrome (was top-bar-only), bordered cards, tabular-nums stats, dashboard breadcrumb+mode badge; screenshot-verified", "status": "done", "commit": "e1bf4d8"},
-    {"id": 4, "name": "Viz: match-journey Sankey (cohort->verdict->destination); analytics overview (coverage table + size/verdict bars + cosine histogram + cohort-overlap heatmap); enriched review row (Monarch provenance idiom)", "status": "done", "commit": "e1bf4d8"},
-    {"id": 5, "name": "Viz: candidate-review workbench (/job/:id/workbench — CDEMapper Fig4 idiom) + CORE additive change (CandidateCDE + candidates on LeanBRecord, persisted in assemble_leanb) + contract/UIRecord candidates; +regression test", "status": "done", "commit": "e1bf4d8 (ui) + core f5802a9"},
-    {"id": 6, "name": "Viz: cohort-colored embedding atlas (adapter computes PCA(2) of field embeddings -> UIResult.atlas; recharts ScatterChart). No core change.", "status": "done", "commit": "e1bf4d8"}
+    {"id": 1, "name": "Guide page (/guide): problem + 'Meaning, not wording' (semantic, Harmony link) + verdicts + 'Where AI is used' + 'You're in the loop' (EITL+confidence) + Learn more links", "status": "done"},
+    {"id": 2, "name": "Field info tooltips on new-run role labels (ROLE_HELP/ROLE_FORMAT in types.ts; value_encoding |-format hint)", "status": "done"},
+    {"id": 3, "name": "Notebook export: backend/notebook.py (nbformat v4, no deps) + /export?format=notebook_py|notebook_r + dashboard buttons", "status": "done"},
+    {"id": 4, "name": "Demo: backend/demos.py+manifest+curated data (scripts/build_demo_data.py) + /demos,/demo + pages/demo.tsx. Precompute HELD until v3; snapshot removed", "status": "done"},
+    {"id": 5, "name": "Seed: backend/seed.py (env DDHARMON_UI_SEED, dev-only) = 2 sample completed runs so results/workbench/export UI is testable pre-v3", "status": "done"},
+    {"id": 6, "name": "New-run form: blank columns (no auto-detect), primary/advanced split, format hints, itemized cost estimate (estimateRunCostBreakdown, anchored $1.45 batch/7451 fields), side-by-side layout (mockup)", "status": "done"},
+    {"id": 7, "name": "Dark mode: index.css :root/.dark CSS vars + @theme inline var(); hooks/use-theme.ts + no-flash script; bg-white->bg-neutral-0", "status": "done"},
+    {"id": 8, "name": "GitHub links (topbar + sidebar 'Report an issue' via lib/links.ts) + 'Built with Claude Code' footer", "status": "done"},
+    {"id": 9, "name": "Related work tab (/related): external tools/standards/groups; internal-only (Forge/biomapper/KRAKEN) omitted", "status": "done"},
+    {"id": 10, "name": "Phenome Health tab (/phenome): internal tools (biomapper/KRAKEN/EITL/ddharmon-ui). URLs in lib/links.ts PH block are BEST-GUESS -> confirm", "status": "done"},
+    {"id": 11, "name": "Static preview mode: VITE_STATIC + scripts/build_static_fixtures.py -> frontend/public/static-data/ (jobs/result/demos/exports) + _redirects + wouter Router base for subpath. Verified backend-less locally", "status": "done"},
+    {"id": 12, "name": "Deploy static preview for team feedback", "status": "blocked", "progress": "GitHub Pages FAILED 3x (GitHub-side 'Deployment failed, try again later'); pivoting to Netlify Drop"}
   ],
   "remaining_tasks": [
-    {"id": 7, "name": "P3 deploy: ddharmon-ui functional -> DEPLOYED (Lightsail + Squarespace subdomain, systemd+nginx+certbot; deploy/README.md runbook), repin ddharmon dep from private git to public PyPI, flip repo public. The COUPLED 1.0.0 gate — ddharmon 1.0.0 tag waits on this.", "status": "not_started"}
+    {"id": 12, "name": "Deploy: Netlify Drop -> drag ~/ai-coding/ddharmon-ui/frontend/dist (ROOT-base build, ready) onto app.netlify.com/drop -> share URL + team blurb (drafted in chat)", "status": "not_started"},
+    {"id": 13, "name": "Optional: scripts/deploy-preview.sh helper (rebuild + push preview)", "status": "not_started"},
+    {"id": 14, "name": "After feedback: commit feature branch + open PR (per earlier decision: NO core PR)", "status": "not_started"}
   ],
   "blockers": [
-    {"description": "P3 deploy needs Lightsail + Squarespace access (infra) — user-gated long pole", "type": "human_action", "workaround": "none; deploy/README.md has the runbook"},
-    {"description": "Repin requires ddharmon 0.7.0+ published to PyPI first (currently held); repo pins private git today", "type": "external", "workaround": "keep private git pin until PyPI publish"}
+    {"description": "GitHub Pages deploy fails with 'Deployment failed, try again later' (actions/deploy-pages@v5) on vemuribv/ddharmon-preview — GitHub-side, NOT our bundle (build finds artifact, deploy step errors). 3 attempts failed; all URLs 404 after 12min.", "type": "external", "workaround": "Netlify Drop (dist ready, root-base) OR Cloudflare(wrangler)/Vercel CLI. Pages may self-heal when GitHub incident clears."}
   ],
   "human_actions_pending": [
-    {"action": "Decide whether to push the two branches / open PRs (nothing pushed yet)", "context": "core f5802a9 on feature/harmonization-v2-split-aware; ddharmon-ui feature/v2-contract-and-viz (4fff6e4, e1bf4d8)", "blocking": false},
-    {"action": "Provision + run P3 deploy; publish ddharmon to PyPI; flip ddharmon-ui public", "context": "coupled 1.0.0 gate", "blocking": true}
+    {"action": "Netlify Drop: drag ~/ai-coding/ddharmon-ui/frontend/dist onto https://app.netlify.com/drop -> instant URL to share", "context": "GitHub Pages is broken GitHub-side; Netlify is the reliable path", "blocking": true},
+    {"action": "Confirm internal-tool URLs in frontend/src/lib/links.ts (PH block: biomapper/biomapperUi/kraken/eitl are best-guess/empty)", "context": "Phenome Health tab links", "blocking": false},
+    {"action": "Decide: leave or delete the failed public repo vemuribv/ddharmon-preview", "context": "created but not serving", "blocking": false}
   ],
   "decisions": [
-    {"decision": "GUI couples to ddharmon ONLY through backend/engine (adapter+contract); adapter injects per-stage callbacks into harmonize_leanb rather than re-implementing stages", "rationale": "user requirement: pipeline churn must not force GUI changes; blast radius confined to _record_to_ui + one callback line", "phase": "P0"},
-    {"decision": "Run mode = Batch API default + sync option + preview(no-LLM)", "rationale": "deployed tool must be cost-bounded; v2 needs LLM to produce any records", "phase": "P0"},
-    {"decision": "v2 requires a CDE catalog (cdeSet endorsed|full; no 'none')", "rationale": "assignment to the given backbone is the v2 thesis; _find_cde_dict raises without it", "phase": "P0"},
-    {"decision": "Shared PH design system mirrored from biomapper-ui dev; tokens were already byte-identical so P2 = matching component/layout patterns", "rationale": "anticipates a unified PH toolkit", "phase": "P2"},
-    {"decision": "Candidate list surfaced via an ADDITIVE CandidateCDE field on LeanBRecord (backward-compatible)", "rationale": "workbench needs ranked candidates; v1 discarded them; keep core churn minimal", "phase": "workbench"},
-    {"decision": "Embedding atlas computed in the adapter (PCA of already-built embeddings), NOT the core", "rationale": "no core change needed; adapter already holds the embedded dicts", "phase": "atlas"}
+    {"decision": "Team feedback = STATIC preview (not full P3 deploy)", "rationale": "P3 = production launch/coupled 1.0 gate; overkill for feedback. Static bundle (VITE_STATIC bakes seeded fixtures) needs no backend/key", "phase": "v1.1"},
+    {"decision": "Demo precompute HELD until v3 pipeline final", "rationale": "user directive; seed provides sample runs for UI testing meanwhile", "phase": "v1.1"},
+    {"decision": "Adopted mockup's itemized cost breakdown + side-by-side upload/config layout", "rationale": "user approved; from docs/biomapper_ui_ddharmon_mock.html (core repo)", "phase": "v1.1"},
+    {"decision": "Phenome Health tab lists internal tools (biomapper/KRAKEN/EITL)", "rationale": "user asked; MAY need gating for a fully-public P3 launch", "phase": "v1.1"}
   ],
-  "uncommitted_files": [],
-  "next_action": "Either (a) push the two branches and open PRs, or (b) plan P3 deploy: read ddharmon-ui/deploy/README.md, then Lightsail provision + repin. All code through the viz suite is committed + green.",
-  "context_notes": "Large multi-session GUI buildout is COMPLETE through P2 + all 5 requested visualizations, committed across both repos (core candidates feature + ddharmon-ui backend/frontend). Everything green: core 23 leanb tests, ddharmon-ui 9 backend tests, frontend typecheck/build, ruff/black/pyright. The ONLY remaining 1.0 item is the user-gated P3 deploy. NOTE: the CORE repo's .planning/.continue-here.md tracks a DIFFERENT active thread (v1.0.0/v3 pipeline+transform-spec work) — left untouched. This GUI handoff lives in the ddharmon-ui repo on purpose."
+  "uncommitted_files": ["entire v1.1 batch on feature/ui-guide-tooltips-notebook-demo — committed by this WIP commit"],
+  "next_action": "Netlify Drop the static bundle (~/ai-coding/ddharmon-ui/frontend/dist) to get a team URL. dist is the ROOT-base static build (asset base /, +_redirects +404.html). To rebuild: cd frontend && VITE_STATIC=1 npm run build && cp dist/index.html dist/404.html && printf '/*    /index.html   200\\n' > dist/_redirects",
+  "context_notes": "All 11 feature tasks DONE + green (frontend typecheck + static & dev builds; 16 backend tests incl. 7 new; ruff/black/pyright). Verified in light+dark via Playwright screenshots. ONLY open item = hosting the static preview (GitHub Pages is broken GitHub-side; use Netlify). PR #1 (v2 contract+viz) already MERGED to main (b40d61f); this v1.1 batch is the next branch. No servers running (dev.sh + vite previews killed). Local dev: cd ddharmon-ui && DDHARMON_UI_SEED=1 DDHARMON_CDE_DIR=/Users/bhargav/ai-coding/ph-arpa-data-harmonization/data/examples ./dev.sh -> :5173 (.venv symlinks core venv)."
 }

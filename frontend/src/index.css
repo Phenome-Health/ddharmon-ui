@@ -3,92 +3,123 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Light (default) + dark palette ──
+   Semantic + neutral + navy tokens below reference these raw vars, so adding `.dark` on <html> flips
+   the whole UI. Brand hues (crimson/teal), radii, fonts, and shadows stay fixed across themes. */
+:root {
+  --sf-0: #FFFFFF; --sf-50: #FAFBFD; --sf-100: #F4F6FA; --sf-200: #E3E7EE; --sf-300: #C9D0DC;
+  --sf-400: #8892A3; --sf-500: #5B6473; --sf-600: #3F4756; --sf-700: #2A3142; --sf-900: #0B152D;
+  --ink: #0B152D;
+  --navy: #113682; --navy-dark: #0d2a68; --navy-darker: #0a1f4f;
+  --success: #005B33; --success-bg: #E6F2EC; --success-border: #B8D9C7;
+  --warning: #B45309; --warning-bg: #FEF3C7; --warning-border: #FCD34D;
+  --danger: #B91C1C; --danger-bg: #FEE2E2; --danger-border: #FCA5A5;
+  --info: #1E40AF; --info-bg: #DBEAFE; --info-border: #93C5FD;
+  --card: #FFFFFF; --popover: #FFFFFF;
+  --chart-1: #113682; --chart-5: #0B152D;
+}
+
+.dark {
+  --sf-0: #0E1626; --sf-50: #172038; --sf-100: #1E2A45; --sf-200: #2A3654; --sf-300: #3B4A6B;
+  --sf-400: #6E7A90; --sf-500: #93A0B5; --sf-600: #B4BECD; --sf-700: #D2D9E3; --sf-900: #F1F4F9;
+  --ink: #F1F4F9;
+  --navy: #5E93EB; --navy-dark: #4F86E8; --navy-darker: #4079E0;
+  --success: #4ADE80; --success-bg: #0F2A1C; --success-border: #1E5238;
+  --warning: #FBBF24; --warning-bg: #2E2410; --warning-border: #57430F;
+  --danger: #F87171; --danger-bg: #2C1416; --danger-border: #5B1D1D;
+  --info: #93C5FD; --info-bg: #12233F; --info-border: #1E3A6B;
+  --card: #0E1626; --popover: #141D33;
+  --chart-1: #5E93EB; --chart-5: #F1F4F9;
+}
+
 /* ── Phenome Health Design System Tokens ── */
 
 @theme inline {
   /* Brand colors */
-  --color-ph-navy: #113682;
-  --color-ph-navy-dark: #0d2a68;
-  --color-ph-navy-darker: #0a1f4f;
+  --color-ph-navy: var(--navy);
+  --color-ph-navy-dark: var(--navy-dark);
+  --color-ph-navy-darker: var(--navy-darker);
   --color-ph-crimson: #E21C52;
   --color-ph-crimson-dark: #c01746;
   --color-ph-crimson-darker: #a3133b;
   --color-ph-teal: #3AC2CB;
   --color-ph-green: #005B33;
-  --color-ph-ink: #0B152D;
+  --color-ph-ink: var(--ink);
 
-  /* Neutrals */
-  --color-neutral-0: #FFFFFF;
-  --color-neutral-50: #FAFBFD;
-  --color-neutral-100: #F4F6FA;
-  --color-neutral-200: #E3E7EE;
-  --color-neutral-300: #C9D0DC;
-  --color-neutral-400: #8892A3;
-  --color-neutral-500: #5B6473;
-  --color-neutral-600: #3F4756;
-  --color-neutral-700: #2A3142;
-  --color-neutral-900: #0B152D;
+  /* Neutrals (flip under .dark) */
+  --color-neutral-0: var(--sf-0);
+  --color-neutral-50: var(--sf-50);
+  --color-neutral-100: var(--sf-100);
+  --color-neutral-200: var(--sf-200);
+  --color-neutral-300: var(--sf-300);
+  --color-neutral-400: var(--sf-400);
+  --color-neutral-500: var(--sf-500);
+  --color-neutral-600: var(--sf-600);
+  --color-neutral-700: var(--sf-700);
+  --color-neutral-900: var(--sf-900);
 
   /* Semantic state colors */
-  --color-success: #005B33;
-  --color-success-bg: #E6F2EC;
-  --color-success-border: #B8D9C7;
-  --color-warning: #B45309;
-  --color-warning-bg: #FEF3C7;
-  --color-warning-border: #FCD34D;
-  --color-danger: #B91C1C;
-  --color-danger-bg: #FEE2E2;
-  --color-danger-border: #FCA5A5;
-  --color-info: #1E40AF;
-  --color-info-bg: #DBEAFE;
-  --color-info-border: #93C5FD;
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-border: var(--danger-border);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-info-border: var(--info-border);
 
   /* Semantic mappings for shadcn/ui compatibility */
-  --color-background: #FFFFFF;
-  --color-foreground: #0B152D;
-  --color-border: #E3E7EE;
-  --color-input: #C9D0DC;
-  --color-ring: #113682;
+  --color-background: var(--sf-0);
+  --color-foreground: var(--ink);
+  --color-border: var(--sf-200);
+  --color-input: var(--sf-300);
+  --color-ring: var(--navy);
 
-  --color-card: #FFFFFF;
-  --color-card-foreground: #0B152D;
-  --color-card-border: #E3E7EE;
+  --color-card: var(--card);
+  --color-card-foreground: var(--ink);
+  --color-card-border: var(--sf-200);
 
-  --color-popover: #FFFFFF;
-  --color-popover-foreground: #0B152D;
-  --color-popover-border: #E3E7EE;
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--ink);
+  --color-popover-border: var(--sf-200);
 
-  --color-primary: #113682;
+  --color-primary: var(--navy);
   --color-primary-foreground: #FFFFFF;
 
-  --color-secondary: #F4F6FA;
-  --color-secondary-foreground: #0B152D;
+  --color-secondary: var(--sf-100);
+  --color-secondary-foreground: var(--ink);
 
-  --color-muted: #F4F6FA;
-  --color-muted-foreground: #5B6473;
+  --color-muted: var(--sf-100);
+  --color-muted-foreground: var(--sf-500);
 
-  --color-accent: #F4F6FA;
-  --color-accent-foreground: #0B152D;
+  --color-accent: var(--sf-100);
+  --color-accent-foreground: var(--ink);
 
   --color-destructive: #E21C52;
   --color-destructive-foreground: #FFFFFF;
 
   /* Chart colors — Phenome brand palette */
-  --color-chart-1: #113682;
+  --color-chart-1: var(--chart-1);
   --color-chart-2: #3AC2CB;
   --color-chart-3: #E21C52;
   --color-chart-4: #005B33;
-  --color-chart-5: #0B152D;
+  --color-chart-5: var(--chart-5);
 
   /* Sidebar — maps to Phenome neutral palette */
-  --color-sidebar: #FAFBFD;
-  --color-sidebar-foreground: #0B152D;
-  --color-sidebar-border: #E3E7EE;
-  --color-sidebar-primary: #113682;
+  --color-sidebar: var(--sf-50);
+  --color-sidebar-foreground: var(--ink);
+  --color-sidebar-border: var(--sf-200);
+  --color-sidebar-primary: var(--navy);
   --color-sidebar-primary-foreground: #FFFFFF;
-  --color-sidebar-accent: #F4F6FA;
-  --color-sidebar-accent-foreground: #0B152D;
-  --color-sidebar-ring: #113682;
+  --color-sidebar-accent: var(--sf-100);
+  --color-sidebar-accent-foreground: var(--ink);
+  --color-sidebar-ring: var(--navy);
 
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

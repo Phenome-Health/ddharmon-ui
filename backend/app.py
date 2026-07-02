@@ -8,7 +8,9 @@ Endpoints (all under /api/harmonize):
     GET  /jobs              list jobs (summaries)
     DELETE /jobs/{job_id}   delete a job
     POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision (by recordId)
-    GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv
+    GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv | notebook_py | notebook_r
+    GET  /demos              list precomputed demo datasets + available combos
+    POST /demo               hydrate a completed job from a precomputed demo snapshot -> {jobId}
 
 Serves the built frontend (frontend/dist) at / when present.
 """
@@ -31,8 +33,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from backend.demos import list_demos, load_snapshot
 from backend.engine import CONTRACT_VERSION
 from backend.jobs import TERMINAL_STATES, store
+from backend.notebook import build_notebook
 from backend.runner import run_harmonization
 
 # --- CDE catalog (server-side; not uploaded) -------------------------------------------------
@@ -63,6 +67,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Dev/testing only: seed a couple of SAMPLE completed runs so the results/workbench/export UI is
+# populated before the real pipeline is wired for local runs. Never on unless DDHARMON_UI_SEED is set.
+if os.environ.get("DDHARMON_UI_SEED"):
+    from backend.seed import seed_jobs
+
+    seed_jobs(store)
 
 
 # --- /detect ---------------------------------------------------------------------------------
@@ -258,6 +269,15 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
     records: list[dict[str, Any]] = job.result["records"]
     decisions = job.decisions
 
+    if format in ("notebook_py", "notebook_r"):
+        lang = "r" if format == "notebook_r" else "py"
+        nb = build_notebook(job.result, lang, job.display_name)
+        return JSONResponse(
+            nb,
+            media_type="application/x-ipynb+json",
+            headers={"Content-Disposition": f'attachment; filename="harmonization_{job_id[:8]}.{lang}.ipynb"'},
+        )
+
     if format == "records_json":
         return JSONResponse(
             records, headers={"Content-Disposition": f'attachment; filename="records_{job_id[:8]}.json"'}
@@ -326,6 +346,34 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{format}_{job_id[:8]}.{ext}"'},
     )
+
+
+# --- demos (precomputed) ---------------------------------------------------------------------
+@app.get("/api/harmonize/demos")
+def demos() -> dict[str, Any]:
+    """List the curated demo datasets and which combinations have a precomputed snapshot."""
+    return list_demos()
+
+
+class DemoBody(BaseModel):
+    datasets: list[str]
+
+
+@app.post("/api/harmonize/demo")
+def start_demo(body: DemoBody) -> dict[str, str]:
+    """Hydrate a completed job from a precomputed snapshot — no pipeline run, no API credits."""
+    snap = load_snapshot(body.datasets)
+    if snap is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No precomputed demo for {sorted(body.datasets)}. See GET /api/harmonize/demos.",
+        )
+    result = snap.get("result", snap)
+    job_id = "demo-" + uuid.uuid4().hex[:8]
+    display = snap.get("displayName") or "Demo run"
+    store.create(job_id, display, {"demo": True, "datasets": sorted(body.datasets), "mode": result.get("mode")})
+    store.update(job_id, status="complete", phase="complete", result=result)
+    return {"jobId": job_id}
 
 
 # --- health ----------------------------------------------------------------------------------

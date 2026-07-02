@@ -25,7 +25,7 @@ function AtlasTooltip({ active, payload }: { active?: boolean; payload?: Tooltip
   const p = payload[0].payload;
   if (!p) return null;
   return (
-    <div className="rounded border border-neutral-200 bg-white px-2 py-1 text-xs shadow-sm">
+    <div className="rounded border border-neutral-200 bg-neutral-0 px-2 py-1 text-xs shadow-sm">
       <div className="font-mono text-neutral-700">{p.variable}</div>
       <div className="text-neutral-500">{p.cohort}</div>
     </div>

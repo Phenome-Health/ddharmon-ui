@@ -28,3 +28,4 @@ data/cde/
 .DS_Store
 .idea/
 .vscode/
+.venv

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import { toast } from "sonner";
-import { Ban, Check, ChevronDown, ChevronRight, Download, Loader2, Pencil } from "lucide-react";
+import { Ban, Check, ChevronDown, ChevronRight, Download, FileCode, Loader2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -130,6 +130,16 @@ export default function DashboardPage() {
             <Button variant="outline" size="sm" asChild>
               <a href={exportUrl(jobId, "records_json")}>
                 <Download className="mr-1.5 h-4 w-4" /> Records JSON
+              </a>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <a href={exportUrl(jobId, "notebook_py")}>
+                <FileCode className="mr-1.5 h-4 w-4" /> Notebook · Python
+              </a>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <a href={exportUrl(jobId, "notebook_r")}>
+                <FileCode className="mr-1.5 h-4 w-4" /> Notebook · R
               </a>
             </Button>
           </div>
@@ -326,7 +336,7 @@ function RecordRows({
           <TableCell colSpan={7} className="space-y-3 py-4 text-sm">
             {/* provenance triple: source → verdict → CDE (Monarch association-detail idiom) */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded border border-neutral-200 bg-white px-2 py-0.5 text-xs text-neutral-600">
+              <span className="rounded border border-neutral-200 bg-neutral-0 px-2 py-0.5 text-xs text-neutral-600">
                 {r.nMembers} {r.nMembers === 1 ? "field" : "fields"} · {r.cohorts.join(", ") || "—"}
               </span>
               <span className="text-neutral-300">→</span>
@@ -335,7 +345,7 @@ function RecordRows({
               </Badge>
               <span className="text-neutral-300">→</span>
               {r.cde ? (
-                <span className="rounded border border-neutral-200 bg-white px-2 py-0.5 text-xs">
+                <span className="rounded border border-neutral-200 bg-neutral-0 px-2 py-0.5 text-xs">
                   <span className="font-medium text-neutral-700">{r.cde.id}</span>
                   {r.cde.externalId && <span className="ml-1 font-mono text-neutral-400">{r.cde.externalId}</span>}
                 </span>
