@@ -119,8 +119,8 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
         {/* ── group list ── */}
-        <Card className="lg:sticky lg:top-4 lg:h-[calc(100vh-9rem)]">
-          <CardHeader className="space-y-2">
+        <Card className="flex flex-col overflow-hidden lg:sticky lg:top-4 lg:h-[calc(100vh-9rem)]">
+          <CardHeader className="shrink-0 space-y-2">
             <CardTitle className="text-base">Concepts ({groups.length})</CardTitle>
             <Input placeholder="Search concepts…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-8" />
             <Select value={filter} onValueChange={setFilter}>
