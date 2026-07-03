@@ -1,46 +1,41 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-02T23:40:00Z",
-  "phase": "ddharmon-ui v1.1 UI features + team preview",
-  "phase_name": "Guide/tooltips/notebooks/demo/dark-mode/related-work/phenome-health + static preview deploy",
-  "phase_dir": "ddharmon-ui repo; companion memory project_ddharmon_ui_v2_buildout (v1.1 addendum)",
+  "timestamp": "2026-07-03T21:08:46Z",
+  "phase": "ddharmon-ui v1.2",
+  "phase_name": "Distinctive landing page + official Phenome Health branding + Nature-style Works Cited",
+  "phase_dir": "ddharmon-ui repo; companion memory project_ddharmon_ui_v2_buildout (v1.1 + v1.2 sections)",
   "plan": 1,
-  "task": 12,
-  "total_tasks": 12,
-  "status": "deployed — awaiting team feedback",
+  "task": "shipped",
+  "total_tasks": "shipped",
+  "status": "shipped to prod — awaiting team feedback",
   "deploy_url": "https://ddharmon.netlify.app/",
-  "branch": "feature/ui-guide-tooltips-notebook-demo (off main; committed as WIP 39cfa37, working tree clean, not pushed)",
+  "branch": "feature/ui-guide-tooltips-notebook-demo (off main; tip 5616314; committed, NOT pushed)",
+  "revert_checkpoint": "1a175a1 (pre-landing)",
   "completed_tasks": [
-    {"id": 1, "name": "Guide page (/guide): problem + 'Meaning, not wording' (semantic, Harmony link) + verdicts + 'Where AI is used' + 'You're in the loop' (EITL+confidence) + Learn more links", "status": "done"},
-    {"id": 2, "name": "Field info tooltips on new-run role labels (ROLE_HELP/ROLE_FORMAT in types.ts; value_encoding |-format hint)", "status": "done"},
-    {"id": 3, "name": "Notebook export: backend/notebook.py (nbformat v4, no deps) + /export?format=notebook_py|notebook_r + dashboard buttons", "status": "done"},
-    {"id": 4, "name": "Demo: backend/demos.py+manifest+curated data (scripts/build_demo_data.py) + /demos,/demo + pages/demo.tsx. Precompute HELD until v3; snapshot removed", "status": "done"},
-    {"id": 5, "name": "Seed: backend/seed.py (env DDHARMON_UI_SEED, dev-only) = 2 sample completed runs so results/workbench/export UI is testable pre-v3", "status": "done"},
-    {"id": 6, "name": "New-run form: blank columns (no auto-detect), primary/advanced split, format hints, itemized cost estimate (estimateRunCostBreakdown, anchored $1.45 batch/7451 fields), side-by-side layout (mockup)", "status": "done"},
-    {"id": 7, "name": "Dark mode: index.css :root/.dark CSS vars + @theme inline var(); hooks/use-theme.ts + no-flash script; bg-white->bg-neutral-0", "status": "done"},
-    {"id": 8, "name": "GitHub links (topbar + sidebar 'Report an issue' via lib/links.ts) + 'Built with Claude Code' footer", "status": "done"},
-    {"id": 9, "name": "Related work tab (/related): external tools/standards/groups; internal-only (Forge/biomapper/KRAKEN) omitted", "status": "done"},
-    {"id": 10, "name": "Phenome Health tab (/phenome): internal tools (biomapper/KRAKEN/EITL/ddharmon-ui). URLs in lib/links.ts PH block are BEST-GUESS -> confirm", "status": "done"},
-    {"id": 11, "name": "Static preview mode: VITE_STATIC + scripts/build_static_fixtures.py -> frontend/public/static-data/ (jobs/result/demos/exports) + _redirects + wouter Router base for subpath. Verified backend-less locally", "status": "done"},
-    {"id": 12, "name": "Deploy static preview for team feedback", "status": "done", "progress": "LIVE at https://ddharmon.netlify.app/ via Netlify Drop of ROOT-base frontend/dist. GitHub Pages abandoned after 3 GitHub-side failures."}
+    {"id": 1, "name": "Deploy static preview to Netlify + wire Netlify-CLI auto-deploy (scripts/deploy-preview.sh); delete failed vemuribv/ddharmon-preview repo", "status": "done", "commit": "1a175a1"},
+    {"id": 2, "name": "v1.1 UI polish: circos brand mark, dark-mode contrast fix (neutral-800->700), run-option tooltips, Guide reorder", "status": "done", "commit": "4712feb"},
+    {"id": 3, "name": "Landing page at / (New-run form -> /new): convergence hero (question+response->CDE), Space Grotesk, official PH lockup, 4-step 'how it works' incl. Generate the transform, enlarged hero", "status": "done", "commit": "2a7243c"},
+    {"id": 4, "name": "Confirm lib/links.ts PH URLs (biomapper2, biomapper-ui=link.expertintheloop.io, kraken=app.krakenkg.com, eitl=expertintheloop.io) + PortFlow tile + move 'you are here' to ddharmon-ui tile", "status": "done", "commit": "2ee3134"},
+    {"id": 5, "name": "Related work: Nature-style, impact-ordered Works Cited with verified DOIs", "status": "done", "commit": "5616314"}
   ],
   "remaining_tasks": [
-    {"id": 13, "name": "Delete failed repo vemuribv/ddharmon-preview", "status": "done", "progress": "deleted manually by user 2026-07-02"},
-    {"id": 14, "name": "Confirm internal-tool URLs in frontend/src/lib/links.ts PH block (best-guess)", "status": "not_started"},
-    {"id": 15, "name": "scripts/deploy-preview.sh helper (rebuild + redeploy via Netlify CLI)", "status": "done", "progress": "Created + executable; repo linked to ddharmon site via netlify link; live test deploy succeeded (same prod URL). Redeploy anytime: ./scripts/deploy-preview.sh"},
-    {"id": 16, "name": "After team feedback: push feature branch + open ddharmon-ui PR (per earlier decision: NO core PR)", "status": "not_started"}
+    {"id": 6, "name": "OPTIONAL: swap topbar circos mark -> official PH icon (user offered; deferred, their call)", "status": "not_started"},
+    {"id": 7, "name": "OPTIONAL: Works Cited tweaks — Yang 2024 -> TACL journal DOI; decide on Mimno 2011 & Newman 2010 (no DOI exists, linked to ACL Anthology)", "status": "not_started"},
+    {"id": 8, "name": "After team feedback: push feature branch + open ddharmon-ui PR (NO core Phenome-Health/ddharmon PR)", "status": "not_started"},
+    {"id": 9, "name": "v3: real demo precompute (scripts/build_demos.py --mode sync + ANTHROPIC_API_KEY)", "status": "not_started"}
   ],
   "blockers": [],
   "human_actions_pending": [
-    {"action": "Confirm internal-tool URLs in frontend/src/lib/links.ts (PH block: biomapper/biomapperUi/kraken/eitl are best-guess/empty)", "context": "Phenome Health tab links", "blocking": false}
+    {"action": "Gather team feedback on https://ddharmon.netlify.app/ and relay any changes", "context": "The preview is live for the team; no code action is pending until feedback arrives", "blocking": false}
   ],
   "decisions": [
-    {"decision": "Team feedback = STATIC preview (not full P3 deploy)", "rationale": "P3 = production launch/coupled 1.0 gate; overkill for feedback. Static bundle (VITE_STATIC bakes seeded fixtures) needs no backend/key", "phase": "v1.1"},
-    {"decision": "Demo precompute HELD until v3 pipeline final", "rationale": "user directive; seed provides sample runs for UI testing meanwhile", "phase": "v1.1"},
-    {"decision": "Adopted mockup's itemized cost breakdown + side-by-side upload/config layout", "rationale": "user approved; from docs/biomapper_ui_ddharmon_mock.html (core repo)", "phase": "v1.1"},
-    {"decision": "Phenome Health tab lists internal tools (biomapper/KRAKEN/EITL)", "rationale": "user asked; MAY need gating for a fully-public P3 launch", "phase": "v1.1"}
+    {"decision": "Landing built WITHIN the PH design system (reuse tokens/components; boldness on type + circos hero), not a divergent identity", "rationale": "user chose 'within the system'", "phase": "v1.2"},
+    {"decision": "Circos mark = ddharmon product (topbar + hero); official PH lockup = the org (footer/PH-page/hero)", "rationale": "user likes the circos mark; official logos requested 'as well throughout'", "phase": "v1.2"},
+    {"decision": "Netlify CLI (not git-CD); draft deploys (no --prod) preview without touching the team's prod link", "rationale": "deploy local working tree on demand; keep prod stable while iterating", "phase": "v1.2"},
+    {"decision": "Smoking-status hero example (question text primary + response codes -> one CDE; variable name is a differentiator, not the matched key)", "rationale": "user: ddharmon matches on question/description + response options, not variable names", "phase": "v1.2"},
+    {"decision": "Works Cited: Nature style, impact-ordered, verified DOIs only (no fabrication)", "rationale": "user requested Nature style + all hyperlinks/DOIs; Mimno 2011 & Newman 2010 genuinely have none", "phase": "v1.2"}
   ],
   "uncommitted_files": [],
-  "next_action": "Deploy DONE (https://ddharmon.netlify.app/). Awaiting team feedback. Cleanup: (1) delete failed vemuribv/ddharmon-preview repo (needs interactive gh delete_repo scope refresh); (2) confirm lib/links.ts PH URLs; (3) after feedback, push branch + open ddharmon-ui PR. Rebuild static bundle if needed: cd frontend && VITE_STATIC=1 npm run build && cp dist/index.html dist/404.html && printf '/*    /index.html   200\\n' > dist/_redirects",
-  "context_notes": "All 12 tasks DONE + green (frontend typecheck + static & dev builds; 16 backend tests incl. 7 new; ruff/black/pyright). Verified in light+dark via Playwright. Static preview LIVE at https://ddharmon.netlify.app/ (Netlify Drop; GitHub Pages abandoned after 3 GitHub-side failures). WIP committed 39cfa37, tree clean, not pushed. PR #1 (v2 contract+viz) already MERGED to main (b40d61f). No servers running. Local dev: cd ddharmon-ui && DDHARMON_UI_SEED=1 DDHARMON_CDE_DIR=/Users/bhargav/ai-coding/ph-arpa-data-harmonization/data/examples ./dev.sh -> :5173 (.venv symlinks core venv)."
+  "next_action": "Nothing forced — awaiting team feedback on the live site. On resume: apply feedback; optionally swap topbar to the official PH icon, adjust the two flagged Works Cited items, or push branch + open the ddharmon-ui PR. Redeploy any change with ./scripts/deploy-preview.sh.",
+  "context_notes": "Full v1.2 arc (landing + PH branding + works-cited) is committed on feature/ui-guide-tooltips-notebook-demo (tip 5616314) and live on prod. Revert point pre-landing = 1a175a1. feature/landing-hero was ff-merged in (now redundant, safe to delete). No servers running. Anti-patterns this session (advisory): SPA scrolls inside <main> not body (Playwright); brand-guide lockup naming is inverted (icon-text=dark wordmark for light bg, icon-dark-text=white wordmark for dark bg); text-neutral-800 is an undefined token; don't fabricate DOIs for the two pre-2012 ACL papers. PH logo assets in frontend/src/assets/ph/ (downscaled). Playwright installed --no-save (gitignored)."
 }
