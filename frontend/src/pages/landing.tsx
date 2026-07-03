@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { ArrowRight, GitCompareArrows, Layers, UserCheck } from "lucide-react";
+import { ArrowRight, GitCompareArrows, Layers, UserCheck, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PhLogo } from "@/components/ph-logo";
 
@@ -33,7 +33,7 @@ function ConvergenceViz() {
   }, []);
 
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[460px]">
+    <div className="relative mx-auto aspect-square w-full max-w-[540px]">
       {/* connectors — source questions flow into the shared concept */}
       <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden="true">
         {SOURCES.map((s, i) => {
@@ -127,13 +127,19 @@ const STEPS = [
     n: "02",
     icon: GitCompareArrows,
     title: "Anchor to a standard",
-    body: "Each concept maps to a Common Data Element: adopt as-is, refine (recoding response options, converting units), or propose a novel GenCDE.",
+    body: "Each concept maps to a Common Data Element — adopt as-is, refine, or propose a novel GenCDE.",
   },
   {
     n: "03",
+    icon: Wand2,
+    title: "Generate the transform",
+    body: "For every match, ddharmon drafts the harmonization spec — response-option recodes, unit and arithmetic conversions — as a runnable transform, exported to Python or R.",
+  },
+  {
+    n: "04",
     icon: UserCheck,
     title: "Stay in the loop",
-    body: "Every match arrives as a suggestion with confidence and a rationale. You approve, refine, or reject each one.",
+    body: "Each spec is a suggestion with confidence and a rationale. You approve, refine, or reject before anything is applied.",
   },
 ];
 
@@ -142,7 +148,7 @@ export default function LandingPage() {
     <div className="space-y-8">
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
       <section
-        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-12 lg:px-14 lg:py-16"
+        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-14 lg:px-16 lg:py-24"
         style={{ background: "linear-gradient(135deg, #0B152D 0%, #113682 62%, #0d2a68 100%)" }}
       >
         {/* ambient glow behind the ring */}
@@ -151,17 +157,17 @@ export default function LandingPage() {
           style={{ background: "radial-gradient(circle, rgba(58,194,203,0.35), transparent 70%)" }}
           aria-hidden="true"
         />
-        <div className="relative grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="relative grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
           <div>
             <p className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-ph-teal">
               Cross-cohort data harmonization
             </p>
-            <h1 className="mt-4 font-display text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
+            <h1 className="mt-4 font-display text-5xl font-bold leading-[1.03] tracking-tight text-white sm:text-6xl">
               Different words.
               <br />
               <span className="text-ph-teal">One meaning.</span>
             </h1>
-            <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-[#c3cfe6]">
+            <p className="mt-6 max-w-2xl text-base leading-relaxed text-[#c3cfe6] lg:text-lg">
               <span className="font-semibold text-white">ddharmon</span> reads each field's question text and
               description — the fields that carry its meaning — along with its response options and variable name,
               groups the items that mean the same thing across cohorts, and anchors each concept to a shared Common
@@ -192,10 +198,10 @@ export default function LandingPage() {
               href="https://phenomehealth.org"
               target="_blank"
               rel="noreferrer"
-              className="mt-10 inline-flex items-center gap-2.5 opacity-80 transition-opacity hover:opacity-100"
+              className="mt-12 inline-flex items-center gap-3 opacity-90 transition-opacity hover:opacity-100"
             >
-              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/45">A project of</span>
-              <PhLogo tone="dark" className="h-4 w-auto" />
+              <span className="font-mono text-xs uppercase tracking-[0.16em] text-white/55">A project of</span>
+              <PhLogo tone="dark" className="h-7 w-auto" />
             </a>
           </div>
 
@@ -218,7 +224,7 @@ export default function LandingPage() {
             Full walkthrough →
           </Link>
         </div>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s) => (
             <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-5">
               <div className="flex items-center gap-2.5">

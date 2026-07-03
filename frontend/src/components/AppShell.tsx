@@ -6,7 +6,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
 import { PhenomeChip } from "@/components/phenome-mark";
-import { PhLogo } from "@/components/ph-logo";
+import { PhMark } from "@/components/ph-logo";
 
 function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
   const [loc] = useLocation();
@@ -76,11 +76,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               href={PH.org}
               target="_blank"
               rel="noreferrer"
-              title="Phenome Health"
-              className="mb-1.5 block rounded px-3 py-1.5 opacity-90 transition-opacity hover:opacity-100"
+              className="mb-1 flex items-center gap-1.5 whitespace-nowrap rounded px-3 py-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
             >
-              <div className="text-[9px] uppercase tracking-wide text-neutral-400">A project of</div>
-              <PhLogo className="mt-1 h-4 w-auto" />
+              <PhMark className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                A project of <span className="font-semibold text-ph-ink">Phenome Health</span>
+              </span>
             </a>
             <a
               href={ISSUES_URL}
