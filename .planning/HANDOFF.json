@@ -1,14 +1,15 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-02T23:05:00Z",
+  "timestamp": "2026-07-02T23:40:00Z",
   "phase": "ddharmon-ui v1.1 UI features + team preview",
   "phase_name": "Guide/tooltips/notebooks/demo/dark-mode/related-work/phenome-health + static preview deploy",
   "phase_dir": "ddharmon-ui repo; companion memory project_ddharmon_ui_v2_buildout (v1.1 addendum)",
   "plan": 1,
   "task": 12,
   "total_tasks": 12,
-  "status": "paused",
-  "branch": "feature/ui-guide-tooltips-notebook-demo (off main; UNCOMMITTED until this WIP commit)",
+  "status": "deployed — awaiting team feedback",
+  "deploy_url": "https://ddharmon.netlify.app/",
+  "branch": "feature/ui-guide-tooltips-notebook-demo (off main; committed as WIP 39cfa37, working tree clean, not pushed)",
   "completed_tasks": [
     {"id": 1, "name": "Guide page (/guide): problem + 'Meaning, not wording' (semantic, Harmony link) + verdicts + 'Where AI is used' + 'You're in the loop' (EITL+confidence) + Learn more links", "status": "done"},
     {"id": 2, "name": "Field info tooltips on new-run role labels (ROLE_HELP/ROLE_FORMAT in types.ts; value_encoding |-format hint)", "status": "done"},
@@ -21,20 +22,17 @@
     {"id": 9, "name": "Related work tab (/related): external tools/standards/groups; internal-only (Forge/biomapper/KRAKEN) omitted", "status": "done"},
     {"id": 10, "name": "Phenome Health tab (/phenome): internal tools (biomapper/KRAKEN/EITL/ddharmon-ui). URLs in lib/links.ts PH block are BEST-GUESS -> confirm", "status": "done"},
     {"id": 11, "name": "Static preview mode: VITE_STATIC + scripts/build_static_fixtures.py -> frontend/public/static-data/ (jobs/result/demos/exports) + _redirects + wouter Router base for subpath. Verified backend-less locally", "status": "done"},
-    {"id": 12, "name": "Deploy static preview for team feedback", "status": "blocked", "progress": "GitHub Pages FAILED 3x (GitHub-side 'Deployment failed, try again later'); pivoting to Netlify Drop"}
+    {"id": 12, "name": "Deploy static preview for team feedback", "status": "done", "progress": "LIVE at https://ddharmon.netlify.app/ via Netlify Drop of ROOT-base frontend/dist. GitHub Pages abandoned after 3 GitHub-side failures."}
   ],
   "remaining_tasks": [
-    {"id": 12, "name": "Deploy: Netlify Drop -> drag ~/ai-coding/ddharmon-ui/frontend/dist (ROOT-base build, ready) onto app.netlify.com/drop -> share URL + team blurb (drafted in chat)", "status": "not_started"},
-    {"id": 13, "name": "Optional: scripts/deploy-preview.sh helper (rebuild + push preview)", "status": "not_started"},
-    {"id": 14, "name": "After feedback: commit feature branch + open PR (per earlier decision: NO core PR)", "status": "not_started"}
+    {"id": 13, "name": "Delete failed repo vemuribv/ddharmon-preview", "status": "done", "progress": "deleted manually by user 2026-07-02"},
+    {"id": 14, "name": "Confirm internal-tool URLs in frontend/src/lib/links.ts PH block (best-guess)", "status": "not_started"},
+    {"id": 15, "name": "scripts/deploy-preview.sh helper (rebuild + redeploy via Netlify CLI)", "status": "done", "progress": "Created + executable; repo linked to ddharmon site via netlify link; live test deploy succeeded (same prod URL). Redeploy anytime: ./scripts/deploy-preview.sh"},
+    {"id": 16, "name": "After team feedback: push feature branch + open ddharmon-ui PR (per earlier decision: NO core PR)", "status": "not_started"}
   ],
-  "blockers": [
-    {"description": "GitHub Pages deploy fails with 'Deployment failed, try again later' (actions/deploy-pages@v5) on vemuribv/ddharmon-preview — GitHub-side, NOT our bundle (build finds artifact, deploy step errors). 3 attempts failed; all URLs 404 after 12min.", "type": "external", "workaround": "Netlify Drop (dist ready, root-base) OR Cloudflare(wrangler)/Vercel CLI. Pages may self-heal when GitHub incident clears."}
-  ],
+  "blockers": [],
   "human_actions_pending": [
-    {"action": "Netlify Drop: drag ~/ai-coding/ddharmon-ui/frontend/dist onto https://app.netlify.com/drop -> instant URL to share", "context": "GitHub Pages is broken GitHub-side; Netlify is the reliable path", "blocking": true},
-    {"action": "Confirm internal-tool URLs in frontend/src/lib/links.ts (PH block: biomapper/biomapperUi/kraken/eitl are best-guess/empty)", "context": "Phenome Health tab links", "blocking": false},
-    {"action": "Decide: leave or delete the failed public repo vemuribv/ddharmon-preview", "context": "created but not serving", "blocking": false}
+    {"action": "Confirm internal-tool URLs in frontend/src/lib/links.ts (PH block: biomapper/biomapperUi/kraken/eitl are best-guess/empty)", "context": "Phenome Health tab links", "blocking": false}
   ],
   "decisions": [
     {"decision": "Team feedback = STATIC preview (not full P3 deploy)", "rationale": "P3 = production launch/coupled 1.0 gate; overkill for feedback. Static bundle (VITE_STATIC bakes seeded fixtures) needs no backend/key", "phase": "v1.1"},
@@ -42,7 +40,7 @@
     {"decision": "Adopted mockup's itemized cost breakdown + side-by-side upload/config layout", "rationale": "user approved; from docs/biomapper_ui_ddharmon_mock.html (core repo)", "phase": "v1.1"},
     {"decision": "Phenome Health tab lists internal tools (biomapper/KRAKEN/EITL)", "rationale": "user asked; MAY need gating for a fully-public P3 launch", "phase": "v1.1"}
   ],
-  "uncommitted_files": ["entire v1.1 batch on feature/ui-guide-tooltips-notebook-demo — committed by this WIP commit"],
-  "next_action": "Netlify Drop the static bundle (~/ai-coding/ddharmon-ui/frontend/dist) to get a team URL. dist is the ROOT-base static build (asset base /, +_redirects +404.html). To rebuild: cd frontend && VITE_STATIC=1 npm run build && cp dist/index.html dist/404.html && printf '/*    /index.html   200\\n' > dist/_redirects",
-  "context_notes": "All 11 feature tasks DONE + green (frontend typecheck + static & dev builds; 16 backend tests incl. 7 new; ruff/black/pyright). Verified in light+dark via Playwright screenshots. ONLY open item = hosting the static preview (GitHub Pages is broken GitHub-side; use Netlify). PR #1 (v2 contract+viz) already MERGED to main (b40d61f); this v1.1 batch is the next branch. No servers running (dev.sh + vite previews killed). Local dev: cd ddharmon-ui && DDHARMON_UI_SEED=1 DDHARMON_CDE_DIR=/Users/bhargav/ai-coding/ph-arpa-data-harmonization/data/examples ./dev.sh -> :5173 (.venv symlinks core venv)."
+  "uncommitted_files": [],
+  "next_action": "Deploy DONE (https://ddharmon.netlify.app/). Awaiting team feedback. Cleanup: (1) delete failed vemuribv/ddharmon-preview repo (needs interactive gh delete_repo scope refresh); (2) confirm lib/links.ts PH URLs; (3) after feedback, push branch + open ddharmon-ui PR. Rebuild static bundle if needed: cd frontend && VITE_STATIC=1 npm run build && cp dist/index.html dist/404.html && printf '/*    /index.html   200\\n' > dist/_redirects",
+  "context_notes": "All 12 tasks DONE + green (frontend typecheck + static & dev builds; 16 backend tests incl. 7 new; ruff/black/pyright). Verified in light+dark via Playwright. Static preview LIVE at https://ddharmon.netlify.app/ (Netlify Drop; GitHub Pages abandoned after 3 GitHub-side failures). WIP committed 39cfa37, tree clean, not pushed. PR #1 (v2 contract+viz) already MERGED to main (b40d61f). No servers running. Local dev: cd ddharmon-ui && DDHARMON_UI_SEED=1 DDHARMON_CDE_DIR=/Users/bhargav/ai-coding/ph-arpa-data-harmonization/data/examples ./dev.sh -> :5173 (.venv symlinks core venv)."
 }
