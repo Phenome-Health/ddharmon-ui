@@ -10,11 +10,14 @@ interface Entry {
 }
 
 interface Ref {
+  kind: "journal" | "preprint" | "conf";
   authors: string;
-  year: number;
   title: string;
-  venue?: string;
-  href?: string;
+  year: number;
+  source?: string; // italic: abbreviated journal, or "Proc. …" for conference papers
+  volume?: string; // bold, journal only
+  pages?: string;
+  url: string; // DOI (https://doi.org/…) where one exists, else canonical page
 }
 
 const TOOLS: Entry[] = [
@@ -82,68 +85,131 @@ const GROUPS: Entry[] = [
   { name: "ARPA-H", desc: "Funds the multi-omics data-harmonization program ddharmon is part of.", href: "https://arpa-h.gov/" },
 ];
 
-// Papers that shaped ddharmon's design (accurate metadata; PDFs kept in the research repo).
+// Papers that shaped ddharmon's design — Nature style, ordered by influence on the design.
+// DOIs verified; Mimno 2011 & Newman 2010 predate ACL DOI assignment → canonical ACL Anthology URLs.
 const REFERENCES: Ref[] = [
   {
-    authors: "Krishnamurthy et al.",
+    kind: "preprint",
+    authors: "Krishnamurthy, M., Korn, D., Haendel, M. A., Mungall, C. J. & Thessen, A. E.",
+    title: "A dynamic framework for semantic grouping of common data elements (CDE) using embeddings and clustering",
     year: 2025,
-    title: "A Dynamic Framework for Semantic Grouping of Common Data Elements (CDEs) Using Embeddings and Clustering",
-    venue: "arXiv:2506.02160",
-    href: "https://arxiv.org/abs/2506.02160",
+    url: "https://doi.org/10.48550/arXiv.2506.02160",
   },
   {
-    authors: "Salimi, Adams, Ay, Balabin, Jacobs & Hofmann-Apitius",
-    year: 2025,
+    kind: "journal",
+    authors: "Salimi, Y., Adams, T., Ay, M. C., Balabin, H., Jacobs, M. & Hofmann-Apitius, M.",
     title:
-      "Evaluating language model embeddings for Parkinson's disease cohort harmonization using a novel manually curated variable mapping schema (PASSIONATE)",
-    venue: "Scientific Reports 15:20210",
-    href: "https://doi.org/10.1038/s41598-025-06447-2",
+      "Evaluating language model embeddings for Parkinson's disease cohort harmonization using a novel manually curated variable mapping schema",
+    source: "Sci. Rep.",
+    volume: "15",
+    pages: "20210",
+    year: 2025,
+    url: "https://doi.org/10.1038/s41598-025-06447-2",
   },
   {
-    authors: "Islam",
+    kind: "journal",
+    authors: "Wang, Y., Huang, J., He, H., Zhang, V., Zhou, Y. et al.",
+    title: "CDEMapper: enhancing National Institutes of Health common data element use with large language models",
+    source: "J. Am. Med. Inform. Assoc.",
+    volume: "32",
+    pages: "1130–1139",
+    year: 2025,
+    url: "https://doi.org/10.1093/jamia/ocaf064",
+  },
+  {
+    kind: "preprint",
+    authors: "Islam, T.",
+    title: "Reasoning-based refinement of unsupervised text clusters with LLMs",
     year: 2026,
-    title: "Reasoning-Based Refinement of Unsupervised Text Clusters with LLMs",
-    venue: "arXiv:2604.07562",
-    href: "https://arxiv.org/abs/2604.07562",
+    url: "https://doi.org/10.48550/arXiv.2604.07562",
   },
   {
-    authors: "Gottfried et al.",
+    kind: "journal",
+    authors: "Gottfried, K., Janson, K., Holz, N. E., Reis, O., Kornhuber, J. et al.",
+    title:
+      "Semantic search helper: a tool based on the use of embeddings in multi-item questionnaires as a harmonization opportunity for merging large datasets — a feasibility study",
+    source: "Eur. Psychiatry",
+    volume: "68",
+    pages: "e8",
     year: 2025,
-    title: "Semantic search helper: embeddings in multi-item questionnaires as a harmonization tool",
+    url: "https://doi.org/10.1192/j.eurpsy.2024.1808",
   },
   {
-    authors: "Wang et al.",
-    year: 2025,
-    title: "CDEMapper: enhancing NIH Common Data Element use with large language models",
-    href: "https://cdemapper.clinicalnlp.org",
-  },
-  {
-    authors: "Mimno, Wallach, Talley, Leenders & McCallum",
+    kind: "conf",
+    authors: "Mimno, D., Wallach, H. M., Talley, E., Leenders, M. & McCallum, A.",
+    title: "Optimizing semantic coherence in topic models",
+    source: "Proc. EMNLP",
+    pages: "262–272",
     year: 2011,
-    title: "Optimizing Semantic Coherence in Topic Models",
-    venue: "EMNLP",
+    url: "https://aclanthology.org/D11-1024/",
   },
   {
-    authors: "Newman, Lau, Grieser & Baldwin",
+    kind: "conf",
+    authors: "Newman, D., Lau, J. H., Grieser, K. & Baldwin, T.",
+    title: "Automatic evaluation of topic coherence",
+    source: "Proc. NAACL-HLT",
+    pages: "100–108",
     year: 2010,
-    title: "Automatic Evaluation of Topic Coherence",
-    venue: "NAACL-HLT",
+    url: "https://aclanthology.org/N10-1012/",
   },
   {
-    authors: "Lau, Newman & Baldwin",
+    kind: "conf",
+    authors: "Lau, J. H., Newman, D. & Baldwin, T.",
+    title: "Machine reading tea leaves: automatically evaluating topic coherence and topic model quality",
+    source: "Proc. EACL",
+    pages: "530–539",
     year: 2014,
-    title: "Machine Reading Tea Leaves: Automatically Evaluating Topic Coherence and Topic Model Quality",
-    venue: "EACL",
-    href: "https://doi.org/10.3115/v1/e14-1056",
+    url: "https://doi.org/10.3115/v1/E14-1056",
   },
   {
-    authors: "Yang, Zhao, Phung, Buntine & Du",
+    kind: "preprint",
+    authors: "Yang, X., Zhao, H., Phung, D., Buntine, W. & Du, L.",
+    title: "LLM reading tea leaves: automatically evaluating topic models with large language models",
     year: 2024,
-    title: "LLM Reading Tea Leaves: Automatically Evaluating Topic Models with Large Language Models",
-    venue: "arXiv:2406.09008",
-    href: "https://arxiv.org/abs/2406.09008",
+    url: "https://doi.org/10.48550/arXiv.2406.09008",
   },
 ];
+
+function RefLink({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="break-all text-ph-navy underline decoration-ph-navy/30 underline-offset-2 hover:decoration-ph-navy"
+    >
+      {url.replace(/^https?:\/\//, "")}
+    </a>
+  );
+}
+
+function ReferenceLine({ r }: { r: Ref }) {
+  const head = (
+    <>
+      <span className="text-neutral-700">{r.authors}</span> {r.title}.{" "}
+    </>
+  );
+  if (r.kind === "preprint") {
+    return (
+      <>
+        {head}Preprint at <RefLink url={r.url} /> ({r.year}).
+      </>
+    );
+  }
+  if (r.kind === "conf") {
+    return (
+      <>
+        {head}In <span className="italic">{r.source}</span> {r.pages} ({r.year}). <RefLink url={r.url} />
+      </>
+    );
+  }
+  return (
+    <>
+      {head}
+      <span className="italic">{r.source}</span> <span className="font-semibold">{r.volume}</span>, {r.pages} ({r.year}). <RefLink url={r.url} />
+    </>
+  );
+}
 
 function ReferencesCard() {
   return (
@@ -151,28 +217,16 @@ function ReferencesCard() {
       <CardHeader>
         <CardTitle className="text-base">Works cited</CardTitle>
         <p className="text-xs text-neutral-400">
-          Papers that shaped ddharmon's design — the embedding → clustering → LLM-labeling lineage for variable/CDE
-          harmonization, and the topic-coherence work behind its semantic-coherence clustering.
+          Papers that shaped ddharmon's design, in Nature style and ordered by influence — the embedding → clustering →
+          LLM-labeling lineage for variable/CDE harmonization, then the topic-coherence work behind its
+          semantic-coherence clustering.
         </p>
       </CardHeader>
       <CardContent>
         <ol className="space-y-2.5">
           {REFERENCES.map((r) => (
             <li key={r.title} className="text-xs leading-relaxed text-neutral-600">
-              <span className="font-medium text-neutral-700">{r.authors}</span> ({r.year}).{" "}
-              {r.href ? (
-                <a
-                  href={r.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="italic text-ph-navy underline decoration-ph-navy/30 underline-offset-2 hover:decoration-ph-navy"
-                >
-                  {r.title}
-                </a>
-              ) : (
-                <span className="italic">{r.title}</span>
-              )}
-              .{r.venue && <span className="text-neutral-400"> {r.venue}.</span>}
+              <ReferenceLine r={r} />
             </li>
           ))}
         </ol>
