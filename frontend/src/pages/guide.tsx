@@ -345,7 +345,7 @@ export default function GuidePage() {
           Ready to try it? Start a run, or load a precomputed demo — no API credits needed.
         </p>
         <Button asChild size="sm">
-          <Link href="/">
+          <Link href="/new">
             New run <ArrowRight className="ml-1.5 h-4 w-4" />
           </Link>
         </Button>

@@ -65,7 +65,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <nav className="space-y-1">
             <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" />
             <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" />
-            <NavLink href="/" icon={<Plus className="h-4 w-4" />} label="New run" />
+            <NavLink href="/new" icon={<Plus className="h-4 w-4" />} label="New run" />
             <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" />
             <NavLink href="/related" icon={<Boxes className="h-4 w-4" />} label="Related work" />
             <NavLink href="/phenome" icon={<Building2 className="h-4 w-4" />} label="Phenome Health" />

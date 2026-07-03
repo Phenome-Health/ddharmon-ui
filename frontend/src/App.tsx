@@ -3,6 +3,7 @@ import { Route, Router, Switch } from "wouter";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { AppShell } from "@/components/AppShell";
+import LandingPage from "@/pages/landing";
 import HomePage from "@/pages/home";
 import DashboardPage from "@/pages/dashboard";
 import WorkbenchPage from "@/pages/workbench";
@@ -26,7 +27,8 @@ export default function App() {
         <Router base={ROUTER_BASE}>
           <AppShell>
             <Switch>
-            <Route path="/" component={HomePage} />
+            <Route path="/" component={LandingPage} />
+            <Route path="/new" component={HomePage} />
             <Route path="/guide" component={GuidePage} />
             <Route path="/demo" component={DemoPage} />
             <Route path="/related" component={RelatedWorkPage} />
