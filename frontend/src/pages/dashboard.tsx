@@ -284,7 +284,7 @@ function RecordRows({
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </TableCell>
         <TableCell className="max-w-xs align-top">
-          <div className="font-medium text-neutral-800">{r.concept || r.id}</div>
+          <div className="font-medium text-neutral-700">{r.concept || r.id}</div>
           <div className="truncate text-xs text-neutral-400">
             {r.nMembers} {r.nMembers === 1 ? "field" : "fields"}
             {r.crossCohort && " · cross-cohort"}

@@ -146,7 +146,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium text-neutral-800">{g.concept || g.id}</span>
+                  <span className="truncate text-sm font-medium text-neutral-700">{g.concept || g.id}</span>
                   {decisions[g.id] && <Check className="h-3.5 w-3.5 shrink-0 text-success" />}
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
@@ -233,7 +233,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                           <TableCell className="tabular-nums text-neutral-500">{c.rank}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <span className="font-medium text-neutral-800">{c.cdeId}</span>
+                              <span className="font-medium text-neutral-700">{c.cdeId}</span>
                               {c.isChosen && <Star className="h-3.5 w-3.5 fill-success text-success" />}
                               {c.llmSuggested && <Sparkles className="h-3.5 w-3.5 text-ph-navy" />}
                             </div>

@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Network, Plus, ListChecks, BookOpen, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
+import { Plus, ListChecks, BookOpen, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
 import { IS_STATIC } from "@/lib/api";
-import { ISSUES_URL, REPO_URL } from "@/lib/links";
+import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
+import { PhenomeChip } from "@/components/phenome-mark";
 
 function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
   const [loc] = useLocation();
@@ -32,9 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-neutral-0 px-4">
         <Link href="/" className="flex items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center rounded bg-ph-navy text-white">
-            <Network className="h-3.5 w-3.5" />
-          </div>
+          <PhenomeChip />
           <div className="flex items-center gap-2 text-sm">
             <span className="font-semibold text-ph-ink">ddharmon</span>
             <span className="text-neutral-300">/</span>
@@ -48,15 +47,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           )}
           <span className="mr-2 hidden text-xs text-neutral-500 sm:block">Split-aware CDE harmonization</span>
-          <a
-            href={ISSUES_URL}
-            target="_blank"
-            rel="noreferrer"
-            title="Report an issue on GitHub"
-            className="flex h-8 w-8 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
-          >
-            <Github className="h-4 w-4" />
-          </a>
           <button
             type="button"
             onClick={toggle}
@@ -81,6 +71,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             <NavLink href="/phenome" icon={<Building2 className="h-4 w-4" />} label="Phenome Health" />
           </nav>
           <div className="mt-auto space-y-1 border-t border-neutral-200 pt-3 text-xs">
+            <a
+              href={PH.org}
+              target="_blank"
+              rel="noreferrer"
+              className="mb-1 flex items-center gap-2 rounded px-3 py-1.5 text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
+            >
+              <PhenomeChip className="h-5 w-5" />
+              <span>
+                A <span className="font-medium text-ph-ink">Phenome Health</span> project
+              </span>
+            </a>
             <a
               href={ISSUES_URL}
               target="_blank"

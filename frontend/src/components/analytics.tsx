@@ -153,7 +153,7 @@ export function Analytics({ records }: { records: UIRecord[] }) {
             <TableBody>
               {cohortRows.map((r) => (
                 <TableRow key={r.cohort}>
-                  <TableCell className="font-medium text-neutral-800">{r.cohort}</TableCell>
+                  <TableCell className="font-medium text-neutral-700">{r.cohort}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.total}</TableCell>
                   <TableCell className="text-right tabular-nums text-success">{r.assigned}</TableCell>
                   <TableCell className="text-right tabular-nums text-ph-navy">{r.novel}</TableCell>

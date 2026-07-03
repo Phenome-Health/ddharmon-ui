@@ -1,6 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PhenomeChip } from "@/components/phenome-mark";
 import { PH } from "@/lib/links";
 
 interface Tool {
@@ -48,7 +49,10 @@ export default function PhenomeHealthPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-ph-ink">Phenome Health</h1>
+        <h1 className="flex items-center gap-2.5 text-2xl font-semibold text-ph-ink">
+          <PhenomeChip className="h-8 w-8" />
+          Phenome Health
+        </h1>
         <p className="mt-1 text-sm text-neutral-500">
           The internal Phenome Health ecosystem ddharmon plugs into — mapping, knowledge-graph, and review tooling
           built alongside this app.{" "}
@@ -77,7 +81,7 @@ function ToolCard({ tool }: { tool: Tool }) {
   const inner = (
     <>
       <div className="flex items-center gap-1.5">
-        <span className="font-medium text-neutral-800 group-hover:text-ph-navy">{tool.name}</span>
+        <span className="font-medium text-neutral-700 group-hover:text-ph-navy">{tool.name}</span>
         {tool.href && <ExternalLink className="h-3 w-3 text-neutral-400 group-hover:text-ph-navy" />}
         {tool.tag && (
           <Badge variant="secondary" className="ml-auto font-normal">

@@ -224,7 +224,9 @@ export default function HomePage() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 gap-4">
             <div className="grid gap-1.5">
-              <Label className="text-xs">CDE catalog</Label>
+              <Label className="flex items-center gap-1 text-xs">
+                CDE catalog <InfoTip text={OPTION_HELP.cdeSet} label="About the CDE catalog options" />
+              </Label>
               <Select value={cdeSet} onValueChange={(v) => setCdeSet(v as CdeSet)}>
                 <SelectTrigger className="h-8">
                   <SelectValue />
@@ -236,7 +238,9 @@ export default function HomePage() {
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label className="text-xs">Run mode</Label>
+              <Label className="flex items-center gap-1 text-xs">
+                Run mode <InfoTip text={OPTION_HELP.runMode} label="About the run mode options" />
+              </Label>
               <Select value={runMode} onValueChange={(v) => setRunMode(v as RunMode)}>
                 <SelectTrigger className="h-8">
                   <SelectValue />
@@ -249,7 +253,9 @@ export default function HomePage() {
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label className="text-xs">Min cluster size</Label>
+              <Label className="flex items-center gap-1 text-xs">
+                Min cluster size <InfoTip text={OPTION_HELP.minClusterSize} label="About minimum cluster size" />
+              </Label>
               <Input
                 type="number"
                 min={2}
@@ -259,14 +265,19 @@ export default function HomePage() {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label className="text-xs">Run name (optional)</Label>
+              <Label className="flex items-center gap-1 text-xs">
+                Run name (optional) <InfoTip text={OPTION_HELP.displayName} label="About the run name" />
+              </Label>
               <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-8" />
             </div>
           </div>
 
           <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2">
             <div>
-              <Label className="text-sm">Generate transform specs</Label>
+              <Label className="flex items-center gap-1 text-sm">
+                Generate transform specs{" "}
+                <InfoTip text={OPTION_HELP.genTransformSpecs} label="About transform-spec generation" />
+              </Label>
               <p className="text-xs text-neutral-400">
                 Value recodes + unit/arithmetic conversions for adopt/refine assignments.
               </p>
@@ -376,21 +387,35 @@ function RoleField({
   );
 }
 
-function RoleInfo({ role }: { role: ColumnRole }) {
+/** Small ⓘ button with a hover/focus tooltip. Reused for column roles and run options. */
+function InfoTip({ text, label }: { text: string; label: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="text-neutral-400 transition-colors hover:text-ph-navy"
-          aria-label={`What is ${role}?`}
-        >
+        <button type="button" className="text-neutral-400 transition-colors hover:text-ph-navy" aria-label={label}>
           <Info className="h-3 w-3" />
         </button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs whitespace-normal text-left font-normal normal-case leading-relaxed">
-        {ROLE_HELP[role]}
+        {text}
       </TooltipContent>
     </Tooltip>
   );
 }
+
+function RoleInfo({ role }: { role: ColumnRole }) {
+  return <InfoTip text={ROLE_HELP[role]} label={`What is ${role}?`} />;
+}
+
+// Help text for the run-option controls (mirrors the Guide's "Choosing run options" section).
+const OPTION_HELP: Record<string, string> = {
+  cdeSet:
+    "Which Common Data Element catalog your fields are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
+  runMode:
+    "How the LLM assignment step runs. Batch: asynchronous and cost-bounded via the Anthropic Batch API (default, cheapest per field). Sync: inline results — needs an API key; best for small runs. Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings before spending credits.",
+  minClusterSize:
+    "The fewest fields that can form a concept cluster. Smaller values surface more, finer-grained concepts (and more singletons/novels); larger values pool more aggressively into fewer, broader concepts.",
+  displayName: "An optional label to recognize this run in the Runs list. Doesn't affect results.",
+  genTransformSpecs:
+    "For each adopt/refine assignment, draft the recipe to convert your raw values into the CDE's expected form — categorical value recodes, unit conversions, and arithmetic formulas. Turned off automatically in Preview mode.",
+};

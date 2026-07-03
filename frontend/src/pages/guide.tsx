@@ -4,7 +4,6 @@ import {
   Bot,
   CheckCircle2,
   Download,
-  Equal,
   ExternalLink,
   FileSpreadsheet,
   Gauge,
@@ -48,7 +47,7 @@ export default function GuidePage() {
         </p>
       </div>
 
-      {/* Overview ------------------------------------------------------------------------------ */}
+      {/* 1 · The problem it solves (incl. meaning-not-wording) --------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -72,19 +71,9 @@ export default function GuidePage() {
             <span className="font-medium text-ph-ink">transform spec</span>: the recipe for converting your
             raw values into the CDE's expected form.
           </p>
-        </CardContent>
-      </Card>
-
-      {/* Semantic matching --------------------------------------------------------------------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Equal className="h-4 w-4 text-ph-navy" /> Meaning, not wording
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
           <p>
-            Cohorts rarely ask a question the same way. One study asks{" "}
+            <span className="font-medium text-ph-ink">Meaning, not wording.</span> Cohorts rarely ask a question
+            the same way. One study asks{" "}
             <span className="italic text-neutral-700">“In general, would you say your health is…”</span>; another
             records the same thing as <span className="italic text-neutral-700">“Overall health rating”</span> under
             a variable named <code>2178</code>. String matching misses these. ddharmon compares the{" "}
@@ -100,139 +89,7 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      {/* The three verdicts -------------------------------------------------------------------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Sparkles className="h-4 w-4 text-ph-navy" /> How each concept is classified
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-3">
-          <VerdictCard
-            verdict="adopt"
-            icon={<CheckCircle2 className="h-4 w-4" />}
-            title="Adopt"
-            body="A CDE fits as-is. Use the standard directly; values already align."
-          />
-          <VerdictCard
-            verdict="refine"
-            icon={<Pencil className="h-4 w-4" />}
-            title="Refine"
-            body="A CDE fits, but values need a transform — a recode, a unit conversion, or a formula."
-          />
-          <VerdictCard
-            verdict="novel"
-            icon={<Sparkles className="h-4 w-4" />}
-            title="Novel"
-            body="No existing CDE fits well. A candidate GenCDE is proposed for a new standard."
-          />
-        </CardContent>
-      </Card>
-
-      {/* Where AI is used ---------------------------------------------------------------------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Bot className="h-4 w-4 text-ph-navy" /> Where AI is used
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
-          <p>ddharmon is AI-assisted end to end — concretely:</p>
-          <ul className="space-y-1.5">
-            <li>
-              <span className="font-medium text-neutral-700">Grouping</span> — sentence-embedding models place
-              semantically similar fields near each other, then cluster them into concepts.
-            </li>
-            <li>
-              <span className="font-medium text-neutral-700">Assignment</span> — a large language model weighs the
-              retrieved CDE candidates for each concept and decides adopt / refine / novel, with a written rationale.
-            </li>
-            <li>
-              <span className="font-medium text-neutral-700">Transform specs</span> — the LLM drafts the value recodes
-              and unit / arithmetic conversions.
-            </li>
-          </ul>
-          <p>
-            Embeddings run locally; the LLM steps are the only ones that call an external model — and the only paid
-            part (you'll see a cost estimate before each run). <span className="font-medium">Preview</span> mode runs
-            the grouping with no LLM at all.{" "}
-            <span className="font-medium text-ph-ink">Every AI output is a suggestion, never a silent commit</span> —
-            which is where you come in.
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Human in the loop --------------------------------------------------------------------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <UserCheck className="h-4 w-4 text-ph-navy" /> You're in the loop
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
-          <p>
-            ddharmon is built for <span className="font-medium text-ph-ink">expert-in-the-loop (EITL)</span> review —
-            the AI drafts, a human decides. Every concept arrives with a verdict, a{" "}
-            <span className="font-medium">confidence score</span>, its ranked CDE candidates, and the exact transform,
-            so you can <span className="font-medium text-success">approve</span>,{" "}
-            <span className="font-medium text-warning">refine</span>, or{" "}
-            <span className="font-medium text-danger">reject</span> each — in the review queue or the candidate
-            workbench. Export the whole queue as a TSV to split review across your team.
-          </p>
-          <div className="flex items-start gap-2 rounded-md border border-neutral-200 p-3">
-            <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-ph-navy" />
-            <p className="text-xs leading-relaxed">
-              <span className="font-medium text-neutral-700">Confidence score</span> = the semantic similarity (0–1,
-              cosine) between your field and the chosen CDE; higher means stronger support for the match. Use it to
-              triage — skim the high-confidence adopts, and spend your time on low-confidence, “floored”, and novel
-              items, which the queue flags for exactly that reason.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Workflow ------------------------------------------------------------------------------ */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Layers className="h-4 w-4 text-ph-navy" /> The workflow
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm text-neutral-600">
-          <Step
-            n={1}
-            icon={<Upload className="h-4 w-4" />}
-            title="Upload data dictionaries"
-            body="One CSV/TSV per cohort, describing your variables. This is metadata about your fields — not the participant-level data itself."
-          />
-          <Step
-            n={2}
-            icon={<FileSpreadsheet className="h-4 w-4" />}
-            title="Map columns to roles"
-            body="Tell ddharmon which of your columns is the variable name, the description, the response options, and so on. Every role starts blank — hover the ⓘ next to each for what it means and how to format it."
-          />
-          <Step
-            n={3}
-            icon={<GitCompareArrows className="h-4 w-4" />}
-            title="Run the harmonization"
-            body="ddharmon embeds and clusters your fields, retrieves candidate CDEs from the catalog, and decides adopt / refine / novel — generating transform specs along the way."
-          />
-          <Step
-            n={4}
-            icon={<ListChecks className="h-4 w-4" />}
-            title="Review & decide"
-            body="Every concept comes with a verdict, a confidence score, ranked CDE candidates, and its transform spec. Approve, refine, or reject each in the review queue or the workbench."
-          />
-          <Step
-            n={5}
-            icon={<Download className="h-4 w-4" />}
-            title="Export"
-            body="Take the results into your pipeline: an expert-review queue, machine-readable records, decision logs, and ready-to-run Python / R notebooks that apply the transforms."
-          />
-        </CardContent>
-      </Card>
-
-      {/* What you provide --------------------------------------------------------------------- */}
+      {/* 2 · What you provide / get back ------------------------------------------------------- */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
@@ -273,7 +130,81 @@ export default function GuidePage() {
         </Card>
       </div>
 
-      {/* Run modes & catalogs ----------------------------------------------------------------- */}
+      {/* 3 · The workflow ---------------------------------------------------------------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Layers className="h-4 w-4 text-ph-navy" /> The workflow
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm text-neutral-600">
+          <Step
+            n={1}
+            icon={<Upload className="h-4 w-4" />}
+            title="Upload data dictionaries"
+            body="One CSV/TSV per cohort, describing your variables. This is metadata about your fields — not the participant-level data itself."
+          />
+          <Step
+            n={2}
+            icon={<FileSpreadsheet className="h-4 w-4" />}
+            title="Map columns to roles"
+            body="Tell ddharmon which of your columns is the variable name, the description, the response options, and so on. Every role starts blank — hover the ⓘ next to each for what it means and how to format it."
+          />
+          <Step
+            n={3}
+            icon={<GitCompareArrows className="h-4 w-4" />}
+            title="Run the harmonization"
+            body="ddharmon embeds and clusters your fields, retrieves candidate CDEs from the catalog, and decides adopt / refine / novel — generating transform specs along the way."
+          />
+          <Step
+            n={4}
+            icon={<ListChecks className="h-4 w-4" />}
+            title="Review & decide"
+            body="Every concept comes with a verdict, a confidence score, ranked CDE candidates, and its transform spec. Approve, refine, or reject each in the review queue or the workbench."
+          />
+          <Step
+            n={5}
+            icon={<Download className="h-4 w-4" />}
+            title="Export"
+            body="Take the results into your pipeline: an expert-review queue, machine-readable records, decision logs, and ready-to-run Python / R notebooks that apply the transforms."
+          />
+        </CardContent>
+      </Card>
+
+      {/* 4 · Where AI is used ------------------------------------------------------------------ */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Bot className="h-4 w-4 text-ph-navy" /> Where AI is used
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
+          <p>ddharmon is AI-assisted end to end — concretely:</p>
+          <ul className="space-y-1.5">
+            <li>
+              <span className="font-medium text-neutral-700">Grouping</span> — sentence-embedding models place
+              semantically similar fields near each other, then cluster them into concepts.
+            </li>
+            <li>
+              <span className="font-medium text-neutral-700">Assignment</span> — a large language model weighs the
+              retrieved CDE candidates for each concept and decides adopt / refine / novel, with a written rationale.
+            </li>
+            <li>
+              <span className="font-medium text-neutral-700">Transform specs</span> — the LLM drafts the value recodes
+              and unit / arithmetic conversions.
+            </li>
+          </ul>
+          <p>
+            Embeddings run locally; the LLM steps are the only ones that call an external model — and the only paid
+            part (you'll see a cost estimate before each run). <span className="font-medium">Preview</span> mode runs
+            the grouping with no LLM at all.{" "}
+            <span className="font-medium text-ph-ink">Every AI output is a suggestion, never a silent commit</span> —
+            every concept is yours to approve, refine, or reject.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* 5 · Choosing run options -------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Choosing run options</CardTitle>
@@ -312,7 +243,65 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      {/* Learn more ---------------------------------------------------------------------------- */}
+      {/* 6 · How each concept is classified ---------------------------------------------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Sparkles className="h-4 w-4 text-ph-navy" /> How each concept is classified
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-3">
+          <VerdictCard
+            verdict="adopt"
+            icon={<CheckCircle2 className="h-4 w-4" />}
+            title="Adopt"
+            body="A CDE fits as-is. Use the standard directly; values already align."
+          />
+          <VerdictCard
+            verdict="refine"
+            icon={<Pencil className="h-4 w-4" />}
+            title="Refine"
+            body="A CDE fits, but values need a transform — a recode, a unit conversion, or a formula."
+          />
+          <VerdictCard
+            verdict="novel"
+            icon={<Sparkles className="h-4 w-4" />}
+            title="Novel"
+            body="No existing CDE fits well. A candidate GenCDE is proposed for a new standard."
+          />
+        </CardContent>
+      </Card>
+
+      {/* 7 · You're in the loop ---------------------------------------------------------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <UserCheck className="h-4 w-4 text-ph-navy" /> You're in the loop
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
+          <p>
+            ddharmon is built for <span className="font-medium text-ph-ink">expert-in-the-loop (EITL)</span> review —
+            the AI drafts, a human decides. Every concept arrives with a verdict, a{" "}
+            <span className="font-medium">confidence score</span>, its ranked CDE candidates, and the exact transform,
+            so you can <span className="font-medium text-success">approve</span>,{" "}
+            <span className="font-medium text-warning">refine</span>, or{" "}
+            <span className="font-medium text-danger">reject</span> each — in the review queue or the candidate
+            workbench. Export the whole queue as a TSV to split review across your team.
+          </p>
+          <div className="flex items-start gap-2 rounded-md border border-neutral-200 p-3">
+            <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-ph-navy" />
+            <p className="text-xs leading-relaxed">
+              <span className="font-medium text-neutral-700">Confidence score</span> = the semantic similarity (0–1,
+              cosine) between your field and the chosen CDE; higher means stronger support for the match. Use it to
+              triage — skim the high-confidence adopts, and spend your time on low-confidence, “floored”, and novel
+              items, which the queue flags for exactly that reason.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 8 · Learn more ------------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Learn more</CardTitle>
@@ -394,7 +383,7 @@ function Step({ n, icon, title, body }: { n: number; icon: React.ReactNode; titl
         {icon}
       </div>
       <div>
-        <div className="font-medium text-neutral-800">
+        <div className="font-medium text-neutral-700">
           <span className="mr-1.5 text-neutral-400">{n}.</span>
           {title}
         </div>

@@ -112,7 +112,7 @@ function EntryCard({ entry }: { entry: Entry }) {
   const inner = (
     <>
       <div className="flex items-center gap-1.5">
-        <span className="font-medium text-neutral-800 group-hover:text-ph-navy">{entry.name}</span>
+        <span className="font-medium text-neutral-700 group-hover:text-ph-navy">{entry.name}</span>
         {entry.href && <ExternalLink className="h-3 w-3 text-neutral-400 group-hover:text-ph-navy" />}
       </div>
       {entry.by && <div className="text-xs text-neutral-400">{entry.by}</div>}

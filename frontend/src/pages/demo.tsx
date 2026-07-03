@@ -85,7 +85,7 @@ export default function DemoPage() {
                     >
                       <span className="flex items-center gap-2">
                         <Checkbox checked={on} onCheckedChange={() => toggle(d.id)} />
-                        <span className="font-medium text-neutral-800">{d.label}</span>
+                        <span className="font-medium text-neutral-700">{d.label}</span>
                       </span>
                       <span className="pl-6 text-xs text-neutral-400">{d.nFields} fields</span>
                       {d.description && <span className="pl-6 text-xs text-neutral-400">{d.description}</span>}
