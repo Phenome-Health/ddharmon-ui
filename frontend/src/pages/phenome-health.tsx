@@ -1,7 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PhenomeChip } from "@/components/phenome-mark";
+import { PhLogo } from "@/components/ph-logo";
 import { PH } from "@/lib/links";
 
 interface Tool {
@@ -49,11 +49,9 @@ export default function PhenomeHealthPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2.5 text-2xl font-semibold text-ph-ink">
-          <PhenomeChip className="h-8 w-8" />
-          Phenome Health
-        </h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <h1 className="sr-only">Phenome Health</h1>
+        <PhLogo className="h-11 w-auto" />
+        <p className="mt-3 text-sm text-neutral-500">
           The internal Phenome Health ecosystem ddharmon plugs into — mapping, knowledge-graph, and review tooling
           built alongside this app.{" "}
           <a href={PH.org} target="_blank" rel="noreferrer" className="text-ph-navy underline hover:text-ph-ink">
