@@ -121,19 +121,19 @@ const STEPS = [
     n: "01",
     icon: Layers,
     title: "Group by meaning",
-    body: "Sentence embeddings compare each field's question text and description — where its meaning lives — so items that ask the same thing cluster together, even under unrelated variable names.",
+    body: "Sentence embeddings capture each variable's metadata fields — where its meaning lives — so variables that ask the same thing cluster together, even when their names differ.",
   },
   {
     n: "02",
     icon: GitCompareArrows,
     title: "Anchor to a standard",
-    body: "Each concept maps to a Common Data Element — adopt as-is, refine, or propose a novel GenCDE.",
+    body: "Each group of conceptually similar variables maps to a Common Data Element — adopt as-is, refine, or propose a novel GenCDE.",
   },
   {
     n: "03",
     icon: Wand2,
     title: "Generate the transform",
-    body: "For every match, ddharmon drafts the harmonization spec — response-option recodes, unit and arithmetic conversions — as a runnable transform, exported to Python or R.",
+    body: "For every match, ddharmon drafts the harmonization spec — response-option recodes, unit and arithmetic conversions — as a runnable transform, exportable to Python or R.",
   },
   {
     n: "04",
@@ -168,10 +168,11 @@ export default function LandingPage() {
               <span className="text-ph-teal">One meaning.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-[#c3cfe6] lg:text-lg">
-              <span className="font-semibold text-white">ddharmon</span> reads each field's question text and
-              description — the fields that carry its meaning — along with its response options and variable name,
-              groups the items that mean the same thing across cohorts, and anchors each concept to a shared Common
-              Data Element, generating the value transform to get there. AI drafts every match; you decide.
+              <span className="font-semibold text-white">ddharmon</span> reads each variable's metadata (question text, 
+              description, variable name) — the fields that carry meaning — along with its response options,
+              groups the variables that mean the same thing across cohorts, and anchors each concept group to a shared Common
+              Data Element (CDE), generating variable → CDE transformation specs along the way. NLP &amp; AI
+              tooling draft every match; you make the final calls.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Button asChild size="lg" className="bg-ph-crimson text-white hover:bg-ph-crimson-dark">

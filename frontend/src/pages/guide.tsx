@@ -58,7 +58,10 @@ export default function GuidePage() {
           <p>
             Different studies describe the same measurement in different words — <code>bmi</code> in one
             cohort, <code>body_mass_index</code> in another, <code>Q47_weight_kg</code> in a third — and the same
-            survey question gets reworded from study to study. Before you can pool cohorts for an analysis, those
+            survey question gets reworded from study to study. One study asks{" "}
+            <span className="italic text-neutral-700">“In general, would you say your health is…”</span>; another
+            records the same thing as <span className="italic text-neutral-700">“Overall health rating”</span> under
+            a variable named <code>2178</code>. String matching misses these. Before you can pool cohorts for an analysis, those
             variables have to be mapped to a shared standard.
           </p>
           <p>
@@ -70,21 +73,6 @@ export default function GuidePage() {
             <A href={REF.snomed}>SNOMED CT</A>). For every assignment it also generates a{" "}
             <span className="font-medium text-ph-ink">transform spec</span>: the recipe for converting your
             raw values into the CDE's expected form.
-          </p>
-          <p>
-            <span className="font-medium text-ph-ink">Meaning, not wording.</span> Cohorts rarely ask a question
-            the same way. One study asks{" "}
-            <span className="italic text-neutral-700">“In general, would you say your health is…”</span>; another
-            records the same thing as <span className="italic text-neutral-700">“Overall health rating”</span> under
-            a variable named <code>2178</code>. String matching misses these. ddharmon compares the{" "}
-            <em>meaning</em> of each field's description and question text — using sentence embeddings — so items
-            that ask the same thing in different words, under unrelated variable names, land in the same concept.
-          </p>
-          <p>
-            It's the same idea behind questionnaire-harmonization tools like{" "}
-            <A href="https://harmonydata.ac.uk">Harmony</A> (matching items worded differently that measure the same
-            construct) — extended here to <em>anchor</em> each matched concept to a shared CDE and generate the value
-            transforms, not just score item-to-item similarity.
           </p>
         </CardContent>
       </Card>
