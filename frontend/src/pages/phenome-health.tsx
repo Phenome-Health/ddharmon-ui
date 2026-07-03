@@ -13,19 +13,19 @@ interface Tool {
 
 const TOOLS: Tool[] = [
   {
-    name: "ddharmon",
-    desc: "This tool — cross-cohort data-dictionary harmonization to a Common Data Element backbone (adopt / refine / novel + transform specs).",
-    href: PH.ddharmon,
+    name: "ddharmon-ui",
+    desc: "This app — the web GUI for ddharmon: configure runs, review adopt / refine / novel verdicts, inspect candidates, and export the results.",
+    href: PH.ddharmonUi,
     tag: "you are here",
   },
   {
-    name: "ddharmon-ui",
-    desc: "The web GUI for ddharmon (this app) — configure runs, review verdicts, and export the results.",
-    href: PH.ddharmonUi,
+    name: "ddharmon",
+    desc: "The core harmonization engine this app runs on — clusters cohort fields by meaning and anchors each concept to a Common Data Element, with transform specs.",
+    href: PH.ddharmon,
   },
   {
     name: "biomapper",
-    desc: "The identifier-layer toolkit — maps entities (proteins, metabolites, genes) to standard IDs. The substrate ddharmon's outputs link into.",
+    desc: "Maps biomedical entities to knowledge-graph nodes (entity linking & resolution) — the identifier layer ddharmon's outputs link into.",
     href: PH.biomapper,
   },
   {
@@ -42,6 +42,11 @@ const TOOLS: Tool[] = [
     name: "EITL (expert-in-the-loop)",
     desc: "The campaign-based human-review web app. ddharmon exports its review queue into EITL campaigns for expert sign-off.",
     href: PH.eitl,
+  },
+  {
+    name: "PortFlow",
+    desc: "A model-portability toolkit — conditional normalizing flows for fast imputation and transfer-lasso for porting linear models across cohorts, combined into one workflow.",
+    href: PH.portflow,
   },
 ];
 

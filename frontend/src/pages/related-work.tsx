@@ -9,6 +9,14 @@ interface Entry {
   href?: string;
 }
 
+interface Ref {
+  authors: string;
+  year: number;
+  title: string;
+  venue?: string;
+  href?: string;
+}
+
 const TOOLS: Entry[] = [
   {
     name: "CDEMapper",
@@ -74,6 +82,105 @@ const GROUPS: Entry[] = [
   { name: "ARPA-H", desc: "Funds the multi-omics data-harmonization program ddharmon is part of.", href: "https://arpa-h.gov/" },
 ];
 
+// Papers that shaped ddharmon's design (accurate metadata; PDFs kept in the research repo).
+const REFERENCES: Ref[] = [
+  {
+    authors: "Krishnamurthy et al.",
+    year: 2025,
+    title: "A Dynamic Framework for Semantic Grouping of Common Data Elements (CDEs) Using Embeddings and Clustering",
+    venue: "arXiv:2506.02160",
+    href: "https://arxiv.org/abs/2506.02160",
+  },
+  {
+    authors: "Salimi, Adams, Ay, Balabin, Jacobs & Hofmann-Apitius",
+    year: 2025,
+    title:
+      "Evaluating language model embeddings for Parkinson's disease cohort harmonization using a novel manually curated variable mapping schema (PASSIONATE)",
+    venue: "Scientific Reports 15:20210",
+    href: "https://doi.org/10.1038/s41598-025-06447-2",
+  },
+  {
+    authors: "Islam",
+    year: 2026,
+    title: "Reasoning-Based Refinement of Unsupervised Text Clusters with LLMs",
+    venue: "arXiv:2604.07562",
+    href: "https://arxiv.org/abs/2604.07562",
+  },
+  {
+    authors: "Gottfried et al.",
+    year: 2025,
+    title: "Semantic search helper: embeddings in multi-item questionnaires as a harmonization tool",
+  },
+  {
+    authors: "Wang et al.",
+    year: 2025,
+    title: "CDEMapper: enhancing NIH Common Data Element use with large language models",
+    href: "https://cdemapper.clinicalnlp.org",
+  },
+  {
+    authors: "Mimno, Wallach, Talley, Leenders & McCallum",
+    year: 2011,
+    title: "Optimizing Semantic Coherence in Topic Models",
+    venue: "EMNLP",
+  },
+  {
+    authors: "Newman, Lau, Grieser & Baldwin",
+    year: 2010,
+    title: "Automatic Evaluation of Topic Coherence",
+    venue: "NAACL-HLT",
+  },
+  {
+    authors: "Lau, Newman & Baldwin",
+    year: 2014,
+    title: "Machine Reading Tea Leaves: Automatically Evaluating Topic Coherence and Topic Model Quality",
+    venue: "EACL",
+    href: "https://doi.org/10.3115/v1/e14-1056",
+  },
+  {
+    authors: "Yang, Zhao, Phung, Buntine & Du",
+    year: 2024,
+    title: "LLM Reading Tea Leaves: Automatically Evaluating Topic Models with Large Language Models",
+    venue: "arXiv:2406.09008",
+    href: "https://arxiv.org/abs/2406.09008",
+  },
+];
+
+function ReferencesCard() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Works cited</CardTitle>
+        <p className="text-xs text-neutral-400">
+          Papers that shaped ddharmon's design — the embedding → clustering → LLM-labeling lineage for variable/CDE
+          harmonization, and the topic-coherence work behind its semantic-coherence clustering.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <ol className="space-y-2.5">
+          {REFERENCES.map((r) => (
+            <li key={r.title} className="text-xs leading-relaxed text-neutral-600">
+              <span className="font-medium text-neutral-700">{r.authors}</span> ({r.year}).{" "}
+              {r.href ? (
+                <a
+                  href={r.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="italic text-ph-navy underline decoration-ph-navy/30 underline-offset-2 hover:decoration-ph-navy"
+                >
+                  {r.title}
+                </a>
+              ) : (
+                <span className="italic">{r.title}</span>
+              )}
+              .{r.venue && <span className="text-neutral-400"> {r.venue}.</span>}
+            </li>
+          ))}
+        </ol>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function RelatedWorkPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -88,6 +195,7 @@ export default function RelatedWorkPage() {
       <Section title="Tools" subtitle="Related and prior-art harmonization / mapping tools" entries={TOOLS} />
       <Section title="Standards & concepts" subtitle="The vocabularies and methods ddharmon builds on" entries={CONCEPTS} />
       <Section title="Groups" subtitle="Research groups and programs in the space" entries={GROUPS} />
+      <ReferencesCard />
     </div>
   );
 }

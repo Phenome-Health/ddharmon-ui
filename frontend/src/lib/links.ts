@@ -4,16 +4,16 @@
 export const REPO_URL = "https://github.com/Phenome-Health/ddharmon-ui";
 export const ISSUES_URL = `${REPO_URL}/issues`;
 
-// Phenome Health org + internal tools (the Phenome Health tab). NOTE: internal-tool URLs are
-// best-guesses — confirm/replace with the canonical repos/pages. Empty string → rendered without a link.
+// Phenome Health org + internal tools (the Phenome Health tab). Empty string → rendered without a link.
 export const PH = {
   org: "https://phenomehealth.org",
   ddharmon: "https://github.com/Phenome-Health/ddharmon",
   ddharmonUi: "https://github.com/Phenome-Health/ddharmon-ui",
-  biomapper: "https://github.com/arpanauts/biomapper", // TODO confirm
-  biomapperUi: "", // TODO confirm
-  kraken: "", // TODO confirm
-  eitl: "", // TODO confirm
+  biomapper: "https://github.com/Phenome-Health/biomapper2",
+  biomapperUi: "https://link.expertintheloop.io/",
+  portflow: "https://github.com/Phenome-Health/PortFlow",
+  kraken: "https://app.krakenkg.com/",
+  eitl: "https://expertintheloop.io/",
 } as const;
 
 // Reference standards / concepts linked from the Guide and Related work.
