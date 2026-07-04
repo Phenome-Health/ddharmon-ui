@@ -33,7 +33,7 @@ function ConvergenceViz() {
   }, []);
 
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[540px]">
+    <div className="relative mx-auto aspect-square w-full max-w-[390px]">
       {/* connectors — source questions flow into the shared concept */}
       <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden="true">
         {SOURCES.map((s, i) => {
@@ -145,10 +145,10 @@ const STEPS = [
 
 export default function LandingPage() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
       <section
-        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-14 lg:px-16 lg:py-24"
+        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-6 lg:px-14 lg:py-4"
         style={{ background: "linear-gradient(135deg, #0B152D 0%, #113682 62%, #0d2a68 100%)" }}
       >
         {/* ambient glow behind the ring */}
@@ -157,24 +157,24 @@ export default function LandingPage() {
           style={{ background: "radial-gradient(circle, rgba(58,194,203,0.35), transparent 70%)" }}
           aria-hidden="true"
         />
-        <div className="relative grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="relative grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <div>
             <p className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-ph-teal">
               Cross-cohort data harmonization
             </p>
-            <h1 className="mt-4 font-display text-5xl font-bold leading-[1.03] tracking-tight text-white sm:text-6xl">
+            <h1 className="mt-2 font-display text-5xl font-bold leading-[1.03] tracking-tight text-white sm:text-6xl">
               Different words.
               <br />
               <span className="text-ph-teal">One meaning.</span>
             </h1>
-            <p className="mt-6 max-w-2xl text-base leading-relaxed text-[#c3cfe6] lg:text-lg">
+            <p className="mt-3 max-w-2xl text-[15px] leading-[1.5] text-[#c3cfe6] lg:text-base">
               <span className="font-semibold text-white">ddharmon</span> reads each variable's metadata (question text, 
               description, variable name) — the fields that carry meaning — along with its response options,
               groups the variables that mean the same thing across cohorts, and anchors each concept group to a shared Common
               Data Element (CDE), generating variable → CDE transformation specs along the way. NLP &amp; AI
               tooling draft every match; you make the final calls.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-5 flex flex-wrap items-center gap-3">
               <Button asChild size="lg" className="bg-ph-crimson text-white hover:bg-ph-crimson-dark">
                 <Link href="/new">
                   Start a run <ArrowRight className="ml-1.5 h-4 w-4" />
@@ -199,7 +199,7 @@ export default function LandingPage() {
               href="https://phenomehealth.org"
               target="_blank"
               rel="noreferrer"
-              className="mt-12 inline-flex items-center gap-3 opacity-90 transition-opacity hover:opacity-100"
+              className="mt-6 inline-flex items-center gap-3 opacity-90 transition-opacity hover:opacity-100"
             >
               <span className="font-mono text-xs uppercase tracking-[0.16em] text-white/55">A project of</span>
               <PhLogo tone="dark" className="h-7 w-auto" />
@@ -208,7 +208,7 @@ export default function LandingPage() {
 
           <div>
             <ConvergenceViz />
-            <p className="mt-4 text-center font-mono text-[11px] leading-relaxed text-[#8fa1c4]">
+            <p className="mt-3 text-center font-mono text-[11px] leading-relaxed text-[#8fa1c4]">
               3 cohorts · different wording, different response codes
               <br />
               → 1 CDE · Smoking status <span className="text-ph-teal/80">(Never · Former · Current)</span>
@@ -219,7 +219,7 @@ export default function LandingPage() {
 
       {/* ── How it works (a real 3-step sequence) ────────────────────────────── */}
       <section>
-        <div className="mb-3 flex items-baseline justify-between">
+        <div className="mb-2 flex items-baseline justify-between">
           <h2 className="font-display text-lg font-semibold text-ph-ink">How a run works</h2>
           <Link href="/guide" className="text-sm text-ph-navy underline underline-offset-2 hover:text-ph-ink">
             Full walkthrough →
@@ -227,13 +227,13 @@ export default function LandingPage() {
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s) => (
-            <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-5">
+            <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-4">
               <div className="flex items-center gap-2.5">
                 <span className="font-mono text-xs font-medium text-ph-crimson">{s.n}</span>
                 <s.icon className="h-4 w-4 text-ph-navy" />
               </div>
-              <h3 className="mt-3 font-display text-base font-semibold text-ph-ink">{s.title}</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-neutral-600">{s.body}</p>
+              <h3 className="mt-2 font-display text-base font-semibold text-ph-ink">{s.title}</h3>
+              <p className="mt-1.5 text-sm leading-snug text-neutral-600">{s.body}</p>
             </div>
           ))}
         </div>

@@ -112,7 +112,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {/* Scrolling content region. */}
         <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-screen-2xl px-6 py-8 lg:px-8">{children}</div>
+          <div className="mx-auto max-w-screen-2xl px-6 py-6 lg:px-8">{children}</div>
         </main>
       </div>
     </div>
