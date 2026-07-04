@@ -19,6 +19,7 @@ import {
   VERDICT_COLOR,
   VERDICT_LABEL,
   VERDICTS,
+  type Focus,
   type Verdict,
 } from "@/lib/chart";
 import type { UIRecord } from "@/types";
@@ -159,13 +160,18 @@ function makeBarTooltip(formatLabel: (name: string) => string) {
 function StackedVerdictBars({
   data,
   formatLabel,
+  focus,
+  onFocus,
   height = 224,
 }: {
   data: Record<string, string | number>[];
   formatLabel: (name: string) => string;
+  focus?: Focus;
+  onFocus?: (f: Focus) => void;
   height?: number;
 }) {
   const BarTooltip = useMemo(() => makeBarTooltip(formatLabel), [formatLabel]);
+  const dimmed = (v: Verdict) => focus?.kind === "verdict" && focus.value !== v;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
@@ -176,11 +182,25 @@ function StackedVerdictBars({
         <Legend
           iconType="square"
           iconSize={9}
-          formatter={(v: string) => <span className="text-neutral-500">{VERDICT_LABEL[v] ?? v}</span>}
-          wrapperStyle={{ fontSize: 11 }}
+          onClick={onFocus ? (e: { value?: string }) => e.value && onFocus({ kind: "verdict", value: e.value }) : undefined}
+          formatter={(v: string) => (
+            <span className="cursor-pointer text-neutral-500" style={{ opacity: dimmed(v as Verdict) ? 0.4 : 1 }}>
+              {VERDICT_LABEL[v] ?? v}
+            </span>
+          )}
+          wrapperStyle={{ fontSize: 11, cursor: onFocus ? "pointer" : "default" }}
         />
         {VERDICTS.map((v) => (
-          <Bar key={v} dataKey={v} stackId="s" fill={VERDICT_COLOR[v]} radius={v === "unclassified" ? [3, 3, 0, 0] : undefined} />
+          <Bar
+            key={v}
+            dataKey={v}
+            stackId="s"
+            fill={VERDICT_COLOR[v]}
+            fillOpacity={dimmed(v) ? 0.28 : 1}
+            radius={v === "unclassified" ? [3, 3, 0, 0] : undefined}
+            cursor={onFocus ? "pointer" : undefined}
+            onClick={onFocus ? () => onFocus({ kind: "verdict", value: v }) : undefined}
+          />
         ))}
       </BarChart>
     </ResponsiveContainer>
@@ -193,7 +213,15 @@ const binLabel = (b: string) => {
   return `cosine ${lo.toFixed(1)}–${(lo + 0.1).toFixed(1)}`;
 };
 
-export function Analytics({ records }: { records: UIRecord[] }) {
+export function Analytics({
+  records,
+  focus = null,
+  onFocus,
+}: {
+  records: UIRecord[];
+  focus?: Focus;
+  onFocus?: (f: Focus) => void;
+}) {
   const cohortRows = useMemo(() => coverageByCohort(records), [records]);
   const sizeBars = useMemo(() => sizeVerdictBars(records), [records]);
   const hist = useMemo(() => scoreHistogram(records), [records]);
@@ -217,15 +245,22 @@ export function Analytics({ records }: { records: UIRecord[] }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {cohortRows.map((r) => (
-                <TableRow key={r.cohort}>
-                  <TableCell className="font-medium text-neutral-700">{r.cohort}</TableCell>
-                  <TableCell className="text-right tabular-nums">{r.total}</TableCell>
-                  <TableCell className="text-right tabular-nums text-success">{r.assigned}</TableCell>
-                  <TableCell className="text-right tabular-nums text-ph-navy">{r.novel}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">{(r.coverage * 100).toFixed(0)}%</TableCell>
-                </TableRow>
-              ))}
+              {cohortRows.map((r) => {
+                const on = focus?.kind === "cohort" && focus.value === r.cohort;
+                return (
+                  <TableRow
+                    key={r.cohort}
+                    onClick={onFocus ? () => onFocus({ kind: "cohort", value: r.cohort }) : undefined}
+                    className={`${onFocus ? "cursor-pointer" : ""} ${on ? "bg-ph-navy/5" : "hover:bg-neutral-50"}`}
+                  >
+                    <TableCell className={`font-medium ${on ? "text-ph-navy" : "text-neutral-700"}`}>{r.cohort}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.total}</TableCell>
+                    <TableCell className="text-right tabular-nums text-success">{r.assigned}</TableCell>
+                    <TableCell className="text-right tabular-nums text-ph-navy">{r.novel}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{(r.coverage * 100).toFixed(0)}%</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
@@ -237,7 +272,7 @@ export function Analytics({ records }: { records: UIRecord[] }) {
         </CardHeader>
         <CardContent>
           {sizeBars.length ? (
-            <StackedVerdictBars data={sizeBars} formatLabel={sizeLabel} />
+            <StackedVerdictBars data={sizeBars} formatLabel={sizeLabel} focus={focus} onFocus={onFocus} />
           ) : (
             <p className="py-8 text-center text-sm text-neutral-400">No concepts.</p>
           )}
@@ -251,7 +286,7 @@ export function Analytics({ records }: { records: UIRecord[] }) {
         </CardHeader>
         <CardContent>
           {hist.length ? (
-            <StackedVerdictBars data={hist} formatLabel={binLabel} />
+            <StackedVerdictBars data={hist} formatLabel={binLabel} focus={focus} onFocus={onFocus} />
           ) : (
             <p className="py-8 text-center text-sm text-neutral-400">No retrieval scores.</p>
           )}
@@ -267,7 +302,7 @@ export function Analytics({ records }: { records: UIRecord[] }) {
         </CardHeader>
         <CardContent>
           {overlap.cohorts.length ? (
-            <OverlapHeatmap {...overlap} />
+            <OverlapHeatmap {...overlap} focus={focus} onFocus={onFocus} />
           ) : (
             <p className="py-8 text-center text-sm text-neutral-400">No cohorts.</p>
           )}
@@ -277,13 +312,31 @@ export function Analytics({ records }: { records: UIRecord[] }) {
   );
 }
 
-function OverlapHeatmap({ cohorts, matrix, max }: { cohorts: string[]; matrix: number[][]; max: number }) {
+function OverlapHeatmap({
+  cohorts,
+  matrix,
+  max,
+  focus,
+  onFocus,
+}: {
+  cohorts: string[];
+  matrix: number[][];
+  max: number;
+  focus?: Focus;
+  onFocus?: (f: Focus) => void;
+}) {
   const [hc, setHc] = useState<{ i: number; j: number } | null>(null);
+  const fi = focus?.kind === "cohort" ? cohorts.indexOf(focus.value) : -1; // sticky-focused cohort row/col
   const readout = hc
     ? hc.i === hc.j
       ? `${cohorts[hc.i]} — ${matrix[hc.i][hc.j]} concepts total`
       : `${cohorts[hc.i]} ∩ ${cohorts[hc.j]} — ${matrix[hc.i][hc.j]} shared concept${matrix[hc.i][hc.j] === 1 ? "" : "s"}`
-    : "concepts shared between each cohort pair (diagonal = total)";
+    : fi >= 0
+      ? `${cohorts[fi]} — ${matrix[fi][fi]} concepts (filtering the run)`
+      : "concepts shared between each cohort pair (diagonal = total)";
+  const colOn = (j: number) => hc?.j === j || fi === j;
+  const rowOn = (i: number) => hc?.i === i || fi === i;
+  const clickCohort = (c: string) => onFocus?.({ kind: "cohort", value: c });
   return (
     <div>
       <div className="overflow-x-auto">
@@ -294,7 +347,8 @@ function OverlapHeatmap({ cohorts, matrix, max }: { cohorts: string[]; matrix: n
               {cohorts.map((c, j) => (
                 <th
                   key={c}
-                  className={`max-w-[64px] truncate p-1 ${hc?.j === j ? "font-semibold text-ph-navy" : "text-neutral-500"}`}
+                  onClick={onFocus ? () => clickCohort(c) : undefined}
+                  className={`max-w-[64px] truncate p-1 ${onFocus ? "cursor-pointer" : ""} ${colOn(j) ? "font-semibold text-ph-navy" : "text-neutral-500"}`}
                   title={c}
                 >
                   {c}
@@ -306,7 +360,8 @@ function OverlapHeatmap({ cohorts, matrix, max }: { cohorts: string[]; matrix: n
             {cohorts.map((rc, i) => (
               <tr key={rc}>
                 <td
-                  className={`max-w-[100px] truncate p-1 pr-2 text-right font-medium ${hc?.i === i ? "text-ph-navy" : "text-neutral-600"}`}
+                  onClick={onFocus ? () => clickCohort(rc) : undefined}
+                  className={`max-w-[100px] truncate p-1 pr-2 text-right font-medium ${onFocus ? "cursor-pointer" : ""} ${rowOn(i) ? "text-ph-navy" : "text-neutral-600"}`}
                   title={rc}
                 >
                   {rc}
@@ -314,7 +369,7 @@ function OverlapHeatmap({ cohorts, matrix, max }: { cohorts: string[]; matrix: n
                 {cohorts.map((cc, j) => {
                   const v = matrix[i][j];
                   const alpha = i === j ? 0.12 : v / max;
-                  const inCross = hc && (hc.i === i || hc.j === j);
+                  const inCross = rowOn(i) || colOn(j);
                   const isCell = hc?.i === i && hc?.j === j;
                   return (
                     <td

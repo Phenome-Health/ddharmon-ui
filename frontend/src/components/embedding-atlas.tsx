@@ -13,7 +13,7 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
-import { CHART_AXIS, CHART_GRID, CHART_TOOLTIP_CLASS, COHORT_PALETTE } from "@/lib/chart";
+import { CHART_AXIS, CHART_GRID, CHART_TOOLTIP_CLASS, COHORT_PALETTE, type Focus } from "@/lib/chart";
 import type { AtlasPoint } from "@/types";
 
 const PALETTE = COHORT_PALETTE;
@@ -33,7 +33,15 @@ function AtlasTooltip({ active, payload }: { active?: boolean; payload?: Tooltip
   );
 }
 
-export function EmbeddingAtlas({ points }: { points: AtlasPoint[] }) {
+export function EmbeddingAtlas({
+  points,
+  focus = null,
+  onFocus,
+}: {
+  points: AtlasPoint[];
+  focus?: Focus;
+  onFocus?: (f: Focus) => void;
+}) {
   const byCohort = useMemo(() => {
     const m = new Map<string, AtlasPoint[]>();
     for (const p of points) {
@@ -55,10 +63,25 @@ export function EmbeddingAtlas({ points }: { points: AtlasPoint[] }) {
         <YAxis type="number" dataKey="y" name="PC2" tick={false} axisLine={false} width={20} label={{ value: "PC2", angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_AXIS }} />
         <ZAxis range={[16, 16]} />
         <RTooltip content={<AtlasTooltip />} />
-        <Legend wrapperStyle={{ fontSize: 12 }} />
-        {byCohort.map(([cohort, data], i) => (
-          <Scatter key={cohort} name={cohort} data={data} fill={PALETTE[i % PALETTE.length]} fillOpacity={0.65} />
-        ))}
+        <Legend
+          wrapperStyle={{ fontSize: 12, cursor: onFocus ? "pointer" : "default" }}
+          onClick={onFocus ? (e: { value?: string }) => e.value && onFocus({ kind: "cohort", value: e.value }) : undefined}
+        />
+        {byCohort.map(([cohort, data], i) => {
+          // A cohort focus dims the other cohorts' points; a verdict focus leaves the atlas untouched.
+          const dim = focus?.kind === "cohort" && focus.value !== cohort;
+          return (
+            <Scatter
+              key={cohort}
+              name={cohort}
+              data={data}
+              fill={PALETTE[i % PALETTE.length]}
+              fillOpacity={dim ? 0.12 : 0.65}
+              onClick={onFocus ? () => onFocus({ kind: "cohort", value: cohort }) : undefined}
+              cursor={onFocus ? "pointer" : undefined}
+            />
+          );
+        })}
       </ScatterChart>
     </ResponsiveContainer>
   );

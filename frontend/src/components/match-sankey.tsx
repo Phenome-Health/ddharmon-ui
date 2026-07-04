@@ -8,7 +8,7 @@
 // tooltip reads out the exact counts (share of total). All hover state is local; colors come from lib/chart.
 import { useMemo, useState } from "react";
 import { ResponsiveContainer, Sankey, Tooltip } from "recharts";
-import { CHART_TOOLTIP_CLASS, COHORT_PALETTE, VERDICT_COLOR } from "@/lib/chart";
+import { CHART_TOOLTIP_CLASS, COHORT_PALETTE, VERDICT_COLOR, type Focus } from "@/lib/chart";
 import type { UIRecord } from "@/types";
 
 const VERDICT_NODE: Record<string, string> = {
@@ -19,6 +19,8 @@ const VERDICT_NODE: Record<string, string> = {
 };
 const VERDICT_ORDER = ["adopt", "refine", "novel", "unclassified"];
 const DEST_ORDER = ["Existing CDE", "GenCDE / new", "Needs review"];
+const VERDICT_NAMES = new Set(Object.values(VERDICT_NODE)); // "Adopt", "Refine", ...
+const DEST_NAMES = new Set(DEST_ORDER);
 
 // Node fill by name -- verdict + destination reuse the verdict palette; cohorts use ph-teal.
 const COLORS: Record<string, string> = {
@@ -149,9 +151,10 @@ interface NodeShapeProps {
   state: ShapeState;
   onEnter: () => void;
   onLeave: () => void;
+  onClick: () => void;
 }
 
-function NodeShape({ x, y, width, height, payload, state, onEnter, onLeave }: NodeShapeProps) {
+function NodeShape({ x, y, width, height, payload, state, onEnter, onLeave, onClick }: NodeShapeProps) {
   const depth = payload.depth ?? 0;
   const cy = y + height / 2;
   let tx = x + width + 6;
@@ -167,7 +170,7 @@ function NodeShape({ x, y, width, height, payload, state, onEnter, onLeave }: No
   }
   const dim = state === "off";
   return (
-    <g style={{ cursor: "pointer" }} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+    <g style={{ cursor: "pointer" }} onMouseEnter={onEnter} onMouseLeave={onLeave} onClick={onClick}>
       <rect
         x={x}
         y={y}
@@ -205,6 +208,7 @@ interface LinkShapeProps {
   state: ShapeState;
   onEnter: () => void;
   onLeave: () => void;
+  onClick: () => void;
 }
 
 function LinkShape({
@@ -219,6 +223,7 @@ function LinkShape({
   state,
   onEnter,
   onLeave,
+  onClick,
 }: LinkShapeProps) {
   const opacity = state === "off" ? 0.06 : state === "on" ? 0.62 : 0.38;
   return (
@@ -231,6 +236,7 @@ function LinkShape({
       style={{ cursor: "pointer", transition: "stroke-opacity 120ms" }}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
+      onClick={onClick}
     />
   );
 }
@@ -242,7 +248,15 @@ const LEGEND = [
   { label: "Unclassified", color: VERDICT_COLOR.unclassified },
 ];
 
-export function MatchSankey({ records }: { records: UIRecord[] }) {
+export function MatchSankey({
+  records,
+  focus = null,
+  onFocus,
+}: {
+  records: UIRecord[];
+  focus?: Focus;
+  onFocus?: (f: Focus) => void;
+}) {
   const data = useMemo(() => buildSankeyData(records), [records]);
   const [hover, setHover] = useState<Hover>(null);
   const [tip, setTip] = useState<Tip>(null);
@@ -260,13 +274,38 @@ export function MatchSankey({ records }: { records: UIRecord[] }) {
     return { nodeTotals: totals, total: t, nodeNames: names };
   }, [data]);
 
-  const active = useMemo(() => computeActive(hover, data.links), [hover, data.links]);
+  // Sticky emphasis from the shared focus, expressed as a node highlight; a live hover overrides it.
+  const focusHover: Hover = useMemo(() => {
+    if (!focus) return null;
+    const name = focus.kind === "verdict" ? VERDICT_NODE[focus.value] : focus.value;
+    const i = data.nodes.findIndex((n) => n.name === name);
+    return i >= 0 ? { kind: "node", index: i } : null;
+  }, [focus, data.nodes]);
+  const active = useMemo(() => computeActive(hover ?? focusHover, data.links), [hover, focusHover, data.links]);
+
   const clear = () => {
     setHover(null);
     setTip(null);
   };
   const nodeState = (i: number): ShapeState => (!active ? "base" : active.activeNodes.has(i) ? "on" : "off");
   const linkState = (li: number): ShapeState => (!active ? "base" : active.activeLinks.has(li) ? "on" : "off");
+
+  // Map a node / flow to the focus it represents. Cohort nodes -> cohort focus; verdict nodes (and any flow,
+  // via its verdict endpoint) -> verdict focus; destination nodes aren't a focus axis.
+  const focusForNode = (name: string): Focus => {
+    if (VERDICT_NAMES.has(name)) return { kind: "verdict", value: name.toLowerCase() };
+    if (DEST_NAMES.has(name)) return null;
+    return { kind: "cohort", value: name };
+  };
+  const focusForLink = (l: SankeyLinkDatum): Focus => {
+    const s = nodeNames[l.source];
+    const t = nodeNames[l.target];
+    const vName = VERDICT_NAMES.has(s) ? s : VERDICT_NAMES.has(t) ? t : null;
+    return vName ? { kind: "verdict", value: vName.toLowerCase() } : null;
+  };
+  const emitFocus = (f: Focus) => {
+    if (f && onFocus) onFocus(f);
+  };
 
   if (!data.links.length) {
     return <p className="py-8 text-center text-sm text-neutral-400">No flows to display.</p>;
@@ -307,6 +346,7 @@ export function MatchSankey({ records }: { records: UIRecord[] }) {
                     setTip({ title: p.payload.name, sub: `${nodeTotals[i]} variables`, x, y, anchor });
                   }}
                   onLeave={clear}
+                  onClick={() => emitFocus(focusForNode(p.payload.name))}
                 />
               );
             }}
@@ -331,6 +371,7 @@ export function MatchSankey({ records }: { records: UIRecord[] }) {
                     });
                   }}
                   onLeave={clear}
+                  onClick={() => emitFocus(focusForLink(p.payload))}
                 />
               );
             }}

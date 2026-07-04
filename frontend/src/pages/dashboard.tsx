@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import { toast } from "sonner";
-import { Ban, Check, ChevronDown, ChevronRight, Download, FileCode, Loader2, Pencil } from "lucide-react";
+import { Ban, Check, ChevronDown, ChevronRight, Download, FileCode, Loader2, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { MatchSankey } from "@/components/match-sankey";
 import { Analytics } from "@/components/analytics";
 import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { exportUrl, submitVerdict } from "@/lib/api";
+import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
 import { VERDICT_STYLES, type UIRecord, type UITransform } from "@/types";
 
 // Known phase ordering for the progress bar. The phase LABEL is shown verbatim from the stream (so a new
@@ -62,14 +63,14 @@ export default function DashboardPage() {
   const [decisions, setDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [filter, setFilter] = useState("all");
+  // Shared brushing-and-linking selection: clicking any chart element sets it; it filters the review queue
+  // and emphasizes the matching slice across every chart. Clicking the same element again clears it.
+  const [focus, setFocus] = useState<Focus>(null);
+  const toggleFocus = (f: Focus) => setFocus((cur) => (sameFocus(cur, f) ? null : f));
 
   const result = jobState?.result ?? null;
   const records = useMemo<UIRecord[]>(() => result?.records ?? [], [result]);
-  const filtered = useMemo(
-    () => (filter === "all" ? records : records.filter((r) => r.verdict === filter)),
-    [records, filter],
-  );
+  const filtered = useMemo(() => records.filter((r) => recordMatchesFocus(r, focus)), [records, focus]);
 
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
     setDecisions((p) => ({ ...p, [r.id]: decision }));
@@ -184,16 +185,38 @@ export default function DashboardPage() {
             <StatCard label="With transform specs" value={result.summary.nWithTransforms} />
           </div>
 
+          {focus && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2 text-sm">
+              <span className="text-neutral-500">Focused on</span>
+              <Badge
+                variant="outline"
+                className={focus.kind === "verdict" ? (VERDICT_STYLES[focus.value] ?? "") : "border-ph-teal/50 text-ph-navy"}
+              >
+                {focus.kind === "cohort" ? "cohort · " : ""}
+                {focusLabel(focus)}
+              </Badge>
+              <span className="text-neutral-500">
+                {filtered.length} of {records.length} concepts · click any chart to change
+              </span>
+              <button
+                onClick={() => setFocus(null)}
+                className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-ph-navy"
+              >
+                Clear <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Match journey</CardTitle>
             </CardHeader>
             <CardContent>
-              <MatchSankey records={records} />
+              <MatchSankey records={records} focus={focus} onFocus={toggleFocus} />
             </CardContent>
           </Card>
 
-          <Analytics records={records} />
+          <Analytics records={records} focus={focus} onFocus={toggleFocus} />
 
           {result.atlas.length > 0 && (
             <Card>
@@ -201,7 +224,7 @@ export default function DashboardPage() {
                 <CardTitle className="text-base">Embedding atlas</CardTitle>
               </CardHeader>
               <CardContent>
-                <EmbeddingAtlas points={result.atlas} />
+                <EmbeddingAtlas points={result.atlas} focus={focus} onFocus={toggleFocus} />
                 <p className="mt-1 text-xs text-neutral-400">PCA of field embeddings · colored by cohort</p>
               </CardContent>
             </Card>
@@ -210,7 +233,10 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle className="text-base">Review queue ({filtered.length})</CardTitle>
-              <Select value={filter} onValueChange={setFilter}>
+              <Select
+                value={focus?.kind === "verdict" ? focus.value : "all"}
+                onValueChange={(v) => setFocus(v === "all" ? null : { kind: "verdict", value: v })}
+              >
                 <SelectTrigger className="h-8 w-44">
                   <SelectValue />
                 </SelectTrigger>

@@ -47,3 +47,24 @@ export const CHART_AXIS = "var(--sf-400)";
 /** Branded floating-tooltip container — neutral tokens flip under `.dark`. */
 export const CHART_TOOLTIP_CLASS =
   "pointer-events-none rounded-md border border-neutral-200 bg-neutral-0 px-2.5 py-1.5 text-xs shadow-md";
+
+// ── Brushing & linking: one shared selection across all run charts + the review queue ──
+// A focus is a single axis of the run — one verdict, or one cohort. Clicking a chart element sets it;
+// it filters the review queue and emphasizes the matching slice everywhere else.
+export type Focus = { kind: "verdict"; value: string } | { kind: "cohort"; value: string } | null;
+
+export function sameFocus(a: Focus, b: Focus): boolean {
+  if (!a || !b) return a === b;
+  return a.kind === b.kind && a.value === b.value;
+}
+
+export function focusLabel(focus: Focus): string {
+  if (!focus) return "";
+  return focus.kind === "verdict" ? (VERDICT_LABEL[focus.value] ?? focus.value) : focus.value;
+}
+
+/** Does a record fall inside the current focus? Structural type so lib/ stays decoupled from types.ts. */
+export function recordMatchesFocus(r: { verdict: string; cohorts: string[] }, focus: Focus): boolean {
+  if (!focus) return true;
+  return focus.kind === "verdict" ? r.verdict === focus.value : r.cohorts.includes(focus.value);
+}
