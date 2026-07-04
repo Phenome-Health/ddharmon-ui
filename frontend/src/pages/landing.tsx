@@ -33,7 +33,7 @@ function ConvergenceViz() {
   }, []);
 
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[390px]">
+    <div className="relative mx-auto aspect-square w-full max-w-[min(500px,47vh)]">
       {/* connectors — source questions flow into the shared concept */}
       <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden="true">
         {SOURCES.map((s, i) => {
@@ -145,10 +145,13 @@ const STEPS = [
 
 export default function LandingPage() {
   return (
-    <div className="space-y-4">
+    // Fluid vertical rhythm: floors match the compact 14" fit; each term grows with viewport
+    // HEIGHT (vh) up to a comfortable max, so a taller monitor fills in rather than leaving a
+    // blank band. Degrades gracefully under zoom (reflows/scrolls) — no fixed-viewport math.
+    <div className="flex flex-col gap-[clamp(1rem,8vh_-_51px,2.25rem)]">
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
       <section
-        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-6 lg:px-14 lg:py-4"
+        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-6 lg:px-14 lg:py-[clamp(1rem,16vh_-_117px,3.5rem)]"
         style={{ background: "linear-gradient(135deg, #0B152D 0%, #113682 62%, #0d2a68 100%)" }}
       >
         {/* ambient glow behind the ring */}
@@ -227,7 +230,7 @@ export default function LandingPage() {
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s) => (
-            <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-4">
+            <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-[clamp(1rem,3.2vh_-_11px,1.5rem)]">
               <div className="flex items-center gap-2.5">
                 <span className="font-mono text-xs font-medium text-ph-crimson">{s.n}</span>
                 <s.icon className="h-4 w-4 text-ph-navy" />
