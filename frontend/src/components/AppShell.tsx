@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Network, Plus, ListChecks } from "lucide-react";
+import { Plus, ListChecks, BookOpen, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/hooks/use-theme";
+import { IS_STATIC } from "@/lib/api";
+import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
+import { PhenomeChip } from "@/components/phenome-mark";
+import { PhMark } from "@/components/ph-logo";
 
 function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
   const [loc] = useLocation();
@@ -23,35 +28,91 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { theme, toggle } = useTheme();
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-white">
+    <div className="flex h-screen flex-col overflow-hidden bg-neutral-0">
       {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-neutral-0 px-4">
         <Link href="/" className="flex items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center rounded bg-ph-navy text-white">
-            <Network className="h-3.5 w-3.5" />
-          </div>
+          <PhenomeChip />
           <div className="flex items-center gap-2 text-sm">
             <span className="font-semibold text-ph-ink">ddharmon</span>
             <span className="text-neutral-300">/</span>
             <span className="text-neutral-500">Harmonization</span>
           </div>
         </Link>
-        <div className="hidden text-xs text-neutral-500 sm:block">Split-aware CDE harmonization</div>
+        <div className="flex items-center gap-1">
+          {IS_STATIC && (
+            <span className="mr-2 rounded bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning">
+              Preview · sample data
+            </span>
+          )}
+          <span className="mr-2 hidden text-xs text-neutral-500 sm:block">Split-aware CDE harmonization</span>
+          <button
+            type="button"
+            onClick={toggle}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label="Toggle theme"
+            className="flex h-8 w-8 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
         {/* Left sidebar nav. */}
-        <aside className="hidden w-60 shrink-0 border-r border-neutral-200 bg-neutral-50 px-3 py-4 lg:block">
+        <aside className="hidden w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 px-3 py-4 lg:flex">
           <nav className="space-y-1">
-            <NavLink href="/" icon={<Plus className="h-4 w-4" />} label="New run" />
+            <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" />
+            <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" />
+            <NavLink href="/new" icon={<Plus className="h-4 w-4" />} label="New run" />
             <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" />
+            <NavLink href="/related" icon={<Boxes className="h-4 w-4" />} label="Related work" />
+            <NavLink href="/phenome" icon={<Building2 className="h-4 w-4" />} label="Phenome Health" />
           </nav>
+          <div className="mt-auto space-y-1 border-t border-neutral-200 pt-3 text-xs">
+            <a
+              href={PH.org}
+              target="_blank"
+              rel="noreferrer"
+              className="mb-1 flex items-center gap-1.5 whitespace-nowrap rounded px-3 py-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
+            >
+              <PhMark className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                A project of <span className="font-semibold text-ph-ink">Phenome Health</span>
+              </span>
+            </a>
+            <a
+              href={ISSUES_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 rounded px-3 py-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
+            >
+              <Github className="h-3.5 w-3.5" /> Report an issue
+            </a>
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="block px-3 text-[11px] text-neutral-400 transition-colors hover:text-ph-navy"
+            >
+              View source on GitHub
+            </a>
+            <a
+              href="https://claude.com/claude-code"
+              target="_blank"
+              rel="noreferrer"
+              className="block px-3 text-[11px] text-neutral-400 transition-colors hover:text-ph-navy"
+            >
+              Built with Claude Code
+            </a>
+          </div>
         </aside>
 
         {/* Scrolling content region. */}
         <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-screen-2xl px-6 py-8 lg:px-8">{children}</div>
+          <div className="mx-auto max-w-screen-2xl px-6 py-6 lg:px-8">{children}</div>
         </main>
       </div>
     </div>

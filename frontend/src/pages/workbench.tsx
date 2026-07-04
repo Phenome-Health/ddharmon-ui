@@ -4,7 +4,7 @@
 // (contract `candidates`) — read-only alternatives with the chosen one flagged — since our backend records
 // one decision per group rather than a free re-pick. Deferred (future): ⌘K palette, batch mode, resizable.
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
 import { ArrowLeft, Ban, Check, ExternalLink, Loader2, Pencil, Sparkles, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -71,7 +71,10 @@ export default function WorkbenchPage() {
 }
 
 export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRecord[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Deep link from the embedding atlas: /job/:id/workbench?c=<recordId> preselects that concept.
+  const queryString = useSearch();
+  const linkedId = new URLSearchParams(queryString).get("c");
+  const [selectedId, setSelectedId] = useState<string | null>(linkedId);
   const [decisions, setDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState("all");
@@ -119,8 +122,8 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
         {/* ── group list ── */}
-        <Card className="lg:sticky lg:top-4 lg:h-[calc(100vh-9rem)]">
-          <CardHeader className="space-y-2">
+        <Card className="flex flex-col overflow-hidden lg:sticky lg:top-4 lg:h-[calc(100vh-9rem)]">
+          <CardHeader className="shrink-0 space-y-2">
             <CardTitle className="text-base">Concepts ({groups.length})</CardTitle>
             <Input placeholder="Search concepts…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-8" />
             <Select value={filter} onValueChange={setFilter}>
@@ -146,7 +149,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium text-neutral-800">{g.concept || g.id}</span>
+                  <span className="truncate text-sm font-medium text-neutral-700">{g.concept || g.id}</span>
                   {decisions[g.id] && <Check className="h-3.5 w-3.5 shrink-0 text-success" />}
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
@@ -233,7 +236,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                           <TableCell className="tabular-nums text-neutral-500">{c.rank}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <span className="font-medium text-neutral-800">{c.cdeId}</span>
+                              <span className="font-medium text-neutral-700">{c.cdeId}</span>
                               {c.isChosen && <Star className="h-3.5 w-3.5 fill-success text-success" />}
                               {c.llmSuggested && <Sparkles className="h-3.5 w-3.5 text-ph-navy" />}
                             </div>

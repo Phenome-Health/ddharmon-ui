@@ -3,6 +3,7 @@
 // retry + terminal-status close), pointed at /api/harmonize/stream and typed to JobResult.
 import { useEffect, useRef, useState } from "react";
 import type { JobResult } from "@/types";
+import { IS_STATIC, getResult } from "@/lib/api";
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 1500;
@@ -22,6 +23,20 @@ export function useHarmonizeStream(jobId: string, enabled = true) {
   useEffect(() => {
     mountedRef.current = true;
     if (!enabled || !jobId) return;
+
+    // Static preview: no SSE — load the bundled sample result once.
+    if (IS_STATIC) {
+      getResult(jobId)
+        .then((data) => {
+          if (!mountedRef.current) return;
+          setJobState(data);
+          setDone(true);
+        })
+        .catch(() => mountedRef.current && setError({ message: "Sample run not found" }));
+      return () => {
+        mountedRef.current = false;
+      };
+    }
 
     function connect(retryCount: number) {
       if (!mountedRef.current) return;

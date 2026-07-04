@@ -1,0 +1,7 @@
+recordId,concept,verdict,cdeId,chosenCos,humanDecision,humanNote
+g1,Biological sex,adopt,Sex Assigned At Birth,0.930,,
+g2,Age at enrollment,adopt,Age At Enrollment (years),0.890,,
+g3,Diastolic blood pressure,refine,Diastolic Blood Pressure (mmHg),0.820,,
+g4,Diabetes diagnosis,refine,Diabetes Mellitus Indicator,0.770,,
+g5,Anxiety symptom severity (GAD-7),novel,,,,
+g6,Height (cm),adopt,Standing Height (cm),0.880,,

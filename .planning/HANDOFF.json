@@ -1,41 +1,45 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-01T21:35:42Z",
-  "phase": "ddharmon 1.0.0 GUI buildout",
-  "phase_name": "ddharmon-ui v2 rewire + biomapper design system + visualization suite",
-  "phase_dir": "ddharmon-ui (repo); companion memory: project_ddharmon_ui_v2_buildout",
+  "timestamp": "2026-07-04T19:52:52Z",
+  "phase": "ddharmon-ui v1.3",
+  "phase_name": "Interactive run visualizations (3 phases) + dashboard header cleanup",
+  "phase_dir": "ddharmon-ui repo; companion memory project_ddharmon_ui_v2_buildout",
   "plan": 1,
-  "task": 7,
-  "total_tasks": 7,
-  "status": "paused",
+  "task": "shipped",
+  "total_tasks": "shipped",
+  "status": "shipped to prod — paused, one open offer",
+  "deploy_url": "https://ddharmon.netlify.app/",
+  "branch": "feature/ui-guide-tooltips-notebook-demo (off main; tip 4f81d6c; committed, NOT pushed)",
   "completed_tasks": [
-    {"id": 1, "name": "P0 backend: v2 engine behind a stable UI contract (engine/contract.py + engine/adapter.py; adapter drives harmonize_leanb via injected sync/batch/preview callbacks, never re-implements the flow); runner/app/jobs on the contract; 9 tests incl. real e2e", "status": "done", "commit": "4fff6e4"},
-    {"id": 2, "name": "P1 frontend: types.ts/api.ts mirror the contract; Configure (runMode batch/sync/preview, cdeSet, specs toggle) / Run (data-driven progress) / Review (records by verdict, expandable detail, approve-refine-reject, exports)", "status": "done", "commit": "e1bf4d8"},
-    {"id": 3, "name": "P2 styling: biomapper-ui shared PH design system — sidebar+topbar AppShell chrome (was top-bar-only), bordered cards, tabular-nums stats, dashboard breadcrumb+mode badge; screenshot-verified", "status": "done", "commit": "e1bf4d8"},
-    {"id": 4, "name": "Viz: match-journey Sankey (cohort->verdict->destination); analytics overview (coverage table + size/verdict bars + cosine histogram + cohort-overlap heatmap); enriched review row (Monarch provenance idiom)", "status": "done", "commit": "e1bf4d8"},
-    {"id": 5, "name": "Viz: candidate-review workbench (/job/:id/workbench — CDEMapper Fig4 idiom) + CORE additive change (CandidateCDE + candidates on LeanBRecord, persisted in assemble_leanb) + contract/UIRecord candidates; +regression test", "status": "done", "commit": "e1bf4d8 (ui) + core f5802a9"},
-    {"id": 6, "name": "Viz: cohort-colored embedding atlas (adapter computes PCA(2) of field embeddings -> UIResult.atlas; recharts ScatterChart). No core change.", "status": "done", "commit": "e1bf4d8"}
+    {"id": 1, "name": "Resumed via /gsd-resume-work; reviewed all 8 live routes (Playwright vs prod)", "status": "done"},
+    {"id": 2, "name": "Applied user copy edits to landing + guide; fixed a JSX build break (raw '-->' -> '→'); deployed", "status": "done", "commit": "621362d"},
+    {"id": 3, "name": "Hardened scripts/deploy-preview.sh: typecheck gate + --draft (non-prod URL) + --skip-typecheck + --help", "status": "done", "commit": "feb3182"},
+    {"id": 4, "name": "Fixed workbench concept-list overflow (card was a block div; made it flex flex-col overflow-hidden + shrink-0 header)", "status": "done", "commit": "ab4d416"},
+    {"id": 5, "name": "VIZ PHASE 1 — interactive charts: Sankey hover-highlight + branded tooltip; bar/histogram branded tooltip + legend; heatmap row/col cross-highlight + readout; new lib/chart.ts shared palette; token-backed grid/axis (dark-mode). Also FIXED a latent Sankey crash (space-joined map keys vs space-containing dest names -> undefined link target). ", "status": "done", "commit": "51279ea"},
+    {"id": 6, "name": "VIZ PHASE 2 — brushing & linking: one shared Focus (verdict|cohort) in lib/chart; click any chart element (Sankey node/flow, bar/legend, coverage row, heatmap label, atlas series) -> filters review queue + emphasizes across all charts; focus bar w/ count + Clear; queue Select synced. Replaced the old verdict-only queue filter.", "status": "done", "commit": "2fffc3e"},
+    {"id": 7, "name": "VIZ PHASE 3 — embedding atlas instrument: color-by toggle (cohort<->verdict), drag-to-zoom + Reset, click a point -> workbench deep-link (?c=<recordId>, workbench preselects). Points map to concepts via cohort:variable == member; single Scatter + per-point <Cell>. Rewrote seed _atlas to member-key points + regenerated result-sample-*.json so the preview actually demonstrates it.", "status": "done", "commit": "4bb533e"},
+    {"id": 8, "name": "Dashboard header cleanup + export tooltips: clean single-line title (badge moved to a meta line: mode · desc · cohorts), Review-workbench CTA top-right, 5 downloads moved into a labeled 'Export' strip filling the dead band, each with a radix info tooltip describing its contents.", "status": "done", "commit": "4f81d6c"}
   ],
   "remaining_tasks": [
-    {"id": 7, "name": "P3 deploy: ddharmon-ui functional -> DEPLOYED (Lightsail + Squarespace subdomain, systemd+nginx+certbot; deploy/README.md runbook), repin ddharmon dep from private git to public PyPI, flip repo public. The COUPLED 1.0.0 gate — ddharmon 1.0.0 tag waits on this.", "status": "not_started"}
+    {"id": "split-aware-explainer", "name": "OPEN OFFER (user asked what 'split-aware' means): surface a short definition in the UI — info tooltip on the 'Split-aware CDE harmonization run' dashboard subtitle and/or a sentence in the Guide. Appears in AppShell.tsx:50 (topbar tagline) + dashboard.tsx:117 (subtitle). Explanation given verbally; NOT yet built — awaiting user go-ahead.", "status": "not_started"},
+    {"id": "push-and-PR", "name": "Push feature/ui-guide-tooltips-notebook-demo + open a ddharmon-ui PR (decision on file: NO core Phenome-Health/ddharmon PR). Standing task 8, gated on team feedback.", "status": "not_started"},
+    {"id": "topbar-icon", "name": "OPTIONAL: swap topbar circos PhenomeChip -> official PH icon (user offered previously, deferred).", "status": "not_started"},
+    {"id": "works-cited-tweaks", "name": "OPTIONAL: Yang 2024 -> TACL DOI; decide Mimno 2011 / Newman 2010 (no DOI).", "status": "not_started"},
+    {"id": "demo-precompute", "name": "(v3) real demo precompute: scripts/build_demos.py --mode sync + ANTHROPIC_API_KEY.", "status": "not_started"}
   ],
-  "blockers": [
-    {"description": "P3 deploy needs Lightsail + Squarespace access (infra) — user-gated long pole", "type": "human_action", "workaround": "none; deploy/README.md has the runbook"},
-    {"description": "Repin requires ddharmon 0.7.0+ published to PyPI first (currently held); repo pins private git today", "type": "external", "workaround": "keep private git pin until PyPI publish"}
-  ],
+  "blockers": [],
   "human_actions_pending": [
-    {"action": "Decide whether to push the two branches / open PRs (nothing pushed yet)", "context": "core f5802a9 on feature/harmonization-v2-split-aware; ddharmon-ui feature/v2-contract-and-viz (4fff6e4, e1bf4d8)", "blocking": false},
-    {"action": "Provision + run P3 deploy; publish ddharmon to PyPI; flip ddharmon-ui public", "context": "coupled 1.0.0 gate", "blocking": true}
+    {"action": "Answer the open offer: want the 'split-aware' explainer wired into the UI (subtitle tooltip + Guide line)?", "context": "user asked the meaning; I explained verbally and offered to surface it", "blocking": false},
+    {"action": "Gather team feedback on https://ddharmon.netlify.app/ ; then decide whether to push the branch + open the ddharmon-ui PR", "context": "the whole v1.1-v1.3 arc is live for the team but the branch is local-only", "blocking": false}
   ],
   "decisions": [
-    {"decision": "GUI couples to ddharmon ONLY through backend/engine (adapter+contract); adapter injects per-stage callbacks into harmonize_leanb rather than re-implementing stages", "rationale": "user requirement: pipeline churn must not force GUI changes; blast radius confined to _record_to_ui + one callback line", "phase": "P0"},
-    {"decision": "Run mode = Batch API default + sync option + preview(no-LLM)", "rationale": "deployed tool must be cost-bounded; v2 needs LLM to produce any records", "phase": "P0"},
-    {"decision": "v2 requires a CDE catalog (cdeSet endorsed|full; no 'none')", "rationale": "assignment to the given backbone is the v2 thesis; _find_cde_dict raises without it", "phase": "P0"},
-    {"decision": "Shared PH design system mirrored from biomapper-ui dev; tokens were already byte-identical so P2 = matching component/layout patterns", "rationale": "anticipates a unified PH toolkit", "phase": "P2"},
-    {"decision": "Candidate list surfaced via an ADDITIVE CandidateCDE field on LeanBRecord (backward-compatible)", "rationale": "workbench needs ranked candidates; v1 discarded them; keep core churn minimal", "phase": "workbench"},
-    {"decision": "Embedding atlas computed in the adapter (PCA of already-built embeddings), NOT the core", "rationale": "no core change needed; adapter already holds the embedded dicts", "phase": "atlas"}
+    {"decision": "Deploy each viz phase to prod immediately (phases 1/2/3 + header) rather than batching", "rationale": "team preview stays current; deploy-preview.sh now typecheck-gates so a bad build aborts before upload"},
+    {"decision": "One shared Focus model (verdict|cohort) lives in lib/chart.ts; dashboard owns the state and passes focus/onFocus to every chart. Replaced the queue's verdict-only Select-filter.", "rationale": "single source of truth for brushing-and-linking; net simplification"},
+    {"decision": "Atlas point click opens the workbench via ?c=<recordId> deep link (not inline queue expand)", "rationale": "workbench is the richest destination (candidates + transforms) and sidesteps the filtered-queue-hides-target problem"},
+    {"decision": "Rewrote seed._atlas to place one point per real member (member-keyed) + regenerated the two static fixtures", "rationale": "synthetic v0..vN points didn't map to any concept, so verdict-color + click-through couldn't demonstrate in the preview"},
+    {"decision": "Verdict focus leaves the atlas dimming per-point (via <Cell>); cross-axis focus still dims correctly", "rationale": "single Scatter + Cell gives per-point color/opacity that recharts series-level fillOpacity can't"}
   ],
   "uncommitted_files": [],
-  "next_action": "Either (a) push the two branches and open PRs, or (b) plan P3 deploy: read ddharmon-ui/deploy/README.md, then Lightsail provision + repin. All code through the viz suite is committed + green.",
-  "context_notes": "Large multi-session GUI buildout is COMPLETE through P2 + all 5 requested visualizations, committed across both repos (core candidates feature + ddharmon-ui backend/frontend). Everything green: core 23 leanb tests, ddharmon-ui 9 backend tests, frontend typecheck/build, ruff/black/pyright. The ONLY remaining 1.0 item is the user-gated P3 deploy. NOTE: the CORE repo's .planning/.continue-here.md tracks a DIFFERENT active thread (v1.0.0/v3 pipeline+transform-spec work) — left untouched. This GUI handoff lives in the ddharmon-ui repo on purpose."
+  "next_action": "Nothing forced. On resume: (1) if the user wants it, wire the 'split-aware' explainer (radix Tooltip on the dashboard subtitle 'Split-aware CDE harmonization run' + a Guide sentence) — same pattern as the export tooltips; (2) otherwise, push the branch + open the ddharmon-ui PR after team feedback. Redeploy any change with ./scripts/deploy-preview.sh (typecheck-gated; add --draft for a non-prod preview).",
+  "context_notes": "Session arc: resume -> live review -> copy edits + deploy-script hardening + workbench bugfix -> user learned the self-serve '!'-prefix deploy -> then a 3-phase run-visualization buildout (interactive charts -> brushing&linking -> atlas instrument) each committed+deployed -> header cleanup + export tooltips. The run dashboard went from static display to a linked interactive analysis surface. Last exchange: explained 'split-aware' (the LLM split step partitions a coarse cluster into distinct-concept groups before CDE assignment; contrast dropped geometric recursion) and offered to surface it in the UI. All 8 commits on feature/ui-guide-tooltips-notebook-demo (tip 4f81d6c), all live on prod, branch never pushed. No servers running."
 }

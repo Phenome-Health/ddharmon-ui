@@ -12,6 +12,8 @@ frontend/node_modules/
 frontend/dist/
 
 # --- runtime / local ---
+# Netlify CLI link state (site id for `netlify deploy`); machine-local.
+.netlify/
 # ddharmon's SQLite embedding cache (created in cwd at runtime).
 .ddharmon/
 # Per-job scratch (uploads + Anthropic Batch artifacts), one subdir per jobId.
@@ -28,3 +30,4 @@ data/cde/
 .DS_Store
 .idea/
 .vscode/
+.venv
