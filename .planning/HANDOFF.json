@@ -1,45 +1,43 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-04T19:52:52Z",
-  "phase": "ddharmon-ui v1.3",
-  "phase_name": "Interactive run visualizations (3 phases) + dashboard header cleanup",
+  "timestamp": "2026-07-04T22:39:05Z",
+  "phase": "ddharmon-ui v1.4",
+  "phase_name": "BYOK API-key field (frontend) + fluid/above-the-fold landing — MERGED to main",
   "phase_dir": "ddharmon-ui repo; companion memory project_ddharmon_ui_v2_buildout",
   "plan": 1,
-  "task": "shipped",
-  "total_tasks": "shipped",
-  "status": "shipped to prod — paused, one open offer",
+  "task": "shipped+merged",
+  "total_tasks": "shipped+merged",
+  "status": "shipped to prod + MERGED via PR #2 — paused, nothing blocked",
   "deploy_url": "https://ddharmon.netlify.app/",
-  "branch": "feature/ui-guide-tooltips-notebook-demo (off main; tip 4f81d6c; committed, NOT pushed)",
+  "branch": "main @ fe40703 (synced to origin/main). The v1.1–v1.4 arc branch feature/ui-guide-tooltips-notebook-demo is MERGED (PR #2) and now stale.",
   "completed_tasks": [
-    {"id": 1, "name": "Resumed via /gsd-resume-work; reviewed all 8 live routes (Playwright vs prod)", "status": "done"},
-    {"id": 2, "name": "Applied user copy edits to landing + guide; fixed a JSX build break (raw '-->' -> '→'); deployed", "status": "done", "commit": "621362d"},
-    {"id": 3, "name": "Hardened scripts/deploy-preview.sh: typecheck gate + --draft (non-prod URL) + --skip-typecheck + --help", "status": "done", "commit": "feb3182"},
-    {"id": 4, "name": "Fixed workbench concept-list overflow (card was a block div; made it flex flex-col overflow-hidden + shrink-0 header)", "status": "done", "commit": "ab4d416"},
-    {"id": 5, "name": "VIZ PHASE 1 — interactive charts: Sankey hover-highlight + branded tooltip; bar/histogram branded tooltip + legend; heatmap row/col cross-highlight + readout; new lib/chart.ts shared palette; token-backed grid/axis (dark-mode). Also FIXED a latent Sankey crash (space-joined map keys vs space-containing dest names -> undefined link target). ", "status": "done", "commit": "51279ea"},
-    {"id": 6, "name": "VIZ PHASE 2 — brushing & linking: one shared Focus (verdict|cohort) in lib/chart; click any chart element (Sankey node/flow, bar/legend, coverage row, heatmap label, atlas series) -> filters review queue + emphasizes across all charts; focus bar w/ count + Clear; queue Select synced. Replaced the old verdict-only queue filter.", "status": "done", "commit": "2fffc3e"},
-    {"id": 7, "name": "VIZ PHASE 3 — embedding atlas instrument: color-by toggle (cohort<->verdict), drag-to-zoom + Reset, click a point -> workbench deep-link (?c=<recordId>, workbench preselects). Points map to concepts via cohort:variable == member; single Scatter + per-point <Cell>. Rewrote seed _atlas to member-key points + regenerated result-sample-*.json so the preview actually demonstrates it.", "status": "done", "commit": "4bb533e"},
-    {"id": 8, "name": "Dashboard header cleanup + export tooltips: clean single-line title (badge moved to a meta line: mode · desc · cohorts), Review-workbench CTA top-right, 5 downloads moved into a labeled 'Export' strip filling the dead band, each with a radix info tooltip describing its contents.", "status": "done", "commit": "4f81d6c"}
+    {"id": 1, "name": "Resumed via /gsd-resume-work ddharmon ui; reviewed UI-thread state (separate repo from the pipeline .planning)", "status": "done"},
+    {"id": 2, "name": "BYOK API-key field (FRONTEND only): masked input + Eye/EyeOff reveal + sk-ant- validation on home.tsx, shown only when runMode != preview; sent as transport-only x-anthropic-key header via startHarmonize(files,config,apiKey?) — NEVER in the config JSON (that becomes the persisted run_config); in-memory React state only. Dropped the now-misleading 'needs API key' from the Sync dropdown label + updated run-mode help.", "status": "done", "commit": "74bbb46"},
+    {"id": 3, "name": "Landing: fit hero + 'How a run works' above the fold on a 14\" MBP (~832px) — was overflowing ~309px. Shrank hero padding, viz footprint (max-w 540→390), widened text col, trimmed spacing/card padding. Kept text-6xl headline. Also global AppShell content padding py-8→py-6.", "status": "done", "commit": "661ce88"},
+    {"id": 4, "name": "Landing: fluid clamp() vh-based spacing so the hero fills taller monitors instead of leaving a blank band (blank-below ~250px→~58px at 2000x1047); floors = the compact 14\" values, capped maxima. Chose fluid over fragile 100vh force-fit (user-confirmed).", "status": "done", "commit": "cbc93d4"},
+    {"id": 5, "name": "Pushed branch, opened PR #2, MERGED to main (merge commit fe40703); synced local main. Pre-merge checks: frontend typecheck+build green, 16 backend tests pass.", "status": "done", "commit": "fe40703"}
   ],
   "remaining_tasks": [
-    {"id": "split-aware-explainer", "name": "OPEN OFFER (user asked what 'split-aware' means): surface a short definition in the UI — info tooltip on the 'Split-aware CDE harmonization run' dashboard subtitle and/or a sentence in the Guide. Appears in AppShell.tsx:50 (topbar tagline) + dashboard.tsx:117 (subtitle). Explanation given verbally; NOT yet built — awaiting user go-ahead.", "status": "not_started"},
-    {"id": "push-and-PR", "name": "Push feature/ui-guide-tooltips-notebook-demo + open a ddharmon-ui PR (decision on file: NO core Phenome-Health/ddharmon PR). Standing task 8, gated on team feedback.", "status": "not_started"},
-    {"id": "topbar-icon", "name": "OPTIONAL: swap topbar circos PhenomeChip -> official PH icon (user offered previously, deferred).", "status": "not_started"},
-    {"id": "works-cited-tweaks", "name": "OPTIONAL: Yang 2024 -> TACL DOI; decide Mimno 2011 / Newman 2010 (no DOI).", "status": "not_started"},
-    {"id": "demo-precompute", "name": "(v3) real demo precompute: scripts/build_demos.py --mode sync + ANTHROPIC_API_KEY.", "status": "not_started"}
+    {"id": "byok-backend", "name": "THE real BYOK follow-up (backend, non-trivial): read the x-anthropic-key header in backend/app.py::start_batch → thread it through run_harmonization/adapter → into the 4 anthropic.Anthropic() constructors as api_key=... (src/ddharmon/llm/batch.py x3, llm/anthropic_client.py:64). Hold in memory for the job only; never os.environ (races/leaks across concurrent jobs), never write to job files/logs. Gated on the P3 real-backend deploy — the live site is static/backend-less so the header is sent-but-ignored today.", "status": "not_started"},
+    {"id": "branch-cleanup", "name": "OPTIONAL: delete stale local+remote branches feature/ui-guide-tooltips-notebook-demo (merged) and feature/landing-hero (old, merged).", "status": "not_started"},
+    {"id": "dependabot", "name": "OPTIONAL: 3 pre-existing Dependabot alerts on main (1 high/1 moderate/1 low) — NOT from this arc (adds no new deps). Address separately.", "status": "not_started"},
+    {"id": "p3-deploy", "name": "(user-gated, coupled 1.0 gate) P3: stand up the FastAPI backend on Lightsail; this is where BYOK backend + real runs become live.", "status": "not_started"},
+    {"id": "demo-precompute", "name": "(v3) real demo precompute: scripts/build_demos.py --mode sync + ANTHROPIC_API_KEY (author-side, one-time). Held until the v3 pipeline is final.", "status": "not_started"},
+    {"id": "optional-polish", "name": "OPTIONAL backlog: topbar circos→official PH icon; Works Cited tweaks (Yang→TACL DOI, Mimno/Newman no-DOI).", "status": "not_started"}
   ],
   "blockers": [],
   "human_actions_pending": [
-    {"action": "Answer the open offer: want the 'split-aware' explainer wired into the UI (subtitle tooltip + Guide line)?", "context": "user asked the meaning; I explained verbally and offered to surface it", "blocking": false},
-    {"action": "Gather team feedback on https://ddharmon.netlify.app/ ; then decide whether to push the branch + open the ddharmon-ui PR", "context": "the whole v1.1-v1.3 arc is live for the team but the branch is local-only", "blocking": false}
+    {"action": "Decide whether to delete the two stale merged branches", "context": "left them rather than auto-deleting the working branch", "blocking": false},
+    {"action": "Gather team feedback on the live v1.1–v1.4 arc at https://ddharmon.netlify.app/", "context": "whole arc is now on main + prod", "blocking": false}
   ],
   "decisions": [
-    {"decision": "Deploy each viz phase to prod immediately (phases 1/2/3 + header) rather than batching", "rationale": "team preview stays current; deploy-preview.sh now typecheck-gates so a bad build aborts before upload"},
-    {"decision": "One shared Focus model (verdict|cohort) lives in lib/chart.ts; dashboard owns the state and passes focus/onFocus to every chart. Replaced the queue's verdict-only Select-filter.", "rationale": "single source of truth for brushing-and-linking; net simplification"},
-    {"decision": "Atlas point click opens the workbench via ?c=<recordId> deep link (not inline queue expand)", "rationale": "workbench is the richest destination (candidates + transforms) and sidesteps the filtered-queue-hides-target problem"},
-    {"decision": "Rewrote seed._atlas to place one point per real member (member-keyed) + regenerated the two static fixtures", "rationale": "synthetic v0..vN points didn't map to any concept, so verdict-color + click-through couldn't demonstrate in the preview"},
-    {"decision": "Verdict focus leaves the atlas dimming per-point (via <Cell>); cross-axis focus still dims correctly", "rationale": "single Scatter + Cell gives per-point color/opacity that recharts series-level fillOpacity can't"}
+    {"decision": "Real runs use BYOK (user enters their own key), not a shared operator key or hybrid", "rationale": "user choice via AskUserQuestion; each user pays for their own runs"},
+    {"decision": "Build the BYOK FRONTEND now even though the backend isn't ready", "rationale": "user scoped it; the live deploy is static anyway, and the backend is a non-trivial core change (4 client constructors)"},
+    {"decision": "Key rides as a transport-only x-anthropic-key header, never in the config JSON; held in component state only (no local/session storage)", "rationale": "the config body is persisted as the job's run_config — a key there would leak to disk/logs"},
+    {"decision": "Landing uses fluid clamp() vh-based spacing, NOT a 100vh force-fit / flex-1 fill", "rationale": "force-fit is fragile across zoom + browser chrome and needs magic pixel offsets; clamp degrades gracefully and is standard practice (user-confirmed)"},
+    {"decision": "Merge PR #2 with a merge commit; no companion core Phenome-Health/ddharmon PR", "rationale": "consistent with how PR #1 merged; this arc is UI-only"}
   ],
   "uncommitted_files": [],
-  "next_action": "Nothing forced. On resume: (1) if the user wants it, wire the 'split-aware' explainer (radix Tooltip on the dashboard subtitle 'Split-aware CDE harmonization run' + a Guide sentence) — same pattern as the export tooltips; (2) otherwise, push the branch + open the ddharmon-ui PR after team feedback. Redeploy any change with ./scripts/deploy-preview.sh (typecheck-gated; add --draft for a non-prod preview).",
-  "context_notes": "Session arc: resume -> live review -> copy edits + deploy-script hardening + workbench bugfix -> user learned the self-serve '!'-prefix deploy -> then a 3-phase run-visualization buildout (interactive charts -> brushing&linking -> atlas instrument) each committed+deployed -> header cleanup + export tooltips. The run dashboard went from static display to a linked interactive analysis surface. Last exchange: explained 'split-aware' (the LLM split step partitions a coarse cluster into distinct-concept groups before CDE assignment; contrast dropped geometric recursion) and offered to surface it in the UI. All 8 commits on feature/ui-guide-tooltips-notebook-demo (tip 4f81d6c), all live on prod, branch never pushed. No servers running."
+  "next_action": "Nothing forced — the arc is merged and live. When work resumes, the substantive item is the BYOK BACKEND (thread x-anthropic-key into the 4 anthropic.Anthropic() constructors), but it's gated on the P3 real-backend deploy. Cheap tidy-ups available now: delete the 2 stale merged branches; triage the 3 Dependabot alerts. Redeploy any change with ./scripts/deploy-preview.sh (typecheck-gated; --draft for a non-prod URL).",
+  "context_notes": "Session arc: /gsd-resume-work ddharmon ui → clarified BYOK vs shared-key (chose BYOK) → built the frontend key field → user asked 'where do we ask for the key' (answer: nowhere yet; env-only) then 'we need to ask users for their key for real runs' → confirmed the gap and built the frontend half → fit the landing above the fold on the 14\" → user asked 'is dynamic scaling good practice?' (answered: fluid=yes, force-fit=no) → implemented fluid clamp → pushed + PR #2 + merged to main. All verified against live prod via Playwright at laptop (1512x832) and monitor (2000x1047). No servers running. The UI-thread state lives in THIS repo's .planning; the pipeline thread (M2/M4/M5/M7/M10 → held-out full-5) is a SEPARATE thread in ~/ai-coding/ph-arpa-data-harmonization/.planning."
 }
