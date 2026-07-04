@@ -111,17 +111,22 @@ def _rec(
     }
 
 
-def _atlas(cohorts: list[str], per: int = 14) -> list[dict[str, Any]]:
-    """Deterministic 2D scatter per cohort (no RNG — stable across restarts)."""
+def _atlas(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministic 2D scatter, one point per field (member), keyed so each point maps back to its concept
+    (cohort:variable == the record member). Members of one concept cluster together — a realistic embedding
+    atlas where clicking a point opens its concept and color-by-verdict shows verdict regions. No RNG."""
     pts: list[dict[str, Any]] = []
-    for ci, cohort in enumerate(cohorts):
-        cx, cy = math.cos(ci * 2.1) * 3, math.sin(ci * 2.1) * 3
-        for i in range(per):
-            a = i * 0.7 + ci
+    for ri, rec in enumerate(records):
+        theta = ri * 2.39996  # golden angle → even spread
+        radius = 0.9 * math.sqrt(ri + 1)
+        cx, cy = math.cos(theta) * radius, math.sin(theta) * radius
+        for mi, member in enumerate(rec.get("members", [])):
+            cohort, _, variable = member.partition(":")
+            a = mi * 2.1
             pts.append({
-                "cohort": cohort, "variable": f"{cohort}:v{i}",
-                "x": round(cx + math.cos(a) * (1 + (i % 5) * 0.25), 3),
-                "y": round(cy + math.sin(a * 1.3) * (1 + (i % 4) * 0.3), 3),
+                "cohort": cohort, "variable": variable,
+                "x": round(cx + math.cos(a) * 0.45, 3),
+                "y": round(cy + math.sin(a) * 0.45, 3),
             })  # fmt: skip
     return pts
 
@@ -154,7 +159,7 @@ def _result(records: list[dict[str, Any]], cohorts: list[str], mode: str) -> dic
             "groupAssign": len(records),
             "specgen": sum(len(r["transforms"]) for r in records),
         },
-        "atlas": _atlas(cohorts),
+        "atlas": _atlas(records),
     }
 
 

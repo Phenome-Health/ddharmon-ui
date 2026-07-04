@@ -4,7 +4,7 @@
 // (contract `candidates`) — read-only alternatives with the chosen one flagged — since our backend records
 // one decision per group rather than a free re-pick. Deferred (future): ⌘K palette, batch mode, resizable.
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
 import { ArrowLeft, Ban, Check, ExternalLink, Loader2, Pencil, Sparkles, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -71,7 +71,10 @@ export default function WorkbenchPage() {
 }
 
 export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRecord[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Deep link from the embedding atlas: /job/:id/workbench?c=<recordId> preselects that concept.
+  const queryString = useSearch();
+  const linkedId = new URLSearchParams(queryString).get("c");
+  const [selectedId, setSelectedId] = useState<string | null>(linkedId);
   const [decisions, setDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState("all");

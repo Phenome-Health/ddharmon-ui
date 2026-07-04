@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { Ban, Check, ChevronDown, ChevronRight, Download, FileCode, Loader2, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,7 @@ function transformSummary(t: UITransform): string {
 
 export default function DashboardPage() {
   const { jobId = "" } = useParams();
+  const [, navigate] = useLocation();
   const { jobState, error } = useHarmonizeStream(jobId);
   const [decisions, setDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -224,8 +225,14 @@ export default function DashboardPage() {
                 <CardTitle className="text-base">Embedding atlas</CardTitle>
               </CardHeader>
               <CardContent>
-                <EmbeddingAtlas points={result.atlas} focus={focus} onFocus={toggleFocus} />
-                <p className="mt-1 text-xs text-neutral-400">PCA of field embeddings · colored by cohort</p>
+                <EmbeddingAtlas
+                  points={result.atlas}
+                  records={records}
+                  focus={focus}
+                  onFocus={toggleFocus}
+                  onOpenConcept={(id) => navigate(`/job/${jobId}/workbench?c=${encodeURIComponent(id)}`)}
+                />
+                <p className="mt-1 text-xs text-neutral-400">PCA of field embeddings · colored by cohort or verdict</p>
               </CardContent>
             </Card>
           )}
