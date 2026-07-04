@@ -13,9 +13,10 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
+import { CHART_AXIS, CHART_GRID, CHART_TOOLTIP_CLASS, COHORT_PALETTE } from "@/lib/chart";
 import type { AtlasPoint } from "@/types";
 
-const PALETTE = ["#113682", "#3AC2CB", "#E21C52", "#005B33", "#B45309", "#7C3AED", "#0EA5E9", "#8892A3"];
+const PALETTE = COHORT_PALETTE;
 
 interface TooltipPayload {
   payload?: AtlasPoint;
@@ -25,7 +26,7 @@ function AtlasTooltip({ active, payload }: { active?: boolean; payload?: Tooltip
   const p = payload[0].payload;
   if (!p) return null;
   return (
-    <div className="rounded border border-neutral-200 bg-neutral-0 px-2 py-1 text-xs shadow-sm">
+    <div className={CHART_TOOLTIP_CLASS}>
       <div className="font-mono text-neutral-700">{p.variable}</div>
       <div className="text-neutral-500">{p.cohort}</div>
     </div>
@@ -49,9 +50,9 @@ export function EmbeddingAtlas({ points }: { points: AtlasPoint[] }) {
   return (
     <ResponsiveContainer width="100%" height={380}>
       <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#E3E7EE" />
-        <XAxis type="number" dataKey="x" name="PC1" tick={false} axisLine={false} label={{ value: "PC1", position: "insideBottom", fontSize: 11, fill: "#8892A3" }} />
-        <YAxis type="number" dataKey="y" name="PC2" tick={false} axisLine={false} width={20} label={{ value: "PC2", angle: -90, position: "insideLeft", fontSize: 11, fill: "#8892A3" }} />
+        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+        <XAxis type="number" dataKey="x" name="PC1" tick={false} axisLine={false} label={{ value: "PC1", position: "insideBottom", fontSize: 11, fill: CHART_AXIS }} />
+        <YAxis type="number" dataKey="y" name="PC2" tick={false} axisLine={false} width={20} label={{ value: "PC2", angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_AXIS }} />
         <ZAxis range={[16, 16]} />
         <RTooltip content={<AtlasTooltip />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
