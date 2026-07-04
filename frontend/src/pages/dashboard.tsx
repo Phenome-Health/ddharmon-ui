@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { MatchSankey } from "@/components/match-sankey";
 import { Analytics } from "@/components/analytics";
@@ -72,6 +73,7 @@ export default function DashboardPage() {
   const result = jobState?.result ?? null;
   const records = useMemo<UIRecord[]>(() => result?.records ?? [], [result]);
   const filtered = useMemo(() => records.filter((r) => recordMatchesFocus(r, focus)), [records, focus]);
+  const headerCohorts = useMemo(() => [...new Set(records.flatMap((r) => r.cohorts))].sort(), [records]);
 
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
     setDecisions((p) => ({ ...p, [r.id]: decision }));
@@ -95,55 +97,72 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <nav className="mb-1 text-xs text-neutral-500">
-            <Link href="/jobs" className="hover:text-ph-navy hover:underline">
-              Runs
-            </Link>
-            <span className="mx-1 text-neutral-300">/</span>
-            <span className="font-mono">{jobId.slice(0, 8)}</span>
-          </nav>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
-            {jobState.displayName}
-            {result && (
-              <Badge variant="neutral" className="font-normal">
-                {result.mode}
-              </Badge>
-            )}
-          </h1>
-          <p className="text-sm text-neutral-500">Split-aware CDE harmonization run</p>
-        </div>
-        {result && !isPreview && (
-          <div className="flex gap-2">
-            <Button size="sm" asChild>
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <nav className="mb-1 text-xs text-neutral-500">
+              <Link href="/jobs" className="hover:text-ph-navy hover:underline">
+                Runs
+              </Link>
+              <span className="mx-1 text-neutral-300">/</span>
+              <span className="font-mono">{jobId.slice(0, 8)}</span>
+            </nav>
+            <h1 className="text-2xl font-semibold text-ph-ink">{jobState.displayName}</h1>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-neutral-500">
+              {result && (
+                <Badge variant="neutral" className="font-normal">
+                  {result.mode}
+                </Badge>
+              )}
+              <span>Split-aware CDE harmonization run</span>
+              {headerCohorts.length > 0 && (
+                <>
+                  <span className="text-neutral-300">·</span>
+                  <span className="font-mono text-xs text-neutral-400">{headerCohorts.join(" · ")}</span>
+                </>
+              )}
+            </div>
+          </div>
+          {result && !isPreview && (
+            <Button size="sm" asChild className="shrink-0">
               <Link href={`/job/${jobId}/workbench`}>Review workbench</Link>
             </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={exportUrl(jobId, "eitl_tsv")}>
-                <Download className="mr-1.5 h-4 w-4" /> EITL TSV
-              </a>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={exportUrl(jobId, "decisions_csv")}>
-                <Download className="mr-1.5 h-4 w-4" /> Decisions
-              </a>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={exportUrl(jobId, "records_json")}>
-                <Download className="mr-1.5 h-4 w-4" /> Records JSON
-              </a>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={exportUrl(jobId, "notebook_py")}>
-                <FileCode className="mr-1.5 h-4 w-4" /> Notebook · Python
-              </a>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={exportUrl(jobId, "notebook_r")}>
-                <FileCode className="mr-1.5 h-4 w-4" /> Notebook · R
-              </a>
-            </Button>
+          )}
+        </div>
+
+        {result && !isPreview && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+            <span className="mr-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Export</span>
+            <ExportButton
+              href={exportUrl(jobId, "eitl_tsv")}
+              icon={Download}
+              label="EITL TSV"
+              tip="Tab-separated review queue for expert-in-the-loop sign-off — one row per concept with its verdict, confidence, ranked CDE candidates, and transform. Opens in Excel; import into an EITL campaign."
+            />
+            <ExportButton
+              href={exportUrl(jobId, "decisions_csv")}
+              icon={Download}
+              label="Decisions"
+              tip="CSV log of your approve / refine / reject decisions for this run — concept, verdict, chosen CDE, and reviewer note. Your audit trail."
+            />
+            <ExportButton
+              href={exportUrl(jobId, "records_json")}
+              icon={Download}
+              label="Records JSON"
+              tip="The full machine-readable result — every concept with its members, verdict, ranked CDE candidates, cosine scores, and transform specs. The source of truth for programmatic use."
+            />
+            <ExportButton
+              href={exportUrl(jobId, "notebook_py")}
+              icon={FileCode}
+              label="Notebook · Python"
+              tip="A ready-to-run Python notebook that applies the harmonization transforms (value recodes, unit and arithmetic conversions) to your data in your own environment."
+            />
+            <ExportButton
+              href={exportUrl(jobId, "notebook_r")}
+              icon={FileCode}
+              label="Notebook · R"
+              tip="A ready-to-run R notebook that applies the harmonization transforms to your data in your own environment."
+            />
           </div>
         )}
       </div>
@@ -459,6 +478,31 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
         <div className="mt-1 text-2xl font-semibold tabular-nums text-ph-ink">{value}</div>
       </CardContent>
     </Card>
+  );
+}
+
+function ExportButton({
+  href,
+  icon: Icon,
+  label,
+  tip,
+}: {
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  tip: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="outline" size="sm" asChild>
+          <a href={href}>
+            <Icon className="mr-1.5 h-4 w-4" /> {label}
+          </a>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs whitespace-normal text-left font-normal leading-relaxed">{tip}</TooltipContent>
+    </Tooltip>
   );
 }
 
