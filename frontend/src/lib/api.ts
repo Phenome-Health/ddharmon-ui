@@ -35,12 +35,22 @@ export async function detectRoles(columns: string[]): Promise<{ columnRoles: Rec
   );
 }
 
-export async function startHarmonize(_files: File[], _config: RunConfig): Promise<{ jobId: string }> {
+export async function startHarmonize(
+  _files: File[],
+  _config: RunConfig,
+  _apiKey?: string,
+): Promise<{ jobId: string }> {
   if (IS_STATIC) throw new Error(STATIC_MSG);
   const fd = new FormData();
   for (const f of _files) fd.append("files", f);
   fd.append("config", JSON.stringify(_config));
-  return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd }));
+  // BYOK: the key rides as a transport-only header, never in the config body (which is persisted as the
+  // job's run_config). The backend is expected to read it per-request and hold it in memory for the job
+  // only — never write it to disk/logs. Not set for preview runs (no LLM). Don't set Content-Type here:
+  // fetch derives the multipart boundary from the FormData body.
+  const headers: Record<string, string> = {};
+  if (_apiKey) headers["x-anthropic-key"] = _apiKey;
+  return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers }));
 }
 
 export async function getResult(jobId: string): Promise<JobResult> {

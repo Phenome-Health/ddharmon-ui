@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Info, Loader2, Upload, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Info, Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -56,7 +56,12 @@ export default function HomePage() {
   const [minClusterSize, setMinClusterSize] = useState(15);
   const [genTransformSpecs, setGenTransformSpecs] = useState(true);
   const [displayName, setDisplayName] = useState("");
+  // BYOK: kept in component memory only — never persisted (no localStorage/sessionStorage), cleared on reload.
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const needsKey = runMode !== "preview"; // batch + sync call the LLM; preview runs none
 
   const onDrop = useCallback(async (accepted: File[]) => {
     const added: DictFile[] = [];
@@ -108,6 +113,17 @@ export default function HomePage() {
         return;
       }
     }
+    const key = apiKey.trim();
+    if (needsKey) {
+      if (!key) {
+        toast.error("Enter your Anthropic API key for batch/sync runs, or switch to Preview (no LLM).");
+        return;
+      }
+      if (!key.startsWith("sk-ant-")) {
+        toast.error("That doesn't look like an Anthropic API key — it should start with “sk-ant-”.");
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       const config = {
@@ -125,6 +141,7 @@ export default function HomePage() {
       const { jobId } = await startHarmonize(
         dicts.map((d) => d.file),
         config,
+        needsKey ? key : undefined,
       );
       navigate(`/job/${jobId}`);
     } catch (e) {
@@ -247,11 +264,50 @@ export default function HomePage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="batch">Batch (async, default)</SelectItem>
-                  <SelectItem value="sync">Sync (inline, needs API key)</SelectItem>
+                  <SelectItem value="sync">Sync (inline)</SelectItem>
                   <SelectItem value="preview">Preview (no LLM — clusters only)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {needsKey && (
+              <div className="grid gap-1.5">
+                <Label className="flex items-center gap-1 text-xs">
+                  Anthropic API key <span className="text-ph-crimson">*</span>
+                  <InfoTip text={OPTION_HELP.apiKey} label="About the API key" />
+                </Label>
+                <div className="relative">
+                  <Input
+                    type={showKey ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-ant-…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Anthropic API key"
+                    className="h-8 pr-8 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKey((s) => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 transition-colors hover:text-ph-navy"
+                    aria-label={showKey ? "Hide API key" : "Show API key"}
+                  >
+                    {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+                <p className="text-[11px] leading-tight text-neutral-400">
+                  Used only for this run, sent over HTTPS — never stored, logged, or saved with the run.{" "}
+                  <a
+                    href="https://console.anthropic.com/settings/keys"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-ph-navy underline hover:text-ph-ink"
+                  >
+                    Get a key
+                  </a>
+                </p>
+              </div>
+            )}
             <div className="grid gap-1.5">
               <Label className="flex items-center gap-1 text-xs">
                 Min cluster size <InfoTip text={OPTION_HELP.minClusterSize} label="About minimum cluster size" />
@@ -412,7 +468,9 @@ const OPTION_HELP: Record<string, string> = {
   cdeSet:
     "Which Common Data Element catalog your fields are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
   runMode:
-    "How the LLM assignment step runs. Batch: asynchronous and cost-bounded via the Anthropic Batch API (default, cheapest per field). Sync: inline results — needs an API key; best for small runs. Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings before spending credits.",
+    "How the LLM assignment step runs. Batch: asynchronous and cost-bounded via the Anthropic Batch API (default, cheapest per field). Sync: inline results, best for small runs. Both call the LLM and need your API key (below). Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings before spending credits.",
+  apiKey:
+    "Your Anthropic API key authorizes this run's LLM calls (concept assignment + transform specs). It's sent over HTTPS for this run only — never written to disk, logs, or the saved run config, and it's cleared when you reload the page. Not needed for Preview mode, which runs no LLM. Get one at console.anthropic.com.",
   minClusterSize:
     "The fewest fields that can form a concept cluster. Smaller values surface more, finer-grained concepts (and more singletons/novels); larger values pool more aggressively into fewer, broader concepts.",
   displayName: "An optional label to recognize this run in the Runs list. Doesn't affect results.",
