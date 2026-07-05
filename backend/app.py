@@ -163,17 +163,22 @@ async def start_batch(
         raise HTTPException(status_code=400, detail="runMode must be batch|sync|preview")
     run_config: dict[str, Any] = {
         "run_mode": run_mode,
-        "min_cluster_size": int(cfg.get("minClusterSize", 15)),
         "gen_transform_specs": bool(cfg.get("genTransformSpecs", True)),
         "cde_cohort": CDE_COHORT,
         "work_dir": str(work_dir),
         "cde_set": cde_set,
     }
-    # Optional advanced knobs — passed through only when set (else harmonize_leanb's own defaults apply).
-    # Adding a new knob here needs no frontend change (the run-options form posts whatever it has).
-    for cfg_key, run_key in (("topK", "top_k"), ("retrievalFloor", "retrieval_floor"), ("modelTag", "model_tag")):
+    # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
+    # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from
+    # an advanced/API caller still wins. Adding a new knob here needs no frontend change.
+    for cfg_key, run_key in (
+        ("minClusterSize", "min_cluster_size"),
+        ("topK", "top_k"),
+        ("retrievalFloor", "retrieval_floor"),
+        ("modelTag", "model_tag"),
+    ):
         if cfg.get(cfg_key) is not None:
-            run_config[run_key] = cfg[cfg_key]
+            run_config[run_key] = int(cfg[cfg_key]) if cfg_key in ("minClusterSize", "topK") else cfg[cfg_key]
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
     store.create(job_id, display, run_config)
     # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted.
@@ -369,9 +374,53 @@ class DemoBody(BaseModel):
     datasets: list[str]
 
 
+# Phases a real run streams, in order — the demo replay paces through these so it looks like a live run.
+_DEMO_PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"]
+
+
+def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
+    """Pace a precomputed demo through the pipeline phases so 'Load demo' feels like a live run.
+
+    Reuses the ordinary JobStore + SSE path: we only advance status/phase/completed over a short window
+    (weighted by the REAL per-phase wall-clock captured at build time), then deliver the finished result.
+    No pipeline, no LLM, no key. ``DDHARMON_DEMO_REPLAY_SECS`` controls total duration (0 → instant, for tests).
+    """
+    import time
+
+    result = snapshot.get("result", snapshot)
+    timings = snapshot.get("phaseTimings", {}) or {}
+    total_target = float(os.environ.get("DDHARMON_DEMO_REPLAY_SECS", "16"))
+    weights = [max(0.05, float(timings.get(p, 1.0))) for p in _DEMO_PHASES]
+    scale = (total_target / sum(weights)) if sum(weights) else 0.0
+    prompts = result.get("prompts", {}) or {}
+    counts = {
+        "generating": prompts.get("ideal", 0),
+        "splitting": prompts.get("split", 0),
+        "assigning": prompts.get("groupAssign", 0),
+        "specs": prompts.get("specgen", 0),
+    }
+    try:
+        for phase, weight in zip(_DEMO_PHASES, weights, strict=True):
+            total = int(counts.get(phase, 0) or 0)
+            ticks = 5 if total else 2
+            for k in range(1, ticks + 1):
+                done = int(total * k / ticks) if total else 0
+                store.update(job_id, status=phase, phase=phase, completed=done, total=total)
+                if scale:
+                    time.sleep(weight * scale / ticks)
+        store.update(job_id, status="complete", phase="complete", result=result)
+    except Exception as exc:  # noqa: BLE001 — a replay glitch must not kill the worker thread silently
+        store.update(job_id, status="error", phase="error", error_message=str(exc))
+
+
 @app.post("/api/harmonize/demo")
 def start_demo(body: DemoBody) -> dict[str, str]:
-    """Hydrate a completed job from a precomputed snapshot — no pipeline run, no API credits."""
+    """Replay a precomputed demo as a live-paced job — no pipeline run, no API credits.
+
+    The snapshot was produced offline by the SAME production pipeline (``scripts/build_demos.py``); here we
+    stream it back through the phases so the job view shows a live-feeling run. A stable per-combo job id keeps
+    the Runs page to a single demo entry (re-loading replays it in place). The job is tagged ``demo: true``.
+    """
     snap = load_snapshot(body.datasets)
     if snap is None:
         raise HTTPException(
@@ -379,10 +428,11 @@ def start_demo(body: DemoBody) -> dict[str, str]:
             detail=f"No precomputed demo for {sorted(body.datasets)}. See GET /api/harmonize/demos.",
         )
     result = snap.get("result", snap)
-    job_id = "demo-" + uuid.uuid4().hex[:8]
+    job_id = "demo-" + "_".join(sorted(d.lower() for d in body.datasets))
     display = snap.get("displayName") or "Demo run"
+    store.delete(job_id)  # reset any prior replay of this same demo (idempotent → one Runs entry)
     store.create(job_id, display, {"demo": True, "datasets": sorted(body.datasets), "mode": result.get("mode")})
-    store.update(job_id, status="complete", phase="complete", result=result)
+    threading.Thread(target=_replay_demo, args=(job_id, snap), daemon=True).start()
     return {"jobId": job_id}
 
 

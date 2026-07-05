@@ -53,7 +53,6 @@ export default function HomePage() {
   const [dicts, setDicts] = useState<DictFile[]>([]);
   const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
   const [runMode, setRunMode] = useState<RunMode>("batch");
-  const [minClusterSize, setMinClusterSize] = useState(15);
   const [genTransformSpecs, setGenTransformSpecs] = useState(true);
   const [displayName, setDisplayName] = useState("");
   // BYOK: kept in component memory only — never persisted (no localStorage/sessionStorage), cleared on reload.
@@ -134,7 +133,6 @@ export default function HomePage() {
         })),
         cdeSet,
         runMode,
-        minClusterSize,
         genTransformSpecs,
         displayName: displayName || undefined,
       };
@@ -264,7 +262,6 @@ export default function HomePage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="batch">Batch (async, default)</SelectItem>
-                  <SelectItem value="sync">Sync (inline)</SelectItem>
                   <SelectItem value="preview">Preview (no LLM — clusters only)</SelectItem>
                 </SelectContent>
               </Select>
@@ -308,18 +305,6 @@ export default function HomePage() {
                 </p>
               </div>
             )}
-            <div className="grid gap-1.5">
-              <Label className="flex items-center gap-1 text-xs">
-                Min cluster size <InfoTip text={OPTION_HELP.minClusterSize} label="About minimum cluster size" />
-              </Label>
-              <Input
-                type="number"
-                min={2}
-                value={minClusterSize}
-                onChange={(e) => setMinClusterSize(Number(e.target.value) || 15)}
-                className="h-8"
-              />
-            </div>
             <div className="grid gap-1.5">
               <Label className="flex items-center gap-1 text-xs">
                 Run name (optional) <InfoTip text={OPTION_HELP.displayName} label="About the run name" />
@@ -468,11 +453,9 @@ const OPTION_HELP: Record<string, string> = {
   cdeSet:
     "Which Common Data Element catalog your fields are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
   runMode:
-    "How the LLM assignment step runs. Batch: asynchronous and cost-bounded via the Anthropic Batch API (default, cheapest per field). Sync: inline results, best for small runs. Both call the LLM and need your API key (below). Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings before spending credits.",
+    "How the run executes. Batch: the LLM assignment runs asynchronously via the Anthropic Batch API (cost-bounded; needs your API key below). Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits.",
   apiKey:
     "Your Anthropic API key authorizes this run's LLM calls (concept assignment + transform specs). It's sent over HTTPS for this run only — never written to disk, logs, or the saved run config, and it's cleared when you reload the page. Not needed for Preview mode, which runs no LLM. Get one at console.anthropic.com.",
-  minClusterSize:
-    "The fewest fields that can form a concept cluster. Smaller values surface more, finer-grained concepts (and more singletons/novels); larger values pool more aggressively into fewer, broader concepts.",
   displayName: "An optional label to recognize this run in the Runs list. Doesn't affect results.",
   genTransformSpecs:
     "For each adopt/refine assignment, draft the recipe to convert your raw values into the CDE's expected form — categorical value recodes, unit conversions, and arithmetic formulas. Turned off automatically in Preview mode.",

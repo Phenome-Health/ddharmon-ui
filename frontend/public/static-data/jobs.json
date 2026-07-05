@@ -1,1 +1,69 @@
-[{"jobId": "sample-aou-clsa", "displayName": "Sample \u2014 AoU + CLSA (sync)", "status": "complete", "phase": "complete", "completed": 0, "total": 0, "errorMessage": null, "config": {"sample": true, "mode": "sync", "cdeSet": "full"}, "decisions": {}, "createdAt": 1783027137.6385221, "updatedAt": 1783027137.6385229, "nRecords": 6}, {"jobId": "sample-cross-cohort", "displayName": "Sample \u2014 AoU + CLSA + UKBB (cross-cohort)", "status": "complete", "phase": "complete", "completed": 0, "total": 0, "errorMessage": null, "config": {"sample": true, "mode": "batch", "cdeSet": "full"}, "decisions": {}, "createdAt": 1783027137.6385138, "updatedAt": 1783027137.638516, "nRecords": 15}]
+[
+  {
+    "jobId": "demo-aou_clsa_ukbb",
+    "displayName": "Demo \u00b7 AoU + CLSA + UKBB",
+    "status": "complete",
+    "phase": "complete",
+    "completed": 0,
+    "total": 0,
+    "errorMessage": null,
+    "config": {
+      "demo": true,
+      "datasets": [
+        "aou",
+        "clsa",
+        "ukbb"
+      ],
+      "mode": "batch"
+    },
+    "decisions": {},
+    "createdAt": 1783227802,
+    "updatedAt": 1783227802,
+    "phaseTimings": {
+      "loading": 0.91,
+      "embedding": 4.56,
+      "clustering": 15.39,
+      "generating": 122.42,
+      "splitting": 488.29,
+      "assigning": 123.63,
+      "specs": 122.07
+    },
+    "nRecords": 350
+  },
+  {
+    "jobId": "sample-aou-clsa",
+    "displayName": "Sample \u2014 AoU + CLSA (sync)",
+    "status": "complete",
+    "phase": "complete",
+    "completed": 0,
+    "total": 0,
+    "errorMessage": null,
+    "config": {
+      "sample": true,
+      "mode": "sync",
+      "cdeSet": "full"
+    },
+    "decisions": {},
+    "createdAt": 1783027137.6385221,
+    "updatedAt": 1783027137.6385229,
+    "nRecords": 6
+  },
+  {
+    "jobId": "sample-cross-cohort",
+    "displayName": "Sample \u2014 AoU + CLSA + UKBB (cross-cohort)",
+    "status": "complete",
+    "phase": "complete",
+    "completed": 0,
+    "total": 0,
+    "errorMessage": null,
+    "config": {
+      "sample": true,
+      "mode": "batch",
+      "cdeSet": "full"
+    },
+    "decisions": {},
+    "createdAt": 1783027137.6385138,
+    "updatedAt": 1783027137.638516,
+    "nRecords": 15
+  }
+]

@@ -24,17 +24,54 @@ export function useHarmonizeStream(jobId: string, enabled = true) {
     mountedRef.current = true;
     if (!enabled || !jobId) return;
 
-    // Static preview: no SSE — load the bundled sample result once.
+    // Static preview (Netlify): no SSE. Load the bundled result; for a DEMO fixture, pace it through the
+    // phases client-side (using the real per-phase wall-clock captured at build time) so it feels like a
+    // live run, then reveal the result — mirroring the backend replay. Sample runs load instantly.
     if (IS_STATIC) {
+      const timers: ReturnType<typeof setTimeout>[] = [];
       getResult(jobId)
-        .then((data) => {
+        .then((full) => {
           if (!mountedRef.current) return;
-          setJobState(data);
-          setDone(true);
+          const isDemo = !!(full.config as { demo?: boolean } | undefined)?.demo;
+          if (!isDemo) {
+            setJobState(full);
+            setDone(true);
+            return;
+          }
+          const PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"];
+          const p = full.result?.prompts;
+          const counts: Record<string, number> = {
+            generating: p?.ideal ?? 0,
+            splitting: p?.split ?? 0,
+            assigning: p?.groupAssign ?? 0,
+            specs: p?.specgen ?? 0,
+          };
+          const weights = PHASES.map((ph) => Math.max(0.05, full.phaseTimings?.[ph] ?? 1));
+          const sum = weights.reduce((a, b) => a + b, 0);
+          const TOTAL_MS = 13000; // snappy but clearly live
+          let elapsed = 0;
+          PHASES.forEach((ph, i) => {
+            const total = counts[ph] ?? 0;
+            timers.push(
+              setTimeout(() => {
+                if (!mountedRef.current) return;
+                setJobState({ ...full, status: ph as JobResult["status"], phase: ph, completed: total, total, result: null });
+              }, elapsed),
+            );
+            elapsed += (weights[i] / sum) * TOTAL_MS;
+          });
+          timers.push(
+            setTimeout(() => {
+              if (!mountedRef.current) return;
+              setJobState(full);
+              setDone(true);
+            }, elapsed),
+          );
         })
         .catch(() => mountedRef.current && setError({ message: "Sample run not found" }));
       return () => {
         mountedRef.current = false;
+        timers.forEach(clearTimeout);
       };
     }
 

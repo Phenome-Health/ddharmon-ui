@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { toast } from "sonner";
-import { Ban, Check, ChevronDown, ChevronRight, Download, FileCode, Loader2, Pencil, X } from "lucide-react";
+import { Ban, Check, ChevronDown, ChevronRight, Download, FileCode, Info, Loader2, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { MatchSankey } from "@/components/match-sankey";
 import { Analytics } from "@/components/analytics";
@@ -27,6 +28,50 @@ const VERDICT_BAR: Record<string, string> = {
   novel: "bg-ph-navy",
   unclassified: "bg-neutral-400",
 };
+
+/** Click-to-open explainer of what is / isn't reproducible run-to-run. Shown on every run's header. */
+function ReproducibilityInfo() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-2 py-0.5 text-xs text-neutral-500 transition-colors hover:border-ph-navy/40 hover:text-ph-navy"
+        >
+          <Info className="h-3 w-3" /> Reproducibility
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 text-xs font-normal leading-relaxed">
+        <p className="mb-2 text-sm font-semibold text-ph-ink">How reproducible is a run?</p>
+        <p className="mb-2 text-neutral-600">
+          Embeddings are deterministic. Two stages are <span className="font-medium">not</span> bitwise-reproducible:
+        </p>
+        <ul className="mb-2 list-disc space-y-1 pl-4 text-neutral-600">
+          <li>
+            <span className="font-medium">Clustering</span> (UMAP/HDBSCAN) — cluster boundaries can shift run to run.
+          </li>
+          <li>
+            <span className="font-medium">LLM assignment</span> — runs at temperature 0, but the model gives no
+            bitwise guarantee, so a few borderline verdicts may flip.
+          </li>
+        </ul>
+        <p className="mb-2 text-neutral-600">
+          The split-aware assignment re-derives concepts from each cluster, so most of that drift washes out of the
+          final grouping.
+        </p>
+        <p className="mb-2 rounded-md bg-neutral-50 p-2 text-neutral-600">
+          <span className="font-medium text-ph-ink">Reference</span> (3×200-field cohorts, two independent fresh
+          runs): ~85% of concepts recurred and ~87% of shared concepts kept the same verdict (record count
+          350&nbsp;→&nbsp;320).
+        </p>
+        <p className="text-neutral-500">
+          A <span className="font-medium">saved / demo run</span> replays a frozen snapshot + cached responses —
+          identical every time.
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function phasePercent(phase: string, completed: number, total: number): number {
   if (phase === "complete" || phase === "prepared") return 100;
@@ -121,6 +166,8 @@ export default function DashboardPage() {
                   <span className="font-mono text-xs text-neutral-400">{headerCohorts.join(" · ")}</span>
                 </>
               )}
+              <span className="text-neutral-300">·</span>
+              <ReproducibilityInfo />
             </div>
           </div>
           {result && !isPreview && (

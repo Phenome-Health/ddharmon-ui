@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import json
+import time
 
 from fastapi.testclient import TestClient
 
@@ -98,10 +99,34 @@ def test_demos_endpoint_lists_datasets():
     assert body["combos"] and all("available" in c for c in body["combos"])
 
 
-def test_demo_load_404_without_snapshot():
-    # No precomputed snapshot is shipped (held until v3) → hydration must 404, not 500.
-    assert load_snapshot(["aou", "clsa", "ukbb"]) is None
+def test_demo_load_replays_and_marks_demo(monkeypatch):
+    """The shipped snapshot loads as a live-paced replay job, tagged demo:true, that completes with records."""
+    monkeypatch.setenv("DDHARMON_DEMO_REPLAY_SECS", "0")  # instant replay (skip the pacing sleeps) for the test
+    assert load_snapshot(["aou", "clsa", "ukbb"]) is not None, "demo snapshot must be shipped"
+
     resp = client.post("/api/harmonize/demo", json={"datasets": ["aou", "clsa", "ukbb"]})
+    assert resp.status_code == 200
+    job_id = resp.json()["jobId"]
+
+    body = None
+    for _ in range(100):
+        body = client.get(f"/api/harmonize/result/{job_id}").json()
+        if body["status"] == "complete":
+            break
+        time.sleep(0.02)
+    assert body and body["status"] == "complete"
+    assert body["config"].get("demo") is True
+    assert body["result"] and len(body["result"]["records"]) > 0
+
+    # shows in the Runs list, demo-marked
+    row = next(j for j in client.get("/api/harmonize/jobs").json() if j["jobId"] == job_id)
+    assert row["config"].get("demo") is True
+
+
+def test_demo_load_404_for_unknown_combo():
+    """An unknown dataset combo has no snapshot → hydration 404s (not 500)."""
+    assert load_snapshot(["nope"]) is None
+    resp = client.post("/api/harmonize/demo", json={"datasets": ["nope"]})
     assert resp.status_code == 404
 
 

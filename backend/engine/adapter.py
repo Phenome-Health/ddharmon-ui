@@ -244,14 +244,16 @@ def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
 def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api_key: str | None = None) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
-    ``api_key`` (optional) is the per-request BYOK key, forwarded to ``submit_and_wait`` for this run only.
+    Uses ``resume_and_wait`` (cache-aware): an existing ``responses_<tag>.jsonl`` is reused as-is and only
+    missing ids are (re)submitted — so a re-run over a frozen work_dir is a byte-identical, $0 replay, and an
+    interrupted batch resumes instead of re-paying. ``api_key`` (optional) is the per-request BYOK key.
     """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
             return {}
         from ddharmon.harmonization import write_prompts_jsonl
-        from ddharmon.llm.batch import submit_and_wait
+        from ddharmon.llm.batch import resume_and_wait
 
         n = len(prompts)
         progress(phase, 0, n)
@@ -259,7 +261,7 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
         responses_path = work_dir / f"responses_{tag}.jsonl"
         write_prompts_jsonl(prompts, prompts_path)
-        submit_and_wait(prompts_path, responses_path, api_key=api_key)
+        resume_and_wait(prompts_path, responses_path, api_key=api_key)
         out: dict[str, Any] = {}
         with open(responses_path) as f:
             for line in f:
@@ -276,6 +278,30 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
 # ── entry point ────────────────────────────────────────────────────────────────────────────
 
 
+def _auto_min_cluster_size(n_fields: int) -> int:
+    """A sensible HDBSCAN ``min_cluster_size`` scaled to corpus size.
+
+    Users no longer set this — clustering is a coarse scaffold that the split-aware stages (split → per-group
+    assign → merge) re-partition, so it only needs to be *reasonable*: small uploads get a low floor so
+    concepts still form (a big mcs on a tiny set would make everything an outlier), large cohorts cap at the
+    long-standing default of 15. Explicit ``min_cluster_size`` in the run config always wins over this.
+    """
+    return max(3, min(15, round(n_fields / 150)))
+
+
+def _save_substrate_if_new(substrate_path: Path | None, result: Any) -> None:
+    """Persist the freshly-built clustering partition for reproducible replay.
+
+    Only writes when a path was requested AND the file doesn't exist yet — a reload run leaves the frozen
+    file untouched. ``result.substrate`` is the ``ClusteringSubstrate`` ``harmonize_leanb`` builds.
+    """
+    if substrate_path and not substrate_path.exists() and getattr(result, "substrate", None) is not None:
+        from ddharmon.harmonization.substrate import save_substrate
+
+        substrate_path.parent.mkdir(parents=True, exist_ok=True)
+        save_substrate(result.substrate, substrate_path)
+
+
 def run_pipeline(
     dict_specs: list[dict[str, Any]],
     cde_spec: dict[str, Any] | None,
@@ -285,6 +311,7 @@ def run_pipeline(
     provider: Any | None = None,
     stage_overrides: dict[str, StageFn] | None = None,
     api_key: str | None = None,
+    substrate_path: str | Path | None = None,
 ) -> UIResult:
     """Run the v2 pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -298,8 +325,12 @@ def run_pipeline(
         stage_overrides: ``{generate, split, classify, specgen}`` stage callbacks (injected in tests to
                     avoid any LLM/network); when given, the run_mode strategy is bypassed.
         api_key:    optional per-request BYOK Anthropic key, passed straight to the core client
-                    constructors (sync ``AnthropicClient`` / batch ``submit_and_wait``). ``None`` keeps the
+                    constructors (sync ``AnthropicClient`` / batch ``resume_and_wait``). ``None`` keeps the
                     default ``ANTHROPIC_API_KEY`` env behavior. In-memory only — never persisted or logged.
+        substrate_path: optional path to a frozen clustering substrate for reproducibility. When the file
+                    exists it is reloaded (UMAP skipped, the exact partition reproduced); after a fresh run the
+                    built partition is saved there. Combined with the cache-aware batch stages, a re-run over
+                    the same ``work_dir`` + ``substrate_path`` is byte-identical. Unused by normal per-job runs.
     """
     from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
@@ -337,10 +368,26 @@ def run_pipeline(
         if config.get(key) is not None:
             kwargs[key] = config[key]
 
+    # min_cluster_size is no longer a user knob — auto-scale a coarse scaffold from the (non-CDE) corpus size
+    # when the config didn't pin one. The split-aware stages re-derive concepts, so this only needs to be
+    # reasonable; an explicit value (advanced/API callers, or the demo build) still wins.
+    if "min_cluster_size" not in kwargs:
+        n_fields = sum(len(dd) for dd in dictionaries if getattr(dd, "cohort_name", None) != cde_cohort)
+        kwargs["min_cluster_size"] = _auto_min_cluster_size(n_fields)
+
+    # --- reproducibility: reload a frozen clustering substrate if one exists (skip UMAP, reproduce the exact
+    #     partition). After a fresh run the built partition is saved (see _save_substrate_if_new). ---
+    substrate_path = Path(substrate_path) if substrate_path else None
+    if substrate_path and substrate_path.exists():
+        from ddharmon.harmonization.substrate import load_substrate
+
+        kwargs["substrate"] = load_substrate(substrate_path)
+
     # --- preview: no LLM. generate=None makes harmonize_leanb stop after building the generate prompts. ---
     if mode == "preview" and not overrides:
         progress("clustering", 0, 0)
         result = harmonize_leanb(embedded, **kwargs)
+        _save_substrate_if_new(substrate_path, result)
         progress("prepared", 0, 0)
         return build_ui_result(result, mode=mode, phases=PHASES_PREVIEW, atlas=atlas)
 
@@ -375,4 +422,5 @@ def run_pipeline(
         specgen=stages.get("specgen") if gen_specs else None,
         **kwargs,
     )
+    _save_substrate_if_new(substrate_path, result)
     return build_ui_result(result, mode=mode, phases=PHASES_RUN, atlas=atlas)

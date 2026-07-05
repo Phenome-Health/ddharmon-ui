@@ -134,6 +134,9 @@ export interface JobResult {
   decisions: Record<string, { decision: string; note: string }>;
   createdAt: number;
   updatedAt: number;
+  // Present on the bundled demo fixture: per-phase wall-clock from the real build run, used to pace the
+  // client-side replay in static (backend-less) mode so the Netlify demo feels like a live run.
+  phaseTimings?: Record<string, number>;
 }
 
 export interface JobSummary extends Omit<JobResult, "result"> {
@@ -150,10 +153,11 @@ export interface RunConfig {
   dictionaries: DictSpec[];
   cdeSet: CdeSet;
   runMode: RunMode;
-  minClusterSize: number;
   genTransformSpecs: boolean;
   displayName?: string;
-  // advanced passthrough knobs (optional; default to harmonize_leanb's own values)
+  // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
+  // omitted, and falls back to harmonize_leanb's own defaults for the rest)
+  minClusterSize?: number;
   topK?: number;
   retrievalFloor?: number;
   modelTag?: string;

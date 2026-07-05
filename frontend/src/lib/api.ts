@@ -95,7 +95,10 @@ export async function listDemos(): Promise<DemosResponse> {
 }
 
 export async function startDemo(_datasets: string[]): Promise<{ jobId: string }> {
-  if (IS_STATIC) throw new Error(STATIC_MSG);
+  // Static preview (Netlify): no backend. The demo is a bundled snapshot replayed client-side (see
+  // useHarmonizeStream). Return the deterministic demo job id that maps to static-data/result-<id>.json —
+  // matches the backend's stable id scheme so the same route works with or without a server.
+  if (IS_STATIC) return { jobId: "demo-" + [..._datasets].map((d) => d.toLowerCase()).sort().join("_") };
   return json(
     await fetch(`${BASE}/demo`, {
       method: "POST",

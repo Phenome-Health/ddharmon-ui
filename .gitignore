@@ -31,3 +31,6 @@ data/cde/
 .idea/
 .vscode/
 .venv
+
+# Persistent demo build work dir (frozen substrate + Batch response cache for reproducible replay)
+backend/demos/.work/
