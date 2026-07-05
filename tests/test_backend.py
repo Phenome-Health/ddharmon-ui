@@ -1,4 +1,4 @@
-"""Tests for the ddharmon GUI backend (backend/) — v2 split-aware contract.
+"""Tests for the ddharmon GUI backend (backend/) — split-aware contract.
 
 Covers: /detect role suggestion, /health, the in-memory JobStore, the contract mapping
 (``_record_to_ui`` / ``build_ui_result`` — the single churn-absorbing surface), the full HTTP flow with a
@@ -388,7 +388,7 @@ def test_batch_rejects_missing_required_role(monkeypatch, tmp_path):
 
 
 def test_batch_rejects_missing_cde_catalog(monkeypatch, tmp_path):
-    """v2 requires a CDE backbone — cdeSet=none (or any non-endorsed/full) is rejected."""
+    """The pipeline requires a CDE backbone — cdeSet=none (or any non-endorsed/full) is rejected."""
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
     monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: None)
     cfg = {

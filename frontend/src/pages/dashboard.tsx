@@ -589,7 +589,7 @@ function RecordRows({
                     <TooltipContent className="max-w-xs whitespace-normal text-left font-normal normal-case leading-relaxed">
                       Cosine similarity to the chosen CDE embedding (0–1) — the retrieval signal behind this match.
                       It is not a calibrated model confidence; the LLM&apos;s decision is the verdict (adopt / refine
-                      / novel). v2 does not emit a separate confidence score.
+                      / novel). The pipeline does not emit a separate confidence score.
                     </TooltipContent>
                   </Tooltip>
                 </span>

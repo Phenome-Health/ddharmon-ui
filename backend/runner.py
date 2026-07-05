@@ -1,6 +1,6 @@
 """Background pipeline runner — a thin shim over :func:`backend.engine.run_pipeline`.
 
-Runs the v2 harmonization adapter in a daemon thread and wires its ``(phase, completed, total)`` progress
+Runs the harmonization adapter in a daemon thread and wires its ``(phase, completed, total)`` progress
 callback to the in-memory :class:`~backend.jobs.JobStore`. ALL pipeline knowledge lives in
 ``backend.engine.adapter`` (the insulation boundary); this file only translates progress into job state
 and catches failures so a worker thread never dies silently. The SSE endpoint polls ``Job.to_dict()``.

@@ -1,6 +1,6 @@
 # ddharmon-ui
 
-Web GUI for the [**ddharmon**](https://github.com/Phenome-Health/ddharmon) v1 harmonization
+Web GUI for the [**ddharmon**](https://github.com/Phenome-Health/ddharmon) harmonization
 pipeline. A React + Vite + Tailwind + shadcn/ui frontend talking to a FastAPI backend that
 wraps `ddharmon.harmonization`.
 
@@ -87,7 +87,7 @@ certbot), including the Squarespace DNS / subdomain steps.
 
 ## Notes
 
-- Jobs are kept **in-memory** — they're lost when the backend restarts (fine for single-user v1).
+- Jobs are kept **in-memory** — they're lost when the backend restarts (fine for a single-user GUI).
   Run exactly **one** uvicorn worker (the deploy unit enforces this).
 - `classifyMode=none` shows CDE-anchored sub-clusters as `pending` (un-classified); choose
   `sync` (inline, needs API key) or `batch` (Anthropic Batch API, async) to get adopt/refine/novel.

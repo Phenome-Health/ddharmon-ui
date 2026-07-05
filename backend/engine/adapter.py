@@ -1,7 +1,7 @@
-"""The v2 engine adapter — the ONLY module that imports the ddharmon pipeline.
+"""The engine adapter — the ONLY module that imports the ddharmon pipeline.
 
 This is the churn-absorbing layer (the insulation boundary). It does **not** re-implement the
-harmonization flow — that was the v1 runner's mistake. ``harmonize_leanb`` already owns the staged
+harmonization flow — that was an earlier runner's mistake. ``harmonize_leanb`` already owns the staged
 orchestration (cluster → retrieve → generate-ideal → split → per-group assign → route → specs) and
 exposes each LLM stage as an *injectable callback*. So this adapter only:
 
@@ -19,10 +19,10 @@ Run modes:
   * ``batch``   — every LLM stage via the Anthropic Batch API (async, cost-bounded). The deployed default.
   * ``sync``    — every LLM stage inline (needs ``ANTHROPIC_API_KEY``); fast for small runs.
   * ``preview`` — no LLM/key: cluster + retrieve + build the generate prompts, expose their counts. Yields
-                  no records (v2 needs the LLM to decide anything) — the zero-cost "what would run" path.
+                  no records (the pipeline needs the LLM to decide anything) — the zero-cost "what would run" path.
 
-v2 **requires a CDE backbone** (assignment to the given CDE catalog is the thesis); there is no
-``cdeSet=none`` path as there was in v1.
+The pipeline **requires a CDE backbone** (assignment to the given CDE catalog is the thesis); there is no
+``cdeSet=none`` path.
 """
 
 from __future__ import annotations
@@ -360,7 +360,7 @@ def run_pipeline(
     api_key: str | None = None,
     substrate_path: str | Path | None = None,
 ) -> UIResult:
-    """Run the v2 pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
+    """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
     Args:
         dict_specs: ``[{path, cohort_name, column_roles}]`` for the uploaded cohort dictionaries.

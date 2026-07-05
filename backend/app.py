@@ -42,7 +42,7 @@ from backend.runner import run_harmonization
 # --- CDE catalog (server-side; not uploaded) -------------------------------------------------
 # Repo root is the parent of backend/ (this file is backend/app.py). The CDE catalog is NOT
 # shipped in this repo (data/cde/ is gitignored) — supply it on the server and/or point
-# DDHARMON_CDE_DIR at it. See deploy/README.md. v2 REQUIRES a catalog (cdeSet must be endorsed|full).
+# DDHARMON_CDE_DIR at it. The pipeline REQUIRES a catalog (cdeSet must be endorsed|full).
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CDE_DIR = Path(os.environ.get("DDHARMON_CDE_DIR", _REPO_ROOT / "data" / "cde"))
 CDE_FILES = {"endorsed": _CDE_DIR / "nih_endorsed_flat.tsv", "full": _CDE_DIR / "all_cdes_flat.tsv"}
@@ -101,13 +101,13 @@ async def start_batch(
     config: Annotated[str, Form()],
     x_anthropic_key: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
-    """Start a v2 harmonization run. ``config`` is a JSON string:
+    """Start a harmonization run. ``config`` is a JSON string:
 
     ``{dictionaries: [{filename, cohortName, columnRoles}], cdeSet: endorsed|full,
        runMode: batch|sync|preview, minClusterSize: int, genTransformSpecs?: bool,
        topK?: int, retrievalFloor?: float, modelTag?: str, displayName?}``
 
-    v2 requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
+    The pipeline requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
     ``endorsed`` or ``full``. ``runMode`` defaults to ``batch`` (the deployed default).
 
     BYOK: the ``X-Anthropic-Key`` header (frontend ``x-anthropic-key``) carries a per-request Anthropic
@@ -139,12 +139,12 @@ async def start_batch(
             )
         dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
-    # v2 REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
+    # The pipeline REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
     cde_set = cfg.get("cdeSet", "endorsed")
     if cde_set not in CDE_FILES:
         raise HTTPException(
             status_code=400,
-            detail=f"cdeSet must be one of {sorted(CDE_FILES)} — v2 harmonization requires a CDE catalog",
+            detail=f"cdeSet must be one of {sorted(CDE_FILES)} — harmonization requires a CDE catalog",
         )
     cde_path = CDE_FILES[cde_set]
     if not cde_path.exists():

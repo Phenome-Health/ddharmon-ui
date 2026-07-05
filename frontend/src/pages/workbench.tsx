@@ -1,4 +1,4 @@
-// Candidate-review workbench — CDEMapper (JAMIA 2025 Fig 4) idiom adapted to the v2 split-aware model.
+// Candidate-review workbench — CDEMapper (JAMIA 2025 Fig 4) idiom adapted to the split-aware model.
 // Two panes: (left) concept-group list; (right) ranked CDE candidates + value/transform mapping + the
 // approve/refine/reject decision for the selected group. Renders the ranked candidates the pipeline saw
 // (contract `candidates`) — read-only alternatives with the chosen one flagged — since our backend records
