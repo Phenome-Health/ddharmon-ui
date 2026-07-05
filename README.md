@@ -5,7 +5,7 @@ pipeline. A React + Vite + Tailwind + shadcn/ui frontend talking to a FastAPI ba
 wraps `ddharmon.harmonization`.
 
 This repo sits **on top of** the core `ddharmon` library — modeled on the way
-[biomapper-ui](https://github.com/trentleslie/biomapper-ui) sits on top of biomapper, but
+biomapper-ui sits on top of biomapper, but
 deliberately simpler: a **single** FastAPI process serves both the built SPA and the `/api`
 routes and runs `ddharmon` in-process (no Express / Clerk / Postgres).
 

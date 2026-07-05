@@ -32,9 +32,9 @@ _LEAK_PATTERNS = [
     r"\\Users\\",  # Windows home
     r"/home/[A-Za-z0-9._-]+/",  # Linux home
     r"Path\.home\(\)",  # resolves to a personal path at runtime — don't ship it in a script
-    r"ai-coding",  # a developer's workspace convention
-    r"ph-arpa-data-harmonization",  # the internal dev repo name (public repo is "ddharmon")
-    r"Insync",  # a developer's cloud-sync dir
+    r"ai-coding",  # a developer's workspace convention (leak-scan-ignore)
+    r"ph-arpa-data-harmonization",  # internal dev repo name; public repo is "ddharmon" (leak-scan-ignore)
+    r"Insync",  # a developer's cloud-sync dir (leak-scan-ignore)
     re.escape(str(Path.home())),  # the literal current home directory
 ]
 

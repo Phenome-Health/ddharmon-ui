@@ -1,0 +1,13 @@
+# Optional local hooks for the public ddharmon-ui repo. Install once:
+#   pip install pre-commit && pre-commit install
+# The authoritative "ship clean" gate is the leak-scan CI on pull requests; this runs the
+# same scan locally on staged files so leaks are caught before they're pushed.
+repos:
+  - repo: local
+    hooks:
+      - id: leak-scan
+        name: leak-scan (public profile)
+        entry: python3 scripts/leak_scan.py --staged --profile public
+        language: system
+        pass_filenames: false
+        always_run: true
