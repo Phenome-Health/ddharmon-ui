@@ -37,3 +37,6 @@ backend/demos/.work/
 
 # GSD planning/handoff docs — local only, never ship (contain local paths, costs, strategy)
 .planning/
+
+# internal GUI build plan (planning artifact) — local only
+docs/GUI-BUILD-PLAN.md

@@ -8,7 +8,7 @@ adapter's mapping functions, and this contract (hence the whole frontend) stays 
 the break is explicit rather than silent.
 
 These are ``TypedDict``s, not dataclasses: they ARE the JSON the API emits (no serialization hop) and
-pyright still checks the shape. See ``docs/GUI-BUILD-PLAN.md`` §1/§3.
+pyright still checks the shape.
 """
 
 from __future__ import annotations

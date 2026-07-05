@@ -1,6 +1,6 @@
 """The v2 engine adapter — the ONLY module that imports the ddharmon pipeline.
 
-This is the churn-absorbing layer (``docs/GUI-BUILD-PLAN.md`` §1). It does **not** re-implement the
+This is the churn-absorbing layer (the insulation boundary). It does **not** re-implement the
 harmonization flow — that was the v1 runner's mistake. ``harmonize_leanb`` already owns the staged
 orchestration (cluster → retrieve → generate-ideal → split → per-group assign → route → specs) and
 exposes each LLM stage as an *injectable callback*. So this adapter only:

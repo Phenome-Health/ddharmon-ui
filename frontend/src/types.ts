@@ -1,7 +1,7 @@
 // Mirrors the stable UIRecord/UIResult contract emitted by backend/engine/contract.py.
 // This file is the frontend half of the insulation boundary — when ddharmon's pipeline churns, only the
 // backend adapter's mapping changes; these shapes (and the views that render them) stay still. Keep in
-// sync with contract.py (CONTRACT_VERSION). See ../../docs/GUI-BUILD-PLAN.md §1/§3.
+// sync with contract.py (CONTRACT_VERSION).
 
 export type RunMode = "batch" | "sync" | "preview";
 export type CdeSet = "endorsed" | "full";
