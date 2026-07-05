@@ -241,8 +241,11 @@ def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
     return stage
 
 
-def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str) -> StageFn:
-    """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll)."""
+def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api_key: str | None = None) -> StageFn:
+    """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
+
+    ``api_key`` (optional) is the per-request BYOK key, forwarded to ``submit_and_wait`` for this run only.
+    """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
@@ -256,7 +259,7 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str) -> 
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
         responses_path = work_dir / f"responses_{tag}.jsonl"
         write_prompts_jsonl(prompts, prompts_path)
-        submit_and_wait(prompts_path, responses_path)
+        submit_and_wait(prompts_path, responses_path, api_key=api_key)
         out: dict[str, Any] = {}
         with open(responses_path) as f:
             for line in f:
@@ -281,6 +284,7 @@ def run_pipeline(
     progress: ProgressFn | None = None,
     provider: Any | None = None,
     stage_overrides: dict[str, StageFn] | None = None,
+    api_key: str | None = None,
 ) -> UIResult:
     """Run the v2 pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -293,6 +297,9 @@ def run_pipeline(
         provider:   embedding provider (defaults to ``SentenceTransformerProvider``; injected in tests).
         stage_overrides: ``{generate, split, classify, specgen}`` stage callbacks (injected in tests to
                     avoid any LLM/network); when given, the run_mode strategy is bypassed.
+        api_key:    optional per-request BYOK Anthropic key, passed straight to the core client
+                    constructors (sync ``AnthropicClient`` / batch ``submit_and_wait``). ``None`` keeps the
+                    default ``ANTHROPIC_API_KEY`` env behavior. In-memory only — never persisted or logged.
     """
     from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
@@ -343,7 +350,7 @@ def run_pipeline(
     elif mode == "sync":
         from ddharmon.llm.anthropic_client import AnthropicClient
 
-        client = AnthropicClient()
+        client = AnthropicClient(api_key=api_key)
         stages = {
             "generate": _sync_stage("generating", progress, client),
             "split": _sync_stage("splitting", progress, client),
@@ -352,10 +359,10 @@ def run_pipeline(
         }
     else:  # batch (default)
         stages = {
-            "generate": _batch_stage("generating", progress, work_dir, "generate"),
-            "split": _batch_stage("splitting", progress, work_dir, "split"),
-            "classify": _batch_stage("assigning", progress, work_dir, "assign"),
-            "specgen": _batch_stage("specs", progress, work_dir, "specgen"),
+            "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key),
+            "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key),
+            "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key),
+            "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key),
         }
 
     gen_specs = config.get("gen_transform_specs", True)

@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -99,7 +99,11 @@ def detect(body: DetectBody) -> dict[str, Any]:
 
 # --- /batch ----------------------------------------------------------------------------------
 @app.post("/api/harmonize/batch")
-async def start_batch(files: Annotated[list[UploadFile], File()], config: Annotated[str, Form()]) -> dict[str, str]:
+async def start_batch(
+    files: Annotated[list[UploadFile], File()],
+    config: Annotated[str, Form()],
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+) -> dict[str, str]:
     """Start a v2 harmonization run. ``config`` is a JSON string:
 
     ``{dictionaries: [{filename, cohortName, columnRoles}], cdeSet: endorsed|full,
@@ -108,6 +112,10 @@ async def start_batch(files: Annotated[list[UploadFile], File()], config: Annota
 
     v2 requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
     ``endorsed`` or ``full``. ``runMode`` defaults to ``batch`` (the deployed default).
+
+    BYOK: the ``X-Anthropic-Key`` header (frontend ``x-anthropic-key``) carries a per-request Anthropic
+    key. It is threaded to the pipeline as an in-memory arg for this job only — deliberately NOT written
+    into ``run_config`` (which ``store.create`` persists) or any log, so it never touches disk.
     """
     cfg = json.loads(config)
     job_id = str(uuid.uuid4())
@@ -168,9 +176,11 @@ async def start_batch(files: Annotated[list[UploadFile], File()], config: Annota
             run_config[run_key] = cfg[cfg_key]
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
     store.create(job_id, display, run_config)
+    # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted.
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, dict_specs, cde_spec, run_config),
+        kwargs={"api_key": x_anthropic_key},
         daemon=True,
     ).start()
     return {"jobId": job_id}
