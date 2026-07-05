@@ -1,13 +1,13 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-04T22:39:05Z",
-  "phase": "ddharmon-ui v1.4",
-  "phase_name": "BYOK API-key field (frontend) + fluid/above-the-fold landing — MERGED to main",
+  "timestamp": "2026-07-05T00:00:00Z",
+  "phase": "ddharmon-ui v1.5 (BYOK backend)",
+  "phase_name": "BYOK backend — thread x-anthropic-key through the pipeline into the core Anthropic clients (frontend + fluid landing already shipped v1.4/PR #2)",
   "phase_dir": "ddharmon-ui repo; companion memory project_ddharmon_ui_v2_buildout",
   "plan": 1,
-  "task": "shipped+merged",
-  "total_tasks": "shipped+merged",
-  "status": "shipped to prod + MERGED via PR #2 — paused, nothing blocked",
+  "task": "built + tested; on feature/byok-backend (PR #3); live only after P3 deploy",
+  "total_tasks": "built + tested",
+  "status": "BYOK backend BUILT + GREEN (17 tests) on feature/byok-backend — PR #3; gated on the P3 real-backend deploy to go live",
   "deploy_url": "https://ddharmon.netlify.app/",
   "branch": "main @ fe40703 (synced to origin/main). The v1.1–v1.4 arc branch feature/ui-guide-tooltips-notebook-demo is MERGED (PR #2) and now stale.",
   "completed_tasks": [
@@ -18,7 +18,7 @@
     {"id": 5, "name": "Pushed branch, opened PR #2, MERGED to main (merge commit fe40703); synced local main. Pre-merge checks: frontend typecheck+build green, 16 backend tests pass.", "status": "done", "commit": "fe40703"}
   ],
   "remaining_tasks": [
-    {"id": "byok-backend", "name": "THE real BYOK follow-up (backend, non-trivial): read the x-anthropic-key header in backend/app.py::start_batch → thread it through run_harmonization/adapter → into the 4 anthropic.Anthropic() constructors as api_key=... (src/ddharmon/llm/batch.py x3, llm/anthropic_client.py:64). Hold in memory for the job only; never os.environ (races/leaks across concurrent jobs), never write to job files/logs. Gated on the P3 real-backend deploy — the live site is static/backend-less so the header is sent-but-ignored today.", "status": "not_started"},
+    {"id": "byok-backend", "name": "THE real BYOK follow-up (backend): read the x-anthropic-key header in backend/app.py::start_batch → thread it through run_harmonization/adapter → into the core Anthropic clients as api_key=... Hold in memory for the job only; never os.environ, never job files/logs.", "status": "done", "branch": "feature/byok-backend", "commit": "f315d12", "note": "BUILT + GREEN (2026-07-05, PR #3). app.py::start_batch reads the X-Anthropic-Key header (frontend already sent it, api.ts:52) → in-memory thread kwarg → run_harmonization(api_key=) → run_pipeline(api_key=) → sync AnthropicClient(api_key=) / batch _batch_stage→submit_and_wait(api_key=). CORE half (research repo feature/harmonization-v2-split-aware @ 092bc94): non-breaking optional api_key on AnthropicClient + batch submit/retrieve/wait → anthropic.Anthropic(api_key=) at all 4 sites; None → unchanged ANTHROPIC_API_KEY env fallback. SECURITY (test-locked): key NEVER in run_config (store.create persists it), never os.environ, never logs; test asserts the secret appears nowhere in the persisted job. 17 backend tests pass. STILL GATED: prod is static/backend-less so the header is sent-but-ignored until the P3 backend deploys; and the core api_key param must reach PyPI (post-0.9.0 forward-port) before a PyPI-pinned prod backend can use it."},
     {"id": "branch-cleanup", "name": "OPTIONAL: delete stale local+remote branches feature/ui-guide-tooltips-notebook-demo (merged) and feature/landing-hero (old, merged).", "status": "not_started"},
     {"id": "dependabot", "name": "OPTIONAL: 3 pre-existing Dependabot alerts on main (1 high/1 moderate/1 low) — NOT from this arc (adds no new deps). Address separately.", "status": "not_started"},
     {"id": "p3-deploy", "name": "(user-gated, coupled 1.0 gate) P3: stand up the FastAPI backend on Lightsail; this is where BYOK backend + real runs become live.", "status": "not_started"},
@@ -38,6 +38,6 @@
     {"decision": "Merge PR #2 with a merge commit; no companion core Phenome-Health/ddharmon PR", "rationale": "consistent with how PR #1 merged; this arc is UI-only"}
   ],
   "uncommitted_files": [],
-  "next_action": "Nothing forced — the arc is merged and live. When work resumes, the substantive item is the BYOK BACKEND (thread x-anthropic-key into the 4 anthropic.Anthropic() constructors), but it's gated on the P3 real-backend deploy. Cheap tidy-ups available now: delete the 2 stale merged branches; triage the 3 Dependabot alerts. Redeploy any change with ./scripts/deploy-preview.sh (typecheck-gated; --draft for a non-prod URL).",
+  "next_action": "BYOK backend is BUILT + GREEN on feature/byok-backend (PR #3, commit f315d12) — merge it when reviewed. It does NOT go live on its own: the deployed site is static/backend-less, so the header is sent-but-ignored until the P3 Lightsail backend is deployed (the coupled 1.0 gate). Two things must both land for BYOK to work in PROD: (1) the P3 backend deploy; (2) the core api_key= param reaching PyPI — it's a post-0.9.0 delta in the research repo (feature/harmonization-v2-split-aware @ 092bc94), NOT yet in canonical/PyPI, to forward-port with 0.9.1/1.0.0. Local dev already works (UI .venv symlinks the core repo's editable src, which has the param now). Other queued items: P3 deploy plan (user-gated infra); delete 2 stale merged branches; triage 3 Dependabot alerts. Redeploy the frontend with ./scripts/deploy-preview.sh.",
   "context_notes": "Session arc: /gsd-resume-work ddharmon ui → clarified BYOK vs shared-key (chose BYOK) → built the frontend key field → user asked 'where do we ask for the key' (answer: nowhere yet; env-only) then 'we need to ask users for their key for real runs' → confirmed the gap and built the frontend half → fit the landing above the fold on the 14\" → user asked 'is dynamic scaling good practice?' (answered: fluid=yes, force-fit=no) → implemented fluid clamp → pushed + PR #2 + merged to main. All verified against live prod via Playwright at laptop (1512x832) and monitor (2000x1047). No servers running. The UI-thread state lives in THIS repo's .planning; the pipeline thread (M2/M4/M5/M7/M10 → held-out full-5) is a SEPARATE thread in ~/ai-coding/ph-arpa-data-harmonization/.planning."
 }
