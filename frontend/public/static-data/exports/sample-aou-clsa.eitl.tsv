@@ -1,7 +1,0 @@
-recordId	clusterId	groupId	concept	verdict	route	cdeId	cdeExternalId	top1Cos	chosenCos	coverageGap	floored	crossCohort	nMembers	cohorts	members	nTransforms	idealCde	rationale	humanDecision	humanNote
-g4	c4	g4	Diabetes diagnosis	refine	assigned	Diabetes Mellitus Indicator	C2985	0.790	0.770	False	False	True	2	AoU;CLSA	AoU:diabetes;CLSA:DIA_DX_TRM	1	Diabetes diagnosis	Assigned to Diabetes Mellitus Indicator.		
-g3	c3	g3	Diastolic blood pressure	refine	assigned	Diastolic Blood Pressure (mmHg)	C25299	0.840	0.820	False	False	True	2	AoU;CLSA	AoU:dbp;CLSA:BP_DIA_TRM	1	Diastolic blood pressure	Assigned to Diastolic Blood Pressure (mmHg).		
-g5	c5	g5	Anxiety symptom severity (GAD-7)	novel	gencde_residual			0.560		True	False	False	1	AoU	AoU:gad7_total	0	Anxiety symptom severity (GAD-7)	No CDE covers a GAD-7 total — proposed as novel.		
-g6	c6	g6	Height (cm)	adopt	assigned	Standing Height (cm)	C25347	0.880	0.880	False	False	True	2	AoU;CLSA	AoU:height;CLSA:HGT_CM_TRM	2	Height (cm)	Assigned to Standing Height (cm).		
-g2	c2	g2	Age at enrollment	adopt	assigned	Age At Enrollment (years)	C25150	0.890	0.890	False	False	True	2	AoU;CLSA	AoU:AGE;CLSA:AGE_NMBR_TRM	1	Age at enrollment	Assigned to Age At Enrollment (years).		
-g1	c1	g1	Biological sex	adopt	assigned	Sex Assigned At Birth	C46109	0.930	0.930	False	False	True	2	AoU;CLSA	AoU:SEX;CLSA:SEX_ASK_TRM	2	Biological sex	Assigned to Sex Assigned At Birth.		

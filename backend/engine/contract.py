@@ -50,6 +50,21 @@ class AtlasPoint(TypedDict):
     y: float
 
 
+class UIMember(TypedDict):
+    """One source field that a concept-group pooled — surfaced so a reviewer can see WHICH variables
+    (and their text) drove the assignment, not just an opaque ``cohort:var`` id.
+
+    ``text`` is the field's human-readable content (description / question / label) — the signal that was
+    embedded and clustered. ``name`` is the raw variable name (may be a synthetic row id when the source
+    dictionary had no usable identifier column). Both are best-effort: ``text`` falls back to ``name``.
+    """
+
+    id: str  # "cohort:var" — matches an entry in the record's ``members`` list
+    cohort: str
+    name: str  # variable name (may be a synthetic row id)
+    text: str  # description / question_text / short_label — the embedded signal
+
+
 class Cosines(TypedDict):
     top1: float | None  # nearest-candidate dense cosine (retrieval signal)
     chosen: float | None  # dense cosine of the CHOSEN candidate (the match's geometric support)
@@ -108,6 +123,7 @@ class UIRecord(TypedDict):
     nMembers: int
     cohorts: list[str]
     members: list[str]  # member variable names ("cohort:var")
+    memberDetails: list[UIMember]  # the source fields (name + text) this concept pooled — for review
     transforms: list[UITransform]
     candidates: list[UICandidate]  # ranked CDE candidates the assign stage saw (best-first)
     rationale: str

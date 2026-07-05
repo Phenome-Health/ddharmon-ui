@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
+import { MemberVariables } from "@/components/member-variables";
 import { submitVerdict } from "@/lib/api";
 import { VERDICT_STYLES, type UIRecord, type UITransform } from "@/types";
 
@@ -97,6 +98,29 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   }, [groups, selectedId]);
 
   const selected = useMemo(() => records.find((r) => r.id === selectedId) ?? null, [records, selectedId]);
+
+  // The assign LLM returns a RANKING (best-first) + a chosen candidate + a one-sentence rationale — so the
+  // pick can differ from the highest-cosine candidate (it ranks concept fit over embedding similarity).
+  // Surface that: find the chosen vs the highest-cosine candidate and whether the model overrode cosine.
+  const candInfo = useMemo(() => {
+    const cands = selected?.candidates ?? [];
+    const chosen = cands.find((c) => c.isChosen) ?? null;
+    const best = cands.length ? cands.reduce((a, b) => (b.cosine > a.cosine ? b : a)) : null;
+    return {
+      chosen,
+      bestRank: best?.rank ?? null,
+      bestCos: best?.cosine ?? null,
+      reranked: !!(chosen && best && chosen.cosine < best.cosine - 1e-6),
+    };
+  }, [selected]);
+
+  // The LLM's `ranking` array and its chosen `cde_id` are separate outputs that can disagree, so the chosen
+  // candidate isn't always ranking[0]. Present the chosen first (it IS the decision), then the rest in the
+  // model's ranking order, and renumber the shown # to display order — so the ★ always reads as #1.
+  const orderedCandidates = useMemo(
+    () => [...(selected?.candidates ?? [])].sort((a, b) => (b.isChosen ? 1 : 0) - (a.isChosen ? 1 : 0) || a.rank - b.rank),
+    [selected],
+  );
 
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
     setDecisions((p) => ({ ...p, [r.id]: decision }));
@@ -202,21 +226,41 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                   className="h-8 max-w-md"
                 />
                 <div className="grid gap-1 text-sm">
-                  <Field label="Members">{selected.members.join(", ") || "—"}</Field>
                   <Field label="Ideal CDE">{selected.idealCde || "—"}</Field>
                   {selected.rationale && (
-                    <blockquote className="mt-1 border-l-2 border-neutral-300 pl-3 italic text-neutral-600">
-                      {selected.rationale}
-                    </blockquote>
+                    <div className="mt-1 space-y-1">
+                      <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">
+                        Why this CDE — model rationale
+                      </div>
+                      <blockquote className="border-l-2 border-neutral-300 pl-3 italic text-neutral-600">
+                        {selected.rationale}
+                      </blockquote>
+                    </div>
+                  )}
+                  {candInfo.reranked && candInfo.chosen && candInfo.bestCos != null && (
+                    <div className="flex items-start gap-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2 text-xs text-neutral-600">
+                      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ph-navy" />
+                      <span>
+                        The model chose a candidate at cos{" "}
+                        <span className="font-medium tabular-nums">{cos(candInfo.chosen.cosine)}</span> over a
+                        higher-cosine one at <span className="font-medium tabular-nums">{cos(candInfo.bestCos)}</span> —
+                        it ranks concept fit above raw embedding similarity (see the rationale above).
+                      </span>
+                    </div>
                   )}
                 </div>
+                <MemberVariables record={selected} />
               </CardContent>
             </Card>
 
             {/* ranked candidates */}
             <Card>
-              <CardHeader>
+              <CardHeader className="space-y-1">
                 <CardTitle className="text-base">CDE candidates ({selected.candidates.length})</CardTitle>
+                <p className="text-xs text-neutral-400">
+                  Ordered by the model&apos;s concept-fit ranking. ★ = the model&apos;s pick · cos = embedding
+                  similarity (retrieval signal, which can differ from the pick).
+                </p>
               </CardHeader>
               <CardContent className="p-0">
                 {selected.candidates.length ? (
@@ -231,14 +275,19 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {selected.candidates.map((c) => (
+                      {orderedCandidates.map((c, i) => (
                         <TableRow key={c.rank} className={c.isChosen ? "bg-success-bg/40" : undefined}>
-                          <TableCell className="tabular-nums text-neutral-500">{c.rank}</TableCell>
+                          <TableCell className="tabular-nums text-neutral-500">{i + 1}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
                               <span className="font-medium text-neutral-700">{c.cdeId}</span>
                               {c.isChosen && <Star className="h-3.5 w-3.5 fill-success text-success" />}
                               {c.llmSuggested && <Sparkles className="h-3.5 w-3.5 text-ph-navy" />}
+                              {c.rank === candInfo.bestRank && !c.isChosen && (
+                                <span className="rounded bg-neutral-100 px-1 py-0.5 text-[10px] font-medium text-neutral-500">
+                                  highest cos
+                                </span>
+                              )}
                             </div>
                             {c.cdeExternalId && <div className="font-mono text-xs text-neutral-400">{c.cdeExternalId}</div>}
                           </TableCell>

@@ -26,20 +26,21 @@ export function useHarmonizeStream(jobId: string, enabled = true) {
 
     // Static preview (Netlify): no SSE. Load the bundled result; for a DEMO fixture, pace it through the
     // phases client-side (using the real per-phase wall-clock captured at build time) so it feels like a
-    // live run, then reveal the result — mirroring the backend replay. Sample runs load instantly.
+    // live run — and progressively REVEAL the records so the metric cards + charts build up as it runs
+    // (mirroring biomapper-ui's live demo), then settle on the full result. Non-demo runs load instantly.
     if (IS_STATIC) {
       const timers: ReturnType<typeof setTimeout>[] = [];
       getResult(jobId)
         .then((full) => {
           if (!mountedRef.current) return;
           const isDemo = !!(full.config as { demo?: boolean } | undefined)?.demo;
-          if (!isDemo) {
+          if (!isDemo || !full.result) {
             setJobState(full);
             setDone(true);
             return;
           }
           const PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"];
-          const p = full.result?.prompts;
+          const p = full.result.prompts;
           const counts: Record<string, number> = {
             generating: p?.ideal ?? 0,
             splitting: p?.split ?? 0,
@@ -48,24 +49,39 @@ export function useHarmonizeStream(jobId: string, enabled = true) {
           };
           const weights = PHASES.map((ph) => Math.max(0.05, full.phaseTimings?.[ph] ?? 1));
           const sum = weights.reduce((a, b) => a + b, 0);
+          // cumulative end-fraction of each phase, and the fraction at which record-producing phases begin
+          // (after loading+embedding+clustering) — records ramp in from there to the end.
+          let acc = 0;
+          const cumEnd = weights.map((w) => (acc += w) / sum);
+          const genStart = weights.slice(0, 3).reduce((a, b) => a + b, 0) / sum;
+          const allRecords = full.result.records ?? [];
+          const N = allRecords.length;
           const TOTAL_MS = 13000; // snappy but clearly live
-          let elapsed = 0;
-          PHASES.forEach((ph, i) => {
+          const STEPS = 30;
+          for (let s = 1; s <= STEPS; s++) {
+            const f = s / STEPS;
+            let pi = cumEnd.findIndex((c) => f <= c);
+            if (pi < 0) pi = PHASES.length - 1;
+            const ph = PHASES[pi];
             const total = counts[ph] ?? 0;
+            const revealFrac = f <= genStart ? 0 : (f - genStart) / (1 - genStart);
+            const k = Math.min(N, Math.round(N * revealFrac));
             timers.push(
               setTimeout(() => {
                 if (!mountedRef.current) return;
-                setJobState({ ...full, status: ph as JobResult["status"], phase: ph, completed: total, total, result: null });
-              }, elapsed),
+                // partial result: records revealed so far, atlas withheld until the end (it's static field
+                // space — no value building it, and it keeps the live phase light).
+                const partial = k > 0 ? { ...full.result!, records: allRecords.slice(0, k), atlas: [] } : null;
+                setJobState({ ...full, status: ph as JobResult["status"], phase: ph, completed: total, total, result: partial });
+              }, f * TOTAL_MS),
             );
-            elapsed += (weights[i] / sum) * TOTAL_MS;
-          });
+          }
           timers.push(
             setTimeout(() => {
               if (!mountedRef.current) return;
               setJobState(full);
               setDone(true);
-            }, elapsed),
+            }, TOTAL_MS + 250),
           );
         })
         .catch(() => mountedRef.current && setError({ message: "Sample run not found" }));

@@ -72,6 +72,16 @@ export interface AtlasPoint {
   y: number;
 }
 
+// One source field a concept pooled — surfaced so a reviewer can see WHICH variables (and their text)
+// drove the assignment. `text` is the embedded signal (description/question/label); `name` may be a
+// synthetic row id when the source dictionary had no usable identifier column. Mirrors contract.py.
+export interface UIMember {
+  id: string; // "cohort:var"
+  cohort: string;
+  name: string;
+  text: string;
+}
+
 export interface UIRecord {
   id: string;
   clusterId: string;
@@ -88,6 +98,7 @@ export interface UIRecord {
   nMembers: number;
   cohorts: string[];
   members: string[];
+  memberDetails: UIMember[]; // the source fields (name + text) this concept pooled — for review
   transforms: UITransform[];
   candidates: UICandidate[]; // ranked CDE candidates the assign stage saw (best-first)
   rationale: string;

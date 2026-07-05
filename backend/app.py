@@ -68,12 +68,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Dev/testing only: seed a couple of SAMPLE completed runs so the results/workbench/export UI is
-# populated before the real pipeline is wired for local runs. Never on unless DDHARMON_UI_SEED is set.
-if os.environ.get("DDHARMON_UI_SEED"):
-    from backend.seed import seed_jobs
-
-    seed_jobs(store)
+# The Runs page shows only real runs (the demo, via POST /demo, and any user runs). The synthetic
+# "Sample —" seed runs were removed from the app — ``backend.seed`` is retained solely for tests that
+# need to exercise the results/workbench/export UI without the pipeline. (Was gated on DDHARMON_UI_SEED.)
 
 
 # --- /detect ---------------------------------------------------------------------------------
@@ -399,15 +396,30 @@ def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
         "assigning": prompts.get("groupAssign", 0),
         "specs": prompts.get("specgen", 0),
     }
+    records = result.get("records", []) or []
+    n_records = len(records)
+    total_w = sum(weights) or 1.0
+    # records ramp in only once the record-producing phases begin (after loading+embedding+clustering).
+    gen_start_frac = (sum(weights[:3]) / total_w) if len(weights) >= 3 else 0.0
     try:
+        elapsed_w = 0.0
         for phase, weight in zip(_DEMO_PHASES, weights, strict=True):
             total = int(counts.get(phase, 0) or 0)
             ticks = 5 if total else 2
             for k in range(1, ticks + 1):
                 done = int(total * k / ticks) if total else 0
-                store.update(job_id, status=phase, phase=phase, completed=done, total=total)
+                frac = (elapsed_w + weight * k / ticks) / total_w
+                reveal = 0.0 if frac <= gen_start_frac else (frac - gen_start_frac) / (1 - gen_start_frac)
+                nk = min(n_records, round(n_records * reveal))
+                fields: dict[str, Any] = {"status": phase, "phase": phase, "completed": done, "total": total}
+                # progressively reveal records so the metric cards + charts build up live during the replay
+                # (atlas withheld until completion — it's static field space and keeps each tick light).
+                if nk > 0:
+                    fields["result"] = {**result, "records": records[:nk], "atlas": []}
+                store.update(job_id, **fields)
                 if scale:
                     time.sleep(weight * scale / ticks)
+            elapsed_w += weight
         store.update(job_id, status="complete", phase="complete", result=result)
     except Exception as exc:  # noqa: BLE001 — a replay glitch must not kill the worker thread silently
         store.update(job_id, status="error", phase="error", error_message=str(exc))

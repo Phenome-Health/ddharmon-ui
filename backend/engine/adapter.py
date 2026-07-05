@@ -39,6 +39,7 @@ from backend.engine.contract import (
     PHASES_RUN,
     AtlasPoint,
     UICandidate,
+    UIMember,
     UIRecord,
     UIResult,
     UISummary,
@@ -114,7 +115,42 @@ def _candidate_to_ui(c: Any) -> UICandidate:
     }
 
 
-def _record_to_ui(r: Any) -> UIRecord:
+def _member_ui(member_id: str, index: dict[str, UIMember]) -> UIMember:
+    """Resolve a ``cohort:var`` id to a :class:`UIMember` (name + text), falling back to the id parts when
+    the field isn't in ``index`` (e.g. a snapshot enriched later, or a test record with no dictionaries)."""
+    hit = index.get(member_id)
+    if hit is not None:
+        return hit
+    cohort, _, var = member_id.partition(":")
+    name = var or member_id
+    return {"id": member_id, "cohort": cohort, "name": name, "text": name}
+
+
+def build_member_index(embedded: list[Any]) -> dict[str, UIMember]:
+    """Build a ``{"cohort:var" -> UIMember}`` lookup from the embedded dictionaries.
+
+    ``text`` is the field's human text (description / question_text / short_label) — the signal that was
+    embedded and clustered — so the review UI can show what each concept actually pooled, not opaque ids.
+    """
+    index: dict[str, UIMember] = {}
+    for ed in embedded:
+        dd = getattr(ed, "dictionary", None)
+        if dd is None:
+            continue
+        cohort = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
+        for var, fld in getattr(dd, "fields", {}).items():
+            text = (
+                getattr(fld, "description", None)
+                or getattr(fld, "question_text", None)
+                or getattr(fld, "short_label", None)
+                or var
+            )
+            key = f"{cohort}:{var}"
+            index[key] = {"id": key, "cohort": cohort, "name": var, "text": text}
+    return index
+
+
+def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
     """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
     return {
         "id": r.group_id or r.cluster_id,
@@ -132,6 +168,7 @@ def _record_to_ui(r: Any) -> UIRecord:
         "nMembers": r.n_members,
         "cohorts": list(r.cohorts),
         "members": list(r.member_variable_names),
+        "memberDetails": [_member_ui(m, member_index) for m in r.member_variable_names],
         "transforms": [_transform_to_ui(t) for t in r.transforms],
         "candidates": [_candidate_to_ui(c) for c in r.candidates],
         "rationale": r.rationale,
@@ -159,10 +196,20 @@ def _summarize(records: list[UIRecord]) -> UISummary:
 
 
 def build_ui_result(
-    leanb_result: Any, *, mode: str, phases: list[str], atlas: list[AtlasPoint] | None = None
+    leanb_result: Any,
+    *,
+    mode: str,
+    phases: list[str],
+    atlas: list[AtlasPoint] | None = None,
+    member_index: dict[str, UIMember] | None = None,
 ) -> UIResult:
-    """Map a ``LeanBResult`` to the stable ``UIResult`` contract."""
-    records = [_record_to_ui(r) for r in leanb_result.records]
+    """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
+
+    ``member_index`` (from :func:`build_member_index`) enriches each record's ``memberDetails`` with the
+    source field text; when omitted, member details fall back to the ``cohort:var`` id parts.
+    """
+    idx = member_index or {}
+    records = [_record_to_ui(r, idx) for r in leanb_result.records]
     return {
         "contractVersion": CONTRACT_VERSION,
         "mode": mode,
@@ -362,6 +409,9 @@ def run_pipeline(
     # 2D projection of the field space for the embedding atlas (cheap, deterministic; no core dependency).
     atlas = _atlas_points(embedded, cde_cohort)
 
+    # {"cohort:var" -> UIMember} so each concept's records carry the source fields (name + text) they pooled.
+    member_index = build_member_index(embedded)
+
     # --- knobs: passthrough only (absent -> harmonize_leanb's own defaults). New knobs need no GUI change. ---
     kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}
     for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
@@ -389,7 +439,7 @@ def run_pipeline(
         result = harmonize_leanb(embedded, **kwargs)
         _save_substrate_if_new(substrate_path, result)
         progress("prepared", 0, 0)
-        return build_ui_result(result, mode=mode, phases=PHASES_PREVIEW, atlas=atlas)
+        return build_ui_result(result, mode=mode, phases=PHASES_PREVIEW, atlas=atlas, member_index=member_index)
 
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
     if overrides:
@@ -423,4 +473,4 @@ def run_pipeline(
         **kwargs,
     )
     _save_substrate_if_new(substrate_path, result)
-    return build_ui_result(result, mode=mode, phases=PHASES_RUN, atlas=atlas)
+    return build_ui_result(result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index)

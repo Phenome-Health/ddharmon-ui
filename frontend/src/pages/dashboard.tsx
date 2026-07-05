@@ -1,7 +1,21 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { toast } from "sonner";
-import { Ban, Check, ChevronDown, ChevronRight, Download, FileCode, Info, Loader2, Pencil, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Ban,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  FileCode,
+  Info,
+  Loader2,
+  Pencil,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +31,7 @@ import { Analytics } from "@/components/analytics";
 import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
-import { VERDICT_STYLES, type UIRecord, type UITransform } from "@/types";
+import { VERDICT_STYLES, type UIRecord } from "@/types";
 
 // Known phase ordering for the progress bar. The phase LABEL is shown verbatim from the stream (so a new
 // pipeline phase still displays); only the percent uses this ordering, falling back gracefully if unknown.
@@ -86,21 +100,43 @@ function cos(x: number | null): string {
   return x == null ? "—" : x.toFixed(3);
 }
 
-function transformSummary(t: UITransform): string {
-  switch (t.kind) {
-    case "identity":
-      return "identity (already aligned)";
-    case "categorical":
-      return `${Object.keys(t.codeMap ?? {}).length} codes mapped${t.unmappedSourceCodes?.length ? `, ${t.unmappedSourceCodes.length} unmapped` : ""}`;
-    case "unit":
-      return `× ${t.factor ?? "?"}${t.offset ? ` + ${t.offset}` : ""} (${t.sourceUnit ?? "?"} → ${t.targetUnit ?? "?"})`;
-    case "arithmetic":
-      return t.formula ?? "formula";
-    case "data_dependent":
-      return `${t.method ?? "data-dependent"} (needs data at apply-time)`;
-    default:
-      return "no spec";
+// ── review-queue sorting ──────────────────────────────────────────────────────────────────────
+type SortKey = "concept" | "cde" | "verdict" | "cos" | "cohorts" | "specs";
+type SortDir = "asc" | "desc";
+interface SortState {
+  key: SortKey;
+  dir: SortDir;
+}
+// Verdict sort order mirrors the EITL review priority (adopt → refine → novel → unclassified).
+const VERDICT_RANK: Record<string, number> = { adopt: 0, refine: 1, novel: 2, unclassified: 3 };
+
+function sortValue(r: UIRecord, key: SortKey): string | number {
+  switch (key) {
+    case "concept":
+      return (r.concept || r.id).toLowerCase();
+    case "cde":
+      return (r.cde?.id ?? "").toLowerCase();
+    case "verdict":
+      return VERDICT_RANK[r.verdict] ?? 9;
+    case "cos":
+      return r.cosines.chosen ?? r.cosines.top1 ?? -1; // nulls (novels) sort as lowest support
+    case "cohorts":
+      return r.cohorts.join(",").toLowerCase();
+    case "specs":
+      return r.transforms.length;
   }
+}
+
+function sortRecords(records: UIRecord[], sort: SortState | null): UIRecord[] {
+  if (!sort) return records;
+  const arr = [...records];
+  arr.sort((a, b) => {
+    const va = sortValue(a, sort.key);
+    const vb = sortValue(b, sort.key);
+    const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+    return sort.dir === "asc" ? c : -c;
+  });
+  return arr;
 }
 
 export default function DashboardPage() {
@@ -114,11 +150,54 @@ export default function DashboardPage() {
   // and emphasizes the matching slice across every chart. Clicking the same element again clears it.
   const [focus, setFocus] = useState<Focus>(null);
   const toggleFocus = (f: Focus) => setFocus((cur) => (sameFocus(cur, f) ? null : f));
+  const [sort, setSort] = useState<SortState | null>(null);
+  const onSort = (key: SortKey) =>
+    setSort((cur) => (cur?.key === key ? { key, dir: cur.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+  // Cross-cohort = the actual harmonization (a concept pooled from ≥2 cohorts). Single-cohort concepts are
+  // CDE-mappings (the CDEMapper/DIVER lane). This toggle narrows the queue to the harmonization subset.
+  const [xcOnly, setXcOnly] = useState(false);
 
   const result = jobState?.result ?? null;
   const records = useMemo<UIRecord[]>(() => result?.records ?? [], [result]);
-  const filtered = useMemo(() => records.filter((r) => recordMatchesFocus(r, focus)), [records, focus]);
+  const filtered = useMemo(
+    () => records.filter((r) => recordMatchesFocus(r, focus) && (!xcOnly || r.crossCohort)),
+    [records, focus, xcOnly],
+  );
+  const sorted = useMemo(() => sortRecords(filtered, sort), [filtered, sort]);
   const headerCohorts = useMemo(() => [...new Set(records.flatMap((r) => r.cohorts))].sort(), [records]);
+  // Stats derived from the records revealed so far, so the cards grow live during the demo replay; at
+  // completion they equal result.summary (route/crossCohort/transforms mirror the backend _summarize).
+  const stats = useMemo(() => {
+    let nAssigned = 0;
+    let nCrossCohort = 0;
+    let nCrossAssigned = 0;
+    let nSingleAssigned = 0;
+    let nSingleNovel = 0;
+    let nWithTransforms = 0;
+    for (const r of records) {
+      const assigned = r.route === "assigned";
+      if (assigned) nAssigned += 1;
+      if (r.transforms.length) nWithTransforms += 1;
+      if (r.crossCohort) {
+        nCrossCohort += 1;
+        if (assigned) nCrossAssigned += 1;
+      } else if (assigned) {
+        nSingleAssigned += 1;
+      } else {
+        nSingleNovel += 1;
+      }
+    }
+    return {
+      nRecords: records.length,
+      nAssigned,
+      nCrossCohort,
+      nCrossAssigned,
+      nSingle: records.length - nCrossCohort,
+      nSingleAssigned,
+      nSingleNovel,
+      nWithTransforms,
+    };
+  }, [records]);
 
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
     setDecisions((p) => ({ ...p, [r.id]: decision }));
@@ -170,14 +249,14 @@ export default function DashboardPage() {
               <ReproducibilityInfo />
             </div>
           </div>
-          {result && !isPreview && (
+          {result && !isPreview && !running && records.length > 0 && (
             <Button size="sm" asChild className="shrink-0">
               <Link href={`/job/${jobId}/workbench`}>Review workbench</Link>
             </Button>
           )}
         </div>
 
-        {result && !isPreview && (
+        {result && !isPreview && !running && records.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
             <span className="mr-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Export</span>
             <ExportButton
@@ -243,13 +322,28 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {result && !isPreview && (
+      {result && !isPreview && records.length > 0 && (
         <>
+          {/* Segment harmonization (cross-cohort pooling — the cross-dataset payoff) from single-cohort
+              CDE-mapping (the CDEMapper/DIVER lane), rather than one blended "assigned" count. */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard label="Records" value={result.summary.nRecords} />
-            <StatCard label="Assigned to CDE" value={result.summary.nAssigned} />
-            <StatCard label="Cross-cohort" value={result.summary.nCrossCohort} />
-            <StatCard label="With transform specs" value={result.summary.nWithTransforms} />
+            <StatCard label="Concepts" value={stats.nRecords} sub={`${stats.nWithTransforms} with transform specs`} />
+            <StatCard
+              label="Harmonized · cross-cohort"
+              value={stats.nCrossCohort}
+              sub={`${stats.nCrossAssigned} mapped to a CDE`}
+              accent
+            />
+            <StatCard
+              label="Single-cohort · CDE-mapping"
+              value={stats.nSingle}
+              sub={`${stats.nSingleAssigned} mapped · ${stats.nSingleNovel} novel`}
+            />
+            <StatCard
+              label="Assigned to CDE"
+              value={stats.nAssigned}
+              sub={`${stats.nCrossAssigned} cross · ${stats.nSingleAssigned} single`}
+            />
           </div>
 
           {focus && (
@@ -303,44 +397,65 @@ export default function DashboardPage() {
             </Card>
           )}
 
+          {!running && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle className="text-base">Review queue ({filtered.length})</CardTitle>
-              <Select
-                value={focus?.kind === "verdict" ? focus.value : "all"}
-                onValueChange={(v) => setFocus(v === "all" ? null : { kind: "verdict", value: v })}
-              >
-                <SelectTrigger className="h-8 w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All verdicts</SelectItem>
-                  <SelectItem value="adopt">Adopt</SelectItem>
-                  <SelectItem value="refine">Refine</SelectItem>
-                  <SelectItem value="novel">Novel</SelectItem>
-                  <SelectItem value="unclassified">Unclassified</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant={xcOnly ? "secondary" : "outline"}
+                  size="sm"
+                  className={`h-8 ${xcOnly ? "text-ph-navy" : "text-neutral-500"}`}
+                  onClick={() => setXcOnly((v) => !v)}
+                  title="Show only concepts pooled from 2+ cohorts (the harmonization subset)"
+                >
+                  Cross-cohort only
+                </Button>
+                <Select
+                  value={focus?.kind === "verdict" ? focus.value : "all"}
+                  onValueChange={(v) => setFocus(v === "all" ? null : { kind: "verdict", value: v })}
+                >
+                  <SelectTrigger className="h-8 w-44">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All verdicts</SelectItem>
+                    <SelectItem value="adopt">Adopt</SelectItem>
+                    <SelectItem value="refine">Refine</SelectItem>
+                    <SelectItem value="novel">Novel</SelectItem>
+                    <SelectItem value="unclassified">Unclassified</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-6" />
-                    <TableHead>Concept</TableHead>
-                    <TableHead>CDE</TableHead>
-                    <TableHead>Verdict</TableHead>
-                    <TableHead className="text-right">cos</TableHead>
-                    <TableHead>Cohorts</TableHead>
-                    <TableHead className="text-right">Specs</TableHead>
+                    <SortableHead label="Concept" sortKey="concept" sort={sort} onSort={onSort} />
+                    <SortableHead label="CDE" sortKey="cde" sort={sort} onSort={onSort} />
+                    <SortableHead label="Verdict" sortKey="verdict" sort={sort} onSort={onSort} />
+                    <SortableHead
+                      label="cos"
+                      sortKey="cos"
+                      sort={sort}
+                      onSort={onSort}
+                      align="right"
+                      tip="Cosine similarity (0–1) between the concept and the chosen CDE embedding — a retrieval signal, not a calibrated model confidence. The LLM's decision is the verdict. Sort ascending to review the weakest matches first."
+                    />
+                    <SortableHead label="Cohorts" sortKey="cohorts" sort={sort} onSort={onSort} />
+                    <SortableHead label="Specs" sortKey="specs" sort={sort} onSort={onSort} align="right" />
                     <TableHead>Decision</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((r) => (
+                  {sorted.map((r) => (
                     <RecordRows
                       key={r.id}
                       r={r}
+                      jobId={jobId}
                       open={!!expanded[r.id]}
                       toggle={() => setExpanded((p) => ({ ...p, [r.id]: !p[r.id] }))}
                       decision={decisions[r.id]}
@@ -353,6 +468,7 @@ export default function DashboardPage() {
               </Table>
             </CardContent>
           </Card>
+          )}
         </>
       )}
     </div>
@@ -361,6 +477,7 @@ export default function DashboardPage() {
 
 function RecordRows({
   r,
+  jobId,
   open,
   toggle,
   decision,
@@ -369,6 +486,7 @@ function RecordRows({
   onDecide,
 }: {
   r: UIRecord;
+  jobId: string;
   open: boolean;
   toggle: () => void;
   decision?: string;
@@ -376,6 +494,10 @@ function RecordRows({
   onNote: (v: string) => void;
   onDecide: (d: "approve" | "refine" | "reject") => void;
 }) {
+  // The chosen candidate can have a lower cosine than a nearer one — the assign LLM ranks concept fit over
+  // embedding similarity. Flag that so the reviewer knows to read the rationale (why the model overrode cos).
+  const reranked =
+    r.cosines.chosen != null && r.cosines.top1 != null && r.cosines.chosen < r.cosines.top1 - 1e-6;
   return (
     <>
       <TableRow className="cursor-pointer" onClick={toggle}>
@@ -458,40 +580,64 @@ function RecordRows({
 
             {(r.cosines.chosen ?? r.cosines.top1) != null && (
               <div className="flex items-center gap-2">
-                <span className="w-24 shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-400">
-                  Confidence
+                <span className="flex w-24 shrink-0 items-center gap-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+                  Cosine
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3 w-3 cursor-help text-neutral-300" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs whitespace-normal text-left font-normal normal-case leading-relaxed">
+                      Cosine similarity to the chosen CDE embedding (0–1) — the retrieval signal behind this match.
+                      It is not a calibrated model confidence; the LLM&apos;s decision is the verdict (adopt / refine
+                      / novel). v2 does not emit a separate confidence score.
+                    </TooltipContent>
+                  </Tooltip>
                 </span>
                 <ConfidenceBar value={r.cosines.chosen ?? r.cosines.top1 ?? 0} verdict={r.verdict} />
                 <span className="text-xs tabular-nums text-neutral-600">{cos(r.cosines.chosen ?? r.cosines.top1)}</span>
               </div>
             )}
 
-            {r.rationale && (
-              <blockquote className="border-l-2 border-neutral-300 pl-3 italic text-neutral-600">{r.rationale}</blockquote>
+            {reranked && (
+              <p className="text-xs text-neutral-500">
+                The model ranked concept fit over similarity — it chose a candidate at cos{" "}
+                <span className="tabular-nums">{cos(r.cosines.chosen)}</span> over a nearer one at cos{" "}
+                <span className="tabular-nums">{cos(r.cosines.top1)}</span>. See the rationale.
+              </p>
             )}
 
-            <DetailLine label="Ideal CDE" value={r.idealCde || "—"} />
-            <DetailLine label="Members" value={r.members.join(", ") || "—"} />
-            {r.transforms.length > 0 && (
-              <div>
-                <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Transform specs</div>
-                <div className="space-y-1">
-                  {r.transforms.map((t, i) => (
-                    <div key={i} className="flex flex-wrap items-center gap-2 text-xs">
-                      <Badge variant="secondary" className="font-mono">
-                        {t.kind}
-                      </Badge>
-                      <span className="font-mono text-neutral-600">{t.sourceVariable}</span>
-                      <span className="text-neutral-400">→</span>
-                      <span className="text-neutral-600">{transformSummary(t)}</span>
-                      {t.needsReview && <Badge variant="outline" className="border-warning/40 text-warning">needs review</Badge>}
-                      {t.needsUnits && <Badge variant="outline" className="border-warning/40 text-warning">needs units</Badge>}
-                      {t.needsData && <Badge variant="outline" className="border-warning/40 text-warning">needs data</Badge>}
-                    </div>
-                  ))}
-                </div>
+            {r.rationale && (
+              <div className="space-y-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">Model rationale</div>
+                <blockquote className="border-l-2 border-neutral-300 pl-3 italic text-neutral-600">
+                  {r.rationale}
+                </blockquote>
               </div>
             )}
+
+            {/* Summary only — the full detail (source variables, ranked CDE candidates, value mapping) lives
+                in the workbench, one click away. Keeps the queue a scannable triage surface. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
+              <span>
+                {r.nMembers} {r.nMembers === 1 ? "field" : "fields"} · {r.cohorts.join(", ") || "—"}
+                {r.crossCohort ? " · cross-cohort" : ""}
+              </span>
+              {r.transforms.length > 0 && (
+                <span>
+                  · {r.transforms.length} transform spec{r.transforms.length === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
+
+            <div className="pt-1">
+              <Link
+                href={`/job/${jobId}/workbench?c=${encodeURIComponent(r.id)}`}
+                className="inline-flex items-center gap-1 text-xs font-medium text-ph-navy hover:underline"
+              >
+                Open in review workbench — source variables, all CDE candidates &amp; value mapping
+                <ChevronRight className="h-3 w-3" />
+              </Link>
+            </div>
           </TableCell>
         </TableRow>
       )}
@@ -508,21 +654,66 @@ function ConfidenceBar({ value, verdict }: { value: number; verdict: string }) {
   );
 }
 
-function DetailLine({ label, value }: { label: string; value: string }) {
+function SortableHead({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = "left",
+  tip,
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: SortState | null;
+  onSort: (k: SortKey) => void;
+  align?: "left" | "right";
+  tip?: string;
+}) {
+  const active = sort?.key === sortKey;
+  const Icon = active ? (sort.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
   return (
-    <div className="flex gap-2">
-      <span className="w-24 shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-400">{label}</span>
-      <span className="text-neutral-700">{value}</span>
-    </div>
+    <TableHead className={align === "right" ? "text-right" : undefined}>
+      <span className={`inline-flex items-center gap-1 ${align === "right" ? "flex-row-reverse" : ""}`}>
+        <button
+          type="button"
+          onClick={() => onSort(sortKey)}
+          className="inline-flex items-center gap-1 font-medium hover:text-ph-navy"
+        >
+          {label}
+          <Icon className={`h-3 w-3 ${active ? "text-ph-navy" : "text-neutral-300"}`} />
+        </button>
+        {tip && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Info className="h-3 w-3 cursor-help text-neutral-300" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs whitespace-normal text-left font-normal leading-relaxed">
+              {tip}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </span>
+    </TableHead>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number | string }) {
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: number | string;
+  sub?: string;
+  accent?: boolean;
+}) {
   return (
-    <Card>
+    <Card className={accent ? "border-ph-navy/30 bg-ph-navy/[0.03]" : undefined}>
       <CardContent>
         <div className="text-xs font-medium uppercase tracking-wider text-neutral-500">{label}</div>
         <div className="mt-1 text-2xl font-semibold tabular-nums text-ph-ink">{value}</div>
+        {sub && <div className="mt-0.5 text-xs text-neutral-400">{sub}</div>}
       </CardContent>
     </Card>
   );

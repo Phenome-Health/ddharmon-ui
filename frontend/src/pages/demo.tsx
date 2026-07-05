@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2, Sparkles } from "lucide-react";
+import { Download, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { listDemos, startDemo } from "@/lib/api";
+import { PH } from "@/lib/links";
 
 export default function DemoPage() {
   const [, navigate] = useLocation();
@@ -91,6 +92,33 @@ export default function DemoPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Reproduce-it-yourself: download the curated inputs + scripts, and point at the source repos. */}
+      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-neutral-700">Run it yourself</div>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              Download the curated cohort CSVs and the build scripts, then reproduce this run locally.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" asChild className="shrink-0">
+            <a href={`${import.meta.env.BASE_URL}demo-cohorts.zip`} download>
+              <Download className="mr-1.5 h-4 w-4" /> Curated cohorts + scripts (.zip)
+            </a>
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-neutral-400">
+          Curated ~200-field subsets of public All of Us / CLSA / UK Biobank data. Full data + provenance:{" "}
+          <a href={PH.ddharmon} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
+            ddharmon
+          </a>
+          {" · "}this app:{" "}
+          <a href={PH.ddharmonUi} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
+            ddharmon-ui
+          </a>
+        </p>
+      </div>
     </div>
   );
 }
