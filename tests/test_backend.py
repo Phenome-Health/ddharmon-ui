@@ -201,7 +201,7 @@ def test_batch_flow_with_fake_runner(monkeypatch, tmp_path):
     cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
     monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
 
-    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None):
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
         store.update(job_id, status="complete", phase="complete", result=_CANNED_RESULT)
 
     monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
@@ -263,6 +263,72 @@ def test_batch_flow_with_fake_runner(monkeypatch, tmp_path):
     # delete
     assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
     assert client.get(f"/api/harmonize/result/{job_id}").status_code == 404
+
+
+def test_byok_key_threaded_to_runner_and_never_persisted(monkeypatch, tmp_path):
+    """The x-anthropic-key header reaches run_harmonization as api_key, but never lands in run_config.
+
+    run_config is persisted by store.create, so a key there would leak to disk/logs. This locks the
+    two BYOK invariants: (1) the header is threaded through; (2) it stays out of the persisted config.
+    """
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    captured: dict = {}
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        captured["api_key"] = api_key
+        captured["config"] = dict(config)
+        store.update(job_id, status="complete", phase="complete", result=_CANNED_RESULT)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    cfg = {
+        "dictionaries": [
+            {
+                "filename": "cohortA.csv",
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "var", "description": "desc"},
+            }
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+        "minClusterSize": 5,
+    }
+    files = [("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))]
+
+    # (1) header present -> threaded as api_key, absent from persisted config
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=files,
+        data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-ant-byok-secret"},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+    assert captured["api_key"] == "sk-ant-byok-secret"
+    assert "api_key" not in captured["config"]
+    assert "sk-ant-byok-secret" not in json.dumps(captured["config"])
+    # and the same invariant against what actually got persisted on the job
+    persisted = next(j for j in client.get("/api/harmonize/jobs").json() if j["jobId"] == job_id)
+    assert "sk-ant-byok-secret" not in json.dumps(persisted)
+
+    # (2) no header -> api_key is None (unchanged ANTHROPIC_API_KEY env behavior)
+    captured.clear()
+    resp2 = client.post("/api/harmonize/batch", files=files, data={"config": json.dumps(cfg)})
+    assert resp2.status_code == 200
+    job2 = resp2.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job2}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+    assert captured["api_key"] is None
 
 
 def test_batch_rejects_missing_required_role(monkeypatch, tmp_path):

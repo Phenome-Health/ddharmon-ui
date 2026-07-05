@@ -27,10 +27,12 @@ def run_harmonization(
     *,
     provider: Any | None = None,
     stage_overrides: dict[str, StageFn] | None = None,
+    api_key: str | None = None,
 ) -> None:
     """Run a job to completion, reporting phase progress to ``store``. Safe to run in a thread.
 
     ``provider`` and ``stage_overrides`` are injected by tests to avoid any model download / LLM call.
+    ``api_key`` is the optional per-request BYOK Anthropic key (in-memory, this job only; never persisted).
     """
 
     def progress(phase: str, completed: int = 0, total: int = 0) -> None:
@@ -44,6 +46,7 @@ def run_harmonization(
             progress=progress,
             provider=provider,
             stage_overrides=stage_overrides,
+            api_key=api_key,
         )
         store.update(job_id, status="complete", phase="complete", result=result)
         logger.info("job %s complete: %d records", job_id, len(result["records"]))
