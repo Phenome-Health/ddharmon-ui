@@ -59,7 +59,7 @@ If you have the `ddharmon` source checked out locally and want to iterate on bot
 core editable first, then this repo's web deps without re-resolving the git pin:
 
 ```bash
-uv pip install -e "../ph-arpa-data-harmonization[all]"   # path to your local ddharmon checkout
+uv pip install -e "../ddharmon[all]"   # path to your local ddharmon checkout
 uv pip install -e . --no-deps
 uv pip install "fastapi>=0.115" "uvicorn[standard]>=0.32" "python-multipart>=0.0.9"
 ```

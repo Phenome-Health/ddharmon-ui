@@ -34,3 +34,6 @@ data/cde/
 
 # Persistent demo build work dir (frozen substrate + Batch response cache for reproducible replay)
 backend/demos/.work/
+
+# GSD planning/handoff docs — local only, never ship (contain local paths, costs, strategy)
+.planning/

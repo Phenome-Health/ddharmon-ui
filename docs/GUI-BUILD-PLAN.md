@@ -2,7 +2,7 @@
 
 **Status:** Active · **Authored:** 2026-06-30 · **Owner:** Bhargav
 **Goal:** Make `ddharmon-ui` the functional + deployed GUI that the coupled `ddharmon 1.0.0` tag waits on.
-**Companion:** `../ph-arpa-data-harmonization/.planning/V1.0-ROADMAP.md` (the package-side roadmap).
+**Companion:** the package-side v1.0 roadmap in the `ddharmon` core repo.
 
 ---
 
