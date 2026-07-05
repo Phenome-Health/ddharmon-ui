@@ -265,7 +265,20 @@ def write_static_fixtures(ids: list[str], snapshot: dict) -> None:
     summary["nRecords"] = len(result.get("records", []))
     merged = [summary] + [j for j in existing if j.get("jobId") != job_id]
     jobs_path.write_text(json.dumps(merged, indent=2))
-    print(f"static fixtures: result-{job_id}.json + jobs.json merge ({summary['nRecords']} records)")
+
+    # Mark this combo available in the static demos.json (in VITE_STATIC mode the SPA reads it as-is — there's
+    # no backend to compute availability). Without this the demo page shows "being prepared" and won't load.
+    demos_path = static_dir / "demos.json"
+    if demos_path.exists():
+        demos = json.loads(demos_path.read_text())
+        for combo in demos.get("combos", []):
+            if sorted(str(x).lower() for x in combo.get("datasets", [])) == ids:
+                combo["available"] = True
+        demos_path.write_text(json.dumps(demos, indent=2))
+
+    print(
+        f"static fixtures: result-{job_id}.json + jobs.json merge + demos.json availability ({summary['nRecords']} records)"
+    )
 
 
 if __name__ == "__main__":
