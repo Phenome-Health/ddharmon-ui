@@ -148,7 +148,7 @@ async def start_batch(
         )
     cde_path = CDE_FILES[cde_set]
     if not cde_path.exists():
-        raise HTTPException(status_code=400, detail=f"CDE file not found: {cde_path} (see deploy/README.md)")
+        raise HTTPException(status_code=400, detail=f"CDE file not found: {cde_path} (set DDHARMON_CDE_DIR to the catalog directory)")
     cde_spec: dict[str, Any] = {
         "path": str(cde_path),
         "cohort_name": CDE_COHORT,

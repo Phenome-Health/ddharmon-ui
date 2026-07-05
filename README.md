@@ -28,7 +28,6 @@ recommendations (approve / refine / reject) → export the EITL queue.
 ```
 backend/     FastAPI app (app.py) + in-memory job store (jobs.py) + pipeline runner (runner.py)
 frontend/    React/Vite/shadcn SPA (build output -> frontend/dist, served by the backend in prod)
-deploy/      AWS Lightsail deploy: systemd unit + nginx config + step-by-step runbook
 tests/       backend tests (monkeypatch BERTopic — no model download / API key needed)
 dev.sh       dev: backend :8000 (--reload) + Vite :5173 (proxies /api)
 serve.sh     prod-ish: build the SPA once, then serve SPA + API from one uvicorn process
@@ -80,15 +79,10 @@ uv pip install "fastapi>=0.115" "uvicorn[standard]>=0.32" "python-multipart>=0.0
 
 Health check: `curl -s localhost:8000/api/health` → `{"status":"ok","frontendBuilt":true,...}`.
 
-## Deploy
-
-See [`deploy/README.md`](deploy/README.md) for the AWS Lightsail runbook (systemd + nginx +
-certbot), including the Squarespace DNS / subdomain steps.
-
 ## Notes
 
 - Jobs are kept **in-memory** — they're lost when the backend restarts (fine for a single-user GUI).
-  Run exactly **one** uvicorn worker (the deploy unit enforces this).
+  Run exactly **one** uvicorn worker (in-memory job state + SSE need a single process).
 - `classifyMode=none` shows CDE-anchored sub-clusters as `pending` (un-classified); choose
   `sync` (inline, needs API key) or `batch` (Anthropic Batch API, async) to get adopt/refine/novel.
 - Uploaded files + batch artifacts land in `.ddharmon_ui/<jobId>/` (gitignored; override with
