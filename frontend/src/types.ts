@@ -1,7 +1,7 @@
 // Mirrors the stable UIRecord/UIResult contract emitted by backend/engine/contract.py.
 // This file is the frontend half of the insulation boundary — when ddharmon's pipeline churns, only the
 // backend adapter's mapping changes; these shapes (and the views that render them) stay still. Keep in
-// sync with contract.py (CONTRACT_VERSION). See ../../docs/GUI-BUILD-PLAN.md §1/§3.
+// sync with contract.py (CONTRACT_VERSION).
 
 export type RunMode = "batch" | "sync" | "preview";
 export type CdeSet = "endorsed" | "full";
@@ -72,6 +72,16 @@ export interface AtlasPoint {
   y: number;
 }
 
+// One source field a concept pooled — surfaced so a reviewer can see WHICH variables (and their text)
+// drove the assignment. `text` is the embedded signal (description/question/label); `name` may be a
+// synthetic row id when the source dictionary had no usable identifier column. Mirrors contract.py.
+export interface UIMember {
+  id: string; // "cohort:var"
+  cohort: string;
+  name: string;
+  text: string;
+}
+
 export interface UIRecord {
   id: string;
   clusterId: string;
@@ -88,6 +98,7 @@ export interface UIRecord {
   nMembers: number;
   cohorts: string[];
   members: string[];
+  memberDetails: UIMember[]; // the source fields (name + text) this concept pooled — for review
   transforms: UITransform[];
   candidates: UICandidate[]; // ranked CDE candidates the assign stage saw (best-first)
   rationale: string;
@@ -134,6 +145,9 @@ export interface JobResult {
   decisions: Record<string, { decision: string; note: string }>;
   createdAt: number;
   updatedAt: number;
+  // Present on the bundled demo fixture: per-phase wall-clock from the real build run, used to pace the
+  // client-side replay in static (backend-less) mode so the Netlify demo feels like a live run.
+  phaseTimings?: Record<string, number>;
 }
 
 export interface JobSummary extends Omit<JobResult, "result"> {
@@ -150,10 +164,11 @@ export interface RunConfig {
   dictionaries: DictSpec[];
   cdeSet: CdeSet;
   runMode: RunMode;
-  minClusterSize: number;
   genTransformSpecs: boolean;
   displayName?: string;
-  // advanced passthrough knobs (optional; default to harmonize_leanb's own values)
+  // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
+  // omitted, and falls back to harmonize_leanb's own defaults for the rest)
+  minClusterSize?: number;
   topK?: number;
   retrievalFloor?: number;
   modelTag?: string;

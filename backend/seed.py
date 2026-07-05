@@ -1,6 +1,6 @@
 """Seed the in-memory job store with a couple of SAMPLE completed runs (dev/testing only).
 
-Pre-v3 the real pipeline isn't wired for local runs, but we still want to exercise the results,
+The real pipeline isn't wired for local runs here, but we still want to exercise the results,
 workbench, visualization, and export UI. This builds synthetic-but-realistic ``UIResult`` snapshots
 (clearly labelled "Sample —") and hydrates completed jobs from them. Enabled only when the env var
 ``DDHARMON_UI_SEED`` is truthy, so production never shows fabricated runs.

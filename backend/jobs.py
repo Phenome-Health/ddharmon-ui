@@ -4,7 +4,7 @@ A run is a long, mostly-CPU-bound pipeline (embed → BERTopic → sub-cluster �
 → classify), so it executes in a daemon thread and reports progress by mutating its
 :class:`Job` under a lock. The SSE endpoint polls ``to_dict()`` every 0.5s.
 
-State is in-memory only — jobs are lost on restart (acceptable for the v1 single-user
+State is in-memory only — jobs are lost on restart (acceptable for the single-user
 GUI; swap in SQLite later if persistence is needed).
 """
 
@@ -28,7 +28,7 @@ class Job:
     display_name: str
     # pending|loading|embedding|clustering|generating|splitting|assigning|specs|prepared|complete|error.
     # The phase set is REPORTED by the engine adapter (data-driven), not enumerated here — this comment is
-    # just the v2 set for reference; the UI renders whatever phases a run reports (see result["phases"]).
+    # just the default set for reference; the UI renders whatever phases a run reports (see result["phases"]).
     status: str = "pending"
     phase: str = "pending"
     completed: int = 0

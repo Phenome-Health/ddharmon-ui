@@ -31,3 +31,15 @@ data/cde/
 .idea/
 .vscode/
 .venv
+
+# Persistent demo build work dir (frozen substrate + Batch response cache for reproducible replay)
+backend/demos/.work/
+
+# GSD planning/handoff docs — local only, never ship (contain local paths, costs, strategy)
+.planning/
+
+# internal GUI build plan (planning artifact) — local only
+docs/GUI-BUILD-PLAN.md
+
+# internal deployment runbook (PH-specific Lightsail/nginx/Squarespace + private-repo auth) — local only, never ship
+deploy/

@@ -1,7 +1,7 @@
-"""The v2 engine adapter — the ONLY module that imports the ddharmon pipeline.
+"""The engine adapter — the ONLY module that imports the ddharmon pipeline.
 
-This is the churn-absorbing layer (``docs/GUI-BUILD-PLAN.md`` §1). It does **not** re-implement the
-harmonization flow — that was the v1 runner's mistake. ``harmonize_leanb`` already owns the staged
+This is the churn-absorbing layer (the insulation boundary). It does **not** re-implement the
+harmonization flow — that was an earlier runner's mistake. ``harmonize_leanb`` already owns the staged
 orchestration (cluster → retrieve → generate-ideal → split → per-group assign → route → specs) and
 exposes each LLM stage as an *injectable callback*. So this adapter only:
 
@@ -19,10 +19,10 @@ Run modes:
   * ``batch``   — every LLM stage via the Anthropic Batch API (async, cost-bounded). The deployed default.
   * ``sync``    — every LLM stage inline (needs ``ANTHROPIC_API_KEY``); fast for small runs.
   * ``preview`` — no LLM/key: cluster + retrieve + build the generate prompts, expose their counts. Yields
-                  no records (v2 needs the LLM to decide anything) — the zero-cost "what would run" path.
+                  no records (the pipeline needs the LLM to decide anything) — the zero-cost "what would run" path.
 
-v2 **requires a CDE backbone** (assignment to the given CDE catalog is the thesis); there is no
-``cdeSet=none`` path as there was in v1.
+The pipeline **requires a CDE backbone** (assignment to the given CDE catalog is the thesis); there is no
+``cdeSet=none`` path.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from backend.engine.contract import (
     PHASES_RUN,
     AtlasPoint,
     UICandidate,
+    UIMember,
     UIRecord,
     UIResult,
     UISummary,
@@ -114,7 +115,42 @@ def _candidate_to_ui(c: Any) -> UICandidate:
     }
 
 
-def _record_to_ui(r: Any) -> UIRecord:
+def _member_ui(member_id: str, index: dict[str, UIMember]) -> UIMember:
+    """Resolve a ``cohort:var`` id to a :class:`UIMember` (name + text), falling back to the id parts when
+    the field isn't in ``index`` (e.g. a snapshot enriched later, or a test record with no dictionaries)."""
+    hit = index.get(member_id)
+    if hit is not None:
+        return hit
+    cohort, _, var = member_id.partition(":")
+    name = var or member_id
+    return {"id": member_id, "cohort": cohort, "name": name, "text": name}
+
+
+def build_member_index(embedded: list[Any]) -> dict[str, UIMember]:
+    """Build a ``{"cohort:var" -> UIMember}`` lookup from the embedded dictionaries.
+
+    ``text`` is the field's human text (description / question_text / short_label) — the signal that was
+    embedded and clustered — so the review UI can show what each concept actually pooled, not opaque ids.
+    """
+    index: dict[str, UIMember] = {}
+    for ed in embedded:
+        dd = getattr(ed, "dictionary", None)
+        if dd is None:
+            continue
+        cohort = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
+        for var, fld in getattr(dd, "fields", {}).items():
+            text = (
+                getattr(fld, "description", None)
+                or getattr(fld, "question_text", None)
+                or getattr(fld, "short_label", None)
+                or var
+            )
+            key = f"{cohort}:{var}"
+            index[key] = {"id": key, "cohort": cohort, "name": var, "text": text}
+    return index
+
+
+def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
     """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
     return {
         "id": r.group_id or r.cluster_id,
@@ -132,6 +168,7 @@ def _record_to_ui(r: Any) -> UIRecord:
         "nMembers": r.n_members,
         "cohorts": list(r.cohorts),
         "members": list(r.member_variable_names),
+        "memberDetails": [_member_ui(m, member_index) for m in r.member_variable_names],
         "transforms": [_transform_to_ui(t) for t in r.transforms],
         "candidates": [_candidate_to_ui(c) for c in r.candidates],
         "rationale": r.rationale,
@@ -159,10 +196,20 @@ def _summarize(records: list[UIRecord]) -> UISummary:
 
 
 def build_ui_result(
-    leanb_result: Any, *, mode: str, phases: list[str], atlas: list[AtlasPoint] | None = None
+    leanb_result: Any,
+    *,
+    mode: str,
+    phases: list[str],
+    atlas: list[AtlasPoint] | None = None,
+    member_index: dict[str, UIMember] | None = None,
 ) -> UIResult:
-    """Map a ``LeanBResult`` to the stable ``UIResult`` contract."""
-    records = [_record_to_ui(r) for r in leanb_result.records]
+    """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
+
+    ``member_index`` (from :func:`build_member_index`) enriches each record's ``memberDetails`` with the
+    source field text; when omitted, member details fall back to the ``cohort:var`` id parts.
+    """
+    idx = member_index or {}
+    records = [_record_to_ui(r, idx) for r in leanb_result.records]
     return {
         "contractVersion": CONTRACT_VERSION,
         "mode": mode,
@@ -244,14 +291,16 @@ def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
 def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api_key: str | None = None) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
-    ``api_key`` (optional) is the per-request BYOK key, forwarded to ``submit_and_wait`` for this run only.
+    Uses ``resume_and_wait`` (cache-aware): an existing ``responses_<tag>.jsonl`` is reused as-is and only
+    missing ids are (re)submitted — so a re-run over a frozen work_dir is a byte-identical, $0 replay, and an
+    interrupted batch resumes instead of re-paying. ``api_key`` (optional) is the per-request BYOK key.
     """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
             return {}
         from ddharmon.harmonization import write_prompts_jsonl
-        from ddharmon.llm.batch import submit_and_wait
+        from ddharmon.llm.batch import resume_and_wait
 
         n = len(prompts)
         progress(phase, 0, n)
@@ -259,7 +308,7 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
         responses_path = work_dir / f"responses_{tag}.jsonl"
         write_prompts_jsonl(prompts, prompts_path)
-        submit_and_wait(prompts_path, responses_path, api_key=api_key)
+        resume_and_wait(prompts_path, responses_path, api_key=api_key)
         out: dict[str, Any] = {}
         with open(responses_path) as f:
             for line in f:
@@ -276,6 +325,30 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
 # ── entry point ────────────────────────────────────────────────────────────────────────────
 
 
+def _auto_min_cluster_size(n_fields: int) -> int:
+    """A sensible HDBSCAN ``min_cluster_size`` scaled to corpus size.
+
+    Users no longer set this — clustering is a coarse scaffold that the split-aware stages (split → per-group
+    assign → merge) re-partition, so it only needs to be *reasonable*: small uploads get a low floor so
+    concepts still form (a big mcs on a tiny set would make everything an outlier), large cohorts cap at the
+    long-standing default of 15. Explicit ``min_cluster_size`` in the run config always wins over this.
+    """
+    return max(3, min(15, round(n_fields / 150)))
+
+
+def _save_substrate_if_new(substrate_path: Path | None, result: Any) -> None:
+    """Persist the freshly-built clustering partition for reproducible replay.
+
+    Only writes when a path was requested AND the file doesn't exist yet — a reload run leaves the frozen
+    file untouched. ``result.substrate`` is the ``ClusteringSubstrate`` ``harmonize_leanb`` builds.
+    """
+    if substrate_path and not substrate_path.exists() and getattr(result, "substrate", None) is not None:
+        from ddharmon.harmonization.substrate import save_substrate
+
+        substrate_path.parent.mkdir(parents=True, exist_ok=True)
+        save_substrate(result.substrate, substrate_path)
+
+
 def run_pipeline(
     dict_specs: list[dict[str, Any]],
     cde_spec: dict[str, Any] | None,
@@ -285,8 +358,9 @@ def run_pipeline(
     provider: Any | None = None,
     stage_overrides: dict[str, StageFn] | None = None,
     api_key: str | None = None,
+    substrate_path: str | Path | None = None,
 ) -> UIResult:
-    """Run the v2 pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
+    """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
     Args:
         dict_specs: ``[{path, cohort_name, column_roles}]`` for the uploaded cohort dictionaries.
@@ -298,8 +372,12 @@ def run_pipeline(
         stage_overrides: ``{generate, split, classify, specgen}`` stage callbacks (injected in tests to
                     avoid any LLM/network); when given, the run_mode strategy is bypassed.
         api_key:    optional per-request BYOK Anthropic key, passed straight to the core client
-                    constructors (sync ``AnthropicClient`` / batch ``submit_and_wait``). ``None`` keeps the
+                    constructors (sync ``AnthropicClient`` / batch ``resume_and_wait``). ``None`` keeps the
                     default ``ANTHROPIC_API_KEY`` env behavior. In-memory only — never persisted or logged.
+        substrate_path: optional path to a frozen clustering substrate for reproducibility. When the file
+                    exists it is reloaded (UMAP skipped, the exact partition reproduced); after a fresh run the
+                    built partition is saved there. Combined with the cache-aware batch stages, a re-run over
+                    the same ``work_dir`` + ``substrate_path`` is byte-identical. Unused by normal per-job runs.
     """
     from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
@@ -331,18 +409,37 @@ def run_pipeline(
     # 2D projection of the field space for the embedding atlas (cheap, deterministic; no core dependency).
     atlas = _atlas_points(embedded, cde_cohort)
 
+    # {"cohort:var" -> UIMember} so each concept's records carry the source fields (name + text) they pooled.
+    member_index = build_member_index(embedded)
+
     # --- knobs: passthrough only (absent -> harmonize_leanb's own defaults). New knobs need no GUI change. ---
     kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}
     for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
         if config.get(key) is not None:
             kwargs[key] = config[key]
 
+    # min_cluster_size is no longer a user knob — auto-scale a coarse scaffold from the (non-CDE) corpus size
+    # when the config didn't pin one. The split-aware stages re-derive concepts, so this only needs to be
+    # reasonable; an explicit value (advanced/API callers, or the demo build) still wins.
+    if "min_cluster_size" not in kwargs:
+        n_fields = sum(len(dd) for dd in dictionaries if getattr(dd, "cohort_name", None) != cde_cohort)
+        kwargs["min_cluster_size"] = _auto_min_cluster_size(n_fields)
+
+    # --- reproducibility: reload a frozen clustering substrate if one exists (skip UMAP, reproduce the exact
+    #     partition). After a fresh run the built partition is saved (see _save_substrate_if_new). ---
+    substrate_path = Path(substrate_path) if substrate_path else None
+    if substrate_path and substrate_path.exists():
+        from ddharmon.harmonization.substrate import load_substrate
+
+        kwargs["substrate"] = load_substrate(substrate_path)
+
     # --- preview: no LLM. generate=None makes harmonize_leanb stop after building the generate prompts. ---
     if mode == "preview" and not overrides:
         progress("clustering", 0, 0)
         result = harmonize_leanb(embedded, **kwargs)
+        _save_substrate_if_new(substrate_path, result)
         progress("prepared", 0, 0)
-        return build_ui_result(result, mode=mode, phases=PHASES_PREVIEW, atlas=atlas)
+        return build_ui_result(result, mode=mode, phases=PHASES_PREVIEW, atlas=atlas, member_index=member_index)
 
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
     if overrides:
@@ -375,4 +472,5 @@ def run_pipeline(
         specgen=stages.get("specgen") if gen_specs else None,
         **kwargs,
     )
-    return build_ui_result(result, mode=mode, phases=PHASES_RUN, atlas=atlas)
+    _save_substrate_if_new(substrate_path, result)
+    return build_ui_result(result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index)

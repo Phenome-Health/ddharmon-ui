@@ -1,4 +1,4 @@
-"""Tests for the ddharmon GUI backend (backend/) — v2 split-aware contract.
+"""Tests for the ddharmon GUI backend (backend/) — split-aware contract.
 
 Covers: /detect role suggestion, /health, the in-memory JobStore, the contract mapping
 (``_record_to_ui`` / ``build_ui_result`` — the single churn-absorbing surface), the full HTTP flow with a
@@ -187,6 +187,50 @@ def test_contract_mapping_record_and_summary():
     assert s["nCrossCohort"] == 1 and s["nAssigned"] == 1 and s["nGencdeResidual"] == 1
     assert s["nWithTransforms"] == 1
     assert s["cohorts"] == ["CohortA", "CohortB"]
+    # No member_index given -> memberDetails falls back to the "cohort:var" id parts.
+    assert rec0["memberDetails"][0] == {
+        "id": "CohortA:age",
+        "cohort": "CohortA",
+        "name": "age",
+        "text": "age",
+    }
+
+
+def test_member_details_enriched_from_index():
+    """With a member_index, each record's memberDetails carry the source field's human text."""
+    from types import SimpleNamespace
+
+    from backend.engine.adapter import build_member_index
+
+    def field(desc="", qtext="", short=""):
+        return SimpleNamespace(description=desc, question_text=qtext, short_label=short)
+
+    dd = SimpleNamespace(
+        cohort_name="CohortA",
+        name="CohortA",
+        fields={
+            "age": field(desc="Age of the participant in years"),
+            "_ROW_0001": field(desc="", qtext="", short="What is your marital status?"),  # AoU-style fallback
+        },
+    )
+    index = build_member_index([SimpleNamespace(dictionary=dd)])
+    assert index["CohortA:age"]["text"] == "Age of the participant in years"
+    assert index["CohortA:_ROW_0001"]["text"] == "What is your marital status?"  # short_label fallback
+
+    rec = LeanBRecord(
+        cluster_id="c1",
+        verdict="adopt",
+        route="assigned",
+        group_id="c1#g0",
+        member_variable_names=["CohortA:age", "CohortA:_ROW_0001", "CohortB:missing"],
+        cohorts=["CohortA", "CohortB"],
+        n_members=3,
+    )
+    result = build_ui_result(LeanBResult(records=[rec]), mode="batch", phases=["loading"], member_index=index)
+    details = result["records"][0]["memberDetails"]
+    assert [d["text"] for d in details[:2]] == ["Age of the participant in years", "What is your marital status?"]
+    # a member absent from the index still resolves (falls back to its id parts, never drops)
+    assert details[2] == {"id": "CohortB:missing", "cohort": "CohortB", "name": "missing", "text": "missing"}
 
 
 # ── full HTTP flow with a fake runner ──────────────────────────
@@ -344,7 +388,7 @@ def test_batch_rejects_missing_required_role(monkeypatch, tmp_path):
 
 
 def test_batch_rejects_missing_cde_catalog(monkeypatch, tmp_path):
-    """v2 requires a CDE backbone — cdeSet=none (or any non-endorsed/full) is rejected."""
+    """The pipeline requires a CDE backbone — cdeSet=none (or any non-endorsed/full) is rejected."""
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
     monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: None)
     cfg = {

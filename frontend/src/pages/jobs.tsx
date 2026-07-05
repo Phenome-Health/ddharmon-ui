@@ -49,9 +49,16 @@ export default function JobsPage() {
               {jobs.map((j) => (
                 <TableRow key={j.jobId}>
                   <TableCell>
-                    <Link href={`/job/${j.jobId}`} className="font-medium text-ph-navy hover:underline">
-                      {j.displayName}
-                    </Link>
+                    <span className="flex items-center gap-2">
+                      <Link href={`/job/${j.jobId}`} className="font-medium text-ph-navy hover:underline">
+                        {j.displayName}
+                      </Link>
+                      {(j.config as { demo?: boolean })?.demo && (
+                        <Badge variant="outline" className="border-ph-navy/30 text-ph-navy">
+                          Demo
+                        </Badge>
+                      )}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <Badge variant={j.status === "complete" ? "secondary" : j.status === "error" ? "destructive" : "outline"}>

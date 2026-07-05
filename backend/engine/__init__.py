@@ -1,7 +1,7 @@
 """The insulation boundary between the GUI and the ddharmon pipeline.
 
 ``contract`` defines the stable, UI-owned record shapes; ``adapter`` is the one place that imports
-ddharmon and maps its output into the contract. See ``docs/GUI-BUILD-PLAN.md`` §1.
+ddharmon and maps its output into the contract.
 """
 
 from backend.engine.adapter import build_ui_result, run_pipeline

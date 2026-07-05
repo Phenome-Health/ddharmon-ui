@@ -21,7 +21,6 @@ import {
   CHART_GRID,
   CHART_TOOLTIP_CLASS,
   COHORT_PALETTE,
-  VERDICT_COLOR,
   VERDICT_LABEL,
   VERDICTS,
   verdictColor,
@@ -30,6 +29,15 @@ import {
 import type { AtlasPoint, UIRecord } from "@/types";
 
 type ColorBy = "cohort" | "verdict";
+
+// A field that isn't a member of any concept record (an outlier the pipeline didn't group). Kept in the
+// atlas as the "residual" of the field space, but it is NOT the "unclassified" VERDICT — conflating the two
+// made these points show as a verdict the review queue has none of. Its own muted color + non-filterable
+// legend entry keeps the distinction honest.
+const UNASSIGNED = "unassigned";
+const UNASSIGNED_COLOR = "#CBD5E1"; // slate-300 — clearly muted vs the verdict palette
+const catLabel = (v: string): string => (v === UNASSIGNED ? "Unassigned (no concept)" : (VERDICT_LABEL[v] ?? v));
+const catColor = (v: string): string => (v === UNASSIGNED ? UNASSIGNED_COLOR : verdictColor(v));
 
 interface EnrichedPoint extends AtlasPoint {
   verdict: string;
@@ -48,8 +56,8 @@ function AtlasTooltip({ active, payload }: { active?: boolean; payload?: Tooltip
       <div className="font-mono text-neutral-700">{p.variable}</div>
       <div className="flex items-center gap-1.5 text-neutral-500">
         <span>{p.cohort}</span>
-        <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: verdictColor(p.verdict) }} />
-        <span>{VERDICT_LABEL[p.verdict] ?? p.verdict}</span>
+        <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: catColor(p.verdict) }} />
+        <span>{catLabel(p.verdict)}</span>
       </div>
       {p.recordId && <div className="mt-0.5 text-[10px] text-neutral-400">click to open concept</div>}
     </div>
@@ -83,7 +91,8 @@ export function EmbeddingAtlas({
   const pts: EnrichedPoint[] = useMemo(() => {
     return points.map((p) => {
       const rec = byMember.get(`${p.cohort}:${p.variable}`);
-      return { ...p, verdict: rec?.verdict ?? "unclassified", recordId: rec?.id ?? null };
+      // A point with no matching record is an unGROUPED field, not the "unclassified" verdict.
+      return { ...p, verdict: rec?.verdict ?? UNASSIGNED, recordId: rec?.id ?? null };
     });
   }, [points, byMember]);
 
@@ -92,20 +101,28 @@ export function EmbeddingAtlas({
     () => Object.fromEntries(cohorts.map((c, i) => [c, COHORT_PALETTE[i % COHORT_PALETTE.length]])),
     [cohorts],
   );
-  const verdictsPresent = useMemo(() => VERDICTS.filter((v) => pts.some((p) => p.verdict === v)), [pts]);
+  const categoriesPresent = useMemo(
+    () => [...VERDICTS, UNASSIGNED].filter((v) => pts.some((p) => p.verdict === v)),
+    [pts],
+  );
 
   if (!points.length) {
     return <p className="py-8 text-center text-sm text-neutral-400">No embedding coordinates.</p>;
   }
 
-  const colorOf = (p: EnrichedPoint) => (colorBy === "cohort" ? cohortColor[p.cohort] : verdictColor(p.verdict));
+  const colorOf = (p: EnrichedPoint) => (colorBy === "cohort" ? cohortColor[p.cohort] : catColor(p.verdict));
   const dimOf = (p: EnrichedPoint) =>
     !!focus && (focus.kind === "cohort" ? p.cohort !== focus.value : p.verdict !== focus.value);
 
   const legend: { label: string; color: string; focus: Focus }[] =
     colorBy === "cohort"
       ? cohorts.map((c) => ({ label: c, color: cohortColor[c], focus: { kind: "cohort", value: c } }))
-      : verdictsPresent.map((v) => ({ label: VERDICT_LABEL[v], color: VERDICT_COLOR[v], focus: { kind: "verdict", value: v } }));
+      : categoriesPresent.map((v) => ({
+          label: catLabel(v),
+          color: catColor(v),
+          // "unassigned" isn't a verdict — clicking it clears the filter rather than selecting an empty verdict.
+          focus: v === UNASSIGNED ? null : { kind: "verdict", value: v },
+        }));
 
   // drag-to-zoom on the plot: mousedown starts a box, mouseup commits it as the axis domain.
   const endDrag = () => {

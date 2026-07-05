@@ -12,13 +12,16 @@ Outputs (committed as demo assets):
     backend/demos/data/ukbb.csv
 
 Usage:
-    python scripts/build_demo_data.py [--source-dir <path to ph-arpa .../data/examples>] [--cap 200]
+    # point --source-dir at a checkout of the ddharmon repo's data/examples (the full public example data),
+    # or set DDHARMON_EXAMPLES_DIR:
+    python scripts/build_demo_data.py --source-dir /path/to/ddharmon/data/examples [--cap 200]
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import os
 from pathlib import Path
 
 # Source-cohort layout: which columns carry searchable text, and which is the variable id.
@@ -86,7 +89,9 @@ DOMAINS = [
     "medication",
 ]
 
-DEFAULT_SOURCE = Path.home() / "ai-coding" / "ph-arpa-data-harmonization" / "data" / "examples"
+# The full public example CSVs live in the ddharmon repo under data/examples/. Point --source-dir there (or
+# set DDHARMON_EXAMPLES_DIR). No personal/absolute default — this script ships in the user-facing demo bundle.
+DEFAULT_SOURCE = Path(os.environ.get("DDHARMON_EXAMPLES_DIR", "data/examples"))
 OUT_DIR = Path(__file__).resolve().parents[1] / "backend" / "demos" / "data"
 
 

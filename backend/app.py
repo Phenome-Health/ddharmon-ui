@@ -42,7 +42,7 @@ from backend.runner import run_harmonization
 # --- CDE catalog (server-side; not uploaded) -------------------------------------------------
 # Repo root is the parent of backend/ (this file is backend/app.py). The CDE catalog is NOT
 # shipped in this repo (data/cde/ is gitignored) — supply it on the server and/or point
-# DDHARMON_CDE_DIR at it. See deploy/README.md. v2 REQUIRES a catalog (cdeSet must be endorsed|full).
+# DDHARMON_CDE_DIR at it. The pipeline REQUIRES a catalog (cdeSet must be endorsed|full).
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CDE_DIR = Path(os.environ.get("DDHARMON_CDE_DIR", _REPO_ROOT / "data" / "cde"))
 CDE_FILES = {"endorsed": _CDE_DIR / "nih_endorsed_flat.tsv", "full": _CDE_DIR / "all_cdes_flat.tsv"}
@@ -68,12 +68,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Dev/testing only: seed a couple of SAMPLE completed runs so the results/workbench/export UI is
-# populated before the real pipeline is wired for local runs. Never on unless DDHARMON_UI_SEED is set.
-if os.environ.get("DDHARMON_UI_SEED"):
-    from backend.seed import seed_jobs
-
-    seed_jobs(store)
+# The Runs page shows only real runs (the demo, via POST /demo, and any user runs). The synthetic
+# "Sample —" seed runs were removed from the app — ``backend.seed`` is retained solely for tests that
+# need to exercise the results/workbench/export UI without the pipeline. (Was gated on DDHARMON_UI_SEED.)
 
 
 # --- /detect ---------------------------------------------------------------------------------
@@ -104,13 +101,13 @@ async def start_batch(
     config: Annotated[str, Form()],
     x_anthropic_key: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
-    """Start a v2 harmonization run. ``config`` is a JSON string:
+    """Start a harmonization run. ``config`` is a JSON string:
 
     ``{dictionaries: [{filename, cohortName, columnRoles}], cdeSet: endorsed|full,
        runMode: batch|sync|preview, minClusterSize: int, genTransformSpecs?: bool,
        topK?: int, retrievalFloor?: float, modelTag?: str, displayName?}``
 
-    v2 requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
+    The pipeline requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
     ``endorsed`` or ``full``. ``runMode`` defaults to ``batch`` (the deployed default).
 
     BYOK: the ``X-Anthropic-Key`` header (frontend ``x-anthropic-key``) carries a per-request Anthropic
@@ -142,16 +139,16 @@ async def start_batch(
             )
         dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
-    # v2 REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
+    # The pipeline REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
     cde_set = cfg.get("cdeSet", "endorsed")
     if cde_set not in CDE_FILES:
         raise HTTPException(
             status_code=400,
-            detail=f"cdeSet must be one of {sorted(CDE_FILES)} — v2 harmonization requires a CDE catalog",
+            detail=f"cdeSet must be one of {sorted(CDE_FILES)} — harmonization requires a CDE catalog",
         )
     cde_path = CDE_FILES[cde_set]
     if not cde_path.exists():
-        raise HTTPException(status_code=400, detail=f"CDE file not found: {cde_path} (see deploy/README.md)")
+        raise HTTPException(status_code=400, detail=f"CDE file not found: {cde_path} (set DDHARMON_CDE_DIR to the catalog directory)")
     cde_spec: dict[str, Any] = {
         "path": str(cde_path),
         "cohort_name": CDE_COHORT,
@@ -163,17 +160,22 @@ async def start_batch(
         raise HTTPException(status_code=400, detail="runMode must be batch|sync|preview")
     run_config: dict[str, Any] = {
         "run_mode": run_mode,
-        "min_cluster_size": int(cfg.get("minClusterSize", 15)),
         "gen_transform_specs": bool(cfg.get("genTransformSpecs", True)),
         "cde_cohort": CDE_COHORT,
         "work_dir": str(work_dir),
         "cde_set": cde_set,
     }
-    # Optional advanced knobs — passed through only when set (else harmonize_leanb's own defaults apply).
-    # Adding a new knob here needs no frontend change (the run-options form posts whatever it has).
-    for cfg_key, run_key in (("topK", "top_k"), ("retrievalFloor", "retrieval_floor"), ("modelTag", "model_tag")):
+    # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
+    # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from
+    # an advanced/API caller still wins. Adding a new knob here needs no frontend change.
+    for cfg_key, run_key in (
+        ("minClusterSize", "min_cluster_size"),
+        ("topK", "top_k"),
+        ("retrievalFloor", "retrieval_floor"),
+        ("modelTag", "model_tag"),
+    ):
         if cfg.get(cfg_key) is not None:
-            run_config[run_key] = cfg[cfg_key]
+            run_config[run_key] = int(cfg[cfg_key]) if cfg_key in ("minClusterSize", "topK") else cfg[cfg_key]
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
     store.create(job_id, display, run_config)
     # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted.
@@ -369,9 +371,68 @@ class DemoBody(BaseModel):
     datasets: list[str]
 
 
+# Phases a real run streams, in order — the demo replay paces through these so it looks like a live run.
+_DEMO_PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"]
+
+
+def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
+    """Pace a precomputed demo through the pipeline phases so 'Load demo' feels like a live run.
+
+    Reuses the ordinary JobStore + SSE path: we only advance status/phase/completed over a short window
+    (weighted by the REAL per-phase wall-clock captured at build time), then deliver the finished result.
+    No pipeline, no LLM, no key. ``DDHARMON_DEMO_REPLAY_SECS`` controls total duration (0 → instant, for tests).
+    """
+    import time
+
+    result = snapshot.get("result", snapshot)
+    timings = snapshot.get("phaseTimings", {}) or {}
+    total_target = float(os.environ.get("DDHARMON_DEMO_REPLAY_SECS", "16"))
+    weights = [max(0.05, float(timings.get(p, 1.0))) for p in _DEMO_PHASES]
+    scale = (total_target / sum(weights)) if sum(weights) else 0.0
+    prompts = result.get("prompts", {}) or {}
+    counts = {
+        "generating": prompts.get("ideal", 0),
+        "splitting": prompts.get("split", 0),
+        "assigning": prompts.get("groupAssign", 0),
+        "specs": prompts.get("specgen", 0),
+    }
+    records = result.get("records", []) or []
+    n_records = len(records)
+    total_w = sum(weights) or 1.0
+    # records ramp in only once the record-producing phases begin (after loading+embedding+clustering).
+    gen_start_frac = (sum(weights[:3]) / total_w) if len(weights) >= 3 else 0.0
+    try:
+        elapsed_w = 0.0
+        for phase, weight in zip(_DEMO_PHASES, weights, strict=True):
+            total = int(counts.get(phase, 0) or 0)
+            ticks = 5 if total else 2
+            for k in range(1, ticks + 1):
+                done = int(total * k / ticks) if total else 0
+                frac = (elapsed_w + weight * k / ticks) / total_w
+                reveal = 0.0 if frac <= gen_start_frac else (frac - gen_start_frac) / (1 - gen_start_frac)
+                nk = min(n_records, round(n_records * reveal))
+                fields: dict[str, Any] = {"status": phase, "phase": phase, "completed": done, "total": total}
+                # progressively reveal records so the metric cards + charts build up live during the replay
+                # (atlas withheld until completion — it's static field space and keeps each tick light).
+                if nk > 0:
+                    fields["result"] = {**result, "records": records[:nk], "atlas": []}
+                store.update(job_id, **fields)
+                if scale:
+                    time.sleep(weight * scale / ticks)
+            elapsed_w += weight
+        store.update(job_id, status="complete", phase="complete", result=result)
+    except Exception as exc:  # noqa: BLE001 — a replay glitch must not kill the worker thread silently
+        store.update(job_id, status="error", phase="error", error_message=str(exc))
+
+
 @app.post("/api/harmonize/demo")
 def start_demo(body: DemoBody) -> dict[str, str]:
-    """Hydrate a completed job from a precomputed snapshot — no pipeline run, no API credits."""
+    """Replay a precomputed demo as a live-paced job — no pipeline run, no API credits.
+
+    The snapshot was produced offline by the SAME production pipeline (``scripts/build_demos.py``); here we
+    stream it back through the phases so the job view shows a live-feeling run. A stable per-combo job id keeps
+    the Runs page to a single demo entry (re-loading replays it in place). The job is tagged ``demo: true``.
+    """
     snap = load_snapshot(body.datasets)
     if snap is None:
         raise HTTPException(
@@ -379,10 +440,11 @@ def start_demo(body: DemoBody) -> dict[str, str]:
             detail=f"No precomputed demo for {sorted(body.datasets)}. See GET /api/harmonize/demos.",
         )
     result = snap.get("result", snap)
-    job_id = "demo-" + uuid.uuid4().hex[:8]
+    job_id = "demo-" + "_".join(sorted(d.lower() for d in body.datasets))
     display = snap.get("displayName") or "Demo run"
+    store.delete(job_id)  # reset any prior replay of this same demo (idempotent → one Runs entry)
     store.create(job_id, display, {"demo": True, "datasets": sorted(body.datasets), "mode": result.get("mode")})
-    store.update(job_id, status="complete", phase="complete", result=result)
+    threading.Thread(target=_replay_demo, args=(job_id, snap), daemon=True).start()
     return {"jobId": job_id}
 
 
