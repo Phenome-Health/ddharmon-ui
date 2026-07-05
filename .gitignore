@@ -40,3 +40,6 @@ backend/demos/.work/
 
 # internal GUI build plan (planning artifact) — local only
 docs/GUI-BUILD-PLAN.md
+
+# internal deployment runbook (PH-specific Lightsail/nginx/Squarespace + private-repo auth) — local only, never ship
+deploy/
