@@ -95,16 +95,17 @@ def test_demos_endpoint_lists_datasets():
     resp = client.get("/api/harmonize/demos")
     assert resp.status_code == 200
     body = resp.json()
-    assert {d["id"] for d in body["datasets"]} == {"aou", "clsa", "ukbb"}
+    assert {d["id"] for d in body["datasets"]} == {"aou", "clsa", "ukbb", "mesa", "aireadi"}
     assert body["combos"] and all("available" in c for c in body["combos"])
 
 
 def test_demo_load_replays_and_marks_demo(monkeypatch):
     """The shipped snapshot loads as a live-paced replay job, tagged demo:true, that completes with records."""
     monkeypatch.setenv("DDHARMON_DEMO_REPLAY_SECS", "0")  # instant replay (skip the pacing sleeps) for the test
-    assert load_snapshot(["aou", "clsa", "ukbb"]) is not None, "demo snapshot must be shipped"
+    combo = ["aou", "clsa", "ukbb", "mesa", "aireadi"]
+    assert load_snapshot(combo) is not None, "demo snapshot must be shipped"
 
-    resp = client.post("/api/harmonize/demo", json={"datasets": ["aou", "clsa", "ukbb"]})
+    resp = client.post("/api/harmonize/demo", json={"datasets": combo})
     assert resp.status_code == 200
     job_id = resp.json()["jobId"]
 
@@ -132,4 +133,4 @@ def test_demo_load_404_for_unknown_combo():
 
 def test_list_demos_matches_manifest():
     demos = list_demos()
-    assert [c["datasets"] for c in demos["combos"]] == [["aou", "clsa", "ukbb"]]
+    assert [c["datasets"] for c in demos["combos"]] == [["aou", "clsa", "ukbb", "mesa", "aireadi"]]

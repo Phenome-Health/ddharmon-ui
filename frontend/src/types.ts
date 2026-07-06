@@ -210,9 +210,13 @@ export const COLUMN_ROLES = [
 ] as const;
 export type ColumnRole = (typeof COLUMN_ROLES)[number];
 
-// The primary roles get top billing in the mapping UI; the rest live behind "advanced".
-export const PRIMARY_ROLES: ColumnRole[] = ["variable_name", "description", "question_text", "value_encoding", "units"];
-export const ADVANCED_ROLES: ColumnRole[] = ["data_type", "category", "field_id", "standard_code"];
+// Core roles get top billing in the mapping UI, split by what they describe: the QUESTION (semantic) side
+// — what the field asks / means — vs the RESPONSE (value) side — the values and how they're coded. The
+// rest live behind "advanced" (organizational / external ids, not part of the core mapping).
+export const SEMANTIC_ROLES: ColumnRole[] = ["variable_name", "description", "question_text"];
+export const VALUE_ROLES: ColumnRole[] = ["value_encoding", "units", "data_type"];
+export const PRIMARY_ROLES: ColumnRole[] = [...SEMANTIC_ROLES, ...VALUE_ROLES];
+export const ADVANCED_ROLES: ColumnRole[] = ["category", "field_id", "standard_code"];
 
 // Roles whose column VALUES must follow a specific format — surfaced inline so users format correctly.
 export const ROLE_FORMAT: Partial<Record<ColumnRole, string>> = {

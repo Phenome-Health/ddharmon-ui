@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useLocation, useParams } from "wouter";
+import { Link, useLocation, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
 import {
   ArrowDown,
@@ -74,9 +74,9 @@ function ReproducibilityInfo() {
           final grouping.
         </p>
         <p className="mb-2 rounded-md bg-neutral-50 p-2 text-neutral-600">
-          <span className="font-medium text-ph-ink">Reference</span> (3×200-field cohorts, two independent fresh
-          runs): ~85% of concepts recurred and ~87% of shared concepts kept the same verdict (record count
-          350&nbsp;→&nbsp;320).
+          <span className="font-medium text-ph-ink">Reference</span> (5×200-field cohorts): across independent fresh
+          runs most concepts recur and keep the same verdict — the split-aware assignment washes most UMAP/LLM
+          drift out of the final grouping.
         </p>
         <p className="text-neutral-500">
           A <span className="font-medium">saved / demo run</span> replays a frozen snapshot + cached responses —
@@ -142,7 +142,9 @@ function sortRecords(records: UIRecord[], sort: SortState | null): UIRecord[] {
 export default function DashboardPage() {
   const { jobId = "" } = useParams();
   const [, navigate] = useLocation();
-  const { jobState, error } = useHarmonizeStream(jobId);
+  // ?results=1 (the demo page's "skip to results" link) → show the finished run immediately, no replay.
+  const skipReplay = new URLSearchParams(useSearch()).get("results") === "1";
+  const { jobState, error } = useHarmonizeStream(jobId, true, skipReplay);
   const [decisions, setDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});

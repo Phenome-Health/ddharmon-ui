@@ -1,7 +1,7 @@
 [
   {
-    "jobId": "demo-aou_clsa_ukbb",
-    "displayName": "Demo \u00b7 AoU + CLSA + UKBB",
+    "jobId": "demo-aireadi_aou_clsa_mesa_ukbb",
+    "displayName": "Demo \u00b7 AI-READI + AoU + CLSA + MESA + UKBB",
     "status": "complete",
     "phase": "complete",
     "completed": 0,
@@ -10,24 +10,26 @@
     "config": {
       "demo": true,
       "datasets": [
+        "aireadi",
         "aou",
         "clsa",
+        "mesa",
         "ukbb"
       ],
       "mode": "batch"
     },
     "decisions": {},
-    "createdAt": 1783271318,
-    "updatedAt": 1783271318,
+    "createdAt": 1783323773,
+    "updatedAt": 1783323773,
     "phaseTimings": {
       "loading": 0.91,
-      "embedding": 4.56,
-      "clustering": 15.39,
-      "generating": 122.42,
-      "splitting": 488.29,
-      "assigning": 123.63,
-      "specs": 122.07
+      "embedding": 11.75,
+      "clustering": 1081.0,
+      "generating": 303.49,
+      "splitting": 250.59,
+      "assigning": 305.2,
+      "specs": 303.32
     },
-    "nRecords": 350
+    "nRecords": 485
   }
 ]

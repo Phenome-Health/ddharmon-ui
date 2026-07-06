@@ -25,6 +25,8 @@ import os
 import shutil
 import threading
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -33,7 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from backend.demos import list_demos, load_snapshot
+from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
 from backend.jobs import TERMINAL_STATES, store
 from backend.notebook import build_notebook
@@ -60,7 +62,17 @@ CDE_COHORT = "NIH_CDE"
 
 _WORK_ROOT = Path(os.environ.get("DDHARMON_UI_WORK", _REPO_ROOT / ".ddharmon_ui"))
 
-app = FastAPI(title="ddharmon Harmonization API", version="1.0.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Prepopulate the Runs page with the precomputed demo(s) on startup so a fresh boot / restart is never
+    empty. Durable by construction: re-seeded every startup, and demo jobs are exempt from TTL purging.
+    No-op when no snapshot is bundled (e.g. a minimal deploy)."""
+    seed_demos(store)
+    yield
+
+
+app = FastAPI(title="ddharmon Harmonization API", version="1.0.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -148,7 +160,9 @@ async def start_batch(
         )
     cde_path = CDE_FILES[cde_set]
     if not cde_path.exists():
-        raise HTTPException(status_code=400, detail=f"CDE file not found: {cde_path} (set DDHARMON_CDE_DIR to the catalog directory)")
+        raise HTTPException(
+            status_code=400, detail=f"CDE file not found: {cde_path} (set DDHARMON_CDE_DIR to the catalog directory)"
+        )
     cde_spec: dict[str, Any] = {
         "path": str(cde_path),
         "cohort_name": CDE_COHORT,
@@ -440,7 +454,7 @@ def start_demo(body: DemoBody) -> dict[str, str]:
             detail=f"No precomputed demo for {sorted(body.datasets)}. See GET /api/harmonize/demos.",
         )
     result = snap.get("result", snap)
-    job_id = "demo-" + "_".join(sorted(d.lower() for d in body.datasets))
+    job_id = demo_job_id(body.datasets)
     display = snap.get("displayName") or "Demo run"
     store.delete(job_id)  # reset any prior replay of this same demo (idempotent → one Runs entry)
     store.create(job_id, display, {"demo": True, "datasets": sorted(body.datasets), "mode": result.get("mode")})

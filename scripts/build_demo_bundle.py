@@ -5,10 +5,10 @@ Produces ``frontend/public/demo-cohorts.zip`` (served at ``/demo-cohorts.zip`` i
 static Netlify build) so a user can grab the exact demo inputs + the scripts and reproduce a run locally.
 
 The zip contains:
-    aou.csv, clsa.csv, ukbb.csv   — the curated ~200-field demo dictionaries (backend/demos/data)
-    build_demo_data.py            — how those subsets were curated from the full public example data
-    build_demos.py                — runs the ddharmon pipeline over them to produce a harmonization run
-    README.md                     — how to run it + pointers to the source repos
+    {aou,clsa,ukbb,mesa,aireadi}.csv  — the curated 200-field demo dictionaries (backend/demos/data)
+    build_demo_data.py                — how those subsets were curated from the full public example data
+    build_demos.py                    — runs the ddharmon pipeline over them to produce a harmonization run
+    README.md                         — per-cohort provenance (public source → build script) + how to run it
 
 Re-run after the curated CSVs change:  python scripts/build_demo_bundle.py
 """
@@ -49,18 +49,40 @@ def _scan_for_leaks(named_texts: dict[str, str]) -> list[str]:
                 hits.append(f"{name}:{i}: {line.strip()[:100]}")
     return hits
 
+
 README = """\
 # ddharmon — curated demo cohorts
 
-These are the exact inputs behind the ddharmon demo run: ~200-field curated subsets of three public
-biomedical cohorts — **All of Us**, **CLSA**, and **UK Biobank** — chosen to overlap on common health &
-demographic domains (sex, age, smoking, blood pressure, …) so a cross-cohort harmonization has real
-matches to find.
+These are the exact inputs behind the ddharmon demo run: **200-field curated subsets of five public
+biomedical cohorts** — All of Us, CLSA, UK Biobank, MESA, and AI-READI — chosen to overlap on common
+health & demographic domains (sex, age, smoking, blood pressure, …) so a cross-cohort harmonization has
+real matches to find.
 
 ## Contents
-- `aou.csv`, `clsa.csv`, `ukbb.csv` — the curated demo dictionaries (REDCap / codebook style)
-- `build_demo_data.py` — how these subsets were curated from the full public example data
-- `build_demos.py`     — runs the ddharmon pipeline over them to produce a harmonization run
+- `aou.csv`, `clsa.csv`, `ukbb.csv`, `mesa.csv`, `aireadi.csv` — the curated demo dictionaries
+- `build_demo_data.py` — how these 200-field subsets were curated from the full public example data
+- `build_demos.py`      — runs the ddharmon pipeline over them to produce a harmonization run
+
+## Provenance — where each cohort's dictionary comes from
+These are **metadata only** (field names, questions, value codings — data *dictionaries*, never
+participant-level data), drawn from each project's openly published, no-login catalog. Each ingested CSV
+is reproducible from its public source via a script in the **ddharmon** repo's `scripts/` folder:
+
+| Cohort | Public source (data dictionary) | Build script (ddharmon repo) |
+|--------|----------------------------------|------------------------------|
+| **All of Us** | All of Us Survey Data Codebooks — https://www.researchallofus.org/data-tools/survey-explorer/ | `scripts/build_all_of_us_csv.py` |
+| **CLSA** | CLSA Data Dictionaries — https://www.clsa-elcv.ca/resource-types/data-dictionaries/ | `scripts/build_clsa_csv.py` |
+| **UK Biobank** | UKB Showcase Schema — https://biobank.ndph.ox.ac.uk/showcase/schema.cgi | `scripts/build_ukbb_csv.py` |
+| **MESA** | dbGaP phs000209 public variable summaries — https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/study.cgi?study_id=phs000209 | `scripts/build_dbgap_csv.py` |
+| **AI-READI** | AI-READI/DataElementMaps (MIT) — https://github.com/AI-READI/DataElementMaps | `scripts/build_aireadi_csv.py` |
+| **NIH CDEs** (the target backbone) | NIH CDE Repository — https://cde.nlm.nih.gov/ | `scripts/flatten_cde_repo.py` |
+
+Full source→script→CSV provenance table (with the exact reproduce commands):
+https://github.com/Phenome-Health/ddharmon/blob/main/data/examples/README.md
+
+`build_demo_data.py` (included here) then curates each full cohort dictionary down to a 200-field subset,
+taking fields that hit shared health/demographic domains first (so the cohorts overlap) and filling the
+rest to reach 200 — see its docstring for the exact rule.
 
 ## Run it yourself
 1. Install the tool: `pip install ddharmon`  → https://github.com/Phenome-Health/ddharmon
@@ -69,15 +91,16 @@ matches to find.
 3. Run (needs an Anthropic API key for the LLM stages):
    ```
    ANTHROPIC_API_KEY=sk-... DDHARMON_CDE_DIR=/path/to/ddharmon/data/examples \\
-     python build_demos.py --mode batch --datasets aou clsa ukbb
+     python build_demos.py --mode batch --datasets aou clsa ukbb mesa aireadi
    ```
    Use `--mode preview` for a free (no-LLM) clustering-only dry run.
 
-## Full data + provenance
-The full (unsubsetted) cohort example CSVs and the scripts that build them from each cohort's public
-source live in the **ddharmon** repo under `data/examples/` (see `data/examples/README.md` for the
-source-URL → script → CSV provenance table):
-  https://github.com/Phenome-Health/ddharmon
+## Column roles used
+The demo maps only the **core** columns a user would map, split two ways — question/semantic
+(`variable_name`, `question_text`, `description`) and response/value (`value_encoding`, `units`,
+`data_type`). Organizational/external-id columns (category, field_id, and any pre-existing standard/CDE
+code) are deliberately left unmapped — the last so the demo never sees the gold answer. The exact
+per-cohort role map is in `build_demos.py` (`COHORT_ROLES`).
 
 This GUI and the demo build scripts live in the **ddharmon-ui** repo:
   https://github.com/Phenome-Health/ddharmon-ui
@@ -89,6 +112,8 @@ def main() -> None:
         DATA_DIR / "aou.csv",
         DATA_DIR / "clsa.csv",
         DATA_DIR / "ukbb.csv",
+        DATA_DIR / "mesa.csv",
+        DATA_DIR / "aireadi.csv",
         SCRIPTS / "build_demo_data.py",
         SCRIPTS / "build_demos.py",
     ]
@@ -102,7 +127,9 @@ def main() -> None:
         named_texts[p.name] = p.read_text(errors="replace")
     leaks = _scan_for_leaks(named_texts)
     if leaks:
-        raise SystemExit("refusing to build — user-facing bundle would leak local/internal paths:\n  " + "\n  ".join(leaks))
+        raise SystemExit(
+            "refusing to build — user-facing bundle would leak local/internal paths:\n  " + "\n  ".join(leaks)
+        )
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:

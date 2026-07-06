@@ -139,12 +139,13 @@ def build_member_index(embedded: list[Any]) -> dict[str, UIMember]:
             continue
         cohort = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
         for var, fld in getattr(dd, "fields", {}).items():
-            text = (
-                getattr(fld, "description", None)
-                or getattr(fld, "question_text", None)
-                or getattr(fld, "short_label", None)
-                or var
-            )
+            # When a source has no description column, load_dictionary backfills description = variable_name;
+            # that echoes the opaque id, so prefer the question/short-label text (what a survey field actually
+            # asks) before falling back — otherwise the UI shows codes like "smoking_100cigslifetime".
+            desc = getattr(fld, "description", None)
+            if desc == var:
+                desc = None
+            text = desc or getattr(fld, "question_text", None) or getattr(fld, "short_label", None) or var
             key = f"{cohort}:{var}"
             index[key] = {"id": key, "cohort": cohort, "name": var, "text": text}
     return index

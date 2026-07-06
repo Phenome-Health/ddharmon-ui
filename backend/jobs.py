@@ -19,6 +19,15 @@ from typing import Any
 TERMINAL_STATES = {"complete", "error"}
 _TTL_SECONDS = 3600
 
+# Runs the TTL purge must never evict: the prepopulated demo (``demo``) and any pinned/sample run. These
+# are always terminal, so without this exemption they would age out after the TTL and vanish from Runs.
+_PINNED_CONFIG_KEYS = ("demo", "pinned", "sample")
+
+
+def _is_pinned(job: Job) -> bool:
+    """A pinned run (demo/sample/explicitly-pinned) is exempt from TTL purging — it stays in Runs forever."""
+    return any(job.config.get(k) for k in _PINNED_CONFIG_KEYS)
+
 
 @dataclass
 class Job:
@@ -112,7 +121,11 @@ class JobStore:
     def purge_expired(self) -> None:
         cutoff = time.time() - self._ttl
         with self._lock:
-            stale = [jid for jid, j in self._jobs.items() if j.updated_at < cutoff and j.status in TERMINAL_STATES]
+            stale = [
+                jid
+                for jid, j in self._jobs.items()
+                if j.updated_at < cutoff and j.status in TERMINAL_STATES and not _is_pinned(j)
+            ]
             for jid in stale:
                 self._jobs.pop(jid, None)
 

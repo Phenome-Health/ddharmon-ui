@@ -15,7 +15,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { IS_STATIC, startHarmonize } from "@/lib/api";
 import {
   ADVANCED_ROLES,
-  PRIMARY_ROLES,
+  SEMANTIC_ROLES,
+  VALUE_ROLES,
   ROLE_FORMAT,
   ROLE_HELP,
   estimateRunCostBreakdown,
@@ -199,12 +200,28 @@ export default function HomePage() {
               <Input value={d.cohortName} onChange={(e) => setCohort(idx, e.target.value)} />
             </div>
 
-            <div>
-              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">Columns</div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {PRIMARY_ROLES.map((role) => (
-                  <RoleField key={role} role={role} value={d.roles[role]} headers={d.headers} onChange={(v) => setRole(idx, role, v)} />
-                ))}
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">
+                  Question columns{" "}
+                  <span className="ml-1 font-normal normal-case text-neutral-300">what the field asks (semantic)</span>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {SEMANTIC_ROLES.map((role) => (
+                    <RoleField key={role} role={role} value={d.roles[role]} headers={d.headers} onChange={(v) => setRole(idx, role, v)} />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">
+                  Response columns{" "}
+                  <span className="ml-1 font-normal normal-case text-neutral-300">the values &amp; how they're coded</span>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {VALUE_ROLES.map((role) => (
+                    <RoleField key={role} role={role} value={d.roles[role]} headers={d.headers} onChange={(v) => setRole(idx, role, v)} />
+                  ))}
+                </div>
               </div>
             </div>
 

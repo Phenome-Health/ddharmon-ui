@@ -31,42 +31,73 @@ from backend.engine import run_pipeline  # noqa: E402
 
 DEMO_DIR = REPO / "backend" / "demos"
 DATA_DIR = DEMO_DIR / "data"
-COHORT_LABELS = {"aou": "AoU", "clsa": "CLSA", "ukbb": "UKBB"}
+COHORT_LABELS = {"aou": "AoU", "clsa": "CLSA", "ukbb": "UKBB", "mesa": "MESA", "aireadi": "AI-READI"}
 
-# Per-cohort role pins for source files that fool generic auto-detection. AoU ships a REDCap codebook whose
-# real identifier is "Item Concept" (not detected) and whose question is "Field Label" (only found as
-# short_label), while auto-detect mis-assigns description->"Branching Logic" (skip-logic) and field_id->a
-# validation bound. Pinning these gives real member ids + clean text on the next demo build. (The frozen
-# snapshot's ids stay _ROW_N; enrich_members recovers the real codes by raw row index — see below.)
-COHORT_ROLE_OVERRIDES: dict[str, dict[str, str]] = {
-    "aou": {"variable_name": "Item Concept", "question_text": "Field Label"},
+# Explicit, hand-verified CORE column-role maps per demo cohort — NOT auto-detected. The demo runs on only
+# the "core" columns a user would map, split two ways:
+#   • semantic (question) side  — variable_name, short_label, question_text, description
+#   • response (value) side     — value_encoding, units, data_type
+# We deliberately DROP the advanced roles (category, field_id, standard_code) even where a source carries
+# them: they aren't part of the core mapping, and standard_code in particular would LEAK the gold CDE answer
+# (AI-READI ships CDE concept codes). Verified against each source header — auto-detection is NOT used here:
+# it mis-reads REDCap codebooks (mis-assigning AoU's id to a validation-bound column), which silently
+# collapsed AoU from 200 to 191 fields. Pinning the real variable_name also gives real member ids straight
+# from the run (no _ROW_N synthetic ids), so memberDetails resolve natively — no post-hoc enrich step.
+CORE_SEMANTIC_ROLES = ("variable_name", "short_label", "question_text", "description")
+CORE_VALUE_ROLES = ("value_encoding", "units", "data_type")
+COHORT_ROLES: dict[str, dict[str, str]] = {
+    # AoU REDCap codebook: Item Concept = id, Field Label = question. (Section Header/category dropped.)
+    "aou": {
+        "variable_name": "Item Concept",
+        "question_text": "Field Label",
+        "value_encoding": "Choices, Calculations, OR Slider Labels",
+        "data_type": "Field Type",
+    },
+    "clsa": {
+        "variable_name": "name",
+        "short_label": "label:en",
+        "question_text": "question:en",
+        "description": "comment:en",
+        "value_encoding": "value_encoding",
+        "units": "unit",
+        "data_type": "valueType",
+    },
+    # UKBB Showcase. (field_id + category dropped.)
+    "ukbb": {
+        "variable_name": "field_name",
+        "description": "description",
+        "value_encoding": "value_encoding",
+        "units": "units",
+        "data_type": "data_type",
+    },
+    # MESA dbGaP. (dataset=category + dbgap_variable_id=field_id dropped.)
+    "mesa": {
+        "variable_name": "variable_name",
+        "description": "description",
+        "value_encoding": "value_encoding",
+        "units": "units",
+        "data_type": "data_type",
+    },
+    # AI-READI REDCap→OMOP/CDE map: field_label = question. (form_name=category + cde_concept_code=standard_code
+    # dropped — the latter is the gold CDE answer and must not leak into the demo run.)
+    "aireadi": {
+        "variable_name": "variable_name",
+        "question_text": "field_label",
+        "value_encoding": "value_encoding",
+        "data_type": "field_type",
+    },
 }
 
 
 def roles_for(did: str, headers: list[str]) -> dict[str, str]:
-    """Auto-detected column roles, with any per-cohort override pins applied (see COHORT_ROLE_OVERRIDES)."""
-    roles = detect_roles(headers)
-    override = COHORT_ROLE_OVERRIDES.get(did)
-    if override:
-        # the mis-detected description/field_id for these codebooks are wrong columns — drop them so the
-        # pinned question_text/variable_name win and no skip-logic text leaks into the embedding.
-        roles.pop("description", None)
-        roles.pop("field_id", None)
-        roles.update(override)
-    return roles
-
-
-def detect_roles(headers: list[str]) -> dict[str, str]:
-    """Best column→role map for these headers (mirrors backend.app.detect)."""
-    from ddharmon.ingestion.schema_registry import SchemaRegistry
-
-    mapping = SchemaRegistry().detect_roles(headers)
-    best: dict[str, tuple[float, str]] = {}
-    for column, match in mapping.role_map.items():
-        kw = match.role.value
-        if kw not in best or match.confidence > best[kw][0]:
-            best[kw] = (match.confidence, column)
-    return {kw: col for kw, (_c, col) in best.items()}
+    """The explicit CORE role map for a demo cohort, validated against the file's actual headers."""
+    roles = COHORT_ROLES.get(did)
+    if roles is None:
+        raise SystemExit(f"no explicit role map for demo cohort {did!r} — add one to COHORT_ROLES")
+    missing = [col for col in roles.values() if col not in headers]
+    if missing:
+        raise SystemExit(f"{did}: mapped columns not found in header: {missing}")
+    return dict(roles)
 
 
 def read_headers(path: Path) -> list[str]:
@@ -120,7 +151,7 @@ def run_once(dict_specs, cde_spec, mode, mcs, cde_set, work_dir, substrate_path)
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--datasets", nargs="+", default=["aou", "clsa", "ukbb"])
+    ap.add_argument("--datasets", nargs="+", default=["aou", "clsa", "ukbb", "mesa", "aireadi"])
     ap.add_argument("--mode", choices=["preview", "sync", "batch"], default="preview")
     ap.add_argument("--cde-set", choices=["endorsed", "full"], default="full")
     ap.add_argument("--min-cluster-size", type=int, default=4)
@@ -144,20 +175,9 @@ def main() -> None:
         help="skip the pipeline entirely; re-emit the Netlify static fixtures from the EXISTING snapshot "
         "(no LLM, $0, preserves the snapshot's reproducibility block).",
     )
-    ap.add_argument(
-        "--enrich-members",
-        action="store_true",
-        help="skip the pipeline; add per-member field text (memberDetails) to the EXISTING snapshot by "
-        "re-loading the demo CSVs (no LLM, $0). Verdicts/decisions are untouched — only member metadata "
-        "is added. Re-emits the static fixtures.",
-    )
     args = ap.parse_args()
 
     ids = sorted(d.lower() for d in args.datasets)
-
-    if args.enrich_members:
-        enrich_members(ids)
-        return
 
     if args.fixtures_only:
         snap_path = DEMO_DIR / f"{'_'.join(ids)}.json"
@@ -258,86 +278,6 @@ def main() -> None:
         print(
             "NOTE: preview snapshot has clusters only (no verdicts/transforms). Re-run with --mode batch for the full demo."
         )
-
-
-def enrich_members(ids: list[str]) -> None:
-    """Add ``memberDetails`` (source field name + text) to an existing demo snapshot — no pipeline, $0.
-
-    Re-loads the curated demo CSVs with the SAME auto-detected roles the build used, so member ids match
-    exactly, then attaches each member's human text (description/question/label) via the adapter's
-    ``build_member_index`` — the single source of truth for that mapping. Only ADDS member metadata; the
-    verdicts, CDE matches, transforms and reproducibility block are left untouched.
-    """
-    from types import SimpleNamespace
-
-    from backend.engine.adapter import _member_ui, build_member_index  # noqa: PLC0415
-    from ddharmon.ingestion import load_dictionary  # noqa: PLC0415
-
-    snap_path = DEMO_DIR / f"{'_'.join(ids)}.json"
-    if not snap_path.exists():
-        raise SystemExit(f"no snapshot at {snap_path} — build it first (drop --enrich-members)")
-    snapshot = json.loads(snap_path.read_text())
-
-    import csv as _csv  # noqa: PLC0415
-
-    dicts = []
-    for did in ids:
-        path = DATA_DIR / f"{did}.csv"
-        if not path.exists():
-            raise SystemExit(f"missing curated demo file: {path}")
-        # AUTO-detect (not roles_for): the frozen snapshot's member ids were built with auto-detected roles,
-        # so we must reproduce them exactly (AoU -> _ROW_N) for the join to hit. Text is already good here
-        # (the loader backfills description from the label); we upgrade the shown id below.
-        roles = detect_roles(read_headers(path))
-        dd = load_dictionary(str(path), cohort_name=COHORT_LABELS.get(did, did), **roles)
-        dicts.append(SimpleNamespace(dictionary=dd))
-    index = build_member_index(dicts)
-
-    # Build a _ROW_N -> real-id rename map for cohorts with a pinned variable_name (REDCap codebooks): the
-    # _ROW_N id IS the raw CSV data-row index, so we read that column by row index. Applied across members,
-    # memberDetails, and transform sourceVariables so the frozen demo reads with real codes everywhere (a
-    # full rebuild via roles_for would produce these ids natively).
-    rename: dict[str, str] = {}
-    for did in ids:
-        override = COHORT_ROLE_OVERRIDES.get(did)
-        id_col = override.get("variable_name") if override else None
-        if not id_col:
-            continue
-        label = COHORT_LABELS.get(did, did)
-        with open(DATA_DIR / f"{did}.csv", newline="") as fh:
-            for i, row in enumerate(_csv.DictReader(fh)):
-                real = (row.get(id_col) or "").strip()
-                if real:
-                    rename[f"{label}:_ROW_{i:05d}"] = f"{label}:{real}"
-    # Alias the index under the real ids too, so re-running enrich (after members are already renamed) still
-    # resolves text — keeps this idempotent.
-    for old, new in rename.items():
-        if old in index:
-            index[new] = {**index[old], "id": new, "name": new.split(":", 1)[1]}
-
-    result = snapshot.get("result", snapshot)
-    records = result.get("records", [])
-    resolved = missing = 0
-    for rec in records:
-        new_members = [rename.get(m, m) for m in rec.get("members", [])]
-        rec["members"] = new_members
-        rec["memberDetails"] = [_member_ui(m, index) for m in new_members]
-        resolved += sum(1 for m in new_members if m in index)
-        missing += sum(1 for m in new_members if m not in index)
-        for t in rec.get("transforms", []):
-            if t.get("sourceVariable") in rename:
-                t["sourceVariable"] = rename[t["sourceVariable"]]
-    # Keep the embedding-atlas point ids in sync with the renamed member ids, else atlas points no longer
-    # join to their record and render as "unassigned" (the bug this whole rename would otherwise introduce).
-    for p in result.get("atlas", []):
-        new = rename.get(f"{p.get('cohort')}:{p.get('variable')}")
-        if new:
-            p["variable"] = new.split(":", 1)[1]
-    snap_path.write_text(json.dumps(snapshot))
-    total = resolved + missing
-    pct = (100 * resolved // total) if total else 0
-    print(f"enriched {len(records)} records — {resolved}/{total} members resolved to dict text ({pct}%), {missing} fallback")
-    write_static_fixtures(ids, snapshot)
 
 
 def write_static_fixtures(ids: list[str], snapshot: dict) -> None:

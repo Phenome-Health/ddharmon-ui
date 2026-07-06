@@ -20,6 +20,7 @@ from ddharmon.models.cluster import FieldCluster, TopicModelResult
 from fastapi.testclient import TestClient
 
 from backend import app as app_module
+from backend.demos import demo_job_id, seed_demos
 from backend.engine.adapter import build_ui_result, run_pipeline
 from backend.jobs import JobStore
 
@@ -537,3 +538,33 @@ def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
         stage_overrides=overrides,
     )
     assert "loading" in seen and "embedding" in seen and "clustering" in seen
+
+
+def test_seed_demos_prepopulates_a_complete_run():
+    """seed_demos hydrates the bundled precomputed demo(s) as COMPLETE runs, so Runs is never empty on boot."""
+    store = JobStore()
+    ids = seed_demos(store)
+    assert ids, "expected at least one bundled demo snapshot to seed"
+    jid = demo_job_id(["aou", "clsa", "ukbb", "mesa", "aireadi"])
+    assert jid in ids
+    job = store.get(jid)
+    assert job is not None and job.status == "complete" and job.phase == "complete"
+    assert job.config.get("demo") is True
+    assert job.summary_dict()["nRecords"] > 0
+    # idempotent: re-seeding neither duplicates nor clobbers the existing run
+    assert seed_demos(store) == []
+    assert store.get(jid) is job
+
+
+def test_purge_exempts_demo_but_evicts_user_runs():
+    """The TTL purge evicts stale terminal USER runs but never the prepopulated (pinned) demo run."""
+    store = JobStore()
+    store.create("user-1", "User run", {})
+    store.update("user-1", status="complete", result={"records": []})
+    seed_demos(store)
+    jid = demo_job_id(["aou", "clsa", "ukbb", "mesa", "aireadi"])
+    for j in store.list():  # age every run well past the TTL
+        j.updated_at = 0.0
+    store.purge_expired()
+    assert store.get("user-1") is None  # ordinary terminal run aged out
+    assert store.get(jid) is not None  # demo run is pinned → survives
