@@ -29,6 +29,7 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { MatchSankey } from "@/components/match-sankey";
 import { Analytics } from "@/components/analytics";
 import { EmbeddingAtlas } from "@/components/embedding-atlas";
+import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
 import { VERDICT_STYLES, type UIRecord } from "@/types";
@@ -161,6 +162,14 @@ export default function DashboardPage() {
 
   const result = jobState?.result ?? null;
   const records = useMemo<UIRecord[]>(() => result?.records ?? [], [result]);
+  // True per-cohort field count from the embedding atlas (all fields, incl. those that never clustered) —
+  // lets the Sankey show each cohort's full width so it agrees with the "N fields / cohort" headline. Empty
+  // while the atlas is withheld mid-replay → the Sankey just shows mapped flows until the run completes.
+  const cohortTotals = useMemo<Record<string, number>>(() => {
+    const t: Record<string, number> = {};
+    for (const p of result?.atlas ?? []) t[p.cohort] = (t[p.cohort] ?? 0) + 1;
+    return t;
+  }, [result]);
   const filtered = useMemo(
     () => records.filter((r) => recordMatchesFocus(r, focus) && (!xcOnly || r.crossCohort)),
     [records, focus, xcOnly],
@@ -371,20 +380,31 @@ export default function DashboardPage() {
           )}
 
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0">
               <CardTitle className="text-base">Match journey</CardTitle>
+              <PlotInfo>
+                Where every field goes: <b>cohort → verdict → destination</b>, flow width = number of fields.
+                <b>Adopt/Refine</b> map onto an existing CDE, <b>Novel</b> routes to a proposed GenCDE, and
+                <b> Unclustered</b> fields (that didn&apos;t group with anything) fall to <b>Not mapped</b>. Click a
+                node or flow to focus it across all the charts.
+              </PlotInfo>
             </CardHeader>
             <CardContent>
-              <MatchSankey records={records} focus={focus} onFocus={toggleFocus} />
+              <MatchSankey records={records} cohortTotals={cohortTotals} focus={focus} onFocus={toggleFocus} />
             </CardContent>
           </Card>
 
-          <Analytics records={records} focus={focus} onFocus={toggleFocus} />
+          <Analytics records={records} cohortTotals={cohortTotals} focus={focus} onFocus={toggleFocus} />
 
           {result.atlas.length > 0 && (
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center gap-2 space-y-0">
                 <CardTitle className="text-base">Embedding atlas</CardTitle>
+                <PlotInfo>
+                  Each dot is one field, placed by the meaning of its text (a 2-D PCA of the embeddings the
+                  clustering used) — nearby dots are semantically similar. Color by <b>cohort</b> or{" "}
+                  <b>verdict</b>; click a dot to open its concept in the workbench.
+                </PlotInfo>
               </CardHeader>
               <CardContent>
                 <EmbeddingAtlas

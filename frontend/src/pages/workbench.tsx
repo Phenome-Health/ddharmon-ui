@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Ban, Check, ExternalLink, Loader2, Pencil, Sparkles, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PlotInfo } from "@/components/plot-info";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -327,8 +328,17 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
 
             {/* value / transform mapping */}
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center gap-2 space-y-0">
                 <CardTitle className="text-base">Value mapping ({selected.transforms.length})</CardTitle>
+                <PlotInfo>
+                  One row per source field → CDE transform recipe. The mono badge is the transform{" "}
+                  <b>kind</b> (categorical recode / unit conversion / arithmetic / identity); <b>coverage</b> is
+                  the share of the source&apos;s values the recipe maps. The <b>review</b> / <b>units</b> /{" "}
+                  <b>data</b> chips are <b>status flags, not buttons</b> — respectively: flagged for a human
+                  check, source/target units couldn&apos;t be reconciled, and needs row-level data to apply.
+                  Specs are exported from the run&apos;s <b>Export</b> menu (EITL TSV, records JSON, or a runnable
+                  notebook).
+                </PlotInfo>
               </CardHeader>
               <CardContent>
                 {selected.transforms.length ? (

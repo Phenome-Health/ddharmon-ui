@@ -10,6 +10,7 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PlotInfo } from "@/components/plot-info";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   CHART_AXIS,
@@ -40,17 +41,28 @@ interface CohortRow {
   novel: number;
   coverage: number; // assigned / total
 }
-function coverageByCohort(records: UIRecord[]): CohortRow[] {
+function coverageByCohort(records: UIRecord[], cohortTotals?: Record<string, number>): CohortRow[] {
   const acc = new Map<string, { total: number; assigned: number; novel: number }>();
+  const ensure = (c: string) => acc.get(c) ?? { total: 0, assigned: 0, novel: 0 };
   for (const r of records) {
     const v = vkey(r);
     const members = r.members.length ? r.members : r.cohorts.map((c) => `${c}:`);
     for (const m of members) {
       const c = cohortOf(m, r.cohorts[0] ?? "unknown");
-      const row = acc.get(c) ?? { total: 0, assigned: 0, novel: 0 };
+      const row = ensure(c);
       row.total += 1;
       if (v === "adopt" || v === "refine") row.assigned += 1;
       else if (v === "novel") row.novel += 1;
+      acc.set(c, row);
+    }
+  }
+  // Use the true per-cohort field count (from the atlas) as the denominator when available, so "Fields" and
+  // coverage reflect ALL the cohort's fields — not just those that reached a concept. The shortfall
+  // (Fields − Assigned − Novel) is fields that never clustered.
+  if (cohortTotals) {
+    for (const [c, n] of Object.entries(cohortTotals)) {
+      const row = ensure(c);
+      row.total = n;
       acc.set(c, row);
     }
   }
@@ -215,14 +227,16 @@ const binLabel = (b: string) => {
 
 export function Analytics({
   records,
+  cohortTotals,
   focus = null,
   onFocus,
 }: {
   records: UIRecord[];
+  cohortTotals?: Record<string, number>;
   focus?: Focus;
   onFocus?: (f: Focus) => void;
 }) {
-  const cohortRows = useMemo(() => coverageByCohort(records), [records]);
+  const cohortRows = useMemo(() => coverageByCohort(records, cohortTotals), [records, cohortTotals]);
   const sizeBars = useMemo(() => sizeVerdictBars(records), [records]);
   const hist = useMemo(() => scoreHistogram(records), [records]);
   const overlap = useMemo(() => cohortOverlap(records), [records]);
@@ -230,8 +244,13 @@ export function Analytics({
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-base">Coverage by cohort</CardTitle>
+          <PlotInfo>
+            Per cohort: <b>Fields</b> it contributed, how many were <b>Assigned</b> to an existing CDE
+            (adopt/refine) vs proposed <b>Novel</b>, and <b>Coverage</b> = assigned ÷ fields. Assigned + Novel
+            can be less than Fields — the rest didn&apos;t cluster into any concept. Click a row to focus that cohort.
+          </PlotInfo>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -267,8 +286,13 @@ export function Analytics({
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-base">Concepts by size × verdict</CardTitle>
+          <PlotInfo>
+            How many concepts pooled 1, 2, 3… fields (x-axis), with each bar stacked by verdict
+            (adopt/refine/novel). Taller stacks on the right = more fields harmonized into one shared concept.
+            Click a segment to focus that verdict.
+          </PlotInfo>
         </CardHeader>
         <CardContent>
           {sizeBars.length ? (
@@ -281,8 +305,13 @@ export function Analytics({
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-base">Retrieval score distribution</CardTitle>
+          <PlotInfo>
+            Distribution of each concept&apos;s cosine similarity to its nearest CDE (binned), stacked by verdict.
+            Adopts cluster at high similarity, novels at low — a quick read on match quality and where the
+            adopt/novel boundary falls. Click a bar to focus that verdict.
+          </PlotInfo>
         </CardHeader>
         <CardContent>
           {hist.length ? (
@@ -297,8 +326,13 @@ export function Analytics({
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-base">Cross-cohort overlap</CardTitle>
+          <PlotInfo>
+            A heatmap of how many concepts each pair of cohorts <b>share</b> — i.e. fields from both cohorts
+            pooled into the same harmonized concept. Darker cells = more shared concepts, the core payoff of
+            cross-cohort harmonization. Click a cell to focus that pair.
+          </PlotInfo>
         </CardHeader>
         <CardContent>
           {overlap.cohorts.length ? (
