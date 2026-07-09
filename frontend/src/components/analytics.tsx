@@ -76,7 +76,7 @@ function sizeTier(n: number): string {
   if (n >= 5) return "≥5";
   return String(Math.max(1, n));
 }
-const TIER_ORDER = ["≥5", "4", "3", "2", "1"];
+const TIER_ORDER = ["1", "2", "3", "4", "≥5"];
 function sizeVerdictBars(records: UIRecord[]) {
   const acc = new Map<string, Record<string, number>>();
   for (const r of records) {
@@ -290,7 +290,8 @@ export function Analytics({
           <CardTitle className="text-base">Concepts by size × verdict</CardTitle>
           <PlotInfo>
             How many concepts pooled 1, 2, 3… fields (x-axis), with each bar stacked by verdict
-            (adopt/refine/novel). Taller stacks on the right = more fields harmonized into one shared concept.
+            (adopt/refine/novel). A higher x-tier means more fields pooled into one shared concept
+            (more harmonization); the y-axis is how many concepts fall in that tier.
             Click a segment to focus that verdict.
           </PlotInfo>
         </CardHeader>

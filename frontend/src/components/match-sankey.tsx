@@ -317,7 +317,9 @@ export function MatchSankey({
   // Sticky emphasis from the shared focus, expressed as a node highlight; a live hover overrides it.
   const focusHover: Hover = useMemo(() => {
     if (!focus) return null;
-    const name = focus.kind === "verdict" ? VERDICT_NODE[focus.value] : focus.value;
+    // "unassigned" focus emphasizes the Unclustered node (and its connected flows).
+    const name =
+      focus.kind === "unassigned" ? UNCLUSTERED : focus.kind === "verdict" ? VERDICT_NODE[focus.value] : focus.value;
     const i = data.nodes.findIndex((n) => n.name === name);
     return i >= 0 ? { kind: "node", index: i } : null;
   }, [focus, data.nodes]);
@@ -330,9 +332,12 @@ export function MatchSankey({
   const nodeState = (i: number): ShapeState => (!active ? "base" : active.activeNodes.has(i) ? "on" : "off");
   const linkState = (li: number): ShapeState => (!active ? "base" : active.activeLinks.has(li) ? "on" : "off");
 
-  // Map a node / flow to the focus it represents. Cohort nodes -> cohort focus; verdict nodes (and any flow,
-  // via its verdict endpoint) -> verdict focus; destination nodes aren't a focus axis.
+  // Map a node / flow to the focus it represents. The Unclustered / Not-mapped reconciliation bucket ->
+  // "unassigned" focus (so the review queue browses result.unassignedFields); cohort nodes -> cohort focus;
+  // verdict nodes (and any flow, via its verdict endpoint) -> verdict focus. Checked FIRST because
+  // VERDICT_NAMES also contains "Unclustered".
   const focusForNode = (name: string): Focus => {
+    if (name === UNCLUSTERED || name === NOT_MAPPED) return { kind: "unassigned" };
     if (VERDICT_NAMES.has(name)) return { kind: "verdict", value: name.toLowerCase() };
     if (DEST_NAMES.has(name)) return null;
     return { kind: "cohort", value: name };
@@ -340,6 +345,7 @@ export function MatchSankey({
   const focusForLink = (l: SankeyLinkDatum): Focus => {
     const s = nodeNames[l.source];
     const t = nodeNames[l.target];
+    if (s === UNCLUSTERED || t === UNCLUSTERED || t === NOT_MAPPED) return { kind: "unassigned" };
     const vName = VERDICT_NAMES.has(s) ? s : VERDICT_NAMES.has(t) ? t : null;
     return vName ? { kind: "verdict", value: vName.toLowerCase() } : null;
   };
