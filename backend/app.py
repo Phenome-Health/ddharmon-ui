@@ -25,6 +25,8 @@ import os
 import shutil
 import threading
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -33,7 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from backend.demos import list_demos, load_snapshot
+from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
 from backend.jobs import TERMINAL_STATES, store
 from backend.notebook import build_notebook
@@ -60,7 +62,17 @@ CDE_COHORT = "NIH_CDE"
 
 _WORK_ROOT = Path(os.environ.get("DDHARMON_UI_WORK", _REPO_ROOT / ".ddharmon_ui"))
 
-app = FastAPI(title="ddharmon Harmonization API", version="1.0.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Prepopulate the Runs page with the precomputed demo(s) on startup so a fresh boot / restart is never
+    empty. Durable by construction: re-seeded every startup, and demo jobs are exempt from TTL purging.
+    No-op when no snapshot is bundled (e.g. a minimal deploy)."""
+    seed_demos(store)
+    yield
+
+
+app = FastAPI(title="ddharmon Harmonization API", version="1.0.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -148,7 +160,9 @@ async def start_batch(
         )
     cde_path = CDE_FILES[cde_set]
     if not cde_path.exists():
-        raise HTTPException(status_code=400, detail=f"CDE file not found: {cde_path} (set DDHARMON_CDE_DIR to the catalog directory)")
+        raise HTTPException(
+            status_code=400, detail=f"CDE file not found: {cde_path} (set DDHARMON_CDE_DIR to the catalog directory)"
+        )
     cde_spec: dict[str, Any] = {
         "path": str(cde_path),
         "cohort_name": CDE_COHORT,
@@ -248,15 +262,25 @@ def delete_job(job_id: str) -> None:
 # --- human decisions -------------------------------------------------------------------------
 class VerdictBody(BaseModel):
     recordId: str
-    decision: str  # approve | refine | reject
+    decision: str  # both axes: approve | refine | reject
     note: str = ""
+    axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode spec)
+    sourceVariable: str | None = None  # REQUIRED for axis="transform" — the "cohort:var" edge the verdict is on
 
 
 @app.post("/api/harmonize/jobs/{job_id}/verdict")
 def submit_verdict(job_id: str, body: VerdictBody) -> dict[str, bool]:
-    if body.decision not in ("approve", "refine", "reject"):
-        raise HTTPException(status_code=400, detail="decision must be approve|refine|reject")
-    if not store.set_decision(job_id, body.recordId, body.decision, body.note):
+    if body.axis not in ("match", "transform"):
+        raise HTTPException(status_code=400, detail="axis must be match|transform")
+    # Both axes accept the full triad; the transform axis records one verdict PER source variable.
+    allowed = ("approve", "refine", "reject")
+    if body.decision not in allowed:
+        raise HTTPException(status_code=400, detail=f"decision must be {'|'.join(allowed)}")
+    if body.axis == "transform" and not body.sourceVariable:
+        raise HTTPException(status_code=400, detail="sourceVariable is required for the transform axis")
+    if not store.set_decision(
+        job_id, body.recordId, body.decision, body.note, axis=body.axis, source_variable=body.sourceVariable
+    ):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
 
@@ -264,13 +288,27 @@ def submit_verdict(job_id: str, body: VerdictBody) -> dict[str, bool]:
 # --- export ----------------------------------------------------------------------------------
 # Export is built from the stable UIRecord contract (not from ddharmon) — one more place insulated from
 # pipeline churn. eitl_tsv mirrors export_leanb_eitl_queue's intent (refine→novel→adopt first).
+# The per-variable transform verdicts are serialized into a SINGLE trailing ``transformDecisions`` JSON
+# column (a map keyed by sourceVariable -> {decision, note}); appending it LAST keeps the match columns and
+# positions stable for index-based test assertions (e.g. eitl[4] == verdict, decisions[0] == recordId).
 _EITL_COLS = [
     "recordId", "clusterId", "groupId", "concept", "verdict", "route", "cdeId", "cdeExternalId",
     "top1Cos", "chosenCos", "coverageGap", "floored", "crossCohort", "nMembers", "cohorts", "members",
-    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote",
+    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote", "transformDecisions",
 ]  # fmt: skip
-_DECISIONS_COLS = ["recordId", "concept", "verdict", "cdeId", "chosenCos", "humanDecision", "humanNote"]
+_DECISIONS_COLS = [
+    "recordId", "concept", "verdict", "cdeId", "chosenCos", "humanDecision", "humanNote", "transformDecisions",
+]  # fmt: skip
 _EITL_RANK = {"refine": 0, "novel": 1, "adopt": 2}
+
+
+def _transform_decisions_json(dec: dict[str, Any]) -> str:
+    """Serialize a record's per-source-variable transform verdicts to a compact JSON map for export.
+
+    Empty string when the record has no transform verdicts. ``_clean`` strips any tab/newline so the value
+    stays on one TSV/CSV row (the JSON's own commas/quotes are handled by ``csv.writer`` quoting)."""
+    transforms = dec.get("transforms")
+    return _clean(json.dumps(transforms, sort_keys=True)) if transforms else ""
 
 
 @app.get("/api/harmonize/jobs/{job_id}/export")
@@ -324,6 +362,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     _fmt(r["cosines"]["chosen"]),
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
+                    _transform_decisions_json(dec),
                 ]
             )
         else:
@@ -350,6 +389,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     _clean(r["rationale"]),
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
+                    _transform_decisions_json(dec),
                 ]
             )
     media = "text/csv" if ext == "csv" else "text/tab-separated-values"
@@ -440,7 +480,7 @@ def start_demo(body: DemoBody) -> dict[str, str]:
             detail=f"No precomputed demo for {sorted(body.datasets)}. See GET /api/harmonize/demos.",
         )
     result = snap.get("result", snap)
-    job_id = "demo-" + "_".join(sorted(d.lower() for d in body.datasets))
+    job_id = demo_job_id(body.datasets)
     display = snap.get("displayName") or "Demo run"
     store.delete(job_id)  # reset any prior replay of this same demo (idempotent → one Runs entry)
     store.create(job_id, display, {"demo": True, "datasets": sorted(body.datasets), "mode": result.get("mode")})

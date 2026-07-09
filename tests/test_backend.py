@@ -8,6 +8,8 @@ stages mocked + BERTopic and embeddings monkeypatched (no model download / API k
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import time
 
@@ -20,6 +22,7 @@ from ddharmon.models.cluster import FieldCluster, TopicModelResult
 from fastapi.testclient import TestClient
 
 from backend import app as app_module
+from backend.demos import demo_job_id, seed_demos
 from backend.engine.adapter import build_ui_result, run_pipeline
 from backend.jobs import JobStore
 
@@ -233,6 +236,95 @@ def test_member_details_enriched_from_index():
     assert details[2] == {"id": "CohortB:missing", "cohort": "CohortB", "name": "missing", "text": "missing"}
 
 
+def test_field_index_and_unassigned_fields():
+    """fieldIndex covers EVERY embedded non-CDE field with its read-in attributes (uncapped, CDE cohort
+    excluded); unassignedFields lists source fields that landed in no record (with x,y when in the atlas)."""
+    from types import SimpleNamespace
+
+    from backend.engine.adapter import build_field_index
+
+    def opt(code, label, order=None):
+        return SimpleNamespace(code=code, label=label, order=order)
+
+    def field(desc="", qtext="", short="", enc=None, units=None, dtype=None, options=None):
+        return SimpleNamespace(
+            description=desc,
+            question_text=qtext,
+            short_label=short,
+            value_encoding_raw=enc,
+            units=units,
+            data_type=dtype,
+            response_options=options or [],
+        )
+
+    dd = SimpleNamespace(
+        cohort_name="CohortA",
+        name="CohortA",
+        fields={
+            "age": field(desc="Age of the participant in years", units="years", dtype="integer"),
+            "smoke": field(desc="Current smoker", enc="1=Yes|2=No", options=[opt("1", "Yes", 1), opt("2", "No", 2)]),
+            "weird": field(desc="Bespoke unclustered item"),  # never lands in a record
+        },
+    )
+    cde = SimpleNamespace(cohort_name="NIH_CDE", name="NIH_CDE", fields={"AgeCDE": field(desc="Age of participant")})
+    embedded = [SimpleNamespace(dictionary=dd), SimpleNamespace(dictionary=cde)]
+
+    field_index = build_field_index(embedded, cde_cohort="NIH_CDE")
+    # every non-CDE field is present; the CDE cohort (the backbone) is excluded
+    assert set(field_index) == {"CohortA:age", "CohortA:smoke", "CohortA:weird"}
+    # read-in attributes surfaced; a key appears only when the source value is non-empty
+    age = field_index["CohortA:age"]
+    assert age["name"] == "age" and age["text"] == "Age of the participant in years"
+    assert age["description"] == "Age of the participant in years"
+    assert age["units"] == "years" and age["dataType"] == "integer"
+    assert "valueEncoding" not in age and "responseOptions" not in age
+    smoke = field_index["CohortA:smoke"]
+    assert smoke["valueEncoding"] == "1=Yes|2=No"
+    assert smoke["responseOptions"] == [
+        {"code": "1", "label": "Yes", "order": 1},
+        {"code": "2", "label": "No", "order": 2},
+    ]
+
+    # a record that clusters only age + smoke; "weird" lands in NO record
+    rec = LeanBRecord(
+        cluster_id="c1",
+        verdict="adopt",
+        route="assigned",
+        group_id="c1#g0",
+        member_variable_names=["CohortA:age", "CohortA:smoke"],
+        cohorts=["CohortA"],
+        n_members=2,
+    )
+    atlas = [
+        {"cohort": "CohortA", "variable": "age", "x": 0.1, "y": 0.2},
+        {"cohort": "CohortA", "variable": "weird", "x": -0.5, "y": 0.7},
+    ]
+    result = build_ui_result(
+        LeanBResult(records=[rec]), mode="batch", phases=["loading"], atlas=atlas, field_index=field_index
+    )
+    # fieldIndex passes through whole — covers the clustered AND the unclustered field
+    assert result["fieldIndex"] == field_index
+    assert "CohortA:weird" in result["fieldIndex"]
+    # unassignedFields = source fields in no record; clustered ones excluded, x/y attached from the atlas
+    unassigned = result["unassignedFields"]
+    assert [u["variable"] for u in unassigned] == ["weird"]
+    assert unassigned[0] == {
+        "cohort": "CohortA",
+        "variable": "weird",
+        "text": "Bespoke unclustered item",
+        "x": -0.5,
+        "y": 0.7,
+    }
+    assert all(u["variable"] != "age" and u["variable"] != "smoke" for u in unassigned)
+
+
+def test_build_ui_result_defaults_field_index_empty():
+    """Without a field_index (e.g. canned-record tests), fieldIndex is {} and unassignedFields is []."""
+    result = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
+    assert result["fieldIndex"] == {}
+    assert result["unassignedFields"] == []
+
+
 # ── full HTTP flow with a fake runner ──────────────────────────
 
 _CANNED_RESULT = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
@@ -307,6 +399,97 @@ def test_batch_flow_with_fake_runner(monkeypatch, tmp_path):
     # delete
     assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
     assert client.get(f"/api/harmonize/result/{job_id}").status_code == 404
+
+
+def test_transform_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
+    """The transform axis is a second, independent verdict recorded PER SOURCE VARIABLE: each ``cohort:var``
+    edge gets its own approve/refine/reject, persisted under ``decisions[rec]["transforms"][sourceVariable]``
+    and serialized into a single trailing ``transformDecisions`` JSON export column. ``sourceVariable`` is
+    REQUIRED on the transform axis; ``refine`` is now valid there too."""
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=_CANNED_RESULT)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    cfg = {
+        "dictionaries": [{"filename": "cohortA.csv", "cohortName": "CohortA", "columnRoles": {"variable_name": "var"}}],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    # match verdict + a PER-VARIABLE transform verdict on the same record, on independent axes
+    m = client.post(
+        f"/api/harmonize/jobs/{job_id}/verdict", json={"recordId": "c1#g0", "decision": "refine", "note": "m"}
+    )
+    assert m.status_code == 200
+    t = client.post(
+        f"/api/harmonize/jobs/{job_id}/verdict",
+        json={
+            "recordId": "c1#g0",
+            "decision": "approve",
+            "axis": "transform",
+            "sourceVariable": "CohortB:age_yrs",
+            "note": "unit ok",
+        },
+    )
+    assert t.status_code == 200
+    # refine IS valid on the transform axis now (full triad, per variable) — last write on the edge wins
+    ok_refine = client.post(
+        f"/api/harmonize/jobs/{job_id}/verdict",
+        json={"recordId": "c1#g0", "decision": "refine", "axis": "transform", "sourceVariable": "CohortB:age_yrs"},
+    )
+    assert ok_refine.status_code == 200
+    # transform axis REQUIRES sourceVariable
+    bad = client.post(
+        f"/api/harmonize/jobs/{job_id}/verdict",
+        json={"recordId": "c1#g0", "decision": "approve", "axis": "transform"},
+    )
+    assert bad.status_code == 400
+
+    # persisted per-variable, nested under decisions[rec]["transforms"][sourceVariable]
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()
+    tx = snap["decisions"]["c1#g0"]["transforms"]["CohortB:age_yrs"]
+    assert tx["decision"] == "refine"  # last write wins on the same edge
+    assert snap["decisions"]["c1#g0"]["decision"] == "refine"  # match axis coexists, untouched
+
+    # EITL TSV: single trailing transformDecisions JSON column, keyed by sourceVariable (parse via csv to
+    # undo the quoting csv.writer applies to the JSON's embedded quotes/commas)
+    tsv = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "eitl_tsv"})
+    assert tsv.status_code == 200
+    rows = list(csv.reader(io.StringIO(tsv.text), delimiter="\t"))
+    header = rows[0]
+    assert header[-1] == "transformDecisions"
+    ti = header.index("transformDecisions")
+    row = next(r for r in rows[1:] if r[0] == "c1#g0")
+    tj = json.loads(row[ti])
+    assert tj["CohortB:age_yrs"]["decision"] == "refine"
+    assert row[header.index("humanDecision")] == "refine"  # match axis unchanged
+
+    # decisions CSV likewise carries the per-variable transform verdicts in its own trailing column
+    dec_csv = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "decisions_csv"})
+    drows = list(csv.reader(io.StringIO(dec_csv.text)))
+    dheader = drows[0]
+    assert dheader[-1] == "transformDecisions"
+    drow = next(r for r in drows[1:] if r[0] == "c1#g0")
+    assert json.loads(drow[dheader.index("transformDecisions")])["CohortB:age_yrs"]["decision"] == "refine"
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
 
 
 def test_byok_key_threaded_to_runner_and_never_persisted(monkeypatch, tmp_path):
@@ -492,6 +675,15 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
     assert any(r["candidates"] for r in result["records"])
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1
     assert {"cohort", "variable", "x", "y"}.issubset(result["atlas"][0])
+    # fieldIndex covers the embedded non-CDE fields (uncapped) and excludes the CDE cohort; every clustered
+    # member resolves in it and no unassigned field is also a member (backward-compatible additive keys).
+    assert result["fieldIndex"], "fieldIndex should be populated from the embedded dictionaries"
+    assert not any(k.startswith("NIH_CDE:") for k in result["fieldIndex"])
+    members = {m for r in result["records"] for m in r["members"]}
+    assert members and members.issubset(result["fieldIndex"])
+    assert isinstance(result["unassignedFields"], list)
+    unassigned_keys = {f"{u['cohort']}:{u['variable']}" for u in result["unassignedFields"]}
+    assert unassigned_keys.isdisjoint(members)
 
 
 def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
@@ -537,3 +729,33 @@ def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
         stage_overrides=overrides,
     )
     assert "loading" in seen and "embedding" in seen and "clustering" in seen
+
+
+def test_seed_demos_prepopulates_a_complete_run():
+    """seed_demos hydrates the bundled precomputed demo(s) as COMPLETE runs, so Runs is never empty on boot."""
+    store = JobStore()
+    ids = seed_demos(store)
+    assert ids, "expected at least one bundled demo snapshot to seed"
+    jid = demo_job_id(["aou", "clsa", "ukbb", "mesa", "aireadi"])
+    assert jid in ids
+    job = store.get(jid)
+    assert job is not None and job.status == "complete" and job.phase == "complete"
+    assert job.config.get("demo") is True
+    assert job.summary_dict()["nRecords"] > 0
+    # idempotent: re-seeding neither duplicates nor clobbers the existing run
+    assert seed_demos(store) == []
+    assert store.get(jid) is job
+
+
+def test_purge_exempts_demo_but_evicts_user_runs():
+    """The TTL purge evicts stale terminal USER runs but never the prepopulated (pinned) demo run."""
+    store = JobStore()
+    store.create("user-1", "User run", {})
+    store.update("user-1", status="complete", result={"records": []})
+    seed_demos(store)
+    jid = demo_job_id(["aou", "clsa", "ukbb", "mesa", "aireadi"])
+    for j in store.list():  # age every run well past the TTL
+        j.updated_at = 0.0
+    store.purge_expired()
+    assert store.get("user-1") is None  # ordinary terminal run aged out
+    assert store.get(jid) is not None  # demo run is pinned → survives

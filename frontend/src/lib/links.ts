@@ -8,6 +8,8 @@ export const ISSUES_URL = `${REPO_URL}/issues`;
 export const PH = {
   org: "https://phenomehealth.org",
   ddharmon: "https://github.com/Phenome-Health/ddharmon",
+  // Per-cohort provenance: the source-URL → build-script → CSV table for every example cohort.
+  ddharmonProvenance: "https://github.com/Phenome-Health/ddharmon/blob/main/data/examples/README.md",
   ddharmonUi: "https://github.com/Phenome-Health/ddharmon-ui",
   biomapper: "https://github.com/Phenome-Health/biomapper2",
   biomapperUi: "https://link.expertintheloop.io/",

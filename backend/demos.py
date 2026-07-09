@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from backend.jobs import JobStore
 
 _DIR = Path(__file__).resolve().parent / "demos"
 _MANIFEST = _DIR / "manifest.json"
@@ -43,3 +46,36 @@ def load_snapshot(datasets: list[str]) -> dict[str, Any] | None:
             if snap.exists():
                 return json.loads(snap.read_text())
     return None
+
+
+def demo_job_id(datasets: list[str]) -> str:
+    """The stable per-combo job id (matches ``POST /demo`` + the static client): ``demo-<sorted datasets>``."""
+    return "demo-" + "_".join(sorted(str(d).lower() for d in datasets))
+
+
+def seed_demos(store: JobStore) -> list[str]:
+    """Prepopulate ``store`` with every available precomputed demo as a COMPLETE run — so the Runs page is
+    never empty on a fresh boot. Idempotent (skips a demo already present, e.g. a live replay in progress).
+    Returns the seeded job ids.
+
+    This is what makes the demo *prepopulated + durable*: re-seeded on every startup (a restart restores it),
+    tagged ``demo: True`` so :meth:`JobStore.purge_expired` never evicts it, and keyed by the same stable id
+    (:func:`demo_job_id`) the demo page deep-links to for "skip to results".
+    """
+    ids: list[str] = []
+    for combo in list_demos().get("combos", []):
+        if not combo.get("available"):
+            continue
+        datasets = combo["datasets"]
+        snap = load_snapshot(datasets)
+        if snap is None:
+            continue
+        job_id = demo_job_id(datasets)
+        if store.get(job_id) is not None:
+            continue  # already present — don't clobber a seeded run or an in-flight replay
+        result = snap.get("result", snap)
+        display = snap.get("displayName") or "Demo run"
+        store.create(job_id, display, {"demo": True, "datasets": sorted(datasets), "mode": result.get("mode")})
+        store.update(job_id, status="complete", phase="complete", result=result)
+        ids.append(job_id)
+    return ids

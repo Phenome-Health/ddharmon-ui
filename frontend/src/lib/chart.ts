@@ -49,22 +49,34 @@ export const CHART_TOOLTIP_CLASS =
   "pointer-events-none rounded-md border border-neutral-200 bg-neutral-0 px-2.5 py-1.5 text-xs shadow-md";
 
 // ── Brushing & linking: one shared selection across all run charts + the review queue ──
-// A focus is a single axis of the run — one verdict, or one cohort. Clicking a chart element sets it;
-// it filters the review queue and emphasizes the matching slice everywhere else.
-export type Focus = { kind: "verdict"; value: string } | { kind: "cohort"; value: string } | null;
+// A focus is a single axis of the run — one verdict, one cohort, or the "unassigned" residual (source
+// fields that never clustered into a concept). Clicking a chart element sets it; it filters the review
+// queue and emphasizes the matching slice everywhere else. "unassigned" is valueless — it's a single
+// bucket, not a family of values — and is deliberately NOT a verdict (records never carry it).
+export type Focus =
+  | { kind: "verdict"; value: string }
+  | { kind: "cohort"; value: string }
+  | { kind: "unassigned" }
+  | null;
 
 export function sameFocus(a: Focus, b: Focus): boolean {
   if (!a || !b) return a === b;
-  return a.kind === b.kind && a.value === b.value;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "unassigned" || b.kind === "unassigned") return true;
+  return a.value === b.value;
 }
 
 export function focusLabel(focus: Focus): string {
   if (!focus) return "";
+  if (focus.kind === "unassigned") return "Unclustered";
   return focus.kind === "verdict" ? (VERDICT_LABEL[focus.value] ?? focus.value) : focus.value;
 }
 
-/** Does a record fall inside the current focus? Structural type so lib/ stays decoupled from types.ts. */
+/** Does a record fall inside the current focus? Structural type so lib/ stays decoupled from types.ts.
+ *  An "unassigned" focus matches NO record — records are all clustered; unassigned fields are surfaced
+ *  separately (result.unassignedFields), so the record queue is empty under this focus. */
 export function recordMatchesFocus(r: { verdict: string; cohorts: string[] }, focus: Focus): boolean {
   if (!focus) return true;
+  if (focus.kind === "unassigned") return false;
   return focus.kind === "verdict" ? r.verdict === focus.value : r.cohorts.includes(focus.value);
 }

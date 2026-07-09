@@ -20,6 +20,20 @@
       "file": "data/ukbb.csv",
       "nFields": 200,
       "description": "UK Biobank Showcase fields (curated subset)"
+    },
+    {
+      "id": "mesa",
+      "label": "MESA",
+      "file": "data/mesa.csv",
+      "nFields": 200,
+      "description": "Multi-Ethnic Study of Atherosclerosis, dbGaP dictionary (curated subset)"
+    },
+    {
+      "id": "aireadi",
+      "label": "AI-READI",
+      "file": "data/aireadi.csv",
+      "nFields": 200,
+      "description": "AI-READI REDCap survey items (curated subset)"
     }
   ],
   "combos": [
@@ -27,11 +41,13 @@
       "datasets": [
         "aou",
         "clsa",
-        "ukbb"
+        "ukbb",
+        "mesa",
+        "aireadi"
       ],
-      "snapshot": "aou_clsa_ukbb.json",
-      "label": "All of Us + CLSA + UK Biobank",
-      "description": "Cross-cohort demo over all three curated cohorts",
+      "snapshot": "aireadi_aou_clsa_mesa_ukbb.json",
+      "label": "All of Us + CLSA + UK Biobank + MESA + AI-READI",
+      "description": "Cross-cohort demo over all five curated cohorts",
       "available": true
     }
   ]

@@ -9,6 +9,8 @@ import DashboardPage from "@/pages/dashboard";
 import WorkbenchPage from "@/pages/workbench";
 import JobsPage from "@/pages/jobs";
 import GuidePage from "@/pages/guide";
+import MethodsPage from "@/pages/methods";
+import BenchmarksPage from "@/pages/benchmarks";
 import DemoPage from "@/pages/demo";
 import RelatedWorkPage from "@/pages/related-work";
 import PhenomeHealthPage from "@/pages/phenome-health";
@@ -30,6 +32,8 @@ export default function App() {
             <Route path="/" component={LandingPage} />
             <Route path="/new" component={HomePage} />
             <Route path="/guide" component={GuidePage} />
+            <Route path="/methods" component={MethodsPage} />
+            <Route path="/benchmarks" component={BenchmarksPage} />
             <Route path="/demo" component={DemoPage} />
             <Route path="/related" component={RelatedWorkPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />

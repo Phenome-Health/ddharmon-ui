@@ -26,6 +26,12 @@ export default function DemoPage() {
     [combo, datasets],
   );
   const totalFields = cohorts.reduce((s, d) => s + (d.nFields ?? 0), 0);
+  // Stable id of the prepopulated run (matches the backend + static-client scheme) — deep-link target for
+  // "skip to results", so impatient users jump straight to the finished run without watching it build.
+  const demoJobId = useMemo(
+    () => (combo ? "demo-" + [...combo.datasets].map((d) => d.toLowerCase()).sort().join("_") : null),
+    [combo],
+  );
 
   async function load() {
     if (!combo) return;
@@ -79,14 +85,26 @@ export default function DemoPage() {
                   </div>
                 ))}
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-neutral-400">
                   {cohorts.length} cohorts · {totalFields} fields · live mapping to NIH CDEs
                 </p>
-                <Button onClick={load} disabled={loading} size="sm">
-                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Load demo
-                </Button>
+                <div className="flex items-center gap-2">
+                  {demoJobId && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-ph-navy hover:text-ph-navy"
+                      onClick={() => navigate(`/job/${demoJobId}?results=1`)}
+                    >
+                      Skip to results →
+                    </Button>
+                  )}
+                  <Button onClick={load} disabled={loading} size="sm">
+                    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Load demo
+                  </Button>
+                </div>
               </div>
             </>
           )}
@@ -109,9 +127,10 @@ export default function DemoPage() {
           </Button>
         </div>
         <p className="mt-2 text-xs text-neutral-400">
-          Curated ~200-field subsets of public All of Us / CLSA / UK Biobank data. Full data + provenance:{" "}
-          <a href={PH.ddharmon} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
-            ddharmon
+          Curated 200-field subsets of public All of Us / CLSA / UK Biobank / MESA / AI-READI data. Each cohort's
+          public source dictionary and the exact script that builds it are documented in the zip's README and in the{" "}
+          <a href={PH.ddharmonProvenance} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
+            provenance table
           </a>
           {" · "}this app:{" "}
           <a href={PH.ddharmonUi} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">

@@ -50,7 +50,14 @@ export default function JobsPage() {
                 <TableRow key={j.jobId}>
                   <TableCell>
                     <span className="flex items-center gap-2">
-                      <Link href={`/job/${j.jobId}`} className="font-medium text-ph-navy hover:underline">
+                      <Link
+                        href={
+                          j.status === "complete" || (j.config as { demo?: boolean })?.demo
+                            ? `/job/${j.jobId}?results=1`
+                            : `/job/${j.jobId}`
+                        }
+                        className="font-medium text-ph-navy hover:underline"
+                      >
                         {j.displayName}
                       </Link>
                       {(j.config as { demo?: boolean })?.demo && (

@@ -15,9 +15,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { IS_STATIC, startHarmonize } from "@/lib/api";
 import {
   ADVANCED_ROLES,
-  PRIMARY_ROLES,
+  SEMANTIC_ROLES,
+  VALUE_ROLES,
   ROLE_FORMAT,
   ROLE_HELP,
+  ROLE_REQUIREMENT,
   estimateRunCostBreakdown,
   formatUsd,
   type CdeSet,
@@ -199,12 +201,35 @@ export default function HomePage() {
               <Input value={d.cohortName} onChange={(e) => setCohort(idx, e.target.value)} />
             </div>
 
-            <div>
-              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">Columns</div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {PRIMARY_ROLES.map((role) => (
-                  <RoleField key={role} role={role} value={d.roles[role]} headers={d.headers} onChange={(v) => setRole(idx, role, v)} />
-                ))}
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 flex flex-wrap items-center gap-x-1.5 text-xs font-medium uppercase tracking-wide text-neutral-400">
+                  Question columns
+                  <span className="font-normal normal-case text-neutral-300">what the field asks (semantic)</span>
+                  <span className="inline-flex items-center gap-1 font-normal normal-case text-ph-crimson">
+                    <span aria-hidden>★</span> at least one required
+                    <InfoTip
+                      text="Map at least one meaning-bearing field so the pipeline can match your fields to CDEs. description and question_text are the primary semantic signals; variable_name alone works but carries the least meaning (and is auto-generated if you skip it)."
+                      label="About the required fields"
+                    />
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+                  {SEMANTIC_ROLES.map((role) => (
+                    <RoleField key={role} role={role} value={d.roles[role]} headers={d.headers} onChange={(v) => setRole(idx, role, v)} />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">
+                  Response columns{" "}
+                  <span className="ml-1 font-normal normal-case text-neutral-300">the values &amp; how they're coded</span>
+                </div>
+                <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+                  {VALUE_ROLES.map((role) => (
+                    <RoleField key={role} role={role} value={d.roles[role]} headers={d.headers} onChange={(v) => setRole(idx, role, v)} />
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -403,11 +428,18 @@ function RoleField({
   onChange: (v: string) => void;
 }) {
   const format = ROLE_FORMAT[role];
+  const requirement = ROLE_REQUIREMENT[role];
   return (
     <div className="grid gap-1.5">
       <Label className="flex items-center gap-1 text-xs">
         {role}
-        {role === "variable_name" && <span className="text-ph-crimson">*</span>}
+        {/* Soft, non-crimson tier hints; the hard "required" marker lives on the semantic group header. */}
+        {requirement === "conditional" && (
+          <span className="font-normal normal-case text-neutral-400">· for transform specs</span>
+        )}
+        {requirement === "recommended" && (
+          <span className="font-normal normal-case text-neutral-400">· recommended</span>
+        )}
         <RoleInfo role={role} />
       </Label>
       <Select value={value || NONE} onValueChange={onChange}>

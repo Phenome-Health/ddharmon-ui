@@ -29,9 +29,12 @@ from pathlib import Path
 
 # (regex, human description, {profiles it applies to})
 RULES: list[tuple[str, str, set[str]]] = [
-    (r"/Users/[^/\s\"'`]+", "local macOS home path", {"public", "internal"}),
+    # A leading (?<![A-Za-z0-9]) requires a path boundary (start / quote / space / =), so a
+    # word-internal slash in prose — e.g. an LLM rationale saying "work/home/daily roles" — is
+    # not mistaken for a home path.
+    (r"(?<![A-Za-z0-9])/Users/[^/\s\"'`]+", "local macOS home path", {"public", "internal"}),
     # /home/ubuntu is a conventional deploy placeholder — allow it, flag other user homes.
-    (r"/home/(?!ubuntu\b)[A-Za-z0-9_.-]+", "local Linux home path", {"public", "internal"}),
+    (r"(?<![A-Za-z0-9])/home/(?!ubuntu\b)[A-Za-z0-9_.-]+", "local Linux home path", {"public", "internal"}),
     (r"\bai-coding\b", "local workspace directory name", {"public", "internal"}),
     (r"\bInsync\b", "local workspace directory name", {"public", "internal"}),
     (r"trentleslie", "personal GitHub handle / content mirror", {"public"}),

@@ -12,7 +12,10 @@ export interface StreamError {
   message: string;
 }
 
-export function useHarmonizeStream(jobId: string, enabled = true) {
+// `instant` shows the finished result immediately, skipping the demo replay animation — used by the demo
+// page's "skip to results" deep-link (?results=1). Live/backend runs ignore it (a complete job streams its
+// final state at once anyway).
+export function useHarmonizeStream(jobId: string, enabled = true, instant = false) {
   const [jobState, setJobState] = useState<JobResult | null>(null);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<StreamError | null>(null);
@@ -34,7 +37,8 @@ export function useHarmonizeStream(jobId: string, enabled = true) {
         .then((full) => {
           if (!mountedRef.current) return;
           const isDemo = !!(full.config as { demo?: boolean } | undefined)?.demo;
-          if (!isDemo || !full.result) {
+          if (instant || !isDemo || !full.result) {
+            // "skip to results" (or a non-demo fixture): settle on the full result with no replay pacing.
             setJobState(full);
             setDone(true);
             return;
@@ -133,7 +137,7 @@ export function useHarmonizeStream(jobId: string, enabled = true) {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       esRef.current?.close();
     };
-  }, [jobId, enabled]);
+  }, [jobId, enabled, instant]);
 
   return { jobState, done, error };
 }

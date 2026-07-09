@@ -73,13 +73,19 @@ export async function submitVerdict(
   recordId: string,
   decision: "approve" | "refine" | "reject",
   note = "",
+  axis: "match" | "transform" = "match",
+  sourceVariable?: string,
 ): Promise<void> {
+  // Two-axis verdict body: { recordId, decision, note, axis, sourceVariable? }. axis="match" is the
+  // concept→CDE verdict; axis="transform" is a PER-SOURCE-VARIABLE recode-spec verdict, so it also carries
+  // the "cohort:var" `sourceVariable` it applies to (required server-side for the transform axis). Both axes
+  // take the full approve|refine|reject triad. Kept out of types.ts on purpose (decisions' keys are optional).
   if (IS_STATIC) return; // preview: decisions are not persisted
   await json(
     await fetch(`${BASE}/jobs/${jobId}/verdict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recordId, decision, note }),
+      body: JSON.stringify({ recordId, decision, note, axis, sourceVariable }),
     }),
   );
 }

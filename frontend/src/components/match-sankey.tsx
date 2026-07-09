@@ -19,8 +19,12 @@ const VERDICT_NODE: Record<string, string> = {
 };
 const VERDICT_ORDER = ["adopt", "refine", "novel", "unclassified"];
 const DEST_ORDER = ["Existing CDE", "GenCDE / new", "Needs review"];
-const VERDICT_NAMES = new Set(Object.values(VERDICT_NODE)); // "Adopt", "Refine", ...
-const DEST_NAMES = new Set(DEST_ORDER);
+// Reconciliation bucket: fields that never clustered into a concept (HDBSCAN outliers) — so the Sankey's
+// cohort widths equal the true per-cohort field count, not just the fields that reached a concept group.
+const UNCLUSTERED = "Unclustered";
+const NOT_MAPPED = "Not mapped";
+const VERDICT_NAMES = new Set([...Object.values(VERDICT_NODE), UNCLUSTERED]); // "Adopt", "Refine", ...
+const DEST_NAMES = new Set([...DEST_ORDER, NOT_MAPPED]);
 
 // Node fill by name -- verdict + destination reuse the verdict palette; cohorts use ph-teal.
 const COLORS: Record<string, string> = {
@@ -31,6 +35,8 @@ const COLORS: Record<string, string> = {
   "Existing CDE": VERDICT_COLOR.adopt,
   "GenCDE / new": VERDICT_COLOR.novel,
   "Needs review": VERDICT_COLOR.unclassified,
+  [UNCLUSTERED]: VERDICT_COLOR.unclassified,
+  [NOT_MAPPED]: VERDICT_COLOR.unclassified,
 };
 const COHORT_COLOR = COHORT_PALETTE[0];
 
@@ -66,7 +72,7 @@ interface SankeyData {
   nCohorts: number;
 }
 
-export function buildSankeyData(records: UIRecord[]): SankeyData {
+export function buildSankeyData(records: UIRecord[], cohortTotals?: Record<string, number>): SankeyData {
   // Keys are JSON tuples, not space-joined strings: destination names contain spaces ("Existing CDE"),
   // so a naive split would mis-parse the node name and produce an undefined link target.
   const cohortVerdict = new Map<string, number>();
@@ -92,10 +98,36 @@ export function buildSankeyData(records: UIRecord[]): SankeyData {
     }
   }
 
+  // Reconcile to the true field count: fields that never clustered into a concept (HDBSCAN outliers) are
+  // absent from `records`, so a cohort's mapped members can be < its total fields — which would contradict
+  // the "200 fields / cohort" headline. When `cohortTotals` is supplied (per-cohort field count from the
+  // embedding atlas), route each cohort's shortfall to an "Unclustered" -> "Not mapped" bucket so its source
+  // width equals the true total. Omitted (e.g. mid-replay, atlas withheld) -> the chart just shows mapped flows.
+  const cohortMapped = new Map<string, number>();
+  for (const [key, value] of cohortVerdict) {
+    const [c] = JSON.parse(key) as [string, string];
+    cohortMapped.set(c, (cohortMapped.get(c) ?? 0) + value);
+  }
+  const cohortUnclustered = new Map<string, number>();
+  let unclusteredTotal = 0;
+  if (cohortTotals) {
+    for (const c of new Set([...cohortsSet, ...Object.keys(cohortTotals)])) {
+      const gap = (cohortTotals[c] ?? 0) - (cohortMapped.get(c) ?? 0);
+      if (gap > 0) {
+        cohortsSet.add(c);
+        cohortUnclustered.set(c, gap);
+        unclusteredTotal += gap;
+      }
+    }
+  }
+  const hasUnclustered = unclusteredTotal > 0;
+
   const cohorts = [...cohortsSet].sort();
   const verdicts = VERDICT_ORDER.filter((v) => verdictsSet.has(v));
   const dests = DEST_ORDER.filter((d) => destsSet.has(d));
-  const nodeNames = [...cohorts, ...verdicts.map((v) => VERDICT_NODE[v]), ...dests];
+  const middleNames = [...verdicts.map((v) => VERDICT_NODE[v]), ...(hasUnclustered ? [UNCLUSTERED] : [])];
+  const rightNames = [...dests, ...(hasUnclustered ? [NOT_MAPPED] : [])];
+  const nodeNames = [...cohorts, ...middleNames, ...rightNames];
   const idx = new Map(nodeNames.map((n, i) => [n, i]));
   const nodes: SankeyNodeDatum[] = nodeNames.map((name) => ({ name, color: colorFor(name) }));
 
@@ -107,6 +139,12 @@ export function buildSankeyData(records: UIRecord[]): SankeyData {
   for (const [key, value] of verdictDest) {
     const [v, d] = JSON.parse(key) as [string, string];
     links.push({ source: idx.get(VERDICT_NODE[v])!, target: idx.get(d)!, value, color: colorFor(VERDICT_NODE[v]), li: 0 });
+  }
+  for (const [c, gap] of cohortUnclustered) {
+    links.push({ source: idx.get(c)!, target: idx.get(UNCLUSTERED)!, value: gap, color: colorFor(UNCLUSTERED), li: 0 });
+  }
+  if (hasUnclustered) {
+    links.push({ source: idx.get(UNCLUSTERED)!, target: idx.get(NOT_MAPPED)!, value: unclusteredTotal, color: colorFor(UNCLUSTERED), li: 0 });
   }
   links.forEach((l, i) => (l.li = i));
   return { nodes, links, nCohorts: cohorts.length };
@@ -250,14 +288,16 @@ const LEGEND = [
 
 export function MatchSankey({
   records,
+  cohortTotals,
   focus = null,
   onFocus,
 }: {
   records: UIRecord[];
+  cohortTotals?: Record<string, number>;
   focus?: Focus;
   onFocus?: (f: Focus) => void;
 }) {
-  const data = useMemo(() => buildSankeyData(records), [records]);
+  const data = useMemo(() => buildSankeyData(records, cohortTotals), [records, cohortTotals]);
   const [hover, setHover] = useState<Hover>(null);
   const [tip, setTip] = useState<Tip>(null);
 
@@ -277,7 +317,9 @@ export function MatchSankey({
   // Sticky emphasis from the shared focus, expressed as a node highlight; a live hover overrides it.
   const focusHover: Hover = useMemo(() => {
     if (!focus) return null;
-    const name = focus.kind === "verdict" ? VERDICT_NODE[focus.value] : focus.value;
+    // "unassigned" focus emphasizes the Unclustered node (and its connected flows).
+    const name =
+      focus.kind === "unassigned" ? UNCLUSTERED : focus.kind === "verdict" ? VERDICT_NODE[focus.value] : focus.value;
     const i = data.nodes.findIndex((n) => n.name === name);
     return i >= 0 ? { kind: "node", index: i } : null;
   }, [focus, data.nodes]);
@@ -290,9 +332,12 @@ export function MatchSankey({
   const nodeState = (i: number): ShapeState => (!active ? "base" : active.activeNodes.has(i) ? "on" : "off");
   const linkState = (li: number): ShapeState => (!active ? "base" : active.activeLinks.has(li) ? "on" : "off");
 
-  // Map a node / flow to the focus it represents. Cohort nodes -> cohort focus; verdict nodes (and any flow,
-  // via its verdict endpoint) -> verdict focus; destination nodes aren't a focus axis.
+  // Map a node / flow to the focus it represents. The Unclustered / Not-mapped reconciliation bucket ->
+  // "unassigned" focus (so the review queue browses result.unassignedFields); cohort nodes -> cohort focus;
+  // verdict nodes (and any flow, via its verdict endpoint) -> verdict focus. Checked FIRST because
+  // VERDICT_NAMES also contains "Unclustered".
   const focusForNode = (name: string): Focus => {
+    if (name === UNCLUSTERED || name === NOT_MAPPED) return { kind: "unassigned" };
     if (VERDICT_NAMES.has(name)) return { kind: "verdict", value: name.toLowerCase() };
     if (DEST_NAMES.has(name)) return null;
     return { kind: "cohort", value: name };
@@ -300,6 +345,7 @@ export function MatchSankey({
   const focusForLink = (l: SankeyLinkDatum): Focus => {
     const s = nodeNames[l.source];
     const t = nodeNames[l.target];
+    if (s === UNCLUSTERED || t === UNCLUSTERED || t === NOT_MAPPED) return { kind: "unassigned" };
     const vName = VERDICT_NAMES.has(s) ? s : VERDICT_NAMES.has(t) ? t : null;
     return vName ? { kind: "verdict", value: vName.toLowerCase() } : null;
   };

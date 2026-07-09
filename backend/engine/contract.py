@@ -65,6 +65,52 @@ class UIMember(TypedDict):
     text: str  # description / question_text / short_label — the embedded signal
 
 
+class ResponseOptionUI(TypedDict, total=False):
+    """One coded response option (code→label) for a field. ``order`` is present only when the source
+    carried an ordinal position. ``code`` and ``label`` are always populated at runtime."""
+
+    code: str
+    label: str
+    order: int
+
+
+class FieldDetail(TypedDict, total=False):
+    """The full read-in detail for one source (non-CDE) field — the value in :attr:`UIResult.fieldIndex`,
+    keyed ``"cohort:var"``.
+
+    Covers EVERY embedded source field (uncapped, unlike the downsampled atlas), so the UI can show the
+    complete per-field detail on demand (and browse fields that never landed in a concept). ``name`` (the
+    variable name) and ``text`` (the embedded signal — same derivation as :class:`UIMember`) are always
+    present; the raw read-in attributes appear only when the source provided a non-empty value. ``description``
+    is omitted when it merely echoes the variable name (a loader backfill), matching the ``text`` fallback.
+    """
+
+    # always present
+    name: str  # variable name (may be a synthetic row id)
+    text: str  # description / question_text / short_label — the embedded signal
+    # raw read-in attributes (present only when the source value is non-empty)
+    description: str
+    questionText: str
+    valueEncoding: str  # inline code=label string, e.g. "1=Yes|2=No" (Field.value_encoding_raw)
+    units: str
+    dataType: str
+    responseOptions: list[ResponseOptionUI]  # parsed code/label pairs (Field.response_options)
+
+
+class UnassignedField(TypedDict, total=False):
+    """A source field that landed in NO concept record — unclustered / dropped outlier. Computed as the full
+    (non-CDE) field set MINUS the union of every record's member ``"cohort:var"`` keys. ``x``/``y`` are present
+    only when the field is in the atlas sample (the atlas is downsampled; this list is not)."""
+
+    # always present
+    cohort: str
+    variable: str
+    text: str  # the embedded signal (same derivation as FieldDetail.text)
+    # present only when the field is in the atlas sample
+    x: float
+    y: float
+
+
 class Cosines(TypedDict):
     top1: float | None  # nearest-candidate dense cosine (retrieval signal)
     chosen: float | None  # dense cosine of the CHOSEN candidate (the match's geometric support)
@@ -155,6 +201,12 @@ class UIResult(TypedDict):
     summary: UISummary
     prompts: PromptCounts  # prompt counts per stage (transparency; the only signal in preview mode)
     atlas: list[AtlasPoint]  # 2D-projected fields for the cohort-colored embedding atlas
+    # Full per-field detail for EVERY embedded source (non-CDE) field, keyed "cohort:var" (uncapped — a
+    # lookup, not plotted points). Lets the UI show complete field detail on demand without a re-fetch.
+    fieldIndex: dict[str, FieldDetail]
+    # Source fields that landed in no concept record (unclustered / dropped outliers) — lets the UI browse
+    # the "everything else" the run didn't harmonize. Uncapped; x/y only when the field is in the atlas.
+    unassignedFields: list[UnassignedField]
 
 
 # Phase sequences the UI consumes to render progress (data-driven — see §1 "new/removed stage" row).
