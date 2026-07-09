@@ -59,9 +59,77 @@ function transformSummary(t: UITransform): string {
   }
 }
 
+const CODE_MAP_CAP = 10;
+
+// The actual recode content for one transform, rendered inline under its summary row so a reviewer can see
+// EXACTLY what the spec does without exporting: categorical code→code pairs (capped), the unit factor/offset
+// + units, the arithmetic formula + inputs, or the data-dependent method. Returns null for identity/none.
+function TransformDetail({ t }: { t: UITransform }) {
+  if (t.kind === "categorical") {
+    const entries = Object.entries(t.codeMap ?? {});
+    if (!entries.length && !t.unmappedSourceCodes?.length) return null;
+    const shown = entries.slice(0, CODE_MAP_CAP);
+    const moreCodes = entries.length - shown.length;
+    const unmapped = t.unmappedSourceCodes ?? [];
+    return (
+      <div className="mt-2 space-y-1 border-t border-neutral-100 pt-2 pl-1">
+        {shown.length > 0 && (
+          <div className="grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
+            {shown.map(([src, tgt]) => (
+              <div key={src} className="flex items-center gap-1.5 font-mono text-[11px]">
+                <span className="truncate text-neutral-500">{src}</span>
+                <span className="text-neutral-300">→</span>
+                <span className="truncate text-neutral-700">{tgt}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {moreCodes > 0 && <div className="text-[11px] text-neutral-400">+{moreCodes} more mapped</div>}
+        {unmapped.length > 0 && (
+          <div className="text-[11px] text-warning">
+            unmapped: <span className="font-mono">{unmapped.slice(0, CODE_MAP_CAP).join(", ")}</span>
+            {unmapped.length > CODE_MAP_CAP ? ` +${unmapped.length - CODE_MAP_CAP} more` : ""}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (t.kind === "unit") {
+    return (
+      <div className="mt-2 border-t border-neutral-100 pt-2 pl-1 font-mono text-[11px] text-neutral-600">
+        target = source × {t.factor ?? "?"}
+        {t.offset ? ` + ${t.offset}` : ""}
+        <span className="ml-2 font-sans text-neutral-400">
+          ({t.sourceUnit ?? "?"} → {t.targetUnit ?? "?"})
+        </span>
+      </div>
+    );
+  }
+  if (t.kind === "arithmetic") {
+    return (
+      <div className="mt-2 border-t border-neutral-100 pt-2 pl-1 font-mono text-[11px] text-neutral-600">
+        {t.formula ?? "—"}
+        {t.inputs?.length ? <span className="ml-2 font-sans text-neutral-400">inputs: {t.inputs.join(", ")}</span> : null}
+      </div>
+    );
+  }
+  if (t.kind === "data_dependent") {
+    return (
+      <div className="mt-2 border-t border-neutral-100 pt-2 pl-1 text-[11px] text-neutral-500">
+        method <span className="font-mono text-neutral-600">{t.method ?? "data-dependent"}</span> — needs row-level
+        data at apply-time
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function WorkbenchPage() {
   const { jobId = "" } = useParams();
-  const { jobState } = useHarmonizeStream(jobId);
+  // The workbench is a deep review surface — always load the finished result immediately.
+  // instant=true skips the demo replay animation (the landing dashboard is where that flourish
+  // belongs; here a mid-replay stream would populate the queue in real time, which reads as a bug).
+  const { jobState } = useHarmonizeStream(jobId, true, true);
   if (!jobState) {
     return (
       <div className="flex items-center gap-2 p-8 text-neutral-500">
@@ -78,6 +146,9 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   const linkedId = new URLSearchParams(queryString).get("c");
   const [selectedId, setSelectedId] = useState<string | null>(linkedId);
   const [decisions, setDecisions] = useState<Record<string, string>>({});
+  // Second, independent verdict axis: approve/refine/reject each var→CDE transform spec, PER source variable
+  // (keyed `${recordId}:${sourceVariable}`) — distinct from the concept→CDE match verdict above.
+  const [transformDecisions, setTransformDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -130,6 +201,19 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
       toast.success(`Marked "${r.concept || r.id}" ${decision}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save decision");
+    }
+  }
+
+  // Transform-axis verdict — approve/refine/reject ONE source variable's recode spec, keyed by
+  // `${recordId}:${sourceVariable}`, distinct from the concept→CDE match verdict.
+  async function decideTransform(r: UIRecord, t: UITransform, decision: "approve" | "refine" | "reject") {
+    const key = `${r.id}:${t.sourceVariable}`;
+    setTransformDecisions((p) => ({ ...p, [key]: decision }));
+    try {
+      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "transform", t.sourceVariable);
+      toast.success(`Transform for "${t.sourceVariable}" ${decision}d`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save transform decision");
     }
   }
 
@@ -227,7 +311,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                   className="h-8 max-w-md"
                 />
                 <div className="grid gap-1 text-sm">
-                  <Field label="Ideal CDE">{selected.idealCde || "—"}</Field>
+                  <Field label="Concept summary">{selected.idealCde || "—"}</Field>
                   {selected.rationale && (
                     <div className="mt-1 space-y-1">
                       <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">
@@ -331,11 +415,14 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
               <CardHeader className="flex flex-row items-center gap-2 space-y-0">
                 <CardTitle className="text-base">Value mapping ({selected.transforms.length})</CardTitle>
                 <PlotInfo>
-                  One row per source field → CDE transform recipe. The mono badge is the transform{" "}
-                  <b>kind</b> (categorical recode / unit conversion / arithmetic / identity); <b>coverage</b> is
-                  the share of the source&apos;s values the recipe maps. The <b>review</b> / <b>units</b> /{" "}
-                  <b>data</b> chips are <b>status flags, not buttons</b> — respectively: flagged for a human
-                  check, source/target units couldn&apos;t be reconciled, and needs row-level data to apply.
+                  One row per source field → CDE transform recipe, showing the actual recode inline: the
+                  categorical <b>code map</b> (source code → CDE code), the <b>unit</b> conversion (factor/offset +
+                  units), the <b>arithmetic</b> formula, or the data-dependent <b>method</b>. The mono badge is the
+                  transform <b>kind</b>; <b>coverage</b> is the share of the source&apos;s values the recipe maps.
+                  Each row carries its OWN <b>approve / refine / reject</b> verdict — a per-variable second axis,
+                  separate from the concept→CDE match verdict at the top of the page. The <b>review</b> /{" "}
+                  <b>units</b> / <b>data</b> chips are diagnostic flags, not buttons — respectively: flagged for a
+                  human check, source/target units couldn&apos;t be reconciled, and needs row-level data to apply.
                   Specs are exported from the run&apos;s <b>Export</b> menu (EITL TSV, records JSON, or a runnable
                   notebook).
                 </PlotInfo>
@@ -343,20 +430,38 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
               <CardContent>
                 {selected.transforms.length ? (
                   <div className="space-y-2">
-                    {selected.transforms.map((t, i) => (
-                      <div key={i} className="flex flex-wrap items-center gap-2 rounded border border-neutral-100 px-3 py-2 text-xs">
-                        <Badge variant="secondary" className="font-mono">
-                          {t.kind}
-                        </Badge>
-                        <span className="font-mono text-neutral-600">{t.sourceVariable}</span>
-                        <span className="text-neutral-300">→</span>
-                        <span className="text-neutral-600">{transformSummary(t)}</span>
-                        <span className="ml-auto text-neutral-400">coverage {(t.coverage * 100).toFixed(0)}%</span>
-                        {t.needsReview && <Badge variant="outline" className="border-warning/40 text-warning">review</Badge>}
-                        {t.needsUnits && <Badge variant="outline" className="border-warning/40 text-warning">units</Badge>}
-                        {t.needsData && <Badge variant="outline" className="border-warning/40 text-warning">data</Badge>}
-                      </div>
-                    ))}
+                    {selected.transforms.map((t, i) => {
+                      const tKey = `${selected.id}:${t.sourceVariable}`;
+                      const td = transformDecisions[tKey];
+                      return (
+                        <div key={i} className="rounded border border-neutral-100 px-3 py-2 text-xs">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="secondary" className="font-mono">
+                              {t.kind}
+                            </Badge>
+                            <span className="font-mono text-neutral-600">{t.sourceVariable}</span>
+                            <span className="text-neutral-300">→</span>
+                            <span className="text-neutral-600">{transformSummary(t)}</span>
+                            <span className="text-neutral-400">coverage {(t.coverage * 100).toFixed(0)}%</span>
+                            {t.needsReview && <Badge variant="outline" className="border-warning/40 text-warning">review</Badge>}
+                            {t.needsUnits && <Badge variant="outline" className="border-warning/40 text-warning">units</Badge>}
+                            {t.needsData && <Badge variant="outline" className="border-warning/40 text-warning">data</Badge>}
+                            <div className="ml-auto flex items-center gap-0.5">
+                              <DecisionBtn active={td === "approve"} onClick={() => decideTransform(selected, t, "approve")} title="Approve transform" color="text-success">
+                                <Check className="h-4 w-4" />
+                              </DecisionBtn>
+                              <DecisionBtn active={td === "refine"} onClick={() => decideTransform(selected, t, "refine")} title="Refine transform" color="text-warning">
+                                <Pencil className="h-4 w-4" />
+                              </DecisionBtn>
+                              <DecisionBtn active={td === "reject"} onClick={() => decideTransform(selected, t, "reject")} title="Reject transform" color="text-danger">
+                                <Ban className="h-4 w-4" />
+                              </DecisionBtn>
+                            </div>
+                          </div>
+                          <TransformDetail t={t} />
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="py-6 text-center text-sm text-neutral-400">No transform specs for this concept.</p>

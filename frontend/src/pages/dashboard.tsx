@@ -32,7 +32,7 @@ import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
-import { VERDICT_STYLES, type UIRecord } from "@/types";
+import { VERDICT_STYLES, type UIRecord, type UnassignedField } from "@/types";
 
 // Known phase ordering for the progress bar. The phase LABEL is shown verbatim from the stream (so a new
 // pipeline phase still displays); only the percent uses this ordering, falling back gracefully if unknown.
@@ -102,7 +102,7 @@ function cos(x: number | null): string {
 }
 
 // ── review-queue sorting ──────────────────────────────────────────────────────────────────────
-type SortKey = "concept" | "cde" | "verdict" | "cos" | "cohorts" | "specs";
+type SortKey = "concept" | "cde" | "verdict" | "cos" | "cohorts" | "nCohorts" | "specs";
 type SortDir = "asc" | "desc";
 interface SortState {
   key: SortKey;
@@ -123,6 +123,8 @@ function sortValue(r: UIRecord, key: SortKey): string | number {
       return r.cosines.chosen ?? r.cosines.top1 ?? -1; // nulls (novels) sort as lowest support
     case "cohorts":
       return r.cohorts.join(",").toLowerCase();
+    case "nCohorts":
+      return r.cohorts.length; // numeric → sorts by cross-cohort breadth (count), asc/desc
     case "specs":
       return r.transforms.length;
   }
@@ -159,6 +161,8 @@ export default function DashboardPage() {
   // Cross-cohort = the actual harmonization (a concept pooled from ≥2 cohorts). Single-cohort concepts are
   // CDE-mappings (the CDEMapper/DIVER lane). This toggle narrows the queue to the harmonization subset.
   const [xcOnly, setXcOnly] = useState(false);
+  // Live substring search over the review queue (concept / CDE / member text / cohorts).
+  const [search, setSearch] = useState("");
 
   const result = jobState?.result ?? null;
   const records = useMemo<UIRecord[]>(() => result?.records ?? [], [result]);
@@ -170,12 +174,38 @@ export default function DashboardPage() {
     for (const p of result?.atlas ?? []) t[p.cohort] = (t[p.cohort] ?? 0) + 1;
     return t;
   }, [result]);
-  const filtered = useMemo(
-    () => records.filter((r) => recordMatchesFocus(r, focus) && (!xcOnly || r.crossCohort)),
-    [records, focus, xcOnly],
-  );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const matchesSearch = (r: UIRecord): boolean => {
+      if (!q) return true;
+      if (r.concept.toLowerCase().includes(q)) return true;
+      if (r.cde?.id.toLowerCase().includes(q) || r.cde?.externalId?.toLowerCase().includes(q)) return true;
+      if (r.cohorts.some((c) => c.toLowerCase().includes(q))) return true;
+      return r.memberDetails.some(
+        (m) => m.name.toLowerCase().includes(q) || m.text.toLowerCase().includes(q),
+      );
+    };
+    return records.filter((r) => recordMatchesFocus(r, focus) && (!xcOnly || r.crossCohort) && matchesSearch(r));
+  }, [records, focus, xcOnly, search]);
   const sorted = useMemo(() => sortRecords(filtered, sort), [filtered, sort]);
   const headerCohorts = useMemo(() => [...new Set(records.flatMap((r) => r.cohorts))].sort(), [records]);
+  // Unclustered / not-mapped SOURCE fields — every field that landed in NO concept record (uncapped). They're
+  // invisible to the record queue (which iterates concepts), so surface them as browse-only rows whenever the
+  // shared focus is the "unassigned" bucket (set from the atlas legend, the Sankey's Unclustered node, or the
+  // verdict Select's "unassigned" option). The live search filters them on variable / text / cohort.
+  const unassignedAll = useMemo<UnassignedField[]>(() => result?.unassignedFields ?? [], [result]);
+  const showUnassigned = focus?.kind === "unassigned";
+  const filteredUnassigned = useMemo(() => {
+    if (!showUnassigned) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return unassignedAll;
+    return unassignedAll.filter(
+      (u) =>
+        u.variable.toLowerCase().includes(q) ||
+        u.text.toLowerCase().includes(q) ||
+        u.cohort.toLowerCase().includes(q),
+    );
+  }, [unassignedAll, showUnassigned, search]);
   // Stats derived from the records revealed so far, so the cards grow live during the demo replay; at
   // completion they equal result.summary (route/crossCohort/transforms mirror the backend _summarize).
   const stats = useMemo(() => {
@@ -368,7 +398,9 @@ export default function DashboardPage() {
                 {focusLabel(focus)}
               </Badge>
               <span className="text-neutral-500">
-                {filtered.length} of {records.length} concepts · click any chart to change
+                {showUnassigned
+                  ? `${filteredUnassigned.length} unclustered ${filteredUnassigned.length === 1 ? "field" : "fields"} · click any chart to change`
+                  : `${filtered.length} of ${records.length} concepts · click any chart to change`}
               </span>
               <button
                 onClick={() => setFocus(null)}
@@ -403,13 +435,14 @@ export default function DashboardPage() {
                 <PlotInfo>
                   Each dot is one field, placed by the meaning of its text (a 2-D PCA of the embeddings the
                   clustering used) — nearby dots are semantically similar. Color by <b>cohort</b> or{" "}
-                  <b>verdict</b>; click a dot to open its concept in the workbench.
+                  <b>verdict</b>; click a dot for its full detail and a link to open its concept.
                 </PlotInfo>
               </CardHeader>
               <CardContent>
                 <EmbeddingAtlas
                   points={result.atlas}
                   records={records}
+                  fieldIndex={result.fieldIndex ?? {}}
                   focus={focus}
                   onFocus={toggleFocus}
                   onOpenConcept={(id) => navigate(`/job/${jobId}/workbench?c=${encodeURIComponent(id)}`)}
@@ -422,8 +455,16 @@ export default function DashboardPage() {
           {!running && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">Review queue ({filtered.length})</CardTitle>
+              <CardTitle className="text-base">
+                Review queue ({showUnassigned ? filteredUnassigned.length : filtered.length})
+              </CardTitle>
               <div className="flex items-center gap-2">
+                <Input
+                  placeholder="Search concept, field, CDE, cohort…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="h-8 w-56"
+                />
                 <Button
                   type="button"
                   variant={xcOnly ? "secondary" : "outline"}
@@ -435,8 +476,14 @@ export default function DashboardPage() {
                   Cross-cohort only
                 </Button>
                 <Select
-                  value={focus?.kind === "verdict" ? focus.value : "all"}
-                  onValueChange={(v) => setFocus(v === "all" ? null : { kind: "verdict", value: v })}
+                  value={
+                    focus?.kind === "verdict" ? focus.value : focus?.kind === "unassigned" ? "unassigned" : "all"
+                  }
+                  onValueChange={(v) =>
+                    setFocus(
+                      v === "all" ? null : v === "unassigned" ? { kind: "unassigned" } : { kind: "verdict", value: v },
+                    )
+                  }
                 >
                   <SelectTrigger className="h-8 w-44">
                     <SelectValue />
@@ -447,6 +494,7 @@ export default function DashboardPage() {
                     <SelectItem value="refine">Refine</SelectItem>
                     <SelectItem value="novel">Novel</SelectItem>
                     <SelectItem value="unclassified">Unclassified</SelectItem>
+                    <SelectItem value="unassigned">Unclustered · not mapped</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -468,24 +516,44 @@ export default function DashboardPage() {
                       tip="Cosine similarity (0–1) between the concept and the chosen CDE embedding — a retrieval signal, not a calibrated model confidence. The LLM's decision is the verdict. Sort ascending to review the weakest matches first."
                     />
                     <SortableHead label="Cohorts" sortKey="cohorts" sort={sort} onSort={onSort} />
+                    <SortableHead
+                      label="# cohorts"
+                      sortKey="nCohorts"
+                      sort={sort}
+                      onSort={onSort}
+                      align="right"
+                      tip="Number of distinct cohorts pooled into this concept — cross-cohort breadth. Sort descending to surface the most widely shared concepts."
+                    />
                     <SortableHead label="Specs" sortKey="specs" sort={sort} onSort={onSort} align="right" />
                     <TableHead>Decision</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sorted.map((r) => (
-                    <RecordRows
-                      key={r.id}
-                      r={r}
-                      jobId={jobId}
-                      open={!!expanded[r.id]}
-                      toggle={() => setExpanded((p) => ({ ...p, [r.id]: !p[r.id] }))}
-                      decision={decisions[r.id]}
-                      note={notes[r.id] ?? ""}
-                      onNote={(v) => setNotes((p) => ({ ...p, [r.id]: v }))}
-                      onDecide={(d) => decide(r, d)}
-                    />
-                  ))}
+                  {showUnassigned ? (
+                    filteredUnassigned.length > 0 ? (
+                      filteredUnassigned.map((u) => <UnassignedRow key={`${u.cohort}:${u.variable}`} u={u} />)
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={9} className="py-8 text-center text-sm text-neutral-400">
+                          No unclustered fields{search ? " match your search" : ""}.
+                        </TableCell>
+                      </TableRow>
+                    )
+                  ) : (
+                    sorted.map((r) => (
+                      <RecordRows
+                        key={r.id}
+                        r={r}
+                        jobId={jobId}
+                        open={!!expanded[r.id]}
+                        toggle={() => setExpanded((p) => ({ ...p, [r.id]: !p[r.id] }))}
+                        decision={decisions[r.id]}
+                        note={notes[r.id] ?? ""}
+                        onNote={(v) => setNotes((p) => ({ ...p, [r.id]: v }))}
+                        onDecide={(d) => decide(r, d)}
+                      />
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -552,6 +620,7 @@ function RecordRows({
         </TableCell>
         <TableCell className="align-top text-right text-sm tabular-nums">{cos(r.cosines.chosen ?? r.cosines.top1)}</TableCell>
         <TableCell className="align-top text-xs text-neutral-500">{r.cohorts.join(", ")}</TableCell>
+        <TableCell className="align-top text-right text-sm tabular-nums">{r.cohorts.length}</TableCell>
         <TableCell className="align-top text-right text-sm tabular-nums">{r.transforms.length || "—"}</TableCell>
         <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
@@ -576,7 +645,7 @@ function RecordRows({
       {open && (
         <TableRow className="bg-neutral-50/60 hover:bg-neutral-50/60">
           <TableCell />
-          <TableCell colSpan={7} className="space-y-3 py-4 text-sm">
+          <TableCell colSpan={8} className="space-y-3 py-4 text-sm">
             {/* provenance triple: source → verdict → CDE (Monarch association-detail idiom) */}
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded border border-neutral-200 bg-neutral-0 px-2 py-0.5 text-xs text-neutral-600">
@@ -599,6 +668,14 @@ function RecordRows({
                 {r.decidedBy === "deterministic" ? "rule" : "AI"}
               </Badge>
             </div>
+
+            {/* Novel concepts route to a generated CDE — surface it here so a novel row never looks empty. */}
+            {!r.cde && r.idealCde && (
+              <div className="space-y-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">Concept summary (proposed)</div>
+                <blockquote className="border-l-2 border-ph-navy/40 pl-3 text-neutral-600">{r.idealCde}</blockquote>
+              </div>
+            )}
 
             {(r.cosines.chosen ?? r.cosines.top1) != null && (
               <div className="flex items-center gap-2">
@@ -664,6 +741,32 @@ function RecordRows({
         </TableRow>
       )}
     </>
+  );
+}
+
+// A browse-only row for a source field that never clustered into a concept. It carries no verdict / CDE /
+// # cohorts / specs, so those columns read "—"; there are no decision controls (nothing to sign off on).
+// Primary label is the raw variable id; the embedded text is the subline; cohort sits in the Cohorts column.
+function UnassignedRow({ u }: { u: UnassignedField }) {
+  return (
+    <TableRow className="hover:bg-neutral-50/60">
+      <TableCell className="align-top" />
+      <TableCell className="max-w-xs align-top">
+        <div className="truncate font-mono text-sm font-medium text-neutral-700">{u.variable}</div>
+        {u.text && <div className="truncate text-xs text-neutral-400">{u.text}</div>}
+      </TableCell>
+      <TableCell className="align-top text-sm text-neutral-400">—</TableCell>
+      <TableCell className="align-top">
+        <Badge variant="outline" className="whitespace-nowrap border-neutral-300 bg-neutral-100 text-neutral-500">
+          unclustered · not mapped
+        </Badge>
+      </TableCell>
+      <TableCell className="align-top text-right text-sm text-neutral-400">—</TableCell>
+      <TableCell className="align-top text-xs text-neutral-500">{u.cohort}</TableCell>
+      <TableCell className="align-top text-right text-sm text-neutral-400">—</TableCell>
+      <TableCell className="align-top text-right text-sm text-neutral-400">—</TableCell>
+      <TableCell className="align-top text-sm text-neutral-400">—</TableCell>
+    </TableRow>
   );
 }
 
