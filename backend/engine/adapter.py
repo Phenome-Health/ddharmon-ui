@@ -38,12 +38,15 @@ from backend.engine.contract import (
     PHASES_PREVIEW,
     PHASES_RUN,
     AtlasPoint,
+    FieldDetail,
+    ResponseOptionUI,
     UICandidate,
     UIMember,
     UIRecord,
     UIResult,
     UISummary,
     UITransform,
+    UnassignedField,
     empty_summary,
 )
 
@@ -151,6 +154,92 @@ def build_member_index(embedded: list[Any]) -> dict[str, UIMember]:
     return index
 
 
+def _response_option_ui(o: Any) -> ResponseOptionUI:
+    """Map one ``ResponseOption`` (code/label/order) to its UI dict; ``order`` only when the source had one."""
+    ui: ResponseOptionUI = {"code": getattr(o, "code", "") or "", "label": getattr(o, "label", "") or ""}
+    order = getattr(o, "order", None)
+    if order is not None:
+        ui["order"] = order
+    return ui
+
+
+def _field_detail(var: str, fld: Any) -> FieldDetail:
+    """Map one canonical ``Field`` to a :class:`FieldDetail` (raw attrs; a key only when its value is present).
+
+    ``text`` uses the same derivation as :func:`build_member_index` (description → question_text →
+    short_label → variable_name). ``description`` echoing the variable name (a loader backfill) is dropped so
+    the UI never shows an opaque id as the field's description — mirroring the ``text`` fallback.
+    """
+    desc = getattr(fld, "description", None)
+    if desc == var:
+        desc = None
+    qtext = getattr(fld, "question_text", None)
+    short = getattr(fld, "short_label", None)
+    detail: FieldDetail = {"name": var, "text": desc or qtext or short or var}
+    if desc:
+        detail["description"] = desc
+    if qtext:
+        detail["questionText"] = qtext
+    enc = getattr(fld, "value_encoding_raw", None)
+    if enc:
+        detail["valueEncoding"] = enc
+    units = getattr(fld, "units", None)
+    if units:
+        detail["units"] = units
+    dtype = getattr(fld, "data_type", None)
+    if dtype:
+        detail["dataType"] = dtype
+    opts = getattr(fld, "response_options", None)
+    if opts:
+        detail["responseOptions"] = [_response_option_ui(o) for o in opts]
+    return detail
+
+
+def build_field_index(embedded: list[Any], cde_cohort: str) -> dict[str, FieldDetail]:
+    """Build a ``{"cohort:var" -> FieldDetail}`` map over EVERY embedded NON-CDE (source) field.
+
+    Same field set the atlas iterates (the CDE cohort is the assignment backbone, not a source field, so it's
+    excluded), but UNCAPPED — this is a lookup, not plotted points. Each entry carries the field's read-in
+    attributes so the UI can show full per-field detail (and browse fields that never landed in a concept).
+    """
+    index: dict[str, FieldDetail] = {}
+    for ed in embedded:
+        dd = getattr(ed, "dictionary", None)
+        if dd is None:
+            continue
+        cohort = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
+        if cohort == cde_cohort:
+            continue
+        for var, fld in getattr(dd, "fields", {}).items():
+            index[f"{cohort}:{var}"] = _field_detail(var, fld)
+    return index
+
+
+def _unassigned_fields(
+    field_index: dict[str, FieldDetail], records: list[UIRecord], atlas: list[AtlasPoint]
+) -> list[UnassignedField]:
+    """Source fields present in the field index but in NO record's members (unclustered / dropped outliers).
+
+    ``x``/``y`` are attached only when the field is in the (downsampled) atlas sample; this list is uncapped.
+    """
+    assigned: set[str] = set()
+    for r in records:
+        assigned.update(r["members"])
+    coords = {f"{p['cohort']}:{p['variable']}": (p["x"], p["y"]) for p in atlas}
+    out: list[UnassignedField] = []
+    for key, detail in field_index.items():
+        if key in assigned:
+            continue
+        cohort, _, variable = key.partition(":")
+        uf: UnassignedField = {"cohort": cohort, "variable": variable, "text": detail.get("text", "")}
+        xy = coords.get(key)
+        if xy is not None:
+            uf["x"] = xy[0]
+            uf["y"] = xy[1]
+        out.append(uf)
+    return out
+
+
 def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
     """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
     return {
@@ -203,13 +292,20 @@ def build_ui_result(
     phases: list[str],
     atlas: list[AtlasPoint] | None = None,
     member_index: dict[str, UIMember] | None = None,
+    field_index: dict[str, FieldDetail] | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
 
     ``member_index`` (from :func:`build_member_index`) enriches each record's ``memberDetails`` with the
     source field text; when omitted, member details fall back to the ``cohort:var`` id parts.
+
+    ``field_index`` (from :func:`build_field_index`) is the uncapped per-field detail map surfaced as
+    ``fieldIndex``; it also drives ``unassignedFields`` (its keys MINUS the union of record member keys). When
+    omitted, both are empty (e.g. canned-record tests with no dictionaries).
     """
     idx = member_index or {}
+    fidx = field_index or {}
+    atlas_pts = atlas or []
     records = [_record_to_ui(r, idx) for r in leanb_result.records]
     return {
         "contractVersion": CONTRACT_VERSION,
@@ -223,7 +319,9 @@ def build_ui_result(
             "groupAssign": len(leanb_result.group_assign_prompts),
             "specgen": len(leanb_result.specgen_prompts),
         },
-        "atlas": atlas or [],
+        "atlas": atlas_pts,
+        "fieldIndex": fidx,
+        "unassignedFields": _unassigned_fields(fidx, records, atlas_pts),
     }
 
 
@@ -413,6 +511,10 @@ def run_pipeline(
     # {"cohort:var" -> UIMember} so each concept's records carry the source fields (name + text) they pooled.
     member_index = build_member_index(embedded)
 
+    # {"cohort:var" -> FieldDetail} over every source field (uncapped) — full per-field detail for the UI and
+    # the basis for unassignedFields (source fields that land in no concept). CDE cohort excluded (backbone).
+    field_index = build_field_index(embedded, cde_cohort)
+
     # --- knobs: passthrough only (absent -> harmonize_leanb's own defaults). New knobs need no GUI change. ---
     kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}
     for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
@@ -440,7 +542,14 @@ def run_pipeline(
         result = harmonize_leanb(embedded, **kwargs)
         _save_substrate_if_new(substrate_path, result)
         progress("prepared", 0, 0)
-        return build_ui_result(result, mode=mode, phases=PHASES_PREVIEW, atlas=atlas, member_index=member_index)
+        return build_ui_result(
+            result,
+            mode=mode,
+            phases=PHASES_PREVIEW,
+            atlas=atlas,
+            member_index=member_index,
+            field_index=field_index,
+        )
 
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
     if overrides:
@@ -474,4 +583,6 @@ def run_pipeline(
         **kwargs,
     )
     _save_substrate_if_new(substrate_path, result)
-    return build_ui_result(result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index)
+    return build_ui_result(
+        result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index, field_index=field_index
+    )

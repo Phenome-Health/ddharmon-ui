@@ -262,15 +262,25 @@ def delete_job(job_id: str) -> None:
 # --- human decisions -------------------------------------------------------------------------
 class VerdictBody(BaseModel):
     recordId: str
-    decision: str  # approve | refine | reject
+    decision: str  # both axes: approve | refine | reject
     note: str = ""
+    axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode spec)
+    sourceVariable: str | None = None  # REQUIRED for axis="transform" — the "cohort:var" edge the verdict is on
 
 
 @app.post("/api/harmonize/jobs/{job_id}/verdict")
 def submit_verdict(job_id: str, body: VerdictBody) -> dict[str, bool]:
-    if body.decision not in ("approve", "refine", "reject"):
-        raise HTTPException(status_code=400, detail="decision must be approve|refine|reject")
-    if not store.set_decision(job_id, body.recordId, body.decision, body.note):
+    if body.axis not in ("match", "transform"):
+        raise HTTPException(status_code=400, detail="axis must be match|transform")
+    # Both axes accept the full triad; the transform axis records one verdict PER source variable.
+    allowed = ("approve", "refine", "reject")
+    if body.decision not in allowed:
+        raise HTTPException(status_code=400, detail=f"decision must be {'|'.join(allowed)}")
+    if body.axis == "transform" and not body.sourceVariable:
+        raise HTTPException(status_code=400, detail="sourceVariable is required for the transform axis")
+    if not store.set_decision(
+        job_id, body.recordId, body.decision, body.note, axis=body.axis, source_variable=body.sourceVariable
+    ):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
 
@@ -278,13 +288,27 @@ def submit_verdict(job_id: str, body: VerdictBody) -> dict[str, bool]:
 # --- export ----------------------------------------------------------------------------------
 # Export is built from the stable UIRecord contract (not from ddharmon) — one more place insulated from
 # pipeline churn. eitl_tsv mirrors export_leanb_eitl_queue's intent (refine→novel→adopt first).
+# The per-variable transform verdicts are serialized into a SINGLE trailing ``transformDecisions`` JSON
+# column (a map keyed by sourceVariable -> {decision, note}); appending it LAST keeps the match columns and
+# positions stable for index-based test assertions (e.g. eitl[4] == verdict, decisions[0] == recordId).
 _EITL_COLS = [
     "recordId", "clusterId", "groupId", "concept", "verdict", "route", "cdeId", "cdeExternalId",
     "top1Cos", "chosenCos", "coverageGap", "floored", "crossCohort", "nMembers", "cohorts", "members",
-    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote",
+    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote", "transformDecisions",
 ]  # fmt: skip
-_DECISIONS_COLS = ["recordId", "concept", "verdict", "cdeId", "chosenCos", "humanDecision", "humanNote"]
+_DECISIONS_COLS = [
+    "recordId", "concept", "verdict", "cdeId", "chosenCos", "humanDecision", "humanNote", "transformDecisions",
+]  # fmt: skip
 _EITL_RANK = {"refine": 0, "novel": 1, "adopt": 2}
+
+
+def _transform_decisions_json(dec: dict[str, Any]) -> str:
+    """Serialize a record's per-source-variable transform verdicts to a compact JSON map for export.
+
+    Empty string when the record has no transform verdicts. ``_clean`` strips any tab/newline so the value
+    stays on one TSV/CSV row (the JSON's own commas/quotes are handled by ``csv.writer`` quoting)."""
+    transforms = dec.get("transforms")
+    return _clean(json.dumps(transforms, sort_keys=True)) if transforms else ""
 
 
 @app.get("/api/harmonize/jobs/{job_id}/export")
@@ -338,6 +362,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     _fmt(r["cosines"]["chosen"]),
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
+                    _transform_decisions_json(dec),
                 ]
             )
         else:
@@ -364,6 +389,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     _clean(r["rationale"]),
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
+                    _transform_decisions_json(dec),
                 ]
             )
     media = "text/csv" if ext == "csv" else "text/tab-separated-values"

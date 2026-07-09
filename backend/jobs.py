@@ -45,7 +45,11 @@ class Job:
     error_message: str | None = None
     result: dict[str, Any] | None = None  # serialized summary + verdicts (camelCase)
     config: dict[str, Any] = field(default_factory=dict)
-    decisions: dict[str, dict[str, str]] = field(default_factory=dict)  # subClusterId -> {decision, note}
+    # recordId -> verdict dict. The MATCH axis (concept→CDE) writes top-level {decision, note}. The
+    # TRANSFORM axis (var→CDE recode spec) is recorded PER SOURCE VARIABLE, nested under
+    # {"transforms": {source_variable: {decision, note}}} — one independent verdict per "cohort:var" edge,
+    # so a record with several transforms carries several transform verdicts alongside the single match one.
+    decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -109,12 +113,36 @@ class JobStore:
                 setattr(job, key, value)
             job.updated_at = time.time()
 
-    def set_decision(self, job_id: str, sub_cluster_id: str, decision: str, note: str = "") -> bool:
+    def set_decision(
+        self,
+        job_id: str,
+        record_id: str,
+        decision: str,
+        note: str = "",
+        axis: str = "match",
+        source_variable: str | None = None,
+    ) -> bool:
+        """Persist a human verdict on one of two independent axes.
+
+        ``axis="match"`` (default) writes the concept→CDE verdict as top-level ``decision``/``note`` (unchanged).
+        ``axis="transform"`` records a PER-SOURCE-VARIABLE recode-spec verdict under
+        ``decisions[record_id]["transforms"][source_variable] = {"decision", "note"}`` — one verdict per
+        ``cohort:var`` edge, so a record's several transforms carry independent verdicts without clobbering the
+        match verdict. A transform-axis call without ``source_variable`` is a no-op (caller must supply it).
+        """
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
                 return False
-            job.decisions[sub_cluster_id] = {"decision": decision, "note": note}
+            rec = job.decisions.setdefault(record_id, {})
+            if axis == "transform":
+                if not source_variable:
+                    return False
+                transforms: dict[str, Any] = rec.setdefault("transforms", {})
+                transforms[source_variable] = {"decision": decision, "note": note}
+            else:
+                rec["decision"] = decision
+                rec["note"] = note
             job.updated_at = time.time()
             return True
 

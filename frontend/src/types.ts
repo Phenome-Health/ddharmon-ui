@@ -82,6 +82,39 @@ export interface UIMember {
   text: string;
 }
 
+// One coded response option (code→label) for a field. `order` present only when the source carried an
+// ordinal position. Mirrors contract.py ResponseOptionUI.
+export interface ResponseOption {
+  code: string;
+  label: string;
+  order?: number;
+}
+
+// Full read-in detail for one source (non-CDE) field, keyed "cohort:var" in HarmonizationResult.fieldIndex.
+// Covers every embedded source field (UNCAPPED — unlike the downsampled atlas). `name` and `text` (the
+// embedded signal) are always present; the raw attributes appear only when the source provided a non-empty
+// value (`description` is omitted when it merely echoes the variable name). Mirrors contract.py FieldDetail.
+export interface FieldDetail {
+  name: string;
+  text: string;
+  description?: string;
+  questionText?: string;
+  valueEncoding?: string; // inline code=label string, e.g. "1=Yes|2=No"
+  units?: string;
+  dataType?: string;
+  responseOptions?: ResponseOption[];
+}
+
+// A source field that landed in NO concept record (unclustered / dropped outlier). `x`,`y` present only when
+// the field is in the atlas sample (the atlas is downsampled; this list is not). Mirrors contract.py.
+export interface UnassignedField {
+  cohort: string;
+  variable: string;
+  text: string;
+  x?: number;
+  y?: number;
+}
+
 export interface UIRecord {
   id: string;
   clusterId: string;
@@ -130,6 +163,12 @@ export interface HarmonizationResult {
   summary: ResultSummary;
   prompts: PromptCounts;
   atlas: AtlasPoint[];
+  // Full per-field detail for every embedded source (non-CDE) field, keyed "cohort:var" (uncapped) — lets the
+  // UI show complete field detail on demand without a re-fetch.
+  fieldIndex: Record<string, FieldDetail>;
+  // Source fields that landed in no concept record (unclustered / dropped outliers) — the "everything else"
+  // the run didn't harmonize. Uncapped; x/y only when the field is in the atlas.
+  unassignedFields: UnassignedField[];
 }
 
 export interface JobResult {
@@ -223,20 +262,37 @@ export const ROLE_FORMAT: Partial<Record<ColumnRole, string>> = {
   value_encoding: "Format: code=label pairs separated by |  —  e.g.  1=Male|2=Female|3=Other",
 };
 
+// Per-role requirement tier — derived from the pipeline's REAL contract, not a hardcoded star:
+//  - "meaning": at least one meaning-bearing field is required. The loader tries description →
+//    short_label → variable_name and skips the row if none carries usable text, so the semantic group
+//    (not any single field) is the hard requirement. These carry the primary group required marker.
+//  - "conditional": required only for a specific downstream output — value_encoding is the HARD input
+//    for CATEGORICAL transform specs (an empty value_set ⇒ no recode spec).
+//  - "recommended": improves output but never blocks — units let numeric unit specs resolve; when it's
+//    absent the specs are still generated, just flagged needs_units.
+// variable_name is intentionally UNMARKED: the pipeline auto-synthesizes a synthetic row id (_ROW_nnnn)
+// when it's unmapped, so it's optional. data_type and the advanced roles are optional too.
+export const ROLE_REQUIREMENT: Partial<Record<ColumnRole, "meaning" | "conditional" | "recommended">> = {
+  question_text: "meaning",
+  description: "meaning",
+  value_encoding: "conditional",
+  units: "recommended",
+};
+
 // Hover-help for each mappable role — what to point this column at, and why it matters.
 export const ROLE_HELP: Record<ColumnRole, string> = {
   variable_name:
-    "The field's unique identifier or code in your dataset (e.g. BMI, Q47_weight). Required — it's the key every other role attaches to.",
+    "The field's unique identifier or code in your dataset (e.g. BMI, Q47_weight). Optional — a synthetic row id is generated if you don't map it; it's the join key other roles attach to.",
   description:
     "A human-readable definition of what the variable measures (e.g. “Body mass index in kg/m²”). The primary signal used to match your field to a CDE.",
   question_text:
     "For survey items, the exact question asked (e.g. “In the past week, how often…”). A strong matching signal for questionnaires.",
   value_encoding:
-    "The coded response options, e.g. 1=Male|2=Female. Drives value-recode transform specs (mapping your codes to the CDE's).",
+    "The coded response options, e.g. 1=Male|2=Female. Drives value-recode transform specs (mapping your codes to the CDE's) — required for categorical transform specs; without it no recode is generated.",
   data_type:
     "The variable's storage type — integer, float, categorical, string, date. Helps choose the right transform.",
   units:
-    "The unit of measurement (e.g. kg, cm, mmHg). Enables unit-conversion transform specs when your unit differs from the CDE's.",
+    "The unit of measurement (e.g. kg, cm, mmHg). Enables unit-conversion transform specs when your unit differs from the CDE's. Recommended — numeric specs are still generated without it, but flagged as needing units.",
   category:
     "A grouping or section label from your dictionary (e.g. Demographics, Vitals). Organizational context — not required.",
   field_id:
