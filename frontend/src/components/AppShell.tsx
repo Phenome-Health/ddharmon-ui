@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Plus, ListChecks, BookOpen, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
+import { Plus, ListChecks, BookOpen, Workflow, Gauge, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
 import { IS_STATIC } from "@/lib/api";
@@ -65,6 +65,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <aside className="hidden w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 px-3 py-4 lg:flex">
           <nav className="space-y-1">
             <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" />
+            <NavLink href="/methods" icon={<Workflow className="h-4 w-4" />} label="Methods" />
+            <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4" />} label="Benchmarks" />
             <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" />
             <NavLink href="/new" icon={<Plus className="h-4 w-4" />} label="New run" />
             <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" />

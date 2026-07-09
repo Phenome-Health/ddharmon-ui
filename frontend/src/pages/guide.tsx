@@ -86,8 +86,8 @@ export default function GuidePage() {
           <CardContent className="space-y-2 text-sm text-neutral-600">
             <p>A data dictionary per cohort (CSV/TSV). Map at least one of:</p>
             <ul className="space-y-1">
-              <FieldItem name="variable_name" required>
-                the field's identifier/code
+              <FieldItem name="variable_name">
+                the field's identifier/code — optional; auto-generated if you omit it
               </FieldItem>
               <FieldItem name="description">a human-readable definition</FieldItem>
               <FieldItem name="question_text">the survey question, if any</FieldItem>
@@ -319,11 +319,15 @@ export default function GuidePage() {
             </li>
           </ul>
           <p className="pt-1 text-xs text-neutral-400">
-            See the{" "}
+            Want the under-the-hood detail? See{" "}
+            <Link href="/methods" className="text-ph-navy underline hover:text-ph-ink">
+              Methods
+            </Link>{" "}
+            for a stage-by-stage walk of the pipeline. The{" "}
             <Link href="/related" className="text-ph-navy underline hover:text-ph-ink">
               Related work
             </Link>{" "}
-            tab for the fuller ecosystem of tools and groups.
+            tab covers the fuller ecosystem of tools and groups.
           </p>
         </CardContent>
       </Card>
