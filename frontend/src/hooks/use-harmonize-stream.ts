@@ -3,7 +3,7 @@
 // retry + terminal-status close), pointed at /api/harmonize/stream and typed to JobResult.
 import { useEffect, useRef, useState } from "react";
 import type { JobResult } from "@/types";
-import { IS_STATIC, getResult } from "@/lib/api";
+import { IS_STATIC, appendAuthToken, getResult } from "@/lib/api";
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 1500;
@@ -95,9 +95,13 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
       };
     }
 
-    function connect(retryCount: number) {
+    async function connect(retryCount: number) {
       if (!mountedRef.current) return;
-      const es = new EventSource(`/api/harmonize/stream/${jobId}`);
+      // EventSource can't set an Authorization header, so the Clerk token (when the SSO gate is on) rides
+      // as ?token=; appendAuthToken is a no-op when auth is disabled (static/dev). Await it before opening.
+      const url = await appendAuthToken(`/api/harmonize/stream/${jobId}`);
+      if (!mountedRef.current) return;
+      const es = new EventSource(url);
       esRef.current = es;
 
       es.addEventListener("progress", (e) => {

@@ -30,11 +30,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from backend.auth import AuthError, authenticate
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
 from backend.jobs import TERMINAL_STATES, store
@@ -61,6 +62,9 @@ CDE_COLUMN_ROLES = {
 CDE_COHORT = "NIH_CDE"
 
 _WORK_ROOT = Path(os.environ.get("DDHARMON_UI_WORK", _REPO_ROOT / ".ddharmon_ui"))
+# Let the job store tear down a job's on-disk scratch dir (<_WORK_ROOT>/<job_id>: uploads + prompts +
+# substrate) when the job is deleted or ages out — so uploaded dictionaries never outlive the run.
+store.work_root = _WORK_ROOT
 
 
 @asynccontextmanager
@@ -73,12 +77,62 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="ddharmon Harmonization API", version="1.0.0", lifespan=_lifespan)
+
+# CORS: the built SPA is served same-origin by this app in prod, so CORS matters only for the Vite dev
+# proxy and any deliberate cross-origin caller. Lock the allowed origins via DDHARMON_UI_ALLOWED_ORIGINS
+# (comma-separated) in prod, e.g. "https://ddharmon.io"; default to the localhost dev origins.
+_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("DDHARMON_UI_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Endpoints reachable WITHOUT signing in (the "try the demo" guest path). The demo is a precomputed,
+# no-LLM replay of public example data, so listing/starting it — and streaming/reading a *demo* job — is
+# public. Everything else (detect, batch/upload, the runs list, real-run stream/result, verdicts, export)
+# stays gated, so a guest physically cannot run their own cohorts. Demo-job scoping is checked via the
+# store's ``config.demo`` flag so real runs are never exposed by the shared stream/result routes.
+_PUBLIC_EXACT = {"/api/harmonize/demos", "/api/harmonize/demo"}
+_DEMO_SCOPED_PREFIXES = ("/api/harmonize/stream/", "/api/harmonize/result/")
+
+
+def _is_public_path(path: str) -> bool:
+    if path in _PUBLIC_EXACT:
+        return True
+    for prefix in _DEMO_SCOPED_PREFIXES:
+        if path.startswith(prefix):
+            job = store.get(path[len(prefix) :])
+            return bool(job and job.config.get("demo"))
+    return False
+
+
+@app.middleware("http")
+async def _auth_gate(request: Request, call_next: Any) -> Any:
+    """Gate ``/api/harmonize/*`` behind Clerk SSO when configured (see :mod:`backend.auth`).
+
+    With no Clerk env set (local dev, the static demo) :func:`authenticate` returns an anonymous
+    principal and this is a pass-through. OPTIONS (CORS preflight) and the public demo paths
+    (:func:`_is_public_path`) are never gated. The SSE endpoint passes its token via ``?token=``
+    because ``EventSource`` can't set an Authorization header.
+    """
+    path = request.url.path
+    if request.method != "OPTIONS" and path.startswith("/api/harmonize/") and not _is_public_path(path):
+        try:
+            request.state.principal = authenticate(
+                request.headers.get("authorization"),
+                request.query_params.get("token"),
+            )
+        except AuthError as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
 
 # The Runs page shows only real runs (the demo, via POST /demo, and any user runs). The synthetic
 # "Sample —" seed runs were removed from the app — ``backend.seed`` is retained solely for tests that

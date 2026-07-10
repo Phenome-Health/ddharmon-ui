@@ -13,21 +13,46 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { deleteJob, listJobs } from "@/lib/api";
+import { useAuthState } from "@/auth";
 
 // Terminal statuses; anything else is an in-flight phase (data-driven — we don't enumerate phases).
 const TERMINAL = new Set(["complete", "error"]);
 
 export default function JobsPage() {
   const qc = useQueryClient();
+  const { isGuest } = useAuthState();
+  // Real runs are per-account and behind the SSO gate, so guests don't fetch the list (it would 401) —
+  // they get a sign-in CTA instead. The demo lives on its own page.
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ["jobs"],
     queryFn: listJobs,
     refetchInterval: 3000,
+    enabled: !isGuest,
   });
 
   async function remove(jobId: string) {
     await deleteJob(jobId);
     qc.invalidateQueries({ queryKey: ["jobs"] });
+  }
+
+  if (isGuest) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-4">
+        <h1 className="text-2xl font-semibold text-ph-ink">Runs</h1>
+        <Card>
+          <CardContent className="space-y-3 p-8 text-center">
+            <p className="text-sm text-neutral-600">Your runs live in your account.</p>
+            <p className="text-xs text-neutral-500">
+              Sign in to upload cohorts and see your harmonization runs here — or try the{" "}
+              <Link href="/demo" className="text-ph-navy underline hover:text-ph-ink">
+                demo
+              </Link>{" "}
+              without an account.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (

@@ -10,9 +10,11 @@ GUI; swap in SQLite later if persistence is needed).
 
 from __future__ import annotations
 
+import shutil
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # Non-terminal phases double as ``status`` values so the UI can show a phase label.
@@ -80,10 +82,21 @@ class Job:
 class JobStore:
     """Thread-safe in-memory job registry with TTL purging."""
 
-    def __init__(self, ttl_seconds: int = _TTL_SECONDS) -> None:
+    def __init__(self, ttl_seconds: int = _TTL_SECONDS, work_root: Path | None = None) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._ttl = ttl_seconds
+        # Root of the per-job on-disk scratch dirs (``<work_root>/<job_id>`` holds uploads + prompts +
+        # substrate). The app sets this after import. When a job is deleted or ages out we tear its dir
+        # down so uploaded dictionaries never outlive the run (WS-3 data-retention guarantee). None ->
+        # no teardown (tests, and demos which keep no scratch dir).
+        self.work_root = work_root
+
+    def _teardown_work_dir(self, job_id: str) -> None:
+        """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone."""
+        if self.work_root is None:
+            return
+        shutil.rmtree(self.work_root / job_id, ignore_errors=True)
 
     def create(self, job_id: str, display_name: str, config: dict[str, Any]) -> Job:
         with self._lock:
@@ -101,7 +114,10 @@ class JobStore:
 
     def delete(self, job_id: str) -> bool:
         with self._lock:
-            return self._jobs.pop(job_id, None) is not None
+            existed = self._jobs.pop(job_id, None) is not None
+        # rmtree outside the lock — filesystem I/O shouldn't block the registry. Idempotent either way.
+        self._teardown_work_dir(job_id)
+        return existed
 
     def update(self, job_id: str, **fields: Any) -> None:
         """Set attributes on a job (status/phase/completed/total/error_message/result)."""
@@ -156,6 +172,8 @@ class JobStore:
             ]
             for jid in stale:
                 self._jobs.pop(jid, None)
+        for jid in stale:  # tear scratch dirs down outside the lock (see delete)
+            self._teardown_work_dir(jid)
 
 
 # Module-level singleton used by the app.

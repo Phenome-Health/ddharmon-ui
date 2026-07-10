@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_STATIC, startHarmonize } from "@/lib/api";
+import { useAuthState } from "@/auth";
 import {
   ADVANCED_ROLES,
   SEMANTIC_ROLES,
@@ -52,6 +53,7 @@ function parseFile(file: File): Promise<{ headers: string[]; nFields: number }> 
 
 export default function HomePage() {
   const [, navigate] = useLocation();
+  const { isGuest } = useAuthState();
   const [dicts, setDicts] = useState<DictFile[]>([]);
   const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
   const [runMode, setRunMode] = useState<RunMode>("batch");
@@ -103,6 +105,10 @@ export default function HomePage() {
     : "";
 
   async function run() {
+    if (isGuest) {
+      toast.error("Sign in to run your own cohorts. The demo is available without an account.");
+      return;
+    }
     if (!dicts.length) {
       toast.error("Add at least one data-dictionary file.");
       return;
@@ -356,10 +362,40 @@ export default function HomePage() {
 
       <CostCard breakdown={cost} meta={costMeta} />
 
-      <Button onClick={run} disabled={submitting || !dicts.length || IS_STATIC} size="lg" className="w-full">
+      <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-[11px] leading-snug text-neutral-500">
+        {runMode === "preview" ? (
+          <>
+            <span className="font-medium text-neutral-700">Nothing leaves this server.</span> Preview runs
+            clustering and candidate retrieval on-box — no third-party LLM call, and none of your data is sent
+            anywhere.
+          </>
+        ) : (
+          <>
+            <span className="font-medium text-neutral-700">Before you run:</span> in Batch mode the field names,
+            descriptions, and value labels from your dictionaries are sent to{" "}
+            <span className="font-medium text-neutral-700">Anthropic's API</span> — a third party we don't control
+            — to run concept assignment. The calls use your own key; your data is processed in memory for this run
+            only and nothing is retained after it completes. Switch to Preview to run with no LLM at all.
+          </>
+        )}
+      </div>
+
+      <Button
+        onClick={run}
+        disabled={submitting || !dicts.length || IS_STATIC || isGuest}
+        size="lg"
+        className="w-full"
+      >
         {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
         Run harmonization
       </Button>
+      {isGuest && (
+        <p className="text-center text-xs text-neutral-400">
+          You're exploring as a guest. <span className="text-neutral-500">Sign in</span> to upload and run your
+          own cohorts — the <Link href="/demo" className="text-ph-navy underline hover:text-ph-ink">demo</Link> runs
+          without an account.
+        </p>
+      )}
       {IS_STATIC && (
         <p className="text-center text-xs text-neutral-400">
           New runs are disabled in this preview — explore the sample runs under{" "}
