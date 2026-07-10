@@ -7,6 +7,12 @@ const BASE = "/api/harmonize";
 export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
 const STATIC_BASE = `${import.meta.env.BASE_URL}static-data`;
 
+// Whether the Clerk SSO gate is configured for this build (single source of truth; src/auth.tsx re-exports
+// it). Lets calls distinguish a signed-out "guest" (gate on, no token) from "no auth at all" (static/dev).
+export const AUTH_ENABLED =
+  Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY) &&
+  !(import.meta.env.DEV && import.meta.env.VITE_DEV_BYPASS_AUTH === "true");
+
 const STATIC_MSG = "This is a static preview — new runs are disabled. Explore the sample runs under Runs.";
 const EXPORT_EXT: Record<ExportFormat, string> = {
   eitl_tsv: "eitl.tsv",
@@ -15,6 +21,35 @@ const EXPORT_EXT: Record<ExportFormat, string> = {
   notebook_py: "py.ipynb",
   notebook_r: "r.ipynb",
 };
+
+// --- auth (Clerk SSO) ----------------------------------------------------------------------------
+// The auth layer (src/auth.tsx) injects a token getter here when the SSO gate is active. When it is
+// null — the static/marketing build, local dev, or any deploy without a Clerk key — every call below
+// behaves EXACTLY as before: no Authorization header, no ?token, no change.
+let _tokenGetter: (() => Promise<string | null>) | null = null;
+let _lastToken: string | null = null; // freshest token, kept current by the bridge for synchronous href use
+
+export function setTokenGetter(fn: (() => Promise<string | null>) | null): void {
+  _tokenGetter = fn;
+}
+export function setLastToken(token: string | null): void {
+  _lastToken = token;
+}
+
+/** Merge an `Authorization: Bearer` header when the gate is active; a no-op (returns `base`) otherwise. */
+async function authed(base: Record<string, string> = {}): Promise<Record<string, string>> {
+  if (!_tokenGetter) return base;
+  const token = await _tokenGetter();
+  return token ? { ...base, Authorization: `Bearer ${token}` } : base;
+}
+
+/** Append `?token=` for URLs used where a header can't be set (SSE EventSource). No-op when the gate is off. */
+export async function appendAuthToken(url: string): Promise<string> {
+  if (!_tokenGetter) return url;
+  const token = await _tokenGetter();
+  if (!token) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+}
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -29,7 +64,7 @@ export async function detectRoles(columns: string[]): Promise<{ columnRoles: Rec
   return json(
     await fetch(`${BASE}/detect`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await authed({ "Content-Type": "application/json" }),
       body: JSON.stringify({ columns }),
     }),
   );
@@ -45,27 +80,26 @@ export async function startHarmonize(
   for (const f of _files) fd.append("files", f);
   fd.append("config", JSON.stringify(_config));
   // BYOK: the key rides as a transport-only header, never in the config body (which is persisted as the
-  // job's run_config). The backend is expected to read it per-request and hold it in memory for the job
-  // only — never write it to disk/logs. Not set for preview runs (no LLM). Don't set Content-Type here:
-  // fetch derives the multipart boundary from the FormData body.
-  const headers: Record<string, string> = {};
-  if (_apiKey) headers["x-anthropic-key"] = _apiKey;
+  // job's run_config). The backend reads it per-request and holds it in memory for the job only — never
+  // written to disk/logs. Not set for preview runs (no LLM). Don't set Content-Type here: fetch derives
+  // the multipart boundary from the FormData body. `authed()` adds the Clerk Bearer when the gate is on.
+  const headers = await authed(_apiKey ? { "x-anthropic-key": _apiKey } : {});
   return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers }));
 }
 
 export async function getResult(jobId: string): Promise<JobResult> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/result-${jobId}.json`));
-  return json(await fetch(`${BASE}/result/${jobId}`));
+  return json(await fetch(`${BASE}/result/${jobId}`, { headers: await authed() }));
 }
 
 export async function listJobs(): Promise<JobSummary[]> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/jobs.json`));
-  return json(await fetch(`${BASE}/jobs`));
+  return json(await fetch(`${BASE}/jobs`, { headers: await authed() }));
 }
 
 export async function deleteJob(jobId: string): Promise<void> {
   if (IS_STATIC) return;
-  await fetch(`${BASE}/jobs/${jobId}`, { method: "DELETE" });
+  await fetch(`${BASE}/jobs/${jobId}`, { method: "DELETE", headers: await authed() });
 }
 
 export async function submitVerdict(
@@ -81,10 +115,13 @@ export async function submitVerdict(
   // the "cohort:var" `sourceVariable` it applies to (required server-side for the transform axis). Both axes
   // take the full approve|refine|reject triad. Kept out of types.ts on purpose (decisions' keys are optional).
   if (IS_STATIC) return; // preview: decisions are not persisted
+  // Guest (gate on, no token): the demo is read-only — saving verdicts needs a sign-in. Fail with a clear
+  // message instead of a raw 401 from the gated endpoint.
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to save decisions.");
   await json(
     await fetch(`${BASE}/jobs/${jobId}/verdict`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await authed({ "Content-Type": "application/json" }),
       body: JSON.stringify({ recordId, decision, note, axis, sourceVariable }),
     }),
   );
@@ -92,12 +129,15 @@ export async function submitVerdict(
 
 export function exportUrl(jobId: string, format: ExportFormat): string {
   if (IS_STATIC) return `${STATIC_BASE}/exports/${jobId}.${EXPORT_EXT[format]}`;
-  return `${BASE}/jobs/${jobId}/export?format=${format}`;
+  const base = `${BASE}/jobs/${jobId}/export?format=${format}`;
+  // A download href can't set an Authorization header; when the SSO gate is on, ride the freshest cached
+  // token as a query param (the backend accepts ?token= for the same reason the SSE endpoint does).
+  return _lastToken ? `${base}&token=${encodeURIComponent(_lastToken)}` : base;
 }
 
 export async function listDemos(): Promise<DemosResponse> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/demos.json`));
-  return json(await fetch(`${BASE}/demos`));
+  return json(await fetch(`${BASE}/demos`, { headers: await authed() }));
 }
 
 export async function startDemo(_datasets: string[]): Promise<{ jobId: string }> {
@@ -108,7 +148,7 @@ export async function startDemo(_datasets: string[]): Promise<{ jobId: string }>
   return json(
     await fetch(`${BASE}/demo`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await authed({ "Content-Type": "application/json" }),
       body: JSON.stringify({ datasets: _datasets }),
     }),
   );

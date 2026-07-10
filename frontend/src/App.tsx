@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Route, Router, Switch } from "wouter";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider } from "@/auth";
 import { AppShell } from "@/components/AppShell";
 import LandingPage from "@/pages/landing";
 import HomePage from "@/pages/home";
@@ -24,7 +25,8 @@ const ROUTER_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
+    <AuthProvider>
+      <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Router base={ROUTER_BASE}>
           <AppShell>
@@ -48,6 +50,7 @@ export default function App() {
         </Router>
         <Toaster />
       </TooltipProvider>
-    </QueryClientProvider>
+      </QueryClientProvider>
+    </AuthProvider>
   );
 }

@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { Plus, ListChecks, BookOpen, Workflow, Gauge, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
+import { UserButton } from "@clerk/react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
+import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
 import { PhenomeChip } from "@/components/phenome-mark";
@@ -29,6 +31,7 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggle } = useTheme();
+  const { isGuest, exitGuest } = useAuthState();
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-neutral-0">
       {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
@@ -57,6 +60,28 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
+          {/* Account area — only when the SSO gate is active. Guests get a "Sign in" affordance; signed-in
+              users get Clerk's UserButton (which must live inside the ClerkProvider AuthProvider mounts). */}
+          {AUTH_ENABLED && (
+            <div className="ml-1 flex items-center gap-2">
+              {isGuest ? (
+                <>
+                  <span className="rounded bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-500">
+                    Guest
+                  </span>
+                  <button
+                    type="button"
+                    onClick={exitGuest}
+                    className="rounded px-2 py-1 text-xs font-medium text-ph-navy transition-colors hover:bg-neutral-100 hover:text-ph-ink"
+                  >
+                    Sign in
+                  </button>
+                </>
+              ) : (
+                <UserButton />
+              )}
+            </div>
+          )}
         </div>
       </header>
 

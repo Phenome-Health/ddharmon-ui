@@ -18,6 +18,11 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.9",
+
+    # Clerk SSO: verify the session JWT (RS256) against Clerk's JWKS (backend/auth.py). Imported
+    # lazily and inert unless CLERK_* env is set, but the deploy needs it installed for the gate to
+    # work. [crypto] pulls the RSA backend PyJWKClient requires.
+    "pyjwt[crypto]>=2.8.0",
 ]
 
 [project.optional-dependencies]
