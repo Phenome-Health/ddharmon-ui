@@ -38,6 +38,12 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# The `ddharmon` dependency is a git direct reference (until it's repinned to PyPI); hatchling
+# rejects direct references during metadata validation unless this is enabled. Required for any
+# source install (`uv pip install -e .`) — e.g. the Lightsail deploy.
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["backend"]
 
