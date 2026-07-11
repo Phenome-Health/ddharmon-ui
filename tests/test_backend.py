@@ -758,6 +758,74 @@ def test_run_pipeline_empty_dictionary_raises_clear_error(tmp_path):
         run_pipeline(dict_specs, cde_spec, config, provider=StubProvider())
 
 
+class _StructuredStubProvider(EmbeddingProvider):
+    """Deterministic embeddings clustered around K latent centroids (+ small noise) so REAL UMAP/HDBSCAN
+    find stable clusters with few outliers — no model download, no all-outlier degeneracy, no flakiness."""
+
+    K = 6
+
+    def __init__(self) -> None:
+        rng = np.random.default_rng(0)
+        c = rng.standard_normal((self.K, DIM)).astype(np.float32)
+        self._centroids = c / np.linalg.norm(c, axis=1, keepdims=True)
+
+    @property
+    def model_name(self) -> str:
+        return "structured-stub"
+
+    @property
+    def dimension(self) -> int:
+        return DIM
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        import hashlib
+
+        out = np.zeros((len(texts), DIM), dtype=np.float32)
+        for i, t in enumerate(texts):
+            seed = int(hashlib.sha256(t.encode()).hexdigest()[:12], 16)
+            bucket = seed % self.K
+            noise = np.random.default_rng(seed).standard_normal(DIM).astype(np.float32)
+            v = self._centroids[bucket] + 0.12 * noise
+            out[i] = v / (np.linalg.norm(v) or 1.0)
+        return out
+
+
+def test_run_pipeline_real_clustering_smoke(tmp_path):
+    """Drive the REAL clustering path (UMAP + HDBSCAN + BERTopic via ``topic_model_dictionaries``) end to
+    end in preview mode — NO monkeypatch, NO LLM. Guards the class of empty-collection / real-clustering
+    crashes (#8 ``len()``, #11 ``np.stack([])``) that slip through every other run_pipeline test because
+    they all fake ``topic_model_dictionaries``. Deterministic structured embeddings keep it stable.
+    """
+    pytest.importorskip("bertopic")
+    pytest.importorskip("umap")
+    pytest.importorskip("hdbscan")
+
+    cohort = tmp_path / "cohort.csv"
+    cohort.write_text("var,desc\n" + "\n".join(f"v{i},Health measure about topic {i}" for i in range(40)) + "\n")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text(
+        "designation\tdefinition\n" + "\n".join(f"CDE{i}\tCommon data element definition {i}" for i in range(60)) + "\n"
+    )
+    dict_specs = [
+        {"path": str(cohort), "cohort_name": "CohortA", "column_roles": {"variable_name": "var", "description": "desc"}}
+    ]
+    cde_spec = {
+        "path": str(cde),
+        "cohort_name": "NIH_CDE",
+        "column_roles": {"variable_name": "designation", "description": "definition"},
+    }
+    config = {"run_mode": "preview", "cde_cohort": "NIH_CDE", "work_dir": str(tmp_path)}
+
+    # No stage_overrides -> the adapter takes the real preview branch: real cluster + retrieve, no LLM.
+    result = run_pipeline(dict_specs, cde_spec, config, provider=_StructuredStubProvider())
+
+    assert result["contractVersion"] == "1"
+    assert result["mode"] == "preview"
+    assert result["phases"] and "clustering" in result["phases"]
+    assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1  # 40 cohort fields projected
+    assert result["fieldIndex"]  # per-field detail populated from the embedded cohort
+
+
 def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_path):
     """A run that does NOT pin ``min_cluster_size`` must auto-scale it from the corpus size.
 
