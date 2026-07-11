@@ -52,4 +52,8 @@ def run_harmonization(
         logger.info("job %s complete: %d records", job_id, len(result["records"]))
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI rather than crash the thread
         logger.exception("job %s failed", job_id)
-        store.update(job_id, status="error", phase="error", error_message=str(exc))
+        # Capture the stage the run was in BEFORE we overwrite phase to "error", so the UI / an error report
+        # can name what broke (e.g. "assigning"). Ignore the non-stage sentinels.
+        failing = store.get(job_id)
+        failed_phase = failing.phase if failing and failing.phase not in ("error", "pending") else None
+        store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)

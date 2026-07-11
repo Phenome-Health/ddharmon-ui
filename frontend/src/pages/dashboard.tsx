@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Ban,
+  Bug,
   Check,
   ChevronDown,
   ChevronRight,
@@ -32,6 +33,7 @@ import { Analytics } from "@/components/analytics";
 import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
+import { buildRunIssueUrl } from "@/lib/links";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
 import { VERDICT_STYLES, type UIRecord, type UnassignedField } from "@/types";
 
@@ -346,6 +348,28 @@ export default function DashboardPage() {
             </div>
             <Progress value={error ? 100 : phasePercent(jobState.phase, jobState.completed, jobState.total)} />
             {error && <p className="text-sm text-danger">{error.message}</p>}
+            {error && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+                <Button size="sm" variant="outline" asChild>
+                  <a
+                    href={buildRunIssueUrl({
+                      jobId: jobState.jobId,
+                      errorMessage: jobState.errorMessage,
+                      failedPhase: jobState.failedPhase,
+                      runMode: jobState.config.run_mode as string | undefined,
+                      cdeSet: jobState.config.cde_set as string | undefined,
+                    })}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Bug className="mr-1.5 h-3.5 w-3.5" /> Report this problem
+                  </a>
+                </Button>
+                <span className="text-xs text-neutral-400">
+                  Opens a prefilled GitHub issue — run metadata only, no uploaded data.
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

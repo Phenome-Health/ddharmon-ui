@@ -45,6 +45,10 @@ class Job:
     completed: int = 0
     total: int = 0
     error_message: str | None = None
+    # The pipeline phase a run was in when it FAILED (e.g. "assigning"). The runner captures it on error
+    # before ``phase`` is overwritten to "error", so an error report / the UI can name the stage that broke.
+    # Persisted, so a report filed later from a run's history still knows the failing stage.
+    failed_phase: str | None = None
     result: dict[str, Any] | None = None  # serialized summary + verdicts (camelCase)
     config: dict[str, Any] = field(default_factory=dict)
     # recordId -> verdict dict. The MATCH axis (concept→CDE) writes top-level {decision, note}. The
@@ -78,6 +82,7 @@ class Job:
             completed=d.get("completed", 0),
             total=d.get("total", 0),
             error_message=d.get("error_message"),
+            failed_phase=d.get("failed_phase"),
             result=d.get("result"),
             config=d.get("config", {}) or {},
             decisions=d.get("decisions", {}) or {},
@@ -98,6 +103,7 @@ class Job:
             "completed": self.completed,
             "total": self.total,
             "errorMessage": self.error_message,
+            "failedPhase": self.failed_phase,
             "result": self.result,
             "config": self.config,
             "decisions": self.decisions,
