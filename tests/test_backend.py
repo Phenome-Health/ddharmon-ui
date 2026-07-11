@@ -1241,6 +1241,49 @@ def test_generate_ideas_skipped_when_not_applicable():
     assert runner_module._generate_ideas({"records": []}, {"gen_analysis_ideas": True, "run_mode": "sync"}, "k") is None
 
 
+def test_sync_run_builds_client_with_the_picked_model(monkeypatch, tmp_path):
+    """Sync mode constructs its LLM client via build_llm_client with the run's PICKED model_tag (not the
+    SDK's stale default, which 404s and ignored the picker). The spy raises at construction, so no real
+    stage / LLM call runs — we only assert the model routing."""
+    a = tmp_path / "cohortA.csv"
+    a.write_text("var,desc\nage,Age in years\n")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+
+    def fake_topic_model(embedded, **kwargs):
+        docs, embeddings, field_refs, cohorts = collect_inputs(embedded)
+        members = [r for r in field_refs if r.dictionary_name != "NIH_CDE"]
+        return TopicModelResult(
+            model=None, docs=docs, embeddings=embeddings, field_refs=field_refs,
+            clusters=[FieldCluster(cluster_id=0, label="all", members=members)],
+            outlier_cluster=None, all_cohort_names=cohorts,
+        )  # fmt: skip
+
+    monkeypatch.setattr("ddharmon.clustering.topic_engine.topic_model_dictionaries", fake_topic_model)
+
+    captured: dict = {}
+
+    class _StopError(Exception):
+        pass
+
+    def spy_build(model_tag, api_key):
+        captured.update(model_tag=model_tag, api_key=api_key)
+        raise _StopError()  # stop before any real LLM call
+
+    monkeypatch.setattr("backend.engine.llm.build_llm_client", spy_build)
+
+    dict_specs = [{"path": str(a), "cohort_name": "A", "column_roles": {"variable_name": "var", "description": "desc"}}]
+    cde_spec = {
+        "path": str(cde), "cohort_name": "NIH_CDE",
+        "column_roles": {"variable_name": "designation", "description": "definition"},
+    }  # fmt: skip
+    config = {"run_mode": "sync", "cde_cohort": "NIH_CDE", "work_dir": str(tmp_path), "model_tag": "claude-opus-4-8"}
+
+    with pytest.raises(_StopError):
+        run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), api_key="sk-test")
+    assert captured == {"model_tag": "claude-opus-4-8", "api_key": "sk-test"}
+
+
 def test_analysis_ideas_endpoint_caches_scopes_and_gates(monkeypatch, tmp_path):
     """The endpoint generates via one BYOK LLM call, caches (no re-bill), regenerates on demand, scopes to
     the owner (404 for others), and 409s when the run has no concepts."""
