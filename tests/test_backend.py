@@ -733,6 +733,20 @@ def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
     assert "loading" in seen and "embedding" in seen and "clustering" in seen
 
 
+def test_spa_deep_link_falls_back_to_index_html():
+    """A hard GET of a client-side route serves the SPA (index.html), so refresh/bookmark/deep links work —
+    while /api stays JSON and a real missing asset still 404s. Skips when the frontend isn't built."""
+    if not app_module._DIST.exists():
+        pytest.skip("frontend/dist not built")
+    r = client.get("/methods")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    # /api is registered before the SPA mount -> not swallowed by the fallback (public demos route = JSON)
+    demos = client.get("/api/harmonize/demos")
+    assert demos.status_code == 200 and "application/json" in demos.headers["content-type"]
+    # a missing asset (has an extension) still 404s -> the fallback doesn't mask real asset misses
+    assert client.get("/definitely-missing.js").status_code == 404
+
+
 def test_run_pipeline_empty_dictionary_raises_clear_error(tmp_path):
     """A file with no usable fields (header-only, or columns that didn't map) must fail with a clear,
     actionable message — NOT a cryptic ``need at least one array to stack`` from an empty embedding stack.

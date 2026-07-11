@@ -639,6 +639,23 @@ def health() -> dict[str, Any]:
 # --- static frontend (prod) ------------------------------------------------------------------
 _DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if _DIST.exists():
-    from fastapi.staticfiles import StaticFiles
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from starlette.responses import FileResponse
+    from starlette.staticfiles import StaticFiles
 
-    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="frontend")
+    class _SPAStaticFiles(StaticFiles):
+        """Serve the built SPA with an HTML5-history fallback: an unknown, extension-less path (a
+        client-side route like ``/methods`` or ``/job/<id>``) falls back to ``index.html`` so a hard
+        refresh / bookmark / shared deep link loads the app instead of 404ing. Real missing assets (a path
+        whose last segment has an extension, e.g. ``/x.js``) still 404. ``/api/*`` never reaches here — those
+        routes are registered before this mount, so they take precedence."""
+
+        async def get_response(self, path: str, scope: Any) -> Any:
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as exc:
+                if exc.status_code == 404 and "." not in path.rsplit("/", 1)[-1]:
+                    return FileResponse(_DIST / "index.html")
+                raise
+
+    app.mount("/", _SPAStaticFiles(directory=str(_DIST), html=True), name="frontend")
