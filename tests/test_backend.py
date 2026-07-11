@@ -1071,6 +1071,94 @@ def test_rerun_clones_uploads_as_new_owned_run(monkeypatch, tmp_path):
         assert started["cde_spec"]["path"].endswith("cde.tsv")
 
 
+def test_analysis_ideas_digest_and_grounding():
+    """Digest keeps only cross-cohort concepts (the pooling signal), and generation drops any idea whose
+    concepts are hallucinated (not present in this run)."""
+    from backend.analysis_ideas import build_concept_digest, generate_analysis_ideas
+
+    records = [
+        {"concept": "Smoking status", "cohorts": ["A", "B"], "verdict": "adopt", "cde": {"id": "SmokeCDE"}, "nMembers": 4},
+        {"concept": "CVD", "cohorts": ["A", "B", "C"], "verdict": "refine", "cde": None, "nMembers": 6},
+        {"concept": "Local-only", "cohorts": ["A"], "verdict": "novel", "cde": None, "nMembers": 1},
+    ]  # fmt: skip
+    digest = build_concept_digest(records)
+    assert {d["concept"] for d in digest} == {"Smoking status", "CVD"}  # single-cohort concept dropped
+    assert digest[0]["concept"] == "CVD"  # most cohorts first
+
+    def fake_complete(prompt, *, system=None, max_tokens=512):
+        return json.dumps(
+            {
+                "ideas": [
+                    {"title": "Pooled smoking→CVD", "hypothesis": "h", "concepts": ["Smoking status", "CVD"],
+                     "cohorts": ["A", "B"], "method": "logistic regression", "whyNewlyPossible": "w", "category": "association"},
+                    {"title": "Hallucinated", "hypothesis": "h", "concepts": ["Made-up concept"],
+                     "cohorts": ["A"], "method": "m", "whyNewlyPossible": "w", "category": "x"},
+                ]
+            }
+        )  # fmt: skip
+
+    out = generate_analysis_ideas(records, fake_complete)
+    assert out["nConcepts"] == 2
+    titles = [i["title"] for i in out["ideas"]]
+    assert "Pooled smoking→CVD" in titles and "Hallucinated" not in titles  # ungrounded idea dropped
+
+
+def test_analysis_ideas_endpoint_caches_scopes_and_gates(monkeypatch, tmp_path):
+    """The endpoint generates via one BYOK LLM call, caches (no re-bill), regenerates on demand, scopes to
+    the owner (404 for others), and 409s when the run has no concepts."""
+    from backend import auth
+
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
+    monkeypatch.setattr(auth, "_decode_claims", _decode_by_token)
+
+    calls = {"n": 0}
+
+    class StubClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            calls["n"] += 1
+            return json.dumps(
+                {"ideas": [{"title": "Pooled smoking→CVD", "hypothesis": "h", "concepts": ["Smoking"],
+                            "cohorts": ["A", "B"], "method": "m", "whyNewlyPossible": "w", "category": "association"}]}
+            )  # fmt: skip
+
+    monkeypatch.setattr("ddharmon.llm.anthropic_client.AnthropicClient", StubClient)
+
+    def hdr(t: str) -> dict:
+        return {"authorization": f"Bearer {t}", "x-anthropic-key": "sk-test"}
+
+    with TestClient(app_module.app) as c:
+        app_module.store.create("ja", "A run", {}, owner_subject="user_A")
+        app_module.store.update(
+            "ja",
+            status="complete",
+            result={
+                "records": [
+                    {"concept": "Smoking", "cohorts": ["A", "B"], "verdict": "adopt", "cde": None, "nMembers": 3}
+                ]
+            },
+        )
+        # user B can't generate for A's run
+        assert c.post("/api/harmonize/jobs/ja/analysis-ideas", headers=hdr("B")).status_code == 404
+        # A generates (one LLM call)
+        b1 = c.post("/api/harmonize/jobs/ja/analysis-ideas", headers=hdr("A")).json()
+        assert b1["cached"] is False and len(b1["ideas"]) == 1 and calls["n"] == 1
+        # second call is served from cache (no second LLM call)
+        b2 = c.post("/api/harmonize/jobs/ja/analysis-ideas", headers=hdr("A")).json()
+        assert b2["cached"] is True and calls["n"] == 1
+        # ?regenerate=true forces a fresh pass
+        b3 = c.post("/api/harmonize/jobs/ja/analysis-ideas?regenerate=true", headers=hdr("A")).json()
+        assert b3["cached"] is False and calls["n"] == 2
+
+        # a run with no concepts -> 409, not a crash
+        app_module.store.create("empty", "Empty", {}, owner_subject="user_A")
+        app_module.store.update("empty", status="complete", result={"records": []})
+        assert c.post("/api/harmonize/jobs/empty/analysis-ideas", headers=hdr("A")).status_code == 409
+
+
 def test_purge_exempts_demo_but_evicts_user_runs():
     """The TTL purge evicts stale terminal USER runs but never the prepopulated (pinned) demo run."""
     store = JobStore()
