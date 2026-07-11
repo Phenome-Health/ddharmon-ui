@@ -341,6 +341,8 @@ def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list
         if name == cde_cohort:
             continue
         names = list(ed.get_variable_names())
+        if not names:  # an empty dictionary would make get_all_vectors() np.stack([]) and raise
+            continue
         mat = np.asarray(ed.get_all_vectors(), dtype=np.float32)
         for v, row in zip(names, mat, strict=False):
             vecs.append(row)
@@ -504,6 +506,26 @@ def run_pipeline(
     for i, dd in enumerate(dictionaries):
         embedded.append(embed_dictionary(dd, provider=provider))
         progress("embedding", i + 1, total)
+
+    # Guard: an uploaded file with only a header row (or columns that didn't map to a variable/description/
+    # question) embeds to ZERO fields. Downstream `get_all_vectors()`/`collect_inputs()` would then `np.stack([])`
+    # -> "need at least one array to stack". Drop such empty dictionaries, and if nothing usable remains, fail
+    # with a clear, actionable message instead of a cryptic numpy error.
+    def _n_fields(ed: Any) -> int:
+        return len(list(ed.get_variable_names()))
+
+    empty = [ed for ed in embedded if _n_fields(ed) == 0]
+    if empty:
+        dropped = sorted(
+            getattr(ed.dictionary, "cohort_name", None) or getattr(ed.dictionary, "name", "?") for ed in empty
+        )
+        logger.warning("dropping %d dictionary(ies) with no usable fields: %s", len(empty), ", ".join(dropped))
+        embedded = [ed for ed in embedded if _n_fields(ed) > 0]
+    if not any(_n_fields(ed) > 0 for ed in embedded if getattr(ed.dictionary, "cohort_name", None) != cde_cohort):
+        raise ValueError(
+            "No usable fields found in the uploaded dictionaries. Check that each file has at least one data "
+            "row and that its columns are mapped to a variable name and/or a description/question."
+        )
 
     # 2D projection of the field space for the embedding atlas (cheap, deterministic; no core dependency).
     atlas = _atlas_points(embedded, cde_cohort)
