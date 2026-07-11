@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link, useLocation } from "wouter";
 import { Lightbulb, Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +16,18 @@ import {
 import { generateAnalysisIdeas } from "@/lib/api";
 import type { AnalysisIdea } from "@/types";
 
-function IdeaCard({ idea }: { idea: AnalysisIdea }) {
+/**
+ * One analysis idea. When ``linkForConcept`` resolves a concept label to a href, that concept's chip
+ * becomes a link (into the review workbench, preselected to the concept); otherwise it's a plain chip.
+ */
+export function IdeaCard({
+  idea,
+  linkForConcept,
+}: {
+  idea: AnalysisIdea;
+  linkForConcept?: (concept: string) => string | undefined;
+}) {
+  const chip = "rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-neutral-600";
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -32,11 +44,23 @@ function IdeaCard({ idea }: { idea: AnalysisIdea }) {
         <p className="leading-relaxed text-neutral-600">{idea.hypothesis}</p>
         {idea.concepts.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {idea.concepts.map((c) => (
-              <span key={c} className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-neutral-600">
-                {c}
-              </span>
-            ))}
+            {idea.concepts.map((c) => {
+              const href = linkForConcept?.(c);
+              return href ? (
+                <Link
+                  key={c}
+                  href={href}
+                  className={`${chip} transition-colors hover:border-ph-navy hover:text-ph-navy`}
+                  title="Open this concept in the review workbench"
+                >
+                  {c}
+                </Link>
+              ) : (
+                <span key={c} className={chip}>
+                  {c}
+                </span>
+              );
+            })}
           </div>
         )}
         <dl className="space-y-1 text-xs text-neutral-500">
@@ -68,10 +92,12 @@ function IdeaCard({ idea }: { idea: AnalysisIdea }) {
 }
 
 /**
- * Post-run "analysis ideas" — an opt-in LLM pass that suggests downstream cross-cohort analyses this run's
- * harmonization unlocks. Metadata-only (suggests, never runs). BYOK: needs the Anthropic key re-entered (a
- * transport-only header, never stored), so the button opens a small key dialog. Ideas are cached server-side
- * after the first pass, so a revisit shows them without re-billing.
+ * Post-run "analysis ideas" entry point. The ideas themselves live on a dedicated page (/job/:id/analysis)
+ * so they don't clutter the run view — this panel is just the CTA:
+ *   - demo run → the page is pre-loaded with pre-generated ideas (no LLM, no key);
+ *   - real run, not yet generated → "Generate" opens a key dialog, runs ONE LLM pass, then opens the page;
+ *   - real run, already generated → "View" opens the page (ideas are cached server-side).
+ * Metadata-only (suggests, never runs). BYOK: the key is a transport-only header, never stored.
  */
 export function AnalysisIdeasPanel({
   jobId,
@@ -80,25 +106,31 @@ export function AnalysisIdeasPanel({
 }: {
   jobId: string;
   initial: AnalysisIdea[] | null;
-  // A demo run ships PRE-GENERATED ideas (guests have no API key to generate their own), so the panel shows
-  // them read-only with a note pointing to "run your own cohorts" — no generate/regenerate buttons.
   isDemo?: boolean;
 }) {
-  const [ideas, setIdeas] = useState<AnalysisIdea[] | null>(initial ?? null);
+  const [, navigate] = useLocation();
   const [open, setOpen] = useState(false);
   const [regen, setRegen] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const page = `/job/${jobId}/analysis`;
+  const alreadyHasIdeas = (initial?.length ?? 0) > 0;
+  const noConcepts = initial !== null && initial.length === 0; // generated, but nothing cross-cohort to suggest
+
   async function run(key: string, regenerate: boolean) {
     setBusy(true);
     setErr(null);
     try {
       const { ideas: got } = await generateAnalysisIdeas(jobId, key, regenerate);
-      setIdeas(got);
-      setOpen(false);
-      setApiKey("");
+      if (got.length) {
+        setOpen(false);
+        setApiKey("");
+        navigate(page); // ideas are cached server-side — the page loads them
+      } else {
+        setErr("No cross-cohort concepts in this run — nothing to suggest.");
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not generate analysis ideas");
     } finally {
@@ -112,8 +144,6 @@ export function AnalysisIdeasPanel({
     setOpen(true);
   };
 
-  const hasIdeas = ideas !== null && ideas.length > 0;
-
   return (
     <Card>
       <CardHeader>
@@ -121,7 +151,7 @@ export function AnalysisIdeasPanel({
           <CardTitle className="flex items-center gap-2 text-base">
             <Lightbulb className="h-4 w-4 text-ph-navy" /> Analysis ideas
           </CardTitle>
-          {hasIdeas && !isDemo && (
+          {alreadyHasIdeas && !isDemo && (
             <Button variant="ghost" size="sm" className="ml-auto text-xs" disabled={busy} onClick={() => openDialog(true)}>
               Regenerate
             </Button>
@@ -133,34 +163,26 @@ export function AnalysisIdeasPanel({
           runs them.
         </p>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {hasIdeas ? (
-          <>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {ideas!.map((idea, i) => (
-                <IdeaCard key={`${idea.title}-${i}`} idea={idea} />
-              ))}
-            </div>
-            {isDemo && (
-              <p className="text-xs text-neutral-400">
-                Pre-generated for this demo. Run your own cohorts to get ideas grounded in your data.
-              </p>
-            )}
-          </>
-        ) : ideas !== null ? (
+      <CardContent>
+        {noConcepts ? (
           <p className="text-sm text-neutral-500">
-            No cross-cohort concepts in this run yet — analysis ideas need a concept shared by ≥2 cohorts.
+            No cross-cohort concepts in this run — analysis ideas need a concept shared by ≥2 cohorts.
           </p>
-        ) : isDemo ? (
-          <p className="text-sm text-neutral-500">Analysis ideas aren&apos;t available for this demo.</p>
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-            <p className="text-sm text-neutral-600">
-              See concrete cross-cohort analyses this run makes possible.
-            </p>
-            <Button size="sm" disabled={busy} onClick={() => openDialog(false)}>
-              <Sparkles className="mr-1.5 h-4 w-4" /> Generate analysis ideas
-            </Button>
+            <p className="text-sm text-neutral-600">See concrete cross-cohort analyses this run makes possible.</p>
+            {isDemo || alreadyHasIdeas ? (
+              <Button size="sm" asChild>
+                <Link href={page}>
+                  <Sparkles className="mr-1.5 h-4 w-4" />
+                  {alreadyHasIdeas && !isDemo ? "View analysis ideas" : "Generate analysis ideas"}
+                </Link>
+              </Button>
+            ) : (
+              <Button size="sm" disabled={busy} onClick={() => openDialog(false)}>
+                <Sparkles className="mr-1.5 h-4 w-4" /> Generate analysis ideas
+              </Button>
+            )}
           </div>
         )}
       </CardContent>
@@ -171,7 +193,8 @@ export function AnalysisIdeasPanel({
             <DialogTitle>Generate analysis ideas</DialogTitle>
             <DialogDescription>
               This runs one LLM pass over the run's harmonized concepts, so it needs your Anthropic API key.
-              The key is sent for this request only — never written to disk, logs, or the saved run.
+              The key is sent for this request only — never written to disk, logs, or the saved run. Your
+              ideas open on their own page when it's done.
             </DialogDescription>
           </DialogHeader>
           <Input

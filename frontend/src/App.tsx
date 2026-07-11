@@ -8,6 +8,7 @@ import LandingPage from "@/pages/landing";
 import HomePage from "@/pages/home";
 import DashboardPage from "@/pages/dashboard";
 import WorkbenchPage from "@/pages/workbench";
+import AnalysisIdeasPage from "@/pages/analysis-ideas";
 import JobsPage from "@/pages/jobs";
 import GuidePage from "@/pages/guide";
 import MethodsPage from "@/pages/methods";
@@ -42,6 +43,7 @@ export default function App() {
             <Route path="/related" component={RelatedWorkPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />
             <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
+            <Route path="/job/:jobId/analysis" component={AnalysisIdeasPage} />
             <Route path="/job/:jobId" component={DashboardPage} />
             <Route path="/jobs" component={JobsPage} />
             <Route>
