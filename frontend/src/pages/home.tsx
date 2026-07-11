@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
@@ -12,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { IS_STATIC, startHarmonize } from "@/lib/api";
+import { IS_STATIC, listModels, startHarmonize } from "@/lib/api";
 import { useAuthState } from "@/auth";
 import {
   ADVANCED_ROLES,
@@ -30,6 +31,21 @@ import {
 } from "@/types";
 
 const NONE = "__none__";
+
+// Human-facing provider labels + per-provider key hints for the picker. Providers not listed here
+// (e.g. "other") fall back to the raw id and a generic key field.
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  gemini: "Google Gemini",
+  local: "Local / on-prem",
+  other: "Other",
+};
+const PROVIDER_KEY_INFO: Record<string, { placeholder: string; link?: string }> = {
+  anthropic: { placeholder: "sk-ant-…", link: "https://console.anthropic.com/settings/keys" },
+  openai: { placeholder: "sk-…", link: "https://platform.openai.com/api-keys" },
+  gemini: { placeholder: "AIza…", link: "https://aistudio.google.com/apikey" },
+};
 
 interface DictFile {
   file: File;
@@ -57,6 +73,8 @@ export default function HomePage() {
   const [dicts, setDicts] = useState<DictFile[]>([]);
   const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
   const [runMode, setRunMode] = useState<RunMode>("batch");
+  const [provider, setProvider] = useState("anthropic");
+  const [model, setModel] = useState("");
   const [genTransformSpecs, setGenTransformSpecs] = useState(true);
   const [displayName, setDisplayName] = useState("");
   // BYOK: kept in component memory only — never persisted (no localStorage/sessionStorage), cleared on reload.
@@ -65,6 +83,7 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false);
 
   const needsKey = runMode !== "preview"; // batch + sync call the LLM; preview runs none
+  const needsProviderKey = needsKey && provider !== "local"; // local/on-prem models need no provider key
 
   const onDrop = useCallback(async (accepted: File[]) => {
     const added: DictFile[] = [];
@@ -104,6 +123,25 @@ export default function HomePage() {
     ? `${totalFields.toLocaleString()} fields · ${dicts.length} cohort${dicts.length > 1 ? "s" : ""} · ${runMode}`
     : "";
 
+  // Model catalog for the picker — from the proxy (via the backend) or a built-in fallback.
+  const { data: catalog } = useQuery({ queryKey: ["models"], queryFn: listModels });
+  const models = useMemo(() => catalog?.models ?? [], [catalog]);
+  const providers = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const m of models) if (!seen.has(m.provider)) (seen.add(m.provider), out.push(m.provider));
+    return out;
+  }, [models]);
+  const modelsForProvider = useMemo(() => models.filter((m) => m.provider === provider), [models, provider]);
+  // Keep `model` valid for the chosen provider: default to the first available whenever the current pick is
+  // empty or not in the provider's list (after the catalog loads, or when the provider changes).
+  useEffect(() => {
+    if (!modelsForProvider.length) return;
+    if (!model || !modelsForProvider.some((m) => m.id === model)) setModel(modelsForProvider[0].id);
+  }, [modelsForProvider, model]);
+  const providerLabel = PROVIDER_LABELS[provider] ?? provider;
+  const keyInfo = PROVIDER_KEY_INFO[provider];
+
   async function run() {
     if (isGuest) {
       toast.error("Sign in to run your own cohorts. The demo is available without an account.");
@@ -121,12 +159,12 @@ export default function HomePage() {
       }
     }
     const key = apiKey.trim();
-    if (needsKey) {
+    if (needsProviderKey) {
       if (!key) {
-        toast.error("Enter your Anthropic API key for batch/sync runs, or switch to Preview (no LLM).");
+        toast.error(`Enter your ${providerLabel} API key for batch/sync runs, or switch to Preview (no LLM).`);
         return;
       }
-      if (!key.startsWith("sk-ant-")) {
+      if (provider === "anthropic" && !key.startsWith("sk-ant-")) {
         toast.error("That doesn't look like an Anthropic API key — it should start with “sk-ant-”.");
         return;
       }
@@ -143,11 +181,14 @@ export default function HomePage() {
         runMode,
         genTransformSpecs,
         displayName: displayName || undefined,
+        modelTag: model || undefined,
+        provider,
       };
       const { jobId } = await startHarmonize(
         dicts.map((d) => d.file),
         config,
-        needsKey ? key : undefined,
+        provider,
+        needsProviderKey ? key : undefined,
       );
       navigate(`/job/${jobId}`);
     } catch (e) {
@@ -300,7 +341,45 @@ export default function HomePage() {
             {needsKey && (
               <div className="grid gap-1.5">
                 <Label className="flex items-center gap-1 text-xs">
-                  Anthropic API key <span className="text-ph-crimson">*</span>
+                  Provider <InfoTip text={OPTION_HELP.provider} label="About the provider options" />
+                </Label>
+                <Select value={provider} onValueChange={setProvider}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {providers.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {PROVIDER_LABELS[p] ?? p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {needsKey && (
+              <div className="grid gap-1.5">
+                <Label className="flex items-center gap-1 text-xs">
+                  Model <InfoTip text={OPTION_HELP.model} label="About the model options" />
+                </Label>
+                <Select value={model} onValueChange={setModel} disabled={!modelsForProvider.length}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder={modelsForProvider.length ? undefined : "No models available"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelsForProvider.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {needsProviderKey && (
+              <div className="grid gap-1.5">
+                <Label className="flex items-center gap-1 text-xs">
+                  {providerLabel} API key <span className="text-ph-crimson">*</span>
                   <InfoTip text={OPTION_HELP.apiKey} label="About the API key" />
                 </Label>
                 <div className="relative">
@@ -308,10 +387,10 @@ export default function HomePage() {
                     type={showKey ? "text" : "password"}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-ant-…"
+                    placeholder={keyInfo?.placeholder ?? "your API key"}
                     autoComplete="off"
                     spellCheck={false}
-                    aria-label="Anthropic API key"
+                    aria-label={`${providerLabel} API key`}
                     className="h-8 pr-8 font-mono"
                   />
                   <button
@@ -325,16 +404,23 @@ export default function HomePage() {
                 </div>
                 <p className="text-[11px] leading-tight text-neutral-400">
                   Used only for this run, sent over HTTPS — never stored, logged, or saved with the run.{" "}
-                  <a
-                    href="https://console.anthropic.com/settings/keys"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-ph-navy underline hover:text-ph-ink"
-                  >
-                    Get a key
-                  </a>
+                  {keyInfo?.link && (
+                    <a
+                      href={keyInfo.link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-ph-navy underline hover:text-ph-ink"
+                    >
+                      Get a key
+                    </a>
+                  )}
                 </p>
               </div>
+            )}
+            {needsKey && provider === "local" && (
+              <p className="text-[11px] leading-tight text-neutral-400">
+                Local / on-prem models run through the self-hosted proxy — no provider API key needed.
+              </p>
             )}
             <div className="grid gap-1.5">
               <Label className="flex items-center gap-1 text-xs">
@@ -369,13 +455,19 @@ export default function HomePage() {
             clustering and candidate retrieval on-box — no third-party LLM call, and none of your data is sent
             anywhere.
           </>
+        ) : provider === "local" ? (
+          <>
+            <span className="font-medium text-neutral-700">Stays on-prem.</span> Field names, descriptions, and
+            value labels are sent to your local / on-prem model via the self-hosted proxy — inside your compliance
+            boundary, not to any third-party cloud.
+          </>
         ) : (
           <>
-            <span className="font-medium text-neutral-700">Before you run:</span> in Batch mode the field names,
-            descriptions, and value labels from your dictionaries are sent to{" "}
-            <span className="font-medium text-neutral-700">Anthropic's API</span> — a third party we don't control
-            — to run concept assignment. The calls use your own key; your data is processed in memory for this run
-            only and nothing is retained after it completes. Switch to Preview to run with no LLM at all.
+            <span className="font-medium text-neutral-700">Before you run:</span> the field names, descriptions,
+            and value labels from your dictionaries are sent to{" "}
+            <span className="font-medium text-neutral-700">{providerLabel}'s API</span> — a third party we don't
+            control — to run concept assignment. The calls use your own key; your data is processed in memory for
+            this run only and nothing is retained after it completes. Switch to Preview to run with no LLM at all.
           </>
         )}
       </div>
@@ -522,8 +614,12 @@ const OPTION_HELP: Record<string, string> = {
     "Which Common Data Element catalog your fields are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
   runMode:
     "How the run executes. Batch: the LLM assignment runs asynchronously via the Anthropic Batch API (cost-bounded; needs your API key below). Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits.",
+  provider:
+    "Which LLM provider runs concept assignment. Anthropic uses the cost-bounded Batch API. Other providers (OpenAI, Gemini, local/on-prem) run synchronously and require the self-hosted LiteLLM proxy — or a backend updated with the unified client — to be configured; without it, only Anthropic executes.",
+  model:
+    "The specific model, taken from the proxy's catalog when a proxy is configured, or a built-in fallback list otherwise. This is the exact model the pipeline calls for assignment and transform specs.",
   apiKey:
-    "Your Anthropic API key authorizes this run's LLM calls (concept assignment + transform specs). It's sent over HTTPS for this run only — never written to disk, logs, or the saved run config, and it's cleared when you reload the page. Not needed for Preview mode, which runs no LLM. Get one at console.anthropic.com.",
+    "Your provider API key authorizes this run's LLM calls (concept assignment + transform specs). It's sent over HTTPS for this run only — never written to disk, logs, or the saved run config, and it's cleared when you reload the page. Not needed for Preview mode or local/on-prem models, which need no provider key.",
   displayName: "An optional label to recognize this run in the Runs list. Doesn't affect results.",
   genTransformSpecs:
     "For each adopt/refine assignment, draft the recipe to convert your raw values into the CDE's expected form — categorical value recodes, unit conversions, and arithmetic formulas. Turned off automatically in Preview mode.",
