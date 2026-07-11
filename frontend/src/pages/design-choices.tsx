@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PH } from "@/lib/links";
 import { DESIGN_CHOICES, type DesignChoice } from "@/data/design-choices";
+import { UnderReviewBanner } from "@/components/under-review-banner";
 
 /** Inline external link, styled + with an icon (matches the Methods/Benchmarks/Guide `A`). */
 function A({ href, children }: { href: string; children: React.ReactNode }) {
@@ -80,6 +81,8 @@ export default function DesignChoicesPage() {
           page (the scores).
         </p>
       </div>
+
+      <UnderReviewBanner />
 
       {/* Reading frame — how to interpret the cards, before any of them. */}
       <Card>

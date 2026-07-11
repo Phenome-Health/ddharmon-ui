@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PH } from "@/lib/links";
 import { BENCHMARKS, type Benchmark, type BenchmarkTier } from "@/data/benchmarks";
+import { UnderReviewBanner } from "@/components/under-review-banner";
 
 /** Inline external link, styled + with an icon (matches the Methods/Guide `A`). */
 function A({ href, children }: { href: string; children: React.ReactNode }) {
@@ -115,6 +116,8 @@ export default function BenchmarksPage() {
           page.
         </p>
       </div>
+
+      <UnderReviewBanner />
 
       {/* Benchmark-usage policy (honesty) — sets the reading frame before any number is shown. */}
       <Card>
