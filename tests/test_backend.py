@@ -1193,6 +1193,54 @@ def test_parse_ideas_salvages_truncated_json():
     assert ideas[0]["title"] == "One" and ideas[0]["concepts"] == ["A"]
 
 
+def test_build_llm_client_pins_model_and_routes():
+    """The shared client-builder honors the run's picked Claude model (the SDK's own default is a stale
+    snapshot), falls back to a current default, strips a proxy prefix, and buckets providers correctly."""
+    from backend.engine.llm import DEFAULT_CLAUDE_MODEL, build_llm_client, is_anthropic_model
+
+    assert is_anthropic_model(None) and is_anthropic_model("claude-sonnet-4-6") and is_anthropic_model("anthropic/x")
+    assert not is_anthropic_model("gpt-4o") and not is_anthropic_model("gemini/gemini-1.5-pro")
+    # Anthropic path (construction is lazy — no API call): model pinned / defaulted / de-prefixed.
+    assert build_llm_client("claude-sonnet-4-6", "k").model_name == "claude-sonnet-4-6"
+    assert build_llm_client(None, "k").model_name == DEFAULT_CLAUDE_MODEL
+    assert build_llm_client("anthropic/claude-opus-4-8", "k").model_name == "claude-opus-4-8"
+
+
+def test_generate_ideas_during_run_uses_the_runs_model(monkeypatch):
+    """When opted in (and not preview), the run generates ideas with the SAME model/provider/key it used —
+    no second key entry. build_llm_client is monkeypatched so no real LLM call is made."""
+    from backend import runner as runner_module
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            return '{"ideas": []}'  # exercised generation; no cross-cohort idea survives here
+
+    def fake_build(model_tag, api_key):
+        captured["model_tag"] = model_tag
+        captured["api_key"] = api_key
+        return _FakeClient()
+
+    monkeypatch.setattr("backend.engine.llm.build_llm_client", fake_build)
+    result = {"records": [{"concept": "BP", "cohorts": ["A", "B"], "verdict": "adopt", "cde": None, "nMembers": 2}]}
+    config = {"gen_analysis_ideas": True, "run_mode": "sync", "model_tag": "claude-sonnet-4-6"}
+
+    ideas = runner_module._generate_ideas(result, config, "sk-test")
+    assert ideas == []  # generation ran (empty result), not skipped
+    assert captured == {"model_tag": "claude-sonnet-4-6", "api_key": "sk-test"}
+
+
+def test_generate_ideas_skipped_when_not_applicable():
+    """No ideas pass for a preview run, an opted-out run, or a run with no records (all non-fatal → None)."""
+    from backend import runner as runner_module
+
+    recs = {"records": [{"concept": "BP", "cohorts": ["A", "B"]}]}
+    assert runner_module._generate_ideas(recs, {"gen_analysis_ideas": True, "run_mode": "preview"}, "k") is None
+    assert runner_module._generate_ideas(recs, {"gen_analysis_ideas": False, "run_mode": "sync"}, "k") is None
+    assert runner_module._generate_ideas({"records": []}, {"gen_analysis_ideas": True, "run_mode": "sync"}, "k") is None
+
+
 def test_analysis_ideas_endpoint_caches_scopes_and_gates(monkeypatch, tmp_path):
     """The endpoint generates via one BYOK LLM call, caches (no re-bill), regenerates on demand, scopes to
     the owner (404 for others), and 409s when the run has no concepts."""
