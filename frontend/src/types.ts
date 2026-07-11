@@ -179,6 +179,9 @@ export interface JobResult {
   completed: number;
   total: number;
   errorMessage: string | null;
+  // On a failed run, the pipeline stage it was in when it broke (e.g. "assigning"); null/absent otherwise.
+  // Feeds the "Report this problem" link so a filed issue names the failing stage.
+  failedPhase?: string | null;
   result: HarmonizationResult | null;
   config: Record<string, unknown>;
   decisions: Record<string, { decision: string; note: string }>;
@@ -212,6 +215,14 @@ export interface DictSpec {
   columnRoles: Record<string, string>;
 }
 
+// One selectable model in the "New Run" picker. The catalog comes from the LiteLLM proxy's
+// GET /model/info when a proxy is configured, else a built-in fallback list (see api.listModels).
+export interface ModelInfo {
+  id: string; // the model tag the engine routes on (e.g. "claude-sonnet-4-6", "gemini/gemini-1.5-pro")
+  provider: string; // "anthropic" | "openai" | "gemini" | "local" | "other"
+  label: string; // human-facing label for the dropdown
+}
+
 export interface RunConfig {
   dictionaries: DictSpec[];
   cdeSet: CdeSet;
@@ -223,7 +234,8 @@ export interface RunConfig {
   minClusterSize?: number;
   topK?: number;
   retrievalFloor?: number;
-  modelTag?: string;
+  modelTag?: string; // the chosen model id (from the picker); routes provider selection in the engine
+  provider?: string; // the chosen provider (informational; the engine derives routing from modelTag)
 }
 
 export type ExportFormat = "eitl_tsv" | "records_json" | "decisions_csv" | "notebook_py" | "notebook_r";

@@ -71,6 +71,36 @@ store.work_root = _WORK_ROOT
 # git pull but not a fresh clone — same lifetime as the CDE catalog). Override with DDHARMON_UI_DB.
 _DB_PATH = Path(os.environ.get("DDHARMON_UI_DB", _WORK_ROOT / "jobs.db"))
 
+# --- LiteLLM proxy (multi-provider gateway) --------------------------------------------------
+# When LITELLM_PROXY_URL is set, the model picker's catalog comes from the proxy's /v1/models and
+# non-Anthropic runs route through it. Unset (the default) → the picker shows a built-in fallback
+# catalog and only Anthropic executes. LITELLM_MASTER_KEY authorizes the proxy's admin endpoints
+# (catalog listing); it is read server-side only and is NEVER sent to the browser.
+LITELLM_PROXY_URL = os.environ.get("LITELLM_PROXY_URL", "").rstrip("/")
+LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
+
+# Built-in fallback model catalog (used when no proxy is configured) — mirrors the frontend fallback.
+_FALLBACK_MODELS: list[dict[str, str]] = [
+    {"id": "claude-sonnet-4-6", "provider": "anthropic", "label": "Claude Sonnet 4.6"},
+    {"id": "claude-opus-4-8", "provider": "anthropic", "label": "Claude Opus 4.8"},
+    {"id": "gpt-4o", "provider": "openai", "label": "GPT-4o"},
+    {"id": "gemini/gemini-1.5-pro", "provider": "gemini", "label": "Gemini 1.5 Pro"},
+]
+
+
+def _provider_for_model(model_id: str) -> str:
+    """Derive the provider bucket from a model id/prefix (mirrors ddharmon.llm provider prefixes)."""
+    m = (model_id or "").lower()
+    if m.startswith(("gemini/", "gemini-")):
+        return "gemini"
+    if m.startswith(("hosted_vllm/", "vllm", "ollama", "local", "local-")):
+        return "local"
+    if m.startswith(("gpt", "o1", "o3", "openai/")):
+        return "openai"
+    if m.startswith(("claude", "anthropic/")):
+        return "anthropic"
+    return "other"
+
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -187,6 +217,8 @@ async def start_batch(
     files: Annotated[list[UploadFile], File()],
     config: Annotated[str, Form()],
     x_anthropic_key: Annotated[str | None, Header()] = None,
+    x_provider_key: Annotated[str | None, Header()] = None,
+    x_provider: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
     """Start a harmonization run. ``config`` is a JSON string:
 
@@ -265,6 +297,15 @@ async def start_batch(
     ):
         if cfg.get(cfg_key) is not None:
             run_config[run_key] = int(cfg[cfg_key]) if cfg_key in ("minClusterSize", "topK") else cfg[cfg_key]
+    # Non-Anthropic providers have no Anthropic-style Batch API, so they run SYNCHRONOUSLY regardless of the
+    # requested runMode. Anthropic keeps the (default) cost-bounded batch path. Provider is derived from the
+    # selected model tag; the picker also sends x-provider as a hint (used only for logging/telemetry here).
+    selected_model = run_config.get("model_tag")
+    if run_config["run_mode"] == "batch" and selected_model and _provider_for_model(str(selected_model)) != "anthropic":
+        run_config["run_mode"] = "sync"
+    # BYOK: prefer the provider-agnostic header; fall back to the legacy Anthropic-specific one. Held in memory
+    # for this job only (thread kwarg below) — never written to run_config (persisted) or any log.
+    effective_key = x_provider_key or x_anthropic_key
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
     # Own the run (verified Clerk subject) and persist dict_specs so it can be re-run from its retained
     # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
@@ -273,10 +314,38 @@ async def start_batch(
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, dict_specs, cde_spec, run_config),
-        kwargs={"api_key": x_anthropic_key},
+        kwargs={"api_key": effective_key},
         daemon=True,
     ).start()
     return {"jobId": job_id}
+
+
+# --- /models ---------------------------------------------------------------------------------
+@app.get("/api/harmonize/models")
+def list_models() -> dict[str, Any]:
+    """Model catalog for the New Run picker. With a LiteLLM proxy configured (LITELLM_PROXY_URL), proxy its
+    OpenAI-compatible /v1/models catalog; otherwise return a built-in fallback list. The master key is used
+    server-side only (never returned to the browser). Any proxy error falls back to the built-in catalog so
+    the picker always renders."""
+    if LITELLM_PROXY_URL:
+        try:
+            import httpx
+
+            headers = {"Authorization": f"Bearer {LITELLM_MASTER_KEY}"} if LITELLM_MASTER_KEY else {}
+            resp = httpx.get(f"{LITELLM_PROXY_URL}/v1/models", headers=headers, timeout=5.0)
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            models: list[dict[str, str]] = []
+            for m in data:
+                mid = m.get("id") if isinstance(m, dict) else None
+                if mid:
+                    models.append({"id": mid, "provider": _provider_for_model(mid), "label": mid})
+            if models:
+                return {"models": models, "source": "proxy"}
+        except Exception:
+            # Proxy unreachable / misconfigured — fall through to the built-in catalog so the picker still works.
+            pass
+    return {"models": list(_FALLBACK_MODELS), "source": "fallback"}
 
 
 # --- SSE + result ----------------------------------------------------------------------------
