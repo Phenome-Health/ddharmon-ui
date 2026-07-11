@@ -52,8 +52,38 @@ class Job:
     # {"transforms": {source_variable: {decision, note}}} — one independent verdict per "cohort:var" edge,
     # so a record with several transforms carries several transform verdicts alongside the single match one.
     decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Ownership + re-run support (durable per-user history). owner_subject is the verified Clerk subject
+    # (None for demos / when the auth gate is disabled). dict_specs are the per-dictionary load specs
+    # (paths + column roles + cohort names) needed to re-execute the run from its retained uploads. Neither
+    # is exposed by to_dict() — owner_subject must never leak to the client.
+    owner_subject: str | None = None
+    dict_specs: list[dict[str, Any]] | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    # Record count carried on a DB-hydrated summary (result blob not loaded); used by summary_dict when
+    # ``result`` is absent so the runs list shows a count without the heavy payload.
+    n_records: int = 0
+
+    @classmethod
+    def from_db_row(cls, d: dict[str, Any]) -> Job:
+        """Rebuild a Job from a :class:`~backend.db.JobDB` record dict (full or summary)."""
+        return cls(
+            job_id=d["job_id"],
+            display_name=d.get("display_name") or "",
+            status=d.get("status", "complete"),
+            phase=d.get("phase", "complete"),
+            completed=d.get("completed", 0),
+            total=d.get("total", 0),
+            error_message=d.get("error_message"),
+            result=d.get("result"),
+            config=d.get("config", {}) or {},
+            decisions=d.get("decisions", {}) or {},
+            owner_subject=d.get("owner_subject"),
+            dict_specs=d.get("dict_specs"),
+            created_at=d["created_at"],
+            updated_at=d["updated_at"],
+            n_records=d.get("n_records", 0),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,22 +105,31 @@ class Job:
         """Lightweight view for the jobs list (omits the heavy result payload)."""
         d = self.to_dict()
         d.pop("result", None)
-        d["nRecords"] = len(self.result["records"]) if self.result else 0
+        # Prefer the live result count; fall back to the persisted n_records hint for DB-hydrated summaries.
+        d["nRecords"] = len(self.result["records"]) if self.result else self.n_records
         return d
 
 
 class JobStore:
-    """Thread-safe in-memory job registry with TTL purging."""
+    """Thread-safe in-memory job registry, mirrored to an optional durable :class:`~backend.db.JobDB`.
 
-    def __init__(self, ttl_seconds: int = _TTL_SECONDS, work_root: Path | None = None) -> None:
+    The in-memory layer serves live SSE progress and holds demos. When a ``db`` is attached, real (owned,
+    non-pinned) runs are written through to SQLite on **create**, on **terminal** update (complete/error),
+    and whenever a **verdict** is recorded — so a user's history survives restarts and is scoped to them.
+    Progress ticks are NOT persisted (they live in memory; the SSE endpoint reads them there).
+    """
+
+    def __init__(self, ttl_seconds: int = _TTL_SECONDS, work_root: Path | None = None, db: Any | None = None) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._ttl = ttl_seconds
         # Root of the per-job on-disk scratch dirs (``<work_root>/<job_id>`` holds uploads + prompts +
-        # substrate). The app sets this after import. When a job is deleted or ages out we tear its dir
-        # down so uploaded dictionaries never outlive the run (WS-3 data-retention guarantee). None ->
-        # no teardown (tests, and demos which keep no scratch dir).
+        # substrate). The app sets this after import. Torn down only on explicit delete now — owned runs
+        # retain their uploads so they can be re-run (see PERSIST-RUNS-PLAN.md). None -> no teardown
+        # (tests, and demos which keep no scratch dir).
         self.work_root = work_root
+        # Durable per-user store (backend.db.JobDB) or None (tests / no persistence -> legacy behavior).
+        self.db = db
 
     def _teardown_work_dir(self, job_id: str) -> None:
         """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone."""
@@ -98,23 +137,66 @@ class JobStore:
             return
         shutil.rmtree(self.work_root / job_id, ignore_errors=True)
 
-    def create(self, job_id: str, display_name: str, config: dict[str, Any]) -> Job:
+    def _persist(self, job: Job) -> None:
+        """Write a job through to the durable store — unless it's pinned (demos/samples aren't persisted)."""
+        if self.db is None or _is_pinned(job):
+            return
+        self.db.upsert(job)
+
+    def create(
+        self,
+        job_id: str,
+        display_name: str,
+        config: dict[str, Any],
+        owner_subject: str | None = None,
+        dict_specs: list[dict[str, Any]] | None = None,
+    ) -> Job:
         with self._lock:
-            job = Job(job_id=job_id, display_name=display_name, config=config)
+            job = Job(
+                job_id=job_id,
+                display_name=display_name,
+                config=config,
+                owner_subject=owner_subject,
+                dict_specs=dict_specs,
+            )
             self._jobs[job_id] = job
-            return job
+        self._persist(job)
+        return job
 
     def get(self, job_id: str) -> Job | None:
+        """The live in-memory job, else a durable record hydrated from the DB (evicted / post-restart)."""
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+        if job is not None:
+            return job
+        if self.db is not None:
+            row = self.db.get(job_id)
+            if row is not None:
+                return Job.from_db_row(row)
+        return None
 
-    def list(self) -> list[Job]:
+    def list(self, owner_subject: str | None = None) -> list[Job]:
+        """Runs visible to ``owner_subject``: their durable history + any live runs + all demos.
+
+        Without a ``db`` (tests / legacy) this returns every in-memory job, unscoped — the prior behavior.
+        """
         with self._lock:
-            return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
+            mem = sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
+        if self.db is None:
+            return mem
+        demos = [j for j in mem if _is_pinned(j)]
+        live_owned = [j for j in mem if not _is_pinned(j) and j.owner_subject == owner_subject]
+        live_ids = {j.job_id for j in demos} | {j.job_id for j in live_owned}
+        durable = [Job.from_db_row(r) for r in self.db.list_owned(owner_subject) if r["job_id"] not in live_ids]
+        return sorted(demos + live_owned + durable, key=lambda j: j.created_at, reverse=True)
 
     def delete(self, job_id: str) -> bool:
         with self._lock:
             existed = self._jobs.pop(job_id, None) is not None
+        if self.db is not None:
+            durable = self.db.get(job_id) is not None
+            self.db.delete(job_id)
+            existed = existed or durable
         # rmtree outside the lock — filesystem I/O shouldn't block the registry. Idempotent either way.
         self._teardown_work_dir(job_id)
         return existed
@@ -128,6 +210,9 @@ class JobStore:
             for key, value in fields.items():
                 setattr(job, key, value)
             job.updated_at = time.time()
+            persist = job.status in TERMINAL_STATES  # mirror only on terminal transitions, not every tick
+        if persist:
+            self._persist(job)
 
     def set_decision(
         self,
@@ -145,24 +230,49 @@ class JobStore:
         ``decisions[record_id]["transforms"][source_variable] = {"decision", "note"}`` — one verdict per
         ``cohort:var`` edge, so a record's several transforms carry independent verdicts without clobbering the
         match verdict. A transform-axis call without ``source_variable`` is a no-op (caller must supply it).
+
+        Works on a past (evicted / post-restart) run too: if it's not live in memory it is hydrated from the
+        durable store, the verdict applied, and the whole record re-persisted — so reviewing history later
+        records verdicts durably.
         """
+        if axis == "transform" and not source_variable:
+            return False
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None:
+            if job is not None:
+                self._apply_decision(job, record_id, decision, note, axis, source_variable)
+        if job is None:  # not live — hydrate the durable record, mutate it, and write it back
+            if self.db is None:
                 return False
-            rec = job.decisions.setdefault(record_id, {})
-            if axis == "transform":
-                if not source_variable:
-                    return False
-                transforms: dict[str, Any] = rec.setdefault("transforms", {})
-                transforms[source_variable] = {"decision": decision, "note": note}
-            else:
-                rec["decision"] = decision
-                rec["note"] = note
-            job.updated_at = time.time()
-            return True
+            row = self.db.get(job_id)
+            if row is None:
+                return False
+            job = Job.from_db_row(row)
+            self._apply_decision(job, record_id, decision, note, axis, source_variable)
+        self._persist(job)  # verdicts must survive a restart
+        return True
+
+    @staticmethod
+    def _apply_decision(
+        job: Job, record_id: str, decision: str, note: str, axis: str, source_variable: str | None
+    ) -> None:
+        rec = job.decisions.setdefault(record_id, {})
+        if axis == "transform":
+            transforms: dict[str, Any] = rec.setdefault("transforms", {})
+            transforms[source_variable] = {"decision": decision, "note": note}  # type: ignore[index]
+        else:
+            rec["decision"] = decision
+            rec["note"] = note
+        job.updated_at = time.time()
 
     def purge_expired(self) -> None:
+        """Evict aged terminal runs from memory (RAM hygiene). Pinned runs (demos) are exempt.
+
+        With a durable ``db``, the row and the on-disk uploads are intentionally RETAINED — the run stays in
+        the user's history (served from the DB) and can be re-run until they explicitly delete it. Without a
+        ``db`` (legacy single-process), eviction also tears the scratch dir down so uploads never outlive the
+        run (the original WS-3 guarantee).
+        """
         cutoff = time.time() - self._ttl
         with self._lock:
             stale = [
@@ -172,8 +282,9 @@ class JobStore:
             ]
             for jid in stale:
                 self._jobs.pop(jid, None)
-        for jid in stale:  # tear scratch dirs down outside the lock (see delete)
-            self._teardown_work_dir(jid)
+        if self.db is None:  # legacy: no durable copy -> uploads must not outlive the run
+            for jid in stale:
+                self._teardown_work_dir(jid)
 
 
 # Module-level singleton used by the app.
