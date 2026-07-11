@@ -1,7 +1,7 @@
 // Tiny typed fetch client for the ddharmon harmonization API (replaces Orval codegen).
 // With VITE_STATIC=1 the client reads bundled fixtures under <base>/static-data instead of /api,
 // so the SPA runs fully static (sample runs + exports, no backend, no key) for a preview deploy.
-import type { DemosResponse, ExportFormat, JobResult, JobSummary, RunConfig } from "@/types";
+import type { DemosResponse, ExportFormat, JobResult, JobSummary, ModelInfo, RunConfig } from "@/types";
 
 const BASE = "/api/harmonize";
 export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
@@ -70,9 +70,28 @@ export async function detectRoles(columns: string[]): Promise<{ columnRoles: Rec
   );
 }
 
+// Built-in fallback catalog for the model picker — used in static preview (no backend) and mirrors the
+// backend's fallback when no LiteLLM proxy is configured. Kept small and provider-diverse so the picker
+// is visibly multi-provider even without a proxy.
+const FALLBACK_MODELS: ModelInfo[] = [
+  { id: "claude-sonnet-4-6", provider: "anthropic", label: "Claude Sonnet 4.6" },
+  { id: "claude-opus-4-8", provider: "anthropic", label: "Claude Opus 4.8" },
+  { id: "gpt-4o", provider: "openai", label: "GPT-4o" },
+  { id: "gemini/gemini-1.5-pro", provider: "gemini", label: "Gemini 1.5 Pro" },
+];
+
+export async function listModels(): Promise<{ models: ModelInfo[]; source: string }> {
+  // The picker's catalog: the backend proxies GET /model/info from the LiteLLM proxy when one is
+  // configured, else returns a built-in fallback. In static preview there is no backend, so serve the
+  // same fallback client-side.
+  if (IS_STATIC) return { models: FALLBACK_MODELS, source: "static" };
+  return json(await fetch(`${BASE}/models`, { headers: await authed() }));
+}
+
 export async function startHarmonize(
   _files: File[],
   _config: RunConfig,
+  _provider?: string,
   _apiKey?: string,
 ): Promise<{ jobId: string }> {
   if (IS_STATIC) throw new Error(STATIC_MSG);
@@ -81,9 +100,14 @@ export async function startHarmonize(
   fd.append("config", JSON.stringify(_config));
   // BYOK: the key rides as a transport-only header, never in the config body (which is persisted as the
   // job's run_config). The backend reads it per-request and holds it in memory for the job only — never
-  // written to disk/logs. Not set for preview runs (no LLM). Don't set Content-Type here: fetch derives
-  // the multipart boundary from the FormData body. `authed()` adds the Clerk Bearer when the gate is on.
-  const headers = await authed(_apiKey ? { "x-anthropic-key": _apiKey } : {});
+  // written to disk/logs. Not set for preview runs / local models (no provider key needed). Don't set
+  // Content-Type here: fetch derives the multipart boundary from the FormData body. `authed()` adds the
+  // Clerk Bearer when the gate is on. `x-provider` tells the backend which provider the key is for; the
+  // engine still routes on the model tag in the config.
+  const extra: Record<string, string> = {};
+  if (_apiKey) extra["x-provider-key"] = _apiKey;
+  if (_provider) extra["x-provider"] = _provider;
+  const headers = await authed(extra);
   return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers }));
 }
 
