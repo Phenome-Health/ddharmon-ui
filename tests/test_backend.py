@@ -14,6 +14,7 @@ import json
 import time
 
 import numpy as np
+import pytest
 from ddharmon.clustering.topic_engine import collect_inputs
 from ddharmon.embedding.provider import EmbeddingProvider
 from ddharmon.harmonization.leanb import LeanBResult
@@ -730,6 +731,31 @@ def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
         stage_overrides=overrides,
     )
     assert "loading" in seen and "embedding" in seen and "clustering" in seen
+
+
+def test_run_pipeline_empty_dictionary_raises_clear_error(tmp_path):
+    """A file with no usable fields (header-only, or columns that didn't map) must fail with a clear,
+    actionable message — NOT a cryptic ``need at least one array to stack`` from an empty embedding stack.
+
+    Regression: an empty embedded dictionary reached ``_atlas_points``/``collect_inputs``, which did
+    ``np.stack([])`` on its (empty) vectors and raised deep in numpy. Reported live as "Error 3/3:
+    need at least one array to stack" on a run whose uploaded file had only a header row.
+    """
+    empty = tmp_path / "empty.csv"
+    empty.write_text("var,desc\n")  # header only -> zero data rows -> zero fields
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    dict_specs = [
+        {"path": str(empty), "cohort_name": "CohortA", "column_roles": {"variable_name": "var", "description": "desc"}}
+    ]
+    cde_spec = {
+        "path": str(cde),
+        "cohort_name": "NIH_CDE",
+        "column_roles": {"variable_name": "designation", "description": "definition"},
+    }
+    config = {"run_mode": "preview", "cde_cohort": "NIH_CDE", "work_dir": str(tmp_path)}
+    with pytest.raises(ValueError, match="No usable fields"):
+        run_pipeline(dict_specs, cde_spec, config, provider=StubProvider())
 
 
 def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_path):
