@@ -32,7 +32,11 @@ def run_harmonization(
     """Run a job to completion, reporting phase progress to ``store``. Safe to run in a thread.
 
     ``provider`` and ``stage_overrides`` are injected by tests to avoid any model download / LLM call.
-    ``api_key`` is the optional per-request BYOK Anthropic key (in-memory, this job only; never persisted).
+    ``api_key`` is the optional per-request BYOK key (in-memory, this job only; never persisted).
+
+    When ``config['gen_analysis_ideas']`` is set (the New Run "Suggest analysis ideas" toggle) and the run
+    used an LLM (not preview), one extra pass generates the analysis ideas with the SAME model/provider/key
+    the run used, so they're ready on the results page without a second key entry.
     """
 
     def progress(phase: str, completed: int = 0, total: int = 0) -> None:
@@ -48,7 +52,11 @@ def run_harmonization(
             stage_overrides=stage_overrides,
             api_key=api_key,
         )
-        store.update(job_id, status="complete", phase="complete", result=result)
+        fields: dict[str, Any] = {"status": "complete", "phase": "complete", "result": result}
+        ideas = _generate_ideas(result, config, api_key)  # None unless opted-in + produced
+        if ideas is not None:
+            fields["analysis_ideas"] = ideas
+        store.update(job_id, **fields)
         logger.info("job %s complete: %d records", job_id, len(result["records"]))
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI rather than crash the thread
         logger.exception("job %s failed", job_id)
@@ -57,3 +65,27 @@ def run_harmonization(
         failing = store.get(job_id)
         failed_phase = failing.phase if failing and failing.phase not in ("error", "pending") else None
         store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)
+
+
+def _generate_ideas(result: dict[str, Any], config: dict[str, Any], api_key: str | None) -> list[dict[str, Any]] | None:
+    """Generate "analysis ideas" as part of the run when opted in — using the SAME model/provider/key the
+    run used (via :func:`backend.engine.llm.build_llm_client`), so the results page has them with no second
+    key entry. Returns the ideas list (possibly empty), or None when skipped/failed.
+
+    Non-fatal by design: a preview run (no LLM), an opted-out run, a run with no records, or any error here
+    just yields None — the harmonization still completes, and the user can generate on-demand later.
+    """
+    if not config.get("gen_analysis_ideas") or config.get("run_mode") == "preview":
+        return None
+    records = result.get("records") or []
+    if not records:
+        return None
+    try:
+        from backend.analysis_ideas import generate_analysis_ideas
+        from backend.engine.llm import build_llm_client
+
+        client = build_llm_client(config.get("model_tag"), api_key)
+        return generate_analysis_ideas(records, client.complete)["ideas"]
+    except Exception:  # noqa: BLE001 — analysis ideas are a bonus; never fail the run over them
+        logger.warning("analysis-ideas generation failed (non-fatal)", exc_info=True)
+        return None

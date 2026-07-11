@@ -232,6 +232,8 @@ export interface RunConfig {
   cdeSet: CdeSet;
   runMode: RunMode;
   genTransformSpecs: boolean;
+  // Generate "analysis ideas" during the run (one extra LLM pass, same model/provider/key). No-op in preview.
+  suggestAnalysisIdeas: boolean;
   displayName?: string;
   // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
   // omitted, and falls back to harmonize_leanb's own defaults for the rest)
@@ -357,6 +359,9 @@ export function formatUsd(x: number): string {
 // Per-stage cost shares of the LLM total, from an observed run: split+assign ≈77%, gen-ideal ≈7%,
 // spec-gen ≈15% (embedding/clustering are local → $0). Used for the itemized estimate.
 const STAGE_SHARES = { ideal: 0.07, splitAssign: 0.77, specgen: 0.15 };
+// "Analysis ideas" is ONE LLM pass over the concept digest (not per-field), so it's a small flat add on top
+// of the run — independent of corpus size and of batch/sync (it always runs synchronously).
+const ANALYSIS_IDEAS_USD = 0.05;
 export interface CostLine {
   label: string;
   cost: number;
@@ -373,6 +378,7 @@ export function estimateRunCostBreakdown(
   nCohorts: number,
   mode: RunMode,
   genSpecs: boolean,
+  suggestIdeas = false,
 ): CostBreakdown {
   if (mode === "preview" || totalFields <= 0) {
     return { free: true, lines: [], total: { low: 0, mid: 0, high: 0, free: true }, batchSavings: 0 };
@@ -387,6 +393,7 @@ export function estimateRunCostBreakdown(
     { label: "Split + assign to CDEs", cost: line(STAGE_SHARES.splitAssign) },
   ];
   if (genSpecs) lines.push({ label: "Transform spec-gen", cost: line(STAGE_SHARES.specgen) });
+  if (suggestIdeas) lines.push({ label: "Analysis ideas", cost: ANALYSIS_IDEAS_USD, note: "one LLM pass" });
   const mid = lines.reduce((s, l) => s + l.cost, 0);
   return {
     free: false,

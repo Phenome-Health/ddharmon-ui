@@ -84,6 +84,7 @@ export default function HomePage() {
   const [provider, setProvider] = useState("anthropic");
   const [model, setModel] = useState("");
   const [genTransformSpecs, setGenTransformSpecs] = useState(true);
+  const [suggestAnalysisIdeas, setSuggestAnalysisIdeas] = useState(true);
   const [displayName, setDisplayName] = useState("");
   // BYOK: kept in component memory only — never persisted (no localStorage/sessionStorage), cleared on reload.
   const [apiKey, setApiKey] = useState("");
@@ -124,8 +125,8 @@ export default function HomePage() {
 
   const totalFields = useMemo(() => dicts.reduce((s, d) => s + d.nFields, 0), [dicts]);
   const cost = useMemo(
-    () => estimateRunCostBreakdown(totalFields, dicts.length, runMode, genTransformSpecs),
-    [totalFields, dicts.length, runMode, genTransformSpecs],
+    () => estimateRunCostBreakdown(totalFields, dicts.length, runMode, genTransformSpecs, suggestAnalysisIdeas),
+    [totalFields, dicts.length, runMode, genTransformSpecs, suggestAnalysisIdeas],
   );
   const time = useMemo(
     () => estimateRunTime(totalFields, dicts.length, runMode),
@@ -197,6 +198,7 @@ export default function HomePage() {
         cdeSet,
         runMode,
         genTransformSpecs,
+        suggestAnalysisIdeas,
         displayName: displayName || undefined,
         modelTag: model || undefined,
         provider,
@@ -466,6 +468,23 @@ export default function HomePage() {
             <Switch checked={genTransformSpecs} onCheckedChange={setGenTransformSpecs} disabled={runMode === "preview"} />
           </div>
 
+          <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2">
+            <div>
+              <Label className="flex items-center gap-1 text-sm">
+                Suggest analysis ideas{" "}
+                <InfoTip text={OPTION_HELP.suggestAnalysisIdeas} label="About analysis-idea suggestions" />
+              </Label>
+              <p className="text-xs text-neutral-400">
+                Downstream cross-cohort analyses this run unlocks, ready on the results page.
+              </p>
+            </div>
+            <Switch
+              checked={suggestAnalysisIdeas}
+              onCheckedChange={setSuggestAnalysisIdeas}
+              disabled={runMode === "preview"}
+            />
+          </div>
+
         </CardContent>
       </Card>
 
@@ -655,4 +674,6 @@ const OPTION_HELP: Record<string, string> = {
   displayName: "An optional label to recognize this run in the Runs list. Doesn't affect results.",
   genTransformSpecs:
     "For each adopt/refine assignment, draft the recipe to convert your raw values into the CDE's expected form — categorical value recodes, unit conversions, and arithmetic formulas. Turned off automatically in Preview mode.",
+  suggestAnalysisIdeas:
+    "After the run, do one extra LLM pass (same model, provider, and key as the run) suggesting concrete downstream cross-cohort analyses this harmonization unlocks — ready on the results page, no second key entry. Metadata-only (it suggests, never runs anything). A small added cost, shown in the estimate; off automatically in Preview mode.",
 };

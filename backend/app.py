@@ -282,6 +282,9 @@ async def start_batch(
     run_config: dict[str, Any] = {
         "run_mode": run_mode,
         "gen_transform_specs": bool(cfg.get("genTransformSpecs", True)),
+        # "Suggest analysis ideas" toggle — generate them during the run (same model/provider/key) so the
+        # results page has them ready. No-op in preview (no LLM). The runner reads this.
+        "gen_analysis_ideas": bool(cfg.get("suggestAnalysisIdeas", True)),
         "cde_cohort": CDE_COHORT,
         "work_dir": str(work_dir),
         "cde_set": cde_set,
@@ -475,11 +478,12 @@ def analysis_ideas(
     if not records:
         raise HTTPException(status_code=409, detail="This run has no harmonized concepts to analyze yet.")
 
-    from ddharmon.llm.anthropic_client import AnthropicClient
-
     from backend.analysis_ideas import generate_analysis_ideas
+    from backend.engine.llm import build_llm_client
 
-    client = AnthropicClient(api_key=x_anthropic_key)  # BYOK — in-memory, this request only; never persisted
+    # Use the SAME model/provider the run was configured with (its persisted model_tag), not the SDK's stale
+    # default. BYOK: the key is in-memory for this request only — never persisted or logged.
+    client = build_llm_client(job.config.get("model_tag"), x_anthropic_key)
     out = generate_analysis_ideas(records, client.complete)
     store.set_analysis_ideas(job_id, out["ideas"])
     return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
