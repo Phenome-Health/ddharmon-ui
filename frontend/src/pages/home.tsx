@@ -47,6 +47,11 @@ const PROVIDER_KEY_INFO: Record<string, { placeholder: string; link?: string }> 
   gemini: { placeholder: "AIza…", link: "https://aistudio.google.com/apikey" },
 };
 
+// Models validated end-to-end with ddharmon are selectable; the rest render greyed-out/disabled until we
+// finish testing them. So far only Anthropic's Claude Sonnet 4.6 has been validated. Matched tolerantly so a
+// proxy-returned id like "anthropic/claude-sonnet-4-6" also counts.
+const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
+
 interface DictFile {
   file: File;
   cohortName: string;
@@ -137,9 +142,14 @@ export default function HomePage() {
   // empty or not in the provider's list (after the catalog loads, or when the provider changes).
   useEffect(() => {
     if (!modelsForProvider.length) return;
-    if (!model || !modelsForProvider.some((m) => m.id === model)) setModel(modelsForProvider[0].id);
+    // Default to the first TESTED model for the provider (so Anthropic lands on Sonnet 4.6); fall back to the
+    // first listed only if the provider has no tested model yet. Also re-default if the current pick is a
+    // now-disabled (untested) model.
+    const valid = model && modelsForProvider.some((m) => m.id === model && isModelTested(m.id));
+    if (!valid) setModel((modelsForProvider.find((m) => isModelTested(m.id)) ?? modelsForProvider[0]).id);
   }, [modelsForProvider, model]);
   const providerLabel = PROVIDER_LABELS[provider] ?? provider;
+  const isProviderTested = (p: string): boolean => models.some((m) => m.provider === p && isModelTested(m.id));
   const keyInfo = PROVIDER_KEY_INFO[provider];
 
   async function run() {
@@ -348,11 +358,14 @@ export default function HomePage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {providers.map((p) => (
-                      <SelectItem key={p} value={p}>
-                        {PROVIDER_LABELS[p] ?? p}
-                      </SelectItem>
-                    ))}
+                    {providers.map((p) => {
+                      const tested = isProviderTested(p);
+                      return (
+                        <SelectItem key={p} value={p} disabled={!tested}>
+                          {(PROVIDER_LABELS[p] ?? p) + (tested ? "" : " · not yet tested")}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -367,11 +380,14 @@ export default function HomePage() {
                     <SelectValue placeholder={modelsForProvider.length ? undefined : "No models available"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {modelsForProvider.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
+                    {modelsForProvider.map((m) => {
+                      const tested = isModelTested(m.id);
+                      return (
+                        <SelectItem key={m.id} value={m.id} disabled={!tested}>
+                          {m.label + (tested ? "" : " · not yet tested")}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -615,9 +631,9 @@ const OPTION_HELP: Record<string, string> = {
   runMode:
     "How the run executes. Batch: the LLM assignment runs asynchronously via the Anthropic Batch API (cost-bounded; needs your API key below). Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits.",
   provider:
-    "Which LLM provider runs concept assignment. Anthropic uses the cost-bounded Batch API. Other providers (OpenAI, Gemini, local/on-prem) run synchronously and require the self-hosted LiteLLM proxy — or a backend updated with the unified client — to be configured; without it, only Anthropic executes.",
+    "Which LLM provider runs concept assignment. Only providers we've validated end-to-end with ddharmon are selectable; the others are shown greyed-out and will unlock as we finish testing them. So far ddharmon has been tested only with Anthropic (Claude Sonnet 4.6). Anthropic uses the cost-bounded Batch API; other providers will run synchronously via the self-hosted proxy.",
   model:
-    "The specific model, taken from the proxy's catalog when a proxy is configured, or a built-in fallback list otherwise. This is the exact model the pipeline calls for assignment and transform specs.",
+    "The specific model the pipeline calls for concept assignment and transform specs. Only models we've validated with ddharmon are selectable — so far that's Anthropic's Claude Sonnet 4.6. Greyed-out models are shown for visibility and become available once we've completed testing on them.",
   apiKey:
     "Your provider API key authorizes this run's LLM calls (concept assignment + transform specs). It's sent over HTTPS for this run only — never written to disk, logs, or the saved run config, and it's cleared when you reload the page. Not needed for Preview mode or local/on-prem models, which need no provider key.",
   displayName: "An optional label to recognize this run in the Runs list. Doesn't affect results.",
