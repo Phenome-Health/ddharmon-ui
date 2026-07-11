@@ -94,6 +94,24 @@ def test_jobstore_lifecycle():
     assert s.get("j1") is None
 
 
+def test_jobstore_stamps_phase_start_timings():
+    """Each first entry into a phase is timestamped (for the run view's elapsed/ETA + stage timeline); a later
+    tick in the same phase does NOT reset it, the terminal phase is stamped, and it surfaces as phaseStartedAt."""
+    s = JobStore()
+    s.create("jt", "Timed run", {"run_mode": "batch"})
+    assert s.get("jt").phase_timings == {}  # create() doesn't stamp "pending"
+    s.update("jt", status="embedding", phase="embedding", completed=0, total=100)
+    first = s.get("jt").phase_timings["embedding"]
+    s.update("jt", status="embedding", phase="embedding", completed=50, total=100)  # later tick, same phase
+    assert s.get("jt").phase_timings["embedding"] == first  # kept the START time, not reset
+    s.update("jt", status="assigning", phase="assigning")
+    s.update("jt", status="complete", phase="complete")
+    timings = s.get("jt").phase_timings
+    assert set(timings) >= {"embedding", "assigning", "complete"}
+    assert timings["embedding"] <= timings["assigning"] <= timings["complete"]
+    assert s.get("jt").to_dict()["phaseStartedAt"] == timings
+
+
 # ── contract mapping (the insulation boundary) ──────────────────
 
 

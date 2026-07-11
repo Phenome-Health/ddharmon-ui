@@ -70,6 +70,10 @@ class Job:
     # Record count carried on a DB-hydrated summary (result blob not loaded); used by summary_dict when
     # ``result`` is absent so the runs list shows a count without the heavy payload.
     n_records: int = 0
+    # Wall-clock epoch when the run FIRST entered each reported phase (loading/embedding/.../complete). LIVE
+    # only: streamed as ``phaseStartedAt`` for the run view's elapsed + ETA + per-stage timeline. NOT persisted
+    # (a DB-hydrated historical run starts empty here, so the UI falls back to total elapsed for old runs).
+    phase_timings: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_db_row(cls, d: dict[str, Any]) -> Job:
@@ -108,6 +112,7 @@ class Job:
             "config": self.config,
             "decisions": self.decisions,
             "analysisIdeas": self.analysis_ideas,
+            "phaseStartedAt": self.phase_timings,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -221,6 +226,11 @@ class JobStore:
                 return
             for key, value in fields.items():
                 setattr(job, key, value)
+            # Stamp the first entry into each phase (incl. the terminal complete/error) so the run view can
+            # show a per-stage timeline + a live ETA. setdefault → the START time; later ticks don't reset it.
+            new_phase = fields.get("phase")
+            if new_phase:
+                job.phase_timings.setdefault(new_phase, time.time())
             job.updated_at = time.time()
             persist = job.status in TERMINAL_STATES  # mirror only on terminal transitions, not every tick
         if persist:

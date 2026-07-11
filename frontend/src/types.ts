@@ -192,6 +192,10 @@ export interface JobResult {
   // Present on the bundled demo fixture: per-phase wall-clock from the real build run, used to pace the
   // client-side replay in static (backend-less) mode so the Netlify demo feels like a live run.
   phaseTimings?: Record<string, number>;
+  // LIVE runs only: wall-clock epoch (seconds) when the run first entered each reported phase — the
+  // backend "stage-event stream". Powers the run view's per-stage timeline + elapsed. Absent on DB-hydrated
+  // historical runs (which fall back to total elapsed = updatedAt − createdAt).
+  phaseStartedAt?: Record<string, number>;
 }
 
 export interface JobSummary extends Omit<JobResult, "result" | "analysisIdeas"> {
@@ -390,6 +394,56 @@ export function estimateRunCostBreakdown(
     total: { low: mid * 0.6, mid, high: mid * 1.6, free: false },
     batchSavings: mode === "batch" ? mid : 0, // sync would cost ~2×, so batch saves ≈ mid
   };
+}
+
+// Rough WALL-CLOCK estimate for a run — the time analog of estimateRunCost, and the SAME model used for
+// both the pre-run estimate (New Run form) and the live ETA (run view). Much rougher than cost: embedding
+// + clustering are local CPU (scale with fields); the LLM stages dominate the rest. Batch turnaround is set
+// mostly by the Anthropic Batch API QUEUE (minutes to tens of minutes, only weakly tied to size), so its
+// range is wide and flagged. Sync scales ~linearly with fields; preview is local-only. Order-of-magnitude —
+// meant to set expectations, not promise a deadline.
+const LOCAL_BASE_SECS = 15; // fixed model-load + setup before any per-field work
+const LOCAL_PER_FIELD_SECS = 0.03; // embedding + UMAP/HDBSCAN, per field
+const SYNC_PER_FIELD_SECS = 0.5; // sequential LLM calls (ideal + split + assign + specs), per field
+const BATCH_QUEUE_SECS = 300; // typical Batch API turnaround floor — highly variable (see `note`)
+
+export interface TimeEstimate {
+  low: number; // seconds
+  mid: number;
+  high: number;
+  note?: string; // caveat to show alongside (e.g. batch queue variance)
+}
+export function estimateRunTime(totalFields: number, nCohorts: number, mode: RunMode): TimeEstimate {
+  if (totalFields <= 0) return { low: 0, mid: 0, high: 0 };
+  const cohortFactor = 1 + 0.08 * Math.max(0, nCohorts - 1); // cross-cohort assign work grows with cohorts
+  const local = LOCAL_BASE_SECS + totalFields * LOCAL_PER_FIELD_SECS;
+  if (mode === "preview") return { low: local * 0.6, mid: local, high: local * 1.5 };
+  if (mode === "sync") {
+    const mid = local + totalFields * SYNC_PER_FIELD_SECS * cohortFactor;
+    return { low: mid * 0.6, mid, high: mid * 1.8 };
+  }
+  // batch: local work + Batch API queue turnaround (the queue dominates and varies widely).
+  const mid = local + BATCH_QUEUE_SECS + totalFields * 0.05 * cohortFactor;
+  return { low: mid * 0.5, mid, high: mid * 3, note: "Batch API queue time varies widely" };
+}
+
+/** Compact human duration: "45s", "6 min", "1h 20m". */
+export function formatDuration(secs: number): string {
+  if (secs <= 0) return "—";
+  if (secs < 60) return `${Math.round(secs)}s`;
+  const m = Math.round(secs / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
+/** A "~2–5 min" span from a TimeEstimate (collapses to one value when the ends round equal). */
+export function formatDurationRange(t: TimeEstimate): string {
+  if (t.mid <= 0) return "—";
+  const lo = formatDuration(t.low);
+  const hi = formatDuration(t.high);
+  return lo === hi ? lo : `${lo}–${hi}`;
 }
 
 // Verdict → badge styling (Phenome Health tokens).
