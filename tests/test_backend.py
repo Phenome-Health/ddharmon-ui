@@ -819,6 +819,7 @@ def test_jobdb_roundtrip_scope_and_recover(tmp_path):
     rows_a = db.list_owned("user_A")
     assert [r["job_id"] for r in rows_a] == ["a"]
     assert "result" not in rows_a[0] and rows_a[0]["n_records"] == 2  # summary omits the heavy blob
+    assert rows_a[0]["config"] == {"x": 1}  # ...but keeps the small config (UI needs run_mode/demo)
     assert [r["job_id"] for r in db.list_owned("user_B")] == ["b"]
 
     # A worker that died mid-run (non-terminal on disk) is reconciled to error; terminal rows untouched.

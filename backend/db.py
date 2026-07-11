@@ -48,13 +48,14 @@ CREATE TABLE IF NOT EXISTS jobs (
 # Purpose-built for "list my runs, newest first".
 _CREATE_INDEX = "CREATE INDEX IF NOT EXISTS idx_jobs_owner_created ON jobs (owner_subject, created_at DESC)"
 
-# Columns hydrated for the runs LIST (omits the heavy result/config/dict_specs blobs; n_records is kept so
-# the list shows a record count without loading the result payload).
+# Columns hydrated for the runs LIST. Omits the heavy result/dict_specs blobs but KEEPS the small config
+# (the UI reads run_mode/demo from it) and n_records (record count without loading the result payload).
 _SUMMARY_COLS = (
     "job_id, owner_subject, display_name, status, phase, completed, total, "
-    "error_message, decisions, n_records, created_at, updated_at"
+    "error_message, config, decisions, n_records, created_at, updated_at"
 )
-_ALL_COLS = _SUMMARY_COLS.replace("decisions,", "result, config, dict_specs, decisions,")
+# A full read adds the heavy blobs (result + dict_specs) alongside the summary columns.
+_ALL_COLS = _SUMMARY_COLS.replace("config,", "config, result, dict_specs,")
 
 # A run is durably terminal only when complete/error. Anything else on disk after a restart means the
 # worker thread died mid-run — recover_stale() reconciles those to error.
@@ -186,6 +187,7 @@ class JobDB:
             "completed": row["completed"],
             "total": row["total"],
             "error_message": row["error_message"],
+            "config": _loads(row["config"], {}),  # small; carried in summaries so the UI knows run_mode/demo
             "decisions": _loads(row["decisions"], {}),
             "n_records": row["n_records"],
             "created_at": row["created_at"],
@@ -193,6 +195,5 @@ class JobDB:
         }
         if full and "result" in keys:
             d["result"] = _loads(row["result"], None)
-            d["config"] = _loads(row["config"], {})
             d["dict_specs"] = _loads(row["dict_specs"], None)
         return d
