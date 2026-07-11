@@ -58,6 +58,9 @@ class Job:
     # is exposed by to_dict() — owner_subject must never leak to the client.
     owner_subject: str | None = None
     dict_specs: list[dict[str, Any]] | None = None
+    # Optional post-run "analysis ideas" (LLM-suggested downstream analyses). None = not generated yet;
+    # a list once generated (cached so the opt-in LLM pass isn't re-billed on every view). Persisted.
+    analysis_ideas: list[dict[str, Any]] | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     # Record count carried on a DB-hydrated summary (result blob not loaded); used by summary_dict when
@@ -80,6 +83,7 @@ class Job:
             decisions=d.get("decisions", {}) or {},
             owner_subject=d.get("owner_subject"),
             dict_specs=d.get("dict_specs"),
+            analysis_ideas=d.get("analysis_ideas"),
             created_at=d["created_at"],
             updated_at=d["updated_at"],
             n_records=d.get("n_records", 0),
@@ -97,14 +101,16 @@ class Job:
             "result": self.result,
             "config": self.config,
             "decisions": self.decisions,
+            "analysisIdeas": self.analysis_ideas,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
 
     def summary_dict(self) -> dict[str, Any]:
-        """Lightweight view for the jobs list (omits the heavy result payload)."""
+        """Lightweight view for the jobs list (omits the heavy result + analysis-ideas payloads)."""
         d = self.to_dict()
         d.pop("result", None)
+        d.pop("analysisIdeas", None)
         # Prefer the live result count; fall back to the persisted n_records hint for DB-hydrated summaries.
         d["nRecords"] = len(self.result["records"]) if self.result else self.n_records
         return d
@@ -250,6 +256,26 @@ class JobStore:
             job = Job.from_db_row(row)
             self._apply_decision(job, record_id, decision, note, axis, source_variable)
         self._persist(job)  # verdicts must survive a restart
+        return True
+
+    def set_analysis_ideas(self, job_id: str, ideas: list[dict[str, Any]]) -> bool:
+        """Cache generated analysis ideas on a job (live or DB-hydrated) and persist them, so the opt-in
+        LLM pass runs once and survives reload/restart. Returns False if the job doesn't exist."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                job.analysis_ideas = ideas
+                job.updated_at = time.time()
+        if job is None:
+            if self.db is None:
+                return False
+            row = self.db.get(job_id)
+            if row is None:
+                return False
+            job = Job.from_db_row(row)
+            job.analysis_ideas = ideas
+            job.updated_at = time.time()
+        self._persist(job)
         return True
 
     @staticmethod

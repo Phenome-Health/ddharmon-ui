@@ -182,6 +182,8 @@ export interface JobResult {
   result: HarmonizationResult | null;
   config: Record<string, unknown>;
   decisions: Record<string, { decision: string; note: string }>;
+  // Opt-in, LLM-suggested downstream analyses (null until generated; see POST /jobs/{id}/analysis-ideas).
+  analysisIdeas?: AnalysisIdea[] | null;
   createdAt: number;
   updatedAt: number;
   // Present on the bundled demo fixture: per-phase wall-clock from the real build run, used to pace the
@@ -189,8 +191,19 @@ export interface JobResult {
   phaseTimings?: Record<string, number>;
 }
 
-export interface JobSummary extends Omit<JobResult, "result"> {
+export interface JobSummary extends Omit<JobResult, "result" | "analysisIdeas"> {
   nRecords: number;
+}
+
+/** One LLM-suggested downstream analysis unlocked by this run's cross-cohort harmonization. */
+export interface AnalysisIdea {
+  title: string;
+  hypothesis: string;
+  concepts: string[]; // grounded in this run's own concepts
+  cohorts: string[];
+  method: string;
+  whyNewlyPossible: string;
+  category: string;
 }
 
 export interface DictSpec {

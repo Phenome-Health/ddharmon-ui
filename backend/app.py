@@ -386,6 +386,36 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     return {"jobId": new_id}
 
 
+@app.post("/api/harmonize/jobs/{job_id}/analysis-ideas")
+def analysis_ideas(
+    job_id: str,
+    request: Request,
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+    regenerate: bool = False,
+) -> dict[str, Any]:
+    """Suggest (never run) downstream cross-cohort analyses this run's harmonization unlocks — one opt-in,
+    BYOK LLM pass over the run's own concepts (metadata only). Cached on the job after the first call so it
+    isn't re-billed on every view; ``?regenerate=true`` forces a fresh pass.
+    """
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.analysis_ideas is not None and not regenerate:
+        return {"ideas": job.analysis_ideas, "cached": True}
+    records = (job.result or {}).get("records") if job.result else None
+    if not records:
+        raise HTTPException(status_code=409, detail="This run has no harmonized concepts to analyze yet.")
+
+    from ddharmon.llm.anthropic_client import AnthropicClient
+
+    from backend.analysis_ideas import generate_analysis_ideas
+
+    client = AnthropicClient(api_key=x_anthropic_key)  # BYOK — in-memory, this request only; never persisted
+    out = generate_analysis_ideas(records, client.complete)
+    store.set_analysis_ideas(job_id, out["ideas"])
+    return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
+
+
 # --- human decisions -------------------------------------------------------------------------
 class VerdictBody(BaseModel):
     recordId: str

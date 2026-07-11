@@ -97,6 +97,20 @@ export async function rerunJob(jobId: string, apiKey?: string): Promise<{ jobId:
   return json(await fetch(`${BASE}/jobs/${jobId}/rerun`, { method: "POST", headers }));
 }
 
+export async function generateAnalysisIdeas(
+  jobId: string,
+  apiKey?: string,
+  regenerate = false,
+): Promise<{ ideas: import("@/types").AnalysisIdea[]; cached: boolean; nConcepts?: number }> {
+  // Opt-in, BYOK LLM pass suggesting downstream analyses (metadata-only; suggests, never runs). The key is
+  // sent transport-only for this one call, exactly like startHarmonize; never persisted.
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to generate analysis ideas.");
+  const q = regenerate ? "?regenerate=true" : "";
+  const headers = await authed(apiKey ? { "x-anthropic-key": apiKey } : {});
+  return json(await fetch(`${BASE}/jobs/${jobId}/analysis-ideas${q}`, { method: "POST", headers }));
+}
+
 export async function getResult(jobId: string): Promise<JobResult> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/result-${jobId}.json`));
   return json(await fetch(`${BASE}/result/${jobId}`, { headers: await authed() }));

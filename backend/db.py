@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     config        TEXT,
     dict_specs    TEXT,
     decisions     TEXT,
+    analysis_ideas TEXT,
     n_records     INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL,
     updated_at    REAL NOT NULL
@@ -48,14 +49,18 @@ CREATE TABLE IF NOT EXISTS jobs (
 # Purpose-built for "list my runs, newest first".
 _CREATE_INDEX = "CREATE INDEX IF NOT EXISTS idx_jobs_owner_created ON jobs (owner_subject, created_at DESC)"
 
+# Additive columns added after the table first shipped — ALTER-ed in on startup for DB files created by an
+# earlier version (CREATE TABLE IF NOT EXISTS won't add a column to an existing table). column -> SQL type.
+_ADDITIVE_COLUMNS = {"analysis_ideas": "TEXT"}
+
 # Columns hydrated for the runs LIST. Omits the heavy result/dict_specs blobs but KEEPS the small config
 # (the UI reads run_mode/demo from it) and n_records (record count without loading the result payload).
 _SUMMARY_COLS = (
     "job_id, owner_subject, display_name, status, phase, completed, total, "
     "error_message, config, decisions, n_records, created_at, updated_at"
 )
-# A full read adds the heavy blobs (result + dict_specs) alongside the summary columns.
-_ALL_COLS = _SUMMARY_COLS.replace("config,", "config, result, dict_specs,")
+# A full read adds the heavy blobs (result + dict_specs + analysis_ideas) alongside the summary columns.
+_ALL_COLS = _SUMMARY_COLS.replace("config,", "config, result, dict_specs, analysis_ideas,")
 
 # A run is durably terminal only when complete/error. Anything else on disk after a restart means the
 # worker thread died mid-run — recover_stale() reconciles those to error.
@@ -88,6 +93,10 @@ class JobDB:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(_CREATE_TABLE)
             self._conn.execute(_CREATE_INDEX)
+            existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(jobs)")}
+            for col, sqltype in _ADDITIVE_COLUMNS.items():  # migrate DBs created by an earlier schema
+                if col not in existing:
+                    self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {sqltype}")
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
 
@@ -111,6 +120,7 @@ class JobDB:
             json.dumps(job.config),
             json.dumps(job.dict_specs) if job.dict_specs is not None else None,
             json.dumps(job.decisions),
+            json.dumps(job.analysis_ideas) if job.analysis_ideas is not None else None,
             n_records,
             job.created_at,
             job.updated_at,
@@ -118,9 +128,9 @@ class JobDB:
         with self._lock:
             self._conn.execute(
                 """INSERT INTO jobs (job_id, owner_subject, display_name, status, phase, completed, total,
-                                     error_message, result, config, dict_specs, decisions, n_records,
-                                     created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                     error_message, result, config, dict_specs, decisions, analysis_ideas,
+                                     n_records, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(job_id) DO UPDATE SET
                        owner_subject=excluded.owner_subject,
                        display_name=excluded.display_name,
@@ -133,6 +143,7 @@ class JobDB:
                        config=excluded.config,
                        dict_specs=excluded.dict_specs,
                        decisions=excluded.decisions,
+                       analysis_ideas=excluded.analysis_ideas,
                        n_records=excluded.n_records,
                        updated_at=excluded.updated_at""",
                 row,
@@ -196,4 +207,5 @@ class JobDB:
         if full and "result" in keys:
             d["result"] = _loads(row["result"], None)
             d["dict_specs"] = _loads(row["dict_specs"], None)
+            d["analysis_ideas"] = _loads(row["analysis_ideas"], None)
         return d

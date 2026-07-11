@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { AnalysisIdeasPanel } from "@/components/analysis-ideas";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -559,6 +560,8 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
           )}
+
+          <AnalysisIdeasPanel jobId={jobId} initial={jobState?.analysisIdeas ?? null} />
         </>
       )}
     </div>
