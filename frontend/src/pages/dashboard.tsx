@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
 import {
@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Ban,
+  Bug,
   Check,
   ChevronDown,
   ChevronRight,
@@ -32,8 +33,9 @@ import { Analytics } from "@/components/analytics";
 import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
+import { buildRunIssueUrl } from "@/lib/links";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
-import { VERDICT_STYLES, type UIRecord, type UnassignedField } from "@/types";
+import { VERDICT_STYLES, formatDuration, type UIRecord, type UnassignedField } from "@/types";
 
 // Known phase ordering for the progress bar. The phase LABEL is shown verbatim from the stream (so a new
 // pipeline phase still displays); only the percent uses this ordering, falling back gracefully if unknown.
@@ -96,6 +98,50 @@ function phasePercent(phase: string, completed: number, total: number): number {
   const span = 100 / PHASE_ORDER.length;
   const sub = total > 0 ? (completed / total) * span : 0;
   return Math.min(99, Math.round(idx * span + sub));
+}
+
+const _TERMINAL_PHASES = ["complete", "error", "prepared"];
+
+/** Verbose per-stage timeline for a live run, built from the backend `phaseStartedAt` stream: each reached
+ * stage with how long it ran. A stage ends when the next reached stage starts; the current (last) stage runs
+ * to `now` (ticking) or to the terminal timestamp once done. Hidden gracefully when no timings are streamed
+ * (e.g. a DB-hydrated historical run). */
+function RunTimeline({
+  phaseStartedAt,
+  currentPhase,
+  now,
+}: {
+  phaseStartedAt?: Record<string, number>;
+  currentPhase: string;
+  now: number;
+}) {
+  const timings = phaseStartedAt ?? {};
+  const seq = Object.keys(timings)
+    .filter((p) => !_TERMINAL_PHASES.includes(p))
+    .sort((a, b) => timings[a] - timings[b]);
+  if (!seq.length) return null;
+  const terminalAt = timings.complete ?? timings.error ?? null;
+  const endOf = (i: number): number => (i + 1 < seq.length ? timings[seq[i + 1]] : (terminalAt ?? now));
+  return (
+    <div className="space-y-1 border-t border-neutral-200 pt-2 text-xs">
+      {seq.map((p, i) => {
+        const active = p === currentPhase && terminalAt === null;
+        return (
+          <div key={p} className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 capitalize text-neutral-600">
+              {active ? (
+                <Loader2 className="h-3 w-3 animate-spin text-ph-navy" />
+              ) : (
+                <Check className="h-3 w-3 text-success" />
+              )}
+              {p}
+            </span>
+            <span className="tabular-nums text-neutral-500">{formatDuration(Math.max(0, endOf(i) - timings[p]))}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function cos(x: number | null): string {
@@ -164,6 +210,17 @@ export default function DashboardPage() {
   const [xcOnly, setXcOnly] = useState(false);
   // Live substring search over the review queue (concept / CDE / member text / cohorts).
   const [search, setSearch] = useState("");
+  // Live wall-clock (ticks every 1s while streaming) for the elapsed + ETA readouts, and a toggle for the
+  // verbose per-stage timeline. `streaming` is computed defensively (jobState may be null pre-connect) so
+  // this hook stays above the early return.
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  const [verbose, setVerbose] = useState(false);
+  const streaming = !!jobState && jobState.status !== "complete" && jobState.status !== "error";
+  useEffect(() => {
+    if (!streaming) return;
+    const id = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(id);
+  }, [streaming]);
 
   const result = jobState?.result ?? null;
   const records = useMemo<UIRecord[]>(() => result?.records ?? [], [result]);
@@ -260,6 +317,12 @@ export default function DashboardPage() {
 
   const running = jobState.status !== "complete" && jobState.status !== "error";
   const isPreview = result?.mode === "preview";
+  const elapsed = Math.max(0, now - jobState.createdAt);
+  // Live ETA: project the remaining time from how far the progress bar has advanced vs. how long that took
+  // (self-calibrating — needs no field count). Only shown once a stable fraction exists, so it isn't wild in
+  // the first seconds or during batch's opaque LLM wait.
+  const pct = phasePercent(jobState.phase, jobState.completed, jobState.total);
+  const etaSecs = running && elapsed > 3 && pct >= 12 && pct < 100 ? (elapsed * (100 - pct)) / pct : null;
 
   return (
     <div className="space-y-6">
@@ -344,8 +407,50 @@ export default function DashboardPage() {
               </span>
               <span className="text-neutral-500">{jobState.total > 0 ? `${jobState.completed}/${jobState.total}` : ""}</span>
             </div>
-            <Progress value={error ? 100 : phasePercent(jobState.phase, jobState.completed, jobState.total)} />
+            <Progress value={error ? 100 : pct} />
+            {running && (
+              <>
+                <div className="flex items-center justify-between text-xs text-neutral-500">
+                  <span className="tabular-nums">Elapsed {formatDuration(elapsed)}</span>
+                  <div className="flex items-center gap-3">
+                    {etaSecs !== null && <span className="tabular-nums">~{formatDuration(etaSecs)} left</span>}
+                    <button
+                      type="button"
+                      onClick={() => setVerbose((v) => !v)}
+                      className="text-neutral-400 underline-offset-2 hover:text-ph-navy hover:underline"
+                    >
+                      {verbose ? "Hide details" : "Show details"}
+                    </button>
+                  </div>
+                </div>
+                {verbose && (
+                  <RunTimeline phaseStartedAt={jobState.phaseStartedAt} currentPhase={jobState.phase} now={now} />
+                )}
+              </>
+            )}
             {error && <p className="text-sm text-danger">{error.message}</p>}
+            {error && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+                <Button size="sm" variant="outline" asChild>
+                  <a
+                    href={buildRunIssueUrl({
+                      jobId: jobState.jobId,
+                      errorMessage: jobState.errorMessage,
+                      failedPhase: jobState.failedPhase,
+                      runMode: jobState.config.run_mode as string | undefined,
+                      cdeSet: jobState.config.cde_set as string | undefined,
+                    })}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Bug className="mr-1.5 h-3.5 w-3.5" /> Report this problem
+                  </a>
+                </Button>
+                <span className="text-xs text-neutral-400">
+                  Opens a prefilled GitHub issue — run metadata only, no uploaded data.
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -94,6 +94,24 @@ def test_jobstore_lifecycle():
     assert s.get("j1") is None
 
 
+def test_jobstore_stamps_phase_start_timings():
+    """Each first entry into a phase is timestamped (for the run view's elapsed/ETA + stage timeline); a later
+    tick in the same phase does NOT reset it, the terminal phase is stamped, and it surfaces as phaseStartedAt."""
+    s = JobStore()
+    s.create("jt", "Timed run", {"run_mode": "batch"})
+    assert s.get("jt").phase_timings == {}  # create() doesn't stamp "pending"
+    s.update("jt", status="embedding", phase="embedding", completed=0, total=100)
+    first = s.get("jt").phase_timings["embedding"]
+    s.update("jt", status="embedding", phase="embedding", completed=50, total=100)  # later tick, same phase
+    assert s.get("jt").phase_timings["embedding"] == first  # kept the START time, not reset
+    s.update("jt", status="assigning", phase="assigning")
+    s.update("jt", status="complete", phase="complete")
+    timings = s.get("jt").phase_timings
+    assert set(timings) >= {"embedding", "assigning", "complete"}
+    assert timings["embedding"] <= timings["assigning"] <= timings["complete"]
+    assert s.get("jt").to_dict()["phaseStartedAt"] == timings
+
+
 # ── contract mapping (the insulation boundary) ──────────────────
 
 
@@ -980,6 +998,64 @@ def test_persistence_survives_a_new_store(tmp_path):
     assert s2.get("keep") is not None and s2.get("keep").result["records"][0]["id"] == "x"
     assert [j.job_id for j in s2.list("user_A")] == ["keep"]
     s2.db.close()
+
+
+# ── run-error reporting (failing stage capture + persistence) ────────────────
+
+
+def test_runner_captures_failing_phase(monkeypatch):
+    """A run that dies mid-pipeline records the STAGE it failed in (failed_phase), not just status=error —
+    and that stage flows into to_dict(), which feeds the 'Report this problem' link."""
+    from backend import runner as runner_module
+
+    def boom(dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None):
+        progress("assigning", 3, 10)  # got partway before dying
+        raise RuntimeError("assign stage exploded")
+
+    monkeypatch.setattr(runner_module, "run_pipeline", boom)
+    s = JobStore()
+    s.create("jf", "Failing run", {"run_mode": "batch"})
+    runner_module.run_harmonization(s, "jf", [], None, {"run_mode": "batch"})
+
+    job = s.get("jf")
+    assert job.status == "error" and job.phase == "error"
+    assert job.failed_phase == "assigning"  # the stage it was in, preserved before the "error" overwrite
+    assert "exploded" in (job.error_message or "")
+    assert job.to_dict()["failedPhase"] == "assigning"
+
+
+def test_failed_phase_persists_and_migrates(tmp_path):
+    """failed_phase round-trips through the DB (incl. the runs-list summary) and is ALTER-ed into an older
+    DB that predates the column — the additive-migration guarantee (a bad migration breaks the live Runs list)."""
+    import sqlite3
+
+    # An OLD-schema DB created before failed_phase (and analysis_ideas) existed — a valid legacy 'jobs' table.
+    dbp = tmp_path / "jobs.db"
+    old = sqlite3.connect(dbp)
+    old.execute(
+        "CREATE TABLE jobs (job_id TEXT PRIMARY KEY, owner_subject TEXT, display_name TEXT, status TEXT, "
+        "phase TEXT, completed INTEGER, total INTEGER, error_message TEXT, result TEXT, config TEXT, "
+        "dict_specs TEXT, decisions TEXT, n_records INTEGER, created_at REAL, updated_at REAL)"
+    )
+    old.execute(
+        "INSERT INTO jobs (job_id, owner_subject, status, phase, created_at, updated_at) "
+        "VALUES ('legacy', 'user_A', 'error', 'error', 0, 0)"
+    )
+    old.commit()
+    old.close()
+
+    db = JobDB(dbp)  # opening the old DB must ALTER the missing columns in, not crash
+    assert db.get("legacy")["failed_phase"] is None  # legacy error row: column now present, value null
+
+    err = Job(
+        job_id="e1", display_name="E", status="error", phase="error",
+        failed_phase="clustering", error_message="boom", owner_subject="user_A",
+    )  # fmt: skip
+    db.upsert(err)
+    assert db.get("e1")["failed_phase"] == "clustering"
+    summ = {r["job_id"]: r for r in db.list_owned("user_A")}
+    assert summ["e1"]["failed_phase"] == "clustering"  # carried in the runs-list summary too
+    db.close()
 
 
 def _decode_by_token(token: str) -> dict:

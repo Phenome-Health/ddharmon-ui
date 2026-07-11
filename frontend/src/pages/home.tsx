@@ -23,11 +23,14 @@ import {
   ROLE_HELP,
   ROLE_REQUIREMENT,
   estimateRunCostBreakdown,
+  estimateRunTime,
   formatUsd,
+  formatDurationRange,
   type CdeSet,
   type ColumnRole,
   type CostBreakdown,
   type RunMode,
+  type TimeEstimate,
 } from "@/types";
 
 const NONE = "__none__";
@@ -123,6 +126,10 @@ export default function HomePage() {
   const cost = useMemo(
     () => estimateRunCostBreakdown(totalFields, dicts.length, runMode, genTransformSpecs),
     [totalFields, dicts.length, runMode, genTransformSpecs],
+  );
+  const time = useMemo(
+    () => estimateRunTime(totalFields, dicts.length, runMode),
+    [totalFields, dicts.length, runMode],
   );
   const costMeta = dicts.length
     ? `${totalFields.toLocaleString()} fields · ${dicts.length} cohort${dicts.length > 1 ? "s" : ""} · ${runMode}`
@@ -462,7 +469,7 @@ export default function HomePage() {
         </CardContent>
       </Card>
 
-      <CostCard breakdown={cost} meta={costMeta} />
+      <CostCard breakdown={cost} time={time} meta={costMeta} />
 
       <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-[11px] leading-snug text-neutral-500">
         {runMode === "preview" ? (
@@ -519,7 +526,7 @@ export default function HomePage() {
   );
 }
 
-function CostCard({ breakdown, meta }: { breakdown: CostBreakdown; meta: string }) {
+function CostCard({ breakdown, time, meta }: { breakdown: CostBreakdown; time: TimeEstimate; meta: string }) {
   return (
     <Card className="border-ph-navy/20 bg-ph-navy/[0.03]">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -534,6 +541,15 @@ function CostCard({ breakdown, meta }: { breakdown: CostBreakdown; meta: string 
       </CardHeader>
       <CardContent className="space-y-2">
         <p className="text-xs text-neutral-400">{meta || "Add files to estimate"}</p>
+        {time.mid > 0 && (
+          <div className="flex items-center justify-between border-t border-neutral-200 pt-2 text-xs">
+            <span className="text-neutral-600">
+              Estimated time
+              {time.note && <span className="ml-1 text-neutral-400">· {time.note}</span>}
+            </span>
+            <span className="tabular-nums text-neutral-700">~{formatDurationRange(time)}</span>
+          </div>
+        )}
         {breakdown.lines.length > 0 && (
           <div className="space-y-1 border-t border-neutral-200 pt-2 text-xs">
             {breakdown.lines.map((l) => (

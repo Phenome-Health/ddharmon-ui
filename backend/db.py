@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     completed     INTEGER NOT NULL DEFAULT 0,
     total         INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
+    failed_phase  TEXT,
     result        TEXT,
     config        TEXT,
     dict_specs    TEXT,
@@ -51,13 +52,14 @@ _CREATE_INDEX = "CREATE INDEX IF NOT EXISTS idx_jobs_owner_created ON jobs (owne
 
 # Additive columns added after the table first shipped — ALTER-ed in on startup for DB files created by an
 # earlier version (CREATE TABLE IF NOT EXISTS won't add a column to an existing table). column -> SQL type.
-_ADDITIVE_COLUMNS = {"analysis_ideas": "TEXT"}
+_ADDITIVE_COLUMNS = {"analysis_ideas": "TEXT", "failed_phase": "TEXT"}
 
 # Columns hydrated for the runs LIST. Omits the heavy result/dict_specs blobs but KEEPS the small config
-# (the UI reads run_mode/demo from it) and n_records (record count without loading the result payload).
+# (the UI reads run_mode/demo from it), failed_phase (an error row's failing stage, for the report link),
+# and n_records (record count without loading the result payload).
 _SUMMARY_COLS = (
     "job_id, owner_subject, display_name, status, phase, completed, total, "
-    "error_message, config, decisions, n_records, created_at, updated_at"
+    "error_message, failed_phase, config, decisions, n_records, created_at, updated_at"
 )
 # A full read adds the heavy blobs (result + dict_specs + analysis_ideas) alongside the summary columns.
 _ALL_COLS = _SUMMARY_COLS.replace("config,", "config, result, dict_specs, analysis_ideas,")
@@ -116,6 +118,7 @@ class JobDB:
             job.completed,
             job.total,
             job.error_message,
+            job.failed_phase,
             json.dumps(job.result) if job.result is not None else None,
             json.dumps(job.config),
             json.dumps(job.dict_specs) if job.dict_specs is not None else None,
@@ -128,9 +131,9 @@ class JobDB:
         with self._lock:
             self._conn.execute(
                 """INSERT INTO jobs (job_id, owner_subject, display_name, status, phase, completed, total,
-                                     error_message, result, config, dict_specs, decisions, analysis_ideas,
-                                     n_records, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                     error_message, failed_phase, result, config, dict_specs, decisions,
+                                     analysis_ideas, n_records, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(job_id) DO UPDATE SET
                        owner_subject=excluded.owner_subject,
                        display_name=excluded.display_name,
@@ -139,6 +142,7 @@ class JobDB:
                        completed=excluded.completed,
                        total=excluded.total,
                        error_message=excluded.error_message,
+                       failed_phase=excluded.failed_phase,
                        result=excluded.result,
                        config=excluded.config,
                        dict_specs=excluded.dict_specs,
@@ -198,6 +202,7 @@ class JobDB:
             "completed": row["completed"],
             "total": row["total"],
             "error_message": row["error_message"],
+            "failed_phase": row["failed_phase"] if "failed_phase" in keys else None,
             "config": _loads(row["config"], {}),  # small; carried in summaries so the UI knows run_mode/demo
             "decisions": _loads(row["decisions"], {}),
             "n_records": row["n_records"],
