@@ -36,9 +36,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from backend.auth import AuthError, authenticate
+from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
-from backend.jobs import TERMINAL_STATES, store
+from backend.jobs import TERMINAL_STATES, Job, _is_pinned, store
 from backend.notebook import build_notebook
 from backend.runner import run_harmonization
 
@@ -63,17 +64,24 @@ CDE_COHORT = "NIH_CDE"
 
 _WORK_ROOT = Path(os.environ.get("DDHARMON_UI_WORK", _REPO_ROOT / ".ddharmon_ui"))
 # Let the job store tear down a job's on-disk scratch dir (<_WORK_ROOT>/<job_id>: uploads + prompts +
-# substrate) when the job is deleted or ages out — so uploaded dictionaries never outlive the run.
+# substrate) on explicit delete. Owned runs now RETAIN their uploads so they can be re-run (see
+# PERSIST-RUNS-PLAN.md); the scratch dir is torn down only when the user deletes the run.
 store.work_root = _WORK_ROOT
+# Durable per-user run history: a SQLite file under the work root (persists across restarts; survives a
+# git pull but not a fresh clone — same lifetime as the CDE catalog). Override with DDHARMON_UI_DB.
+_DB_PATH = Path(os.environ.get("DDHARMON_UI_DB", _WORK_ROOT / "jobs.db"))
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Prepopulate the Runs page with the precomputed demo(s) on startup so a fresh boot / restart is never
-    empty. Durable by construction: re-seeded every startup, and demo jobs are exempt from TTL purging.
-    No-op when no snapshot is bundled (e.g. a minimal deploy)."""
+    """Attach the durable store, reconcile any run interrupted by a prior restart, then prepopulate the
+    Runs page with the precomputed demo(s) so a fresh boot is never empty. Demos are re-seeded every
+    startup, ownerless, and exempt from TTL purging (never written to the durable store)."""
+    store.db = JobDB(_DB_PATH)
+    store.db.recover_stale()  # any non-terminal row = a worker that died on the last restart -> error
     seed_demos(store)
     yield
+    store.db.close()
 
 
 app = FastAPI(title="ddharmon Harmonization API", version="1.0.0", lifespan=_lifespan)
@@ -111,6 +119,18 @@ def _is_public_path(path: str) -> bool:
             job = store.get(path[len(prefix) :])
             return bool(job and job.config.get("demo"))
     return False
+
+
+def _subject(request: Request) -> str | None:
+    """The verified caller's Clerk subject, set on ``request.state`` by the auth gate. None on public/demo
+    paths (the gate doesn't authenticate them) and when the gate is disabled (dev / no Clerk env)."""
+    principal = getattr(request.state, "principal", None)
+    return getattr(principal, "subject", None) if principal else None
+
+
+def _visible_to(job: Job, subject: str | None) -> bool:
+    """A run is visible to a caller if they own it, or it's a public demo/pinned run (visible to everyone)."""
+    return _is_pinned(job) or job.owner_subject == subject
 
 
 @app.middleware("http")
@@ -163,6 +183,7 @@ def detect(body: DetectBody) -> dict[str, Any]:
 # --- /batch ----------------------------------------------------------------------------------
 @app.post("/api/harmonize/batch")
 async def start_batch(
+    request: Request,
     files: Annotated[list[UploadFile], File()],
     config: Annotated[str, Form()],
     x_anthropic_key: Annotated[str | None, Header()] = None,
@@ -245,7 +266,9 @@ async def start_batch(
         if cfg.get(cfg_key) is not None:
             run_config[run_key] = int(cfg[cfg_key]) if cfg_key in ("minClusterSize", "topK") else cfg[cfg_key]
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
-    store.create(job_id, display, run_config)
+    # Own the run (verified Clerk subject) and persist dict_specs so it can be re-run from its retained
+    # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
+    store.create(job_id, display, run_config, owner_subject=_subject(request), dict_specs=dict_specs)
     # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted.
     threading.Thread(
         target=run_harmonization,
@@ -270,8 +293,10 @@ def _clean(s: Any) -> str:
 
 
 @app.get("/api/harmonize/stream/{job_id}")
-async def stream(job_id: str) -> StreamingResponse:
-    if store.get(job_id) is None:
+async def stream(job_id: str, request: Request) -> StreamingResponse:
+    job = store.get(job_id)
+    # 404 (not 403) on a run the caller doesn't own, so we never reveal that someone else's job exists.
+    if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def gen() -> Any:
@@ -294,23 +319,71 @@ async def stream(job_id: str) -> StreamingResponse:
 
 
 @app.get("/api/harmonize/result/{job_id}")
-def result(job_id: str) -> dict[str, Any]:
+def result(job_id: str, request: Request) -> dict[str, Any]:
     job = store.get(job_id)
-    if job is None:
+    if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
     return job.to_dict()
 
 
 # --- jobs list / delete ----------------------------------------------------------------------
 @app.get("/api/harmonize/jobs")
-def list_jobs() -> list[dict[str, Any]]:
-    return [j.summary_dict() for j in store.list()]
+def list_jobs(request: Request) -> list[dict[str, Any]]:
+    """The caller's own runs (durable history + any live) plus the public demo(s), newest first."""
+    return [j.summary_dict() for j in store.list(_subject(request))]
 
 
 @app.delete("/api/harmonize/jobs/{job_id}", status_code=204)
-def delete_job(job_id: str) -> None:
-    if not store.delete(job_id):
+def delete_job(job_id: str, request: Request) -> None:
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
+    store.delete(job_id)
+
+
+@app.post("/api/harmonize/jobs/{job_id}/rerun")
+def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | None, Header()] = None) -> dict[str, str]:
+    """Re-execute a past run from its retained uploads as a NEW owned run (the original is preserved).
+
+    Copies the source job's uploaded dictionaries into a fresh work dir and restarts the pipeline with the
+    same config. BYOK: batch/sync modes need the ``X-Anthropic-Key`` header re-supplied (never persisted);
+    preview mode needs none.
+    """
+    subject = _subject(request)
+    src = store.get(job_id)
+    if src is None or not _visible_to(src, subject) or _is_pinned(src):
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not src.dict_specs or not src.config.get("work_dir"):
+        raise HTTPException(status_code=409, detail="This run predates re-run support (no retained uploads)")
+
+    old_uploads = Path(src.config["work_dir"]) / "uploads"
+    if not old_uploads.is_dir():
+        raise HTTPException(status_code=409, detail="Uploaded files for this run are no longer available")
+
+    # Rebuild the CDE backbone from the stored cdeSet (catalog files live server-side, not in the job dir).
+    cde_set = src.config.get("cde_set", "endorsed")
+    cde_path = CDE_FILES.get(cde_set)
+    if cde_path is None or not cde_path.exists():
+        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
+
+    new_id = str(uuid.uuid4())
+    new_work = _WORK_ROOT / new_id
+    new_uploads = new_work / "uploads"
+    shutil.copytree(old_uploads, new_uploads)
+    # Remap each dict_spec path (same filenames) into the new uploads dir.
+    new_specs = [{**s, "path": str(new_uploads / Path(s["path"]).name)} for s in src.dict_specs]
+    cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+    run_config = {**src.config, "work_dir": str(new_work)}
+
+    display = f"{src.display_name} (re-run)"
+    store.create(new_id, display, run_config, owner_subject=subject, dict_specs=new_specs)
+    threading.Thread(
+        target=run_harmonization,
+        args=(store, new_id, new_specs, cde_spec, run_config),
+        kwargs={"api_key": x_anthropic_key},
+        daemon=True,
+    ).start()
+    return {"jobId": new_id}
 
 
 # --- human decisions -------------------------------------------------------------------------
@@ -323,7 +396,7 @@ class VerdictBody(BaseModel):
 
 
 @app.post("/api/harmonize/jobs/{job_id}/verdict")
-def submit_verdict(job_id: str, body: VerdictBody) -> dict[str, bool]:
+def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str, bool]:
     if body.axis not in ("match", "transform"):
         raise HTTPException(status_code=400, detail="axis must be match|transform")
     # Both axes accept the full triad; the transform axis records one verdict PER source variable.
@@ -332,6 +405,9 @@ def submit_verdict(job_id: str, body: VerdictBody) -> dict[str, bool]:
         raise HTTPException(status_code=400, detail=f"decision must be {'|'.join(allowed)}")
     if body.axis == "transform" and not body.sourceVariable:
         raise HTTPException(status_code=400, detail="sourceVariable is required for the transform axis")
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
     if not store.set_decision(
         job_id, body.recordId, body.decision, body.note, axis=body.axis, source_variable=body.sourceVariable
     ):

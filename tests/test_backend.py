@@ -22,9 +22,10 @@ from ddharmon.models.cluster import FieldCluster, TopicModelResult
 from fastapi.testclient import TestClient
 
 from backend import app as app_module
+from backend.db import JobDB
 from backend.demos import demo_job_id, seed_demos
 from backend.engine.adapter import build_ui_result, run_pipeline
-from backend.jobs import JobStore
+from backend.jobs import Job, JobStore
 
 client = TestClient(app_module.app)
 DIM = 32
@@ -795,6 +796,170 @@ def test_seed_demos_prepopulates_a_complete_run():
     # idempotent: re-seeding neither duplicates nor clobbers the existing run
     assert seed_demos(store) == []
     assert store.get(jid) is job
+
+
+# ── durable per-user run persistence ─────────────────────────────────────────
+
+
+def test_jobdb_roundtrip_scope_and_recover(tmp_path):
+    """The durable store round-trips a full record, lists per-owner (summary only), and reconciles stale runs."""
+    db = JobDB(tmp_path / "jobs.db")
+    a = Job(
+        job_id="a", display_name="A", status="complete", owner_subject="user_A",
+        result={"records": [{"id": "r1"}, {"id": "r2"}]}, config={"x": 1}, dict_specs=[{"path": "/tmp/a.csv"}],
+    )  # fmt: skip
+    b = Job(job_id="b", display_name="B", status="running", owner_subject="user_B")
+    db.upsert(a)
+    db.upsert(b)
+
+    got = db.get("a")
+    assert got["owner_subject"] == "user_A" and got["n_records"] == 2
+    assert got["result"]["records"][0]["id"] == "r1" and got["dict_specs"][0]["path"] == "/tmp/a.csv"
+
+    rows_a = db.list_owned("user_A")
+    assert [r["job_id"] for r in rows_a] == ["a"]
+    assert "result" not in rows_a[0] and rows_a[0]["n_records"] == 2  # summary omits the heavy blob
+    assert [r["job_id"] for r in db.list_owned("user_B")] == ["b"]
+
+    # A worker that died mid-run (non-terminal on disk) is reconciled to error; terminal rows untouched.
+    assert db.recover_stale() == 1
+    assert db.get("b")["status"] == "error" and db.get("a")["status"] == "complete"
+
+    db.delete("a")
+    assert db.get("a") is None
+    db.close()
+
+
+def test_jobstore_scopes_persists_and_hydrates(tmp_path):
+    """JobStore write-through: per-owner list scoping, demos unpersisted, evicted runs served from the DB."""
+    s = JobStore(db=JobDB(tmp_path / "jobs.db"))
+    s.create("demo1", "Demo", {"demo": True})  # pinned/ownerless -> public, NOT persisted
+    s.create("ja", "A run", {}, owner_subject="user_A")
+    s.update("ja", status="complete", result={"records": [{"id": "r"}]})
+    s.create("jb", "B run", {}, owner_subject="user_B")
+    s.update("jb", status="complete", result={"records": []})
+
+    # A sees own run + the demo, never B's; the demo is not written to the durable store.
+    assert {j.job_id for j in s.list("user_A")} == {"ja", "demo1"}
+    assert {j.job_id for j in s.list("user_B")} == {"jb", "demo1"}
+    assert s.db.get("demo1") is None and s.db.get("ja") is not None
+
+    # Age every run and evict from memory: the demo survives, owned terminal runs drop from RAM but persist.
+    for j in list(s._jobs.values()):
+        j.updated_at = 0.0
+    s.purge_expired()
+    assert "ja" not in s._jobs and "demo1" in s._jobs
+    hydrated = s.get("ja")
+    assert hydrated is not None and hydrated.result["records"][0]["id"] == "r"
+    assert any(j.job_id == "ja" for j in s.list("user_A"))  # still in the owner's history
+
+    # A verdict recorded on the evicted (DB-only) run is persisted.
+    assert s.set_decision("ja", "r", "approve", axis="match")
+    assert s.db.get("ja")["decisions"]["r"]["decision"] == "approve"
+    s.db.close()
+
+
+def test_persistence_survives_a_new_store(tmp_path):
+    """A fresh JobStore over the same DB file sees prior runs — the restart-survival guarantee."""
+    dbp = tmp_path / "jobs.db"
+    s1 = JobStore(db=JobDB(dbp))
+    s1.create("keep", "Keeps", {}, owner_subject="user_A")
+    s1.update("keep", status="complete", result={"records": [{"id": "x"}]})
+    s1.db.close()
+
+    s2 = JobStore(db=JobDB(dbp))  # simulate a process restart
+    assert s2.get("keep") is not None and s2.get("keep").result["records"][0]["id"] == "x"
+    assert [j.job_id for j in s2.list("user_A")] == ["keep"]
+    s2.db.close()
+
+
+def _decode_by_token(token: str) -> dict:
+    """Test tokens 'A'/'B' map to distinct Clerk subjects; anything else is rejected."""
+    from backend import auth
+
+    subs = {"A": "user_A", "B": "user_B"}
+    if token not in subs:
+        raise auth.AuthError(401, "bad token")
+    return {"sub": subs[token], "email": f"{subs[token]}@example.org"}
+
+
+def test_runs_scoped_per_user_via_api(monkeypatch, tmp_path):
+    """End-to-end ownership: user B can neither list, read, delete, nor verdict user A's run (404, not 403)."""
+    from backend import auth
+
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
+    monkeypatch.setattr(auth, "_decode_claims", _decode_by_token)
+
+    with TestClient(app_module.app) as c:  # `with` runs the lifespan -> attaches the DB
+        app_module.store.create("ja", "A run", {}, owner_subject="user_A")
+        app_module.store.update("ja", status="complete", result={"records": [{"id": "r"}]})
+
+        def hdr(t: str) -> dict:
+            return {"authorization": f"Bearer {t}"}
+
+        list_a = c.get("/api/harmonize/jobs", headers=hdr("A")).json()
+        assert any(j["jobId"] == "ja" for j in list_a)
+        assert c.get("/api/harmonize/result/ja", headers=hdr("A")).status_code == 200
+
+        assert not any(j["jobId"] == "ja" for j in c.get("/api/harmonize/jobs", headers=hdr("B")).json())
+        assert c.get("/api/harmonize/result/ja", headers=hdr("B")).status_code == 404
+        assert c.delete("/api/harmonize/jobs/ja", headers=hdr("B")).status_code == 404
+        verdict = c.post(
+            "/api/harmonize/jobs/ja/verdict", headers=hdr("B"), json={"recordId": "r", "decision": "approve"}
+        )
+        assert verdict.status_code == 404
+
+
+def test_rerun_clones_uploads_as_new_owned_run(monkeypatch, tmp_path):
+    """Re-run copies a past run's retained uploads into a fresh owned job; another user can't re-run it."""
+    from backend import auth
+
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": tmp_path / "cde.tsv"})
+    (tmp_path / "cde.tsv").write_text("designation\tdefinition\nX\tY\n")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
+    monkeypatch.setattr(auth, "_decode_claims", _decode_by_token)
+
+    started: dict = {}
+
+    def fake_run(store, job_id, dict_specs, cde_spec, config, *, api_key=None):
+        started.update(job_id=job_id, dict_specs=dict_specs, cde_spec=cde_spec)
+        store.update(job_id, status="complete", result={"records": []})
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_run)
+
+    with TestClient(app_module.app) as c:
+        src_up = tmp_path / "work" / "src" / "uploads"
+        src_up.mkdir(parents=True)
+        (src_up / "a.csv").write_text("var,desc\nage,Age\n")
+        app_module.store.create(
+            "src", "My run",
+            {"work_dir": str(tmp_path / "work" / "src"), "cde_set": "endorsed", "run_mode": "preview"},
+            owner_subject="user_A",
+            dict_specs=[{"path": str(src_up / "a.csv"), "cohort_name": "A",
+                         "column_roles": {"variable_name": "var", "description": "desc"}}],
+        )  # fmt: skip
+        app_module.store.update("src", status="complete", result={"records": []})
+
+        assert c.post("/api/harmonize/jobs/src/rerun", headers={"authorization": "Bearer B"}).status_code == 404
+
+        resp = c.post("/api/harmonize/jobs/src/rerun", headers={"authorization": "Bearer A"})
+        assert resp.status_code == 200
+        new_id = resp.json()["jobId"]
+        assert new_id != "src"
+        new_upload = tmp_path / "work" / new_id / "uploads" / "a.csv"
+        assert new_upload.exists()  # uploads copied synchronously before the run is spawned
+        assert app_module.store.get(new_id).owner_subject == "user_A"
+
+        for _ in range(200):  # the run itself is spawned in a thread
+            if started:
+                break
+            time.sleep(0.01)
+        assert started["job_id"] == new_id
+        assert started["dict_specs"][0]["path"] == str(new_upload)  # remapped into the new job dir
+        assert started["cde_spec"]["path"].endswith("cde.tsv")
 
 
 def test_purge_exempts_demo_but_evicts_user_runs():
