@@ -87,6 +87,16 @@ export async function startHarmonize(
   return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers }));
 }
 
+export async function rerunJob(jobId: string, apiKey?: string): Promise<{ jobId: string }> {
+  // Re-execute a past run from its server-retained uploads as a NEW owned run. BYOK: batch/sync runs need
+  // the key re-supplied (it's never persisted, so the Runs page can't have it cached) — sent transport-only,
+  // exactly like startHarmonize; preview runs need none. Guests (gate on, no token) must sign in first.
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to re-run.");
+  const headers = await authed(apiKey ? { "x-anthropic-key": apiKey } : {});
+  return json(await fetch(`${BASE}/jobs/${jobId}/rerun`, { method: "POST", headers }));
+}
+
 export async function getResult(jobId: string): Promise<JobResult> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/result-${jobId}.json`));
   return json(await fetch(`${BASE}/result/${jobId}`, { headers: await authed() }));

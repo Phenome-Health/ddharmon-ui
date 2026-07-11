@@ -1,9 +1,19 @@
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
-import { Trash2 } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -12,11 +22,86 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { deleteJob, listJobs } from "@/lib/api";
+import { deleteJob, listJobs, rerunJob } from "@/lib/api";
 import { useAuthState } from "@/auth";
+import type { JobSummary } from "@/types";
 
 // Terminal statuses; anything else is an in-flight phase (data-driven — we don't enumerate phases).
 const TERMINAL = new Set(["complete", "error"]);
+
+// Re-run a past run from its server-retained uploads. Preview runs (no LLM) go in one click; batch/sync runs
+// need the Anthropic key re-entered (it's never persisted, so the Runs page can't have it) via a small dialog.
+function RerunAction({ job }: { job: JobSummary }) {
+  const qc = useQueryClient();
+  const [, navigate] = useLocation();
+  const mode = (job.config as { run_mode?: string })?.run_mode ?? "batch";
+  const needsKey = mode !== "preview";
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function go(apiKey?: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const { jobId } = await rerunJob(job.jobId, apiKey);
+      setOpen(false);
+      setKey("");
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      navigate(`/job/${jobId}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Re-run failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Re-run"
+        title="Re-run this run"
+        disabled={busy}
+        onClick={() => (needsKey ? setOpen(true) : go())}
+      >
+        <RotateCcw className="h-4 w-4 text-neutral-400" />
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Re-run “{job.displayName}”</DialogTitle>
+            <DialogDescription>
+              This {mode} run calls the LLM, so it needs your Anthropic API key again. The key is sent for this
+              run only — never written to disk, logs, or the saved run.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="password"
+            placeholder="sk-ant-…"
+            autoComplete="off"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && key.trim()) go(key.trim());
+            }}
+          />
+          {err && <p className="text-sm text-destructive">{err}</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={() => go(key.trim() || undefined)} disabled={busy || !key.trim()}>
+              {busy ? "Starting…" : "Re-run"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 export default function JobsPage() {
   const qc = useQueryClient();
@@ -102,9 +187,12 @@ export default function JobsPage() {
                     {new Date(j.createdAt * 1000).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => remove(j.jobId)} aria-label="Delete">
-                      <Trash2 className="h-4 w-4 text-neutral-400" />
-                    </Button>
+                    <span className="flex items-center justify-end gap-1">
+                      {TERMINAL.has(j.status) && !(j.config as { demo?: boolean })?.demo && <RerunAction job={j} />}
+                      <Button variant="ghost" size="icon" onClick={() => remove(j.jobId)} aria-label="Delete">
+                        <Trash2 className="h-4 w-4 text-neutral-400" />
+                      </Button>
+                    </span>
                   </TableCell>
                 </TableRow>
               ))}
