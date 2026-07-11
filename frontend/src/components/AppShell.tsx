@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Plus, ListChecks, BookOpen, Workflow, Gauge, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
+import { Plus, ListChecks, BookOpen, Workflow, Gauge, Lightbulb, Sparkles, Boxes, Building2, Github, Moon, Sun } from "lucide-react";
 import { UserButton } from "@clerk/react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
@@ -92,6 +92,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" />
             <NavLink href="/methods" icon={<Workflow className="h-4 w-4" />} label="Methods" />
             <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4" />} label="Benchmarks" />
+            <NavLink href="/design" icon={<Lightbulb className="h-4 w-4" />} label="Design" />
             <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" />
             <NavLink href="/new" icon={<Plus className="h-4 w-4" />} label="New run" />
             <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" />
