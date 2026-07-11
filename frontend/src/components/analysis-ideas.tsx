@@ -73,7 +73,17 @@ function IdeaCard({ idea }: { idea: AnalysisIdea }) {
  * transport-only header, never stored), so the button opens a small key dialog. Ideas are cached server-side
  * after the first pass, so a revisit shows them without re-billing.
  */
-export function AnalysisIdeasPanel({ jobId, initial }: { jobId: string; initial: AnalysisIdea[] | null }) {
+export function AnalysisIdeasPanel({
+  jobId,
+  initial,
+  isDemo = false,
+}: {
+  jobId: string;
+  initial: AnalysisIdea[] | null;
+  // A demo run ships PRE-GENERATED ideas (guests have no API key to generate their own), so the panel shows
+  // them read-only with a note pointing to "run your own cohorts" — no generate/regenerate buttons.
+  isDemo?: boolean;
+}) {
   const [ideas, setIdeas] = useState<AnalysisIdea[] | null>(initial ?? null);
   const [open, setOpen] = useState(false);
   const [regen, setRegen] = useState(false);
@@ -111,7 +121,7 @@ export function AnalysisIdeasPanel({ jobId, initial }: { jobId: string; initial:
           <CardTitle className="flex items-center gap-2 text-base">
             <Lightbulb className="h-4 w-4 text-ph-navy" /> Analysis ideas
           </CardTitle>
-          {hasIdeas && (
+          {hasIdeas && !isDemo && (
             <Button variant="ghost" size="sm" className="ml-auto text-xs" disabled={busy} onClick={() => openDialog(true)}>
               Regenerate
             </Button>
@@ -125,15 +135,24 @@ export function AnalysisIdeasPanel({ jobId, initial }: { jobId: string; initial:
       </CardHeader>
       <CardContent className="space-y-3">
         {hasIdeas ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {ideas!.map((idea, i) => (
-              <IdeaCard key={`${idea.title}-${i}`} idea={idea} />
-            ))}
-          </div>
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {ideas!.map((idea, i) => (
+                <IdeaCard key={`${idea.title}-${i}`} idea={idea} />
+              ))}
+            </div>
+            {isDemo && (
+              <p className="text-xs text-neutral-400">
+                Pre-generated for this demo. Run your own cohorts to get ideas grounded in your data.
+              </p>
+            )}
+          </>
         ) : ideas !== null ? (
           <p className="text-sm text-neutral-500">
             No cross-cohort concepts in this run yet — analysis ideas need a concept shared by ≥2 cohorts.
           </p>
+        ) : isDemo ? (
+          <p className="text-sm text-neutral-500">Analysis ideas aren&apos;t available for this demo.</p>
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
             <p className="text-sm text-neutral-600">

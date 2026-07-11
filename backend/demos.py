@@ -17,12 +17,26 @@ if TYPE_CHECKING:
 
 _DIR = Path(__file__).resolve().parent / "demos"
 _MANIFEST = _DIR / "manifest.json"
+# Pre-generated "analysis ideas" per demo, keyed by snapshot filename (a small sidecar so the multi-MB
+# snapshots stay untouched). Built offline by ``scripts/build_demo_analysis_ideas.py`` with the SAME
+# generator the live feature uses; surfaced on the seeded demo job so a guest sees them without an LLM call.
+_IDEAS = _DIR / "analysis_ideas.json"
 
 
 def _load_manifest() -> dict[str, Any]:
     if not _MANIFEST.exists():
         return {"datasets": [], "combos": []}
     return json.loads(_MANIFEST.read_text())
+
+
+def _load_demo_ideas() -> dict[str, Any]:
+    """Snapshot-filename -> pre-generated analysis ideas (empty when the sidecar is absent)."""
+    if not _IDEAS.exists():
+        return {}
+    try:
+        return json.loads(_IDEAS.read_text())
+    except (ValueError, OSError):
+        return {}
 
 
 def _key(datasets: list[str]) -> tuple[str, ...]:
@@ -63,6 +77,7 @@ def seed_demos(store: JobStore) -> list[str]:
     (:func:`demo_job_id`) the demo page deep-links to for "skip to results".
     """
     ids: list[str] = []
+    ideas_by_snapshot = _load_demo_ideas()
     for combo in list_demos().get("combos", []):
         if not combo.get("available"):
             continue
@@ -76,6 +91,12 @@ def seed_demos(store: JobStore) -> list[str]:
         result = snap.get("result", snap)
         display = snap.get("displayName") or "Demo run"
         store.create(job_id, display, {"demo": True, "datasets": sorted(datasets), "mode": result.get("mode")})
-        store.update(job_id, status="complete", phase="complete", result=result)
+        fields: dict[str, Any] = {"status": "complete", "phase": "complete", "result": result}
+        # Pre-generated ideas (sidecar keyed by snapshot filename, else inline on the snapshot) → the demo
+        # shows them without an LLM call. Absent → the panel just offers "generate" as for a real run.
+        ideas = ideas_by_snapshot.get(combo["snapshot"]) or snap.get("analysisIdeas")
+        if ideas:
+            fields["analysis_ideas"] = ideas
+        store.update(job_id, **fields)
         ids.append(job_id)
     return ids

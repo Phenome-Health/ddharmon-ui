@@ -317,6 +317,7 @@ export default function DashboardPage() {
 
   const running = jobState.status !== "complete" && jobState.status !== "error";
   const isPreview = result?.mode === "preview";
+  const isDemo = !!(jobState.config as { demo?: boolean }).demo;
   const elapsed = Math.max(0, now - jobState.createdAt);
   // Live ETA: project the remaining time from how far the progress bar has advanced vs. how long that took
   // (self-calibrating — needs no field count). Only shown once a stable fraction exists, so it isn't wild in
@@ -558,6 +559,10 @@ export default function DashboardPage() {
             </Card>
           )}
 
+          {/* "What this run unlocks" — kept ABOVE the (long) review queue so it's seen without scrolling to
+              the bottom. For a demo the ideas are pre-generated; for a real run it's a one-click generate. */}
+          <AnalysisIdeasPanel jobId={jobId} initial={jobState?.analysisIdeas ?? null} isDemo={isDemo} />
+
           {!running && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -665,8 +670,6 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
           )}
-
-          <AnalysisIdeasPanel jobId={jobId} initial={jobState?.analysisIdeas ?? null} />
         </>
       )}
     </div>
