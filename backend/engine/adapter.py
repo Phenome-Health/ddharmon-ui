@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -577,9 +578,27 @@ def run_pipeline(
     if overrides:
         stages: dict[str, StageFn] = overrides
     elif mode == "sync":
-        from ddharmon.llm.anthropic_client import AnthropicClient
+        # Client selection keys off the chosen model tag. Anthropic (or no explicit model — the historical
+        # default) uses AnthropicClient, unchanged. Any other provider routes through the unified LiteLLM
+        # client added in ddharmon Phase 7; the import is guarded so Anthropic-only deployments on an older
+        # ddharmon keep working and a non-Anthropic pick fails fast with an actionable message.
+        model_tag = kwargs.get("model_tag")
+        mt = str(model_tag).lower() if model_tag else ""
+        if not mt or mt.startswith(("claude", "anthropic/")):
+            from ddharmon.llm.anthropic_client import AnthropicClient
 
-        client = AnthropicClient(api_key=api_key)
+            client = AnthropicClient(api_key=api_key)
+        else:
+            try:
+                from ddharmon.llm.litellm_client import LiteLLMClient
+            except ImportError as e:
+                raise RuntimeError(
+                    f"Model {model_tag!r} needs the unified LiteLLM client, but this backend's ddharmon package "
+                    "lacks it. Update the ddharmon dependency (Phase 7 / >=0.7) and set LITELLM_PROXY_URL."
+                ) from e
+            client = LiteLLMClient(
+                model=str(model_tag), api_key=api_key, api_base=(os.environ.get("LITELLM_PROXY_URL") or None)
+            )
         stages = {
             "generate": _sync_stage("generating", progress, client),
             "split": _sync_stage("splitting", progress, client),
