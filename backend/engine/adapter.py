@@ -525,7 +525,7 @@ def run_pipeline(
     # when the config didn't pin one. The split-aware stages re-derive concepts, so this only needs to be
     # reasonable; an explicit value (advanced/API callers, or the demo build) still wins.
     if "min_cluster_size" not in kwargs:
-        n_fields = sum(len(dd) for dd in dictionaries if getattr(dd, "cohort_name", None) != cde_cohort)
+        n_fields = sum(len(dd.fields) for dd in dictionaries if getattr(dd, "cohort_name", None) != cde_cohort)
         kwargs["min_cluster_size"] = _auto_min_cluster_size(n_fields)
 
     # --- reproducibility: reload a frozen clustering substrate if one exists (skip UMAP, reproduce the exact

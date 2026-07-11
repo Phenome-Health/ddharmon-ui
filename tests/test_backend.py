@@ -731,6 +731,56 @@ def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
     assert "loading" in seen and "embedding" in seen and "clustering" in seen
 
 
+def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_path):
+    """A run that does NOT pin ``min_cluster_size`` must auto-scale it from the corpus size.
+
+    Regression: the auto-scale branch summed field counts with ``len(dd)`` on a ``DataDictionary``
+    (no ``__len__``) → ``TypeError: object of type 'DataDictionary' has no len()``. Every real UI run
+    hits this branch (only the bundled demos pin ``min_cluster_size``, which is why demos worked and
+    fresh user runs crashed). Assert the auto path completes and produces a valid result.
+    """
+    a = tmp_path / "cohortA.csv"
+    a.write_text("var,desc\nage,Age in years\nsmoke,Do you smoke\n")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+
+    def fake_topic_model(embedded, **kwargs):
+        docs, embeddings, field_refs, cohorts = collect_inputs(embedded)
+        members = [r for r in field_refs if r.dictionary_name != "NIH_CDE"]
+        return TopicModelResult(
+            model=None,
+            docs=docs,
+            embeddings=embeddings,
+            field_refs=field_refs,
+            clusters=[FieldCluster(cluster_id=0, label="all", members=members)],
+            outlier_cluster=None,
+            all_cohort_names=cohorts,
+        )
+
+    monkeypatch.setattr("ddharmon.clustering.topic_engine.topic_model_dictionaries", fake_topic_model)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "novel", "cde_id": None, "ranking": [], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    # NOTE: config deliberately omits "min_cluster_size" — forces the _auto_min_cluster_size branch.
+    result = run_pipeline(
+        [{"path": str(a), "cohort_name": "CohortA", "column_roles": {"variable_name": "var", "description": "desc"}}],
+        {
+            "path": str(cde),
+            "cohort_name": "NIH_CDE",
+            "column_roles": {"variable_name": "designation", "description": "definition"},
+        },
+        {"run_mode": "batch", "cde_cohort": "NIH_CDE", "work_dir": str(tmp_path)},
+        provider=StubProvider(),
+        stage_overrides=overrides,
+    )
+    assert result["contractVersion"] == "1"
+
+
 def test_seed_demos_prepopulates_a_complete_run():
     """seed_demos hydrates the bundled precomputed demo(s) as COMPLETE runs, so Runs is never empty on boot."""
     store = JobStore()
