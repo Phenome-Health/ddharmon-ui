@@ -1179,6 +1179,20 @@ def test_analysis_ideas_digest_and_grounding():
     assert "Pooled smoking→CVD" in titles and "Hallucinated" not in titles  # ungrounded idea dropped
 
 
+def test_parse_ideas_salvages_truncated_json():
+    """A verbose response that hits the token cap mid-array (invalid JSON) must not collapse to zero — the
+    complete idea objects are salvaged and the incomplete trailing one is dropped."""
+    from backend.analysis_ideas import _parse_ideas
+
+    truncated = (
+        '{"ideas":[{"title":"One","hypothesis":"h","concepts":["A"],"cohorts":["X"],"method":"m",'
+        '"whyNewlyPossible":"w","category":"c"},{"title":"Two","hypothesis":"cut off here and never clo'
+    )
+    ideas = _parse_ideas(truncated, allowed={"A", "B"})
+    assert len(ideas) == 1
+    assert ideas[0]["title"] == "One" and ideas[0]["concepts"] == ["A"]
+
+
 def test_analysis_ideas_endpoint_caches_scopes_and_gates(monkeypatch, tmp_path):
     """The endpoint generates via one BYOK LLM call, caches (no re-bill), regenerates on demand, scopes to
     the owner (404 for others), and 409s when the run has no concepts."""

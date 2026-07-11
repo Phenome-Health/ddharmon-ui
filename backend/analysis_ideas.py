@@ -13,6 +13,7 @@ and every idea is grounded in concepts ACTUALLY present in this run (hallucinate
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -75,11 +76,60 @@ def _build_prompt(digest: list[dict[str, Any]], max_ideas: int) -> tuple[str, st
     return system, user
 
 
+def _salvage_truncated_ideas(text: str) -> list[dict[str, Any]]:
+    """Recover complete idea objects from a JSON array the model cut off mid-way (token cap).
+
+    Locates the ``ideas`` array (or a bare ``[`` list), then walks brace depth collecting each balanced
+    ``{...}`` object and parsing it on its own — so the incomplete trailing object is simply dropped instead
+    of failing the whole parse. Returns the list of complete idea dicts (possibly empty).
+    """
+    m = re.search(r'"ideas"\s*:\s*\[', text)
+    start_idx = m.end() if m else (text.find("[") + 1 if "[" in text else -1)
+    if start_idx <= 0:
+        return []
+    objs: list[dict[str, Any]] = []
+    depth = 0
+    obj_start = -1
+    in_str = False
+    esc = False
+    for i in range(start_idx, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and obj_start >= 0:
+                    try:
+                        obj = json.loads(text[obj_start : i + 1])
+                        if isinstance(obj, dict):
+                            objs.append(obj)
+                    except (ValueError, TypeError):
+                        pass
+                    obj_start = -1
+        elif ch == "]" and depth == 0:
+            break
+    return objs
+
+
 def _parse_ideas(raw: str, allowed: set[str]) -> list[dict[str, Any]]:
     """Tolerantly parse the model's JSON and keep only ideas grounded in the run's own concepts.
 
-    Strips markdown fences, accepts either ``{"ideas": [...]}`` or a bare list, intersects each idea's
-    ``concepts`` with ``allowed`` (dropping hallucinated ones), and drops any idea left with none grounded.
+    Strips markdown fences, accepts either ``{"ideas": [...]}`` or a bare list, and — if the JSON is
+    truncated (the model hit the token cap mid-array) — salvages the complete idea objects. Then intersects
+    each idea's ``concepts`` with ``allowed`` (dropping hallucinated ones) and drops any idea with none left.
     """
     text = raw.strip()
     if text.startswith("```"):
@@ -87,9 +137,9 @@ def _parse_ideas(raw: str, allowed: set[str]) -> list[dict[str, Any]]:
         text = text.removeprefix("json").strip()
     try:
         data = json.loads(text)
+        items = data.get("ideas") if isinstance(data, dict) else data
     except (ValueError, TypeError):
-        return []
-    items = data.get("ideas") if isinstance(data, dict) else data
+        items = _salvage_truncated_ideas(text)  # likely truncated at the token cap — keep complete ideas
     if not isinstance(items, list):
         return []
 
@@ -127,6 +177,8 @@ def generate_analysis_ideas(
     if not digest:
         return {"ideas": [], "nConcepts": 0}
     system, user = _build_prompt(digest, max_ideas)
-    raw = complete(user, system=system, max_tokens=2000)
+    # Headroom for several detailed ideas; the parser also salvages a truncated array as a backstop so a
+    # verbose response never collapses to zero ideas.
+    raw = complete(user, system=system, max_tokens=4096)
     ideas = _parse_ideas(raw, allowed={d["concept"] for d in digest})
     return {"ideas": ideas[:max_ideas], "nConcepts": len(digest)}

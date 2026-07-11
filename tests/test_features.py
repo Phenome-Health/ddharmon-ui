@@ -134,3 +134,25 @@ def test_demo_load_404_for_unknown_combo():
 def test_list_demos_matches_manifest():
     demos = list_demos()
     assert [c["datasets"] for c in demos["combos"]] == [["aou", "clsa", "ukbb", "mesa", "aireadi"]]
+
+
+def test_seed_demos_surfaces_pregenerated_analysis_ideas():
+    """A seeded demo carries its PRE-GENERATED analysis ideas (from the sidecar) so a guest sees them
+    without an LLM call — surfaced both on the Job and via to_dict()'s analysisIdeas."""
+    from backend.demos import _load_demo_ideas, demo_job_id, seed_demos
+    from backend.jobs import JobStore
+
+    ideas_by_snapshot = _load_demo_ideas()
+    store = JobStore()
+    seed_demos(store)
+    for combo in list_demos()["combos"]:
+        expected = ideas_by_snapshot.get(combo["snapshot"])
+        if not combo.get("available") or not expected:
+            continue
+        job = store.get(demo_job_id(combo["datasets"]))
+        assert job is not None
+        assert job.analysis_ideas == expected  # pre-generated ideas set on the demo job
+        assert job.to_dict()["analysisIdeas"] == expected  # ...and streamed to the client
+    # The shipped 5-cohort demo must actually carry ideas (guards against a missing/empty sidecar).
+    shipped = ideas_by_snapshot.get("aireadi_aou_clsa_mesa_ukbb.json")
+    assert shipped and len(shipped) > 0
