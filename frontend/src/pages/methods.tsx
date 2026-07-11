@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PH } from "@/lib/links";
 import { PIPELINE_STAGES, type PipelineStage, type StageKind } from "@/data/pipeline-stages";
+import { UnderReviewBanner } from "@/components/under-review-banner";
 
 /** Inline external link, styled + with an icon (matches the Guide page's `A`). */
 function A({ href, children }: { href: string; children: React.ReactNode }) {
@@ -178,6 +179,8 @@ export default function MethodsPage() {
           .
         </p>
       </div>
+
+      <UnderReviewBanner />
 
       {/* 0 · Orientation — makes this page standalone; the vocabulary the stages assume ------- */}
       <Card>
