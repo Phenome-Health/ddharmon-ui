@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
@@ -77,6 +77,7 @@ function parseFile(file: File): Promise<{ headers: string[]; nFields: number }> 
 
 export default function HomePage() {
   const [, navigate] = useLocation();
+  const qc = useQueryClient();
   const { isGuest } = useAuthState();
   const [dicts, setDicts] = useState<DictFile[]>([]);
   const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
@@ -209,6 +210,7 @@ export default function HomePage() {
         provider,
         needsProviderKey ? key : undefined,
       );
+      qc.invalidateQueries({ queryKey: ["jobs"] });
       navigate(`/job/${jobId}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to start run");
