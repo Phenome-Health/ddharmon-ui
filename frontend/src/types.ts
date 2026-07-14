@@ -132,7 +132,7 @@ export interface GenCDE {
   sourceVariables: string[]; // pooled member edges ("cohort:var")
   sourceCohorts: string[];
   relatedCdes: string[]; // near-miss candidate names the assign stage saw
-  valueCoverage: number; // fraction of observed answer-concepts represented (flag, not gate)
+  valueCoverage: number | null; // fraction of observed answer-concepts represented (flag, not gate); null = N/A for a numeric GenCDE
   uncoveredLabels: string[];
   confidence: number;
   needsReview: boolean;

@@ -538,7 +538,7 @@ def test_transform_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
     assert tsv.status_code == 200
     rows = list(csv.reader(io.StringIO(tsv.text), delimiter="\t"))
     header = rows[0]
-    assert header[-1] == "transformDecisions"
+    assert header[-2] == "transformDecisions" and header[-1] == "gencdeDecision"  # two trailing verdict cols
     ti = header.index("transformDecisions")
     row = next(r for r in rows[1:] if r[0] == "c1#g0")
     tj = json.loads(row[ti])
@@ -549,9 +549,79 @@ def test_transform_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
     dec_csv = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "decisions_csv"})
     drows = list(csv.reader(io.StringIO(dec_csv.text)))
     dheader = drows[0]
-    assert dheader[-1] == "transformDecisions"
+    assert dheader[-2] == "transformDecisions" and dheader[-1] == "gencdeDecision"
     drow = next(r for r in drows[1:] if r[0] == "c1#g0")
     assert json.loads(drow[dheader.index("transformDecisions")])["CohortB:age_yrs"]["decision"] == "refine"
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
+
+
+def test_gencde_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
+    """The GenCDE axis is a THIRD independent verdict — the reviewer's approve/refine/reject on the synthesized
+    GenCDE itself, recorded once per record under ``decisions[rec]["gencde"]`` and serialized into the trailing
+    ``gencdeDecision`` export column. It needs no ``sourceVariable`` and coexists with the match + transform axes."""
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=_CANNED_RESULT)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+    cfg = {
+        "dictionaries": [{"filename": "cohortA.csv", "cohortName": "CohortA", "columnRoles": {"variable_name": "var"}}],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    # match + transform + gencde verdicts on the same record, all on independent axes
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict", json={"recordId": "c1#g0", "decision": "approve"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict",
+            json={"recordId": "c1#g0", "decision": "reject", "axis": "gencde", "note": "wrong concept"},
+        ).status_code
+        == 200
+    )
+    # gencde axis takes no sourceVariable, and an unknown axis is rejected
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict", json={"recordId": "c1#g0", "decision": "approve", "axis": "bogus"}
+        ).status_code
+        == 400
+    )
+
+    # persisted under decisions[rec]["gencde"], coexisting with the untouched match verdict
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()
+    assert snap["decisions"]["c1#g0"]["gencde"] == {"decision": "reject", "note": "wrong concept"}
+    assert snap["decisions"]["c1#g0"]["decision"] == "approve"  # match axis untouched
+
+    # both exports carry the GenCDE verdict in the trailing gencdeDecision column
+    for fmt, delim in (("eitl_tsv", "\t"), ("decisions_csv", ",")):
+        exp = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": fmt})
+        assert exp.status_code == 200
+        erows = list(csv.reader(io.StringIO(exp.text), delimiter=delim))
+        eheader = erows[0]
+        assert eheader[-1] == "gencdeDecision"
+        erow = next(r for r in erows[1:] if r[0] == "c1#g0")
+        assert json.loads(erow[eheader.index("gencdeDecision")])["decision"] == "reject"
 
     assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
 

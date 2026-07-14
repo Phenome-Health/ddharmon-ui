@@ -149,6 +149,8 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   // Second, independent verdict axis: approve/refine/reject each var→CDE transform spec, PER source variable
   // (keyed `${recordId}:${sourceVariable}`) — distinct from the concept→CDE match verdict above.
   const [transformDecisions, setTransformDecisions] = useState<Record<string, string>>({});
+  // Third axis: approve/refine/reject the synthesized GenCDE itself (novel route), keyed by recordId.
+  const [gencdeDecisions, setGencdeDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -214,6 +216,18 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
       toast.success(`Transform for "${t.sourceVariable}" ${decision}d`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save transform decision");
+    }
+  }
+
+  // GenCDE-axis verdict — approve/refine/reject the synthesized GenCDE (the novel route's proposed target),
+  // keyed by recordId, distinct from the concept→CDE match verdict and the per-variable transform verdicts.
+  async function decideGencde(r: UIRecord, decision: "approve" | "refine" | "reject") {
+    setGencdeDecisions((p) => ({ ...p, [r.id]: decision }));
+    try {
+      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "gencde");
+      toast.success(`Proposed GenCDE for "${r.concept || r.id}" ${decision}d`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save GenCDE decision");
     }
   }
 
@@ -312,7 +326,13 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                 />
                 <div className="grid gap-1 text-sm">
                   <Field label="Concept summary">{selected.idealCde || "—"}</Field>
-                  {selected.gencde && <GenCDECard g={selected.gencde} />}
+                  {selected.gencde && (
+                    <GenCDECard
+                      g={selected.gencde}
+                      decision={gencdeDecisions[selected.id]}
+                      onDecide={(d) => decideGencde(selected, d)}
+                    />
+                  )}
                   {selected.rationale && (
                     <div className="mt-1 space-y-1">
                       <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">
@@ -493,7 +513,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 // The synthesized GenCDE proposed for a novel concept (contract `UIRecord.gencde`) — the spec-conformant
 // harmonization target, distinct from the free-text "Concept summary" (idealCde). Shown only on novels.
-function GenCDECard({ g }: { g: GenCDE }) {
+function GenCDECard({
+  g,
+  decision,
+  onDecide,
+}: {
+  g: GenCDE;
+  decision?: string;
+  onDecide: (d: "approve" | "refine" | "reject") => void;
+}) {
   const hasRange = g.minimum != null || g.maximum != null;
   return (
     <div className="mt-1 space-y-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2.5">
@@ -513,6 +541,20 @@ function GenCDECard({ g }: { g: GenCDE }) {
             </Badge>
           )}
         </span>
+      </div>
+      {/* GenCDE-axis verdict: approve/refine/reject the proposed target itself (distinct from the concept→CDE
+          match verdict and the per-variable transform verdicts). */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] text-neutral-500">Review proposal:</span>
+        <DecisionBtn active={decision === "approve"} onClick={() => onDecide("approve")} title="Approve GenCDE" color="text-success">
+          <Check className="h-4 w-4" />
+        </DecisionBtn>
+        <DecisionBtn active={decision === "refine"} onClick={() => onDecide("refine")} title="Refine GenCDE" color="text-warning">
+          <Pencil className="h-4 w-4" />
+        </DecisionBtn>
+        <DecisionBtn active={decision === "reject"} onClick={() => onDecide("reject")} title="Reject GenCDE" color="text-danger">
+          <Ban className="h-4 w-4" />
+        </DecisionBtn>
       </div>
       <div className="text-sm">
         <span className="font-mono font-medium text-ph-ink">{g.preferredName || "—"}</span>
@@ -551,7 +593,10 @@ function GenCDECard({ g }: { g: GenCDE }) {
       )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-neutral-500">
         <span>
-          coverage <span className="font-medium tabular-nums">{Math.round(g.valueCoverage * 100)}%</span>
+          coverage{" "}
+          <span className="font-medium tabular-nums">
+            {g.valueCoverage == null ? "n/a" : `${Math.round(g.valueCoverage * 100)}%`}
+          </span>
         </span>
         {g.confidence > 0 && (
           <span>

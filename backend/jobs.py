@@ -245,13 +245,15 @@ class JobStore:
         axis: str = "match",
         source_variable: str | None = None,
     ) -> bool:
-        """Persist a human verdict on one of two independent axes.
+        """Persist a human verdict on one of three independent axes.
 
         ``axis="match"`` (default) writes the concept→CDE verdict as top-level ``decision``/``note`` (unchanged).
         ``axis="transform"`` records a PER-SOURCE-VARIABLE recode-spec verdict under
         ``decisions[record_id]["transforms"][source_variable] = {"decision", "note"}`` — one verdict per
         ``cohort:var`` edge, so a record's several transforms carry independent verdicts without clobbering the
         match verdict. A transform-axis call without ``source_variable`` is a no-op (caller must supply it).
+        ``axis="gencde"`` records the reviewer's verdict on the synthesized GenCDE (the novel route's proposed
+        target) under ``decisions[record_id]["gencde"] = {"decision", "note"}`` — once per record.
 
         Works on a past (evicted / post-restart) run too: if it's not live in memory it is hydrated from the
         durable store, the verdict applied, and the whole record re-persisted — so reviewing history later
@@ -302,6 +304,11 @@ class JobStore:
         if axis == "transform":
             transforms: dict[str, Any] = rec.setdefault("transforms", {})
             transforms[source_variable] = {"decision": decision, "note": note}  # type: ignore[index]
+        elif axis == "gencde":
+            # A THIRD axis: the reviewer's verdict on the synthesized GenCDE itself (the novel route's
+            # proposed target), recorded once per record under a single "gencde" key — distinct from the
+            # concept→CDE match verdict and the per-variable transform verdicts.
+            rec["gencde"] = {"decision": decision, "note": note}
         else:
             rec["decision"] = decision
             rec["note"] = note

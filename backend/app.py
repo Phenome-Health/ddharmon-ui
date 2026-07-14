@@ -494,14 +494,14 @@ class VerdictBody(BaseModel):
     recordId: str
     decision: str  # both axes: approve | refine | reject
     note: str = ""
-    axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode spec)
+    axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode) | gencde (proposed GenCDE)
     sourceVariable: str | None = None  # REQUIRED for axis="transform" — the "cohort:var" edge the verdict is on
 
 
 @app.post("/api/harmonize/jobs/{job_id}/verdict")
 def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str, bool]:
-    if body.axis not in ("match", "transform"):
-        raise HTTPException(status_code=400, detail="axis must be match|transform")
+    if body.axis not in ("match", "transform", "gencde"):
+        raise HTTPException(status_code=400, detail="axis must be match|transform|gencde")
     # Both axes accept the full triad; the transform axis records one verdict PER source variable.
     allowed = ("approve", "refine", "reject")
     if body.decision not in allowed:
@@ -527,10 +527,11 @@ def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str
 _EITL_COLS = [
     "recordId", "clusterId", "groupId", "concept", "verdict", "route", "cdeId", "cdeExternalId",
     "top1Cos", "chosenCos", "coverageGap", "floored", "crossCohort", "nMembers", "cohorts", "members",
-    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote", "transformDecisions",
+    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote", "transformDecisions", "gencdeDecision",
 ]  # fmt: skip
 _DECISIONS_COLS = [
     "recordId", "concept", "verdict", "cdeId", "chosenCos", "humanDecision", "humanNote", "transformDecisions",
+    "gencdeDecision",
 ]  # fmt: skip
 _EITL_RANK = {"refine": 0, "novel": 1, "adopt": 2}
 
@@ -542,6 +543,15 @@ def _transform_decisions_json(dec: dict[str, Any]) -> str:
     stays on one TSV/CSV row (the JSON's own commas/quotes are handled by ``csv.writer`` quoting)."""
     transforms = dec.get("transforms")
     return _clean(json.dumps(transforms, sort_keys=True)) if transforms else ""
+
+
+def _gencde_decision_json(dec: dict[str, Any]) -> str:
+    """Serialize a record's GenCDE-axis verdict ({decision, note}) to a compact JSON object for export.
+
+    Empty string when the record has no GenCDE verdict. Appended LAST (like ``transformDecisions``) so the
+    match/transform column positions stay stable for index-based test assertions."""
+    gencde = dec.get("gencde")
+    return _clean(json.dumps(gencde, sort_keys=True)) if gencde else ""
 
 
 @app.get("/api/harmonize/jobs/{job_id}/export")
@@ -596,6 +606,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
                     _transform_decisions_json(dec),
+                    _gencde_decision_json(dec),
                 ]
             )
         else:
@@ -623,6 +634,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
                     _transform_decisions_json(dec),
+                    _gencde_decision_json(dec),
                 ]
             )
     media = "text/csv" if ext == "csv" else "text/tab-separated-values"

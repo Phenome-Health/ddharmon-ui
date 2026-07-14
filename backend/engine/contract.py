@@ -171,7 +171,9 @@ class UIGenCDE(TypedDict, total=False):
     sourceVariables: list[str]  # the pooled member edges ("cohort:var")
     sourceCohorts: list[str]
     relatedCdes: list[str]  # near-miss candidate names the assign stage saw
-    valueCoverage: float  # fraction of observed answer-concepts the domain represents (flag, not gate)
+    valueCoverage: (
+        float | None
+    )  # fraction of observed answer-concepts the domain represents; None = N/A (numeric GenCDE)
     uncoveredLabels: list[str]
     confidence: float
     needsReview: bool

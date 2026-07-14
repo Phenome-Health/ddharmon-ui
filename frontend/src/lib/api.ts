@@ -155,12 +155,13 @@ export async function submitVerdict(
   recordId: string,
   decision: "approve" | "refine" | "reject",
   note = "",
-  axis: "match" | "transform" = "match",
+  axis: "match" | "transform" | "gencde" = "match",
   sourceVariable?: string,
 ): Promise<void> {
-  // Two-axis verdict body: { recordId, decision, note, axis, sourceVariable? }. axis="match" is the
+  // Three-axis verdict body: { recordId, decision, note, axis, sourceVariable? }. axis="match" is the
   // concept→CDE verdict; axis="transform" is a PER-SOURCE-VARIABLE recode-spec verdict, so it also carries
-  // the "cohort:var" `sourceVariable` it applies to (required server-side for the transform axis). Both axes
+  // the "cohort:var" `sourceVariable` it applies to (required server-side for the transform axis); axis="gencde"
+  // is the verdict on the synthesized GenCDE itself (novel route, once per record, no sourceVariable). All axes
   // take the full approve|refine|reject triad. Kept out of types.ts on purpose (decisions' keys are optional).
   if (IS_STATIC) return; // preview: decisions are not persisted
   // Guest (gate on, no token): the demo is read-only — saving verdicts needs a sign-in. Fail with a clear
