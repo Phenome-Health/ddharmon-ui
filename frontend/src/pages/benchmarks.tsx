@@ -1,10 +1,10 @@
 import { Link } from "wouter";
-import { ArrowRight, ExternalLink, Gauge, RefreshCcw, ScaleIcon, ShieldCheck } from "lucide-react";
+import { ArrowRight, BookOpen, ExternalLink, Gauge, RefreshCcw, ScaleIcon, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PH } from "@/lib/links";
-import { BENCHMARKS, type Benchmark, type BenchmarkTier } from "@/data/benchmarks";
+import { BENCHMARKS, METRIC_DEFS, type Benchmark, type BenchmarkTier } from "@/data/benchmarks";
 import { UnderReviewBanner } from "@/components/under-review-banner";
 
 /** Inline external link, styled + with an icon (matches the Methods/Guide `A`). */
@@ -64,9 +64,22 @@ function BenchmarkCard({ b }: { b: Benchmark }) {
       <CardContent className="space-y-4 text-sm">
         <div>
           <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
-            Ground truth
+            Task
+          </div>
+          <p className="text-neutral-600">{b.task}</p>
+        </div>
+
+        <div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+            Ground truth &amp; provenance
           </div>
           <p className="text-neutral-600">{b.groundTruth}</p>
+          <p className="mt-1 text-neutral-600">{b.provenance}</p>
+          {b.source && (
+            <p className="mt-1.5">
+              <A href={b.source.href}>{b.source.label}</A>
+            </p>
+          )}
         </div>
 
         <div>
@@ -173,6 +186,34 @@ export default function BenchmarksPage() {
           <BenchmarkCard key={b.name} b={b} />
         ))}
       </div>
+
+      {/* Metric definitions — so a value isn't read without knowing exactly what it measures. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <BookOpen className="h-4 w-4 text-ph-navy" /> What the metrics mean
+          </CardTitle>
+          <p className="text-xs text-neutral-400">
+            Precise definitions + the reference frame for reading each score.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm text-neutral-600">
+          <dl className="space-y-2.5">
+            {METRIC_DEFS.map((m) => (
+              <div key={m.term} className="grid gap-0.5 sm:grid-cols-[minmax(9rem,13rem)_1fr] sm:gap-3">
+                <dt className="font-mono text-xs font-medium text-ph-ink">{m.term}</dt>
+                <dd className="text-neutral-600">{m.def}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="rounded-md border border-border bg-muted p-3 text-xs">
+            <span className="font-medium text-neutral-700">What&apos;s good?</span> recall@k, assignment, and
+            recode-accuracy run 0–1 (1 = perfect; a chance / naive baseline sits far below). Separability Δ is a
+            distributional gap, not an accuracy — larger means the encoder separates concepts more cleanly, 0
+            means no separation.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* The value layer needs context — the ATHLOS lift, called out. */}
       <Card>
