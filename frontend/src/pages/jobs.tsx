@@ -15,6 +15,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import {
   Table,
   TableBody,
   TableCell,
@@ -103,8 +115,55 @@ function RerunAction({ job }: { job: JobSummary }) {
   );
 }
 
-export default function JobsPage() {
+// Delete a run behind a confirmation dialog — a run can carry real LLM cost, so guard the trash button
+// against a fat-finger click. Names the run being deleted; delete is irreversible.
+function DeleteAction({ job }: { job: JobSummary }) {
   const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function confirm() {
+    setBusy(true);
+    try {
+      await deleteJob(job.jobId);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      setOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button variant="ghost" size="icon" aria-label="Delete" title="Delete this run" onClick={() => setOpen(true)}>
+        <Trash2 className="h-4 w-4 text-neutral-400" />
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete “{job.displayName}”?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently deletes the run and its results. This can’t be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={busy}
+            onClick={(e) => {
+              e.preventDefault();
+              confirm();
+            }}
+            className={cn(buttonVariants({ variant: "destructive" }))}
+          >
+            {busy ? "Deleting…" : "Delete"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+export default function JobsPage() {
   const { isGuest } = useAuthState();
   // Real runs are per-account and behind the SSO gate, so guests don't fetch the list (it would 401) —
   // they get a sign-in CTA instead. The demo lives on its own page.
@@ -114,11 +173,6 @@ export default function JobsPage() {
     refetchInterval: 3000,
     enabled: !isGuest,
   });
-
-  async function remove(jobId: string) {
-    await deleteJob(jobId);
-    qc.invalidateQueries({ queryKey: ["jobs"] });
-  }
 
   if (isGuest) {
     return (
@@ -189,9 +243,7 @@ export default function JobsPage() {
                   <TableCell className="text-right">
                     <span className="flex items-center justify-end gap-1">
                       {TERMINAL.has(j.status) && !(j.config as { demo?: boolean })?.demo && <RerunAction job={j} />}
-                      <Button variant="ghost" size="icon" onClick={() => remove(j.jobId)} aria-label="Delete">
-                        <Trash2 className="h-4 w-4 text-neutral-400" />
-                      </Button>
+                      <DeleteAction job={j} />
                     </span>
                   </TableCell>
                 </TableRow>
