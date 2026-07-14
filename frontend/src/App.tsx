@@ -17,6 +17,7 @@ import DesignChoicesPage from "@/pages/design-choices";
 import DemoPage from "@/pages/demo";
 import RelatedWorkPage from "@/pages/related-work";
 import PhenomeHealthPage from "@/pages/phenome-health";
+import RoadmapPage from "@/pages/roadmap";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -41,6 +42,7 @@ export default function App() {
             <Route path="/design" component={DesignChoicesPage} />
             <Route path="/demo" component={DemoPage} />
             <Route path="/related" component={RelatedWorkPage} />
+            <Route path="/roadmap" component={RoadmapPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />
             <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
             <Route path="/job/:jobId/analysis" component={AnalysisIdeasPage} />
