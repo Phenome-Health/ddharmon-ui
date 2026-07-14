@@ -34,6 +34,7 @@ import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { buildRunIssueUrl } from "@/lib/links";
+import { RerunAction } from "@/components/rerun-action";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
 import { VERDICT_STYLES, formatDuration, type UIRecord, type UnassignedField } from "@/types";
 
@@ -432,6 +433,8 @@ export default function DashboardPage() {
             {error && <p className="text-sm text-danger">{error.message}</p>}
             {error && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+                {/* Recovery actions: retry the identical run (many failures are transient), or report it. */}
+                <RerunAction job={jobState} labeled />
                 <Button size="sm" variant="outline" asChild>
                   <a
                     href={buildRunIssueUrl({
