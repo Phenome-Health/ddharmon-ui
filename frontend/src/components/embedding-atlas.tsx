@@ -376,9 +376,9 @@ export function EmbeddingAtlas({
       {colorBy === "agreement" && (
         <p className="mt-1.5 rounded-md border border-warning-border bg-warning-bg px-2.5 py-1.5 text-[11px] leading-relaxed text-neutral-700">
           <b className="text-warning">Reading this view:</b> the agree/disagree color is a{" "}
-          <b>2-D geometry check only</b> — it asks whether a field&apos;s concept-mates fall among its {K_NEIGHBORS}{" "}
+          <b>2-D geometry check only</b> — it asks whether a variable&apos;s concept-mates fall among its {K_NEIGHBORS}{" "}
           nearest neighbors on this PCA plot. Concept assignment itself is <b>not</b> pure atlas proximity: the split
-          stage also weighs the variable name, the field&apos;s response values/units, and an LLM concept judgment. So
+          stage also weighs the variable name, the variable&apos;s response values/units, and an LLM concept judgment. So
           two dots that sit close here can still be assigned to different concepts — that&apos;s the pipeline using
           signals this flat 2-D view can&apos;t show. Click a dot for its concept, rationale, and values.
         </p>
@@ -444,7 +444,7 @@ export function EmbeddingAtlas({
               </div>
             ) : (
               <div className="mt-1 text-neutral-400">
-                {catLabel(UNASSIGNED)} — this field didn&apos;t cluster into any concept.
+                {catLabel(UNASSIGNED)} — this variable didn&apos;t cluster into any concept.
               </div>
             )}
 
@@ -473,7 +473,7 @@ export function EmbeddingAtlas({
                   </div>
                 )}
                 {!selectedRec && (
-                  <div className="mt-1 text-neutral-400">The agreement check applies only to assigned fields.</div>
+                  <div className="mt-1 text-neutral-400">The agreement check applies only to assigned variables.</div>
                 )}
               </div>
             )}

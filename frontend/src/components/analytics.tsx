@@ -219,7 +219,7 @@ function StackedVerdictBars({
   );
 }
 
-const sizeLabel = (t: string) => `${t} field${t === "1" ? "" : "s"} per concept`;
+const sizeLabel = (t: string) => `${t} variable${t === "1" ? "" : "s"} per concept`;
 const binLabel = (b: string) => {
   const lo = Number(b);
   return `cosine ${lo.toFixed(1)}–${(lo + 0.1).toFixed(1)}`;
@@ -247,9 +247,9 @@ export function Analytics({
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-base">Coverage by cohort</CardTitle>
           <PlotInfo>
-            Per cohort: <b>Fields</b> it contributed, how many were <b>Assigned</b> to an existing CDE
-            (adopt/refine) vs proposed <b>Novel</b>, and <b>Coverage</b> = assigned ÷ fields. Assigned + Novel
-            can be less than Fields — the rest didn&apos;t cluster into any concept. Click a row to focus that cohort.
+            Per cohort: <b>Variables</b> it contributed, how many were <b>Assigned</b> to an existing CDE
+            (adopt/refine) vs proposed <b>Novel</b>, and <b>Coverage</b> = assigned ÷ variables. Assigned + Novel
+            can be less than Variables — the rest didn&apos;t cluster into any concept. Click a row to focus that cohort.
           </PlotInfo>
         </CardHeader>
         <CardContent className="p-0">
@@ -257,7 +257,7 @@ export function Analytics({
             <TableHeader>
               <TableRow>
                 <TableHead>Cohort</TableHead>
-                <TableHead className="text-right">Fields</TableHead>
+                <TableHead className="text-right">Variables</TableHead>
                 <TableHead className="text-right">Assigned</TableHead>
                 <TableHead className="text-right">Novel</TableHead>
                 <TableHead className="text-right">Coverage</TableHead>
@@ -289,8 +289,8 @@ export function Analytics({
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-base">Concepts by size × verdict</CardTitle>
           <PlotInfo>
-            How many concepts pooled 1, 2, 3… fields (x-axis), with each bar stacked by verdict
-            (adopt/refine/novel). A higher x-tier means more fields pooled into one shared concept
+            How many concepts pooled 1, 2, 3… variables (x-axis), with each bar stacked by verdict
+            (adopt/refine/novel). A higher x-tier means more variables pooled into one shared concept
             (more harmonization); the y-axis is how many concepts fall in that tier.
             Click a segment to focus that verdict.
           </PlotInfo>
@@ -301,7 +301,7 @@ export function Analytics({
           ) : (
             <p className="py-8 text-center text-sm text-neutral-400">No concepts.</p>
           )}
-          <p className="mt-1 text-xs text-neutral-400">x = fields pooled per concept · bars stacked by verdict</p>
+          <p className="mt-1 text-xs text-neutral-400">x = variables pooled per concept · bars stacked by verdict</p>
         </CardContent>
       </Card>
 
@@ -330,7 +330,7 @@ export function Analytics({
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-base">Cross-cohort overlap</CardTitle>
           <PlotInfo>
-            A heatmap of how many concepts each pair of cohorts <b>share</b> — i.e. fields from both cohorts
+            A heatmap of how many concepts each pair of cohorts <b>share</b> — i.e. variables from both cohorts
             pooled into the same harmonized concept. Darker cells = more shared concepts, the core payoff of
             cross-cohort harmonization. Click a cell to focus that pair.
           </PlotInfo>

@@ -59,7 +59,7 @@ export const BENCHMARKS: Benchmark[] = [
   {
     name: "CDEMapper",
     question: "Are we matching the right CDE?",
-    groundTruth: "Yale CDE-Mapping-Tool (494 field→CDE)",
+    groundTruth: "Yale CDE-Mapping-Tool (494 variable→CDE)",
     metrics: [
       { label: "hybrid retrieval recall@5", value: "0.632" },
       { label: "fused assignment (in-backbone)", value: "0.521" },
@@ -88,6 +88,6 @@ export const BENCHMARKS: Benchmark[] = [
     groundTruth: "ATHLOS harmonisation scripts (284 recode golds)",
     metrics: [{ label: "LLM recode pair-accuracy (with question_text context)", value: "0.832 → 0.869" }],
     tier: "external",
-    note: "Feeding the source field's question_text into the recode generator lifts recode accuracy ~7pp (0.832 → 0.869).",
+    note: "Feeding the source variable's question_text into the recode generator lifts recode accuracy ~7pp (0.832 → 0.869).",
   },
 ];

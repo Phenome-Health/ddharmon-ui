@@ -80,14 +80,14 @@ export default function DemoPage() {
                     className="flex flex-col gap-1 rounded-md border border-neutral-200 bg-neutral-0 p-3 text-sm"
                   >
                     <span className="font-medium text-neutral-700">{d.label}</span>
-                    <span className="text-xs text-neutral-400">{d.nFields} fields</span>
+                    <span className="text-xs text-neutral-400">{d.nFields} variables</span>
                     {d.description && <span className="text-xs text-neutral-400">{d.description}</span>}
                   </div>
                 ))}
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-neutral-400">
-                  {cohorts.length} cohorts · {totalFields} fields · live mapping to NIH CDEs
+                  {cohorts.length} cohorts · {totalFields} variables · live mapping to NIH CDEs
                 </p>
                 <div className="flex items-center gap-2">
                   {demoJobId && (
@@ -127,7 +127,7 @@ export default function DemoPage() {
           </Button>
         </div>
         <p className="mt-2 text-xs text-neutral-400">
-          Curated 200-field subsets of public All of Us / CLSA / UK Biobank / MESA / AI-READI data. Each cohort's
+          Curated 200-variable subsets of public All of Us / CLSA / UK Biobank / MESA / AI-READI data. Each cohort's
           public source dictionary and the exact script that builds it are documented in the zip's README and in the{" "}
           <a href={PH.ddharmonProvenance} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
             provenance table

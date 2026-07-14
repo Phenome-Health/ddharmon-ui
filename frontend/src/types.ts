@@ -313,9 +313,9 @@ export const ROLE_REQUIREMENT: Partial<Record<ColumnRole, "meaning" | "condition
 // Hover-help for each mappable role — what to point this column at, and why it matters.
 export const ROLE_HELP: Record<ColumnRole, string> = {
   variable_name:
-    "The field's unique identifier or code in your dataset (e.g. BMI, Q47_weight). Optional — a synthetic row id is generated if you don't map it; it's the join key other roles attach to.",
+    "The variable's unique identifier or code in your dataset (e.g. BMI, Q47_weight). Optional — a synthetic row id is generated if you don't map it; it's the join key other roles attach to.",
   description:
-    "A human-readable definition of what the variable measures (e.g. “Body mass index in kg/m²”). The primary signal used to match your field to a CDE.",
+    "A human-readable definition of what the variable measures (e.g. “Body mass index in kg/m²”). The primary signal used to match your variable to a CDE.",
   question_text:
     "For survey items, the exact question asked (e.g. “In the past week, how often…”). A strong matching signal for questionnaires.",
   value_encoding:
@@ -327,9 +327,9 @@ export const ROLE_HELP: Record<ColumnRole, string> = {
   category:
     "A grouping or section label from your dictionary (e.g. Demographics, Vitals). Organizational context — not required.",
   field_id:
-    "An external or catalog identifier for the field, if you have one (e.g. a study's field number).",
+    "An external or catalog identifier for the variable, if you have one (e.g. a study's field number).",
   standard_code:
-    "An existing ontology/standard code for the field, if already annotated (e.g. LOINC, SNOMED, a CDE tinyId).",
+    "An existing ontology/standard code for the variable, if already annotated (e.g. LOINC, SNOMED, a CDE tinyId).",
 };
 
 // Rough LLM-cost estimate for a run. Anchored on an observed run: ~$1.45 (batch, Sonnet) over ~7,451

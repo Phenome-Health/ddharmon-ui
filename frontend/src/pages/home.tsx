@@ -133,7 +133,7 @@ export default function HomePage() {
     [totalFields, dicts.length, runMode],
   );
   const costMeta = dicts.length
-    ? `${totalFields.toLocaleString()} fields · ${dicts.length} cohort${dicts.length > 1 ? "s" : ""} · ${runMode}`
+    ? `${totalFields.toLocaleString()} variables · ${dicts.length} cohort${dicts.length > 1 ? "s" : ""} · ${runMode}`
     : "";
 
   // Model catalog for the picker — from the proxy (via the backend) or a built-in fallback.
@@ -255,7 +255,7 @@ export default function HomePage() {
             <CardTitle className="flex items-center gap-2 text-base">
               {d.file.name}
               <Badge variant="secondary">{d.headers.length} cols</Badge>
-              <Badge variant="secondary">{d.nFields.toLocaleString()} fields</Badge>
+              <Badge variant="secondary">{d.nFields.toLocaleString()} variables</Badge>
             </CardTitle>
             <Button variant="ghost" size="icon" onClick={() => removeDict(idx)} aria-label="Remove">
               <X className="h-4 w-4" />
@@ -271,11 +271,11 @@ export default function HomePage() {
               <div>
                 <div className="mb-2 flex flex-wrap items-center gap-x-1.5 text-xs font-medium uppercase tracking-wide text-neutral-400">
                   Question columns
-                  <span className="font-normal normal-case text-neutral-300">what the field asks (semantic)</span>
+                  <span className="font-normal normal-case text-neutral-300">what the variable asks (semantic)</span>
                   <span className="inline-flex items-center gap-1 font-normal normal-case text-ph-crimson">
                     <span aria-hidden>★</span> at least one required
                     <InfoTip
-                      text="Map at least one meaning-bearing field so the pipeline can match your fields to CDEs. description and question_text are the primary semantic signals; variable_name alone works but carries the least meaning (and is auto-generated if you skip it)."
+                      text="Map at least one meaning-bearing field so the pipeline can match your variables to CDEs. description and question_text are the primary semantic signals; variable_name alone works but carries the least meaning (and is auto-generated if you skip it)."
                       label="About the required fields"
                     />
                   </span>
@@ -662,7 +662,7 @@ function RoleInfo({ role }: { role: ColumnRole }) {
 // Help text for the run-option controls (mirrors the Guide's "Choosing run options" section).
 const OPTION_HELP: Record<string, string> = {
   cdeSet:
-    "Which Common Data Element catalog your fields are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
+    "Which Common Data Element catalog your variables are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
   runMode:
     "How the run executes. Batch: the LLM assignment runs asynchronously via the Anthropic Batch API (cost-bounded; needs your API key below). Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits.",
   provider:

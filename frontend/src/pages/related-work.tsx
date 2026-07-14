@@ -66,7 +66,7 @@ const TOOLS: Entry[] = [
 ];
 
 const CONCEPTS: Entry[] = [
-  { name: "Common Data Elements (CDEs)", desc: "NIH CDE Repository — the curated standard definitions ddharmon assigns fields to.", href: REF.cde },
+  { name: "Common Data Elements (CDEs)", desc: "NIH CDE Repository — the curated standard definitions ddharmon assigns variables to.", href: REF.cde },
   { name: "LOINC", desc: "Standard codes for labs, measurements, and survey instruments.", href: REF.loinc },
   { name: "SNOMED CT", desc: "Clinical terminology for conditions, findings, and procedures.", href: REF.snomed },
   { name: "OMOP CDM", desc: "OHDSI's common data model — a frequent harmonization target.", href: REF.omop },

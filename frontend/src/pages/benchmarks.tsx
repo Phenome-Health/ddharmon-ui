@@ -183,7 +183,7 @@ export default function BenchmarksPage() {
         </CardHeader>
         <CardContent className="text-sm leading-relaxed text-neutral-600">
           <p>
-            Value recodes aren't generated blind. On the ATHLOS benchmark, feeding the source field's{" "}
+            Value recodes aren't generated blind. On the ATHLOS benchmark, feeding the source variable's{" "}
             <span className="font-mono text-xs text-ph-ink">question_text</span> into the recode
             generator lifts recode accuracy about{" "}
             <span className="font-medium text-neutral-700">7 percentage points</span>{" "}

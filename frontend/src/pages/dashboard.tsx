@@ -78,7 +78,7 @@ function ReproducibilityInfo() {
           final grouping.
         </p>
         <p className="mb-2 rounded-md bg-neutral-50 p-2 text-neutral-600">
-          <span className="font-medium text-ph-ink">Reference</span> (5×200-field cohorts): across independent fresh
+          <span className="font-medium text-ph-ink">Reference</span> (5×200-variable cohorts): across independent fresh
           runs most concepts recur and keep the same verdict — the split-aware assignment washes most UMAP/LLM
           drift out of the final grouping.
         </p>
@@ -506,7 +506,7 @@ export default function DashboardPage() {
               </Badge>
               <span className="text-neutral-500">
                 {showUnassigned
-                  ? `${filteredUnassigned.length} unclustered ${filteredUnassigned.length === 1 ? "field" : "fields"} · click any chart to change`
+                  ? `${filteredUnassigned.length} unclustered ${filteredUnassigned.length === 1 ? "variable" : "variables"} · click any chart to change`
                   : `${filtered.length} of ${records.length} concepts · click any chart to change`}
               </span>
               <button
@@ -522,9 +522,9 @@ export default function DashboardPage() {
             <CardHeader className="flex flex-row items-center gap-2 space-y-0">
               <CardTitle className="text-base">Match journey</CardTitle>
               <PlotInfo>
-                Where every field goes: <b>cohort → verdict → destination</b>, flow width = number of fields.
+                Where every variable goes: <b>cohort → verdict → destination</b>, flow width = number of variables.
                 <b>Adopt/Refine</b> map onto an existing CDE, <b>Novel</b> routes to a proposed GenCDE, and
-                <b> Unclustered</b> fields (that didn&apos;t group with anything) fall to <b>Not mapped</b>. Click a
+                <b> Unclustered</b> variables (that didn&apos;t group with anything) fall to <b>Not mapped</b>. Click a
                 node or flow to focus it across all the charts.
               </PlotInfo>
             </CardHeader>
@@ -540,7 +540,7 @@ export default function DashboardPage() {
               <CardHeader className="flex flex-row items-center gap-2 space-y-0">
                 <CardTitle className="text-base">Embedding atlas</CardTitle>
                 <PlotInfo>
-                  Each dot is one field, placed by the meaning of its text (a 2-D PCA of the embeddings the
+                  Each dot is one variable, placed by the meaning of its text (a 2-D PCA of the embeddings the
                   clustering used) — nearby dots are semantically similar. Color by <b>cohort</b> or{" "}
                   <b>verdict</b>; click a dot for its full detail and a link to open its concept.
                 </PlotInfo>
@@ -554,7 +554,7 @@ export default function DashboardPage() {
                   onFocus={toggleFocus}
                   onOpenConcept={(id) => navigate(`/job/${jobId}/workbench?c=${encodeURIComponent(id)}`)}
                 />
-                <p className="mt-1 text-xs text-neutral-400">PCA of field embeddings · colored by cohort or verdict</p>
+                <p className="mt-1 text-xs text-neutral-400">PCA of variable embeddings · colored by cohort or verdict</p>
               </CardContent>
             </Card>
           )}
@@ -571,7 +571,7 @@ export default function DashboardPage() {
               </CardTitle>
               <div className="flex items-center gap-2">
                 <Input
-                  placeholder="Search concept, field, CDE, cohort…"
+                  placeholder="Search concept, variable, CDE, cohort…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="h-8 w-56"
@@ -646,7 +646,7 @@ export default function DashboardPage() {
                     ) : (
                       <TableRow>
                         <TableCell colSpan={9} className="py-8 text-center text-sm text-neutral-400">
-                          No unclustered fields{search ? " match your search" : ""}.
+                          No unclustered variables{search ? " match your search" : ""}.
                         </TableCell>
                       </TableRow>
                     )
@@ -708,7 +708,7 @@ function RecordRows({
         <TableCell className="max-w-xs align-top">
           <div className="font-medium text-neutral-700">{r.concept || r.id}</div>
           <div className="truncate text-xs text-neutral-400">
-            {r.nMembers} {r.nMembers === 1 ? "field" : "fields"}
+            {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"}
             {r.crossCohort && " · cross-cohort"}
             {r.coverageGap && " · coverage gap"}
             {r.floored && " · floored"}
@@ -760,7 +760,7 @@ function RecordRows({
             {/* provenance triple: source → verdict → CDE (Monarch association-detail idiom) */}
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded border border-neutral-200 bg-neutral-0 px-2 py-0.5 text-xs text-neutral-600">
-                {r.nMembers} {r.nMembers === 1 ? "field" : "fields"} · {r.cohorts.join(", ") || "—"}
+                {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"} · {r.cohorts.join(", ") || "—"}
               </span>
               <span className="text-neutral-300">→</span>
               <Badge variant="outline" className={VERDICT_STYLES[r.verdict] ?? ""}>
@@ -829,7 +829,7 @@ function RecordRows({
                 in the workbench, one click away. Keeps the queue a scannable triage surface. */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
               <span>
-                {r.nMembers} {r.nMembers === 1 ? "field" : "fields"} · {r.cohorts.join(", ") || "—"}
+                {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"} · {r.cohorts.join(", ") || "—"}
                 {r.crossCohort ? " · cross-cohort" : ""}
               </span>
               {r.transforms.length > 0 && (

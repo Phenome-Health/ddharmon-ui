@@ -27,7 +27,7 @@ export function MemberVariables({ record }: { record: UIRecord }) {
   return (
     <div>
       <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
-        Source variables ({members.length}) — the fields this concept pooled
+        Source variables ({members.length}) — the variables this concept pooled
       </div>
       <div className="space-y-1">
         {shown.map((m) => (
