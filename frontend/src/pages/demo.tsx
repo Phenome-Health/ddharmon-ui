@@ -9,6 +9,47 @@ import { Badge } from "@/components/ui/badge";
 import { listDemos, startDemo } from "@/lib/api";
 import { PH } from "@/lib/links";
 
+// Public source dictionary + reproducing build script for each demo cohort. Kept in sync with the
+// provenance table at data/examples/README.md (the source of truth). URLs are the public, no-login catalogs.
+const DEMO_SOURCES: { name: string; href: string; src: string; script: string }[] = [
+  {
+    name: "All of Us",
+    href: "https://docs.google.com/spreadsheets/d/1pODkE2bFN-kmVtYp89rtrJg7oXck4Fsex58237x47mA/edit",
+    src: "Survey Data Codebooks",
+    script: "build_all_of_us_csv.py",
+  },
+  {
+    name: "CLSA",
+    href: "https://www.clsa-elcv.ca/resource-types/data-dictionaries/",
+    src: "CLSA Data Dictionaries",
+    script: "build_clsa_csv.py",
+  },
+  {
+    name: "UK Biobank",
+    href: "https://biobank.ndph.ox.ac.uk/showcase/schema.cgi",
+    src: "UKB Showcase Schema",
+    script: "build_ukbb_csv.py",
+  },
+  {
+    name: "MESA",
+    href: "https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/study.cgi?study_id=phs000209",
+    src: "dbGaP phs000209 (public variable summaries)",
+    script: "build_dbgap_csv.py",
+  },
+  {
+    name: "AI-READI",
+    href: "https://github.com/AI-READI/DataElementMaps",
+    src: "AI-READI / DataElementMaps",
+    script: "build_aireadi_csv.py",
+  },
+  {
+    name: "NIH CDEs",
+    href: "https://cde.nlm.nih.gov/",
+    src: "NIH CDE Repository (assignment backbone)",
+    script: "flatten_cde_repo.py",
+  },
+];
+
 export default function DemoPage() {
   const [, navigate] = useLocation();
   const [loading, setLoading] = useState(false);
@@ -136,6 +177,50 @@ export default function DemoPage() {
           <a href={PH.ddharmonUi} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
             ddharmon-ui
           </a>
+        </p>
+      </div>
+
+      {/* Data provenance — public source dictionaries + how the ~200-variable subset was curated. */}
+      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
+        <div className="text-sm font-medium text-neutral-700">Where the demo data comes from</div>
+        <p className="mt-0.5 text-xs text-neutral-500">
+          Every demo cohort is built from a <span className="font-medium">public data dictionary</span> —
+          metadata only (variable names, descriptions, value codings), never participant-level data. Each links
+          to its public source and the script that reproduces our copy.
+        </p>
+        <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+          {DEMO_SOURCES.map((s) => (
+            <li key={s.name} className="text-xs text-neutral-500">
+              <a
+                href={s.href}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-ph-navy hover:underline"
+              >
+                {s.name}
+              </a>{" "}
+              — {s.src} <span className="text-neutral-400">({s.script})</span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 text-xs text-neutral-500">
+          <span className="font-medium text-neutral-600">How the ~200 variables per cohort were chosen:</span>{" "}
+          each cohort&apos;s full public dictionary is filtered to variables touching a shared set of common
+          health &amp; demographic domains (sex, age, race, education, smoking, blood pressure, diabetes, …),
+          grouped by domain and taken round-robin so the subset spans domains rather than piling into one
+          section. If a cohort has fewer domain-matched variables than the ~200 cap, the rest is filled from its
+          remaining variables so every cohort contributes the same count. It&apos;s a domain-stratified
+          curation — deliberately not random, and not cherry-picked — so the cohorts genuinely overlap and the
+          demo has real cross-cohort matches to find (see{" "}
+          <a
+            href={`${PH.ddharmonUi}/blob/main/scripts/build_demo_data.py`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-ph-navy hover:underline"
+          >
+            build_demo_data.py
+          </a>
+          ).
         </p>
       </div>
     </div>
