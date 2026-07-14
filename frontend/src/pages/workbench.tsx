@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { MemberVariables } from "@/components/member-variables";
 import { submitVerdict } from "@/lib/api";
-import { VERDICT_STYLES, type UIRecord, type UITransform } from "@/types";
+import { VERDICT_STYLES, type GenCDE, type UIRecord, type UITransform } from "@/types";
 
 const NIH_CDE_URL = "https://cde.nlm.nih.gov/deView?tinyId=";
 const VERDICT_BAR: Record<string, string> = {
@@ -312,6 +312,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                 />
                 <div className="grid gap-1 text-sm">
                   <Field label="Concept summary">{selected.idealCde || "—"}</Field>
+                  {selected.gencde && <GenCDECard g={selected.gencde} />}
                   {selected.rationale && (
                     <div className="mt-1 space-y-1">
                       <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">
@@ -486,6 +487,82 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div className="flex gap-2">
       <span className="w-24 shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-400">{label}</span>
       <span className="text-neutral-700">{children}</span>
+    </div>
+  );
+}
+
+// The synthesized GenCDE proposed for a novel concept (contract `UIRecord.gencde`) — the spec-conformant
+// harmonization target, distinct from the free-text "Concept summary" (idealCde). Shown only on novels.
+function GenCDECard({ g }: { g: GenCDE }) {
+  const hasRange = g.minimum != null || g.maximum != null;
+  return (
+    <div className="mt-1 space-y-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ph-navy">
+          <Sparkles className="h-3.5 w-3.5" /> Proposed GenCDE
+        </span>
+        <span className="flex items-center gap-1">
+          {g.dataType && (
+            <Badge variant="outline" className="font-mono text-[10px]">
+              {g.dataType}
+            </Badge>
+          )}
+          {g.needsReview && (
+            <Badge variant="outline" className="border-warning/40 text-warning">
+              needs review
+            </Badge>
+          )}
+        </span>
+      </div>
+      <div className="text-sm">
+        <span className="font-mono font-medium text-ph-ink">{g.preferredName || "—"}</span>
+        {g.title && <span className="text-neutral-500"> · {g.title}</span>}
+      </div>
+      {g.definition && <p className="text-sm text-neutral-600">{g.definition}</p>}
+      {g.permissibleValues.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {g.permissibleValues.map((o) => (
+            <span
+              key={`${o.code}=${o.label}`}
+              className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-neutral-600"
+            >
+              {o.code}={o.label}
+            </span>
+          ))}
+        </div>
+      )}
+      {(g.units || hasRange) && (
+        <div className="text-xs text-neutral-500">
+          {g.units && (
+            <>
+              units <span className="font-mono">{g.units}</span>
+            </>
+          )}
+          {g.units && hasRange && " · "}
+          {hasRange && (
+            <>
+              range{" "}
+              <span className="font-mono">
+                {g.minimum ?? "−∞"}…{g.maximum ?? "∞"}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-neutral-500">
+        <span>
+          coverage <span className="font-medium tabular-nums">{Math.round(g.valueCoverage * 100)}%</span>
+        </span>
+        {g.confidence > 0 && (
+          <span>
+            confidence <span className="font-medium tabular-nums">{g.confidence.toFixed(2)}</span>
+          </span>
+        )}
+        {g.sourceCohorts.length > 0 && <span>from {g.sourceCohorts.join(", ")}</span>}
+      </div>
+      {g.uncoveredLabels.length > 0 && (
+        <div className="text-[11px] text-warning">missing answer concepts: {g.uncoveredLabels.join(", ")}</div>
+      )}
     </div>
   );
 }

@@ -16,6 +16,7 @@ export type JobStatus =
   | "generating"
   | "splitting"
   | "assigning"
+  | "gencde"
   | "specs"
   | "prepared"
   | "complete"
@@ -115,6 +116,34 @@ export interface UnassignedField {
   y?: number;
 }
 
+// A synthesized Common Data Element for a novel concept group (mirrors contract.py UIGenCDE) — the novel
+// route's proposed harmonization target. Distinct from UIRecord.idealCde (the free-text coverage anchor):
+// a spec-conformant proposal (name/definition/data type/permissible values/units) reconciled from the
+// group's pooled cross-cohort member evidence. `valueCoverage`/`needsReview` are verification flags, never a gate.
+export interface GenCDE {
+  gencdeId: string;
+  preferredName: string;
+  title: string;
+  definition: string;
+  questionText: string;
+  dataType: string; // numeric | categorical | binary | date | text
+  permissibleValues: ResponseOption[]; // reconciled categorical domain
+  aliases: string[];
+  sourceVariables: string[]; // pooled member edges ("cohort:var")
+  sourceCohorts: string[];
+  relatedCdes: string[]; // near-miss candidate names the assign stage saw
+  valueCoverage: number; // fraction of observed answer-concepts represented (flag, not gate)
+  uncoveredLabels: string[];
+  confidence: number;
+  needsReview: boolean;
+  rationale: string;
+  generatedBy: string;
+  // numeric concepts only
+  units?: string;
+  minimum?: number;
+  maximum?: number;
+}
+
 export interface UIRecord {
   id: string;
   clusterId: string;
@@ -124,6 +153,7 @@ export interface UIRecord {
   route: string; // assigned | gencde_residual
   cde: CdeRef | null;
   idealCde: string;
+  gencde: GenCDE | null; // novel route -> synthesized spec-conformant CDE proposal; null otherwise
   cosines: Cosines;
   coverageGap: boolean;
   floored: boolean;
@@ -142,6 +172,7 @@ export interface PromptCounts {
   ideal: number;
   split: number;
   groupAssign: number;
+  gencde: number;
   specgen: number;
 }
 

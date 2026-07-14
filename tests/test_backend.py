@@ -73,7 +73,7 @@ def test_health_ok():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["contractVersion"] == "1"
+    assert body["contractVersion"] == "2"
     assert set(body["cde"]) == {"endorsed", "full"}
     assert "frontendBuilt" in body
 
@@ -181,7 +181,7 @@ def _canned_records() -> list[LeanBRecord]:
 
 def test_contract_mapping_record_and_summary():
     result = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
     assert result["mode"] == "batch"
     rec0 = result["records"][0]
     assert rec0["id"] == "c1#g0"
@@ -217,6 +217,50 @@ def test_contract_mapping_record_and_summary():
         "name": "age",
         "text": "age",
     }
+
+
+def test_gencde_maps_to_contract():
+    """A novel record's synthesized GenCDE surfaces on UIRecord.gencde (distinct from the free-text idealCde);
+    records without one map to null, and the prompt counts carry a gencde entry."""
+    from ddharmon.harmonization.models import GenCDE
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    novel = LeanBRecord(
+        cluster_id="c9",
+        group_id="c9#g0",
+        concept="Ever smoked",
+        verdict="novel",
+        route="gencde_residual",
+        cohorts=["AoU", "CLSA"],
+        member_variable_names=["AoU:smk", "CLSA:smoke"],
+        ideal_cde="Whether the participant ever smoked.",
+        gencde=GenCDE(
+            gencde_id="GENCDE:c9#g0",
+            preferred_name="ever_smoked",
+            definition="Whether the participant has ever smoked cigarettes.",
+            data_type="binary",
+            permissible_values=[ResponseOption(code="1", label="Yes"), ResponseOption(code="0", label="No")],
+            source_variables=["AoU:smk", "CLSA:smoke"],
+            source_cohorts=["AoU", "CLSA"],
+            value_coverage=1.0,
+            confidence=0.9,
+            needs_review=False,
+        ),
+    )
+    result = build_ui_result(LeanBResult(records=[novel]), mode="batch", phases=["loading"])
+    rec = result["records"][0]
+    assert rec["idealCde"].startswith("Whether")  # the free-text anchor is untouched
+    g = rec["gencde"]
+    assert g is not None
+    assert g["gencdeId"] == "GENCDE:c9#g0"
+    assert g["preferredName"] == "ever_smoked"
+    assert g["dataType"] == "binary"
+    assert g["permissibleValues"] == [{"code": "1", "label": "Yes"}, {"code": "0", "label": "No"}]
+    assert g["valueCoverage"] == 1.0 and g["needsReview"] is False
+    assert "gencde" in result["prompts"]
+    # a record without a synthesized GenCDE -> null
+    plain = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
+    assert plain["records"][0]["gencde"] is None
 
 
 def test_member_details_enriched_from_index():
@@ -684,7 +728,7 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
 
     result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
 
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
     assert result["mode"] == "batch"
     assert result["phases"][0] == "loading"
     assert len(result["records"]) >= 1
@@ -851,7 +895,7 @@ def test_run_pipeline_real_clustering_smoke(tmp_path):
     # No stage_overrides -> the adapter takes the real preview branch: real cluster + retrieve, no LLM.
     result = run_pipeline(dict_specs, cde_spec, config, provider=_StructuredStubProvider())
 
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
     assert result["mode"] == "preview"
     assert result["phases"] and "clustering" in result["phases"]
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1  # 40 cohort fields projected
@@ -905,7 +949,7 @@ def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_
         provider=StubProvider(),
         stage_overrides=overrides,
     )
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
 
 
 def test_seed_demos_prepopulates_a_complete_run():

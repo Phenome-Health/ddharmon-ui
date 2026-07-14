@@ -17,7 +17,7 @@ from typing import Any, Literal, TypedDict
 
 # Bump (and handle additively) only when a genuinely new output concept appears — a new verdict class,
 # row-level data, a new artifact kind. Field renames/reshapes do NOT bump this; they stay in the adapter.
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"  # v2: novel records carry a synthesized GenCDE (UIRecord.gencde) — a new output concept
 
 RunMode = Literal["batch", "sync", "preview"]
 Verdict = Literal["adopt", "refine", "novel", "unclassified"]
@@ -151,6 +151,38 @@ class UITransform(TypedDict, total=False):
     params: dict[str, Any]
 
 
+class UIGenCDE(TypedDict, total=False):
+    """A synthesized Common Data Element for a ``novel`` concept group (mapped from ``GenCDE``) — the novel
+    route's proposed harmonization target. Distinct from ``UIRecord.idealCde`` (the free-text coverage
+    anchor): this is the spec-conformant proposal — name, definition, data type, permissible values, units —
+    reconciled from the group's pooled cross-cohort member evidence. ``valueCoverage``/``needsReview`` are
+    verification flags (never a gate).
+    """
+
+    # always present
+    gencdeId: str
+    preferredName: str
+    title: str
+    definition: str
+    questionText: str
+    dataType: str  # numeric | categorical | binary | date | text
+    permissibleValues: list[ResponseOptionUI]  # reconciled categorical domain
+    aliases: list[str]
+    sourceVariables: list[str]  # the pooled member edges ("cohort:var")
+    sourceCohorts: list[str]
+    relatedCdes: list[str]  # near-miss candidate names the assign stage saw
+    valueCoverage: float  # fraction of observed answer-concepts the domain represents (flag, not gate)
+    uncoveredLabels: list[str]
+    confidence: float
+    needsReview: bool
+    rationale: str
+    generatedBy: str  # llm | rule
+    # numeric concepts only
+    units: str
+    minimum: float
+    maximum: float
+
+
 class UIRecord(TypedDict):
     """One harmonization decision per concept-GROUP (mapped from ``LeanBRecord``)."""
 
@@ -161,7 +193,8 @@ class UIRecord(TypedDict):
     verdict: str  # adopt | refine | novel | unclassified
     route: str  # assigned | gencde_residual
     cde: CdeRef | None  # chosen CDE for adopt/refine; null for novel
-    idealCde: str  # the independently-generated coverage anchor
+    idealCde: str  # the independently-generated coverage anchor (free text)
+    gencde: UIGenCDE | None  # novel route -> synthesized spec-conformant CDE proposal; null otherwise
     cosines: Cosines
     coverageGap: bool  # diagnostic: novel & top1 below tau (never a gate)
     floored: bool  # retrieval floor downgraded an adopt/refine -> novel
@@ -180,6 +213,7 @@ class PromptCounts(TypedDict):
     ideal: int
     split: int
     groupAssign: int
+    gencde: int
     specgen: int
 
 
@@ -210,7 +244,7 @@ class UIResult(TypedDict):
 
 
 # Phase sequences the UI consumes to render progress (data-driven — see §1 "new/removed stage" row).
-PHASES_RUN = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"]
+PHASES_RUN = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "gencde", "specs"]
 PHASES_PREVIEW = ["loading", "embedding", "clustering", "prepared"]
 
 

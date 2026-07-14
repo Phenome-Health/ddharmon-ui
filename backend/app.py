@@ -645,7 +645,7 @@ class DemoBody(BaseModel):
 
 
 # Phases a real run streams, in order — the demo replay paces through these so it looks like a live run.
-_DEMO_PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"]
+_DEMO_PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "gencde", "specs"]
 
 
 def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
@@ -667,6 +667,7 @@ def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
         "generating": prompts.get("ideal", 0),
         "splitting": prompts.get("split", 0),
         "assigning": prompts.get("groupAssign", 0),
+        "gencde": prompts.get("gencde", 0),
         "specs": prompts.get("specgen", 0),
     }
     records = result.get("records", []) or []
@@ -722,18 +723,33 @@ def start_demo(body: DemoBody) -> dict[str, str]:
 
 
 # --- health ----------------------------------------------------------------------------------
+def _core_version() -> str:
+    """Installed ``ddharmon`` core version. On the dev channel this pins to a git ref, so surfacing it
+    (with ``channel``) makes it observable which core the running server is actually on."""
+    try:
+        from importlib.metadata import version
+
+        return version("ddharmon")
+    except Exception:
+        return "unknown"
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     """Liveness/readiness probe: process is up, plus which optional server-side assets are present.
 
     Used by the deploy runbook (systemd/nginx verification) and any future uptime check. Returns
     200 as soon as the app imports; ``cde``/``frontendBuilt`` flag whether the catalog TSVs and the
-    built SPA are in place (a run with ``cdeSet != none`` needs the matching CDE file).
+    built SPA are in place (a run with ``cdeSet != none`` needs the matching CDE file). ``channel``
+    (``prod`` default / ``dev``) and ``coreVersion`` distinguish the dev deployment — which pins the
+    core to an unreleased GitHub ref — from prod, which tracks the PyPI release.
     """
     return {
         "status": "ok",
         "version": app.version,
         "contractVersion": CONTRACT_VERSION,
+        "channel": os.environ.get("DDHARMON_CHANNEL", "prod"),
+        "coreVersion": _core_version(),
         "cde": {name: path.exists() for name, path in CDE_FILES.items()},
         "frontendBuilt": _DIST.exists(),
     }

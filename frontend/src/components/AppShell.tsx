@@ -11,6 +11,11 @@ import { PhenomeChip } from "@/components/phenome-mark";
 import { PhMark } from "@/components/ph-logo";
 import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
 
+// Dev channel: a build pinned to an UNRELEASED core (git ref), deployed to dev.ddharmon.io for
+// pre-PyPI validation. Baked in at build time (VITE_APP_CHANNEL=dev); defaults to prod so a normal
+// build is never mislabeled. Surfaced as a prominent badge so a dev build is never mistaken for prod.
+const IS_DEV_CHANNEL = (import.meta.env.VITE_APP_CHANNEL as string | undefined) === "dev";
+
 function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
   const [loc] = useLocation();
   const active = loc === href || (href !== "/" && loc.startsWith(href));
@@ -46,6 +51,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </Link>
         <div className="flex items-center gap-1">
+          {IS_DEV_CHANNEL && (
+            <span
+              title="Development build — pinned to an unreleased core from GitHub, not the PyPI release. For pre-release testing only."
+              className="mr-2 rounded border border-danger-border bg-danger-bg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-danger"
+            >
+              Dev · unreleased core
+            </span>
+          )}
           {IS_STATIC && (
             <span className="mr-2 rounded bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning">
               Preview · sample data

@@ -41,6 +41,7 @@ from backend.engine.contract import (
     FieldDetail,
     ResponseOptionUI,
     UICandidate,
+    UIGenCDE,
     UIMember,
     UIRecord,
     UIResult,
@@ -240,6 +241,39 @@ def _unassigned_fields(
     return out
 
 
+def _gencde_to_ui(g: Any) -> UIGenCDE | None:
+    """Map a synthesized ``GenCDE`` (the novel route's proposed target) to a ``UIGenCDE``; ``None`` when the
+    record has none (adopt/refine, or a novel produced with the gencde stage off)."""
+    if g is None:
+        return None
+    ui: UIGenCDE = {
+        "gencdeId": g.gencde_id,
+        "preferredName": g.preferred_name,
+        "title": g.title,
+        "definition": g.definition,
+        "questionText": g.question_text,
+        "dataType": g.data_type,
+        "permissibleValues": [{"code": o.code, "label": o.label} for o in g.permissible_values],
+        "aliases": list(g.aliases),
+        "sourceVariables": list(g.source_variables),
+        "sourceCohorts": list(g.source_cohorts),
+        "relatedCdes": list(g.related_cdes),
+        "valueCoverage": g.value_coverage,
+        "uncoveredLabels": list(g.uncovered_labels),
+        "confidence": g.confidence,
+        "needsReview": g.needs_review,
+        "rationale": g.rationale,
+        "generatedBy": g.generated_by,
+    }
+    if g.units:
+        ui["units"] = g.units
+    if g.minimum_value is not None:
+        ui["minimum"] = g.minimum_value
+    if g.maximum_value is not None:
+        ui["maximum"] = g.maximum_value
+    return ui
+
+
 def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
     """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
     return {
@@ -251,6 +285,7 @@ def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
         "route": r.route,
         "cde": {"id": r.cde_id, "externalId": r.cde_external_id or ""} if r.cde_id else None,
         "idealCde": r.ideal_cde,
+        "gencde": _gencde_to_ui(r.gencde),
         "cosines": {"top1": r.top1_cos, "chosen": r.chosen_cos},
         "coverageGap": r.coverage_gap,
         "floored": r.floored,
@@ -317,6 +352,7 @@ def build_ui_result(
             "ideal": len(leanb_result.ideal_prompts),
             "split": len(leanb_result.split_prompts),
             "groupAssign": len(leanb_result.group_assign_prompts),
+            "gencde": len(leanb_result.gencde_prompts),
             "specgen": len(leanb_result.specgen_prompts),
         },
         "atlas": atlas_pts,
@@ -588,6 +624,7 @@ def run_pipeline(
             "generate": _sync_stage("generating", progress, client),
             "split": _sync_stage("splitting", progress, client),
             "classify": _sync_stage("assigning", progress, client),
+            "gencde": _sync_stage("gencde", progress, client),
             "specgen": _sync_stage("specs", progress, client),
         }
     else:  # batch (default)
@@ -595,16 +632,22 @@ def run_pipeline(
             "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key),
             "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key),
             "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key),
+            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", api_key=api_key),
             "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key),
         }
 
     gen_specs = config.get("gen_transform_specs", True)
+    # GenCDE synthesis for novel concepts — ON by default (a value-add verifying pass like transform specs);
+    # gate off with gen_gencde=false. Runs after merge, before specgen; batch stage caches to
+    # responses_gencde.jsonl (its own content-addressed tag, so it re-runs $0 with the other stages cached).
+    gen_gencde = config.get("gen_gencde", True)
     progress("clustering", 0, 0)  # clustering + retrieval happen inside harmonize_leanb before the first callback
     result = harmonize_leanb(
         embedded,
         generate=stages.get("generate"),
         split=stages.get("split"),
         classify=stages.get("classify"),
+        gencde=stages.get("gencde") if gen_gencde else None,
         specgen=stages.get("specgen") if gen_specs else None,
         **kwargs,
     )

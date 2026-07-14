@@ -43,12 +43,13 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
             setDone(true);
             return;
           }
-          const PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"];
+          const PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "gencde", "specs"];
           const p = full.result.prompts;
           const counts: Record<string, number> = {
             generating: p?.ideal ?? 0,
             splitting: p?.split ?? 0,
             assigning: p?.groupAssign ?? 0,
+            gencde: p?.gencde ?? 0,
             specs: p?.specgen ?? 0,
           };
           const weights = PHASES.map((ph) => Math.max(0.05, full.phaseTimings?.[ph] ?? 1));
