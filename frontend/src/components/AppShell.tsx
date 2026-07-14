@@ -9,6 +9,7 @@ import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
 import { PhenomeChip } from "@/components/phenome-mark";
 import { PhMark } from "@/components/ph-logo";
+import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
 
 function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
   const [loc] = useLocation();
@@ -50,7 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               Preview · sample data
             </span>
           )}
-          <span className="mr-2 hidden text-xs text-neutral-500 sm:block">Split-aware CDE harmonization</span>
+          <ActiveRunsIndicator />
           <button
             type="button"
             onClick={toggle}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Download, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,7 @@ const DEMO_SOURCES: { name: string; href: string; src: string; script: string }[
 
 export default function DemoPage() {
   const [, navigate] = useLocation();
+  const qc = useQueryClient();
   const [loading, setLoading] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ["demos"], queryFn: listDemos });
 
@@ -79,6 +80,7 @@ export default function DemoPage() {
     setLoading(true);
     try {
       const { jobId } = await startDemo(combo.datasets);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
       navigate(`/job/${jobId}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load demo");
