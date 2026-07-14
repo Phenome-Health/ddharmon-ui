@@ -99,9 +99,9 @@ export const DESIGN_CHOICES: DesignChoice[] = [
     // §2 Ingest/embed row: "value/encoding metadata is routed to the LLM prompt (symbolic), not the geometric vector"
     icon: Layers,
     title: "Value metadata goes to the prompt, not the embedding",
-    rejected: "folding response options / units / data-type into the field's embedding vector",
+    rejected: "folding response options / units / data-type into the variable's embedding vector",
     rationale:
-      "Each field gets a single semantic vector; its value/encoding metadata (response options, units, data type) is routed to the LLM prompt (symbolic), not averaged into the geometric vector. Similarity is a geometric question; value-level judgment is a symbolic one — mixing them adds noise to the vector.",
+      "Each variable gets a single semantic vector; its value/encoding metadata (response options, units, data type) is routed to the LLM prompt (symbolic), not averaged into the geometric vector. Similarity is a geometric question; value-level judgment is a symbolic one — mixing them adds noise to the vector.",
     takeaway: "Geometry for similarity; symbols (in the prompt) for value-level judgment.",
   },
   {
@@ -110,7 +110,7 @@ export const DESIGN_CHOICES: DesignChoice[] = [
     title: "A biomedical-domain encoder (BioLORD-2023)",
     rejected: "a general-purpose sentence encoder",
     rationale:
-      "Fields are clinical terminology, so the semantic vector comes from a biomedical domain-tuned encoder (FremyCompany/BioLORD-2023, 768-d, L2-normalized, run locally and SQLite-cached) rather than a general-purpose model. It is the encoder behind the retrieval numbers on the Benchmarks page.",
+      "Variables are clinical terminology, so the semantic vector comes from a biomedical domain-tuned encoder (FremyCompany/BioLORD-2023, 768-d, L2-normalized, run locally and SQLite-cached) rather than a general-purpose model. It is the encoder behind the retrieval numbers on the Benchmarks page.",
     takeaway: "Match the encoder to the domain — clinical text, clinical embeddings.",
   },
   {
@@ -119,7 +119,7 @@ export const DESIGN_CHOICES: DesignChoice[] = [
     title: "Auto-scale the clustering granularity, don't hand-tune it",
     rejected: "a single hand-tuned min_cluster_size",
     rationale:
-      "Clustering is scaffolding — it batches near-duplicate fields for one assignment call and provides a centroid for retrieval; it is not the decision engine. Since the split-aware stages re-derive concepts anyway, min_cluster_size only needs to be reasonable, so it auto-scales to corpus size instead of being a tuned knob.",
+      "Clustering is scaffolding — it batches near-duplicate variables for one assignment call and provides a centroid for retrieval; it is not the decision engine. Since the split-aware stages re-derive concepts anyway, min_cluster_size only needs to be reasonable, so it auto-scales to corpus size instead of being a tuned knob.",
     takeaway: "Don't over-tune a knob that isn't the decision engine.",
   },
   {
@@ -128,7 +128,7 @@ export const DESIGN_CHOICES: DesignChoice[] = [
     title: "Feed question_text into the value-recode generator",
     rejected: "generating recodes from the code/label pairs alone",
     rationale:
-      "When generating a value recode, the source field's question_text (a role ddharmon already carries) is fed to the generator — it resolves polarity and granularity judgment calls the bare code/label pairs leave ambiguous.",
+      "When generating a value recode, the source variable's question_text (a role ddharmon already carries) is fed to the generator — it resolves polarity and granularity judgment calls the bare code/label pairs leave ambiguous.",
     evidence: { metric: "recode pair-accuracy", value: "0.832 → 0.869", source: "ATHLOS" },
     takeaway: "Recodes need the question, not just the answer codes.",
   },

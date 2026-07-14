@@ -66,7 +66,7 @@ export default function GuidePage() {
           </p>
           <p>
             <span className="font-medium text-ph-ink">ddharmon</span> reads the <em>data dictionaries</em>{" "}
-            (the metadata that describes each variable) from two or more cohorts, groups fields that mean the
+            (the metadata that describes each variable) from two or more cohorts, groups variables that mean the
             same thing, and assigns each concept to a{" "}
             <A href={REF.cde}>Common Data Element (CDE)</A> — a curated, reusable standard definition (e.g. from
             the NIH CDE Repository, often coded with <A href={REF.loinc}>LOINC</A> or{" "}
@@ -87,7 +87,7 @@ export default function GuidePage() {
             <p>A data dictionary per cohort (CSV/TSV). Map at least one of:</p>
             <ul className="space-y-1">
               <FieldItem name="variable_name">
-                the field's identifier/code — optional; auto-generated if you omit it
+                the variable's identifier/code — optional; auto-generated if you omit it
               </FieldItem>
               <FieldItem name="description">a human-readable definition</FieldItem>
               <FieldItem name="question_text">the survey question, if any</FieldItem>
@@ -130,7 +130,7 @@ export default function GuidePage() {
             n={1}
             icon={<Upload className="h-4 w-4" />}
             title="Upload data dictionaries"
-            body="One CSV/TSV per cohort, describing your variables. This is metadata about your fields — not the participant-level data itself."
+            body="One CSV/TSV per cohort, describing your variables. This is metadata about your variables — not the participant-level data itself."
           />
           <Step
             n={2}
@@ -142,7 +142,7 @@ export default function GuidePage() {
             n={3}
             icon={<GitCompareArrows className="h-4 w-4" />}
             title="Run the harmonization"
-            body="ddharmon embeds and clusters your fields, retrieves candidate CDEs from the catalog, and decides adopt / refine / novel — generating transform specs along the way."
+            body="ddharmon embeds and clusters your variables, retrieves candidate CDEs from the catalog, and decides adopt / refine / novel — generating transform specs along the way."
           />
           <Step
             n={4}
@@ -171,7 +171,7 @@ export default function GuidePage() {
           <ul className="space-y-1.5">
             <li>
               <span className="font-medium text-neutral-700">Grouping</span> — sentence-embedding models place
-              semantically similar fields near each other, then cluster them into concepts.
+              semantically similar variables near each other, then cluster them into concepts.
             </li>
             <li>
               <span className="font-medium text-neutral-700">Assignment</span> — a large language model weighs the
@@ -281,7 +281,7 @@ export default function GuidePage() {
             <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-ph-navy" />
             <p className="text-xs leading-relaxed">
               <span className="font-medium text-neutral-700">Confidence score</span> = the semantic similarity (0–1,
-              cosine) between your field and the chosen CDE; higher means stronger support for the match. Use it to
+              cosine) between your variable and the chosen CDE; higher means stronger support for the match. Use it to
               triage — skim the high-confidence adopts, and spend your time on low-confidence, “floored”, and novel
               items, which the queue flags for exactly that reason.
             </p>

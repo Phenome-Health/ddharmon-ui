@@ -39,9 +39,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Link href="/" className="flex items-center gap-2.5">
           <PhenomeChip />
           <div className="flex items-center gap-2 text-sm">
-            <span className="font-semibold text-ph-ink">ddharmon</span>
+            <span className="font-semibold text-ph-ink">Phenome Health</span>
             <span className="text-neutral-300">/</span>
-            <span className="text-neutral-500">Harmonization</span>
+            <span className="text-neutral-500">ddharmon</span>
           </div>
         </Link>
         <div className="flex items-center gap-1">

@@ -208,8 +208,8 @@ export default function MethodsPage() {
               participant-level data itself.
             </Term>
             <Term name="Concept">
-              a group of fields (usually across cohorts) that mean the same thing. The concept — not each
-              individual field — is the unit ddharmon assigns to a standard.
+              a group of variables (usually across cohorts) that mean the same thing. The concept — not each
+              individual variable — is the unit ddharmon assigns to a standard.
             </Term>
             <Term name="CDE — Common Data Element">
               a curated, reusable standard definition (e.g. the NIH CDE Repository) that a concept is matched to.

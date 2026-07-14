@@ -84,9 +84,9 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     kind: "local",
     icon: FileSpreadsheet,
     whatItDoes:
-      "A role-mapped CSV/TSV loader reads each cohort's data dictionary; you map your columns to roles (variable name, description, question text, value encoding, units, …). The NIH CDE catalog is loaded the same way — as another cohort — so its text lands in the same embedding space as your fields.",
+      "A role-mapped CSV/TSV loader reads each cohort's data dictionary; you map your columns to roles (variable name, description, question text, value encoding, units, …). The NIH CDE catalog is loaded the same way — as another cohort — so its text lands in the same embedding space as your variables.",
     inputs: ["One CSV/TSV data dictionary per cohort", "The CDE catalog (the assignment backbone)"],
-    outputs: ["Canonical Field records with roles resolved", "The CDE backbone loaded as a cohort"],
+    outputs: ["Canonical variable records with roles resolved", "The CDE backbone loaded as a cohort"],
     keyDecisions: [
       "The pipeline requires a CDE backbone — assignment to the given catalog is the thesis; there is no “no-CDE” path.",
       "Value / encoding / units metadata is kept for the LLM prompts (symbolic), not folded into the geometric vector.",
@@ -101,11 +101,11 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     kind: "local",
     icon: Boxes,
     whatItDoes:
-      "Each field's text is preprocessed into a single embedding-text string, then encoded to a 768-d, L2-normalized vector with FremyCompany/BioLORD-2023. Vectors are SQLite-cached so re-runs are incremental. Embeddings run locally — no external call, no cost.",
-    inputs: ["Canonical Field records (source cohorts + CDE catalog)"],
-    outputs: ["One semantic vector per field", "A 2-D projection of the field space for the atlas"],
+      "Each variable's text is preprocessed into a single embedding-text string, then encoded to a 768-d, L2-normalized vector with FremyCompany/BioLORD-2023. Vectors are SQLite-cached so re-runs are incremental. Embeddings run locally — no external call, no cost.",
+    inputs: ["Canonical variable records (source cohorts + CDE catalog)"],
+    outputs: ["One semantic vector per variable", "A 2-D projection of the variable space for the atlas"],
     keyDecisions: [
-      "A single semantic vector per field — value/encoding/units metadata is routed to the LLM prompt, never mixed into the vector.",
+      "A single semantic vector per variable — value/encoding/units metadata is routed to the LLM prompt, never mixed into the vector.",
       "Local + SQLite-cached: the deterministic, zero-cost part of every run.",
     ],
     link: { href: "/demo", label: "See the cohort-colored embedding atlas" },
@@ -118,7 +118,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     kind: "local",
     icon: Network,
     whatItDoes:
-      "Fields are clustered over their semantic vectors, with outlier recovery so stray fields still reach a concept. Clustering is scaffolding — it batches near-duplicate fields into one assignment call and gives dense retrieval a centroid. It is deliberately not the decision engine.",
+      "Variables are clustered over their semantic vectors, with outlier recovery so stray variables still reach a concept. Clustering is scaffolding — it batches near-duplicate variables into one assignment call and gives dense retrieval a centroid. It is deliberately not the decision engine.",
     inputs: ["Semantic vectors"],
     outputs: ["Coarse concept clusters (+ recovered outliers)", "Per-cluster centroids for retrieval"],
     keyDecisions: [
@@ -152,7 +152,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     icon: Target,
     whatItDoes:
       "An LLM describes the ideal CDE for the concept with no candidates shown — an independent coverage anchor for what should exist, unbiased by whatever retrieval happened to surface. In the review workbench this text is shown as the “Concept summary.”",
-    inputs: ["The concept's pooled member fields (name + text)"],
+    inputs: ["The concept's pooled member variables (name + text)"],
     outputs: ["An ideal-CDE description (the coverage anchor / Concept summary)"],
     keyDecisions: [
       "Formed with no candidates on purpose — it anchors the later novel decision rather than following retrieval.",
@@ -224,7 +224,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     inputs: ["Adopt/refine records", "Source value / encoding / units metadata"],
     outputs: ["Transform specs (recodes / unit / arithmetic / wide→long), all routed to review"],
     keyDecisions: [
-      "Feeding the source field's question_text lifts whole-variable recode accuracy ~7pp (ATHLOS 0.832 → 0.869).",
+      "Feeding the source variable's question_text lifts whole-variable recode accuracy ~7pp (ATHLOS 0.832 → 0.869).",
       "Arithmetic specs are always flagged for review.",
       "Nothing is applied to data — a spec is a recipe you run in your own environment.",
     ],

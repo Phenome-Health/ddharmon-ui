@@ -288,7 +288,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                     </Badge>
                   </CardTitle>
                   <p className="mt-1 text-xs text-neutral-500">
-                    {selected.nMembers} fields · {selected.cohorts.join(", ")} · route {selected.route}
+                    {selected.nMembers} variables · {selected.cohorts.join(", ")} · route {selected.route}
                   </p>
                 </div>
                 <div className="flex items-center gap-1">
@@ -415,7 +415,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
               <CardHeader className="flex flex-row items-center gap-2 space-y-0">
                 <CardTitle className="text-base">Value mapping ({selected.transforms.length})</CardTitle>
                 <PlotInfo>
-                  One row per source field → CDE transform recipe, showing the actual recode inline: the
+                  One row per source variable → CDE transform recipe, showing the actual recode inline: the
                   categorical <b>code map</b> (source code → CDE code), the <b>unit</b> conversion (factor/offset +
                   units), the <b>arithmetic</b> formula, or the data-dependent <b>method</b>. The mono badge is the
                   transform <b>kind</b>; <b>coverage</b> is the share of the source&apos;s values the recipe maps.

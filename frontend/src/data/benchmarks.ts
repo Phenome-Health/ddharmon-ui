@@ -48,18 +48,58 @@ export interface Benchmark {
   groundTruth: string;
   /** Headline metric(s) — verbatim canonical numbers. */
   metrics: BenchmarkMetric[];
+  /** The task + setup — what the pipeline is scored on (retrieval, co-clustering, transform-spec, …). */
+  task: string;
+  /** How the gold was curated (human-labeled / derived from a resource / expert scripts) — provenance. */
+  provenance: string;
+  /** Optional public source for the gold dataset (only set where the URL is verified). */
+  source?: { label: string; href: string };
   /** Development / held-out / external — surfaced as a badge on every card. */
   tier: BenchmarkTier;
   /** Short canonical caveat / interpretation for this benchmark. */
   note?: string;
 }
 
-// Numbers below are verbatim from `Phenome-Health/ddharmon:docs/methods.md` §3 (Evaluation).
+/**
+ * Plain-language definition of each metric on the page — so a value isn't read without knowing what it
+ * measures. Reference frame ("what's good"): recall@k / assignment / recode-accuracy are 0–1 where 1 is
+ * perfect and a chance/naive baseline sits far lower; separability Δ is a distributional GAP (larger = the
+ * encoder separates concepts more cleanly; 0 = no separation), not an accuracy.
+ */
+export const METRIC_DEFS: { term: string; def: string }[] = [
+  {
+    term: "recall@5 (retrieval)",
+    def: "The correct CDE is among the top-5 candidates retrieval surfaces for a variable — measures whether the right target is even in the shortlist.",
+  },
+  {
+    term: "fused assignment (in-backbone)",
+    def: "The final fused step picks the correct CDE, scored over variables whose gold CDE is present in the loaded catalog — the end-to-end pick, not just retrieval.",
+  },
+  {
+    term: "variable→concept recall@5",
+    def: "The correct concept anchor is among the top-5 for a variable — the assignment-side analogue of retrieval recall.",
+  },
+  {
+    term: "embedding separability (Δ)",
+    def: "The gap between same-concept and different-concept variable-pair similarity — how cleanly the encoder pulls same-concept variables together. A gap, not an accuracy; larger is better.",
+  },
+  {
+    term: "recode pair-accuracy",
+    def: "Fraction of individual source-code → CDE-code recode pairs the generated transform maps correctly — scores the value layer pair by pair.",
+  },
+];
+
+// Numbers below are verbatim from `Phenome-Health/ddharmon:docs/methods.md` §3 (Evaluation). The `task` /
+// `provenance` / `source` context is grounded in the benchmark definitions + the public gold sources — no
+// numbers are introduced here.
 export const BENCHMARKS: Benchmark[] = [
   {
     name: "CDEMapper",
     question: "Are we matching the right CDE?",
-    groundTruth: "Yale CDE-Mapping-Tool (494 field→CDE)",
+    task: "Variable→CDE mapping: retrieve candidate CDEs for a source variable, then pick the right one (retrieval + assignment).",
+    provenance:
+      "Human-curated: 494 gold variable→CDE mappings from the Yale CDE-Mapping-Tool study. We converge on the same task with an extended scope — not a claim to beat CDEMapper on recall.",
+    groundTruth: "Yale CDE-Mapping-Tool (494 variable→CDE)",
     metrics: [
       { label: "hybrid retrieval recall@5", value: "0.632" },
       { label: "fused assignment (in-backbone)", value: "0.521" },
@@ -70,7 +110,11 @@ export const BENCHMARKS: Benchmark[] = [
   {
     name: "PhenX",
     question: "Do same-concept vars from different cohorts co-cluster?",
+    task: "Cross-cohort co-clustering: do same-concept variables from different cohorts land near each other in the embedding space?",
+    provenance:
+      "Derived from the expert-maintained PhenX↔dbGaP crosswalk — a public, curated mapping of study variables to standard PhenX measures.",
     groundTruth: "PhenX↔dbGaP crosswalk",
+    source: { label: "PhenX Toolkit", href: "https://www.phenxtoolkit.org/" },
     metrics: [{ label: "embedding separability", value: "Δ0.536" }],
     tier: "held-out",
     note: "Clustering's edge is diffuse — which is exactly what motivates the assignment-first design.",
@@ -78,16 +122,23 @@ export const BENCHMARKS: Benchmark[] = [
   {
     name: "AI-READI",
     question: "Does a variable reach the right concept?",
+    task: "Variable→concept assignment: does a source variable reach its correct OMOP/CDE anchor concept (top-5)?",
+    provenance:
+      "Gold OMOP/CDE anchors from the AI-READI DataElementMaps (MIT-licensed, expert-curated REDCap→OMOP/CDE value-set mappings).",
     groundTruth: "AI-READI OMOP/CDE anchors",
+    source: { label: "AI-READI/DataElementMaps", href: "https://github.com/AI-READI/DataElementMaps" },
     metrics: [{ label: "variable→concept recall@5", value: "0.655" }],
     tier: "held-out",
   },
   {
     name: "ATHLOS",
     question: "Are the value recodes generated correctly?",
+    task: "Transform-spec correctness: are the generated value recodes (source code → CDE code) right, pair by pair?",
+    provenance:
+      "External gold: 284 recode pairs taken from the published ATHLOS harmonisation scripts (expert-authored recode rules).",
     groundTruth: "ATHLOS harmonisation scripts (284 recode golds)",
     metrics: [{ label: "LLM recode pair-accuracy (with question_text context)", value: "0.832 → 0.869" }],
     tier: "external",
-    note: "Feeding the source field's question_text into the recode generator lifts recode accuracy ~7pp (0.832 → 0.869).",
+    note: "Feeding the source variable's question_text into the recode generator lifts recode accuracy ~7pp (0.832 → 0.869).",
   },
 ];

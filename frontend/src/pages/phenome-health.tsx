@@ -20,7 +20,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "ddharmon",
-    desc: "The core harmonization engine this app runs on — clusters cohort fields by meaning and anchors each concept to a Common Data Element, with transform specs.",
+    desc: "The core harmonization engine this app runs on — clusters cohort variables by meaning and anchors each concept to a Common Data Element, with transform specs.",
     href: PH.ddharmon,
   },
   {
