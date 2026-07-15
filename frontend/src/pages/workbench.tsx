@@ -197,10 +197,16 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   );
 
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
-    setDecisions((p) => ({ ...p, [r.id]: decision }));
+    const cleared = decisions[r.id] === decision; // re-clicking the active verdict toggles it off
+    setDecisions((p) => {
+      if (!cleared) return { ...p, [r.id]: decision };
+      const rest = { ...p };
+      delete rest[r.id];
+      return rest;
+    });
     try {
-      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "");
-      toast.success(`Marked "${r.concept || r.id}" ${decision}`);
+      await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "");
+      toast.success(cleared ? `Cleared verdict for "${r.concept || r.id}"` : `Marked "${r.concept || r.id}" ${decision}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save decision");
     }
@@ -210,10 +216,16 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   // `${recordId}:${sourceVariable}`, distinct from the concept→CDE match verdict.
   async function decideTransform(r: UIRecord, t: UITransform, decision: "approve" | "refine" | "reject") {
     const key = `${r.id}:${t.sourceVariable}`;
-    setTransformDecisions((p) => ({ ...p, [key]: decision }));
+    const cleared = transformDecisions[key] === decision; // re-clicking the active verdict toggles it off
+    setTransformDecisions((p) => {
+      if (!cleared) return { ...p, [key]: decision };
+      const rest = { ...p };
+      delete rest[key];
+      return rest;
+    });
     try {
-      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "transform", t.sourceVariable);
-      toast.success(`Transform for "${t.sourceVariable}" ${decision}d`);
+      await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "transform", t.sourceVariable);
+      toast.success(cleared ? `Cleared transform verdict for "${t.sourceVariable}"` : `Transform for "${t.sourceVariable}" ${decision}d`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save transform decision");
     }
@@ -222,10 +234,16 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   // GenCDE-axis verdict — approve/refine/reject the synthesized GenCDE (the novel route's proposed target),
   // keyed by recordId, distinct from the concept→CDE match verdict and the per-variable transform verdicts.
   async function decideGencde(r: UIRecord, decision: "approve" | "refine" | "reject") {
-    setGencdeDecisions((p) => ({ ...p, [r.id]: decision }));
+    const cleared = gencdeDecisions[r.id] === decision; // re-clicking the active verdict toggles it off
+    setGencdeDecisions((p) => {
+      if (!cleared) return { ...p, [r.id]: decision };
+      const rest = { ...p };
+      delete rest[r.id];
+      return rest;
+    });
     try {
-      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "gencde");
-      toast.success(`Proposed GenCDE for "${r.concept || r.id}" ${decision}d`);
+      await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "gencde");
+      toast.success(cleared ? `Cleared GenCDE verdict for "${r.concept || r.id}"` : `Proposed GenCDE for "${r.concept || r.id}" ${decision}d`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save GenCDE decision");
     }
@@ -370,8 +388,9 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
               </CardHeader>
               <CardContent className="p-0">
                 {selected.candidates.length ? (
+                  <div className="max-h-[24rem] overflow-y-auto">
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-neutral-0">
                       <TableRow>
                         <TableHead className="w-8">#</TableHead>
                         <TableHead>CDE</TableHead>
@@ -423,6 +442,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 ) : (
                   <p className="py-8 text-center text-sm text-neutral-400">
                     No candidates retained (novel / GenCDE route).

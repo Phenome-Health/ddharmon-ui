@@ -492,7 +492,7 @@ def analysis_ideas(
 # --- human decisions -------------------------------------------------------------------------
 class VerdictBody(BaseModel):
     recordId: str
-    decision: str  # both axes: approve | refine | reject
+    decision: str  # all axes: approve | refine | reject | clear (clear = un-set a prior verdict, toggle-off undo)
     note: str = ""
     axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode) | gencde (proposed GenCDE)
     sourceVariable: str | None = None  # REQUIRED for axis="transform" — the "cohort:var" edge the verdict is on
@@ -502,8 +502,8 @@ class VerdictBody(BaseModel):
 def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str, bool]:
     if body.axis not in ("match", "transform", "gencde"):
         raise HTTPException(status_code=400, detail="axis must be match|transform|gencde")
-    # Both axes accept the full triad; the transform axis records one verdict PER source variable.
-    allowed = ("approve", "refine", "reject")
+    # All axes accept the full triad plus "clear" (un-set a prior verdict — the reviewer toggled it off).
+    allowed = ("approve", "refine", "reject", "clear")
     if body.decision not in allowed:
         raise HTTPException(status_code=400, detail=f"decision must be {'|'.join(allowed)}")
     if body.axis == "transform" and not body.sourceVariable:

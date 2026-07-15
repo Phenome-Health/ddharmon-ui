@@ -556,6 +556,68 @@ def test_transform_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
     assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
 
 
+def test_verdict_clear_unsets_each_axis(monkeypatch, tmp_path):
+    """``decision="clear"`` un-sets a previously-recorded verdict on any axis (the reviewer toggled it off in
+    the workbench). Match clears the top-level decision/note; transform clears only its sourceVariable edge;
+    gencde clears the gencde entry. A record whose every axis is cleared is pruned entirely, leaving no residue."""
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=_CANNED_RESULT)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+    cfg = {
+        "dictionaries": [{"filename": "cohortA.csv", "cohortName": "CohortA", "columnRoles": {"variable_name": "var"}}],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    def verdict(**body):
+        return client.post(f"/api/harmonize/jobs/{job_id}/verdict", json={"recordId": "c1#g0", **body})
+
+    # set a verdict on all three independent axes
+    assert verdict(decision="approve", note="m").status_code == 200
+    assert verdict(decision="approve", axis="transform", sourceVariable="CohortB:age_yrs").status_code == 200
+    assert verdict(decision="reject", axis="gencde").status_code == 200
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()["decisions"]["c1#g0"]
+    assert snap["decision"] == "approve" and snap["gencde"]["decision"] == "reject"
+    assert snap["transforms"]["CohortB:age_yrs"]["decision"] == "approve"
+
+    # clear the transform edge — only that edge goes; match + gencde remain
+    assert verdict(decision="clear", axis="transform", sourceVariable="CohortB:age_yrs").status_code == 200
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()["decisions"]["c1#g0"]
+    assert "CohortB:age_yrs" not in snap.get("transforms", {})
+    assert snap["decision"] == "approve" and "gencde" in snap
+
+    # clear the gencde axis — match verdict still stands
+    assert verdict(decision="clear", axis="gencde").status_code == 200
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()["decisions"]["c1#g0"]
+    assert "gencde" not in snap and snap["decision"] == "approve"
+
+    # clear the match axis — the record is now fully empty and pruned entirely
+    assert verdict(decision="clear").status_code == 200
+    assert "c1#g0" not in client.get(f"/api/harmonize/result/{job_id}").json()["decisions"]
+
+    # an unknown decision is still rejected
+    assert verdict(decision="bogus").status_code == 400
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
+
+
 def test_gencde_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
     """The GenCDE axis is a THIRD independent verdict — the reviewer's approve/refine/reject on the synthesized
     GenCDE itself, recorded once per record under ``decisions[rec]["gencde"]`` and serialized into the trailing

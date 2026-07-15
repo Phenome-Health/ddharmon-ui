@@ -300,18 +300,35 @@ class JobStore:
     def _apply_decision(
         job: Job, record_id: str, decision: str, note: str, axis: str, source_variable: str | None
     ) -> None:
+        clear = decision == "clear"  # un-set this axis's prior verdict (reviewer toggled it off)
         rec = job.decisions.setdefault(record_id, {})
         if axis == "transform":
             transforms: dict[str, Any] = rec.setdefault("transforms", {})
-            transforms[source_variable] = {"decision": decision, "note": note}  # type: ignore[index]
+            if clear:
+                transforms.pop(source_variable, None)  # type: ignore[arg-type]
+            else:
+                transforms[source_variable] = {"decision": decision, "note": note}  # type: ignore[index]
         elif axis == "gencde":
             # A THIRD axis: the reviewer's verdict on the synthesized GenCDE itself (the novel route's
             # proposed target), recorded once per record under a single "gencde" key — distinct from the
             # concept→CDE match verdict and the per-variable transform verdicts.
-            rec["gencde"] = {"decision": decision, "note": note}
+            if clear:
+                rec.pop("gencde", None)
+            else:
+                rec["gencde"] = {"decision": decision, "note": note}
         else:
-            rec["decision"] = decision
-            rec["note"] = note
+            if clear:
+                rec.pop("decision", None)
+                rec.pop("note", None)
+            else:
+                rec["decision"] = decision
+                rec["note"] = note
+        # A cleared verdict should leave no residue: drop an emptied transforms map, then the record itself.
+        if clear:
+            if isinstance(rec.get("transforms"), dict) and not rec["transforms"]:
+                rec.pop("transforms", None)
+            if not rec:
+                job.decisions.pop(record_id, None)
         job.updated_at = time.time()
 
     def purge_expired(self) -> None:

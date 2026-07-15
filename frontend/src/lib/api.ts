@@ -153,7 +153,7 @@ export async function deleteJob(jobId: string): Promise<void> {
 export async function submitVerdict(
   jobId: string,
   recordId: string,
-  decision: "approve" | "refine" | "reject",
+  decision: "approve" | "refine" | "reject" | "clear",
   note = "",
   axis: "match" | "transform" | "gencde" = "match",
   sourceVariable?: string,
@@ -162,7 +162,8 @@ export async function submitVerdict(
   // concept→CDE verdict; axis="transform" is a PER-SOURCE-VARIABLE recode-spec verdict, so it also carries
   // the "cohort:var" `sourceVariable` it applies to (required server-side for the transform axis); axis="gencde"
   // is the verdict on the synthesized GenCDE itself (novel route, once per record, no sourceVariable). All axes
-  // take the full approve|refine|reject triad. Kept out of types.ts on purpose (decisions' keys are optional).
+  // take the full approve|refine|reject triad, plus "clear" to un-set a previously-recorded verdict (toggle-off
+  // undo). Kept out of types.ts on purpose (decisions' keys are optional).
   if (IS_STATIC) return; // preview: decisions are not persisted
   // Guest (gate on, no token): the demo is read-only — saving verdicts needs a sign-in. Fail with a clear
   // message instead of a raw 401 from the gated endpoint.
