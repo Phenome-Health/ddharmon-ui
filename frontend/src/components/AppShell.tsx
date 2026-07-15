@@ -7,7 +7,6 @@ import { useTheme } from "@/hooks/use-theme";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
-import { PhenomeChip } from "@/components/phenome-mark";
 import { PhMark } from "@/components/ph-logo";
 import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
 
@@ -43,7 +42,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-neutral-0 px-4">
         <Link href="/" className="flex items-center gap-2.5">
-          <PhenomeChip />
+          <PhMark className="h-6 w-6" />
           <div className="flex items-center gap-2 text-sm">
             <span className="font-semibold text-ph-ink">Phenome Health</span>
             <span className="text-neutral-300">/</span>
