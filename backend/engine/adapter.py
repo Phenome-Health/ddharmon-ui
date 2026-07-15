@@ -27,6 +27,7 @@ The pipeline **requires a CDE backbone** (assignment to the given CDE catalog is
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from collections.abc import Callable
@@ -641,6 +642,13 @@ def run_pipeline(
     # gate off with gen_gencde=false. Runs after merge, before specgen; batch stage caches to
     # responses_gencde.jsonl (its own content-addressed tag, so it re-runs $0 with the other stages cached).
     gen_gencde = config.get("gen_gencde", True)
+    # GenCDE transform specs (M12): generate C1 member->GenCDE recodes for novel records so the tail carries
+    # transform specs like the adopt/refine path. Needs the gencde stage (a target) AND the specgen stage (the
+    # recode LLM). Guarded on the core signature so a core pinned before M12 simply skips the flag rather than
+    # erroring on an unexpected kwarg — the dev channel swaps core versions, so the adapter must not assume it.
+    gen_gencde_specs = config.get("gen_gencde_specs", True) and gen_gencde and gen_specs
+    if gen_gencde_specs and "gencde_specgen" in inspect.signature(harmonize_leanb).parameters:
+        kwargs["gencde_specgen"] = True
     progress("clustering", 0, 0)  # clustering + retrieval happen inside harmonize_leanb before the first callback
     result = harmonize_leanb(
         embedded,
