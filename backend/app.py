@@ -8,6 +8,7 @@ Endpoints (all under /api/harmonize):
     GET  /jobs              list jobs (summaries)
     DELETE /jobs/{job_id}   delete a job
     POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision (by recordId)
+    POST /jobs/{job_id}/records/{record_id}/regenerate-specs  regenerate member->GenCDE recodes after a refine
     GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv | notebook_py | notebook_r
     GET  /demos              list precomputed demo datasets + available combos
     POST /demo               hydrate a completed job from a precomputed demo snapshot -> {jobId}
@@ -28,7 +29,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -496,6 +497,9 @@ class VerdictBody(BaseModel):
     note: str = ""
     axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode) | gencde (proposed GenCDE)
     sourceVariable: str | None = None  # REQUIRED for axis="transform" — the "cohort:var" edge the verdict is on
+    # axis="gencde" refine only: the reviewer's corrected GenCDE fields (camelCase UIGenCDE subset). Stored on
+    # the decision and merged into the result blob's GenCDE, so edits flow to the workbench/export/regen.
+    edited: dict[str, Any] | None = None
 
 
 @app.post("/api/harmonize/jobs/{job_id}/verdict")
@@ -512,10 +516,65 @@ def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
     if not store.set_decision(
-        job_id, body.recordId, body.decision, body.note, axis=body.axis, source_variable=body.sourceVariable
+        job_id,
+        body.recordId,
+        body.decision,
+        body.note,
+        axis=body.axis,
+        source_variable=body.sourceVariable,
+        edited=body.edited,
     ):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
+
+
+@app.post("/api/harmonize/jobs/{job_id}/records/{record_id}/regenerate-specs")
+def regenerate_specs(
+    job_id: str,
+    record_id: str,
+    request: Request,
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+    x_provider_key: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """Regenerate the member->GenCDE recodes for one record whose GenCDE was refined (its value domain changed).
+
+    Reads the (already reviewer-corrected) GenCDE from the run's result blob, reloads the run's retained source
+    dictionaries to recover each member's source value set, and re-runs the SAME core recode seams a full run
+    uses — via a targeted one-off BYOK LLM pass — then writes the fresh transforms back onto the record.
+
+    BYOK: the key rides the ``X-Provider-Key`` (or legacy ``X-Anthropic-Key``) header, is used to build the
+    LLM client for THIS request only, and is NEVER written to ``run_config``, the job, the DB, os.environ, or
+    any log — exactly like the analysis-ideas + batch paths.
+    """
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    records = (job.result or {}).get("records") if job.result else None
+    rec_ui = next((r for r in (records or []) if r.get("id") == record_id), None)
+    if rec_ui is None:
+        raise HTTPException(status_code=404, detail="Record not found in this run")
+    if not rec_ui.get("gencde"):
+        raise HTTPException(status_code=409, detail="This record has no proposed GenCDE to regenerate recodes for")
+    if not job.dict_specs:
+        raise HTTPException(
+            status_code=409, detail="This run predates recode regeneration (no retained source dictionaries)"
+        )
+
+    from backend.engine.adapter import regenerate_gencde_specs, specgen_stage_fn
+    from backend.engine.llm import build_llm_client
+
+    # Use the SAME model the run was configured with; the BYOK key is in-memory for this request only.
+    effective_key = x_provider_key or x_anthropic_key
+    client = build_llm_client(job.config.get("model_tag"), effective_key)
+    stage_fn = specgen_stage_fn(client)
+    try:
+        updated = regenerate_gencde_specs(
+            rec_ui, job.dict_specs, model_tag=job.config.get("model_tag"), stage_fn=stage_fn
+        )
+    except RuntimeError as exc:  # e.g. a core build lacking the GenCDE spec-gen seams
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    store.replace_result_record(job_id, record_id, cast("dict[str, Any]", updated))
+    return {"record": updated}
 
 
 # --- export ----------------------------------------------------------------------------------

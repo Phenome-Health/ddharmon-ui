@@ -6,18 +6,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
-import { ArrowLeft, Ban, Check, ExternalLink, Loader2, Pencil, Sparkles, Star } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Ban, Check, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Save, Sparkles, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlotInfo } from "@/components/plot-info";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { MemberVariables } from "@/components/member-variables";
-import { submitVerdict } from "@/lib/api";
-import { VERDICT_STYLES, type GenCDE, type UIRecord, type UITransform } from "@/types";
+import { regenerateSpecs, submitVerdict } from "@/lib/api";
+import { VERDICT_STYLES, type GenCDE, type ResponseOption, type UIRecord, type UITransform } from "@/types";
 
 const NIH_CDE_URL = "https://cde.nlm.nih.gov/deView?tinyId=";
 const VERDICT_BAR: Record<string, string> = {
@@ -57,6 +67,14 @@ function transformSummary(t: UITransform): string {
     default:
       return "no spec";
   }
+}
+
+// A GenCDE's value domain as a stable string — the categorical permissible values plus the numeric units /
+// bounds. Used to tell whether a refine touched the part of the proposal that the member→GenCDE recodes
+// depend on (text-only edits to definition/title/question don't make recodes stale).
+function valueDomainKey(g: Pick<GenCDE, "permissibleValues" | "units" | "minimum" | "maximum">): string {
+  const pv = g.permissibleValues.map((o) => `${o.code}=${o.label}`).join("|");
+  return `${pv}§${g.units ?? ""}§${g.minimum ?? ""}§${g.maximum ?? ""}`;
 }
 
 const CODE_MAP_CAP = 10;
@@ -154,6 +172,16 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  // Refine → regen (Part 3): recordIds whose GenCDE-target recodes went stale because a refine changed the
+  // GenCDE's value domain, and the freshly regenerated transforms once "Regenerate recodes" completes (an
+  // override layered over the record's `transforms`, since records arrive as a prop from the stream hook).
+  const [staleRecords, setStaleRecords] = useState<Record<string, boolean>>({});
+  const [regenTransforms, setRegenTransforms] = useState<Record<string, UITransform[]>>({});
+  // BYOK dialog for the regen LLM pass — the key is held in component memory only, never persisted.
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenKey, setRegenKey] = useState("");
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenErr, setRegenErr] = useState<string | null>(null);
 
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -196,6 +224,13 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
     [selected],
   );
 
+  // Transforms to render for the selected record: the freshly regenerated set once a regen has run, else the
+  // record's own. `gencdeId` flags which recodes target the proposed GenCDE; `gencdeStale` = a value-domain
+  // refine left those recodes stale (awaiting regeneration).
+  const gencdeId = selected?.gencde?.gencdeId ?? null;
+  const shownTransforms = selected ? (regenTransforms[selected.id] ?? selected.transforms) : [];
+  const gencdeStale = selected ? !!staleRecords[selected.id] : false;
+
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
     setDecisions((p) => ({ ...p, [r.id]: decision }));
     try {
@@ -221,13 +256,40 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
 
   // GenCDE-axis verdict — approve/refine/reject the synthesized GenCDE (the novel route's proposed target),
   // keyed by recordId, distinct from the concept→CDE match verdict and the per-variable transform verdicts.
-  async function decideGencde(r: UIRecord, decision: "approve" | "refine" | "reject") {
+  // A refine can carry the reviewer's corrected GenCDE (`edited`); when that correction changes the value
+  // domain, the record's member→GenCDE recodes go stale (Part 3).
+  async function decideGencde(r: UIRecord, decision: "approve" | "refine" | "reject", edited?: GenCDE) {
     setGencdeDecisions((p) => ({ ...p, [r.id]: decision }));
+    if (decision === "refine" && edited && r.gencde && valueDomainKey(r.gencde) !== valueDomainKey(edited)) {
+      // The value domain moved — the previously generated member→GenCDE recodes no longer target it.
+      setStaleRecords((p) => ({ ...p, [r.id]: true }));
+    }
     try {
-      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "gencde");
-      toast.success(`Proposed GenCDE for "${r.concept || r.id}" ${decision}d`);
+      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "gencde", undefined, edited);
+      toast.success(
+        edited ? `Saved GenCDE edits for "${r.concept || r.id}"` : `Proposed GenCDE for "${r.concept || r.id}" ${decision}d`,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save GenCDE decision");
+    }
+  }
+
+  // Refine → regen (Part 3): re-run the member→GenCDE recodes for the selected record against its corrected
+  // value domain. One targeted, BYOK LLM pass; the fresh transforms overlay the record and the stale flag clears.
+  async function regenerate(r: UIRecord, key: string) {
+    setRegenBusy(true);
+    setRegenErr(null);
+    try {
+      const { record } = await regenerateSpecs(jobId, r.id, key || undefined);
+      setRegenTransforms((p) => ({ ...p, [r.id]: record.transforms }));
+      setStaleRecords((p) => ({ ...p, [r.id]: false }));
+      setRegenOpen(false);
+      setRegenKey("");
+      toast.success(`Regenerated ${record.transforms.length} recode(s) for "${r.concept || r.id}"`);
+    } catch (e) {
+      setRegenErr(e instanceof Error ? e.message : "Failed to regenerate recodes");
+    } finally {
+      setRegenBusy(false);
     }
   }
 
@@ -330,7 +392,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                     <GenCDECard
                       g={selected.gencde}
                       decision={gencdeDecisions[selected.id]}
-                      onDecide={(d) => decideGencde(selected, d)}
+                      onDecide={(d, edited) => decideGencde(selected, d, edited)}
                     />
                   )}
                   {selected.rationale && (
@@ -433,27 +495,56 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
 
             {/* value / transform mapping */}
             <Card>
-              <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-                <CardTitle className="text-base">Value mapping ({selected.transforms.length})</CardTitle>
-                <PlotInfo>
-                  One row per source variable → CDE transform recipe, showing the actual recode inline: the
-                  categorical <b>code map</b> (source code → CDE code), the <b>unit</b> conversion (factor/offset +
-                  units), the <b>arithmetic</b> formula, or the data-dependent <b>method</b>. The mono badge is the
-                  transform <b>kind</b>; <b>coverage</b> is the share of the source&apos;s values the recipe maps.
-                  Each row carries its OWN <b>approve / refine / reject</b> verdict — a per-variable second axis,
-                  separate from the concept→CDE match verdict at the top of the page. The <b>review</b> /{" "}
-                  <b>units</b> / <b>data</b> chips are diagnostic flags, not buttons — respectively: flagged for a
-                  human check, source/target units couldn&apos;t be reconciled, and needs row-level data to apply.
-                  Specs are exported from the run&apos;s <b>Export</b> menu (EITL TSV, records JSON, or a runnable
-                  notebook).
-                </PlotInfo>
+              <CardHeader className="space-y-2">
+                <div className="flex flex-row items-center gap-2">
+                  <CardTitle className="text-base">Value mapping ({shownTransforms.length})</CardTitle>
+                  <PlotInfo>
+                    One row per source variable → target recode recipe, showing the actual recode inline: the
+                    categorical <b>code map</b> (source code → target code), the <b>unit</b> conversion (factor/offset
+                    + units), the <b>arithmetic</b> formula, or the data-dependent <b>method</b>. The mono badge is the
+                    transform <b>kind</b>; <b>coverage</b> is the share of the source&apos;s values the recipe maps.
+                    A <b>→ Proposed GenCDE</b> pill marks a recode whose target is this concept&apos;s synthesized
+                    GenCDE (novel route) rather than an existing CDE. Each row carries its OWN{" "}
+                    <b>approve / refine / reject</b> verdict — a per-variable second axis, separate from the
+                    concept→CDE match verdict at the top of the page. The <b>review</b> / <b>units</b> / <b>data</b>{" "}
+                    chips are diagnostic flags, not buttons — respectively: flagged for a human check, source/target
+                    units couldn&apos;t be reconciled, and needs row-level data to apply. Specs are exported from the
+                    run&apos;s <b>Export</b> menu (EITL TSV, records JSON, or a runnable notebook).
+                  </PlotInfo>
+                  {gencdeStale && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto h-7 gap-1.5 border-warning/40 text-xs text-warning hover:bg-warning-bg"
+                      onClick={() => {
+                        setRegenErr(null);
+                        setRegenOpen(true);
+                      }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Regenerate recodes
+                    </Button>
+                  )}
+                </div>
+                {gencdeId && (
+                  <p className="text-xs text-neutral-500">
+                    These recodes map each source variable&apos;s values <b>into the proposed GenCDE&apos;s domain</b>{" "}
+                    (this concept is novel — the target is the synthesized GenCDE above, not an existing CDE).
+                  </p>
+                )}
+                {gencdeStale && (
+                  <p className="flex items-center gap-1.5 text-xs text-warning">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> The GenCDE&apos;s value domain was refined —
+                    the recodes below are stale. Regenerate them to remap against the corrected domain.
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
-                {selected.transforms.length ? (
+                {shownTransforms.length ? (
                   <div className="space-y-2">
-                    {selected.transforms.map((t, i) => {
+                    {shownTransforms.map((t, i) => {
                       const tKey = `${selected.id}:${t.sourceVariable}`;
                       const td = transformDecisions[tKey];
+                      const toGenCDE = !!gencdeId && t.targetCdeId === gencdeId;
                       return (
                         <div key={i} className="rounded border border-neutral-100 px-3 py-2 text-xs">
                           <div className="flex flex-wrap items-center gap-2">
@@ -463,6 +554,16 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                             <span className="font-mono text-neutral-600">{t.sourceVariable}</span>
                             <span className="text-neutral-300">→</span>
                             <span className="text-neutral-600">{transformSummary(t)}</span>
+                            {toGenCDE && (
+                              <Badge variant="outline" className="gap-1 border-ph-navy/30 text-ph-navy">
+                                <Sparkles className="h-3 w-3" /> → Proposed GenCDE
+                              </Badge>
+                            )}
+                            {toGenCDE && gencdeStale && (
+                              <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
+                                <AlertTriangle className="h-3 w-3" /> stale — regenerate
+                              </Badge>
+                            )}
                             <span className="text-neutral-400">coverage {(t.coverage * 100).toFixed(0)}%</span>
                             {t.needsReview && <Badge variant="outline" className="border-warning/40 text-warning">review</Badge>}
                             {t.needsUnits && <Badge variant="outline" className="border-warning/40 text-warning">units</Badge>}
@@ -489,6 +590,43 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                 )}
               </CardContent>
             </Card>
+
+            {/* Regenerate-recodes BYOK dialog (Part 3): one targeted LLM pass re-maps the member→GenCDE recodes
+                against the corrected value domain. Key is transport-only, never persisted. */}
+            <Dialog open={regenOpen} onOpenChange={setRegenOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Regenerate recodes</DialogTitle>
+                  <DialogDescription>
+                    The proposed GenCDE&apos;s value domain changed, so this re-maps each source variable&apos;s values
+                    into the corrected domain — one LLM pass, so it needs your Anthropic API key. The key is sent for
+                    this request only — never written to disk, logs, or the saved run.
+                  </DialogDescription>
+                </DialogHeader>
+                <Input
+                  type="password"
+                  placeholder="sk-ant-…"
+                  autoComplete="off"
+                  value={regenKey}
+                  onChange={(e) => setRegenKey(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && regenKey.trim() && selected) regenerate(selected, regenKey.trim());
+                  }}
+                />
+                {regenErr && <p className="text-sm text-destructive">{regenErr}</p>}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setRegenOpen(false)} disabled={regenBusy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => selected && regenerate(selected, regenKey.trim())}
+                    disabled={regenBusy || !regenKey.trim()}
+                  >
+                    {regenBusy ? "Regenerating…" : "Regenerate"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         ) : (
           <Card>
@@ -513,6 +651,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 // The synthesized GenCDE proposed for a novel concept (contract `UIRecord.gencde`) — the spec-conformant
 // harmonization target, distinct from the free-text "Concept summary" (idealCde). Shown only on novels.
+// Clicking "refine" opens an editable draft over the synthesized fields so the reviewer can CORRECT the
+// proposal (name/definition/question, permissible values, units/bounds); "Save changes" persists the edited
+// GenCDE alongside the verdict. A save that moves the value domain marks the recodes stale (see the parent).
 function GenCDECard({
   g,
   decision,
@@ -520,9 +661,33 @@ function GenCDECard({
 }: {
   g: GenCDE;
   decision?: string;
-  onDecide: (d: "approve" | "refine" | "reject") => void;
+  onDecide: (d: "approve" | "refine" | "reject", edited?: GenCDE) => void;
 }) {
+  // Editable draft, seeded from the synthesized proposal and reset when a different GenCDE is selected.
+  const [draft, setDraft] = useState<GenCDE>(g);
+  useEffect(() => {
+    setDraft(g);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on concept switch, not on every g ref
+  }, [g.gencdeId]);
+  const editing = decision === "refine";
   const hasRange = g.minimum != null || g.maximum != null;
+
+  const setPV = (i: number, patch: Partial<ResponseOption>) =>
+    setDraft((d) => ({ ...d, permissibleValues: d.permissibleValues.map((o, j) => (j === i ? { ...o, ...patch } : o)) }));
+  const addPV = () => setDraft((d) => ({ ...d, permissibleValues: [...d.permissibleValues, { code: "", label: "" }] }));
+  const removePV = (i: number) =>
+    setDraft((d) => ({ ...d, permissibleValues: d.permissibleValues.filter((_, j) => j !== i) }));
+  const numOrUndef = (s: string) => (s.trim() === "" ? undefined : Number(s));
+
+  function save() {
+    // Drop blank permissible-value rows before persisting so an empty editor row isn't stored as a code.
+    const cleaned: GenCDE = {
+      ...draft,
+      permissibleValues: draft.permissibleValues.filter((o) => o.code.trim() !== "" || o.label.trim() !== ""),
+    };
+    onDecide("refine", cleaned);
+  }
+
   return (
     <div className="mt-1 space-y-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2.5">
       <div className="flex items-center justify-between gap-2">
@@ -543,7 +708,7 @@ function GenCDECard({
         </span>
       </div>
       {/* GenCDE-axis verdict: approve/refine/reject the proposed target itself (distinct from the concept→CDE
-          match verdict and the per-variable transform verdicts). */}
+          match verdict and the per-variable transform verdicts). "refine" opens the edit form below. */}
       <div className="flex items-center gap-1.5">
         <span className="text-[11px] text-neutral-500">Review proposal:</span>
         <DecisionBtn active={decision === "approve"} onClick={() => onDecide("approve")} title="Approve GenCDE" color="text-success">
@@ -556,58 +721,175 @@ function GenCDECard({
           <Ban className="h-4 w-4" />
         </DecisionBtn>
       </div>
-      <div className="text-sm">
-        <span className="font-mono font-medium text-ph-ink">{g.preferredName || "—"}</span>
-        {g.title && <span className="text-neutral-500"> · {g.title}</span>}
-      </div>
-      {g.definition && <p className="text-sm text-neutral-600">{g.definition}</p>}
-      {g.permissibleValues.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {g.permissibleValues.map((o) => (
-            <span
-              key={`${o.code}=${o.label}`}
-              className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-neutral-600"
-            >
-              {o.code}={o.label}
-            </span>
-          ))}
+
+      {editing ? (
+        // ── editable refine form ─────────────────────────────────────────────────────────────
+        <div className="space-y-2.5 rounded border border-warning/30 bg-warning-bg/30 p-2.5">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <EditField label="Preferred name">
+              <Input
+                className="h-8"
+                value={draft.preferredName}
+                onChange={(e) => setDraft((d) => ({ ...d, preferredName: e.target.value }))}
+              />
+            </EditField>
+            <EditField label="Title">
+              <Input className="h-8" value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} />
+            </EditField>
+          </div>
+          <EditField label="Definition">
+            <Textarea
+              className="min-h-[60px]"
+              value={draft.definition}
+              onChange={(e) => setDraft((d) => ({ ...d, definition: e.target.value }))}
+            />
+          </EditField>
+          <EditField label="Question text">
+            <Input
+              className="h-8"
+              value={draft.questionText}
+              onChange={(e) => setDraft((d) => ({ ...d, questionText: e.target.value }))}
+            />
+          </EditField>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <EditField label="Units">
+              <Input
+                className="h-8"
+                value={draft.units ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, units: e.target.value || undefined }))}
+              />
+            </EditField>
+            <EditField label="Minimum">
+              <Input
+                className="h-8"
+                type="number"
+                value={draft.minimum ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, minimum: numOrUndef(e.target.value) }))}
+              />
+            </EditField>
+            <EditField label="Maximum">
+              <Input
+                className="h-8"
+                type="number"
+                value={draft.maximum ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, maximum: numOrUndef(e.target.value) }))}
+              />
+            </EditField>
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] uppercase tracking-wide text-neutral-500">Permissible values (code = label)</Label>
+              <Button type="button" size="sm" variant="ghost" className="h-6 gap-1 text-xs" onClick={addPV}>
+                <Plus className="h-3 w-3" /> Add value
+              </Button>
+            </div>
+            {draft.permissibleValues.length === 0 && (
+              <p className="text-[11px] text-neutral-400">No permissible values (numeric / open-text GenCDE).</p>
+            )}
+            {draft.permissibleValues.map((o, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <Input
+                  className="h-7 w-24 font-mono text-[11px]"
+                  placeholder="code"
+                  value={o.code}
+                  onChange={(e) => setPV(i, { code: e.target.value })}
+                />
+                <span className="text-neutral-300">=</span>
+                <Input
+                  className="h-7 flex-1 text-[11px]"
+                  placeholder="label"
+                  value={o.label}
+                  onChange={(e) => setPV(i, { label: e.target.value })}
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-neutral-400 hover:text-danger"
+                  title="Remove value"
+                  onClick={() => removePV(i)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setDraft(g)}>
+              Reset
+            </Button>
+            <Button type="button" size="sm" className="h-7 gap-1.5 text-xs" onClick={save}>
+              <Save className="h-3.5 w-3.5" /> Save changes
+            </Button>
+          </div>
         </div>
-      )}
-      {(g.units || hasRange) && (
-        <div className="text-xs text-neutral-500">
-          {g.units && (
-            <>
-              units <span className="font-mono">{g.units}</span>
-            </>
+      ) : (
+        // ── read-only display ────────────────────────────────────────────────────────────────
+        <>
+          <div className="text-sm">
+            <span className="font-mono font-medium text-ph-ink">{g.preferredName || "—"}</span>
+            {g.title && <span className="text-neutral-500"> · {g.title}</span>}
+          </div>
+          {g.definition && <p className="text-sm text-neutral-600">{g.definition}</p>}
+          {g.permissibleValues.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {g.permissibleValues.map((o) => (
+                <span
+                  key={`${o.code}=${o.label}`}
+                  className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-neutral-600"
+                >
+                  {o.code}={o.label}
+                </span>
+              ))}
+            </div>
           )}
-          {g.units && hasRange && " · "}
-          {hasRange && (
-            <>
-              range{" "}
-              <span className="font-mono">
-                {g.minimum ?? "−∞"}…{g.maximum ?? "∞"}
+          {(g.units || hasRange) && (
+            <div className="text-xs text-neutral-500">
+              {g.units && (
+                <>
+                  units <span className="font-mono">{g.units}</span>
+                </>
+              )}
+              {g.units && hasRange && " · "}
+              {hasRange && (
+                <>
+                  range{" "}
+                  <span className="font-mono">
+                    {g.minimum ?? "−∞"}…{g.maximum ?? "∞"}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-neutral-500">
+            <span>
+              coverage{" "}
+              <span className="font-medium tabular-nums">
+                {g.valueCoverage == null ? "n/a" : `${Math.round(g.valueCoverage * 100)}%`}
               </span>
-            </>
+            </span>
+            {g.confidence > 0 && (
+              <span>
+                confidence <span className="font-medium tabular-nums">{g.confidence.toFixed(2)}</span>
+              </span>
+            )}
+            {g.sourceCohorts.length > 0 && <span>from {g.sourceCohorts.join(", ")}</span>}
+          </div>
+          {g.uncoveredLabels.length > 0 && (
+            <div className="text-[11px] text-warning">missing answer concepts: {g.uncoveredLabels.join(", ")}</div>
           )}
-        </div>
+        </>
       )}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-neutral-500">
-        <span>
-          coverage{" "}
-          <span className="font-medium tabular-nums">
-            {g.valueCoverage == null ? "n/a" : `${Math.round(g.valueCoverage * 100)}%`}
-          </span>
-        </span>
-        {g.confidence > 0 && (
-          <span>
-            confidence <span className="font-medium tabular-nums">{g.confidence.toFixed(2)}</span>
-          </span>
-        )}
-        {g.sourceCohorts.length > 0 && <span>from {g.sourceCohorts.join(", ")}</span>}
-      </div>
-      {g.uncoveredLabels.length > 0 && (
-        <div className="text-[11px] text-warning">missing answer concepts: {g.uncoveredLabels.join(", ")}</div>
-      )}
+    </div>
+  );
+}
+
+// Small labeled wrapper for one edit field in the GenCDE refine form.
+function EditField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-[11px] uppercase tracking-wide text-neutral-500">{label}</Label>
+      {children}
     </div>
   );
 }

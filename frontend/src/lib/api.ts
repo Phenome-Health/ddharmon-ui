@@ -1,7 +1,7 @@
 // Tiny typed fetch client for the ddharmon harmonization API (replaces Orval codegen).
 // With VITE_STATIC=1 the client reads bundled fixtures under <base>/static-data instead of /api,
 // so the SPA runs fully static (sample runs + exports, no backend, no key) for a preview deploy.
-import type { DemosResponse, ExportFormat, JobResult, JobSummary, ModelInfo, RunConfig } from "@/types";
+import type { DemosResponse, ExportFormat, GenCDE, JobResult, JobSummary, ModelInfo, RunConfig, UIRecord } from "@/types";
 
 const BASE = "/api/harmonize";
 export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
@@ -157,12 +157,14 @@ export async function submitVerdict(
   note = "",
   axis: "match" | "transform" | "gencde" = "match",
   sourceVariable?: string,
+  edited?: Partial<GenCDE>,
 ): Promise<void> {
-  // Three-axis verdict body: { recordId, decision, note, axis, sourceVariable? }. axis="match" is the
+  // Three-axis verdict body: { recordId, decision, note, axis, sourceVariable?, edited? }. axis="match" is the
   // concept→CDE verdict; axis="transform" is a PER-SOURCE-VARIABLE recode-spec verdict, so it also carries
   // the "cohort:var" `sourceVariable` it applies to (required server-side for the transform axis); axis="gencde"
-  // is the verdict on the synthesized GenCDE itself (novel route, once per record, no sourceVariable). All axes
-  // take the full approve|refine|reject triad. Kept out of types.ts on purpose (decisions' keys are optional).
+  // is the verdict on the synthesized GenCDE itself (novel route, once per record, no sourceVariable). A gencde
+  // "refine" may carry the reviewer's corrected GenCDE fields in `edited` (merged into the run's GenCDE
+  // server-side). All axes take the full approve|refine|reject triad. Kept out of types.ts on purpose.
   if (IS_STATIC) return; // preview: decisions are not persisted
   // Guest (gate on, no token): the demo is read-only — saving verdicts needs a sign-in. Fail with a clear
   // message instead of a raw 401 from the gated endpoint.
@@ -171,9 +173,22 @@ export async function submitVerdict(
     await fetch(`${BASE}/jobs/${jobId}/verdict`, {
       method: "POST",
       headers: await authed({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ recordId, decision, note, axis, sourceVariable }),
+      body: JSON.stringify({ recordId, decision, note, axis, sourceVariable, edited }),
     }),
   );
+}
+
+export async function regenerateSpecs(jobId: string, recordId: string, apiKey?: string): Promise<{ record: UIRecord }> {
+  // Refine → regen: after a GenCDE's value domain is corrected, its member→GenCDE recodes go stale. This
+  // re-runs JUST those recodes for the one record (a targeted one-off LLM pass over the corrected domain) and
+  // returns the record with fresh transforms. BYOK: the key is sent transport-only for this call, exactly
+  // like generateAnalysisIdeas — never persisted. Guests (gate on, no token) must sign in first.
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to regenerate recodes.");
+  const headers = await authed(apiKey ? { "x-anthropic-key": apiKey } : {});
+  // recordId is a group id (e.g. "c9#g0") — encode it so the "#" isn't parsed as a URL fragment.
+  const rid = encodeURIComponent(recordId);
+  return json(await fetch(`${BASE}/jobs/${jobId}/records/${rid}/regenerate-specs`, { method: "POST", headers }));
 }
 
 export function exportUrl(jobId: string, format: ExportFormat): string {

@@ -623,6 +623,258 @@ def test_gencde_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
         erow = next(r for r in erows[1:] if r[0] == "c1#g0")
         assert json.loads(erow[eheader.index("gencdeDecision")])["decision"] == "reject"
 
+    # a gencde REFINE may carry the reviewer's CORRECTED GenCDE fields in ``edited`` — those round-trip on the
+    # decision AND flow to the trailing gencdeDecision export column (the export already dumps the whole dict).
+    edited = {"definition": "corrected definition", "permissibleValues": [{"code": "1", "label": "Yes"}], "units": "yr"}
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict",
+            json={"recordId": "c1#g0", "decision": "refine", "axis": "gencde", "note": "fixed", "edited": edited},
+        ).status_code
+        == 200
+    )
+    snap2 = client.get(f"/api/harmonize/result/{job_id}").json()
+    gd = snap2["decisions"]["c1#g0"]["gencde"]
+    assert gd["decision"] == "refine" and gd["note"] == "fixed" and gd["edited"] == edited
+    tsv2 = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "eitl_tsv"})
+    trows = list(csv.reader(io.StringIO(tsv2.text), delimiter="\t"))
+    theader = trows[0]
+    trow = next(r for r in trows[1:] if r[0] == "c1#g0")
+    exported = json.loads(trow[theader.index("gencdeDecision")])
+    assert exported["decision"] == "refine" and exported["edited"]["definition"] == "corrected definition"
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
+
+
+def test_gencde_recode_regeneration_replaces_stale_specs_and_byok_not_persisted(monkeypatch, tmp_path):
+    """Refine → regen: the targeted endpoint re-maps a record's member→GenCDE recodes against the corrected
+    value domain (fresh transforms REPLACE the stale one), reloading the run's retained source dictionary for
+    the source value set. BYOK: the key builds the client for this request only and is NEVER persisted."""
+    from ddharmon.harmonization.leanb import LeanBResult
+    from ddharmon.harmonization.models import GenCDE, LeanBRecord, TransformKind, TransformSpec
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    from backend.engine.adapter import build_ui_result
+
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    # A novel record with a categorical GenCDE and a STALE member→GenCDE recode (only 1 of 2 source codes).
+    novel = LeanBRecord(
+        cluster_id="c9",
+        group_id="c9#g0",
+        concept="Ever smoked",
+        verdict="novel",
+        route="gencde_residual",
+        cohorts=["CohortA"],
+        member_variable_names=["CohortA:smk"],
+        n_members=1,
+        ideal_cde="Whether the participant ever smoked.",
+        gencde=GenCDE(
+            gencde_id="GENCDE:c9#g0",
+            preferred_name="ever_smoked",
+            definition="Whether the participant has ever smoked.",
+            data_type="categorical",
+            permissible_values=[ResponseOption(code="1", label="Yes"), ResponseOption(code="0", label="No")],
+            source_variables=["CohortA:smk"],
+            source_cohorts=["CohortA"],
+            value_coverage=1.0,
+            confidence=0.9,
+        ),
+        transforms=[
+            TransformSpec(
+                source_variable="CohortA:smk",
+                target_cde_id="GENCDE:c9#g0",
+                kind=TransformKind.CATEGORICAL,
+                coverage=0.5,
+                confidence=0.4,
+                code_map={"1": "1"},  # stale: source code "2" unmapped
+                needs_review=True,
+            )
+        ],
+    )
+    custom_result = build_ui_result(LeanBResult(records=[novel]), mode="batch", phases=["loading"])
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=custom_result)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    # The spec-gen LLM is stubbed at the SDK client: it returns a full recode (both source codes mapped).
+    seen_keys: list[str | None] = []
+
+    class StubClient:
+        def __init__(self, *a, **k):
+            seen_keys.append(k.get("api_key"))
+
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            return json.dumps({"code_map": {"1": "1", "2": "0"}, "confidence": 0.95, "notes": "remapped"})
+
+    monkeypatch.setattr("ddharmon.llm.anthropic_client.AnthropicClient", StubClient)
+
+    cfg = {
+        "dictionaries": [
+            {
+                "filename": "cohortA.csv",
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "var", "description": "desc", "value_encoding": "enc"},
+            }
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc,enc\nsmk,Ever smoked,1=Yes|2=No\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    # regenerate the recodes for the novel record, supplying the BYOK key. The record id "c9#g0" has a "#",
+    # so it must be URL-encoded in the path (mirrors the frontend's encodeURIComponent).
+    from urllib.parse import quote
+
+    reg = client.post(
+        f"/api/harmonize/jobs/{job_id}/records/{quote('c9#g0', safe='')}/regenerate-specs",
+        headers={"x-anthropic-key": "sk-ant-regen-secret"},
+    )
+    assert reg.status_code == 200, reg.text
+    transforms = reg.json()["record"]["transforms"]
+    # exactly one GenCDE-target recode, now covering BOTH source codes (the stale partial one is gone)
+    gencde_tx = [t for t in transforms if t["targetCdeId"] == "GENCDE:c9#g0"]
+    assert len(gencde_tx) == 1
+    assert gencde_tx[0]["kind"] == "categorical"
+    assert gencde_tx[0]["codeMap"] == {"1": "1", "2": "0"}
+    assert gencde_tx[0]["coverage"] == 1.0  # was 0.5
+
+    # the fresh transforms are written back onto the job's result blob
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()
+    rec = next(r for r in snap["result"]["records"] if r["id"] == "c9#g0")
+    assert rec["transforms"][0]["codeMap"] == {"1": "1", "2": "0"}
+
+    # BYOK invariant: the key reached the client constructor but is NOWHERE in the persisted job.
+    assert "sk-ant-regen-secret" in (seen_keys or [None])  # client built with the key
+    assert "sk-ant-regen-secret" not in json.dumps(snap)
+    persisted = next(j for j in client.get("/api/harmonize/jobs").json() if j["jobId"] == job_id)
+    assert "sk-ant-regen-secret" not in json.dumps(persisted)
+
+    # a record with no GenCDE / an unknown record → 409 / 404 (never a crash)
+    assert client.post(f"/api/harmonize/jobs/{job_id}/records/nope/regenerate-specs").status_code == 404
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
+
+
+def test_gencde_recode_regeneration_numeric_runs_n1_n2(monkeypatch, tmp_path):
+    """Refine → regen for a NUMERIC GenCDE (no permissible_values): the endpoint runs the deterministic N1
+    unit pass + the N2 arithmetic residual upgrade (an LLM formula), replacing the stale numeric recode with
+    a fresh ARITHMETIC spec that always routes to review."""
+    from ddharmon.harmonization.leanb import LeanBResult
+    from ddharmon.harmonization.models import GenCDE, LeanBRecord, TransformKind, TransformSpec
+
+    from backend.engine.adapter import build_ui_result
+
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    # A novel record with a NUMERIC GenCDE and a STALE numeric recode targeting it.
+    novel = LeanBRecord(
+        cluster_id="c9",
+        group_id="c9#g0",
+        concept="Age",
+        verdict="novel",
+        route="gencde_residual",
+        cohorts=["CohortA"],
+        member_variable_names=["CohortA:agemo"],
+        n_members=1,
+        gencde=GenCDE(
+            gencde_id="GENCDE:c9#g0",
+            preferred_name="age_years",
+            definition="Participant age in years.",
+            data_type="numeric",
+            permissible_values=[],  # numeric -> the N1/N2 path, not a categorical recode
+            source_variables=["CohortA:agemo"],
+            source_cohorts=["CohortA"],
+        ),
+        transforms=[
+            TransformSpec(
+                source_variable="CohortA:agemo",
+                target_cde_id="GENCDE:c9#g0",
+                kind=TransformKind.ARITHMETIC,
+                formula="source * 999",  # stale
+                inputs=["source"],
+                needs_review=True,
+            )
+        ],
+    )
+    custom_result = build_ui_result(LeanBResult(records=[novel]), mode="batch", phases=["loading"])
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=custom_result)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    # The N2 arith LLM is stubbed at the SDK client: it proposes a fixed months->years formula.
+    seen_keys: list[str | None] = []
+
+    class StubClient:
+        def __init__(self, *a, **k):
+            seen_keys.append(k.get("api_key"))
+
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            return json.dumps({"formula": "source / 12", "confidence": 0.9, "notes": "months to years"})
+
+    monkeypatch.setattr("ddharmon.llm.anthropic_client.AnthropicClient", StubClient)
+
+    cfg = {
+        "dictionaries": [
+            {
+                "filename": "cohortA.csv",
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "var", "description": "desc"},
+            }
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc\nagemo,Age in months\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    from urllib.parse import quote
+
+    reg = client.post(
+        f"/api/harmonize/jobs/{job_id}/records/{quote('c9#g0', safe='')}/regenerate-specs",
+        headers={"x-anthropic-key": "sk-ant-numeric-secret"},
+    )
+    assert reg.status_code == 200, reg.text
+    gencde_tx = [t for t in reg.json()["record"]["transforms"] if t["targetCdeId"] == "GENCDE:c9#g0"]
+    assert len(gencde_tx) == 1
+    assert gencde_tx[0]["kind"] == "arithmetic"  # N1 residual upgraded by the N2 formula
+    assert gencde_tx[0]["formula"] == "source / 12"  # the stale "source * 999" is gone
+    assert gencde_tx[0]["needsReview"] is True  # LLM-proposed arithmetic always routes to review
+
+    # BYOK invariant: the key built the client but is nowhere in the persisted job.
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()
+    assert "sk-ant-numeric-secret" in (seen_keys or [None])
+    assert "sk-ant-numeric-secret" not in json.dumps(snap)
+
     assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
 
 

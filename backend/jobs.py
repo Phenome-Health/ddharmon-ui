@@ -244,6 +244,7 @@ class JobStore:
         note: str = "",
         axis: str = "match",
         source_variable: str | None = None,
+        edited: dict[str, Any] | None = None,
     ) -> bool:
         """Persist a human verdict on one of three independent axes.
 
@@ -253,7 +254,10 @@ class JobStore:
         ``cohort:var`` edge, so a record's several transforms carry independent verdicts without clobbering the
         match verdict. A transform-axis call without ``source_variable`` is a no-op (caller must supply it).
         ``axis="gencde"`` records the reviewer's verdict on the synthesized GenCDE (the novel route's proposed
-        target) under ``decisions[record_id]["gencde"] = {"decision", "note"}`` — once per record.
+        target) under ``decisions[record_id]["gencde"] = {"decision", "note", edited?}`` — once per record. When
+        ``edited`` is supplied (a refine that corrected the synthesized fields), it is stored on the decision AND
+        merged into ``result["records"][i]["gencde"]`` in place, so the workbench + export + a follow-on recode
+        regeneration all see the corrected GenCDE.
 
         Works on a past (evicted / post-restart) run too: if it's not live in memory it is hydrated from the
         durable store, the verdict applied, and the whole record re-persisted — so reviewing history later
@@ -264,7 +268,7 @@ class JobStore:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is not None:
-                self._apply_decision(job, record_id, decision, note, axis, source_variable)
+                self._apply_decision(job, record_id, decision, note, axis, source_variable, edited)
         if job is None:  # not live — hydrate the durable record, mutate it, and write it back
             if self.db is None:
                 return False
@@ -272,8 +276,42 @@ class JobStore:
             if row is None:
                 return False
             job = Job.from_db_row(row)
-            self._apply_decision(job, record_id, decision, note, axis, source_variable)
+            self._apply_decision(job, record_id, decision, note, axis, source_variable, edited)
         self._persist(job)  # verdicts must survive a restart
+        return True
+
+    def replace_result_record(self, job_id: str, record_id: str, new_record: dict[str, Any]) -> bool:
+        """Replace one record in a job's result blob (e.g. after a targeted recode regeneration) and persist.
+
+        Finds ``result["records"][i]`` by id, swaps in ``new_record``, and re-persists the job (works on an
+        evicted / DB-hydrated run too, mirroring :meth:`set_decision`). Returns False if the job or record
+        isn't found."""
+
+        def apply(job: Job) -> bool:
+            records = (job.result or {}).get("records") if job.result else None
+            if not records:
+                return False
+            for i, r in enumerate(records):
+                if r.get("id") == record_id:
+                    records[i] = new_record
+                    job.updated_at = time.time()
+                    return True
+            return False
+
+        with self._lock:
+            job = self._jobs.get(job_id)
+            ok = apply(job) if job is not None else False
+        if job is None:
+            if self.db is None:
+                return False
+            row = self.db.get(job_id)
+            if row is None:
+                return False
+            job = Job.from_db_row(row)
+            ok = apply(job)
+        if not ok:
+            return False
+        self._persist(job)
         return True
 
     def set_analysis_ideas(self, job_id: str, ideas: list[dict[str, Any]]) -> bool:
@@ -298,7 +336,13 @@ class JobStore:
 
     @staticmethod
     def _apply_decision(
-        job: Job, record_id: str, decision: str, note: str, axis: str, source_variable: str | None
+        job: Job,
+        record_id: str,
+        decision: str,
+        note: str,
+        axis: str,
+        source_variable: str | None,
+        edited: dict[str, Any] | None = None,
     ) -> None:
         rec = job.decisions.setdefault(record_id, {})
         if axis == "transform":
@@ -307,8 +351,18 @@ class JobStore:
         elif axis == "gencde":
             # A THIRD axis: the reviewer's verdict on the synthesized GenCDE itself (the novel route's
             # proposed target), recorded once per record under a single "gencde" key — distinct from the
-            # concept→CDE match verdict and the per-variable transform verdicts.
-            rec["gencde"] = {"decision": decision, "note": note}
+            # concept→CDE match verdict and the per-variable transform verdicts. A refine may carry the
+            # reviewer's corrected GenCDE fields in ``edited`` (kept only when present, for backward compat).
+            entry: dict[str, Any] = {"decision": decision, "note": note}
+            if edited:
+                entry["edited"] = edited
+                # Reflect the correction in the result blob so the workbench, export, and a follow-on recode
+                # regeneration all read the corrected GenCDE (camelCase merge over the synthesized fields).
+                for r in (job.result or {}).get("records", []) if job.result else []:
+                    if r.get("id") == record_id and r.get("gencde"):
+                        r["gencde"] = {**r["gencde"], **edited}
+                        break
+            rec["gencde"] = entry
         else:
             rec["decision"] = decision
             rec["note"] = note

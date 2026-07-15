@@ -426,6 +426,24 @@ def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
     return stage
 
 
+def specgen_stage_fn(client: Any) -> StageFn:
+    """A minimal, progress-free synchronous stage callback for one-off recode regeneration.
+
+    Runs each ``PromptRecord`` through ``client.complete`` exactly like :func:`_sync_stage` (same schema
+    preamble + token cap) but without the per-item progress reporting — used by the targeted GenCDE
+    spec-regen endpoint, which runs a handful of prompts inline rather than a whole staged run.
+    """
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for rec in prompts:
+            system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
+            out[rec.id] = client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
+        return out
+
+    return stage
+
+
 def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api_key: str | None = None) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
@@ -663,3 +681,158 @@ def run_pipeline(
     return build_ui_result(
         result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index, field_index=field_index
     )
+
+
+# ── targeted GenCDE recode regeneration (refine → regen, Part 3) ─────────────────────────────
+#
+# When a reviewer refines a novel record's GenCDE and changes its value domain, the member->GenCDE recodes
+# (produced by the M12 gencde_specgen pass) go stale. This regenerates JUST those recodes for the one edited
+# record, off the SAME core seams the run uses (``prepare_gencde_specgen`` + ``assemble_gencde_specgen``) — no
+# re-embedding, no substrate: the source value sets come from a cheap reload of the run's retained source
+# dictionaries (``load_dictionary``, no embedding), which is all ``build_field_lookup`` needs.
+
+
+def _reload_source_dicts(dict_specs: list[dict[str, Any]]) -> list[Any]:
+    """Reload the run's source dictionaries (NO embedding) as ``{dictionary: DataDictionary}`` shims.
+
+    ``prepare_gencde_specgen`` only reaches ``ed.dictionary`` (cohort_name / name / fields) via
+    ``build_field_lookup`` to read each member's source value set — it never touches embeddings — so a plain
+    ``load_dictionary`` reload wrapped in a namespace is sufficient and avoids loading the embedding model.
+    """
+    from types import SimpleNamespace
+
+    from ddharmon.ingestion import load_dictionary
+
+    out: list[Any] = []
+    for s in dict_specs:
+        dd = load_dictionary(s["path"], cohort_name=s["cohort_name"], **s.get("column_roles", {}))
+        out.append(SimpleNamespace(dictionary=dd))
+    return out
+
+
+def _core_gencde_from_ui(g: Any) -> Any:
+    """Build a core ``GenCDE`` from a (possibly reviewer-edited) ``UIGenCDE`` dict — the regen target."""
+    from ddharmon.harmonization.models import GenCDE
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    pv: list[Any] = []
+    for o in g.get("permissibleValues") or []:
+        kw: dict[str, Any] = {"code": str(o.get("code", "")), "label": str(o.get("label", ""))}
+        if o.get("order") is not None:
+            kw["order"] = o["order"]
+        pv.append(ResponseOption(**kw))
+    return GenCDE(
+        gencde_id=g["gencdeId"],
+        preferred_name=g.get("preferredName", ""),
+        title=g.get("title", ""),
+        definition=g.get("definition", ""),
+        question_text=g.get("questionText", ""),
+        data_type=g.get("dataType", ""),
+        permissible_values=pv,
+        units=g.get("units"),
+        minimum_value=g.get("minimum"),
+        maximum_value=g.get("maximum"),
+        source_variables=list(g.get("sourceVariables") or []),
+        source_cohorts=list(g.get("sourceCohorts") or []),
+    )
+
+
+def _rebuild_regen_record(rec_ui: UIRecord) -> Any:
+    """Reconstruct the minimal ``LeanBRecord`` the regen seams need from a stored ``UIRecord`` dict.
+
+    Only the fields ``prepare_gencde_specgen`` / ``assemble_gencde_specgen`` read are rebuilt: the record key
+    (group/cluster id), members, cohorts, the edited GenCDE, and a WIDE_TO_LONG guard transform when the
+    stored record has one (so ``prepare`` still short-circuits — a wide->long record is one structural spec,
+    not per-column recodes). The stale categorical member->GenCDE recodes are deliberately NOT carried: the
+    assemble pass appends the fresh ones, and the caller re-merges the non-stale UI transforms around them.
+    """
+    from ddharmon.harmonization.models import LeanBRecord, TransformKind, TransformSpec
+
+    g = rec_ui.get("gencde")
+    gencde = _core_gencde_from_ui(g) if g else None
+    gencde_id = g.get("gencdeId", "") if g else ""
+    guard = [
+        TransformSpec(
+            source_variable=t.get("sourceVariable", ""),
+            target_cde_id=t.get("targetCdeId", ""),
+            kind=TransformKind.WIDE_TO_LONG,
+        )
+        for t in rec_ui.get("transforms", [])
+        if t.get("targetCdeId") == gencde_id and t.get("kind") == "wide_to_long"
+    ]
+    return LeanBRecord(
+        cluster_id=rec_ui.get("clusterId") or rec_ui.get("id") or "",
+        group_id=rec_ui.get("groupId") or "",
+        verdict=rec_ui.get("verdict") or "novel",
+        route=rec_ui.get("route") or "gencde_residual",
+        concept=rec_ui.get("concept", ""),
+        member_variable_names=list(rec_ui.get("members") or []),
+        cohorts=list(rec_ui.get("cohorts") or []),
+        n_members=rec_ui.get("nMembers", 0),
+        gencde=gencde,
+        transforms=guard,
+    )
+
+
+def regenerate_gencde_specs(
+    rec_ui: UIRecord,
+    dict_specs: list[dict[str, Any]],
+    *,
+    model_tag: str | None,
+    stage_fn: StageFn,
+) -> UIRecord:
+    """Regenerate the member->GenCDE recodes for ONE edited novel record and return the updated ``UIRecord``.
+
+    ``rec_ui`` carries the (already reviewer-edited) GenCDE — its ``permissibleValues`` / units / bounds are
+    the fresh target. Runs the SAME core seams a full run uses, on a single-record list: build recode prompts
+    from the members' source value sets vs the edited domain (``prepare_gencde_specgen``), run them via the
+    injected ``stage_fn`` (the caller supplies a BYOK client), and attach the fresh specs
+    (``assemble_gencde_specgen``). Arithmetic/derived recodes inherit the core's review policy — nothing is
+    auto-approved here. The stale categorical member->GenCDE recodes are replaced; any non-GenCDE-target
+    transforms on the record are preserved untouched.
+    """
+    from ddharmon.harmonization import assemble_gencde_specgen, prepare_gencde_specgen
+    from ddharmon.harmonization.models import TransformKind
+
+    embedded = _reload_source_dicts(dict_specs)
+    member_index = build_member_index(embedded)
+    rec = _rebuild_regen_record(rec_ui)
+
+    kwargs = {"model_tag": model_tag} if model_tag else {}
+    g = rec_ui.get("gencde") or {}
+    if g.get("permissibleValues"):
+        # CATEGORICAL GenCDE: LLM member-code -> GenCDE-code recodes (C1), same as a full run.
+        prompts = prepare_gencde_specgen([rec], embedded, **kwargs)
+        assemble_gencde_specgen(prompts, stage_fn(prompts), [rec])
+    else:
+        # NUMERIC GenCDE: deterministic unit specs (N1) + LLM arithmetic residual upgrade (N2), mirroring
+        # harmonize_leanb's gencde stage. Guarded import so a core build predating N1/N2 returns a clean 409
+        # (RuntimeError) instead of dropping the record's numeric recodes with nothing to replace them.
+        try:
+            from ddharmon.harmonization import (
+                assemble_gencde_arith_specgen,
+                generate_gencde_unit_specs,
+                prepare_gencde_arith_specgen,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "this core build cannot regenerate numeric GenCDE recodes (needs the N1/N2 spec-gen seams)"
+            ) from exc
+        generate_gencde_unit_specs([rec], embedded)  # N1 (deterministic) — leaves needs_units residuals
+        prompts = prepare_gencde_arith_specgen([rec], embedded, **kwargs)  # N2 residual -> arith prompts
+        assemble_gencde_arith_specgen(prompts, stage_fn(prompts), [rec])
+
+    # Fresh recodes = everything assemble appended (the record started with only the wide->long guard).
+    fresh_ui = [_transform_to_ui(t) for t in rec.transforms if t.kind != TransformKind.WIDE_TO_LONG]
+    # Preserve the record's non-stale UI transforms (any non-GenCDE-target spec, plus a wide->long guard),
+    # dropping the stale member->GenCDE recodes we just regenerated.
+    gencde_id = g.get("gencdeId", "")
+    preserved = [
+        t
+        for t in rec_ui.get("transforms", [])
+        if not (t.get("targetCdeId") == gencde_id and t.get("kind") != "wide_to_long")
+    ]
+    updated: UIRecord = {**rec_ui}
+    updated["transforms"] = preserved + fresh_ui
+    updated["memberDetails"] = [_member_ui(m, member_index) for m in updated.get("members", [])]
+    return updated
