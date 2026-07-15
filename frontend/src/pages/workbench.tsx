@@ -289,10 +289,16 @@ export function WorkbenchBody({
   const gencdeStale = selected ? !!staleRecords[selected.id] : false;
 
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
-    setDecisions((p) => ({ ...p, [r.id]: decision }));
+    const cleared = decisions[r.id] === decision; // re-clicking the active verdict toggles it off
+    setDecisions((p) => {
+      if (!cleared) return { ...p, [r.id]: decision };
+      const rest = { ...p };
+      delete rest[r.id];
+      return rest;
+    });
     try {
-      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "");
-      toast.success(`Marked "${conceptLabel(r)}" ${decision}`);
+      await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "");
+      toast.success(cleared ? `Cleared verdict for "${conceptLabel(r)}"` : `Marked "${conceptLabel(r)}" ${decision}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save decision");
     }
@@ -302,10 +308,16 @@ export function WorkbenchBody({
   // `${recordId}:${sourceVariable}`, distinct from the concept→CDE match verdict.
   async function decideTransform(r: UIRecord, t: UITransform, decision: "approve" | "refine" | "reject") {
     const key = `${r.id}:${t.sourceVariable}`;
-    setTransformDecisions((p) => ({ ...p, [key]: decision }));
+    const cleared = transformDecisions[key] === decision; // re-clicking the active verdict toggles it off
+    setTransformDecisions((p) => {
+      if (!cleared) return { ...p, [key]: decision };
+      const rest = { ...p };
+      delete rest[key];
+      return rest;
+    });
     try {
-      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "transform", t.sourceVariable);
-      toast.success(`Transform for "${t.sourceVariable}" ${decision}d`);
+      await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "transform", t.sourceVariable);
+      toast.success(cleared ? `Cleared transform verdict for "${t.sourceVariable}"` : `Transform for "${t.sourceVariable}" ${decision}d`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save transform decision");
     }
@@ -314,19 +326,28 @@ export function WorkbenchBody({
   // GenCDE-axis verdict — approve/refine/reject the synthesized GenCDE (the novel route's proposed target),
   // keyed by recordId, distinct from the concept→CDE match verdict and the per-variable transform verdicts.
   // A refine can carry the reviewer's corrected GenCDE (`edited`); when that correction changes the value
-  // domain, the record's member→GenCDE recodes go stale (Part 3).
+  // domain, the record's member→GenCDE recodes go stale (Part 3). Re-clicking the active verdict (with no
+  // edit) toggles it off — persisted as a "clear".
   async function decideGencde(r: UIRecord, decision: "approve" | "refine" | "reject", edited?: GenCDE) {
-    setGencdeDecisions((p) => ({ ...p, [r.id]: decision }));
+    const cleared = !edited && gencdeDecisions[r.id] === decision; // re-clicking the active verdict toggles it off (never on an edit)
+    setGencdeDecisions((p) => {
+      if (!cleared) return { ...p, [r.id]: decision };
+      const rest = { ...p };
+      delete rest[r.id];
+      return rest;
+    });
     if (decision === "refine" && edited && r.gencde && valueDomainKey(r.gencde) !== valueDomainKey(edited)) {
       // The value domain moved — the previously generated member→GenCDE recodes no longer target it.
       setStaleRecords((p) => ({ ...p, [r.id]: true }));
     }
     try {
-      await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "gencde", undefined, edited);
+      await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "gencde", undefined, edited);
       toast.success(
-        edited
-          ? `Saved GenCDE edits for "${conceptLabel(r)}"`
-          : `Proposed GenCDE for "${conceptLabel(r)}" ${decision}d`,
+        cleared
+          ? `Cleared GenCDE verdict for "${conceptLabel(r)}"`
+          : edited
+            ? `Saved GenCDE edits for "${conceptLabel(r)}"`
+            : `Proposed GenCDE for "${conceptLabel(r)}" ${decision}d`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save GenCDE decision");
@@ -491,8 +512,9 @@ export function WorkbenchBody({
               </CardHeader>
               <CardContent className="p-0">
                 {selected.candidates.length ? (
+                  <div className="max-h-[24rem] overflow-y-auto">
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-neutral-0">
                       <TableRow>
                         <TableHead className="w-8">#</TableHead>
                         <TableHead>CDE</TableHead>
@@ -544,6 +566,7 @@ export function WorkbenchBody({
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 ) : (
                   <p className="py-8 text-center text-sm text-neutral-400">
                     No candidates retained (novel / GenCDE route).
