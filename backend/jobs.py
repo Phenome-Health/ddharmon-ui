@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Non-terminal phases double as ``status`` values so the UI can show a phase label.
-TERMINAL_STATES = {"complete", "error"}
+# Non-terminal phases double as ``status`` values so the UI can show a phase label. ``cancelled`` is a
+# terminal state distinct from ``error`` (a user stopped the run) and ``complete`` — a cancelled run is
+# re-runnable from its retained uploads, exactly like an errored one.
+TERMINAL_STATES = {"complete", "error", "cancelled"}
 _TTL_SECONDS = 3600
 
 # Runs the TTL purge must never evict: the prepopulated demo (``demo``) and any pinned/sample run. These
@@ -74,6 +76,10 @@ class Job:
     # only: streamed as ``phaseStartedAt`` for the run view's elapsed + ETA + per-stage timeline. NOT persisted
     # (a DB-hydrated historical run starts empty here, so the UI falls back to total elapsed for old runs).
     phase_timings: dict[str, float] = field(default_factory=dict)
+    # Cooperative-cancellation flag. Set by ``JobStore.request_cancel`` when the user hits Stop; the runner's
+    # progress callback reads it at each phase/tick checkpoint and raises to abort the run (-> ``cancelled``).
+    # Transient (live-job only): never persisted, never serialized by to_dict — a re-hydrated run starts False.
+    cancel_requested: bool = False
 
     @classmethod
     def from_db_row(cls, d: dict[str, Any]) -> Job:
@@ -235,6 +241,26 @@ class JobStore:
             persist = job.status in TERMINAL_STATES  # mirror only on terminal transitions, not every tick
         if persist:
             self._persist(job)
+
+    def request_cancel(self, job_id: str) -> bool:
+        """Flag a live, in-flight run to stop at its next progress checkpoint (the runner raises there).
+
+        Returns True when a running job was flagged; False when it's unknown, already terminal, or only in the
+        durable store (a past run isn't executing, so there's nothing to stop). Idempotent — flagging twice is
+        harmless. Only sets the flag; the worker thread performs the actual abort cooperatively.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status in TERMINAL_STATES:
+                return False
+            job.cancel_requested = True
+            return True
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        """Whether a stop has been requested for a live job (read by the runner's progress callback)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return bool(job and job.cancel_requested)
 
     def set_decision(
         self,

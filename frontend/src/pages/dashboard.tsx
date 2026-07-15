@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CircleStop,
   Download,
   FileCode,
   Info,
@@ -35,8 +36,9 @@ import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { buildRunIssueUrl } from "@/lib/links";
 import { RerunAction } from "@/components/rerun-action";
+import { StopRunAction } from "@/components/stop-run-action";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
-import { VERDICT_STYLES, formatDuration, type UIRecord, type UnassignedField } from "@/types";
+import { VERDICT_STYLES, conceptLabel, formatDuration, type UIRecord, type UnassignedField } from "@/types";
 
 // Known phase ordering for the progress bar. The phase LABEL is shown verbatim from the stream (so a new
 // pipeline phase still displays); only the percent uses this ordering, falling back gracefully if unknown.
@@ -162,7 +164,7 @@ const VERDICT_RANK: Record<string, number> = { adopt: 0, refine: 1, novel: 2, un
 function sortValue(r: UIRecord, key: SortKey): string | number {
   switch (key) {
     case "concept":
-      return (r.concept || r.id).toLowerCase();
+      return conceptLabel(r).toLowerCase();
     case "cde":
       return (r.cde?.id ?? "").toLowerCase();
     case "verdict":
@@ -195,7 +197,7 @@ export default function DashboardPage() {
   const [, navigate] = useLocation();
   // ?results=1 (the demo page's "skip to results" link) → show the finished run immediately, no replay.
   const skipReplay = new URLSearchParams(useSearch()).get("results") === "1";
-  const { jobState, error } = useHarmonizeStream(jobId, true, skipReplay);
+  const { jobState, error, cancel } = useHarmonizeStream(jobId, true, skipReplay);
   const [decisions, setDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -216,7 +218,8 @@ export default function DashboardPage() {
   // this hook stays above the early return.
   const [now, setNow] = useState(() => Date.now() / 1000);
   const [verbose, setVerbose] = useState(false);
-  const streaming = !!jobState && jobState.status !== "complete" && jobState.status !== "error";
+  const streaming =
+    !!jobState && jobState.status !== "complete" && jobState.status !== "error" && jobState.status !== "cancelled";
   useEffect(() => {
     if (!streaming) return;
     const id = setInterval(() => setNow(Date.now() / 1000), 1000);
@@ -237,7 +240,7 @@ export default function DashboardPage() {
     const q = search.trim().toLowerCase();
     const matchesSearch = (r: UIRecord): boolean => {
       if (!q) return true;
-      if (r.concept.toLowerCase().includes(q)) return true;
+      if (conceptLabel(r).toLowerCase().includes(q)) return true;
       if (r.cde?.id.toLowerCase().includes(q) || r.cde?.externalId?.toLowerCase().includes(q)) return true;
       if (r.cohorts.some((c) => c.toLowerCase().includes(q))) return true;
       return r.memberDetails.some(
@@ -316,7 +319,8 @@ export default function DashboardPage() {
     );
   }
 
-  const running = jobState.status !== "complete" && jobState.status !== "error";
+  const running =
+    jobState.status !== "complete" && jobState.status !== "error" && jobState.status !== "cancelled";
   const isPreview = result?.mode === "preview";
   const isDemo = !!(jobState.config as { demo?: boolean }).demo;
   const elapsed = Math.max(0, now - jobState.createdAt);
@@ -428,6 +432,10 @@ export default function DashboardPage() {
                 {verbose && (
                   <RunTimeline phaseStartedAt={jobState.phaseStartedAt} currentPhase={jobState.phase} now={now} />
                 )}
+                {/* Stop the run: real cost/time is accruing, so this is the escape hatch (confirm-guarded). */}
+                <div className="flex justify-end pt-1">
+                  <StopRunAction labeled displayName={jobState.displayName} onConfirm={cancel} />
+                </div>
               </>
             )}
             {error && <p className="text-sm text-danger">{error.message}</p>}
@@ -453,6 +461,25 @@ export default function DashboardPage() {
                 <span className="text-xs text-neutral-400">
                   Opens a prefilled GitHub issue — run metadata only, no uploaded data.
                 </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {jobState.status === "cancelled" && (
+        <Card>
+          <CardContent className="space-y-3 py-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-neutral-700">
+              <CircleStop className="h-4 w-4 text-neutral-400" /> Run stopped
+            </div>
+            <p className="text-sm text-neutral-500">
+              You stopped this run before it finished, so it produced no results. You can re-run it from the
+              same inputs.
+            </p>
+            {!isDemo && (
+              <div className="flex flex-wrap items-center gap-2">
+                <RerunAction job={jobState} labeled />
               </div>
             )}
           </CardContent>
@@ -709,7 +736,7 @@ function RecordRows({
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </TableCell>
         <TableCell className="max-w-xs align-top">
-          <div className="font-medium text-neutral-700">{r.concept || r.id}</div>
+          <div className="font-medium text-neutral-700">{conceptLabel(r)}</div>
           <div className="truncate text-xs text-neutral-400">
             {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"}
             {r.crossCohort && " · cross-cohort"}

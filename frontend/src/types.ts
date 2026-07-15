@@ -20,7 +20,8 @@ export type JobStatus =
   | "specs"
   | "prepared"
   | "complete"
-  | "error";
+  | "error"
+  | "cancelled"; // user stopped the run (terminal; distinct from error) — re-runnable from its uploads
 
 export interface CdeRef {
   id: string;
@@ -491,3 +492,80 @@ export const VERDICT_STYLES: Record<string, string> = {
   novel: "bg-ph-navy/10 text-ph-navy border-ph-navy/30",
   unclassified: "bg-neutral-100 text-neutral-600 border-neutral-300",
 };
+
+// ── concept display label ────────────────────────────────────────────────────────────────────
+// A concept's display name must NEVER be a raw internal id. The split-aware pipeline keys a group
+// `<clusterHash>#g<n>`; when the labeling step doesn't attach a human title, that key can leak into
+// `concept` (observed: "c5c089913f98b#g1"). Guarding here keeps the UI honest regardless of the backend —
+// the deeper fix (always generate a title, incl. split-residual subgroups) lives in the core labeler.
+
+/** True when `concept` is empty or a raw internal id — a `<hash>#g<n>` group key, a bare long cluster
+ *  hash, or a value equal to the record's own cluster/group id — rather than a human-readable label. */
+export function isRawConceptId(
+  concept: string | null | undefined,
+  ids: { clusterId?: string; groupId?: string } = {},
+): boolean {
+  const c = (concept ?? "").trim();
+  if (!c) return true;
+  if (c === ids.clusterId || c === ids.groupId) return true;
+  return /^[0-9a-f]{6,}#g\d+$/i.test(c) || /^[0-9a-f]{12,}$/i.test(c);
+}
+
+/** The human-readable label for a concept card. When `concept` is a leaked raw id (or empty), fall back to
+ *  the GenCDE title, then the concept-summary's first phrase, then a variable-count placeholder — so the UI
+ *  never prints a hash. Otherwise returns `concept` untouched. */
+export function conceptLabel(
+  r: Pick<UIRecord, "concept" | "clusterId" | "groupId" | "gencde" | "idealCde" | "nMembers">,
+): string {
+  const c = (r.concept ?? "").trim();
+  if (!isRawConceptId(c, { clusterId: r.clusterId, groupId: r.groupId })) return c;
+  const gTitle = (r.gencde?.title || r.gencde?.preferredName || "").trim();
+  if (gTitle) return gTitle;
+  const ideal = (r.idealCde ?? "").trim();
+  if (ideal) {
+    const phrase = ideal.split(/[.;\n]/)[0].trim();
+    return phrase.length > 80 ? `${phrase.slice(0, 77)}…` : phrase;
+  }
+  const n = r.nMembers ?? 0;
+  return `Unnamed concept (${n} variable${n === 1 ? "" : "s"})`;
+}
+
+// ── value-encoding labels (for the value-mapping display) ──────────────────────────────────────
+// The value-mapping panel shows code→code recodes; these turn the bare codes into `code (label)` so a
+// reviewer can read what each code MEANS. Source labels come from the loaded dictionary's value encoding
+// (responseOptions, else the inline valueEncoding string); target labels from a novel concept's GenCDE
+// permissible values. Assigned real CDEs don't carry their permissible values in the payload → bare code.
+
+/** Parse an inline value-encoding string ("1=Yes|2=No") into a `{code: label}` map. Splits on the FIRST
+ *  `=` per pair (labels may contain `=`); tolerates `|` or `;` pair separators. */
+export function parseValueEncoding(enc: string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!enc) return out;
+  for (const pair of enc.split(/[|;]/)) {
+    const s = pair.trim();
+    const eq = s.indexOf("=");
+    if (eq <= 0) continue;
+    const code = s.slice(0, eq).trim();
+    if (code) out[code] = s.slice(eq + 1).trim();
+  }
+  return out;
+}
+
+/** Source-side `{code: label}` for a field, preferring parsed `responseOptions`, falling back to the inline
+ *  `valueEncoding` string. Empty for a numeric/open field with no coded options. */
+export function sourceValueLabels(fd: FieldDetail | undefined): Record<string, string> {
+  if (!fd) return {};
+  if (fd.responseOptions?.length) {
+    const out: Record<string, string> = {};
+    for (const o of fd.responseOptions) if (o.code) out[o.code] = o.label ?? "";
+    return out;
+  }
+  return parseValueEncoding(fd.valueEncoding);
+}
+
+/** `{code: label}` from a set of permissible values (a GenCDE's reconciled domain) — the target side. */
+export function permissibleValueLabels(opts: ResponseOption[] | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const o of opts ?? []) if (o.code) out[o.code] = o.label ?? "";
+  return out;
+}

@@ -1,9 +1,9 @@
 // SSE hook for live harmonization-run progress.
 // Adapted from biomapper-ui's use-mapping-stream.ts (same EventSource + exponential-backoff
 // retry + terminal-status close), pointed at /api/harmonize/stream and typed to JobResult.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { JobResult } from "@/types";
-import { IS_STATIC, appendAuthToken, getResult } from "@/lib/api";
+import { IS_STATIC, appendAuthToken, cancelJob, getResult } from "@/lib/api";
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 1500;
@@ -22,6 +22,8 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
   const esRef = useRef<EventSource | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  // Pending timers for the static (Netlify) client-side replay — held in a ref so cancel() can stop them.
+  const staticTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -32,7 +34,8 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
     // live run — and progressively REVEAL the records so the metric cards + charts build up as it runs
     // (mirroring biomapper-ui's live demo), then settle on the full result. Non-demo runs load instantly.
     if (IS_STATIC) {
-      const timers: ReturnType<typeof setTimeout>[] = [];
+      staticTimersRef.current = [];
+      const timers = staticTimersRef.current;
       getResult(jobId)
         .then((full) => {
           if (!mountedRef.current) return;
@@ -117,6 +120,10 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
             setError({ message: data.errorMessage ?? "Harmonization failed" });
             setDone(true);
             es.close();
+          } else if (data.status === "cancelled") {
+            // User stopped the run — terminal, but not an error. Settle and close the stream.
+            setDone(true);
+            es.close();
           }
         } catch (err) {
           console.error("[SSE] error parsing progress payload", err);
@@ -144,5 +151,23 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
     };
   }, [jobId, enabled, instant]);
 
-  return { jobState, done, error };
+  // Stop an in-progress run. Backend: ask the server to cancel — the SSE stream delivers the terminal
+  // "cancelled" state and closes. Static preview (no backend): stop the client-side replay timers and settle
+  // on a cancelled state locally. Safe to call when nothing is running (a no-op the UI just won't show).
+  const cancel = useCallback(async () => {
+    if (IS_STATIC) {
+      staticTimersRef.current.forEach(clearTimeout);
+      staticTimersRef.current = [];
+      setJobState((prev) => (prev ? { ...prev, status: "cancelled", phase: "cancelled" } : prev));
+      setDone(true);
+      return;
+    }
+    try {
+      await cancelJob(jobId); // server flags the run; the SSE tick above flips it to cancelled and closes
+    } catch {
+      // request failed — leave the run as-is; the next stream tick reflects its true state
+    }
+  }, [jobId]);
+
+  return { jobState, done, error, cancel };
 }

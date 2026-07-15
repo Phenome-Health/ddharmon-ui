@@ -7,6 +7,7 @@ Endpoints (all under /api/harmonize):
     GET  /result/{job_id}   full job snapshot (REST fallback)
     GET  /jobs              list jobs (summaries)
     DELETE /jobs/{job_id}   delete a job
+    POST /jobs/{job_id}/cancel    request a stop for an in-flight run (-> cancelled)
     POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision (by recordId)
     POST /jobs/{job_id}/records/{record_id}/regenerate-specs  regenerate member->GenCDE recodes after a refine
     GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv | notebook_py | notebook_r
@@ -414,6 +415,17 @@ def delete_job(job_id: str, request: Request) -> None:
     store.delete(job_id)
 
 
+@app.post("/api/harmonize/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: Request) -> dict[str, bool]:
+    """Request a stop for an in-flight run the caller owns. Cooperative: flags the job so the worker aborts at
+    its next checkpoint and stops issuing new LLM work (-> ``cancelled``). Idempotent — ``cancelled`` is False
+    when the run is unknown to the caller (404), or already terminal / not live (nothing to stop)."""
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"cancelled": store.request_cancel(job_id)}
+
+
 @app.post("/api/harmonize/jobs/{job_id}/rerun")
 def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | None, Header()] = None) -> dict[str, str]:
     """Re-execute a past run from its retained uploads as a NEW owned run (the original is preserved).
@@ -752,6 +764,9 @@ def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
             total = int(counts.get(phase, 0) or 0)
             ticks = 5 if total else 2
             for k in range(1, ticks + 1):
+                if store.is_cancel_requested(job_id):  # Stop pressed mid-replay -> end it as cancelled
+                    store.update(job_id, status="cancelled", phase="cancelled")
+                    return
                 done = int(total * k / ticks) if total else 0
                 frac = (elapsed_w + weight * k / ticks) / total_w
                 reveal = 0.0 if frac <= gen_start_frac else (frac - gen_start_frac) / (1 - gen_start_frac)

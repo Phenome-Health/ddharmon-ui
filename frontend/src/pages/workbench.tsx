@@ -27,7 +27,17 @@ import {
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { MemberVariables } from "@/components/member-variables";
 import { regenerateSpecs, submitVerdict } from "@/lib/api";
-import { VERDICT_STYLES, type GenCDE, type ResponseOption, type UIRecord, type UITransform } from "@/types";
+import {
+  VERDICT_STYLES,
+  conceptLabel,
+  permissibleValueLabels,
+  sourceValueLabels,
+  type FieldDetail,
+  type GenCDE,
+  type ResponseOption,
+  type UIRecord,
+  type UITransform,
+} from "@/types";
 
 const NIH_CDE_URL = "https://cde.nlm.nih.gov/deView?tinyId=";
 const VERDICT_BAR: Record<string, string> = {
@@ -79,10 +89,32 @@ function valueDomainKey(g: Pick<GenCDE, "permissibleValues" | "units" | "minimum
 
 const CODE_MAP_CAP = 10;
 
+// One `code (label)` cell: the code reads primary (mono), the label secondary (muted sans). Label omitted
+// when the source/target carries no coded meaning for that code (numeric/open field, or an assigned CDE
+// whose permissible values aren't in the payload) — the bare code shows, per graceful-degradation.
+function CodeLabel({ code, label, codeClass }: { code: string; label?: string; codeClass: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1">
+      <span className={`font-mono ${codeClass}`}>{code}</span>
+      {label ? <span className="truncate text-neutral-400">({label})</span> : null}
+    </span>
+  );
+}
+
 // The actual recode content for one transform, rendered inline under its summary row so a reviewer can see
-// EXACTLY what the spec does without exporting: categorical code→code pairs (capped), the unit factor/offset
-// + units, the arithmetic formula + inputs, or the data-dependent method. Returns null for identity/none.
-function TransformDetail({ t }: { t: UITransform }) {
+// EXACTLY what the spec does without exporting: categorical code→code pairs (capped) WITH their value
+// labels, the unit factor/offset + units, the arithmetic formula + inputs, or the data-dependent method.
+// `srcLabels`/`tgtLabels` are code→label maps for the source field and target CDE; empty maps degrade to
+// bare codes. Returns null for identity/none.
+function TransformDetail({
+  t,
+  srcLabels,
+  tgtLabels,
+}: {
+  t: UITransform;
+  srcLabels: Record<string, string>;
+  tgtLabels: Record<string, string>;
+}) {
   if (t.kind === "categorical") {
     const entries = Object.entries(t.codeMap ?? {});
     if (!entries.length && !t.unmappedSourceCodes?.length) return null;
@@ -94,10 +126,14 @@ function TransformDetail({ t }: { t: UITransform }) {
         {shown.length > 0 && (
           <div className="grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
             {shown.map(([src, tgt]) => (
-              <div key={src} className="flex items-center gap-1.5 font-mono text-[11px]">
-                <span className="truncate text-neutral-500">{src}</span>
-                <span className="text-neutral-300">→</span>
-                <span className="truncate text-neutral-700">{tgt}</span>
+              <div
+                key={src}
+                className="flex items-center gap-1.5 text-[11px]"
+                title={`${src}${srcLabels[src] ? ` = ${srcLabels[src]}` : ""}  →  ${tgt}${tgtLabels[tgt] ? ` = ${tgtLabels[tgt]}` : ""}`}
+              >
+                <CodeLabel code={src} label={srcLabels[src]} codeClass="text-neutral-500" />
+                <span className="shrink-0 text-neutral-300">→</span>
+                <CodeLabel code={tgt} label={tgtLabels[tgt]} codeClass="text-neutral-700" />
               </div>
             ))}
           </div>
@@ -105,7 +141,14 @@ function TransformDetail({ t }: { t: UITransform }) {
         {moreCodes > 0 && <div className="text-[11px] text-neutral-400">+{moreCodes} more mapped</div>}
         {unmapped.length > 0 && (
           <div className="text-[11px] text-warning">
-            unmapped: <span className="font-mono">{unmapped.slice(0, CODE_MAP_CAP).join(", ")}</span>
+            <span className="font-medium">unmapped:</span>{" "}
+            {unmapped.slice(0, CODE_MAP_CAP).map((code, i) => (
+              <span key={code}>
+                {i > 0 ? ", " : ""}
+                <span className="font-mono">{code}</span>
+                {srcLabels[code] ? <span className="text-warning/80"> ({srcLabels[code]})</span> : null}
+              </span>
+            ))}
             {unmapped.length > CODE_MAP_CAP ? ` +${unmapped.length - CODE_MAP_CAP} more` : ""}
           </div>
         )}
@@ -155,10 +198,24 @@ export default function WorkbenchPage() {
       </div>
     );
   }
-  return <WorkbenchBody jobId={jobId} records={jobState.result?.records ?? []} />;
+  return (
+    <WorkbenchBody
+      jobId={jobId}
+      records={jobState.result?.records ?? []}
+      fieldIndex={jobState.result?.fieldIndex ?? {}}
+    />
+  );
 }
 
-export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRecord[] }) {
+export function WorkbenchBody({
+  jobId,
+  records,
+  fieldIndex = {},
+}: {
+  jobId: string;
+  records: UIRecord[];
+  fieldIndex?: Record<string, FieldDetail>;
+}) {
   // Deep link from the embedding atlas: /job/:id/workbench?c=<recordId> preselects that concept.
   const queryString = useSearch();
   const linkedId = new URLSearchParams(queryString).get("c");
@@ -186,7 +243,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase();
     return records.filter(
-      (r) => (filter === "all" || r.verdict === filter) && (!q || r.concept.toLowerCase().includes(q)),
+      (r) => (filter === "all" || r.verdict === filter) && (!q || conceptLabel(r).toLowerCase().includes(q)),
     );
   }, [records, filter, search]);
 
@@ -235,7 +292,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
     setDecisions((p) => ({ ...p, [r.id]: decision }));
     try {
       await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "");
-      toast.success(`Marked "${r.concept || r.id}" ${decision}`);
+      toast.success(`Marked "${conceptLabel(r)}" ${decision}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save decision");
     }
@@ -267,7 +324,9 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
     try {
       await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "", "gencde", undefined, edited);
       toast.success(
-        edited ? `Saved GenCDE edits for "${r.concept || r.id}"` : `Proposed GenCDE for "${r.concept || r.id}" ${decision}d`,
+        edited
+          ? `Saved GenCDE edits for "${conceptLabel(r)}"`
+          : `Proposed GenCDE for "${conceptLabel(r)}" ${decision}d`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save GenCDE decision");
@@ -285,7 +344,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
       setStaleRecords((p) => ({ ...p, [r.id]: false }));
       setRegenOpen(false);
       setRegenKey("");
-      toast.success(`Regenerated ${record.transforms.length} recode(s) for "${r.concept || r.id}"`);
+      toast.success(`Regenerated ${record.transforms.length} recode(s) for "${conceptLabel(r)}"`);
     } catch (e) {
       setRegenErr(e instanceof Error ? e.message : "Failed to regenerate recodes");
     } finally {
@@ -334,7 +393,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium text-neutral-700">{g.concept || g.id}</span>
+                  <span className="truncate text-sm font-medium text-neutral-700">{conceptLabel(g)}</span>
                   {decisions[g.id] && <Check className="h-3.5 w-3.5 shrink-0 text-success" />}
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
@@ -358,7 +417,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
               <CardHeader className="flex flex-row items-start justify-between space-y-0">
                 <div>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    {selected.concept || selected.id}
+                    {conceptLabel(selected)}
                     <Badge variant="outline" className={VERDICT_STYLES[selected.verdict] ?? ""}>
                       {selected.verdict}
                     </Badge>
@@ -545,6 +604,11 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                       const tKey = `${selected.id}:${t.sourceVariable}`;
                       const td = transformDecisions[tKey];
                       const toGenCDE = !!gencdeId && t.targetCdeId === gencdeId;
+                      // Source labels from the loaded dictionary's value encoding (keyed "cohort:var" in the
+                      // field index); target labels from the novel concept's GenCDE permissible values (an
+                      // assigned real CDE doesn't carry them → bare target code shows).
+                      const srcLabels = sourceValueLabels(fieldIndex[t.sourceVariable]);
+                      const tgtLabels = permissibleValueLabels(selected.gencde?.permissibleValues);
                       return (
                         <div key={i} className="rounded border border-neutral-100 px-3 py-2 text-xs">
                           <div className="flex flex-wrap items-center gap-2">
@@ -580,7 +644,7 @@ export function WorkbenchBody({ jobId, records }: { jobId: string; records: UIRe
                               </DecisionBtn>
                             </div>
                           </div>
-                          <TransformDetail t={t} />
+                          <TransformDetail t={t} srcLabels={srcLabels} tgtLabels={tgtLabels} />
                         </div>
                       );
                     })}

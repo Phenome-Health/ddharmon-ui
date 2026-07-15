@@ -1390,6 +1390,74 @@ def test_runner_captures_failing_phase(monkeypatch):
     assert job.to_dict()["failedPhase"] == "assigning"
 
 
+# ── run cancellation (Stop) ──────────────────────────────────────────────────
+
+
+def test_request_cancel_only_flags_live_nonterminal():
+    """request_cancel flags a live in-flight run; it's a no-op for an unknown or already-terminal run."""
+    s = JobStore()
+    s.create("j1", "R", {"run_mode": "batch"})
+    assert s.request_cancel("j1") is True
+    assert s.get("j1").cancel_requested is True and s.is_cancel_requested("j1") is True
+    assert s.request_cancel("nope") is False  # unknown job
+    s.update("j1", status="complete", phase="complete")
+    assert s.request_cancel("j1") is False  # already terminal -> nothing to stop
+    # cancel_requested is transient: it never surfaces in the serialized job (must not leak to the client)
+    assert "cancel_requested" not in s.get("j1").to_dict()
+    assert "cancelRequested" not in s.get("j1").to_dict()
+
+
+def test_runner_cancellation_marks_cancelled(monkeypatch):
+    """A stop requested mid-run makes the runner abort at the NEXT progress checkpoint and mark the job
+    ``cancelled`` (terminal, not ``error``): no error_message, and no stage past the checkpoint runs."""
+    from backend import runner as runner_module
+
+    reached: list[str] = []
+
+    def pipeline(dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None):
+        progress("embedding", 1, 3)  # first checkpoint: not yet cancelled -> proceeds
+        reached.append("embedding")
+        progress("assigning", 0, 10)  # Stop was pressed by now -> this checkpoint raises RunCancelledError
+        reached.append("assigning")  # must NOT be reached
+        return {"records": []}
+
+    s = JobStore()
+    s.create("jc", "Cancelling run", {"run_mode": "batch"})
+
+    # Simulate the user pressing Stop right after the first tick: flag the job once it enters "embedding".
+    real_update = s.update
+
+    def update_then_stop(job_id, **fields):
+        real_update(job_id, **fields)
+        if fields.get("phase") == "embedding":
+            s.request_cancel(job_id)
+
+    monkeypatch.setattr(s, "update", update_then_stop)
+    monkeypatch.setattr(runner_module, "run_pipeline", pipeline)
+    runner_module.run_harmonization(s, "jc", [], None, {"run_mode": "batch"})
+
+    job = s.get("jc")
+    assert job.status == "cancelled" and job.phase == "cancelled"
+    assert job.error_message is None  # a stop is not a failure
+    assert reached == ["embedding"]  # aborted before the assigning stage issued any work
+
+
+def test_cancel_endpoint():
+    """POST /jobs/{id}/cancel flags a live run (cancelled=True), is a no-op on a terminal run (False), and
+    404s on an unknown run — mirroring the ownership/visibility of the other job routes."""
+    app_module.store.create("live1", "Live", {"run_mode": "batch"})  # pending, ownerless -> visible, live
+    r = client.post("/api/harmonize/jobs/live1/cancel")
+    assert r.status_code == 200 and r.json()["cancelled"] is True
+    assert app_module.store.get("live1").cancel_requested is True
+
+    app_module.store.create("done1", "Done", {})
+    app_module.store.update("done1", status="complete", phase="complete")
+    r2 = client.post("/api/harmonize/jobs/done1/cancel")
+    assert r2.status_code == 200 and r2.json()["cancelled"] is False  # terminal -> nothing to stop
+
+    assert client.post("/api/harmonize/jobs/does-not-exist/cancel").status_code == 404
+
+
 def test_failed_phase_persists_and_migrates(tmp_path):
     """failed_phase round-trips through the DB (incl. the runs-list summary) and is ALTER-ed into an older
     DB that predates the column — the additive-migration guarantee (a bad migration breaks the live Runs list)."""

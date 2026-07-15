@@ -18,6 +18,15 @@ from backend.jobs import JobStore
 logger = logging.getLogger(__name__)
 
 
+class RunCancelledError(Exception):
+    """Raised from the progress callback when the user requested a stop, to unwind the pipeline promptly.
+
+    Distinct from a real failure: the runner catches it and marks the job ``cancelled`` (not ``error``), so no
+    new LLM work is issued past the current checkpoint. A Batch-API stage already SUBMITTED keeps running
+    server-side — cancellation takes effect at the next stage boundary, not mid-batch (see the todo).
+    """
+
+
 def run_harmonization(
     store: JobStore,
     job_id: str,
@@ -40,6 +49,10 @@ def run_harmonization(
     """
 
     def progress(phase: str, completed: int = 0, total: int = 0) -> None:
+        # Cooperative cancellation: the user's Stop sets a flag that we check at every phase/tick checkpoint
+        # and raise on, so the pipeline unwinds instead of running to completion (and billing) after a Stop.
+        if store.is_cancel_requested(job_id):
+            raise RunCancelledError
         store.update(job_id, status=phase, phase=phase, completed=completed, total=total)
 
     try:
@@ -58,6 +71,11 @@ def run_harmonization(
             fields["analysis_ideas"] = ideas
         store.update(job_id, **fields)
         logger.info("job %s complete: %d records", job_id, len(result["records"]))
+    except RunCancelledError:
+        # User-requested stop: terminal but NOT an error. Leave error_message unset; keep any partial result
+        # already attached (usually none — records land only at the end) so the run is inspectable/re-runnable.
+        logger.info("job %s cancelled by user", job_id)
+        store.update(job_id, status="cancelled", phase="cancelled")
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI rather than crash the thread
         logger.exception("job %s failed", job_id)
         # Capture the stage the run was in BEFORE we overwrite phase to "error", so the UI / an error report
