@@ -416,14 +416,15 @@ def delete_job(job_id: str, request: Request) -> None:
 
 
 @app.post("/api/harmonize/jobs/{job_id}/cancel")
-def cancel_job(job_id: str, request: Request) -> dict[str, bool]:
-    """Request a stop for an in-flight run the caller owns. Cooperative: flags the job so the worker aborts at
-    its next checkpoint and stops issuing new LLM work (-> ``cancelled``). Idempotent — ``cancelled`` is False
-    when the run is unknown to the caller (404), or already terminal / not live (nothing to stop)."""
+def cancel_job(job_id: str, request: Request, mode: str = "discard") -> dict[str, bool]:
+    """Request a stop for an in-flight run the caller owns. ``mode`` is ``keep`` (finish the current stage,
+    keep its partial result, skip the rest — no further LLM cost) or ``discard`` (abort ASAP, no result).
+    Cooperative: flags the job; the worker acts at its next checkpoint (-> ``cancelled``). Idempotent —
+    ``cancelled`` is False when the run is unknown to the caller (404) or already terminal (nothing to stop)."""
     job = store.get(job_id)
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"cancelled": store.request_cancel(job_id)}
+    return {"cancelled": store.request_cancel(job_id, mode)}
 
 
 @app.post("/api/harmonize/jobs/{job_id}/rerun")

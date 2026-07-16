@@ -1374,7 +1374,9 @@ def test_runner_captures_failing_phase(monkeypatch):
     and that stage flows into to_dict(), which feeds the 'Report this problem' link."""
     from backend import runner as runner_module
 
-    def boom(dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None):
+    def boom(
+        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+    ):
         progress("assigning", 3, 10)  # got partway before dying
         raise RuntimeError("assign stage exploded")
 
@@ -1393,18 +1395,23 @@ def test_runner_captures_failing_phase(monkeypatch):
 # ── run cancellation (Stop) ──────────────────────────────────────────────────
 
 
-def test_request_cancel_only_flags_live_nonterminal():
-    """request_cancel flags a live in-flight run; it's a no-op for an unknown or already-terminal run."""
+def test_request_cancel_sets_mode_only_on_live_nonterminal():
+    """request_cancel records a stop MODE on a live run (default discard); no-op for unknown/terminal. The
+    raw mode never leaks to the client — only a derived ``stopping`` bool does."""
     s = JobStore()
     s.create("j1", "R", {"run_mode": "batch"})
-    assert s.request_cancel("j1") is True
-    assert s.get("j1").cancel_requested is True and s.is_cancel_requested("j1") is True
+    assert s.request_cancel("j1") is True  # default mode
+    assert s.cancel_mode("j1") == "discard" and s.is_cancel_requested("j1") is True
+    assert s.get("j1").to_dict()["stopping"] is True  # derived flag surfaces while non-terminal
+    assert s.request_cancel("j1", "keep") is True  # last mode wins (escalate/rewrite)
+    assert s.cancel_mode("j1") == "keep"
+    assert s.request_cancel("j1", "bogus") is True and s.cancel_mode("j1") == "discard"  # invalid -> discard
     assert s.request_cancel("nope") is False  # unknown job
     s.update("j1", status="complete", phase="complete")
     assert s.request_cancel("j1") is False  # already terminal -> nothing to stop
-    # cancel_requested is transient: it never surfaces in the serialized job (must not leak to the client)
-    assert "cancel_requested" not in s.get("j1").to_dict()
-    assert "cancelRequested" not in s.get("j1").to_dict()
+    d = s.get("j1").to_dict()
+    assert "cancel_mode" not in d and "cancelMode" not in d  # raw mode never serialized
+    assert d["stopping"] is False  # terminal -> not stopping
 
 
 def test_runner_cancellation_marks_cancelled(monkeypatch):
@@ -1414,7 +1421,9 @@ def test_runner_cancellation_marks_cancelled(monkeypatch):
 
     reached: list[str] = []
 
-    def pipeline(dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None):
+    def pipeline(
+        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+    ):
         progress("embedding", 1, 3)  # first checkpoint: not yet cancelled -> proceeds
         reached.append("embedding")
         progress("assigning", 0, 10)  # Stop was pressed by now -> this checkpoint raises RunCancelledError
@@ -1443,12 +1452,17 @@ def test_runner_cancellation_marks_cancelled(monkeypatch):
 
 
 def test_cancel_endpoint():
-    """POST /jobs/{id}/cancel flags a live run (cancelled=True), is a no-op on a terminal run (False), and
-    404s on an unknown run — mirroring the ownership/visibility of the other job routes."""
+    """POST /jobs/{id}/cancel records the requested stop mode (default discard; ?mode=keep), is a no-op on a
+    terminal run, and 404s on an unknown run — mirroring the other job routes' ownership/visibility."""
     app_module.store.create("live1", "Live", {"run_mode": "batch"})  # pending, ownerless -> visible, live
-    r = client.post("/api/harmonize/jobs/live1/cancel")
+    r = client.post("/api/harmonize/jobs/live1/cancel")  # default -> discard
     assert r.status_code == 200 and r.json()["cancelled"] is True
-    assert app_module.store.get("live1").cancel_requested is True
+    assert app_module.store.cancel_mode("live1") == "discard"
+
+    app_module.store.create("live2", "Live2", {"run_mode": "batch"})
+    r_keep = client.post("/api/harmonize/jobs/live2/cancel", params={"mode": "keep"})
+    assert r_keep.status_code == 200 and r_keep.json()["cancelled"] is True
+    assert app_module.store.cancel_mode("live2") == "keep"
 
     app_module.store.create("done1", "Done", {})
     app_module.store.update("done1", status="complete", phase="complete")
@@ -1456,6 +1470,52 @@ def test_cancel_endpoint():
     assert r2.status_code == 200 and r2.json()["cancelled"] is False  # terminal -> nothing to stop
 
     assert client.post("/api/harmonize/jobs/does-not-exist/cancel").status_code == 404
+
+
+def test_runner_keep_stop_preserves_partial_result(monkeypatch):
+    """A 'keep' stop lets the pipeline return its partial result; the runner marks the run cancelled WITH that
+    result (not discarded), and doesn't raise — the inverse of the discard path."""
+    from backend import runner as runner_module
+
+    partial = {"records": [{"id": "r1"}, {"id": "r2"}]}
+
+    def pipeline(
+        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+    ):
+        progress("generating", 0, 1)  # keep mode -> progress does NOT raise; the stage finishes
+        assert stopping() == "keep"  # the runner threaded the live stop mode through
+        return partial  # engine finished the in-flight stage, skipped the rest -> partial result
+
+    s = JobStore()
+    s.create("jk", "Keep run", {"run_mode": "batch"})
+    s.request_cancel("jk", "keep")
+    monkeypatch.setattr(runner_module, "run_pipeline", pipeline)
+    runner_module.run_harmonization(s, "jk", [], None, {"run_mode": "batch"})
+
+    job = s.get("jk")
+    assert job.status == "cancelled" and job.phase == "cancelled"
+    assert job.result == partial  # partial result KEPT
+    assert job.error_message is None
+
+
+def test_batch_stage_skips_not_yet_started_stage_on_keep(monkeypatch, tmp_path):
+    """A 'keep' stop already in effect when a later stage begins skips that stage entirely — it never submits
+    a batch — so no downstream cost is incurred after the Stop."""
+    from types import SimpleNamespace
+
+    from backend.engine import adapter as adapter_mod
+
+    submitted = {"resume": False}
+
+    def fake_resume_and_wait(prompts_path, output_path, *, api_key=None, **kw):
+        submitted["resume"] = True  # must NOT be reached
+
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", fake_resume_and_wait)
+    monkeypatch.setattr("ddharmon.harmonization.write_prompts_jsonl", lambda prompts, path: None)
+
+    stage = adapter_mod._batch_stage("assigning", lambda *a, **k: None, tmp_path, "assign", stopping=lambda: "keep")
+    assert stage([SimpleNamespace(id="p1")]) == {}  # skipped -> empty responses
+    assert submitted["resume"] is False  # the batch was never submitted
 
 
 def test_batch_stage_aborts_mid_poll_on_cancel(monkeypatch, tmp_path):

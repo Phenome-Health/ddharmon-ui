@@ -59,6 +59,10 @@ logger = logging.getLogger(__name__)
 ProgressFn = Callable[[str, int, int], None]
 # list[PromptRecord] -> {id: response}. The execution strategy injected per stage.
 StageFn = Callable[[list[Any]], dict[str, Any]]
+# () -> "keep" | "discard" | None. A stage consults this on entry: a "keep" stop means the user wants to stop
+# but keep results, so a not-yet-started stage returns {} (skipped, no new cost) while the pipeline still
+# reaches its end and returns a partial result. ("discard" aborts via progress raising, not here.)
+StoppingFn = Callable[[], str | None]
 
 # Same instruction the Batch API appends server-side, so inline (sync) output matches the schema.
 _SCHEMA_PREAMBLE = "\n\nRespond with ONLY valid JSON matching this schema (no markdown fences):\n"
@@ -412,11 +416,13 @@ def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list
 # ── stage execution strategies (sync inline / Batch API) ──────────────────────────────────
 
 
-def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
+def _sync_stage(phase: str, progress: ProgressFn, client: Any, stopping: StoppingFn | None = None) -> StageFn:
     """A stage callback that runs each prompt inline via the Anthropic client, reporting per-item progress."""
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
+            return {}
+        if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (no new cost)
             return {}
         n = len(prompts)
         progress(phase, 0, n)
@@ -448,7 +454,14 @@ def specgen_stage_fn(client: Any) -> StageFn:
     return stage
 
 
-def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api_key: str | None = None) -> StageFn:
+def _batch_stage(
+    phase: str,
+    progress: ProgressFn,
+    work_dir: Path,
+    tag: str,
+    api_key: str | None = None,
+    stopping: StoppingFn | None = None,
+) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
     Uses ``resume_and_wait`` (cache-aware): an existing ``responses_<tag>.jsonl`` is reused as-is and only
@@ -465,6 +478,8 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
+            return {}
+        if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (never submit)
             return {}
         from ddharmon.harmonization import write_prompts_jsonl
         from ddharmon.llm.batch import resume_and_wait
@@ -540,6 +555,7 @@ def run_pipeline(
     provider: Any | None = None,
     stage_overrides: dict[str, StageFn] | None = None,
     api_key: str | None = None,
+    stopping: StoppingFn | None = None,
     substrate_path: str | Path | None = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
@@ -666,19 +682,19 @@ def run_pipeline(
 
         client = build_llm_client(kwargs.get("model_tag"), api_key)
         stages = {
-            "generate": _sync_stage("generating", progress, client),
-            "split": _sync_stage("splitting", progress, client),
-            "classify": _sync_stage("assigning", progress, client),
-            "gencde": _sync_stage("gencde", progress, client),
-            "specgen": _sync_stage("specs", progress, client),
+            "generate": _sync_stage("generating", progress, client, stopping),
+            "split": _sync_stage("splitting", progress, client, stopping),
+            "classify": _sync_stage("assigning", progress, client, stopping),
+            "gencde": _sync_stage("gencde", progress, client, stopping),
+            "specgen": _sync_stage("specs", progress, client, stopping),
         }
     else:  # batch (default)
         stages = {
-            "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key),
-            "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key),
-            "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key),
-            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", api_key=api_key),
-            "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key),
+            "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key, stopping=stopping),
+            "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key, stopping=stopping),
+            "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key, stopping=stopping),
+            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", api_key=api_key, stopping=stopping),
+            "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key, stopping=stopping),
         }
 
     gen_specs = config.get("gen_transform_specs", True)

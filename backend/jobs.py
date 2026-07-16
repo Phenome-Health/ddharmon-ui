@@ -76,10 +76,13 @@ class Job:
     # only: streamed as ``phaseStartedAt`` for the run view's elapsed + ETA + per-stage timeline. NOT persisted
     # (a DB-hydrated historical run starts empty here, so the UI falls back to total elapsed for old runs).
     phase_timings: dict[str, float] = field(default_factory=dict)
-    # Cooperative-cancellation flag. Set by ``JobStore.request_cancel`` when the user hits Stop; the runner's
-    # progress callback reads it at each phase/tick checkpoint and raises to abort the run (-> ``cancelled``).
-    # Transient (live-job only): never persisted, never serialized by to_dict — a re-hydrated run starts False.
-    cancel_requested: bool = False
+    # Cooperative-cancellation mode, set by ``JobStore.request_cancel`` when the user hits Stop:
+    #   "discard" — abort ASAP (the runner's progress checkpoint raises), keep NO partial result.
+    #   "keep"    — finish the in-flight stage (deliver work already paid for), then skip the remaining stages;
+    #               the run ends ``cancelled`` WITH whatever partial result the pipeline produced.
+    # Transient (live-job only): never persisted, never serialized as a raw value by to_dict (only the derived
+    # ``stopping`` bool is) — a re-hydrated run starts None.
+    cancel_mode: str | None = None
 
     @classmethod
     def from_db_row(cls, d: dict[str, Any]) -> Job:
@@ -110,6 +113,9 @@ class Job:
             "displayName": self.display_name,
             "status": self.status,
             "phase": self.phase,
+            # A stop was requested but the run hasn't reached its terminal state yet (the current stage is
+            # finishing, for a "keep" stop). Lets the UI show a "Stopping…" state. Derived, never the raw mode.
+            "stopping": self.cancel_mode is not None and self.status not in TERMINAL_STATES,
             "completed": self.completed,
             "total": self.total,
             "errorMessage": self.error_message,
@@ -242,25 +248,32 @@ class JobStore:
         if persist:
             self._persist(job)
 
-    def request_cancel(self, job_id: str) -> bool:
-        """Flag a live, in-flight run to stop at its next progress checkpoint (the runner raises there).
+    def request_cancel(self, job_id: str, mode: str = "discard") -> bool:
+        """Flag a live, in-flight run to stop. ``mode`` is "keep" (finish the current stage, keep its partial
+        result, skip the rest) or "discard" (abort ASAP, no result); an unknown mode falls back to "discard".
 
-        Returns True when a running job was flagged; False when it's unknown, already terminal, or only in the
-        durable store (a past run isn't executing, so there's nothing to stop). Idempotent — flagging twice is
-        harmless. Only sets the flag; the worker thread performs the actual abort cooperatively.
+        Returns True when a running job was flagged; False when it's unknown or already terminal (nothing to
+        stop). Idempotent — the LAST mode set wins, so a user can escalate a "keep" to a "discard".
         """
+        if mode not in ("keep", "discard"):
+            mode = "discard"
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job.status in TERMINAL_STATES:
                 return False
-            job.cancel_requested = True
+            job.cancel_mode = mode
             return True
 
     def is_cancel_requested(self, job_id: str) -> bool:
-        """Whether a stop has been requested for a live job (read by the runner's progress callback)."""
+        """Whether a stop (either mode) has been requested for a live job."""
+        return self.cancel_mode(job_id) is not None
+
+    def cancel_mode(self, job_id: str) -> str | None:
+        """The requested stop mode for a live job ("keep"/"discard"), or None if no stop was requested. Read by
+        the runner's progress callback (discard raises) and the engine stage callbacks (keep skips)."""
         with self._lock:
             job = self._jobs.get(job_id)
-            return bool(job and job.cancel_requested)
+            return job.cancel_mode if job else None
 
     def set_decision(
         self,
