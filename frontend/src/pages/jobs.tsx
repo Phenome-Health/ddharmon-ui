@@ -25,13 +25,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { deleteJob, listJobs } from "@/lib/api";
+import { cancelJob, deleteJob, listJobs } from "@/lib/api";
 import { useAuthState } from "@/auth";
 import { RerunAction } from "@/components/rerun-action";
-import type { JobSummary } from "@/types";
+import { StopRunAction } from "@/components/stop-run-action";
+import { stopCostSplit, type JobSummary } from "@/types";
 
 // Terminal statuses; anything else is an in-flight phase (data-driven — we don't enumerate phases).
-const TERMINAL = new Set(["complete", "error"]);
+const TERMINAL = new Set(["complete", "error", "cancelled"]);
 
 // Delete a run behind a confirmation dialog — a run can carry real LLM cost, so guard the trash button
 // against a fat-finger click. Names the run being deleted; delete is irreversible.
@@ -82,6 +83,7 @@ function DeleteAction({ job }: { job: JobSummary }) {
 }
 
 export default function JobsPage() {
+  const qc = useQueryClient();
   const { isGuest } = useAuthState();
   // Real runs are per-account and behind the SSO gate, so guests don't fetch the list (it would 401) —
   // they get a sign-in CTA instead. The demo lives on its own page.
@@ -160,6 +162,20 @@ export default function JobsPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <span className="flex items-center justify-end gap-1">
+                      {!TERMINAL.has(j.status) && !(j.config as { demo?: boolean })?.demo && (
+                        <StopRunAction
+                          displayName={j.displayName}
+                          costNote={stopCostSplit(j.config, j.phase)}
+                          onKeep={async () => {
+                            await cancelJob(j.jobId, "keep");
+                            qc.invalidateQueries({ queryKey: ["jobs"] });
+                          }}
+                          onDiscard={async () => {
+                            await cancelJob(j.jobId, "discard");
+                            qc.invalidateQueries({ queryKey: ["jobs"] });
+                          }}
+                        />
+                      )}
                       {TERMINAL.has(j.status) && !(j.config as { demo?: boolean })?.demo && <RerunAction job={j} />}
                       <DeleteAction job={j} />
                     </span>

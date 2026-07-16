@@ -28,7 +28,7 @@ import {
   verdictColor,
   type Focus,
 } from "@/lib/chart";
-import type { AtlasPoint, FieldDetail, UIRecord } from "@/types";
+import { conceptLabel, type AtlasPoint, type FieldDetail, type UIRecord } from "@/types";
 
 type ColorBy = "cohort" | "verdict" | "agreement";
 
@@ -430,7 +430,7 @@ export function EmbeddingAtlas({
                     className="inline-block h-2 w-2 shrink-0 rounded-full"
                     style={{ backgroundColor: catColor(selectedRec.verdict) }}
                   />
-                  <span className="min-w-0 truncate text-neutral-600">{selectedRec.concept}</span>
+                  <span className="min-w-0 truncate text-neutral-600">{conceptLabel(selectedRec)}</span>
                   <span className="shrink-0 text-neutral-400">· {catLabel(selectedRec.verdict)}</span>
                 </div>
                 {onOpenConcept && (

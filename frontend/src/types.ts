@@ -16,10 +16,12 @@ export type JobStatus =
   | "generating"
   | "splitting"
   | "assigning"
+  | "gencde"
   | "specs"
   | "prepared"
   | "complete"
-  | "error";
+  | "error"
+  | "cancelled"; // user stopped the run (terminal; distinct from error) — re-runnable from its uploads
 
 export interface CdeRef {
   id: string;
@@ -115,6 +117,34 @@ export interface UnassignedField {
   y?: number;
 }
 
+// A synthesized Common Data Element for a novel concept group (mirrors contract.py UIGenCDE) — the novel
+// route's proposed harmonization target. Distinct from UIRecord.idealCde (the free-text coverage anchor):
+// a spec-conformant proposal (name/definition/data type/permissible values/units) reconciled from the
+// group's pooled cross-cohort member evidence. `valueCoverage`/`needsReview` are verification flags, never a gate.
+export interface GenCDE {
+  gencdeId: string;
+  preferredName: string;
+  title: string;
+  definition: string;
+  questionText: string;
+  dataType: string; // numeric | categorical | binary | date | text
+  permissibleValues: ResponseOption[]; // reconciled categorical domain
+  aliases: string[];
+  sourceVariables: string[]; // pooled member edges ("cohort:var")
+  sourceCohorts: string[];
+  relatedCdes: string[]; // near-miss candidate names the assign stage saw
+  valueCoverage: number | null; // fraction of observed answer-concepts represented (flag, not gate); null = N/A for a numeric GenCDE
+  uncoveredLabels: string[];
+  confidence: number;
+  needsReview: boolean;
+  rationale: string;
+  generatedBy: string;
+  // numeric concepts only
+  units?: string;
+  minimum?: number;
+  maximum?: number;
+}
+
 export interface UIRecord {
   id: string;
   clusterId: string;
@@ -124,6 +154,7 @@ export interface UIRecord {
   route: string; // assigned | gencde_residual
   cde: CdeRef | null;
   idealCde: string;
+  gencde: GenCDE | null; // novel route -> synthesized spec-conformant CDE proposal; null otherwise
   cosines: Cosines;
   coverageGap: boolean;
   floored: boolean;
@@ -142,6 +173,7 @@ export interface PromptCounts {
   ideal: number;
   split: number;
   groupAssign: number;
+  gencde: number;
   specgen: number;
 }
 
@@ -196,6 +228,10 @@ export interface JobResult {
   // backend "stage-event stream". Powers the run view's per-stage timeline + elapsed. Absent on DB-hydrated
   // historical runs (which fall back to total elapsed = updatedAt − createdAt).
   phaseStartedAt?: Record<string, number>;
+  // True once a Stop has been requested but the run hasn't reached its cancel checkpoint yet (backend-derived:
+  // cancel_mode set and status not terminal). Lets the run view show a "Stopping…" state. The raw keep/discard
+  // mode is never exposed.
+  stopping?: boolean;
 }
 
 export interface JobSummary extends Omit<JobResult, "result" | "analysisIdeas"> {
@@ -242,6 +278,10 @@ export interface RunConfig {
   retrievalFloor?: number;
   modelTag?: string; // the chosen model id (from the picker); routes provider selection in the engine
   provider?: string; // the chosen provider (informational; the engine derives routing from modelTag)
+  // Corpus size the New-Run form estimated, echoed back on the run's config so the Stop dialog can price a
+  // partial stop (run_config carries no dictionaries to re-count). Persisted snake_case as est_fields/est_cohorts.
+  estFields?: number;
+  estCohorts?: number;
 }
 
 export type ExportFormat = "eitl_tsv" | "records_json" | "decisions_csv" | "notebook_py" | "notebook_r";
@@ -403,6 +443,44 @@ export function estimateRunCostBreakdown(
   };
 }
 
+// Fraction of a run's total LLM cost already committed by the time it is IN a given phase — i.e. what a
+// "keep" stop (finish the current stage, skip the rest) would still be billed. Local stages (loading/
+// embedding/clustering) are free; the LLM stages accrue in order (from STAGE_SHARES: gen-ideal ≈7%, then
+// split+assign ≈77% split across splitting→assigning, spec-gen ≈15%). Anything past the current stage is
+// avoided. Keys mirror the backend phase labels.
+const STOP_COMMITTED_BY_PHASE: Record<string, number> = {
+  loading: 0,
+  embedding: 0,
+  clustering: 0,
+  generating: 0.07, // gen-ideal done
+  splitting: 0.3, // partway through split+assign
+  assigning: 0.84, // split+assign essentially done
+  gencde: 0.85, // GenCDE synthesis (novels) — most cost committed
+  specs: 1, // transform spec-gen is the last paid stage
+  complete: 1,
+};
+
+export interface StopCostSplit {
+  committed: number; // ≈ USD already committed this run (billed even on a "keep" stop)
+  avoided: number; // ≈ USD a stop-now avoids (the skipped downstream stages)
+  total: number; // ≈ USD the full run would cost
+  hasEstimate: boolean; // false when the run carries no corpus size (older run / API caller) → show qualitative copy
+}
+
+// Price a mid-run stop for the Stop dialog: how much is already committed vs. avoided by stopping in `phase`.
+// Reads the corpus size the New-Run form persisted onto the run's config (est_fields/est_cohorts, snake_case)
+// and the run_mode. A preview run (or a run with no stored counts) yields total 0 / hasEstimate=false, so the
+// dialog falls back to qualitative wording rather than a bogus "$0".
+export function stopCostSplit(config: Record<string, unknown>, phase: string): StopCostSplit {
+  const estFields = typeof config.est_fields === "number" ? config.est_fields : 0;
+  const estCohorts = typeof config.est_cohorts === "number" ? config.est_cohorts : 0;
+  const runMode = (typeof config.run_mode === "string" ? config.run_mode : "batch") as RunMode;
+  const total = estFields > 0 ? estimateRunCost(estFields, estCohorts, runMode).mid : 0;
+  const frac = STOP_COMMITTED_BY_PHASE[phase] ?? 0.5; // unknown mid-run phase: assume ~half committed
+  const committed = total * frac;
+  return { committed, avoided: Math.max(0, total - committed), total, hasEstimate: estFields > 0 && total > 0 };
+}
+
 // Rough WALL-CLOCK estimate for a run — the time analog of estimateRunCost, and the SAME model used for
 // both the pre-run estimate (New Run form) and the live ETA (run view). Much rougher than cost: embedding
 // + clustering are local CPU (scale with fields); the LLM stages dominate the rest. Batch turnaround is set
@@ -460,3 +538,80 @@ export const VERDICT_STYLES: Record<string, string> = {
   novel: "bg-ph-navy/10 text-ph-navy border-ph-navy/30",
   unclassified: "bg-neutral-100 text-neutral-600 border-neutral-300",
 };
+
+// ── concept display label ────────────────────────────────────────────────────────────────────
+// A concept's display name must NEVER be a raw internal id. The split-aware pipeline keys a group
+// `<clusterHash>#g<n>`; when the labeling step doesn't attach a human title, that key can leak into
+// `concept` (observed: "c5c089913f98b#g1"). Guarding here keeps the UI honest regardless of the backend —
+// the deeper fix (always generate a title, incl. split-residual subgroups) lives in the core labeler.
+
+/** True when `concept` is empty or a raw internal id — a `<hash>#g<n>` group key, a bare long cluster
+ *  hash, or a value equal to the record's own cluster/group id — rather than a human-readable label. */
+export function isRawConceptId(
+  concept: string | null | undefined,
+  ids: { clusterId?: string; groupId?: string } = {},
+): boolean {
+  const c = (concept ?? "").trim();
+  if (!c) return true;
+  if (c === ids.clusterId || c === ids.groupId) return true;
+  return /^[0-9a-f]{6,}#g\d+$/i.test(c) || /^[0-9a-f]{12,}$/i.test(c);
+}
+
+/** The human-readable label for a concept card. When `concept` is a leaked raw id (or empty), fall back to
+ *  the GenCDE title, then the concept-summary's first phrase, then a variable-count placeholder — so the UI
+ *  never prints a hash. Otherwise returns `concept` untouched. */
+export function conceptLabel(
+  r: Pick<UIRecord, "concept" | "clusterId" | "groupId" | "gencde" | "idealCde" | "nMembers">,
+): string {
+  const c = (r.concept ?? "").trim();
+  if (!isRawConceptId(c, { clusterId: r.clusterId, groupId: r.groupId })) return c;
+  const gTitle = (r.gencde?.title || r.gencde?.preferredName || "").trim();
+  if (gTitle) return gTitle;
+  const ideal = (r.idealCde ?? "").trim();
+  if (ideal) {
+    const phrase = ideal.split(/[.;\n]/)[0].trim();
+    return phrase.length > 80 ? `${phrase.slice(0, 77)}…` : phrase;
+  }
+  const n = r.nMembers ?? 0;
+  return `Unnamed concept (${n} variable${n === 1 ? "" : "s"})`;
+}
+
+// ── value-encoding labels (for the value-mapping display) ──────────────────────────────────────
+// The value-mapping panel shows code→code recodes; these turn the bare codes into `code (label)` so a
+// reviewer can read what each code MEANS. Source labels come from the loaded dictionary's value encoding
+// (responseOptions, else the inline valueEncoding string); target labels from a novel concept's GenCDE
+// permissible values. Assigned real CDEs don't carry their permissible values in the payload → bare code.
+
+/** Parse an inline value-encoding string ("1=Yes|2=No") into a `{code: label}` map. Splits on the FIRST
+ *  `=` per pair (labels may contain `=`); tolerates `|` or `;` pair separators. */
+export function parseValueEncoding(enc: string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!enc) return out;
+  for (const pair of enc.split(/[|;]/)) {
+    const s = pair.trim();
+    const eq = s.indexOf("=");
+    if (eq <= 0) continue;
+    const code = s.slice(0, eq).trim();
+    if (code) out[code] = s.slice(eq + 1).trim();
+  }
+  return out;
+}
+
+/** Source-side `{code: label}` for a field, preferring parsed `responseOptions`, falling back to the inline
+ *  `valueEncoding` string. Empty for a numeric/open field with no coded options. */
+export function sourceValueLabels(fd: FieldDetail | undefined): Record<string, string> {
+  if (!fd) return {};
+  if (fd.responseOptions?.length) {
+    const out: Record<string, string> = {};
+    for (const o of fd.responseOptions) if (o.code) out[o.code] = o.label ?? "";
+    return out;
+  }
+  return parseValueEncoding(fd.valueEncoding);
+}
+
+/** `{code: label}` from a set of permissible values (a GenCDE's reconciled domain) — the target side. */
+export function permissibleValueLabels(opts: ResponseOption[] | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const o of opts ?? []) if (o.code) out[o.code] = o.label ?? "";
+  return out;
+}

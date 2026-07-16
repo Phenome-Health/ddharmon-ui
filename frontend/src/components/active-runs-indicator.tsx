@@ -10,7 +10,7 @@ import type { JobSummary } from "@/types";
 // once in the AppShell header — is the app-wide observer of the user's runs: it shows a "N running" badge
 // so an in-flight run is always visible, and fires a completion toast (from any page) when one finishes, so
 // the user never has to sit on the run page. It shares the ["jobs"] query cache with the Runs page.
-const TERMINAL = new Set(["complete", "error"]);
+const TERMINAL = new Set(["complete", "error", "cancelled"]);
 
 export function ActiveRunsIndicator() {
   const [, navigate] = useLocation();
@@ -46,6 +46,11 @@ export function ActiveRunsIndicator() {
         toast.success("Run finished", {
           description: j.displayName,
           action: { label: "View results", onClick: goTo },
+        });
+      } else if (j.status === "cancelled") {
+        toast("Run stopped", {
+          description: j.displayName,
+          action: { label: "View", onClick: goTo },
         });
       } else {
         toast.error("Run failed", {

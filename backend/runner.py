@@ -18,6 +18,15 @@ from backend.jobs import JobStore
 logger = logging.getLogger(__name__)
 
 
+class RunCancelledError(Exception):
+    """Raised from the progress callback when the user requested a stop, to unwind the pipeline promptly.
+
+    Distinct from a real failure: the runner catches it and marks the job ``cancelled`` (not ``error``), so no
+    new LLM work is issued past the current checkpoint. A Batch-API stage already SUBMITTED keeps running
+    server-side — cancellation takes effect at the next stage boundary, not mid-batch (see the todo).
+    """
+
+
 def run_harmonization(
     store: JobStore,
     job_id: str,
@@ -40,6 +49,11 @@ def run_harmonization(
     """
 
     def progress(phase: str, completed: int = 0, total: int = 0) -> None:
+        # Cancellation at every phase/tick checkpoint. "discard" aborts here (raise -> the run unwinds with no
+        # result). "keep" does NOT raise: the current stage finishes (delivering work already paid for) and the
+        # engine's stage callbacks skip the remaining stages, so run_pipeline RETURNS a partial result below.
+        if store.cancel_mode(job_id) == "discard":
+            raise RunCancelledError
         store.update(job_id, status=phase, phase=phase, completed=completed, total=total)
 
     try:
@@ -51,13 +65,25 @@ def run_harmonization(
             provider=provider,
             stage_overrides=stage_overrides,
             api_key=api_key,
+            stopping=lambda: store.cancel_mode(job_id),
         )
+        if store.cancel_mode(job_id) == "keep":
+            # "Keep" stop: the pipeline finished the in-flight stage and skipped the rest, returning a PARTIAL
+            # result. Mark the run cancelled but attach that result so the user gets what they paid for.
+            store.update(job_id, status="cancelled", phase="cancelled", result=result)
+            logger.info("job %s stopped (keep): %d partial records", job_id, len(result.get("records", [])))
+            return
         fields: dict[str, Any] = {"status": "complete", "phase": "complete", "result": result}
         ideas = _generate_ideas(result, config, api_key)  # None unless opted-in + produced
         if ideas is not None:
             fields["analysis_ideas"] = ideas
         store.update(job_id, **fields)
         logger.info("job %s complete: %d records", job_id, len(result["records"]))
+    except RunCancelledError:
+        # "Discard" stop: terminal but NOT an error, and NO result — the user chose to throw away in-flight
+        # work. Leave error_message unset; the run stays re-runnable from its retained uploads.
+        logger.info("job %s stopped (discard)", job_id)
+        store.update(job_id, status="cancelled", phase="cancelled")
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI rather than crash the thread
         logger.exception("job %s failed", job_id)
         # Capture the stage the run was in BEFORE we overwrite phase to "error", so the UI / an error report

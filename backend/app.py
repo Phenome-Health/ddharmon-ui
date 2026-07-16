@@ -7,7 +7,9 @@ Endpoints (all under /api/harmonize):
     GET  /result/{job_id}   full job snapshot (REST fallback)
     GET  /jobs              list jobs (summaries)
     DELETE /jobs/{job_id}   delete a job
+    POST /jobs/{job_id}/cancel    request a stop for an in-flight run (-> cancelled)
     POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision (by recordId)
+    POST /jobs/{job_id}/records/{record_id}/regenerate-specs  regenerate member->GenCDE recodes after a refine
     GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv | notebook_py | notebook_r
     GET  /demos              list precomputed demo datasets + available combos
     POST /demo               hydrate a completed job from a precomputed demo snapshot -> {jobId}
@@ -28,7 +30,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -288,6 +290,10 @@ async def start_batch(
         "cde_cohort": CDE_COHORT,
         "work_dir": str(work_dir),
         "cde_set": cde_set,
+        # Corpus size the New-Run form estimated (variables / cohorts). Display-only — persisted so the run
+        # view's Stop dialog can show a committed-vs-avoided cost estimate (run_config keeps no dictionaries).
+        "est_fields": int(cfg["estFields"]) if cfg.get("estFields") is not None else None,
+        "est_cohorts": int(cfg["estCohorts"]) if cfg.get("estCohorts") is not None else None,
     }
     # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
     # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from
@@ -413,6 +419,18 @@ def delete_job(job_id: str, request: Request) -> None:
     store.delete(job_id)
 
 
+@app.post("/api/harmonize/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: Request, mode: str = "discard") -> dict[str, bool]:
+    """Request a stop for an in-flight run the caller owns. ``mode`` is ``keep`` (finish the current stage,
+    keep its partial result, skip the rest — no further LLM cost) or ``discard`` (abort ASAP, no result).
+    Cooperative: flags the job; the worker acts at its next checkpoint (-> ``cancelled``). Idempotent —
+    ``cancelled`` is False when the run is unknown to the caller (404) or already terminal (nothing to stop)."""
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"cancelled": store.request_cancel(job_id, mode)}
+
+
 @app.post("/api/harmonize/jobs/{job_id}/rerun")
 def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | None, Header()] = None) -> dict[str, str]:
     """Re-execute a past run from its retained uploads as a NEW owned run (the original is preserved).
@@ -494,14 +512,17 @@ class VerdictBody(BaseModel):
     recordId: str
     decision: str  # both axes: approve | refine | reject
     note: str = ""
-    axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode spec)
+    axis: str = "match"  # match (concept→CDE) | transform (per source-variable recode) | gencde (proposed GenCDE)
     sourceVariable: str | None = None  # REQUIRED for axis="transform" — the "cohort:var" edge the verdict is on
+    # axis="gencde" refine only: the reviewer's corrected GenCDE fields (camelCase UIGenCDE subset). Stored on
+    # the decision and merged into the result blob's GenCDE, so edits flow to the workbench/export/regen.
+    edited: dict[str, Any] | None = None
 
 
 @app.post("/api/harmonize/jobs/{job_id}/verdict")
 def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str, bool]:
-    if body.axis not in ("match", "transform"):
-        raise HTTPException(status_code=400, detail="axis must be match|transform")
+    if body.axis not in ("match", "transform", "gencde"):
+        raise HTTPException(status_code=400, detail="axis must be match|transform|gencde")
     # Both axes accept the full triad; the transform axis records one verdict PER source variable.
     allowed = ("approve", "refine", "reject")
     if body.decision not in allowed:
@@ -512,10 +533,65 @@ def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
     if not store.set_decision(
-        job_id, body.recordId, body.decision, body.note, axis=body.axis, source_variable=body.sourceVariable
+        job_id,
+        body.recordId,
+        body.decision,
+        body.note,
+        axis=body.axis,
+        source_variable=body.sourceVariable,
+        edited=body.edited,
     ):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
+
+
+@app.post("/api/harmonize/jobs/{job_id}/records/{record_id}/regenerate-specs")
+def regenerate_specs(
+    job_id: str,
+    record_id: str,
+    request: Request,
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+    x_provider_key: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """Regenerate the member->GenCDE recodes for one record whose GenCDE was refined (its value domain changed).
+
+    Reads the (already reviewer-corrected) GenCDE from the run's result blob, reloads the run's retained source
+    dictionaries to recover each member's source value set, and re-runs the SAME core recode seams a full run
+    uses — via a targeted one-off BYOK LLM pass — then writes the fresh transforms back onto the record.
+
+    BYOK: the key rides the ``X-Provider-Key`` (or legacy ``X-Anthropic-Key``) header, is used to build the
+    LLM client for THIS request only, and is NEVER written to ``run_config``, the job, the DB, os.environ, or
+    any log — exactly like the analysis-ideas + batch paths.
+    """
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    records = (job.result or {}).get("records") if job.result else None
+    rec_ui = next((r for r in (records or []) if r.get("id") == record_id), None)
+    if rec_ui is None:
+        raise HTTPException(status_code=404, detail="Record not found in this run")
+    if not rec_ui.get("gencde"):
+        raise HTTPException(status_code=409, detail="This record has no proposed GenCDE to regenerate recodes for")
+    if not job.dict_specs:
+        raise HTTPException(
+            status_code=409, detail="This run predates recode regeneration (no retained source dictionaries)"
+        )
+
+    from backend.engine.adapter import regenerate_gencde_specs, specgen_stage_fn
+    from backend.engine.llm import build_llm_client
+
+    # Use the SAME model the run was configured with; the BYOK key is in-memory for this request only.
+    effective_key = x_provider_key or x_anthropic_key
+    client = build_llm_client(job.config.get("model_tag"), effective_key)
+    stage_fn = specgen_stage_fn(client)
+    try:
+        updated = regenerate_gencde_specs(
+            rec_ui, job.dict_specs, model_tag=job.config.get("model_tag"), stage_fn=stage_fn
+        )
+    except RuntimeError as exc:  # e.g. a core build lacking the GenCDE spec-gen seams
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    store.replace_result_record(job_id, record_id, cast("dict[str, Any]", updated))
+    return {"record": updated}
 
 
 # --- export ----------------------------------------------------------------------------------
@@ -527,10 +603,11 @@ def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str
 _EITL_COLS = [
     "recordId", "clusterId", "groupId", "concept", "verdict", "route", "cdeId", "cdeExternalId",
     "top1Cos", "chosenCos", "coverageGap", "floored", "crossCohort", "nMembers", "cohorts", "members",
-    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote", "transformDecisions",
+    "nTransforms", "idealCde", "rationale", "humanDecision", "humanNote", "transformDecisions", "gencdeDecision",
 ]  # fmt: skip
 _DECISIONS_COLS = [
     "recordId", "concept", "verdict", "cdeId", "chosenCos", "humanDecision", "humanNote", "transformDecisions",
+    "gencdeDecision",
 ]  # fmt: skip
 _EITL_RANK = {"refine": 0, "novel": 1, "adopt": 2}
 
@@ -542,6 +619,15 @@ def _transform_decisions_json(dec: dict[str, Any]) -> str:
     stays on one TSV/CSV row (the JSON's own commas/quotes are handled by ``csv.writer`` quoting)."""
     transforms = dec.get("transforms")
     return _clean(json.dumps(transforms, sort_keys=True)) if transforms else ""
+
+
+def _gencde_decision_json(dec: dict[str, Any]) -> str:
+    """Serialize a record's GenCDE-axis verdict ({decision, note}) to a compact JSON object for export.
+
+    Empty string when the record has no GenCDE verdict. Appended LAST (like ``transformDecisions``) so the
+    match/transform column positions stay stable for index-based test assertions."""
+    gencde = dec.get("gencde")
+    return _clean(json.dumps(gencde, sort_keys=True)) if gencde else ""
 
 
 @app.get("/api/harmonize/jobs/{job_id}/export")
@@ -596,6 +682,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
                     _transform_decisions_json(dec),
+                    _gencde_decision_json(dec),
                 ]
             )
         else:
@@ -623,6 +710,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                     dec.get("decision", ""),
                     _clean(dec.get("note", "")),
                     _transform_decisions_json(dec),
+                    _gencde_decision_json(dec),
                 ]
             )
     media = "text/csv" if ext == "csv" else "text/tab-separated-values"
@@ -645,7 +733,7 @@ class DemoBody(BaseModel):
 
 
 # Phases a real run streams, in order — the demo replay paces through these so it looks like a live run.
-_DEMO_PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"]
+_DEMO_PHASES = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "gencde", "specs"]
 
 
 def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
@@ -667,6 +755,7 @@ def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
         "generating": prompts.get("ideal", 0),
         "splitting": prompts.get("split", 0),
         "assigning": prompts.get("groupAssign", 0),
+        "gencde": prompts.get("gencde", 0),
         "specs": prompts.get("specgen", 0),
     }
     records = result.get("records", []) or []
@@ -680,6 +769,9 @@ def _replay_demo(job_id: str, snapshot: dict[str, Any]) -> None:
             total = int(counts.get(phase, 0) or 0)
             ticks = 5 if total else 2
             for k in range(1, ticks + 1):
+                if store.is_cancel_requested(job_id):  # Stop pressed mid-replay -> end it as cancelled
+                    store.update(job_id, status="cancelled", phase="cancelled")
+                    return
                 done = int(total * k / ticks) if total else 0
                 frac = (elapsed_w + weight * k / ticks) / total_w
                 reveal = 0.0 if frac <= gen_start_frac else (frac - gen_start_frac) / (1 - gen_start_frac)
@@ -722,18 +814,33 @@ def start_demo(body: DemoBody) -> dict[str, str]:
 
 
 # --- health ----------------------------------------------------------------------------------
+def _core_version() -> str:
+    """Installed ``ddharmon`` core version. On the dev channel this pins to a git ref, so surfacing it
+    (with ``channel``) makes it observable which core the running server is actually on."""
+    try:
+        from importlib.metadata import version
+
+        return version("ddharmon")
+    except Exception:
+        return "unknown"
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     """Liveness/readiness probe: process is up, plus which optional server-side assets are present.
 
     Used by the deploy runbook (systemd/nginx verification) and any future uptime check. Returns
     200 as soon as the app imports; ``cde``/``frontendBuilt`` flag whether the catalog TSVs and the
-    built SPA are in place (a run with ``cdeSet != none`` needs the matching CDE file).
+    built SPA are in place (a run with ``cdeSet != none`` needs the matching CDE file). ``channel``
+    (``prod`` default / ``dev``) and ``coreVersion`` distinguish the dev deployment — which pins the
+    core to an unreleased GitHub ref — from prod, which tracks the PyPI release.
     """
     return {
         "status": "ok",
         "version": app.version,
         "contractVersion": CONTRACT_VERSION,
+        "channel": os.environ.get("DDHARMON_CHANNEL", "prod"),
+        "coreVersion": _core_version(),
         "cde": {name: path.exists() for name, path in CDE_FILES.items()},
         "frontendBuilt": _DIST.exists(),
     }

@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Non-terminal phases double as ``status`` values so the UI can show a phase label.
-TERMINAL_STATES = {"complete", "error"}
+# Non-terminal phases double as ``status`` values so the UI can show a phase label. ``cancelled`` is a
+# terminal state distinct from ``error`` (a user stopped the run) and ``complete`` — a cancelled run is
+# re-runnable from its retained uploads, exactly like an errored one.
+TERMINAL_STATES = {"complete", "error", "cancelled"}
 _TTL_SECONDS = 3600
 
 # Runs the TTL purge must never evict: the prepopulated demo (``demo``) and any pinned/sample run. These
@@ -74,6 +76,13 @@ class Job:
     # only: streamed as ``phaseStartedAt`` for the run view's elapsed + ETA + per-stage timeline. NOT persisted
     # (a DB-hydrated historical run starts empty here, so the UI falls back to total elapsed for old runs).
     phase_timings: dict[str, float] = field(default_factory=dict)
+    # Cooperative-cancellation mode, set by ``JobStore.request_cancel`` when the user hits Stop:
+    #   "discard" — abort ASAP (the runner's progress checkpoint raises), keep NO partial result.
+    #   "keep"    — finish the in-flight stage (deliver work already paid for), then skip the remaining stages;
+    #               the run ends ``cancelled`` WITH whatever partial result the pipeline produced.
+    # Transient (live-job only): never persisted, never serialized as a raw value by to_dict (only the derived
+    # ``stopping`` bool is) — a re-hydrated run starts None.
+    cancel_mode: str | None = None
 
     @classmethod
     def from_db_row(cls, d: dict[str, Any]) -> Job:
@@ -104,6 +113,9 @@ class Job:
             "displayName": self.display_name,
             "status": self.status,
             "phase": self.phase,
+            # A stop was requested but the run hasn't reached its terminal state yet (the current stage is
+            # finishing, for a "keep" stop). Lets the UI show a "Stopping…" state. Derived, never the raw mode.
+            "stopping": self.cancel_mode is not None and self.status not in TERMINAL_STATES,
             "completed": self.completed,
             "total": self.total,
             "errorMessage": self.error_message,
@@ -236,6 +248,33 @@ class JobStore:
         if persist:
             self._persist(job)
 
+    def request_cancel(self, job_id: str, mode: str = "discard") -> bool:
+        """Flag a live, in-flight run to stop. ``mode`` is "keep" (finish the current stage, keep its partial
+        result, skip the rest) or "discard" (abort ASAP, no result); an unknown mode falls back to "discard".
+
+        Returns True when a running job was flagged; False when it's unknown or already terminal (nothing to
+        stop). Idempotent — the LAST mode set wins, so a user can escalate a "keep" to a "discard".
+        """
+        if mode not in ("keep", "discard"):
+            mode = "discard"
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status in TERMINAL_STATES:
+                return False
+            job.cancel_mode = mode
+            return True
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        """Whether a stop (either mode) has been requested for a live job."""
+        return self.cancel_mode(job_id) is not None
+
+    def cancel_mode(self, job_id: str) -> str | None:
+        """The requested stop mode for a live job ("keep"/"discard"), or None if no stop was requested. Read by
+        the runner's progress callback (discard raises) and the engine stage callbacks (keep skips)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return job.cancel_mode if job else None
+
     def set_decision(
         self,
         job_id: str,
@@ -244,14 +283,20 @@ class JobStore:
         note: str = "",
         axis: str = "match",
         source_variable: str | None = None,
+        edited: dict[str, Any] | None = None,
     ) -> bool:
-        """Persist a human verdict on one of two independent axes.
+        """Persist a human verdict on one of three independent axes.
 
         ``axis="match"`` (default) writes the concept→CDE verdict as top-level ``decision``/``note`` (unchanged).
         ``axis="transform"`` records a PER-SOURCE-VARIABLE recode-spec verdict under
         ``decisions[record_id]["transforms"][source_variable] = {"decision", "note"}`` — one verdict per
         ``cohort:var`` edge, so a record's several transforms carry independent verdicts without clobbering the
         match verdict. A transform-axis call without ``source_variable`` is a no-op (caller must supply it).
+        ``axis="gencde"`` records the reviewer's verdict on the synthesized GenCDE (the novel route's proposed
+        target) under ``decisions[record_id]["gencde"] = {"decision", "note", edited?}`` — once per record. When
+        ``edited`` is supplied (a refine that corrected the synthesized fields), it is stored on the decision AND
+        merged into ``result["records"][i]["gencde"]`` in place, so the workbench + export + a follow-on recode
+        regeneration all see the corrected GenCDE.
 
         Works on a past (evicted / post-restart) run too: if it's not live in memory it is hydrated from the
         durable store, the verdict applied, and the whole record re-persisted — so reviewing history later
@@ -262,7 +307,7 @@ class JobStore:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is not None:
-                self._apply_decision(job, record_id, decision, note, axis, source_variable)
+                self._apply_decision(job, record_id, decision, note, axis, source_variable, edited)
         if job is None:  # not live — hydrate the durable record, mutate it, and write it back
             if self.db is None:
                 return False
@@ -270,8 +315,42 @@ class JobStore:
             if row is None:
                 return False
             job = Job.from_db_row(row)
-            self._apply_decision(job, record_id, decision, note, axis, source_variable)
+            self._apply_decision(job, record_id, decision, note, axis, source_variable, edited)
         self._persist(job)  # verdicts must survive a restart
+        return True
+
+    def replace_result_record(self, job_id: str, record_id: str, new_record: dict[str, Any]) -> bool:
+        """Replace one record in a job's result blob (e.g. after a targeted recode regeneration) and persist.
+
+        Finds ``result["records"][i]`` by id, swaps in ``new_record``, and re-persists the job (works on an
+        evicted / DB-hydrated run too, mirroring :meth:`set_decision`). Returns False if the job or record
+        isn't found."""
+
+        def apply(job: Job) -> bool:
+            records = (job.result or {}).get("records") if job.result else None
+            if not records:
+                return False
+            for i, r in enumerate(records):
+                if r.get("id") == record_id:
+                    records[i] = new_record
+                    job.updated_at = time.time()
+                    return True
+            return False
+
+        with self._lock:
+            job = self._jobs.get(job_id)
+            ok = apply(job) if job is not None else False
+        if job is None:
+            if self.db is None:
+                return False
+            row = self.db.get(job_id)
+            if row is None:
+                return False
+            job = Job.from_db_row(row)
+            ok = apply(job)
+        if not ok:
+            return False
+        self._persist(job)
         return True
 
     def set_analysis_ideas(self, job_id: str, ideas: list[dict[str, Any]]) -> bool:
@@ -296,12 +375,33 @@ class JobStore:
 
     @staticmethod
     def _apply_decision(
-        job: Job, record_id: str, decision: str, note: str, axis: str, source_variable: str | None
+        job: Job,
+        record_id: str,
+        decision: str,
+        note: str,
+        axis: str,
+        source_variable: str | None,
+        edited: dict[str, Any] | None = None,
     ) -> None:
         rec = job.decisions.setdefault(record_id, {})
         if axis == "transform":
             transforms: dict[str, Any] = rec.setdefault("transforms", {})
             transforms[source_variable] = {"decision": decision, "note": note}  # type: ignore[index]
+        elif axis == "gencde":
+            # A THIRD axis: the reviewer's verdict on the synthesized GenCDE itself (the novel route's
+            # proposed target), recorded once per record under a single "gencde" key — distinct from the
+            # concept→CDE match verdict and the per-variable transform verdicts. A refine may carry the
+            # reviewer's corrected GenCDE fields in ``edited`` (kept only when present, for backward compat).
+            entry: dict[str, Any] = {"decision": decision, "note": note}
+            if edited:
+                entry["edited"] = edited
+                # Reflect the correction in the result blob so the workbench, export, and a follow-on recode
+                # regeneration all read the corrected GenCDE (camelCase merge over the synthesized fields).
+                for r in (job.result or {}).get("records", []) if job.result else []:
+                    if r.get("id") == record_id and r.get("gencde"):
+                        r["gencde"] = {**r["gencde"], **edited}
+                        break
+            rec["gencde"] = entry
         else:
             rec["decision"] = decision
             rec["note"] = note

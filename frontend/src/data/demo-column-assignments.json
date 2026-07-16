@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "cohort": "aou",
+      "filename": "aou.csv",
+      "signature": "branching logic (show field only if...)|choices, calculations, or slider labels|controlled tier rules|custom alignment|field annotation|field label|field type|form name|generalized answer codes|item concept|registered tier rules|required field?|section header|survey|text validation max|text validation min|text validation type or show slider number|version",
+      "roles": {
+        "variable_name": "Item Concept",
+        "question_text": "Field Label",
+        "value_encoding": "Choices, Calculations, OR Slider Labels",
+        "data_type": "Field Type"
+      }
+    },
+    {
+      "cohort": "clsa",
+      "filename": "clsa.csv",
+      "signature": "comment:en|label:en|name|question:en|table|unit|value_encoding|valuetype",
+      "roles": {
+        "variable_name": "name",
+        "short_label": "label:en",
+        "question_text": "question:en",
+        "description": "comment:en",
+        "value_encoding": "value_encoding",
+        "units": "unit",
+        "data_type": "valueType"
+      }
+    },
+    {
+      "cohort": "ukbb",
+      "filename": "ukbb.csv",
+      "signature": "category|data_type|description|encoding_id|encoding_name|field_id|field_name|n_codes|participant_count|units|value_encoding",
+      "roles": {
+        "variable_name": "field_name",
+        "description": "description",
+        "value_encoding": "value_encoding",
+        "units": "units",
+        "data_type": "data_type"
+      }
+    },
+    {
+      "cohort": "mesa",
+      "filename": "mesa.csv",
+      "signature": "data_type|dataset|dbgap_study|dbgap_variable_id|description|n_codes|units|value_encoding|variable_name",
+      "roles": {
+        "variable_name": "variable_name",
+        "description": "description",
+        "value_encoding": "value_encoding",
+        "units": "units",
+        "data_type": "data_type"
+      }
+    },
+    {
+      "cohort": "aireadi",
+      "filename": "aireadi.csv",
+      "signature": "cde_concept_code|cde_concept_name|cde_domain|cde_vocabulary|field_label|field_type|form_name|mapping_confidence|n_codes|value_encoding|variable_name",
+      "roles": {
+        "variable_name": "variable_name",
+        "question_text": "field_label",
+        "value_encoding": "value_encoding",
+        "data_type": "field_type"
+      }
+    }
+  ]
+}

@@ -15,7 +15,10 @@ Re-run after the curated CSVs change:  python scripts/build_demo_bundle.py
 
 from __future__ import annotations
 
+import csv
+import json
 import re
+import sys
 import zipfile
 from pathlib import Path
 
@@ -23,6 +26,15 @@ REPO = Path(__file__).resolve().parents[1]
 DATA_DIR = REPO / "backend" / "demos" / "data"
 SCRIPTS = REPO / "scripts"
 OUT = REPO / "frontend" / "public" / "demo-cohorts.zip"
+# App-bundled manifest of canonical column assignments — the New Run flow reads it to prefill the mapping
+# when a demo-zip CSV is dropped in (recognized by header signature), reproducing the showcased run.
+MANIFEST_OUT = REPO / "frontend" / "src" / "data" / "demo-column-assignments.json"
+
+sys.path.insert(0, str(SCRIPTS))
+from build_demos import COHORT_ROLES  # noqa: E402  — single source of truth for the canonical demo role map
+
+# The five CSVs the demo zip ships (cohort id -> filename in backend/demos/data).
+DEMO_CSVS = {"aou": "aou.csv", "clsa": "clsa.csv", "ukbb": "ukbb.csv", "mesa": "mesa.csv", "aireadi": "aireadi.csv"}
 
 # This zip is user-facing, so nothing in it may reveal a developer's local machine or the internal repo.
 # The bundle build HARD-FAILS if any bundled file (or the README) matches one of these — a leak like an
@@ -107,6 +119,40 @@ This GUI and the demo build scripts live in the **ddharmon-ui** repo:
 """
 
 
+def _header_signature(headers: list[str]) -> str:
+    """Order-independent key from a CSV's column names. MUST match the frontend's headerSignature()
+    (lib/column-prefill.ts): trim + lowercase each column, drop empties, sort, join with '|'."""
+    return "|".join(sorted(h.strip().lower() for h in headers if h.strip()))
+
+
+def _read_header(path: Path) -> list[str]:
+    with open(path, newline="") as fh:
+        return next(csv.reader(fh), [])
+
+
+def write_manifest() -> None:
+    """Emit the canonical demo column-assignment manifest the New Run flow uses to prefill the mapping.
+
+    Keyed by header signature so a dropped demo CSV is recognized regardless of filename. Sourced from
+    build_demos.COHORT_ROLES so it can never drift from the mapping that produced the showcased run.
+    """
+    entries = []
+    for cohort, filename in DEMO_CSVS.items():
+        roles = COHORT_ROLES.get(cohort)
+        if roles is None:  # cohort absent from the role map (e.g. an extra demo not in the shipped set) — skip
+            continue
+        headers = _read_header(DATA_DIR / filename)
+        missing = [c for c in roles.values() if c not in headers]
+        if missing:
+            raise SystemExit(f"{cohort}: canonical role columns not in {filename} header: {missing}")
+        entries.append(
+            {"cohort": cohort, "filename": filename, "signature": _header_signature(headers), "roles": dict(roles)}
+        )
+    MANIFEST_OUT.parent.mkdir(parents=True, exist_ok=True)
+    MANIFEST_OUT.write_text(json.dumps({"version": 1, "entries": entries}, indent=2) + "\n")
+    print(f"Wrote {MANIFEST_OUT.relative_to(REPO)}  ({len(entries)} demo cohorts)")
+
+
 def main() -> None:
     members = [
         DATA_DIR / "aou.csv",
@@ -139,6 +185,9 @@ def main() -> None:
 
     kb = OUT.stat().st_size // 1024
     print(f"Wrote {OUT.relative_to(REPO)}  ({len(members) + 1} files, {kb} KB) — privacy gate passed")
+
+    # Emit the app-bundled column-assignment manifest (prefill for the New Run flow) alongside the zip.
+    write_manifest()
 
 
 if __name__ == "__main__":

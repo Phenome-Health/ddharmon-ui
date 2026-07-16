@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_STATIC, listModels, startHarmonize } from "@/lib/api";
+import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
 import { useAuthState } from "@/auth";
 import {
   ADVANCED_ROLES,
@@ -62,6 +63,8 @@ interface DictFile {
   nFields: number;
   roles: Record<string, string>; // role -> column (or unset)
   showAdvanced: boolean;
+  prefillSource?: PrefillSource; // set when roles were prefilled (demo manifest or saved history)
+  prefillDismissed?: boolean;
 }
 
 function parseFile(file: File): Promise<{ headers: string[]; nFields: number }> {
@@ -100,8 +103,18 @@ export default function HomePage() {
     for (const file of accepted) {
       const { headers, nFields } = await parseFile(file);
       const cohortName = file.name.replace(/\.(csv|tsv|txt)$/i, "");
-      // Columns start UNMAPPED — the user decides every role explicitly (no auto-detect prefill).
-      added.push({ file, cohortName, headers, nFields, roles: {}, showAdvanced: false });
+      // Recognize demo-zip files / previously-mapped files by header signature and prefill the role
+      // mapping; an unrecognized file starts unmapped (manual assignment). Prefilled values stay editable.
+      const pf = lookupPrefill(headers);
+      added.push({
+        file,
+        cohortName,
+        headers,
+        nFields,
+        roles: pf?.roles ?? {},
+        showAdvanced: false,
+        prefillSource: pf?.source,
+      });
     }
     setDicts((prev) => [...prev, ...added]);
   }, []);
@@ -122,6 +135,9 @@ export default function HomePage() {
   }
   function removeDict(idx: number) {
     setDicts((prev) => prev.filter((_, i) => i !== idx));
+  }
+  function dismissPrefill(idx: number) {
+    setDicts((prev) => prev.map((d, i) => (i === idx ? { ...d, prefillDismissed: true } : d)));
   }
 
   const totalFields = useMemo(() => dicts.reduce((s, d) => s + d.nFields, 0), [dicts]);
@@ -203,6 +219,9 @@ export default function HomePage() {
         displayName: displayName || undefined,
         modelTag: model || undefined,
         provider,
+        // Corpus size for the run view's Stop-dialog cost estimate (run_config has no dictionaries to count).
+        estFields: totalFields,
+        estCohorts: dicts.length,
       };
       const { jobId } = await startHarmonize(
         dicts.map((d) => d.file),
@@ -210,6 +229,9 @@ export default function HomePage() {
         provider,
         needsProviderKey ? key : undefined,
       );
+      // Remember each file's column assignments so a later upload of a same-shaped file prefills them
+      // (localStorage; skips demo files, which use the shipped manifest).
+      dicts.forEach((d) => rememberAssignment(d.headers, d.roles));
       qc.invalidateQueries({ queryKey: ["jobs"] });
       navigate(`/job/${jobId}`);
     } catch (e) {
@@ -264,6 +286,23 @@ export default function HomePage() {
             </Button>
           </CardHeader>
           <CardContent className="space-y-4">
+            {d.prefillSource && !d.prefillDismissed && (
+              <div className="flex items-start justify-between gap-2 rounded-md border border-info-border bg-info-bg px-3 py-2 text-xs text-info">
+                <span>
+                  {d.prefillSource === "demo"
+                    ? "Demo mapping applied — these column assignments reproduce the showcased run. Editable below."
+                    : "Restored your previous mapping for a file with these columns — review & confirm below."}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => dismissPrefill(idx)}
+                  aria-label="Dismiss"
+                  className="shrink-0 text-info/70 transition-colors hover:text-info"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
             <div className="grid max-w-xs gap-1.5">
               <Label>Cohort name</Label>
               <Input value={d.cohortName} onChange={(e) => setCohort(idx, e.target.value)} />

@@ -27,8 +27,10 @@ The pipeline **requires a CDE backbone** (assignment to the given CDE catalog is
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,6 +43,7 @@ from backend.engine.contract import (
     FieldDetail,
     ResponseOptionUI,
     UICandidate,
+    UIGenCDE,
     UIMember,
     UIRecord,
     UIResult,
@@ -56,10 +59,17 @@ logger = logging.getLogger(__name__)
 ProgressFn = Callable[[str, int, int], None]
 # list[PromptRecord] -> {id: response}. The execution strategy injected per stage.
 StageFn = Callable[[list[Any]], dict[str, Any]]
+# () -> "keep" | "discard" | None. A stage consults this on entry: a "keep" stop means the user wants to stop
+# but keep results, so a not-yet-started stage returns {} (skipped, no new cost) while the pipeline still
+# reaches its end and returns a partial result. ("discard" aborts via progress raising, not here.)
+StoppingFn = Callable[[], str | None]
 
 # Same instruction the Batch API appends server-side, so inline (sync) output matches the schema.
 _SCHEMA_PREAMBLE = "\n\nRespond with ONLY valid JSON matching this schema (no markdown fences):\n"
 _SYNC_MAX_TOKENS = 1024
+# How often a batch stage re-checks for a Stop while the Batch API poll blocks (see _batch_stage). Small
+# enough that a user's Stop takes effect in seconds, not after the whole batch returns.
+_BATCH_POLL_SECS = 3.0
 
 
 def _noop_progress(phase: str, completed: int = 0, total: int = 0) -> None:
@@ -240,6 +250,39 @@ def _unassigned_fields(
     return out
 
 
+def _gencde_to_ui(g: Any) -> UIGenCDE | None:
+    """Map a synthesized ``GenCDE`` (the novel route's proposed target) to a ``UIGenCDE``; ``None`` when the
+    record has none (adopt/refine, or a novel produced with the gencde stage off)."""
+    if g is None:
+        return None
+    ui: UIGenCDE = {
+        "gencdeId": g.gencde_id,
+        "preferredName": g.preferred_name,
+        "title": g.title,
+        "definition": g.definition,
+        "questionText": g.question_text,
+        "dataType": g.data_type,
+        "permissibleValues": [{"code": o.code, "label": o.label} for o in g.permissible_values],
+        "aliases": list(g.aliases),
+        "sourceVariables": list(g.source_variables),
+        "sourceCohorts": list(g.source_cohorts),
+        "relatedCdes": list(g.related_cdes),
+        "valueCoverage": g.value_coverage,
+        "uncoveredLabels": list(g.uncovered_labels),
+        "confidence": g.confidence,
+        "needsReview": g.needs_review,
+        "rationale": g.rationale,
+        "generatedBy": g.generated_by,
+    }
+    if g.units:
+        ui["units"] = g.units
+    if g.minimum_value is not None:
+        ui["minimum"] = g.minimum_value
+    if g.maximum_value is not None:
+        ui["maximum"] = g.maximum_value
+    return ui
+
+
 def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
     """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
     return {
@@ -251,6 +294,7 @@ def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
         "route": r.route,
         "cde": {"id": r.cde_id, "externalId": r.cde_external_id or ""} if r.cde_id else None,
         "idealCde": r.ideal_cde,
+        "gencde": _gencde_to_ui(r.gencde),
         "cosines": {"top1": r.top1_cos, "chosen": r.chosen_cos},
         "coverageGap": r.coverage_gap,
         "floored": r.floored,
@@ -317,6 +361,7 @@ def build_ui_result(
             "ideal": len(leanb_result.ideal_prompts),
             "split": len(leanb_result.split_prompts),
             "groupAssign": len(leanb_result.group_assign_prompts),
+            "gencde": len(leanb_result.gencde_prompts),
             "specgen": len(leanb_result.specgen_prompts),
         },
         "atlas": atlas_pts,
@@ -371,11 +416,13 @@ def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list
 # ── stage execution strategies (sync inline / Batch API) ──────────────────────────────────
 
 
-def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
+def _sync_stage(phase: str, progress: ProgressFn, client: Any, stopping: StoppingFn | None = None) -> StageFn:
     """A stage callback that runs each prompt inline via the Anthropic client, reporting per-item progress."""
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
+            return {}
+        if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (no new cost)
             return {}
         n = len(prompts)
         progress(phase, 0, n)
@@ -389,16 +436,50 @@ def _sync_stage(phase: str, progress: ProgressFn, client: Any) -> StageFn:
     return stage
 
 
-def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api_key: str | None = None) -> StageFn:
+def specgen_stage_fn(client: Any) -> StageFn:
+    """A minimal, progress-free synchronous stage callback for one-off recode regeneration.
+
+    Runs each ``PromptRecord`` through ``client.complete`` exactly like :func:`_sync_stage` (same schema
+    preamble + token cap) but without the per-item progress reporting — used by the targeted GenCDE
+    spec-regen endpoint, which runs a handful of prompts inline rather than a whole staged run.
+    """
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for rec in prompts:
+            system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
+            out[rec.id] = client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
+        return out
+
+    return stage
+
+
+def _batch_stage(
+    phase: str,
+    progress: ProgressFn,
+    work_dir: Path,
+    tag: str,
+    api_key: str | None = None,
+    stopping: StoppingFn | None = None,
+) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
     Uses ``resume_and_wait`` (cache-aware): an existing ``responses_<tag>.jsonl`` is reused as-is and only
     missing ids are (re)submitted — so a re-run over a frozen work_dir is a byte-identical, $0 replay, and an
     interrupted batch resumes instead of re-paying. ``api_key`` (optional) is the per-request BYOK key.
+
+    Cancellation: ``resume_and_wait`` blocks polling the Batch API until the batch ends, so a naive call would
+    make a user's Stop wait out the whole batch. Instead we run it on a daemon thread and call ``progress`` on
+    a short interval — ``progress`` raises (the runner's cancellation signal) when Stop was pressed, aborting
+    within ``_BATCH_POLL_SECS`` instead of minutes. The abandoned thread finishes its poll and exits on its
+    own; the already-submitted batch still completes server-side (it can't be un-submitted), but we stop
+    consuming it and NO downstream stage is submitted after the Stop — which is where the cost is.
     """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
+            return {}
+        if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (never submit)
             return {}
         from ddharmon.harmonization import write_prompts_jsonl
         from ddharmon.llm.batch import resume_and_wait
@@ -409,7 +490,22 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
         responses_path = work_dir / f"responses_{tag}.jsonl"
         write_prompts_jsonl(prompts, prompts_path)
-        resume_and_wait(prompts_path, responses_path, api_key=api_key)
+        # Run the blocking Batch API wait off-thread so we can honor a mid-poll Stop (see docstring).
+        holder: dict[str, BaseException] = {}
+
+        def _wait() -> None:
+            try:
+                resume_and_wait(prompts_path, responses_path, api_key=api_key)
+            except BaseException as exc:  # noqa: BLE001 — captured and re-raised on the calling thread
+                holder["exc"] = exc
+
+        worker = threading.Thread(target=_wait, name=f"ddharmon-batch-{tag}", daemon=True)
+        worker.start()
+        while worker.is_alive():
+            worker.join(timeout=_BATCH_POLL_SECS)
+            progress(phase, 0, n)  # heartbeat + cancellation checkpoint (raises on Stop -> abort the poll)
+        if "exc" in holder:
+            raise holder["exc"]
         out: dict[str, Any] = {}
         with open(responses_path) as f:
             for line in f:
@@ -459,6 +555,7 @@ def run_pipeline(
     provider: Any | None = None,
     stage_overrides: dict[str, StageFn] | None = None,
     api_key: str | None = None,
+    stopping: StoppingFn | None = None,
     substrate_path: str | Path | None = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
@@ -585,26 +682,40 @@ def run_pipeline(
 
         client = build_llm_client(kwargs.get("model_tag"), api_key)
         stages = {
-            "generate": _sync_stage("generating", progress, client),
-            "split": _sync_stage("splitting", progress, client),
-            "classify": _sync_stage("assigning", progress, client),
-            "specgen": _sync_stage("specs", progress, client),
+            "generate": _sync_stage("generating", progress, client, stopping),
+            "split": _sync_stage("splitting", progress, client, stopping),
+            "classify": _sync_stage("assigning", progress, client, stopping),
+            "gencde": _sync_stage("gencde", progress, client, stopping),
+            "specgen": _sync_stage("specs", progress, client, stopping),
         }
     else:  # batch (default)
         stages = {
-            "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key),
-            "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key),
-            "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key),
-            "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key),
+            "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key, stopping=stopping),
+            "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key, stopping=stopping),
+            "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key, stopping=stopping),
+            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", api_key=api_key, stopping=stopping),
+            "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key, stopping=stopping),
         }
 
     gen_specs = config.get("gen_transform_specs", True)
+    # GenCDE synthesis for novel concepts — ON by default (a value-add verifying pass like transform specs);
+    # gate off with gen_gencde=false. Runs after merge, before specgen; batch stage caches to
+    # responses_gencde.jsonl (its own content-addressed tag, so it re-runs $0 with the other stages cached).
+    gen_gencde = config.get("gen_gencde", True)
+    # GenCDE transform specs (M12): generate C1 member->GenCDE recodes for novel records so the tail carries
+    # transform specs like the adopt/refine path. Needs the gencde stage (a target) AND the specgen stage (the
+    # recode LLM). Guarded on the core signature so a core pinned before M12 simply skips the flag rather than
+    # erroring on an unexpected kwarg — the dev channel swaps core versions, so the adapter must not assume it.
+    gen_gencde_specs = config.get("gen_gencde_specs", True) and gen_gencde and gen_specs
+    if gen_gencde_specs and "gencde_specgen" in inspect.signature(harmonize_leanb).parameters:
+        kwargs["gencde_specgen"] = True
     progress("clustering", 0, 0)  # clustering + retrieval happen inside harmonize_leanb before the first callback
     result = harmonize_leanb(
         embedded,
         generate=stages.get("generate"),
         split=stages.get("split"),
         classify=stages.get("classify"),
+        gencde=stages.get("gencde") if gen_gencde else None,
         specgen=stages.get("specgen") if gen_specs else None,
         **kwargs,
     )
@@ -612,3 +723,158 @@ def run_pipeline(
     return build_ui_result(
         result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index, field_index=field_index
     )
+
+
+# ── targeted GenCDE recode regeneration (refine → regen, Part 3) ─────────────────────────────
+#
+# When a reviewer refines a novel record's GenCDE and changes its value domain, the member->GenCDE recodes
+# (produced by the M12 gencde_specgen pass) go stale. This regenerates JUST those recodes for the one edited
+# record, off the SAME core seams the run uses (``prepare_gencde_specgen`` + ``assemble_gencde_specgen``) — no
+# re-embedding, no substrate: the source value sets come from a cheap reload of the run's retained source
+# dictionaries (``load_dictionary``, no embedding), which is all ``build_field_lookup`` needs.
+
+
+def _reload_source_dicts(dict_specs: list[dict[str, Any]]) -> list[Any]:
+    """Reload the run's source dictionaries (NO embedding) as ``{dictionary: DataDictionary}`` shims.
+
+    ``prepare_gencde_specgen`` only reaches ``ed.dictionary`` (cohort_name / name / fields) via
+    ``build_field_lookup`` to read each member's source value set — it never touches embeddings — so a plain
+    ``load_dictionary`` reload wrapped in a namespace is sufficient and avoids loading the embedding model.
+    """
+    from types import SimpleNamespace
+
+    from ddharmon.ingestion import load_dictionary
+
+    out: list[Any] = []
+    for s in dict_specs:
+        dd = load_dictionary(s["path"], cohort_name=s["cohort_name"], **s.get("column_roles", {}))
+        out.append(SimpleNamespace(dictionary=dd))
+    return out
+
+
+def _core_gencde_from_ui(g: Any) -> Any:
+    """Build a core ``GenCDE`` from a (possibly reviewer-edited) ``UIGenCDE`` dict — the regen target."""
+    from ddharmon.harmonization.models import GenCDE
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    pv: list[Any] = []
+    for o in g.get("permissibleValues") or []:
+        kw: dict[str, Any] = {"code": str(o.get("code", "")), "label": str(o.get("label", ""))}
+        if o.get("order") is not None:
+            kw["order"] = o["order"]
+        pv.append(ResponseOption(**kw))
+    return GenCDE(
+        gencde_id=g["gencdeId"],
+        preferred_name=g.get("preferredName", ""),
+        title=g.get("title", ""),
+        definition=g.get("definition", ""),
+        question_text=g.get("questionText", ""),
+        data_type=g.get("dataType", ""),
+        permissible_values=pv,
+        units=g.get("units"),
+        minimum_value=g.get("minimum"),
+        maximum_value=g.get("maximum"),
+        source_variables=list(g.get("sourceVariables") or []),
+        source_cohorts=list(g.get("sourceCohorts") or []),
+    )
+
+
+def _rebuild_regen_record(rec_ui: UIRecord) -> Any:
+    """Reconstruct the minimal ``LeanBRecord`` the regen seams need from a stored ``UIRecord`` dict.
+
+    Only the fields ``prepare_gencde_specgen`` / ``assemble_gencde_specgen`` read are rebuilt: the record key
+    (group/cluster id), members, cohorts, the edited GenCDE, and a WIDE_TO_LONG guard transform when the
+    stored record has one (so ``prepare`` still short-circuits — a wide->long record is one structural spec,
+    not per-column recodes). The stale categorical member->GenCDE recodes are deliberately NOT carried: the
+    assemble pass appends the fresh ones, and the caller re-merges the non-stale UI transforms around them.
+    """
+    from ddharmon.harmonization.models import LeanBRecord, TransformKind, TransformSpec
+
+    g = rec_ui.get("gencde")
+    gencde = _core_gencde_from_ui(g) if g else None
+    gencde_id = g.get("gencdeId", "") if g else ""
+    guard = [
+        TransformSpec(
+            source_variable=t.get("sourceVariable", ""),
+            target_cde_id=t.get("targetCdeId", ""),
+            kind=TransformKind.WIDE_TO_LONG,
+        )
+        for t in rec_ui.get("transforms", [])
+        if t.get("targetCdeId") == gencde_id and t.get("kind") == "wide_to_long"
+    ]
+    return LeanBRecord(
+        cluster_id=rec_ui.get("clusterId") or rec_ui.get("id") or "",
+        group_id=rec_ui.get("groupId") or "",
+        verdict=rec_ui.get("verdict") or "novel",
+        route=rec_ui.get("route") or "gencde_residual",
+        concept=rec_ui.get("concept", ""),
+        member_variable_names=list(rec_ui.get("members") or []),
+        cohorts=list(rec_ui.get("cohorts") or []),
+        n_members=rec_ui.get("nMembers", 0),
+        gencde=gencde,
+        transforms=guard,
+    )
+
+
+def regenerate_gencde_specs(
+    rec_ui: UIRecord,
+    dict_specs: list[dict[str, Any]],
+    *,
+    model_tag: str | None,
+    stage_fn: StageFn,
+) -> UIRecord:
+    """Regenerate the member->GenCDE recodes for ONE edited novel record and return the updated ``UIRecord``.
+
+    ``rec_ui`` carries the (already reviewer-edited) GenCDE — its ``permissibleValues`` / units / bounds are
+    the fresh target. Runs the SAME core seams a full run uses, on a single-record list: build recode prompts
+    from the members' source value sets vs the edited domain (``prepare_gencde_specgen``), run them via the
+    injected ``stage_fn`` (the caller supplies a BYOK client), and attach the fresh specs
+    (``assemble_gencde_specgen``). Arithmetic/derived recodes inherit the core's review policy — nothing is
+    auto-approved here. The stale categorical member->GenCDE recodes are replaced; any non-GenCDE-target
+    transforms on the record are preserved untouched.
+    """
+    from ddharmon.harmonization import assemble_gencde_specgen, prepare_gencde_specgen
+    from ddharmon.harmonization.models import TransformKind
+
+    embedded = _reload_source_dicts(dict_specs)
+    member_index = build_member_index(embedded)
+    rec = _rebuild_regen_record(rec_ui)
+
+    kwargs = {"model_tag": model_tag} if model_tag else {}
+    g = rec_ui.get("gencde") or {}
+    if g.get("permissibleValues"):
+        # CATEGORICAL GenCDE: LLM member-code -> GenCDE-code recodes (C1), same as a full run.
+        prompts = prepare_gencde_specgen([rec], embedded, **kwargs)
+        assemble_gencde_specgen(prompts, stage_fn(prompts), [rec])
+    else:
+        # NUMERIC GenCDE: deterministic unit specs (N1) + LLM arithmetic residual upgrade (N2), mirroring
+        # harmonize_leanb's gencde stage. Guarded import so a core build predating N1/N2 returns a clean 409
+        # (RuntimeError) instead of dropping the record's numeric recodes with nothing to replace them.
+        try:
+            from ddharmon.harmonization import (
+                assemble_gencde_arith_specgen,
+                generate_gencde_unit_specs,
+                prepare_gencde_arith_specgen,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "this core build cannot regenerate numeric GenCDE recodes (needs the N1/N2 spec-gen seams)"
+            ) from exc
+        generate_gencde_unit_specs([rec], embedded)  # N1 (deterministic) — leaves needs_units residuals
+        prompts = prepare_gencde_arith_specgen([rec], embedded, **kwargs)  # N2 residual -> arith prompts
+        assemble_gencde_arith_specgen(prompts, stage_fn(prompts), [rec])
+
+    # Fresh recodes = everything assemble appended (the record started with only the wide->long guard).
+    fresh_ui = [_transform_to_ui(t) for t in rec.transforms if t.kind != TransformKind.WIDE_TO_LONG]
+    # Preserve the record's non-stale UI transforms (any non-GenCDE-target spec, plus a wide->long guard),
+    # dropping the stale member->GenCDE recodes we just regenerated.
+    gencde_id = g.get("gencdeId", "")
+    preserved = [
+        t
+        for t in rec_ui.get("transforms", [])
+        if not (t.get("targetCdeId") == gencde_id and t.get("kind") != "wide_to_long")
+    ]
+    updated: UIRecord = {**rec_ui}
+    updated["transforms"] = preserved + fresh_ui
+    updated["memberDetails"] = [_member_ui(m, member_index) for m in updated.get("members", [])]
+    return updated

@@ -73,7 +73,7 @@ def test_health_ok():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["contractVersion"] == "1"
+    assert body["contractVersion"] == "2"
     assert set(body["cde"]) == {"endorsed", "full"}
     assert "frontendBuilt" in body
 
@@ -181,7 +181,7 @@ def _canned_records() -> list[LeanBRecord]:
 
 def test_contract_mapping_record_and_summary():
     result = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
     assert result["mode"] == "batch"
     rec0 = result["records"][0]
     assert rec0["id"] == "c1#g0"
@@ -217,6 +217,50 @@ def test_contract_mapping_record_and_summary():
         "name": "age",
         "text": "age",
     }
+
+
+def test_gencde_maps_to_contract():
+    """A novel record's synthesized GenCDE surfaces on UIRecord.gencde (distinct from the free-text idealCde);
+    records without one map to null, and the prompt counts carry a gencde entry."""
+    from ddharmon.harmonization.models import GenCDE
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    novel = LeanBRecord(
+        cluster_id="c9",
+        group_id="c9#g0",
+        concept="Ever smoked",
+        verdict="novel",
+        route="gencde_residual",
+        cohorts=["AoU", "CLSA"],
+        member_variable_names=["AoU:smk", "CLSA:smoke"],
+        ideal_cde="Whether the participant ever smoked.",
+        gencde=GenCDE(
+            gencde_id="GENCDE:c9#g0",
+            preferred_name="ever_smoked",
+            definition="Whether the participant has ever smoked cigarettes.",
+            data_type="binary",
+            permissible_values=[ResponseOption(code="1", label="Yes"), ResponseOption(code="0", label="No")],
+            source_variables=["AoU:smk", "CLSA:smoke"],
+            source_cohorts=["AoU", "CLSA"],
+            value_coverage=1.0,
+            confidence=0.9,
+            needs_review=False,
+        ),
+    )
+    result = build_ui_result(LeanBResult(records=[novel]), mode="batch", phases=["loading"])
+    rec = result["records"][0]
+    assert rec["idealCde"].startswith("Whether")  # the free-text anchor is untouched
+    g = rec["gencde"]
+    assert g is not None
+    assert g["gencdeId"] == "GENCDE:c9#g0"
+    assert g["preferredName"] == "ever_smoked"
+    assert g["dataType"] == "binary"
+    assert g["permissibleValues"] == [{"code": "1", "label": "Yes"}, {"code": "0", "label": "No"}]
+    assert g["valueCoverage"] == 1.0 and g["needsReview"] is False
+    assert "gencde" in result["prompts"]
+    # a record without a synthesized GenCDE -> null
+    plain = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
+    assert plain["records"][0]["gencde"] is None
 
 
 def test_member_details_enriched_from_index():
@@ -494,7 +538,7 @@ def test_transform_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
     assert tsv.status_code == 200
     rows = list(csv.reader(io.StringIO(tsv.text), delimiter="\t"))
     header = rows[0]
-    assert header[-1] == "transformDecisions"
+    assert header[-2] == "transformDecisions" and header[-1] == "gencdeDecision"  # two trailing verdict cols
     ti = header.index("transformDecisions")
     row = next(r for r in rows[1:] if r[0] == "c1#g0")
     tj = json.loads(row[ti])
@@ -505,9 +549,331 @@ def test_transform_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
     dec_csv = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "decisions_csv"})
     drows = list(csv.reader(io.StringIO(dec_csv.text)))
     dheader = drows[0]
-    assert dheader[-1] == "transformDecisions"
+    assert dheader[-2] == "transformDecisions" and dheader[-1] == "gencdeDecision"
     drow = next(r for r in drows[1:] if r[0] == "c1#g0")
     assert json.loads(drow[dheader.index("transformDecisions")])["CohortB:age_yrs"]["decision"] == "refine"
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
+
+
+def test_gencde_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
+    """The GenCDE axis is a THIRD independent verdict — the reviewer's approve/refine/reject on the synthesized
+    GenCDE itself, recorded once per record under ``decisions[rec]["gencde"]`` and serialized into the trailing
+    ``gencdeDecision`` export column. It needs no ``sourceVariable`` and coexists with the match + transform axes."""
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=_CANNED_RESULT)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+    cfg = {
+        "dictionaries": [{"filename": "cohortA.csv", "cohortName": "CohortA", "columnRoles": {"variable_name": "var"}}],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    # match + transform + gencde verdicts on the same record, all on independent axes
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict", json={"recordId": "c1#g0", "decision": "approve"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict",
+            json={"recordId": "c1#g0", "decision": "reject", "axis": "gencde", "note": "wrong concept"},
+        ).status_code
+        == 200
+    )
+    # gencde axis takes no sourceVariable, and an unknown axis is rejected
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict", json={"recordId": "c1#g0", "decision": "approve", "axis": "bogus"}
+        ).status_code
+        == 400
+    )
+
+    # persisted under decisions[rec]["gencde"], coexisting with the untouched match verdict
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()
+    assert snap["decisions"]["c1#g0"]["gencde"] == {"decision": "reject", "note": "wrong concept"}
+    assert snap["decisions"]["c1#g0"]["decision"] == "approve"  # match axis untouched
+
+    # both exports carry the GenCDE verdict in the trailing gencdeDecision column
+    for fmt, delim in (("eitl_tsv", "\t"), ("decisions_csv", ",")):
+        exp = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": fmt})
+        assert exp.status_code == 200
+        erows = list(csv.reader(io.StringIO(exp.text), delimiter=delim))
+        eheader = erows[0]
+        assert eheader[-1] == "gencdeDecision"
+        erow = next(r for r in erows[1:] if r[0] == "c1#g0")
+        assert json.loads(erow[eheader.index("gencdeDecision")])["decision"] == "reject"
+
+    # a gencde REFINE may carry the reviewer's CORRECTED GenCDE fields in ``edited`` — those round-trip on the
+    # decision AND flow to the trailing gencdeDecision export column (the export already dumps the whole dict).
+    edited = {"definition": "corrected definition", "permissibleValues": [{"code": "1", "label": "Yes"}], "units": "yr"}
+    assert (
+        client.post(
+            f"/api/harmonize/jobs/{job_id}/verdict",
+            json={"recordId": "c1#g0", "decision": "refine", "axis": "gencde", "note": "fixed", "edited": edited},
+        ).status_code
+        == 200
+    )
+    snap2 = client.get(f"/api/harmonize/result/{job_id}").json()
+    gd = snap2["decisions"]["c1#g0"]["gencde"]
+    assert gd["decision"] == "refine" and gd["note"] == "fixed" and gd["edited"] == edited
+    tsv2 = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "eitl_tsv"})
+    trows = list(csv.reader(io.StringIO(tsv2.text), delimiter="\t"))
+    theader = trows[0]
+    trow = next(r for r in trows[1:] if r[0] == "c1#g0")
+    exported = json.loads(trow[theader.index("gencdeDecision")])
+    assert exported["decision"] == "refine" and exported["edited"]["definition"] == "corrected definition"
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
+
+
+def test_gencde_recode_regeneration_replaces_stale_specs_and_byok_not_persisted(monkeypatch, tmp_path):
+    """Refine → regen: the targeted endpoint re-maps a record's member→GenCDE recodes against the corrected
+    value domain (fresh transforms REPLACE the stale one), reloading the run's retained source dictionary for
+    the source value set. BYOK: the key builds the client for this request only and is NEVER persisted."""
+    from ddharmon.harmonization.leanb import LeanBResult
+    from ddharmon.harmonization.models import GenCDE, LeanBRecord, TransformKind, TransformSpec
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    from backend.engine.adapter import build_ui_result
+
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    # A novel record with a categorical GenCDE and a STALE member→GenCDE recode (only 1 of 2 source codes).
+    novel = LeanBRecord(
+        cluster_id="c9",
+        group_id="c9#g0",
+        concept="Ever smoked",
+        verdict="novel",
+        route="gencde_residual",
+        cohorts=["CohortA"],
+        member_variable_names=["CohortA:smk"],
+        n_members=1,
+        ideal_cde="Whether the participant ever smoked.",
+        gencde=GenCDE(
+            gencde_id="GENCDE:c9#g0",
+            preferred_name="ever_smoked",
+            definition="Whether the participant has ever smoked.",
+            data_type="categorical",
+            permissible_values=[ResponseOption(code="1", label="Yes"), ResponseOption(code="0", label="No")],
+            source_variables=["CohortA:smk"],
+            source_cohorts=["CohortA"],
+            value_coverage=1.0,
+            confidence=0.9,
+        ),
+        transforms=[
+            TransformSpec(
+                source_variable="CohortA:smk",
+                target_cde_id="GENCDE:c9#g0",
+                kind=TransformKind.CATEGORICAL,
+                coverage=0.5,
+                confidence=0.4,
+                code_map={"1": "1"},  # stale: source code "2" unmapped
+                needs_review=True,
+            )
+        ],
+    )
+    custom_result = build_ui_result(LeanBResult(records=[novel]), mode="batch", phases=["loading"])
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=custom_result)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    # The spec-gen LLM is stubbed at the SDK client: it returns a full recode (both source codes mapped).
+    seen_keys: list[str | None] = []
+
+    class StubClient:
+        def __init__(self, *a, **k):
+            seen_keys.append(k.get("api_key"))
+
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            return json.dumps({"code_map": {"1": "1", "2": "0"}, "confidence": 0.95, "notes": "remapped"})
+
+    monkeypatch.setattr("ddharmon.llm.anthropic_client.AnthropicClient", StubClient)
+
+    cfg = {
+        "dictionaries": [
+            {
+                "filename": "cohortA.csv",
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "var", "description": "desc", "value_encoding": "enc"},
+            }
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc,enc\nsmk,Ever smoked,1=Yes|2=No\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    # regenerate the recodes for the novel record, supplying the BYOK key. The record id "c9#g0" has a "#",
+    # so it must be URL-encoded in the path (mirrors the frontend's encodeURIComponent).
+    from urllib.parse import quote
+
+    reg = client.post(
+        f"/api/harmonize/jobs/{job_id}/records/{quote('c9#g0', safe='')}/regenerate-specs",
+        headers={"x-anthropic-key": "sk-ant-regen-secret"},
+    )
+    assert reg.status_code == 200, reg.text
+    transforms = reg.json()["record"]["transforms"]
+    # exactly one GenCDE-target recode, now covering BOTH source codes (the stale partial one is gone)
+    gencde_tx = [t for t in transforms if t["targetCdeId"] == "GENCDE:c9#g0"]
+    assert len(gencde_tx) == 1
+    assert gencde_tx[0]["kind"] == "categorical"
+    assert gencde_tx[0]["codeMap"] == {"1": "1", "2": "0"}
+    assert gencde_tx[0]["coverage"] == 1.0  # was 0.5
+
+    # the fresh transforms are written back onto the job's result blob
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()
+    rec = next(r for r in snap["result"]["records"] if r["id"] == "c9#g0")
+    assert rec["transforms"][0]["codeMap"] == {"1": "1", "2": "0"}
+
+    # BYOK invariant: the key reached the client constructor but is NOWHERE in the persisted job.
+    assert "sk-ant-regen-secret" in (seen_keys or [None])  # client built with the key
+    assert "sk-ant-regen-secret" not in json.dumps(snap)
+    persisted = next(j for j in client.get("/api/harmonize/jobs").json() if j["jobId"] == job_id)
+    assert "sk-ant-regen-secret" not in json.dumps(persisted)
+
+    # a record with no GenCDE / an unknown record → 409 / 404 (never a crash)
+    assert client.post(f"/api/harmonize/jobs/{job_id}/records/nope/regenerate-specs").status_code == 404
+
+    assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
+
+
+def test_gencde_recode_regeneration_numeric_runs_n1_n2(monkeypatch, tmp_path):
+    """Refine → regen for a NUMERIC GenCDE (no permissible_values): the endpoint runs the deterministic N1
+    unit pass + the N2 arithmetic residual upgrade (an LLM formula), replacing the stale numeric recode with
+    a fresh ARITHMETIC spec that always routes to review."""
+    from ddharmon.harmonization.leanb import LeanBResult
+    from ddharmon.harmonization.models import GenCDE, LeanBRecord, TransformKind, TransformSpec
+
+    from backend.engine.adapter import build_ui_result
+
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    # A novel record with a NUMERIC GenCDE and a STALE numeric recode targeting it.
+    novel = LeanBRecord(
+        cluster_id="c9",
+        group_id="c9#g0",
+        concept="Age",
+        verdict="novel",
+        route="gencde_residual",
+        cohorts=["CohortA"],
+        member_variable_names=["CohortA:agemo"],
+        n_members=1,
+        gencde=GenCDE(
+            gencde_id="GENCDE:c9#g0",
+            preferred_name="age_years",
+            definition="Participant age in years.",
+            data_type="numeric",
+            permissible_values=[],  # numeric -> the N1/N2 path, not a categorical recode
+            source_variables=["CohortA:agemo"],
+            source_cohorts=["CohortA"],
+        ),
+        transforms=[
+            TransformSpec(
+                source_variable="CohortA:agemo",
+                target_cde_id="GENCDE:c9#g0",
+                kind=TransformKind.ARITHMETIC,
+                formula="source * 999",  # stale
+                inputs=["source"],
+                needs_review=True,
+            )
+        ],
+    )
+    custom_result = build_ui_result(LeanBResult(records=[novel]), mode="batch", phases=["loading"])
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, *, provider=None, stage_overrides=None, api_key=None):
+        store.update(job_id, status="complete", phase="complete", result=custom_result)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    # The N2 arith LLM is stubbed at the SDK client: it proposes a fixed months->years formula.
+    seen_keys: list[str | None] = []
+
+    class StubClient:
+        def __init__(self, *a, **k):
+            seen_keys.append(k.get("api_key"))
+
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            return json.dumps({"formula": "source / 12", "confidence": 0.9, "notes": "months to years"})
+
+    monkeypatch.setattr("ddharmon.llm.anthropic_client.AnthropicClient", StubClient)
+
+    cfg = {
+        "dictionaries": [
+            {
+                "filename": "cohortA.csv",
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "var", "description": "desc"},
+            }
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc\nagemo,Age in months\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+    for _ in range(50):
+        if client.get(f"/api/harmonize/result/{job_id}").json()["status"] == "complete":
+            break
+        time.sleep(0.02)
+
+    from urllib.parse import quote
+
+    reg = client.post(
+        f"/api/harmonize/jobs/{job_id}/records/{quote('c9#g0', safe='')}/regenerate-specs",
+        headers={"x-anthropic-key": "sk-ant-numeric-secret"},
+    )
+    assert reg.status_code == 200, reg.text
+    gencde_tx = [t for t in reg.json()["record"]["transforms"] if t["targetCdeId"] == "GENCDE:c9#g0"]
+    assert len(gencde_tx) == 1
+    assert gencde_tx[0]["kind"] == "arithmetic"  # N1 residual upgraded by the N2 formula
+    assert gencde_tx[0]["formula"] == "source / 12"  # the stale "source * 999" is gone
+    assert gencde_tx[0]["needsReview"] is True  # LLM-proposed arithmetic always routes to review
+
+    # BYOK invariant: the key built the client but is nowhere in the persisted job.
+    snap = client.get(f"/api/harmonize/result/{job_id}").json()
+    assert "sk-ant-numeric-secret" in (seen_keys or [None])
+    assert "sk-ant-numeric-secret" not in json.dumps(snap)
 
     assert client.delete(f"/api/harmonize/jobs/{job_id}").status_code == 204
 
@@ -684,7 +1050,7 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
 
     result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
 
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
     assert result["mode"] == "batch"
     assert result["phases"][0] == "loading"
     assert len(result["records"]) >= 1
@@ -851,7 +1217,7 @@ def test_run_pipeline_real_clustering_smoke(tmp_path):
     # No stage_overrides -> the adapter takes the real preview branch: real cluster + retrieve, no LLM.
     result = run_pipeline(dict_specs, cde_spec, config, provider=_StructuredStubProvider())
 
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
     assert result["mode"] == "preview"
     assert result["phases"] and "clustering" in result["phases"]
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1  # 40 cohort fields projected
@@ -905,7 +1271,7 @@ def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_
         provider=StubProvider(),
         stage_overrides=overrides,
     )
-    assert result["contractVersion"] == "1"
+    assert result["contractVersion"] == "2"
 
 
 def test_seed_demos_prepopulates_a_complete_run():
@@ -1008,7 +1374,9 @@ def test_runner_captures_failing_phase(monkeypatch):
     and that stage flows into to_dict(), which feeds the 'Report this problem' link."""
     from backend import runner as runner_module
 
-    def boom(dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None):
+    def boom(
+        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+    ):
         progress("assigning", 3, 10)  # got partway before dying
         raise RuntimeError("assign stage exploded")
 
@@ -1022,6 +1390,169 @@ def test_runner_captures_failing_phase(monkeypatch):
     assert job.failed_phase == "assigning"  # the stage it was in, preserved before the "error" overwrite
     assert "exploded" in (job.error_message or "")
     assert job.to_dict()["failedPhase"] == "assigning"
+
+
+# ── run cancellation (Stop) ──────────────────────────────────────────────────
+
+
+def test_request_cancel_sets_mode_only_on_live_nonterminal():
+    """request_cancel records a stop MODE on a live run (default discard); no-op for unknown/terminal. The
+    raw mode never leaks to the client — only a derived ``stopping`` bool does."""
+    s = JobStore()
+    s.create("j1", "R", {"run_mode": "batch"})
+    assert s.request_cancel("j1") is True  # default mode
+    assert s.cancel_mode("j1") == "discard" and s.is_cancel_requested("j1") is True
+    assert s.get("j1").to_dict()["stopping"] is True  # derived flag surfaces while non-terminal
+    assert s.request_cancel("j1", "keep") is True  # last mode wins (escalate/rewrite)
+    assert s.cancel_mode("j1") == "keep"
+    assert s.request_cancel("j1", "bogus") is True and s.cancel_mode("j1") == "discard"  # invalid -> discard
+    assert s.request_cancel("nope") is False  # unknown job
+    s.update("j1", status="complete", phase="complete")
+    assert s.request_cancel("j1") is False  # already terminal -> nothing to stop
+    d = s.get("j1").to_dict()
+    assert "cancel_mode" not in d and "cancelMode" not in d  # raw mode never serialized
+    assert d["stopping"] is False  # terminal -> not stopping
+
+
+def test_runner_cancellation_marks_cancelled(monkeypatch):
+    """A stop requested mid-run makes the runner abort at the NEXT progress checkpoint and mark the job
+    ``cancelled`` (terminal, not ``error``): no error_message, and no stage past the checkpoint runs."""
+    from backend import runner as runner_module
+
+    reached: list[str] = []
+
+    def pipeline(
+        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+    ):
+        progress("embedding", 1, 3)  # first checkpoint: not yet cancelled -> proceeds
+        reached.append("embedding")
+        progress("assigning", 0, 10)  # Stop was pressed by now -> this checkpoint raises RunCancelledError
+        reached.append("assigning")  # must NOT be reached
+        return {"records": []}
+
+    s = JobStore()
+    s.create("jc", "Cancelling run", {"run_mode": "batch"})
+
+    # Simulate the user pressing Stop right after the first tick: flag the job once it enters "embedding".
+    real_update = s.update
+
+    def update_then_stop(job_id, **fields):
+        real_update(job_id, **fields)
+        if fields.get("phase") == "embedding":
+            s.request_cancel(job_id)
+
+    monkeypatch.setattr(s, "update", update_then_stop)
+    monkeypatch.setattr(runner_module, "run_pipeline", pipeline)
+    runner_module.run_harmonization(s, "jc", [], None, {"run_mode": "batch"})
+
+    job = s.get("jc")
+    assert job.status == "cancelled" and job.phase == "cancelled"
+    assert job.error_message is None  # a stop is not a failure
+    assert reached == ["embedding"]  # aborted before the assigning stage issued any work
+
+
+def test_cancel_endpoint():
+    """POST /jobs/{id}/cancel records the requested stop mode (default discard; ?mode=keep), is a no-op on a
+    terminal run, and 404s on an unknown run — mirroring the other job routes' ownership/visibility."""
+    app_module.store.create("live1", "Live", {"run_mode": "batch"})  # pending, ownerless -> visible, live
+    r = client.post("/api/harmonize/jobs/live1/cancel")  # default -> discard
+    assert r.status_code == 200 and r.json()["cancelled"] is True
+    assert app_module.store.cancel_mode("live1") == "discard"
+
+    app_module.store.create("live2", "Live2", {"run_mode": "batch"})
+    r_keep = client.post("/api/harmonize/jobs/live2/cancel", params={"mode": "keep"})
+    assert r_keep.status_code == 200 and r_keep.json()["cancelled"] is True
+    assert app_module.store.cancel_mode("live2") == "keep"
+
+    app_module.store.create("done1", "Done", {})
+    app_module.store.update("done1", status="complete", phase="complete")
+    r2 = client.post("/api/harmonize/jobs/done1/cancel")
+    assert r2.status_code == 200 and r2.json()["cancelled"] is False  # terminal -> nothing to stop
+
+    assert client.post("/api/harmonize/jobs/does-not-exist/cancel").status_code == 404
+
+
+def test_runner_keep_stop_preserves_partial_result(monkeypatch):
+    """A 'keep' stop lets the pipeline return its partial result; the runner marks the run cancelled WITH that
+    result (not discarded), and doesn't raise — the inverse of the discard path."""
+    from backend import runner as runner_module
+
+    partial = {"records": [{"id": "r1"}, {"id": "r2"}]}
+
+    def pipeline(
+        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+    ):
+        progress("generating", 0, 1)  # keep mode -> progress does NOT raise; the stage finishes
+        assert stopping() == "keep"  # the runner threaded the live stop mode through
+        return partial  # engine finished the in-flight stage, skipped the rest -> partial result
+
+    s = JobStore()
+    s.create("jk", "Keep run", {"run_mode": "batch"})
+    s.request_cancel("jk", "keep")
+    monkeypatch.setattr(runner_module, "run_pipeline", pipeline)
+    runner_module.run_harmonization(s, "jk", [], None, {"run_mode": "batch"})
+
+    job = s.get("jk")
+    assert job.status == "cancelled" and job.phase == "cancelled"
+    assert job.result == partial  # partial result KEPT
+    assert job.error_message is None
+
+
+def test_batch_stage_skips_not_yet_started_stage_on_keep(monkeypatch, tmp_path):
+    """A 'keep' stop already in effect when a later stage begins skips that stage entirely — it never submits
+    a batch — so no downstream cost is incurred after the Stop."""
+    from types import SimpleNamespace
+
+    from backend.engine import adapter as adapter_mod
+
+    submitted = {"resume": False}
+
+    def fake_resume_and_wait(prompts_path, output_path, *, api_key=None, **kw):
+        submitted["resume"] = True  # must NOT be reached
+
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", fake_resume_and_wait)
+    monkeypatch.setattr("ddharmon.harmonization.write_prompts_jsonl", lambda prompts, path: None)
+
+    stage = adapter_mod._batch_stage("assigning", lambda *a, **k: None, tmp_path, "assign", stopping=lambda: "keep")
+    assert stage([SimpleNamespace(id="p1")]) == {}  # skipped -> empty responses
+    assert submitted["resume"] is False  # the batch was never submitted
+
+
+def test_batch_stage_aborts_mid_poll_on_cancel(monkeypatch, tmp_path):
+    """A Stop during a Batch-API poll aborts within a heartbeat instead of waiting out resume_and_wait.
+
+    The blocking batch wait runs off-thread; the stage calls progress() on a short interval, and progress
+    (the runner's cancellation signal) raises RunCancelledError when Stop was pressed. Regression guard for
+    the batch-mode Stop being deferred until the whole batch returned.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from backend.engine import adapter as adapter_mod
+    from backend.runner import RunCancelledError
+
+    monkeypatch.setattr(adapter_mod, "_BATCH_POLL_SECS", 0.02)
+    release = threading.Event()  # gates the fake batch so it's still "polling" when we cancel
+
+    def fake_resume_and_wait(prompts_path, output_path, *, api_key=None, **kw):
+        release.wait(timeout=5)  # block like a live batch poll until released in teardown
+
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", fake_resume_and_wait)
+    monkeypatch.setattr("ddharmon.harmonization.write_prompts_jsonl", lambda prompts, path: None)
+
+    calls = {"n": 0}
+
+    def progress(phase, completed=0, total=0):
+        calls["n"] += 1
+        if calls["n"] >= 2:  # Stop pressed: raise on the first heartbeat after the start tick
+            raise RunCancelledError
+
+    stage = adapter_mod._batch_stage("generating", progress, tmp_path, "generate")
+    try:
+        with pytest.raises(RunCancelledError):
+            stage([SimpleNamespace(id="p1")])  # non-empty so the stage actually runs the wait
+    finally:
+        release.set()  # let the abandoned daemon thread exit cleanly
 
 
 def test_failed_phase_persists_and_migrates(tmp_path):
