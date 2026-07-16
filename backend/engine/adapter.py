@@ -30,6 +30,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,9 @@ StageFn = Callable[[list[Any]], dict[str, Any]]
 # Same instruction the Batch API appends server-side, so inline (sync) output matches the schema.
 _SCHEMA_PREAMBLE = "\n\nRespond with ONLY valid JSON matching this schema (no markdown fences):\n"
 _SYNC_MAX_TOKENS = 1024
+# How often a batch stage re-checks for a Stop while the Batch API poll blocks (see _batch_stage). Small
+# enough that a user's Stop takes effect in seconds, not after the whole batch returns.
+_BATCH_POLL_SECS = 3.0
 
 
 def _noop_progress(phase: str, completed: int = 0, total: int = 0) -> None:
@@ -450,6 +454,13 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
     Uses ``resume_and_wait`` (cache-aware): an existing ``responses_<tag>.jsonl`` is reused as-is and only
     missing ids are (re)submitted — so a re-run over a frozen work_dir is a byte-identical, $0 replay, and an
     interrupted batch resumes instead of re-paying. ``api_key`` (optional) is the per-request BYOK key.
+
+    Cancellation: ``resume_and_wait`` blocks polling the Batch API until the batch ends, so a naive call would
+    make a user's Stop wait out the whole batch. Instead we run it on a daemon thread and call ``progress`` on
+    a short interval — ``progress`` raises (the runner's cancellation signal) when Stop was pressed, aborting
+    within ``_BATCH_POLL_SECS`` instead of minutes. The abandoned thread finishes its poll and exits on its
+    own; the already-submitted batch still completes server-side (it can't be un-submitted), but we stop
+    consuming it and NO downstream stage is submitted after the Stop — which is where the cost is.
     """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
@@ -464,7 +475,22 @@ def _batch_stage(phase: str, progress: ProgressFn, work_dir: Path, tag: str, api
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
         responses_path = work_dir / f"responses_{tag}.jsonl"
         write_prompts_jsonl(prompts, prompts_path)
-        resume_and_wait(prompts_path, responses_path, api_key=api_key)
+        # Run the blocking Batch API wait off-thread so we can honor a mid-poll Stop (see docstring).
+        holder: dict[str, BaseException] = {}
+
+        def _wait() -> None:
+            try:
+                resume_and_wait(prompts_path, responses_path, api_key=api_key)
+            except BaseException as exc:  # noqa: BLE001 — captured and re-raised on the calling thread
+                holder["exc"] = exc
+
+        worker = threading.Thread(target=_wait, name=f"ddharmon-batch-{tag}", daemon=True)
+        worker.start()
+        while worker.is_alive():
+            worker.join(timeout=_BATCH_POLL_SECS)
+            progress(phase, 0, n)  # heartbeat + cancellation checkpoint (raises on Stop -> abort the poll)
+        if "exc" in holder:
+            raise holder["exc"]
         out: dict[str, Any] = {}
         with open(responses_path) as f:
             for line in f:

@@ -1458,6 +1458,43 @@ def test_cancel_endpoint():
     assert client.post("/api/harmonize/jobs/does-not-exist/cancel").status_code == 404
 
 
+def test_batch_stage_aborts_mid_poll_on_cancel(monkeypatch, tmp_path):
+    """A Stop during a Batch-API poll aborts within a heartbeat instead of waiting out resume_and_wait.
+
+    The blocking batch wait runs off-thread; the stage calls progress() on a short interval, and progress
+    (the runner's cancellation signal) raises RunCancelledError when Stop was pressed. Regression guard for
+    the batch-mode Stop being deferred until the whole batch returned.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from backend.engine import adapter as adapter_mod
+    from backend.runner import RunCancelledError
+
+    monkeypatch.setattr(adapter_mod, "_BATCH_POLL_SECS", 0.02)
+    release = threading.Event()  # gates the fake batch so it's still "polling" when we cancel
+
+    def fake_resume_and_wait(prompts_path, output_path, *, api_key=None, **kw):
+        release.wait(timeout=5)  # block like a live batch poll until released in teardown
+
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", fake_resume_and_wait)
+    monkeypatch.setattr("ddharmon.harmonization.write_prompts_jsonl", lambda prompts, path: None)
+
+    calls = {"n": 0}
+
+    def progress(phase, completed=0, total=0):
+        calls["n"] += 1
+        if calls["n"] >= 2:  # Stop pressed: raise on the first heartbeat after the start tick
+            raise RunCancelledError
+
+    stage = adapter_mod._batch_stage("generating", progress, tmp_path, "generate")
+    try:
+        with pytest.raises(RunCancelledError):
+            stage([SimpleNamespace(id="p1")])  # non-empty so the stage actually runs the wait
+    finally:
+        release.set()  # let the abandoned daemon thread exit cleanly
+
+
 def test_failed_phase_persists_and_migrates(tmp_path):
     """failed_phase round-trips through the DB (incl. the runs-list summary) and is ALTER-ed into an older
     DB that predates the column — the additive-migration guarantee (a bad migration breaks the live Runs list)."""
