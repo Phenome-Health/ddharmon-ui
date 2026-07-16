@@ -121,13 +121,15 @@ export async function rerunJob(jobId: string, apiKey?: string): Promise<{ jobId:
   return json(await fetch(`${BASE}/jobs/${jobId}/rerun`, { method: "POST", headers }));
 }
 
-export async function cancelJob(jobId: string): Promise<{ cancelled: boolean }> {
-  // Request a stop for an in-flight run. The backend flags the job so its worker aborts at the next stage
-  // checkpoint (-> status "cancelled"); the SSE stream then delivers that terminal state and closes. In
-  // static preview there's no backend — the caller (the stream hook) stops the client-side replay instead.
+export async function cancelJob(jobId: string, mode: "keep" | "discard" = "discard"): Promise<{ cancelled: boolean }> {
+  // Request a stop for an in-flight run. `mode` chooses what happens to work in flight: "discard" (default)
+  // aborts at the next checkpoint with no results; "keep" lets the current stage finish (delivering its
+  // partial result) and skips the rest. Either way the run ends "cancelled"; the SSE stream delivers that
+  // terminal state and closes. In static preview there's no backend — the caller (the stream hook) stops the
+  // client-side replay instead (mode is moot: a replay has no cost).
   if (IS_STATIC) return { cancelled: true };
   if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to stop a run.");
-  return json(await fetch(`${BASE}/jobs/${jobId}/cancel`, { method: "POST", headers: await authed() }));
+  return json(await fetch(`${BASE}/jobs/${jobId}/cancel?mode=${mode}`, { method: "POST", headers: await authed() }));
 }
 
 export async function generateAnalysisIdeas(

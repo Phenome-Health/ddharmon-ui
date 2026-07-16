@@ -29,7 +29,7 @@ import { cancelJob, deleteJob, listJobs } from "@/lib/api";
 import { useAuthState } from "@/auth";
 import { RerunAction } from "@/components/rerun-action";
 import { StopRunAction } from "@/components/stop-run-action";
-import type { JobSummary } from "@/types";
+import { stopCostSplit, type JobSummary } from "@/types";
 
 // Terminal statuses; anything else is an in-flight phase (data-driven — we don't enumerate phases).
 const TERMINAL = new Set(["complete", "error", "cancelled"]);
@@ -165,8 +165,13 @@ export default function JobsPage() {
                       {!TERMINAL.has(j.status) && !(j.config as { demo?: boolean })?.demo && (
                         <StopRunAction
                           displayName={j.displayName}
-                          onConfirm={async () => {
-                            await cancelJob(j.jobId);
+                          costNote={stopCostSplit(j.config, j.phase)}
+                          onKeep={async () => {
+                            await cancelJob(j.jobId, "keep");
+                            qc.invalidateQueries({ queryKey: ["jobs"] });
+                          }}
+                          onDiscard={async () => {
+                            await cancelJob(j.jobId, "discard");
                             qc.invalidateQueries({ queryKey: ["jobs"] });
                           }}
                         />

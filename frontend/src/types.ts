@@ -228,6 +228,10 @@ export interface JobResult {
   // backend "stage-event stream". Powers the run view's per-stage timeline + elapsed. Absent on DB-hydrated
   // historical runs (which fall back to total elapsed = updatedAt − createdAt).
   phaseStartedAt?: Record<string, number>;
+  // True once a Stop has been requested but the run hasn't reached its cancel checkpoint yet (backend-derived:
+  // cancel_mode set and status not terminal). Lets the run view show a "Stopping…" state. The raw keep/discard
+  // mode is never exposed.
+  stopping?: boolean;
 }
 
 export interface JobSummary extends Omit<JobResult, "result" | "analysisIdeas"> {
@@ -274,6 +278,10 @@ export interface RunConfig {
   retrievalFloor?: number;
   modelTag?: string; // the chosen model id (from the picker); routes provider selection in the engine
   provider?: string; // the chosen provider (informational; the engine derives routing from modelTag)
+  // Corpus size the New-Run form estimated, echoed back on the run's config so the Stop dialog can price a
+  // partial stop (run_config carries no dictionaries to re-count). Persisted snake_case as est_fields/est_cohorts.
+  estFields?: number;
+  estCohorts?: number;
 }
 
 export type ExportFormat = "eitl_tsv" | "records_json" | "decisions_csv" | "notebook_py" | "notebook_r";
@@ -433,6 +441,44 @@ export function estimateRunCostBreakdown(
     total: { low: mid * 0.6, mid, high: mid * 1.6, free: false },
     batchSavings: mode === "batch" ? mid : 0, // sync would cost ~2×, so batch saves ≈ mid
   };
+}
+
+// Fraction of a run's total LLM cost already committed by the time it is IN a given phase — i.e. what a
+// "keep" stop (finish the current stage, skip the rest) would still be billed. Local stages (loading/
+// embedding/clustering) are free; the LLM stages accrue in order (from STAGE_SHARES: gen-ideal ≈7%, then
+// split+assign ≈77% split across splitting→assigning, spec-gen ≈15%). Anything past the current stage is
+// avoided. Keys mirror the backend phase labels.
+const STOP_COMMITTED_BY_PHASE: Record<string, number> = {
+  loading: 0,
+  embedding: 0,
+  clustering: 0,
+  generating: 0.07, // gen-ideal done
+  splitting: 0.3, // partway through split+assign
+  assigning: 0.84, // split+assign essentially done
+  gencde: 0.85, // GenCDE synthesis (novels) — most cost committed
+  specs: 1, // transform spec-gen is the last paid stage
+  complete: 1,
+};
+
+export interface StopCostSplit {
+  committed: number; // ≈ USD already committed this run (billed even on a "keep" stop)
+  avoided: number; // ≈ USD a stop-now avoids (the skipped downstream stages)
+  total: number; // ≈ USD the full run would cost
+  hasEstimate: boolean; // false when the run carries no corpus size (older run / API caller) → show qualitative copy
+}
+
+// Price a mid-run stop for the Stop dialog: how much is already committed vs. avoided by stopping in `phase`.
+// Reads the corpus size the New-Run form persisted onto the run's config (est_fields/est_cohorts, snake_case)
+// and the run_mode. A preview run (or a run with no stored counts) yields total 0 / hasEstimate=false, so the
+// dialog falls back to qualitative wording rather than a bogus "$0".
+export function stopCostSplit(config: Record<string, unknown>, phase: string): StopCostSplit {
+  const estFields = typeof config.est_fields === "number" ? config.est_fields : 0;
+  const estCohorts = typeof config.est_cohorts === "number" ? config.est_cohorts : 0;
+  const runMode = (typeof config.run_mode === "string" ? config.run_mode : "batch") as RunMode;
+  const total = estFields > 0 ? estimateRunCost(estFields, estCohorts, runMode).mid : 0;
+  const frac = STOP_COMMITTED_BY_PHASE[phase] ?? 0.5; // unknown mid-run phase: assume ~half committed
+  const committed = total * frac;
+  return { committed, avoided: Math.max(0, total - committed), total, hasEstimate: estFields > 0 && total > 0 };
 }
 
 // Rough WALL-CLOCK estimate for a run — the time analog of estimateRunCost, and the SAME model used for

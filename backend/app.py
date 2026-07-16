@@ -290,6 +290,10 @@ async def start_batch(
         "cde_cohort": CDE_COHORT,
         "work_dir": str(work_dir),
         "cde_set": cde_set,
+        # Corpus size the New-Run form estimated (variables / cohorts). Display-only — persisted so the run
+        # view's Stop dialog can show a committed-vs-avoided cost estimate (run_config keeps no dictionaries).
+        "est_fields": int(cfg["estFields"]) if cfg.get("estFields") is not None else None,
+        "est_cohorts": int(cfg["estCohorts"]) if cfg.get("estCohorts") is not None else None,
     }
     # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
     # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from

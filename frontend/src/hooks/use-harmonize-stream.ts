@@ -151,10 +151,11 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
     };
   }, [jobId, enabled, instant]);
 
-  // Stop an in-progress run. Backend: ask the server to cancel — the SSE stream delivers the terminal
-  // "cancelled" state and closes. Static preview (no backend): stop the client-side replay timers and settle
-  // on a cancelled state locally. Safe to call when nothing is running (a no-op the UI just won't show).
-  const cancel = useCallback(async () => {
+  // Stop an in-progress run. `mode` is "discard" (hard abort, no results) or "keep" (finish the current stage
+  // → partial results, skip the rest). Backend: ask the server to cancel — the SSE stream delivers the terminal
+  // "cancelled" state and closes. Static preview (no backend): stop the client-side replay timers and settle on
+  // a cancelled state locally (mode is moot — a replay has no cost). Safe to call when nothing is running.
+  const cancel = useCallback(async (mode: "keep" | "discard" = "discard") => {
     if (IS_STATIC) {
       staticTimersRef.current.forEach(clearTimeout);
       staticTimersRef.current = [];
@@ -163,7 +164,7 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
       return;
     }
     try {
-      await cancelJob(jobId); // server flags the run; the SSE tick above flips it to cancelled and closes
+      await cancelJob(jobId, mode); // server flags the run; the SSE tick above flips it to cancelled and closes
     } catch {
       // request failed — leave the run as-is; the next stream tick reflects its true state
     }

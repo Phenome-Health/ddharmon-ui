@@ -219,6 +219,9 @@ export default function HomePage() {
         displayName: displayName || undefined,
         modelTag: model || undefined,
         provider,
+        // Corpus size for the run view's Stop-dialog cost estimate (run_config has no dictionaries to count).
+        estFields: totalFields,
+        estCohorts: dicts.length,
       };
       const { jobId } = await startHarmonize(
         dicts.map((d) => d.file),
