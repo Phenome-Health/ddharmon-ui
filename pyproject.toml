@@ -1,6 +1,6 @@
 [project]
 name = "ddharmon-ui"
-version = "1.0.0"
+version = "1.1.0"
 description = "Web GUI for the ddharmon data-dictionary harmonization pipeline (FastAPI + React/Vite/shadcn)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,9 +9,10 @@ dependencies = [
     # (sentence-transformers, BERTopic/UMAP/HDBSCAN, anthropic, …) — the pipeline
     # runner imports these directly, so the bare library is not enough.
     #
-    # ddharmon is PUBLIC on PyPI as of 1.0.0 — a plain version pin, no auth or git ref needed.
+    # ddharmon is PUBLIC on PyPI — a plain version pin, no auth or git ref needed. Pinned >=1.1.0:
+    # the UI's GenCDE surface (synthesis + transform-spec generation) needs the M12 core stages.
     # For local dev against a checkout instead, see README.md ("Develop against a local core").
-    "ddharmon[all]>=1.0.0",
+    "ddharmon[all]>=1.1.0",
 
     # Web layer (the only thing this repo adds on top of ddharmon).
     "fastapi>=0.115.0",
