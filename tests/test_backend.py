@@ -73,7 +73,7 @@ def test_health_ok():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["contractVersion"] == "2"
+    assert body["contractVersion"] == "3"
     assert set(body["cde"]) == {"endorsed", "full"}
     assert "frontendBuilt" in body
 
@@ -181,7 +181,7 @@ def _canned_records() -> list[LeanBRecord]:
 
 def test_contract_mapping_record_and_summary():
     result = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
-    assert result["contractVersion"] == "2"
+    assert result["contractVersion"] == "3"
     assert result["mode"] == "batch"
     rec0 = result["records"][0]
     assert rec0["id"] == "c1#g0"
@@ -1112,7 +1112,10 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
 
     result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
 
-    assert result["contractVersion"] == "2"
+    assert result["contractVersion"] == "3"
+    # v3 additive: every result carries a realized-cost block. Zero here (stage_overrides bypass the priced
+    # sync/batch stages); a real run populates it from captured token usage.
+    assert result["cost"] == {"actualUsd": 0.0, "tokens": {"input": 0, "output": 0}, "perStage": {}}
     assert result["mode"] == "batch"
     assert result["phases"][0] == "loading"
     assert len(result["records"]) >= 1
@@ -1279,7 +1282,7 @@ def test_run_pipeline_real_clustering_smoke(tmp_path):
     # No stage_overrides -> the adapter takes the real preview branch: real cluster + retrieve, no LLM.
     result = run_pipeline(dict_specs, cde_spec, config, provider=_StructuredStubProvider())
 
-    assert result["contractVersion"] == "2"
+    assert result["contractVersion"] == "3"
     assert result["mode"] == "preview"
     assert result["phases"] and "clustering" in result["phases"]
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1  # 40 cohort fields projected
@@ -1333,7 +1336,7 @@ def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_
         provider=StubProvider(),
         stage_overrides=overrides,
     )
-    assert result["contractVersion"] == "2"
+    assert result["contractVersion"] == "3"
 
 
 def test_seed_demos_prepopulates_a_complete_run():
@@ -1575,7 +1578,11 @@ def test_batch_stage_skips_not_yet_started_stage_on_keep(monkeypatch, tmp_path):
     monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", fake_resume_and_wait)
     monkeypatch.setattr("ddharmon.harmonization.write_prompts_jsonl", lambda prompts, path: None)
 
-    stage = adapter_mod._batch_stage("assigning", lambda *a, **k: None, tmp_path, "assign", stopping=lambda: "keep")
+    from ddharmon.llm.cost import CostLedger
+
+    stage = adapter_mod._batch_stage(
+        "assigning", lambda *a, **k: None, tmp_path, "assign", CostLedger(), stopping=lambda: "keep"
+    )
     assert stage([SimpleNamespace(id="p1")]) == {}  # skipped -> empty responses
     assert submitted["resume"] is False  # the batch was never submitted
 
@@ -1604,17 +1611,94 @@ def test_batch_stage_aborts_mid_poll_on_cancel(monkeypatch, tmp_path):
 
     calls = {"n": 0}
 
-    def progress(phase, completed=0, total=0):
+    def progress(phase, completed=0, total=0, cost=None):
         calls["n"] += 1
         if calls["n"] >= 2:  # Stop pressed: raise on the first heartbeat after the start tick
             raise RunCancelledError
 
-    stage = adapter_mod._batch_stage("generating", progress, tmp_path, "generate")
+    from ddharmon.llm.cost import CostLedger
+
+    stage = adapter_mod._batch_stage("generating", progress, tmp_path, "generate", CostLedger())
     try:
         with pytest.raises(RunCancelledError):
             stage([SimpleNamespace(id="p1")])  # non-empty so the stage actually runs the wait
     finally:
         release.set()  # let the abandoned daemon thread exit cleanly
+
+
+def test_sync_stage_runs_concurrently_and_aggregates_realized_cost():
+    """A sync stage fans its prompts across the pool, returns every response, and folds the clients' realized
+    token usage into the ledger (sync = full price) — surfacing the running total on the progress callback."""
+    from types import SimpleNamespace
+
+    from ddharmon.llm.cost import CostLedger, TokenUsage
+
+    from backend.engine import adapter as adapter_mod
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.usage_log: list = []
+
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            self.usage_log.append(TokenUsage("claude-sonnet-4-6", 1000, 500))  # 1000 in @ $3/M + 500 out @ $15/M
+            return {"echo": prompt}
+
+        def drain_usage(self):
+            log = self.usage_log
+            self.usage_log = []
+            return log
+
+    ledger = CostLedger()
+    seen_cost: list[float] = []
+
+    def progress(phase, completed=0, total=0, cost=None):
+        if cost is not None:
+            seen_cost.append(cost)
+
+    prompts = [SimpleNamespace(id=f"p{i}", system_prompt="sys", schema="{}", user_prompt=f"u{i}") for i in range(5)]
+    stage = adapter_mod._sync_stage("assigning", progress, _FakeClient(), ledger)
+    out = stage(prompts)
+
+    assert set(out) == {f"p{i}" for i in range(5)}  # every prompt answered despite concurrency
+    # 5 calls × (1000/1e6·$3 + 500/1e6·$15) = 5 × $0.0105 = $0.0525
+    assert abs(ledger.total_usd - 0.0525) < 1e-6
+    assert ledger.to_dict()["perStage"]["assigning"]["calls"] == 5
+    assert seen_cost and abs(seen_cost[-1] - 0.0525) < 1e-6  # the live running total was reported
+
+
+def test_batch_stage_prices_preserved_usage_at_half(monkeypatch, tmp_path):
+    """A batch stage reads the usage the retrieve now preserves in the responses JSONL and prices it at the
+    Batch 50% discount, folding it into the ledger."""
+    from types import SimpleNamespace
+
+    from ddharmon.llm.cost import CostLedger
+
+    from backend.engine import adapter as adapter_mod
+
+    def fake_resume_and_wait(prompts_path, output_path, *, api_key=None, **kw):
+        with open(output_path, "w") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "id": "p1",
+                        "response": {"ok": 1},
+                        "usage": {"input_tokens": 2000, "output_tokens": 1000},
+                        "model": "claude-sonnet-4-6",
+                    }
+                )
+                + "\n"
+            )
+
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", fake_resume_and_wait)
+    monkeypatch.setattr("ddharmon.harmonization.write_prompts_jsonl", lambda prompts, path: None)
+
+    ledger = CostLedger()
+    stage = adapter_mod._batch_stage("assigning", lambda *a, **k: None, tmp_path, "assign", ledger)
+    out = stage([SimpleNamespace(id="p1", system_prompt="sys", schema="{}", user_prompt="u")])
+
+    assert out == {"p1": {"ok": 1}}
+    # (2000/1e6·$3 + 1000/1e6·$15) × 0.5 = ($0.006 + $0.015) × 0.5 = $0.0105
+    assert abs(ledger.total_usd - 0.0105) < 1e-6
 
 
 def test_failed_phase_persists_and_migrates(tmp_path):

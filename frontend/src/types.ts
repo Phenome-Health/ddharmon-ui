@@ -187,6 +187,21 @@ export interface ResultSummary {
   cohorts: string[];
 }
 
+/** Realized cost + token totals for one pipeline stage (from the backend's cost ledger). */
+export interface StageCost {
+  usd: number;
+  inputTokens: number;
+  outputTokens: number;
+  calls: number;
+}
+/** Realized run cost — REAL spend: tokens captured per LLM call and priced against LiteLLM's model→price map
+ *  (Batch billed at 50%). For a BYOK run this is the user's own provider bill, not an estimate. */
+export interface RunCost {
+  actualUsd: number;
+  tokens: { input: number; output: number };
+  perStage: Record<string, StageCost>;
+}
+
 export interface HarmonizationResult {
   contractVersion: string;
   mode: string;
@@ -201,6 +216,8 @@ export interface HarmonizationResult {
   // Source fields that landed in no concept record (unclustered / dropped outliers) — the "everything else"
   // the run didn't harmonize. Uncapped; x/y only when the field is in the atlas.
   unassignedFields: UnassignedField[];
+  // Realized run cost — real spend, not an estimate (contract v3+). Optional so pre-v3 demo fixtures still parse.
+  cost?: RunCost;
 }
 
 export interface JobResult {
@@ -232,6 +249,10 @@ export interface JobResult {
   // cancel_mode set and status not terminal). Lets the run view show a "Stopping…" state. The raw keep/discard
   // mode is never exposed.
   stopping?: boolean;
+  // LIVE runs: realized cost-so-far in USD, streamed as each LLM stage prices its captured token usage — the
+  // "spent so far" counter. Absent on DB-hydrated historical runs (not persisted); the final total is in
+  // result.cost.actualUsd. A demo fixture may carry it so the Runs list shows the demo's build cost.
+  costSoFar?: number;
 }
 
 export interface JobSummary extends Omit<JobResult, "result" | "analysisIdeas"> {
@@ -304,6 +325,10 @@ export interface DemoCombo {
 export interface DemosResponse {
   datasets: DemoDataset[];
   combos: DemoCombo[];
+  // ddharmon core version the demo snapshots were built with (stamped by scripts/build_demos.py). Shown on the
+  // demo page so users know which release the frozen demo reflects — prod lags dev, so its demo may predate
+  // features already live on dev.ddharmon.io.
+  coreVersion?: string;
 }
 
 // load_dictionary column roles the UI lets you map (value = source column).
@@ -372,9 +397,12 @@ export const ROLE_HELP: Record<ColumnRole, string> = {
     "An existing ontology/standard code for the variable, if already annotated (e.g. LOINC, SNOMED, a CDE tinyId).",
 };
 
-// Rough LLM-cost estimate for a run. Anchored on an observed run: ~$1.45 (batch, Sonnet) over ~7,451
-// fields ⇒ ~$0.0002/field. Cost is ~linear in total fields; split+assign (≈77% of it) grow with cohort
-// count, so a small cross-cohort multiplier is applied. Batch ≈ 50% of sync; preview uses no LLM.
+// PRE-run cost ESTIMATE (the one number that can't be exact — tokens aren't known until the run). Its price
+// basis is real: the same Claude Sonnet rates ddharmon's cost accounting prices against (LiteLLM model→price
+// map — $3/1M input, $15/1M output), calibrated to an observed run (~$1.45 batch over ~7,451 fields ⇒
+// ~$0.0002/field). Cost is ~linear in fields; split+assign (≈77%) grow with cohort count, so a small
+// cross-cohort multiplier is applied. Batch ≈ 50% of sync; preview uses no LLM. The POST-run ACTUAL cost
+// (result.cost, from captured tokens) supersedes this — it's the real spend, not an estimate.
 const PER_FIELD_BATCH_USD = 0.0002;
 export interface CostEstimate {
   low: number;

@@ -76,6 +76,10 @@ class Job:
     # only: streamed as ``phaseStartedAt`` for the run view's elapsed + ETA + per-stage timeline. NOT persisted
     # (a DB-hydrated historical run starts empty here, so the UI falls back to total elapsed for old runs).
     phase_timings: dict[str, float] = field(default_factory=dict)
+    # Realized cost-so-far in USD, streamed for the live "spent so far" counter — each LLM stage updates it as
+    # it prices its captured token usage (see the adapter's cost ledger). LIVE only (like phase_timings): not
+    # persisted, so a DB-hydrated historical run starts 0 and the UI reads the final cost from result["cost"].
+    cost_so_far: float = 0.0
     # Cooperative-cancellation mode, set by ``JobStore.request_cancel`` when the user hits Stop:
     #   "discard" — abort ASAP (the runner's progress checkpoint raises), keep NO partial result.
     #   "keep"    — finish the in-flight stage (deliver work already paid for), then skip the remaining stages;
@@ -125,6 +129,7 @@ class Job:
             "decisions": self.decisions,
             "analysisIdeas": self.analysis_ideas,
             "phaseStartedAt": self.phase_timings,
+            "costSoFar": self.cost_so_far,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }

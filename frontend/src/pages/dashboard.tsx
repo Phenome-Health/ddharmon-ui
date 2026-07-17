@@ -38,7 +38,15 @@ import { buildRunIssueUrl } from "@/lib/links";
 import { RerunAction } from "@/components/rerun-action";
 import { StopRunAction } from "@/components/stop-run-action";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
-import { VERDICT_STYLES, conceptLabel, formatDuration, stopCostSplit, type UIRecord, type UnassignedField } from "@/types";
+import {
+  VERDICT_STYLES,
+  conceptLabel,
+  formatDuration,
+  formatUsd,
+  stopCostSplit,
+  type UIRecord,
+  type UnassignedField,
+} from "@/types";
 
 // Known phase ordering for the progress bar. The phase LABEL is shown verbatim from the stream (so a new
 // pipeline phase still displays); only the percent uses this ordering, falling back gracefully if unknown.
@@ -359,6 +367,31 @@ export default function DashboardPage() {
               <span className="text-neutral-300">·</span>
               <ReproducibilityInfo />
             </div>
+            {result?.cost && result.cost.actualUsd > 0 && !running && (
+              <div className="mt-1.5 text-xs text-neutral-500">
+                Actual cost{" "}
+                <span
+                  className="font-semibold tabular-nums text-ph-ink"
+                  title="Real token spend for this run — captured usage priced at provider rates (Batch billed at 50%). For a BYOK run this is your own bill, not an estimate."
+                >
+                  {formatUsd(result.cost.actualUsd)}
+                </span>
+                <span className="text-neutral-400">
+                  {" · "}
+                  {result.cost.tokens.input.toLocaleString()} in / {result.cost.tokens.output.toLocaleString()} out
+                  tokens
+                </span>
+                {Object.entries(result.cost.perStage).filter(([, s]) => s.usd > 0).length > 0 && (
+                  <span className="text-neutral-400">
+                    {" · "}
+                    {Object.entries(result.cost.perStage)
+                      .filter(([, s]) => s.usd > 0)
+                      .map(([k, s]) => `${k} ${formatUsd(s.usd)}`)
+                      .join(" · ")}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           {result && !isPreview && !running && records.length > 0 && (
             <Button size="sm" asChild className="shrink-0">
@@ -417,7 +450,17 @@ export default function DashboardPage() {
             {running && (
               <>
                 <div className="flex items-center justify-between text-xs text-neutral-500">
-                  <span className="tabular-nums">Elapsed {formatDuration(elapsed)}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="tabular-nums">Elapsed {formatDuration(elapsed)}</span>
+                    {typeof jobState.costSoFar === "number" && jobState.costSoFar > 0 && (
+                      <span
+                        className="tabular-nums text-ph-navy"
+                        title="Realized spend so far — actual token cost of the stages done, not an estimate"
+                      >
+                        Spent {formatUsd(jobState.costSoFar)}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-3">
                     {etaSecs !== null && <span className="tabular-nums">~{formatDuration(etaSecs)} left</span>}
                     <button

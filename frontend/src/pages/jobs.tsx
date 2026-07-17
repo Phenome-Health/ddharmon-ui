@@ -29,7 +29,7 @@ import { cancelJob, deleteJob, listJobs } from "@/lib/api";
 import { useAuthState } from "@/auth";
 import { RerunAction } from "@/components/rerun-action";
 import { StopRunAction } from "@/components/stop-run-action";
-import { stopCostSplit, type JobSummary } from "@/types";
+import { formatUsd, stopCostSplit, type JobSummary } from "@/types";
 
 // Terminal statuses; anything else is an in-flight phase (data-driven — we don't enumerate phases).
 const TERMINAL = new Set(["complete", "error", "cancelled"]);
@@ -125,6 +125,7 @@ export default function JobsPage() {
                 <TableHead>Run</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Records</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead />
               </TableRow>
@@ -157,6 +158,12 @@ export default function JobsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{j.nRecords || "—"}</TableCell>
+                  <TableCell
+                    className="text-right tabular-nums text-neutral-600"
+                    title={j.costSoFar ? "Actual token cost of this run (real spend, not an estimate)" : undefined}
+                  >
+                    {j.costSoFar ? formatUsd(j.costSoFar) : "—"}
+                  </TableCell>
                   <TableCell className="text-sm text-neutral-500">
                     {new Date(j.createdAt * 1000).toLocaleString()}
                   </TableCell>
@@ -184,7 +191,7 @@ export default function JobsPage() {
               ))}
               {!jobs.length && !isLoading && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-neutral-400">
+                  <TableCell colSpan={6} className="py-8 text-center text-sm text-neutral-400">
                     No runs yet. <Link href="/new" className="text-ph-navy hover:underline">Start one →</Link>
                   </TableCell>
                 </TableRow>

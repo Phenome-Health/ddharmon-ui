@@ -17,7 +17,7 @@ from typing import Any, Literal, TypedDict
 
 # Bump (and handle additively) only when a genuinely new output concept appears — a new verdict class,
 # row-level data, a new artifact kind. Field renames/reshapes do NOT bump this; they stay in the adapter.
-CONTRACT_VERSION = "2"  # v2: novel records carry a synthesized GenCDE (UIRecord.gencde) — a new output concept
+CONTRACT_VERSION = "3"  # v3: result carries realized run cost (UIResult.cost) — real spend, not an estimate
 
 RunMode = Literal["batch", "sync", "preview"]
 Verdict = Literal["adopt", "refine", "novel", "unclassified"]
@@ -229,6 +229,32 @@ class UISummary(TypedDict):
     cohorts: list[str]
 
 
+class UIStageCost(TypedDict):
+    """Realized cost + token totals for one pipeline stage (from ddharmon.llm.cost.CostLedger)."""
+
+    usd: float
+    inputTokens: int
+    outputTokens: int
+    calls: int
+
+
+class UICostTokens(TypedDict):
+    input: int
+    output: int
+
+
+class UICost(TypedDict):
+    """Realized run cost — REAL spend, not an estimate. Token usage captured per LLM call (sync + Batch) and
+    priced against LiteLLM's model→price map (Batch billed at 50%). For a BYOK run this is the user's own
+    provider bill. ``actualUsd`` is the run total; ``perStage`` attributes it to each stage. A preview run (no
+    LLM) is all zeros. See :class:`~ddharmon.llm.cost.CostLedger`.
+    """
+
+    actualUsd: float
+    tokens: UICostTokens
+    perStage: dict[str, UIStageCost]
+
+
 class UIResult(TypedDict):
     contractVersion: str
     mode: str  # the RunMode this run used
@@ -243,6 +269,9 @@ class UIResult(TypedDict):
     # Source fields that landed in no concept record (unclustered / dropped outliers) — lets the UI browse
     # the "everything else" the run didn't harmonize. Uncapped; x/y only when the field is in the atlas.
     unassignedFields: list[UnassignedField]
+    # Realized run cost — real spend (captured tokens × LiteLLM price map, Batch at 50%), not an estimate.
+    # Preview (no LLM) is all zeros. Additive v3 field; the live "spent so far" counter is Job.costSoFar.
+    cost: UICost
 
 
 # Phase sequences the UI consumes to render progress (data-driven — see §1 "new/removed stage" row).
@@ -260,3 +289,8 @@ def empty_summary() -> UISummary:
         "nWithTransforms": 0,
         "cohorts": [],
     }
+
+
+def empty_cost() -> UICost:
+    """A zero-cost block — for preview runs and result builds with no cost ledger (e.g. canned-record tests)."""
+    return {"actualUsd": 0.0, "tokens": {"input": 0, "output": 0}, "perStage": {}}

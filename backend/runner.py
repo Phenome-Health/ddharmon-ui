@@ -48,13 +48,18 @@ def run_harmonization(
     the run used, so they're ready on the results page without a second key entry.
     """
 
-    def progress(phase: str, completed: int = 0, total: int = 0) -> None:
+    def progress(phase: str, completed: int = 0, total: int = 0, cost: float | None = None) -> None:
         # Cancellation at every phase/tick checkpoint. "discard" aborts here (raise -> the run unwinds with no
         # result). "keep" does NOT raise: the current stage finishes (delivering work already paid for) and the
         # engine's stage callbacks skip the remaining stages, so run_pipeline RETURNS a partial result below.
         if store.cancel_mode(job_id) == "discard":
             raise RunCancelledError
-        store.update(job_id, status=phase, phase=phase, completed=completed, total=total)
+        fields: dict[str, Any] = {"status": phase, "phase": phase, "completed": completed, "total": total}
+        # The LLM stages pass the run's realized cost-so-far (USD) after pricing their usage; fold it into the
+        # job for the live "spent so far" counter. Pre-LLM phases call with 3 args (cost=None) -> not touched.
+        if cost is not None:
+            fields["cost_so_far"] = cost
+        store.update(job_id, **fields)
 
     try:
         result = run_pipeline(

@@ -393,7 +393,8 @@ export default function HomePage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="batch">Batch (async, default)</SelectItem>
+                  <SelectItem value="batch">Batch (async, economical)</SelectItem>
+                  <SelectItem value="sync">Synchronous (fast, higher cost)</SelectItem>
                   <SelectItem value="preview">Preview (no LLM — clusters only)</SelectItem>
                 </SelectContent>
               </Select>
@@ -705,7 +706,7 @@ const OPTION_HELP: Record<string, string> = {
   cdeSet:
     "Which Common Data Element catalog your variables are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
   runMode:
-    "How the run executes. Batch: the LLM assignment runs asynchronously via the Anthropic Batch API (cost-bounded; needs your API key below). Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits.",
+    "How the run executes. Batch: the LLM stages run asynchronously via the Anthropic Batch API — ~50% cheaper, but results can take a while (worst case, hours). Synchronous: the same pipeline with immediate LLM calls — finishes in minutes with predictable wall-clock, at roughly 2× the batch cost. Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits. Batch and Synchronous both need your API key below.",
   provider:
     "Which LLM provider runs concept assignment. Only providers we've validated end-to-end with ddharmon are selectable; the others are shown greyed-out and will unlock as we finish testing them. So far ddharmon has been tested only with Anthropic (Claude Sonnet 4.6). Anthropic uses the cost-bounded Batch API; other providers will run synchronously via the self-hosted proxy.",
   model:

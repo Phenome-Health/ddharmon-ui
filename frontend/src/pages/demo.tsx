@@ -131,6 +131,17 @@ export default function DemoPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-neutral-400">
                   {cohorts.length} cohorts · {totalFields} variables · live mapping to NIH CDEs
+                  {data?.coreVersion && (
+                    <>
+                      {" · "}
+                      <span
+                        title="The ddharmon version this frozen demo was generated with. The live app on dev.ddharmon.io may run a newer version — prod lags dev, so a feature you see on dev may not appear in this demo (or on prod) yet."
+                        className="cursor-help underline decoration-dotted underline-offset-2"
+                      >
+                        reflects ddharmon v{data.coreVersion}
+                      </span>
+                    </>
+                  )}
                 </p>
                 <div className="flex items-center gap-2">
                   {demoJobId && (

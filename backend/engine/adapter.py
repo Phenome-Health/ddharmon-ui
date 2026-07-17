@@ -30,10 +30,11 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from backend.engine.contract import (
     CONTRACT_VERSION,
@@ -43,6 +44,7 @@ from backend.engine.contract import (
     FieldDetail,
     ResponseOptionUI,
     UICandidate,
+    UICost,
     UIGenCDE,
     UIMember,
     UIRecord,
@@ -50,13 +52,17 @@ from backend.engine.contract import (
     UISummary,
     UITransform,
     UnassignedField,
+    empty_cost,
     empty_summary,
 )
 
 logger = logging.getLogger(__name__)
 
-# (phase, completed, total) -> None. Reported between stages and within sync stages.
-ProgressFn = Callable[[str, int, int], None]
+# (phase, completed, total, cost=None) -> None. Reported between stages and within sync stages. The optional
+# 4th arg is the run's realized cost-so-far in USD (only the LLM stages pass it, after pricing their usage);
+# the runner folds it into Job.costSoFar for the live "spent so far" counter. Callable[...] so the pre-LLM
+# phases can keep calling with 3 args without a type error.
+ProgressFn = Callable[..., None]
 # list[PromptRecord] -> {id: response}. The execution strategy injected per stage.
 StageFn = Callable[[list[Any]], dict[str, Any]]
 # () -> "keep" | "discard" | None. A stage consults this on entry: a "keep" stop means the user wants to stop
@@ -67,12 +73,17 @@ StoppingFn = Callable[[], str | None]
 # Same instruction the Batch API appends server-side, so inline (sync) output matches the schema.
 _SCHEMA_PREAMBLE = "\n\nRespond with ONLY valid JSON matching this schema (no markdown fences):\n"
 _SYNC_MAX_TOKENS = 1024
+# Synchronous stages fan their per-prompt LLM calls across a bounded thread pool so a full sync run finishes
+# in minutes, not the hours a serial loop would take (each call is a network round-trip). The Anthropic SDK
+# client is thread-safe for concurrent requests; the cap keeps us well under per-tier rate limits. Override
+# with DDHARMON_SYNC_WORKERS.
+_SYNC_MAX_WORKERS = max(1, int(os.environ.get("DDHARMON_SYNC_WORKERS", "8") or "8"))
 # How often a batch stage re-checks for a Stop while the Batch API poll blocks (see _batch_stage). Small
 # enough that a user's Stop takes effect in seconds, not after the whole batch returns.
 _BATCH_POLL_SECS = 3.0
 
 
-def _noop_progress(phase: str, completed: int = 0, total: int = 0) -> None:
+def _noop_progress(phase: str, completed: int = 0, total: int = 0, cost: float | None = None) -> None:
     pass
 
 
@@ -337,6 +348,7 @@ def build_ui_result(
     atlas: list[AtlasPoint] | None = None,
     member_index: dict[str, UIMember] | None = None,
     field_index: dict[str, FieldDetail] | None = None,
+    cost: UICost | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
 
@@ -367,6 +379,7 @@ def build_ui_result(
         "atlas": atlas_pts,
         "fieldIndex": fidx,
         "unassignedFields": _unassigned_fields(fidx, records, atlas_pts),
+        "cost": cost if cost is not None else empty_cost(),
     }
 
 
@@ -416,21 +429,49 @@ def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list
 # ── stage execution strategies (sync inline / Batch API) ──────────────────────────────────
 
 
-def _sync_stage(phase: str, progress: ProgressFn, client: Any, stopping: StoppingFn | None = None) -> StageFn:
-    """A stage callback that runs each prompt inline via the Anthropic client, reporting per-item progress."""
+def _sync_stage(
+    phase: str, progress: ProgressFn, client: Any, ledger: Any, stopping: StoppingFn | None = None
+) -> StageFn:
+    """A stage callback that runs its prompts inline via the LLM client — concurrently, across a bounded
+    thread pool — reporting per-item progress. After the stage finishes it drains the client's realized token
+    usage into ``ledger`` (sync = full price) and reports the run's cost-so-far for the live counter.
+
+    Concurrency makes a full sync run finish in minutes rather than the hours a serial per-prompt loop would
+    take. A "discard" stop surfaces as ``progress`` raising mid-loop; we then cancel the not-yet-started calls
+    so we stop paying immediately (in-flight calls can't be un-sent, mirroring the Batch stage's semantics).
+    """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
             return {}
         if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (no new cost)
             return {}
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         n = len(prompts)
         progress(phase, 0, n)
-        out: dict[str, Any] = {}
-        for i, rec in enumerate(prompts):
+
+        def _run_one(rec: Any) -> tuple[str, Any]:
             system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
-            out[rec.id] = client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
-            progress(phase, i + 1, n)
+            return rec.id, client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
+
+        out: dict[str, Any] = {}
+        done = 0
+        with ThreadPoolExecutor(max_workers=min(_SYNC_MAX_WORKERS, n)) as ex:
+            futures = [ex.submit(_run_one, rec) for rec in prompts]
+            try:
+                for fut in as_completed(futures):
+                    rid, resp = fut.result()
+                    out[rid] = resp
+                    done += 1
+                    progress(phase, done, n)  # raises on a "discard" stop -> abort the stage promptly
+            except BaseException:
+                for f in futures:  # cancel not-yet-started calls so a discard-stop stops paying immediately
+                    f.cancel()
+                raise
+        # Attribute this stage's realized spend (sync = full price) + surface the running total for the live UI.
+        ledger.add(phase, client.drain_usage(), batch=False)
+        progress(phase, n, n, ledger.total_usd)
         return out
 
     return stage
@@ -459,6 +500,7 @@ def _batch_stage(
     progress: ProgressFn,
     work_dir: Path,
     tag: str,
+    ledger: Any,
     api_key: str | None = None,
     stopping: StoppingFn | None = None,
 ) -> StageFn:
@@ -506,14 +548,30 @@ def _batch_stage(
             progress(phase, 0, n)  # heartbeat + cancellation checkpoint (raises on Stop -> abort the poll)
         if "exc" in holder:
             raise holder["exc"]
+        from ddharmon.llm.cost import TokenUsage
+
         out: dict[str, Any] = {}
+        usages: list[Any] = []
         with open(responses_path) as f:
             for line in f:
                 line = line.strip()
-                if line:
-                    rec = json.loads(line)
-                    out[rec["id"]] = rec["response"]
-        progress(phase, n, n)
+                if not line:
+                    continue
+                rec = json.loads(line)
+                out[rec["id"]] = rec["response"]
+                # Realized usage the retrieve preserved (older cached response files predate it -> just skip;
+                # that stage prices to $0, which is honest for a cache replay that re-paid nothing).
+                u = rec.get("usage")
+                if u:
+                    usages.append(
+                        TokenUsage(
+                            model=rec.get("model"),
+                            input_tokens=int(u.get("input_tokens", 0) or 0),
+                            output_tokens=int(u.get("output_tokens", 0) or 0),
+                        )
+                    )
+        ledger.add(phase, usages, batch=True)  # Batch bills at 50% — the discount is applied in price_usage.
+        progress(phase, n, n, ledger.total_usd)
         return out
 
     return stage
@@ -580,12 +638,16 @@ def run_pipeline(
     from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
     from ddharmon.ingestion import load_dictionary
+    from ddharmon.llm.cost import CostLedger
 
     progress = progress or _noop_progress
     overrides = stage_overrides or {}
     mode: str = config.get("run_mode", "batch")
     cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
     work_dir = Path(config.get("work_dir", "."))
+    # Realized-cost accumulator: each LLM stage folds its captured token usage in (sync = full price, batch =
+    # 50%), so build_ui_result can emit real spend (UIResult.cost) and the stages can stream a live total.
+    ledger = CostLedger()
 
     # --- load ---
     progress("loading", 0, 0)
@@ -668,6 +730,7 @@ def run_pipeline(
             atlas=atlas,
             member_index=member_index,
             field_index=field_index,
+            cost=cast(UICost, ledger.to_dict()),
         )
 
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
@@ -682,19 +745,23 @@ def run_pipeline(
 
         client = build_llm_client(kwargs.get("model_tag"), api_key)
         stages = {
-            "generate": _sync_stage("generating", progress, client, stopping),
-            "split": _sync_stage("splitting", progress, client, stopping),
-            "classify": _sync_stage("assigning", progress, client, stopping),
-            "gencde": _sync_stage("gencde", progress, client, stopping),
-            "specgen": _sync_stage("specs", progress, client, stopping),
+            "generate": _sync_stage("generating", progress, client, ledger, stopping),
+            "split": _sync_stage("splitting", progress, client, ledger, stopping),
+            "classify": _sync_stage("assigning", progress, client, ledger, stopping),
+            "gencde": _sync_stage("gencde", progress, client, ledger, stopping),
+            "specgen": _sync_stage("specs", progress, client, ledger, stopping),
         }
     else:  # batch (default)
         stages = {
-            "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key, stopping=stopping),
-            "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key, stopping=stopping),
-            "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key, stopping=stopping),
-            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", api_key=api_key, stopping=stopping),
-            "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key, stopping=stopping),
+            "generate": _batch_stage(
+                "generating", progress, work_dir, "generate", ledger, api_key=api_key, stopping=stopping
+            ),
+            "split": _batch_stage("splitting", progress, work_dir, "split", ledger, api_key=api_key, stopping=stopping),
+            "classify": _batch_stage(
+                "assigning", progress, work_dir, "assign", ledger, api_key=api_key, stopping=stopping
+            ),
+            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping),
+            "specgen": _batch_stage("specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping),
         }
 
     gen_specs = config.get("gen_transform_specs", True)
@@ -721,7 +788,13 @@ def run_pipeline(
     )
     _save_substrate_if_new(substrate_path, result)
     return build_ui_result(
-        result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index, field_index=field_index
+        result,
+        mode=mode,
+        phases=PHASES_RUN,
+        atlas=atlas,
+        member_index=member_index,
+        field_index=field_index,
+        cost=cast(UICost, ledger.to_dict()),
     )
 
 

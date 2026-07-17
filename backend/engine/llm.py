@@ -42,4 +42,6 @@ def build_llm_client(model_tag: str | None, api_key: str | None) -> Any:
             f"Model {model_tag!r} needs the unified LiteLLM client, but this backend's ddharmon package "
             "lacks it. Update the ddharmon dependency (Phase 7 / >=0.7) and set LITELLM_PROXY_URL."
         ) from e
-    return LiteLLMClient(model=str(model_tag), api_key=api_key, api_base=(os.environ.get("LITELLM_PROXY_URL") or None))
+    return LiteLLMClient(
+        model_name=str(model_tag), api_key=api_key, api_base=(os.environ.get("LITELLM_PROXY_URL") or None)
+    )
