@@ -116,7 +116,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     store.db.close()
 
 
-app = FastAPI(title="ddharmon Harmonization API", version="1.0.0", lifespan=_lifespan)
+app = FastAPI(title="ddharmon Harmonization API", version="1.1.0", lifespan=_lifespan)
 
 # CORS: the built SPA is served same-origin by this app in prod, so CORS matters only for the Vite dev
 # proxy and any deliberate cross-origin caller. Lock the allowed origins via DDHARMON_UI_ALLOWED_ORIGINS
