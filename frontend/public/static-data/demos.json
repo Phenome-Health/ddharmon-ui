@@ -50,5 +50,6 @@
       "description": "Cross-cohort demo over all five curated cohorts",
       "available": true
     }
-  ]
+  ],
+  "coreVersion": "1.2.0"
 }

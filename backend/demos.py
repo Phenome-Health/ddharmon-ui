@@ -44,10 +44,15 @@ def _key(datasets: list[str]) -> tuple[str, ...]:
 
 
 def list_demos() -> dict[str, Any]:
-    """Datasets + combos for the picker; each combo flagged with whether its snapshot is present."""
+    """Datasets + combos for the picker; each combo flagged with whether its snapshot is present.
+
+    ``coreVersion`` (stamped by ``scripts/build_demos.py`` into the manifest) is the ddharmon release the
+    demo snapshots reflect — surfaced so the demo page can note it (prod lags dev, so its demo may predate
+    features already live on dev).
+    """
     man = _load_manifest()
     combos = [{**c, "available": (_DIR / c["snapshot"]).exists()} for c in man.get("combos", [])]
-    return {"datasets": man.get("datasets", []), "combos": combos}
+    return {"datasets": man.get("datasets", []), "combos": combos, "coreVersion": man.get("coreVersion")}
 
 
 def load_snapshot(datasets: list[str]) -> dict[str, Any] | None:

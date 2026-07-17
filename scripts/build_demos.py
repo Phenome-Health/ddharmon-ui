@@ -18,6 +18,7 @@ Column roles are auto-detected with ddharmon's SchemaRegistry (same as the app's
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import sys
 import tempfile
@@ -32,6 +33,15 @@ from backend.engine import run_pipeline  # noqa: E402
 DEMO_DIR = REPO / "backend" / "demos"
 DATA_DIR = DEMO_DIR / "data"
 COHORT_LABELS = {"aou": "AoU", "clsa": "CLSA", "ukbb": "UKBB", "mesa": "MESA", "aireadi": "AI-READI"}
+
+
+def _installed_core_version() -> str:
+    """The installed ddharmon version (for stamping on the demo). An editable/dev core self-reports a
+    placeholder like 0.1.0 — pass --core-version the real release number when building for a deploy."""
+    try:
+        return importlib.metadata.version("ddharmon")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 # Explicit, hand-verified CORE column-role maps per demo cohort — NOT auto-detected. The demo runs on only
 # the "core" columns a user would map, split two ways:
@@ -127,13 +137,13 @@ def run_once(dict_specs, cde_spec, mode, mcs, cde_set, work_dir, substrate_path)
     timings: dict[str, float] = {}
     state = {"phase": None, "t0": time.time()}
 
-    def progress(phase: str, c: int = 0, t: int = 0) -> None:
+    def progress(phase: str, c: int = 0, t: int = 0, cost: float | None = None) -> None:
         if phase != state["phase"]:
             now = time.time()
             if state["phase"] is not None:
                 timings[state["phase"]] = round(now - state["t0"], 2)
             state["phase"], state["t0"] = phase, now
-        print(f"  · {phase} {c}/{t}")
+        print(f"  · {phase} {c}/{t}" + (f"  (spent ${cost:.4f})" if cost else ""))
 
     config = {
         "run_mode": mode,
@@ -175,9 +185,18 @@ def main() -> None:
         help="skip the pipeline entirely; re-emit the Netlify static fixtures from the EXISTING snapshot "
         "(no LLM, $0, preserves the snapshot's reproducibility block).",
     )
+    ap.add_argument(
+        "--core-version",
+        default=None,
+        help="ddharmon version to stamp on the demo (shown on the demo page as 'reflects ddharmon vX', so "
+        "users know which release the frozen demo reflects — prod lags dev). Defaults to the INSTALLED "
+        "ddharmon version; pass the release version the demo corresponds to when building against an "
+        "editable/dev core (which self-reports a placeholder like 0.1.0).",
+    )
     args = ap.parse_args()
 
     ids = sorted(d.lower() for d in args.datasets)
+    core_version = args.core_version or _installed_core_version()
 
     if args.fixtures_only:
         snap_path = DEMO_DIR / f"{'_'.join(ids)}.json"
@@ -257,6 +276,13 @@ def main() -> None:
             f"  record overlap {len(shared)}/{max(len(v0), len(vf))} | verdict agreement on shared: {same_verdict}/{len(shared) if shared else 0}"
         )
 
+    # Realized cost from an INCREMENTAL rebuild (frozen substrate + cached LLM stages reused) is PARTIAL — the
+    # cached stages re-paid nothing, so their cost is $0 and the total UNDERSTATES a from-scratch run. Omit it
+    # rather than ship a misleading number on the demo; a fresh full build (no cache) keeps its accurate cost.
+    if not fresh_build and isinstance(result, dict) and (result.get("cost") or {}).get("actualUsd"):
+        print(f"  omitting demo cost — incremental rebuild; realized ${result['cost']['actualUsd']:.2f} is partial")
+        result["cost"] = {"actualUsd": 0.0, "tokens": {"input": 0, "output": 0}, "perStage": {}}
+
     # --- write the snapshot (from the ship run) ---
     label = " + ".join(COHORT_LABELS.get(d, d) for d in ids)
     snapshot = {
@@ -265,6 +291,7 @@ def main() -> None:
         "mode": args.mode,
         "minClusterSize": args.min_cluster_size,
         "cdeSet": args.cde_set,
+        "coreVersion": core_version,  # the ddharmon release this demo reflects (shown on the demo page)
         "isDemo": True,
         "phaseTimings": timings,  # wall-clock per phase from the real run -> realistic replay pacing
         "reproducibility": repro,
@@ -309,6 +336,7 @@ def write_static_fixtures(ids: list[str], snapshot: dict) -> None:
         "createdAt": now,
         "updatedAt": now,
         "phaseTimings": snapshot.get("phaseTimings", {}),
+        "coreVersion": snapshot.get("coreVersion"),
     }
     (static_dir / f"result-{job_id}.json").write_text(json.dumps(job))
 
@@ -327,7 +355,18 @@ def write_static_fixtures(ids: list[str], snapshot: dict) -> None:
         for combo in demos.get("combos", []):
             if sorted(str(x).lower() for x in combo.get("datasets", [])) == ids:
                 combo["available"] = True
+        if snapshot.get("coreVersion"):
+            demos["coreVersion"] = snapshot["coreVersion"]  # static (Netlify) demo-page version note
         demos_path.write_text(json.dumps(demos, indent=2))
+
+    # Backend demo registry: stamp coreVersion so the LIVE /api/harmonize/demos endpoint can surface the
+    # "reflects ddharmon vX" note on dev/prod too (not just the static build). Cheap top-level field.
+    if snapshot.get("coreVersion"):
+        manifest_path = DEMO_DIR / "manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            manifest["coreVersion"] = snapshot["coreVersion"]
+            manifest_path.write_text(json.dumps(manifest, indent=2))
 
     print(
         f"static fixtures: result-{job_id}.json + jobs.json merge + demos.json availability ({summary['nRecords']} records)"
