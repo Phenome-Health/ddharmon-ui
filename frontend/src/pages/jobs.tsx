@@ -152,7 +152,7 @@ export default function JobsPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={j.status === "complete" ? "secondary" : j.status === "error" ? "destructive" : "outline"}>
+                    <Badge variant={j.status === "complete" ? "success" : j.status === "error" ? "destructive" : "outline"}>
                       {TERMINAL.has(j.status) ? j.status : j.phase}
                     </Badge>
                   </TableCell>
