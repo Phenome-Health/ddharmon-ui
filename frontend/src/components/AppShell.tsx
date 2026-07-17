@@ -9,6 +9,7 @@ import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
 import { PhMark } from "@/components/ph-logo";
 import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
+import { GlobalStatusBanner } from "@/components/global-status-banner";
 
 // Dev channel: a build pinned to an UNRELEASED core (git ref), deployed to dev.ddharmon.io for
 // pre-PyPI validation. Baked in at build time (VITE_APP_CHANNEL=dev); defaults to prod so a normal
@@ -39,6 +40,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { isGuest, exitGuest } = useAuthState();
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-neutral-0">
+      {/* Site-wide "under active development" notice — every page, both prod + dev channels. */}
+      <GlobalStatusBanner />
       {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-neutral-0 px-4">
         <Link href="/" className="flex items-center gap-2.5">
