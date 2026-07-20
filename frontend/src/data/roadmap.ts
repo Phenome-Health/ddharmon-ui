@@ -15,6 +15,8 @@ export interface RoadmapItem {
   status: RoadmapStatus;
   /** Optional one-line clarification, public-safe. */
   note?: string;
+  /** Optional in-app route to a design preview / mockup of this item (renders a "Preview" tag). */
+  preview?: string;
 }
 
 export interface RoadmapGroup {
@@ -93,6 +95,7 @@ export const ROADMAP: RoadmapGroup[] = [
       {
         label: "Drag-and-drop concept restructuring — move variables between concepts, then re-check with the model",
         status: "planned",
+        preview: "/preview/restructure",
       },
       {
         label: "Flag a concept as incoherent and have the model re-adjudicate it",

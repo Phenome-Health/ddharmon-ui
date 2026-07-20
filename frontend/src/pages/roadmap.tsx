@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { ArrowRight, CheckCircle2, Circle, CircleDot, FlaskConical, Milestone } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, CircleDot, Eye, FlaskConical, Milestone } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -82,6 +82,14 @@ export default function RoadmapPage() {
                         <Badge variant="outline" className="ml-2 align-middle border-warning/40 text-[10px] text-warning">
                           Exploring
                         </Badge>
+                      )}
+                      {item.preview && (
+                        <Link
+                          href={item.preview}
+                          className="ml-2 inline-flex items-center gap-1 rounded border border-ph-navy/30 px-1.5 py-0.5 align-middle text-[10px] font-medium text-ph-navy hover:bg-ph-navy/5"
+                        >
+                          <Eye className="h-3 w-3" /> Preview
+                        </Link>
                       )}
                       {item.note && <span className="mt-0.5 block text-xs text-neutral-400">{item.note}</span>}
                     </span>
