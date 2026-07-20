@@ -52,8 +52,8 @@ export interface Benchmark {
   task: string;
   /** How the gold was curated (human-labeled / derived from a resource / expert scripts) — provenance. */
   provenance: string;
-  /** Optional public source for the gold dataset (only set where the URL is verified). */
-  source?: { label: string; href: string };
+  /** Public sources for the gold dataset — the dataset/tool page and/or the paper (DOI). Verified URLs only. */
+  sources?: { label: string; href: string }[];
   /** Development / held-out / external — surfaced as a badge on every card. */
   tier: BenchmarkTier;
   /** Short canonical caveat / interpretation for this benchmark. */
@@ -100,6 +100,7 @@ export const BENCHMARKS: Benchmark[] = [
     provenance:
       "Human-curated: 494 gold variable→CDE mappings from the Yale CDE-Mapping-Tool study. We converge on the same task with an extended scope — not a claim to beat CDEMapper on recall.",
     groundTruth: "Yale CDE-Mapping-Tool (494 variable→CDE)",
+    sources: [{ label: "Paper — Wang et al., JAMIA 2025", href: "https://doi.org/10.1093/jamia/ocaf064" }],
     metrics: [
       { label: "hybrid retrieval recall@5", value: "0.632" },
       { label: "fused assignment (in-backbone)", value: "0.521" },
@@ -114,7 +115,10 @@ export const BENCHMARKS: Benchmark[] = [
     provenance:
       "Derived from the expert-maintained PhenX↔dbGaP crosswalk — a public, curated mapping of study variables to standard PhenX measures.",
     groundTruth: "PhenX↔dbGaP crosswalk",
-    source: { label: "PhenX Toolkit", href: "https://www.phenxtoolkit.org/" },
+    sources: [
+      { label: "PhenX Toolkit", href: "https://www.phenxtoolkit.org/" },
+      { label: "Paper — PhenX↔dbGaP, Scientific Data 2022", href: "https://doi.org/10.1038/s41597-022-01660-4" },
+    ],
     metrics: [{ label: "embedding separability", value: "Δ0.536" }],
     tier: "held-out",
     note: "Clustering's edge is diffuse — which is exactly what motivates the assignment-first design.",
@@ -126,7 +130,10 @@ export const BENCHMARKS: Benchmark[] = [
     provenance:
       "Gold OMOP/CDE anchors from the AI-READI DataElementMaps (MIT-licensed, expert-curated REDCap→OMOP/CDE value-set mappings).",
     groundTruth: "AI-READI OMOP/CDE anchors",
-    source: { label: "AI-READI/DataElementMaps", href: "https://github.com/AI-READI/DataElementMaps" },
+    sources: [
+      { label: "AI-READI/DataElementMaps", href: "https://github.com/AI-READI/DataElementMaps" },
+      { label: "Paper — AI-READI, Nature Metabolism 2024", href: "https://doi.org/10.1038/s42255-024-01165-x" },
+    ],
     metrics: [{ label: "variable→concept recall@5", value: "0.655" }],
     tier: "held-out",
   },
@@ -137,6 +144,7 @@ export const BENCHMARKS: Benchmark[] = [
     provenance:
       "External gold: 284 recode pairs taken from the published ATHLOS harmonisation scripts (expert-authored recode rules).",
     groundTruth: "ATHLOS harmonisation scripts (284 recode golds)",
+    sources: [{ label: "Paper — Cohort Profile, IJE 2019", href: "https://doi.org/10.1093/ije/dyz077" }],
     metrics: [{ label: "LLM recode pair-accuracy (with question_text context)", value: "0.832 → 0.869" }],
     tier: "external",
     note: "Feeding the source variable's question_text into the recode generator lifts recode accuracy ~7pp (0.832 → 0.869).",
