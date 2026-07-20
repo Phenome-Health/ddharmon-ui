@@ -171,6 +171,7 @@ export const ROADMAP: RoadmapGroup[] = [
       {
         label: "Reproducibility metrics — run-to-run and cross-model agreement",
         status: "planned",
+        preview: "/preview/reproducibility",
       },
       {
         label: "Fold expert review verdicts back in as human ground truth",

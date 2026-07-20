@@ -19,6 +19,8 @@
   --info: #1E40AF; --info-bg: #DBEAFE; --info-border: #93C5FD;
   --card: #FFFFFF; --popover: #FFFFFF;
   --chart-1: #113682; --chart-5: #0B152D;
+  /* Reproducibility-preview model series — dataviz-validated categorical (light steps). */
+  --rmv-1: #2a78d6; --rmv-2: #008300; --rmv-3: #e87ba4; --rmv-4: #eda100; --rmv-5: #1baf7a;
 }
 
 .dark {
@@ -32,6 +34,8 @@
   --info: #93C5FD; --info-bg: #12233F; --info-border: #1E3A6B;
   --card: #0E1626; --popover: #141D33;
   --chart-1: #5E93EB; --chart-5: #F1F4F9;
+  /* Reproducibility-preview model series — dataviz-validated categorical (dark steps). */
+  --rmv-1: #3987e5; --rmv-2: #008300; --rmv-3: #d55181; --rmv-4: #c98500; --rmv-5: #199e70;
 }
 
 /* ── Phenome Health Design System Tokens ── */
