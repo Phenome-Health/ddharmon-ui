@@ -1,16 +1,18 @@
 import { Link } from "wouter";
-import { ArrowRight, CheckCircle2, Circle, CircleDot, Milestone } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, CircleDot, FlaskConical, Milestone } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ROADMAP, type RoadmapStatus } from "@/data/roadmap";
 
 // Per-status presentation. Shipped = crossed off (a filled check); planned = an empty circle; in-progress
-// sits between, with a badge so it isn't mistaken for either.
+// sits between, with a badge so it isn't mistaken for either. Exploring = an open research direction (a
+// flask), badged like in-progress so it reads as a live bet, not a committed plan.
 const STATUS: Record<RoadmapStatus, { Icon: typeof Circle; cls: string; label: string }> = {
   shipped: { Icon: CheckCircle2, cls: "text-success", label: "Shipped" },
   "in-progress": { Icon: CircleDot, cls: "text-ph-navy", label: "In progress" },
   planned: { Icon: Circle, cls: "text-neutral-300", label: "Planned" },
+  exploring: { Icon: FlaskConical, cls: "text-warning", label: "Exploring" },
 };
 
 export default function RoadmapPage() {
@@ -18,6 +20,7 @@ export default function RoadmapPage() {
   const shipped = all.filter((i) => i.status === "shipped").length;
   const inProgress = all.filter((i) => i.status === "in-progress").length;
   const planned = all.filter((i) => i.status === "planned").length;
+  const exploring = all.filter((i) => i.status === "exploring").length;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -46,6 +49,10 @@ export default function RoadmapPage() {
             <Circle className="h-4 w-4 text-neutral-300" /> Planned
             <span className="tabular-nums text-neutral-400">· {planned}</span>
           </span>
+          <span className="inline-flex items-center gap-1.5 text-neutral-600">
+            <FlaskConical className="h-4 w-4 text-warning" /> Exploring
+            <span className="tabular-nums text-neutral-400">· {exploring}</span>
+          </span>
         </CardContent>
       </Card>
 
@@ -69,6 +76,11 @@ export default function RoadmapPage() {
                       {item.status === "in-progress" && (
                         <Badge variant="secondary" className="ml-2 align-middle text-[10px]">
                           In progress
+                        </Badge>
+                      )}
+                      {item.status === "exploring" && (
+                        <Badge variant="outline" className="ml-2 align-middle border-warning/40 text-[10px] text-warning">
+                          Exploring
                         </Badge>
                       )}
                       {item.note && <span className="mt-0.5 block text-xs text-neutral-400">{item.note}</span>}
