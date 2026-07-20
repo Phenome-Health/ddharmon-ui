@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { MemberVariables } from "@/components/member-variables";
+import { SourceRows } from "@/components/source-rows";
 import { regenerateSpecs, submitVerdict } from "@/lib/api";
 import {
   VERDICT_STYLES,
@@ -477,6 +478,25 @@ export function WorkbenchBody({
                   )}
                 </div>
                 <MemberVariables record={selected} />
+              </CardContent>
+            </Card>
+
+            {/* raw source-dictionary rows — the ground-truth metadata behind every derived claim above */}
+            <Card>
+              <CardHeader className="space-y-1">
+                <div className="flex flex-row items-center gap-2">
+                  <CardTitle className="text-base">Source dictionary rows ({selected.nMembers})</CardTitle>
+                  <PlotInfo>
+                    The raw metadata rows you uploaded for each variable this concept pooled — one row per
+                    variable, columns are the fields as ingested (description, question, value encoding, units,
+                    type). This is the ground truth behind the summary, CDE match, and value mapping on this page:
+                    use it to confirm the derived claims, or to spot a bad group (e.g. distinct measurements
+                    mistakenly merged). Empty columns are hidden.
+                  </PlotInfo>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <SourceRows record={selected} fieldIndex={fieldIndex} />
               </CardContent>
             </Card>
 
