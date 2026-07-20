@@ -25,7 +25,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { MemberVariables } from "@/components/member-variables";
 import { SourceRows } from "@/components/source-rows";
 import { regenerateSpecs, submitVerdict } from "@/lib/api";
 import {
@@ -498,7 +497,6 @@ export function WorkbenchBody({
                     </div>
                   )}
                 </div>
-                <MemberVariables record={selected} />
               </CardContent>
             </Card>
 
