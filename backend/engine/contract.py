@@ -13,11 +13,11 @@ pyright still checks the shape.
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 # Bump (and handle additively) only when a genuinely new output concept appears — a new verdict class,
 # row-level data, a new artifact kind. Field renames/reshapes do NOT bump this; they stay in the adapter.
-CONTRACT_VERSION = "3"  # v3: result carries realized run cost (UIResult.cost) — real spend, not an estimate
+CONTRACT_VERSION = "4"  # v4: preview result carries clusters + retrieved CDE candidates (UIResult.previewClusters)
 
 RunMode = Literal["batch", "sync", "preview"]
 Verdict = Literal["adopt", "refine", "novel", "unclassified"]
@@ -255,6 +255,39 @@ class UICost(TypedDict):
     perStage: dict[str, UIStageCost]
 
 
+class PreviewMember(TypedDict):
+    """One source field in a preview cluster (a capped sample of the cluster's members)."""
+
+    cohort: str
+    variable: str
+    text: str  # description / question_text / label — the embedded signal
+
+
+class PreviewCandidate(TypedDict):
+    """One retrieved CDE candidate for a preview cluster — a RETRIEVAL hit (BM25⊕dense RRF), NOT an
+    assignment. The preview skips the LLM assign stage, so these are ranked candidates only."""
+
+    rank: int  # 1-based, by retrieval cosine
+    cdeId: str
+    cdeExternalId: str  # "" when absent
+    definition: str
+    cosine: float
+
+
+class PreviewCluster(TypedDict):
+    """A preview-mode cluster: the deterministic front half (embed → cluster → retrieve) with NO LLM. Members
+    is a capped sample (``nMembers`` is the true size); candidates are the top-k retrieved CDEs. A full run's
+    LLM stages (split / assign / verdict) can substantially restructure these — surfaced with a disclaimer."""
+
+    clusterId: str
+    nMembers: int
+    cohorts: list[str]
+    crossCohort: bool
+    top1Cos: float | None
+    members: list[PreviewMember]  # capped sample of the cluster's source fields
+    candidates: list[PreviewCandidate]  # top-k retrieved CDE candidates (not assignments)
+
+
 class UIResult(TypedDict):
     contractVersion: str
     mode: str  # the RunMode this run used
@@ -272,6 +305,10 @@ class UIResult(TypedDict):
     # Realized run cost — real spend (captured tokens × LiteLLM price map, Batch at 50%), not an estimate.
     # Preview (no LLM) is all zeros. Additive v3 field; the live "spent so far" counter is Job.costSoFar.
     cost: UICost
+    # PREVIEW ONLY (additive v4): the clusters + retrieved CDE candidates from the deterministic front half,
+    # so a preview shows something to look at (viz + candidate matches) instead of a bare status string.
+    # Absent/empty on a full run (its records carry the finalized assignments). NotRequired — additive-optional.
+    previewClusters: NotRequired[list[PreviewCluster]]
 
 
 # Phase sequences the UI consumes to render progress (data-driven — see §1 "new/removed stage" row).
