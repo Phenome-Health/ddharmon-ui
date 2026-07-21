@@ -175,7 +175,10 @@ export function AnalysisIdeasPanel({
               <Button size="sm" asChild>
                 <Link href={page}>
                   <Sparkles className="mr-1.5 h-4 w-4" />
-                  {alreadyHasIdeas && !isDemo ? "View analysis ideas" : "Generate analysis ideas"}
+                  {/* This branch is reached only when ideas exist to VIEW: a preloaded demo carries baked ideas
+                      (isDemo), or a real run already generated them (alreadyHasIdeas). The old `&& !isDemo`
+                      wrongly showed "Generate" for a demo whose ideas are already present. */}
+                  {alreadyHasIdeas ? "View analysis ideas" : "Generate analysis ideas"}
                 </Link>
               </Button>
             ) : (
