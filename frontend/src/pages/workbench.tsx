@@ -266,7 +266,12 @@ export function WorkbenchBody({
     return records.filter(
       (r) =>
         (filter === "all" || r.verdict === filter) &&
-        (userFilter === "all" || (decisions[r.id] ?? "tbd") === userFilter) &&
+        // "all" = any; "reviewed" = has ANY decision (approve/refine/reject); else = that exact verdict;
+        // "tbd" = undecided (no entry in `decisions`).
+        (userFilter === "all" ||
+          (userFilter === "reviewed"
+            ? (decisions[r.id] ?? "tbd") !== "tbd"
+            : (decisions[r.id] ?? "tbd") === userFilter)) &&
         (!q || conceptLabel(r).toLowerCase().includes(q)),
     );
   }, [records, filter, userFilter, decisions, search]);
@@ -440,9 +445,12 @@ export function WorkbenchBody({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All review statuses</SelectItem>
-                  <SelectItem value="approve">Approved</SelectItem>
-                  <SelectItem value="refine">Refine</SelectItem>
-                  <SelectItem value="reject">Rejected</SelectItem>
+                  {/* "All reviewed" = anything I've decided; Approved/Refine/Rejected are its sub-options
+                      (indented — the check indicator sits on the right, so left-pad is free). */}
+                  <SelectItem value="reviewed">All reviewed</SelectItem>
+                  <SelectItem value="approve" className="pl-6">Approved</SelectItem>
+                  <SelectItem value="refine" className="pl-6">Refine</SelectItem>
+                  <SelectItem value="reject" className="pl-6">Rejected</SelectItem>
                   <SelectItem value="tbd">TBD · undecided</SelectItem>
                 </SelectContent>
               </Select>
