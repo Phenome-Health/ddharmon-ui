@@ -37,7 +37,7 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { theme, toggle } = useTheme();
-  const { isGuest, exitGuest } = useAuthState();
+  const { isGuest, exitGuest, email } = useAuthState();
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-neutral-0">
       {/* Site-wide "under active development" notice — every page, both prod + dev channels. */}
@@ -82,15 +82,18 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="ml-1 flex items-center gap-2">
               {isGuest ? (
                 <>
-                  <span className="rounded bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-500">
-                    Guest
+                  <span
+                    title={email ? `Signed in as ${email} — read-only demo (running is limited to Phenome Health accounts)` : undefined}
+                    className="max-w-[16rem] truncate rounded bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-500"
+                  >
+                    {email ? `${email} · read-only` : "Guest"}
                   </span>
                   <button
                     type="button"
                     onClick={exitGuest}
                     className="rounded px-2 py-1 text-xs font-medium text-ph-navy transition-colors hover:bg-neutral-100 hover:text-ph-ink"
                   >
-                    Sign in
+                    {email ? "Sign out" : "Sign in"}
                   </button>
                 </>
               ) : (
