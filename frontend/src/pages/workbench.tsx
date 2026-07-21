@@ -47,6 +47,24 @@ const VERDICT_BAR: Record<string, string> = {
   unclassified: "bg-neutral-400",
 };
 
+// User-verdict → {icon, color}. Single source of truth for the concept-list sidebar badge AND the
+// approve/refine/reject decision buttons (same icons/colors) so they can't drift. Keyed by the values
+// decide() stores in `decisions`: approve | refine | reject.
+const VERDICT_ICON: Record<string, { Icon: typeof Check; color: string }> = {
+  approve: { Icon: Check, color: "text-success" },
+  refine: { Icon: Pencil, color: "text-warning" },
+  reject: { Icon: Ban, color: "text-danger" },
+};
+
+/** The sidebar "reviewed" badge: shows the reviewer's ACTUAL verdict icon (approve=✓/refine=✎/reject=⦸),
+ *  not a blanket green check. Renders nothing when undecided (TBD). */
+function VerdictBadge({ verdict }: { verdict?: string }) {
+  const v = verdict ? VERDICT_ICON[verdict] : undefined;
+  if (!v) return null;
+  const { Icon, color } = v;
+  return <Icon className={`h-3.5 w-3.5 shrink-0 ${color}`} />;
+}
+
 function cos(x: number | null | undefined): string {
   return x == null ? "—" : x.toFixed(3);
 }
@@ -441,7 +459,7 @@ export function WorkbenchBody({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-sm font-medium text-neutral-700">{conceptLabel(g)}</span>
-                  {decisions[g.id] && <Check className="h-3.5 w-3.5 shrink-0 text-success" />}
+                  <VerdictBadge verdict={decisions[g.id]} />
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
                   <Badge variant="outline" className={`${VERDICT_STYLES[g.verdict] ?? ""} px-1.5 py-0`}>
