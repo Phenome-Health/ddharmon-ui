@@ -228,6 +228,9 @@ export function WorkbenchBody({
   const [gencdeDecisions, setGencdeDecisions] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState("all");
+  // Second, independent filter: the reviewer's OWN decision (the `decisions` map) — distinct from the pipeline
+  // verdict above. "tbd" = no entry in `decisions` (undecided). Values mirror decide(): approve|refine|reject.
+  const [userFilter, setUserFilter] = useState("all");
   const [search, setSearch] = useState("");
   // Refine → regen (Part 3): recordIds whose GenCDE-target recodes went stale because a refine changed the
   // GenCDE's value domain, and the freshly regenerated transforms once "Regenerate recodes" completes (an
@@ -243,9 +246,12 @@ export function WorkbenchBody({
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase();
     return records.filter(
-      (r) => (filter === "all" || r.verdict === filter) && (!q || conceptLabel(r).toLowerCase().includes(q)),
+      (r) =>
+        (filter === "all" || r.verdict === filter) &&
+        (userFilter === "all" || (decisions[r.id] ?? "tbd") === userFilter) &&
+        (!q || conceptLabel(r).toLowerCase().includes(q)),
     );
-  }, [records, filter, search]);
+  }, [records, filter, userFilter, decisions, search]);
 
   // Default-select the first group once records load / filter changes.
   useEffect(() => {
@@ -391,18 +397,38 @@ export function WorkbenchBody({
           <CardHeader className="shrink-0 space-y-2">
             <CardTitle className="text-base">Concepts ({groups.length})</CardTitle>
             <Input placeholder="Search concepts…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-8" />
-            <Select value={filter} onValueChange={setFilter}>
-              <SelectTrigger className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All verdicts</SelectItem>
-                <SelectItem value="adopt">Adopt</SelectItem>
-                <SelectItem value="refine">Refine</SelectItem>
-                <SelectItem value="novel">Novel</SelectItem>
-                <SelectItem value="unclassified">Unclassified</SelectItem>
-              </SelectContent>
-            </Select>
+            {/* Two independent filters. Verdict = the PIPELINE's call (adopt/refine/novel). Review status =
+                the REVIEWER's own decision (the `decisions` map). Both have a "refine" — labels disambiguate. */}
+            <div className="space-y-1">
+              <span className="block text-[11px] font-medium text-neutral-400">Verdict · pipeline</span>
+              <Select value={filter} onValueChange={setFilter}>
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All verdicts</SelectItem>
+                  <SelectItem value="adopt">Adopt</SelectItem>
+                  <SelectItem value="refine">Refine</SelectItem>
+                  <SelectItem value="novel">Novel</SelectItem>
+                  <SelectItem value="unclassified">Unclassified</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <span className="block text-[11px] font-medium text-neutral-400">Review status · yours</span>
+              <Select value={userFilter} onValueChange={setUserFilter}>
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All review statuses</SelectItem>
+                  <SelectItem value="approve">Approved</SelectItem>
+                  <SelectItem value="refine">Refine</SelectItem>
+                  <SelectItem value="reject">Rejected</SelectItem>
+                  <SelectItem value="tbd">TBD · undecided</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent className="max-h-[calc(100vh-20rem)] space-y-1 overflow-y-auto p-2 lg:max-h-none lg:flex-1">
             {groups.map((g) => (
