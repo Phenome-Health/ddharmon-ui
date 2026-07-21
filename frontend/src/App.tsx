@@ -18,6 +18,7 @@ import DemoPage from "@/pages/demo";
 import RelatedWorkPage from "@/pages/related-work";
 import PhenomeHealthPage from "@/pages/phenome-health";
 import RoadmapPage from "@/pages/roadmap";
+import DeploymentArchitecturePage from "@/pages/deployment-architecture";
 import PreviewRestructurePage from "@/pages/preview-restructure";
 import PreviewPayoffPage from "@/pages/preview-payoff";
 import PreviewCompositePage from "@/pages/preview-composite";
@@ -47,6 +48,7 @@ export default function App() {
             <Route path="/demo" component={DemoPage} />
             <Route path="/related" component={RelatedWorkPage} />
             <Route path="/roadmap" component={RoadmapPage} />
+            <Route path="/architecture" component={DeploymentArchitecturePage} />
             <Route path="/preview/restructure" component={PreviewRestructurePage} />
             <Route path="/preview/payoff" component={PreviewPayoffPage} />
             <Route path="/preview/composite" component={PreviewCompositePage} />
