@@ -202,6 +202,34 @@ export interface RunCost {
   perStage: Record<string, StageCost>;
 }
 
+/** One source field in a preview cluster (a capped sample of the cluster's members). */
+export interface PreviewMember {
+  cohort: string;
+  variable: string;
+  text: string;
+}
+/** One retrieved CDE candidate for a preview cluster — a RETRIEVAL hit, NOT an assignment (preview skips the
+ *  LLM assign stage). */
+export interface PreviewCandidate {
+  rank: number;
+  cdeId: string;
+  cdeExternalId: string;
+  definition: string;
+  cosine: number;
+}
+/** A preview-mode cluster: the deterministic front half (embed → cluster → retrieve), no LLM. `members` is a
+ *  capped sample (`nMembers` is the true size); `candidates` are the top-k retrieved CDEs. A full run's LLM
+ *  stages can substantially restructure these. */
+export interface PreviewCluster {
+  clusterId: string;
+  nMembers: number;
+  cohorts: string[];
+  crossCohort: boolean;
+  top1Cos: number | null;
+  members: PreviewMember[];
+  candidates: PreviewCandidate[];
+}
+
 export interface HarmonizationResult {
   contractVersion: string;
   mode: string;
@@ -218,6 +246,9 @@ export interface HarmonizationResult {
   unassignedFields: UnassignedField[];
   // Realized run cost — real spend, not an estimate (contract v3+). Optional so pre-v3 demo fixtures still parse.
   cost?: RunCost;
+  // PREVIEW ONLY (contract v4+): clusters + retrieved CDE candidates from the deterministic front half, so a
+  // preview shows viz + candidate matches instead of a bare status string. Absent/empty on a full run.
+  previewClusters?: PreviewCluster[];
 }
 
 export interface JobResult {

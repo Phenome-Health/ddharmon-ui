@@ -57,6 +57,9 @@ const VERDICT_BAR: Record<string, string> = {
   novel: "bg-ph-navy",
   unclassified: "bg-neutral-400",
 };
+// Preview shows the biggest clusters (most likely to be restructured by a full run) first; cap the rendered
+// list so a large corpus doesn't produce hundreds of cards. The rest are noted with a "+N more" line.
+const PREVIEW_CLUSTER_CAP = 40;
 
 /** Click-to-open explainer of what is / isn't reproducible run-to-run. Shown on every run's header. */
 function ReproducibilityInfo() {
@@ -330,6 +333,7 @@ export default function DashboardPage() {
   const running =
     jobState.status !== "complete" && jobState.status !== "error" && jobState.status !== "cancelled";
   const isPreview = result?.mode === "preview";
+  const previewClusters = result?.previewClusters ?? [];
   const isDemo = !!(jobState.config as { demo?: boolean }).demo;
   const elapsed = Math.max(0, now - jobState.createdAt);
   // Live ETA: project the remaining time from how far the progress bar has advanced vs. how long that took
@@ -546,17 +550,106 @@ export default function DashboardPage() {
       )}
 
       {result && isPreview && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Preview prepared (no LLM)</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-neutral-600">
-            Clustering + retrieval ran and{" "}
-            <span className="font-semibold text-ph-ink">{result.prompts.ideal}</span> concept prompts were built. Re-run
-            in <span className="font-medium">batch</span> or <span className="font-medium">sync</span> mode to produce
-            adopt / refine / novel decisions.
-          </CardContent>
-        </Card>
+        <>
+          {/* Honest disclaimer — a preview is the deterministic FRONT HALF only (embed → cluster → retrieve).
+              The LLM stages a full run adds are exactly the ones that restructure clusters + finalize matches. */}
+          <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-neutral-600">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div>
+              <span className="font-semibold text-ph-ink">Preview — clustering + retrieved CDE candidates only.</span>{" "}
+              A full run adds LLM-based <b>splitting</b>, <b>assignment</b>, and <b>verification</b> that can
+              substantially change both the clusters and the CDE matches. The candidates below are retrieval hits,
+              not final assignments.
+            </div>
+          </div>
+
+          {/* Cluster viz — the 2-D semantic map the clustering used (cohort-colored; no verdicts yet in preview). */}
+          {result.atlas.length > 0 && (
+            <Card>
+              <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+                <CardTitle className="text-base">Embedding atlas</CardTitle>
+                <PlotInfo>
+                  Each dot is one variable, placed by the meaning of its text (a 2-D PCA of the embeddings the
+                  clustering used) — nearby dots are semantically similar. Colored by <b>cohort</b>.
+                </PlotInfo>
+              </CardHeader>
+              <CardContent>
+                <EmbeddingAtlas points={result.atlas} fieldIndex={result.fieldIndex ?? {}} />
+                <p className="mt-1 text-xs text-neutral-400">PCA of variable embeddings · colored by cohort</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Clusters + retrieved CDE candidates (biggest first). Candidates are retrieval hits, NOT assignments. */}
+          {previewClusters.length > 0 && (
+            <Card>
+              <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+                <CardTitle className="text-base">Clusters &amp; candidate CDEs ({previewClusters.length})</CardTitle>
+                <PlotInfo>
+                  Each cluster is a group of variables the embedding pooled, with the top CDE candidates that
+                  retrieval found. A full run&apos;s LLM stages decide which (if any) is adopted, split the cluster,
+                  or propose a new CDE — so these are provisional.
+                </PlotInfo>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {previewClusters.slice(0, PREVIEW_CLUSTER_CAP).map((c) => (
+                  <div key={c.clusterId} className="rounded-md border border-neutral-200 p-3">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-medium text-ph-ink">
+                        {c.nMembers} variable{c.nMembers === 1 ? "" : "s"}
+                      </span>
+                      {c.crossCohort && (
+                        <Badge variant="outline" className="border-ph-teal/50 text-ph-navy">
+                          cross-cohort
+                        </Badge>
+                      )}
+                      <span className="text-xs text-neutral-400">{c.cohorts.join(" · ")}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-neutral-500">
+                      {c.members.slice(0, 6).map((m, i) => (
+                        <span key={`${m.cohort}:${m.variable}`}>
+                          {i > 0 ? ", " : ""}
+                          {m.text || m.variable}
+                        </span>
+                      ))}
+                      {c.nMembers > 6 ? ` +${c.nMembers - 6} more` : ""}
+                    </div>
+                    {c.candidates.length > 0 && (
+                      <div className="mt-2 border-t border-neutral-100 pt-2">
+                        <div className="text-[11px] font-medium text-neutral-400">Top CDE candidates · retrieval</div>
+                        <ul className="mt-1 space-y-0.5">
+                          {c.candidates.slice(0, 3).map((cd) => (
+                            <li key={cd.rank} className="flex items-baseline gap-2 text-xs">
+                              <span className="w-8 shrink-0 font-mono text-neutral-400">{cd.cosine.toFixed(2)}</span>
+                              <span className="text-neutral-600">{cd.cdeId}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {previewClusters.length > PREVIEW_CLUSTER_CAP && (
+                  <p className="text-xs text-neutral-400">
+                    +{previewClusters.length - PREVIEW_CLUSTER_CAP} more clusters — run in full mode to review them all.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Promote CTA — RerunAction offers the full/batch/sync modes, carrying inputs forward. */}
+          <Card>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm text-neutral-600">
+              <span>
+                <span className="font-semibold text-ph-ink">{result.prompts.ideal}</span> concept prompts were built.
+                Re-run in <span className="font-medium">batch</span> or <span className="font-medium">sync</span> mode
+                to produce adopt / refine / novel decisions.
+              </span>
+              <RerunAction job={jobState} labeled />
+            </CardContent>
+          </Card>
+        </>
       )}
 
       {result && !isPreview && records.length > 0 && (

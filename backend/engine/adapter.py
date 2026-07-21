@@ -42,6 +42,7 @@ from backend.engine.contract import (
     PHASES_RUN,
     AtlasPoint,
     FieldDetail,
+    PreviewCluster,
     ResponseOptionUI,
     UICandidate,
     UICost,
@@ -340,6 +341,51 @@ def _summarize(records: list[UIRecord]) -> UISummary:
     }
 
 
+_PREVIEW_MEMBER_CAP = 25  # members surfaced per preview cluster (nMembers keeps the true size)
+
+
+def _preview_clusters(leanb_result: Any, cap: int = _PREVIEW_MEMBER_CAP) -> list[PreviewCluster]:
+    """Extract the preview's clusters + retrieved CDE candidates from the generate-ideal prompts — each
+    ``ideal_prompts`` PromptRecord carries its cluster's members + top-k retrieval candidates in ``context``
+    (see ``prepare_leanb``). NO LLM ran, so these candidates are RETRIEVAL hits, not assignments. Members are
+    capped to ``cap`` per cluster (``nMembers`` is the true size); biggest clusters first (most likely to be
+    restructured by a full run's split stage → most worth eyeballing)."""
+    out: list[PreviewCluster] = []
+    for pr in getattr(leanb_result, "ideal_prompts", []):
+        ctx = pr.context or {}
+        members = ctx.get("members", [])
+        cands = ctx.get("candidates", [])
+        top1 = ctx.get("top1_cos")
+        cluster: PreviewCluster = {
+            "clusterId": ctx.get("cluster_id", ""),
+            "nMembers": int(ctx.get("n_members", len(members))),
+            "cohorts": list(ctx.get("cohorts", [])),
+            "crossCohort": bool(ctx.get("cross_cohort", False)),
+            "top1Cos": float(top1) if top1 is not None else None,
+            "members": [
+                {
+                    "cohort": m.get("dictionary_name", ""),
+                    "variable": m.get("variable_name", ""),
+                    "text": m.get("text", ""),
+                }
+                for m in members[:cap]
+            ],
+            "candidates": [
+                {
+                    "rank": i + 1,
+                    "cdeId": c.get("designation", ""),
+                    "cdeExternalId": c.get("external_id", "") or "",
+                    "definition": c.get("text", ""),
+                    "cosine": round(float(c.get("cos", 0.0)), 4),
+                }
+                for i, c in enumerate(cands)
+            ],
+        }
+        out.append(cluster)
+    out.sort(key=lambda pc: pc["nMembers"], reverse=True)
+    return out
+
+
 def build_ui_result(
     leanb_result: Any,
     *,
@@ -349,6 +395,7 @@ def build_ui_result(
     member_index: dict[str, UIMember] | None = None,
     field_index: dict[str, FieldDetail] | None = None,
     cost: UICost | None = None,
+    preview_clusters: list[PreviewCluster] | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
 
@@ -380,6 +427,7 @@ def build_ui_result(
         "fieldIndex": fidx,
         "unassignedFields": _unassigned_fields(fidx, records, atlas_pts),
         "cost": cost if cost is not None else empty_cost(),
+        "previewClusters": preview_clusters or [],
     }
 
 
@@ -731,6 +779,7 @@ def run_pipeline(
             member_index=member_index,
             field_index=field_index,
             cost=cast(UICost, ledger.to_dict()),
+            preview_clusters=_preview_clusters(result),
         )
 
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---

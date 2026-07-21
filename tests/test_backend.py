@@ -73,7 +73,7 @@ def test_health_ok():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["contractVersion"] == "3"
+    assert body["contractVersion"] == "4"
     assert set(body["cde"]) == {"endorsed", "full"}
     assert "frontendBuilt" in body
 
@@ -181,7 +181,7 @@ def _canned_records() -> list[LeanBRecord]:
 
 def test_contract_mapping_record_and_summary():
     result = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
-    assert result["contractVersion"] == "3"
+    assert result["contractVersion"] == "4"
     assert result["mode"] == "batch"
     rec0 = result["records"][0]
     assert rec0["id"] == "c1#g0"
@@ -1112,7 +1112,7 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
 
     result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
 
-    assert result["contractVersion"] == "3"
+    assert result["contractVersion"] == "4"
     # v3 additive: every result carries a realized-cost block. Zero here (stage_overrides bypass the priced
     # sync/batch stages); a real run populates it from captured token usage.
     assert result["cost"] == {"actualUsd": 0.0, "tokens": {"input": 0, "output": 0}, "perStage": {}}
@@ -1282,11 +1282,21 @@ def test_run_pipeline_real_clustering_smoke(tmp_path):
     # No stage_overrides -> the adapter takes the real preview branch: real cluster + retrieve, no LLM.
     result = run_pipeline(dict_specs, cde_spec, config, provider=_StructuredStubProvider())
 
-    assert result["contractVersion"] == "3"
+    assert result["contractVersion"] == "4"
     assert result["mode"] == "preview"
     assert result["phases"] and "clustering" in result["phases"]
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1  # 40 cohort fields projected
     assert result["fieldIndex"]  # per-field detail populated from the embedded cohort
+    # Preview enrichment (contract v4): the deterministic front half surfaces clusters + RETRIEVED CDE
+    # candidates (no LLM ran), so a preview shows something to look at instead of a bare status string.
+    preview_clusters = result.get("previewClusters")
+    assert isinstance(preview_clusters, list) and preview_clusters, "preview should surface >=1 cluster"
+    for pc in preview_clusters:
+        assert pc["clusterId"] and pc["nMembers"] >= 1
+        assert isinstance(pc["members"], list) and isinstance(pc["candidates"], list)
+        assert len(pc["members"]) <= pc["nMembers"]  # capped sample, never more than the true size
+        for cand in pc["candidates"]:
+            assert cand["cdeId"] and isinstance(cand["cosine"], float)
 
 
 def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_path):
@@ -1336,7 +1346,7 @@ def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_
         provider=StubProvider(),
         stage_overrides=overrides,
     )
-    assert result["contractVersion"] == "3"
+    assert result["contractVersion"] == "4"
 
 
 def test_seed_demos_prepopulates_a_complete_run():
