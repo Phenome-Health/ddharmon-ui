@@ -29,6 +29,8 @@ const FULL_ACCESS_DOMAINS = ((import.meta.env.VITE_FULL_ACCESS_DOMAINS as string
   .split(",")
   .map((d) => d.trim().toLowerCase())
   .filter(Boolean);
+// Optional caption under the sign-in box (dev channel tells collaborators to use their email for a code).
+const SIGNIN_NOTE = import.meta.env.VITE_SIGNIN_NOTE as string | undefined;
 
 // Re-export so components can import the gate flag from "@/auth" without reaching into the api client.
 export { AUTH_ENABLED };
@@ -69,6 +71,9 @@ function SignInWall({ onGuest }: { onGuest?: () => void }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-neutral-50 p-6">
       <SignIn />
+      {/* Optional collaborator hint (dev channel): sign in with an email for a one-time code. Unset on
+          prod → nothing renders. */}
+      {SIGNIN_NOTE && <p className="max-w-sm text-center text-sm text-neutral-600">{SIGNIN_NOTE}</p>}
       {/* Guest bypass — omitted on a locked (PH-only) deployment where sign-in is mandatory. */}
       {onGuest && (
         <button
