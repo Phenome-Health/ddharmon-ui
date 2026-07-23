@@ -136,7 +136,11 @@ export const ROADMAP: RoadmapGroup[] = [
       { label: "LinkML schema export of the data model", status: "planned" },
       { label: "GenCDE / CDE-curator submission handoff for proposed new elements", status: "planned" },
       { label: "Selectable CDE catalogs beyond NIH — bring a community or domain catalog", status: "planned" },
-      { label: "Bridge harmonized elements into a biomedical knowledge graph", status: "exploring" },
+      {
+        label: "Bridge harmonized elements into a biomedical knowledge graph",
+        status: "exploring",
+        preview: "/preview/knowledge-graph",
+      },
     ],
   },
   {
