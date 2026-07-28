@@ -261,6 +261,86 @@ def test_gencde_maps_to_contract():
     # a record without a synthesized GenCDE -> null
     plain = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
     assert plain["records"][0]["gencde"] is None
+    # a from-scratch element claims no parent, so the UI renders it as a proposal, not a refinement
+    assert "parentCdeId" not in g
+
+
+def test_refined_cde_carries_its_derivation_to_the_contract():
+    """A `refine` record's element is DERIVED from a real CDE, and the UI must be able to say so.
+
+    Without the parent, relation and delta the workbench would render a refinement identically to a
+    from-scratch GenCDE — hiding which standard element is being changed and how, which is the only thing
+    a reviewer can actually check.
+    """
+    from ddharmon.harmonization.models import GenCDE
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    refined = LeanBRecord(
+        cluster_id="c4",
+        group_id="c4#g1",
+        concept="Right carotid bulb plaque surface morphology",
+        verdict="refine",
+        route="assigned",
+        cde_id="Imaging plaque surface type",
+        cde_external_id="tiny999",
+        cohorts=["MESA"],
+        member_variable_names=["MESA:cplq1"],
+        gencde=GenCDE(
+            gencde_id="REFCDE:c4#g1",
+            preferred_name="carotid_bulb_plaque_surface_right",
+            definition="Surface morphology of plaque at the right carotid bulb.",
+            data_type="categorical",
+            permissible_values=[
+                ResponseOption(code="1", label="Regular"),
+                ResponseOption(code="2", label="Irregular"),
+            ],
+            source_variables=["MESA:cplq1"],
+            source_cohorts=["MESA"],
+            confidence=0.82,
+            parent_cde_id="Imaging plaque surface type",
+            parent_cde_external_id="tiny999",
+            relation="skos:narrowMatch",
+            refinement_axis="qualifier",
+            qualifier_added="right carotid bulb",
+            added_permissible_values=[ResponseOption(code="3", label="Ulcerated")],
+            deprecated_values=["9"],
+            changed_fields=["question_text"],
+            completed_fields=["definition"],
+            delta_size=0.167,
+        ),
+    )
+    result = build_ui_result(LeanBResult(records=[refined]), mode="batch", phases=["loading"])
+    g = result["records"][0]["gencde"]
+    assert g is not None
+    assert g["parentCdeId"] == "Imaging plaque surface type"
+    assert g["parentCdeExternalId"] == "tiny999"  # drives the link-out to the NIH repository entry
+    assert g["relation"] == "skos:narrowMatch"
+    assert g["refinementAxis"] == "qualifier"
+    assert g["qualifierAdded"] == "right carotid bulb"
+    assert g["addedPermissibleValues"] == [{"code": "3", "label": "Ulcerated"}]
+    assert g["deprecatedValues"] == ["9"]
+    # changed vs completed is load-bearing: filling an EMPTY parent slot is not a contradiction of it
+    assert g["changedFields"] == ["question_text"]
+    assert g["completedFields"] == ["definition"]
+    assert g["deltaSize"] == 0.167
+    assert g["overRefined"] is False
+
+
+def test_over_refined_element_surfaces_the_warning():
+    """When the tool judges its own delta a rewrite rather than a refinement, the reviewer must see that."""
+    from ddharmon.harmonization.models import GenCDE
+
+    rec = LeanBRecord(
+        cluster_id="c5",
+        group_id="c5#g0",
+        concept="Food frequency",
+        verdict="refine",
+        route="assigned",
+        cde_id="Some CDE",
+        gencde=GenCDE(gencde_id="REFCDE:c5#g0", parent_cde_id="Some CDE", over_refined=True, delta_size=0.83),
+    )
+    g = build_ui_result(LeanBResult(records=[rec]), mode="batch", phases=["loading"])["records"][0]["gencde"]
+    assert g["overRefined"] is True and g["deltaSize"] == 0.83
 
 
 def test_member_details_enriched_from_index():

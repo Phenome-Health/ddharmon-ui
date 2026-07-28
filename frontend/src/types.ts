@@ -117,10 +117,13 @@ export interface UnassignedField {
   y?: number;
 }
 
-// A synthesized Common Data Element for a novel concept group (mirrors contract.py UIGenCDE) — the novel
-// route's proposed harmonization target. Distinct from UIRecord.idealCde (the free-text coverage anchor):
-// a spec-conformant proposal (name/definition/data type/permissible values/units) reconciled from the
-// group's pooled cross-cohort member evidence. `valueCoverage`/`needsReview` are verification flags, never a gate.
+// A proposed Common Data Element for one concept group (mirrors contract.py UIGenCDE) — its harmonization
+// target. Distinct from UIRecord.idealCde (the free-text coverage anchor): a spec-conformant proposal
+// (name/definition/data type/permissible values/units) reconciled from the group's pooled cross-cohort
+// member evidence. `valueCoverage`/`needsReview` are verification flags, never a gate.
+//
+// Two provenances: a NOVEL group's element is synthesized from scratch; a REFINE group's is derived from
+// the matched CDE (parent + a typed, minimal delta). `parentCdeId` is the test for which.
 export interface GenCDE {
   gencdeId: string;
   preferredName: string;
@@ -143,6 +146,20 @@ export interface GenCDE {
   units?: string;
   minimum?: number;
   maximum?: number;
+  // Derivation — present ONLY when this element refines an existing CDE (the refine route). Rendering a
+  // derived element without these reads as a from-scratch proposal, hiding the very thing under review:
+  // which standard element it changes, and how.
+  parentCdeId?: string;
+  parentCdeExternalId?: string;
+  relation?: string; // skos:narrowMatch | broadMatch | closeMatch | relatedMatch
+  refinementAxis?: string; // value_domain | qualifier | representation | structural | scope
+  qualifierAdded?: string;
+  addedPermissibleValues?: ResponseOption[];
+  deprecatedValues?: string[];
+  changedFields?: string[]; // parent fields the delta CONTRADICTS
+  completedFields?: string[]; // parent fields that were EMPTY and this element supplies (not a change)
+  deltaSize?: number;
+  overRefined?: boolean; // the delta rewrites rather than refines — probably should have been a novel
 }
 
 export interface UIRecord {

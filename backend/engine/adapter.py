@@ -263,8 +263,16 @@ def _unassigned_fields(
 
 
 def _gencde_to_ui(g: Any) -> UIGenCDE | None:
-    """Map a synthesized ``GenCDE`` (the novel route's proposed target) to a ``UIGenCDE``; ``None`` when the
-    record has none (adopt/refine, or a novel produced with the gencde stage off)."""
+    """Map a proposed ``GenCDE`` to a ``UIGenCDE``; ``None`` when the record has none.
+
+    Covers BOTH provenances. A ``novel`` group's element is synthesized from scratch; a ``refine``
+    group's is derived from the matched CDE, and then the derivation block below is populated. Reading
+    the shared fields only would silently present a refinement as a from-scratch proposal — the parent it
+    refines, the relation, and the delta are exactly what a reviewer needs to judge it.
+
+    Derivation fields are read with ``getattr`` defaults so this adapter still works against a pinned
+    core that predates them (the contract is versioned, the core ref is not always in lockstep).
+    """
     if g is None:
         return None
     ui: UIGenCDE = {
@@ -292,6 +300,23 @@ def _gencde_to_ui(g: Any) -> UIGenCDE | None:
         ui["minimum"] = g.minimum_value
     if g.maximum_value is not None:
         ui["maximum"] = g.maximum_value
+    # Derived element (refine route): carry the parent + relation + delta so the UI can render it as a
+    # refinement of a real standard rather than a new proposal. Absent for a from-scratch novel.
+    parent = getattr(g, "parent_cde_id", None)
+    if parent:
+        ui["parentCdeId"] = parent
+        ui["parentCdeExternalId"] = getattr(g, "parent_cde_external_id", None) or ""
+        ui["relation"] = getattr(g, "relation", "") or ""
+        ui["refinementAxis"] = getattr(g, "refinement_axis", "") or ""
+        ui["qualifierAdded"] = getattr(g, "qualifier_added", "") or ""
+        ui["addedPermissibleValues"] = [
+            {"code": o.code, "label": o.label} for o in getattr(g, "added_permissible_values", []) or []
+        ]
+        ui["deprecatedValues"] = list(getattr(g, "deprecated_values", []) or [])
+        ui["changedFields"] = list(getattr(g, "changed_fields", []) or [])
+        ui["completedFields"] = list(getattr(g, "completed_fields", []) or [])
+        ui["deltaSize"] = float(getattr(g, "delta_size", 0.0) or 0.0)
+        ui["overRefined"] = bool(getattr(g, "over_refined", False))
     return ui
 
 

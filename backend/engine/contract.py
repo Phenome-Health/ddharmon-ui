@@ -152,11 +152,17 @@ class UITransform(TypedDict, total=False):
 
 
 class UIGenCDE(TypedDict, total=False):
-    """A synthesized Common Data Element for a ``novel`` concept group (mapped from ``GenCDE``) — the novel
-    route's proposed harmonization target. Distinct from ``UIRecord.idealCde`` (the free-text coverage
-    anchor): this is the spec-conformant proposal — name, definition, data type, permissible values, units —
-    reconciled from the group's pooled cross-cohort member evidence. ``valueCoverage``/``needsReview`` are
-    verification flags (never a gate).
+    """A proposed Common Data Element for one concept group (mapped from ``GenCDE``) — its harmonization
+    target. Distinct from ``UIRecord.idealCde`` (the free-text coverage anchor): this is the
+    spec-conformant proposal — name, definition, data type, permissible values, units — reconciled from
+    the group's pooled cross-cohort member evidence. ``valueCoverage``/``needsReview`` are verification
+    flags (never a gate).
+
+    **Two provenances.** A ``novel`` group's element is synthesized FROM SCRATCH; a ``refine`` group's is
+    DERIVED FROM the matched CDE — the parent plus a typed, minimal delta. ``parentCdeId`` is the test for
+    which: present = derived. The UI must not present a derived element as a from-scratch proposal, since
+    the whole point of the refine verdict is that an existing standard element nearly fits and needs a
+    stated, reviewable change — a reviewer who cannot see the parent cannot judge the change.
     """
 
     # always present
@@ -183,6 +189,18 @@ class UIGenCDE(TypedDict, total=False):
     units: str
     minimum: float
     maximum: float
+    # ── derivation: present ONLY when this element refines an existing CDE (refine route) ──
+    parentCdeId: str  # the matched CDE's designation — the element this one refines
+    parentCdeExternalId: str  # the parent's NIH tinyId, for link-out to the repository entry
+    relation: str  # SSSOM/SKOS predicate vs the parent: skos:narrowMatch | broadMatch | closeMatch | relatedMatch
+    refinementAxis: str  # value_domain | qualifier | representation | structural | scope
+    qualifierAdded: str  # the qualifier the parent lacked ("right carotid bulb")
+    addedPermissibleValues: list[ResponseOptionUI]  # values this element adds to the parent's domain
+    deprecatedValues: list[str]  # parent codes the concept does not use
+    changedFields: list[str]  # parent fields the delta CONTRADICTS (the minimality evidence)
+    completedFields: list[str]  # parent fields that were EMPTY and this element supplies (not a change)
+    deltaSize: float  # fraction of what the parent DID assert that this element changes
+    overRefined: bool  # the delta rewrites rather than refines -> this should probably have been a novel
 
 
 class UIRecord(TypedDict):
