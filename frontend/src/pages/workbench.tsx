@@ -414,7 +414,10 @@ export function WorkbenchBody({
         <div className="text-sm text-neutral-500">{records.length} concepts</div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
+      {/* minmax(0,1fr), not 1fr: a bare `1fr` floors at the content's min-content width, and the CDE
+          table's widest cell blows the track past the container — clipping the detail pane on every
+          record that has one. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
         {/* ── group list ── */}
         <Card className="flex flex-col overflow-hidden lg:sticky lg:top-4 lg:h-[calc(100vh-9rem)]">
           <CardHeader className="shrink-0 space-y-2">
