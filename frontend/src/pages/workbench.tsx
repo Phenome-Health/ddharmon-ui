@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
-import { AlertTriangle, ArrowLeft, Ban, Check, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Save, Sparkles, Star, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Ban, Check, ExternalLink, GitBranch, Loader2, Pencil, Plus, RefreshCw, Save, Sparkles, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlotInfo } from "@/components/plot-info";
@@ -656,7 +656,9 @@ export function WorkbenchBody({
                     + units), the <b>arithmetic</b> formula, or the data-dependent <b>method</b>. The mono badge is the
                     transform <b>kind</b>; <b>coverage</b> is the share of the source&apos;s values the recipe maps.
                     A <b>→ Proposed GenCDE</b> pill marks a recode whose target is this concept&apos;s synthesized
-                    GenCDE (novel route) rather than an existing CDE. Each row carries its OWN{" "}
+                    GenCDE (novel route) rather than an existing CDE; <b>→ Refined CDE</b> marks one whose target is a{" "}
+                    <i>refinement</i> of an existing CDE (refine route) — the parent plus a stated delta, shown in
+                    the Refined CDE panel above. Each row carries its OWN{" "}
                     <b>approve / refine / reject</b> verdict — a per-variable second axis, separate from the
                     concept→CDE match verdict at the top of the page. The <b>review</b> / <b>units</b> / <b>data</b>{" "}
                     chips are diagnostic flags, not buttons — respectively: flagged for a human check, source/target
@@ -713,7 +715,15 @@ export function WorkbenchBody({
                             <span className="text-neutral-600">{transformSummary(t)}</span>
                             {toGenCDE && (
                               <Badge variant="outline" className="gap-1 border-ph-navy/30 text-ph-navy">
-                                <Sparkles className="h-3 w-3" /> → Proposed GenCDE
+                                {selected.gencde?.parentCdeId ? (
+                                  <>
+                                    <GitBranch className="h-3 w-3" /> → Refined CDE
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="h-3 w-3" /> → Proposed GenCDE
+                                  </>
+                                )}
                               </Badge>
                             )}
                             {toGenCDE && gencdeStale && (
@@ -806,6 +816,104 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// How a refined element relates to the CDE it was derived from. SSSOM/SKOS predicates, rendered in plain
+// language — a reviewer should not have to know the vocabulary to judge the claim.
+const RELATION_LABEL: Record<string, string> = {
+  "skos:narrowMatch": "narrower than the original (specialized)",
+  "skos:broadMatch": "broader than the original (generalized)",
+  "skos:closeMatch": "same concept, changed representation",
+  "skos:relatedMatch": "related, neither narrower nor broader",
+};
+
+// The derivation evidence for a refined element: WHICH standard element it changes, HOW it relates to it,
+// and WHAT the change is. Without this a refinement is indistinguishable from a new proposal, and the
+// reviewer has nothing to check the delta against.
+function DerivationBlock({ g }: { g: GenCDE }) {
+  const changed = g.changedFields ?? [];
+  const completed = g.completedFields ?? [];
+  const added = g.addedPermissibleValues ?? [];
+  const deprecated = g.deprecatedValues ?? [];
+  const pct = g.deltaSize != null ? `${Math.round(g.deltaSize * 100)}%` : null;
+
+  return (
+    <div className="space-y-1.5 rounded border border-ph-navy/15 bg-neutral-50 px-2.5 py-2 text-[11px]">
+      <div className="flex flex-wrap items-baseline gap-x-1.5">
+        <span className="font-medium uppercase tracking-wide text-neutral-500">Refines</span>
+        {g.parentCdeExternalId ? (
+          <a
+            className="font-medium text-ph-navy hover:underline"
+            href={`${NIH_CDE_URL}${g.parentCdeExternalId}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {/* `inline`, not `inline-flex`: parent CDE names are full question text and routinely wrap,
+                and a flex line box strands the icon at the far right of the last line. */}
+            {g.parentCdeId} <ExternalLink className="ml-0.5 inline h-3 w-3 align-[-2px]" />
+          </a>
+        ) : (
+          <span className="font-medium text-neutral-700">{g.parentCdeId}</span>
+        )}
+      </div>
+      {g.relation && (
+        <div className="text-neutral-600">
+          <span className="font-medium uppercase tracking-wide text-neutral-500">Relation </span>
+          {RELATION_LABEL[g.relation] ?? g.relation}
+          <span className="ml-1 font-mono text-[10px] text-neutral-500">{g.relation}</span>
+        </div>
+      )}
+      {g.qualifierAdded && (
+        <div className="text-neutral-600">
+          <span className="font-medium uppercase tracking-wide text-neutral-500">Qualifier added </span>
+          {g.qualifierAdded}
+        </div>
+      )}
+      {(changed.length > 0 || completed.length > 0 || pct) && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="font-medium uppercase tracking-wide text-neutral-500">Delta</span>
+          {changed.map((f) => (
+            <Badge key={f} variant="outline" className="border-warning/40 font-mono text-[10px] text-warning">
+              {f.replace(/_/g, " ")}
+            </Badge>
+          ))}
+          {/* Completions are NOT changes: the public CDE catalog is sparse (most matched parents carry no
+              question text), so supplying one fills a blank rather than contradicting the standard. */}
+          {completed.map((f) => (
+            <Badge key={f} variant="outline" className="font-mono text-[10px] text-neutral-500" title="Parent field was empty — supplied, not changed">
+              +{f.replace(/_/g, " ")}
+            </Badge>
+          ))}
+          {pct && <span className="text-neutral-500">{pct} of the original changed</span>}
+        </div>
+      )}
+      {(added.length > 0 || deprecated.length > 0) && (
+        <div className="text-neutral-600">
+          {added.length > 0 && (
+            <span>
+              <span className="font-medium uppercase tracking-wide text-neutral-500">Values added </span>
+              {added.map((o) => o.label).join(", ")}
+            </span>
+          )}
+          {deprecated.length > 0 && (
+            <span className="ml-2">
+              <span className="font-medium uppercase tracking-wide text-neutral-500">Unused </span>
+              {deprecated.join(", ")}
+            </span>
+          )}
+        </div>
+      )}
+      {g.overRefined && (
+        <div className="flex items-start gap-1.5 rounded border border-warning/40 bg-warning-bg/40 px-2 py-1.5 text-warning">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            This rewrites more of the original than it refines — the concept may warrant a brand-new element
+            rather than a change to this one. Worth checking whether the group is really one concept.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The synthesized GenCDE proposed for a novel concept (contract `UIRecord.gencde`) — the spec-conformant
 // harmonization target, distinct from the free-text "Concept summary" (idealCde). Shown only on novels.
 // Clicking "refine" opens an editable draft over the synthesized fields so the reviewer can CORRECT the
@@ -845,13 +953,24 @@ function GenCDECard({
     onDecide("refine", cleaned);
   }
 
+  // Provenance drives the framing. A DERIVED element (refine route) changes an existing standard element,
+  // so it is titled and evidenced as such — calling it a "Proposed GenCDE" would hide the parent and the
+  // delta, which are the only things that make the proposal reviewable.
+  const derived = !!g.parentCdeId;
+
   return (
     <div className="mt-1 space-y-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2.5">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ph-navy">
-          <Sparkles className="h-3.5 w-3.5" /> Proposed GenCDE
+          {derived ? <GitBranch className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+          {derived ? "Refined CDE" : "Proposed GenCDE"}
         </span>
         <span className="flex items-center gap-1">
+          {derived && g.refinementAxis && (
+            <Badge variant="outline" className="font-mono text-[10px]">
+              {g.refinementAxis.replace(/_/g, " ")}
+            </Badge>
+          )}
           {g.dataType && (
             <Badge variant="outline" className="font-mono text-[10px]">
               {g.dataType}
@@ -864,10 +983,12 @@ function GenCDECard({
           )}
         </span>
       </div>
+
+      {derived && <DerivationBlock g={g} />}
       {/* GenCDE-axis verdict: approve/refine/reject the proposed target itself (distinct from the concept→CDE
           match verdict and the per-variable transform verdicts). "refine" opens the edit form below. */}
       <div className="flex items-center gap-1.5">
-        <span className="text-[11px] text-neutral-500">Review proposal:</span>
+        <span className="text-[11px] text-neutral-500">{derived ? "Review refinement:" : "Review proposal:"}</span>
         <DecisionBtn active={decision === "approve"} onClick={() => onDecide("approve")} title="Approve GenCDE" color="text-success">
           <Check className="h-4 w-4" />
         </DecisionBtn>
