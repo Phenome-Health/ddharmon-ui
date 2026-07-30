@@ -67,6 +67,10 @@ class Job:
     # Optional post-run "analysis ideas" (LLM-suggested downstream analyses). None = not generated yet;
     # a list once generated (cached so the opt-in LLM pass isn't re-billed on every view). Persisted.
     analysis_ideas: list[dict[str, Any]] | None = None
+    # Optional post-run composite/derived-variable specs (one per published score derived against this run's
+    # concepts). None = none derived yet. A list, because a run legitimately supports several scores; a
+    # re-derive REPLACES the entry for that score name rather than appending (see backend.composite.upsert).
+    composites: list[dict[str, Any]] | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     # Record count carried on a DB-hydrated summary (result blob not loaded); used by summary_dict when
@@ -102,6 +106,7 @@ class Job:
             owner_subject=d.get("owner_subject"),
             dict_specs=d.get("dict_specs"),
             analysis_ideas=d.get("analysis_ideas"),
+            composites=d.get("composites"),
             created_at=d["created_at"],
             updated_at=d["updated_at"],
             n_records=d.get("n_records", 0),
@@ -124,6 +129,7 @@ class Job:
             "config": self.config,
             "decisions": self.decisions,
             "analysisIdeas": self.analysis_ideas,
+            "composites": self.composites,
             "phaseStartedAt": self.phase_timings,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
@@ -350,6 +356,26 @@ class JobStore:
             ok = apply(job)
         if not ok:
             return False
+        self._persist(job)
+        return True
+
+    def set_composites(self, job_id: str, composites: list[dict[str, Any]]) -> bool:
+        """Cache derived composite specs on a job (live or DB-hydrated) and persist them, so a derivation
+        survives reload/restart and a re-view isn't re-billed. Returns False if the job doesn't exist."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                job.composites = composites
+                job.updated_at = time.time()
+        if job is None:
+            if self.db is None:
+                return False
+            row = self.db.get(job_id)
+            if row is None:
+                return False
+            job = Job.from_db_row(row)
+            job.composites = composites
+            job.updated_at = time.time()
         self._persist(job)
         return True
 

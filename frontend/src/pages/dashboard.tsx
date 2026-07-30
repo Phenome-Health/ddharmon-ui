@@ -7,6 +7,7 @@ import {
   ArrowUpDown,
   Ban,
   Bug,
+  Calculator,
   Check,
   ChevronDown,
   ChevronRight,
@@ -608,6 +609,27 @@ export default function DashboardPage() {
           {/* "What this run unlocks" — kept ABOVE the (long) review queue so it's seen without scrolling to
               the bottom. For a demo the ideas are pre-generated; for a real run it's a one-click generate. */}
           <AnalysisIdeasPanel jobId={jobId} initial={jobState?.analysisIdeas ?? null} isDemo={isDemo} />
+
+          {/* Composite/derived variables — "can these concepts support a published score?" Its own page
+              (like analysis ideas) because a derivation carries a source document + a full spec. */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Calculator className="h-4 w-4 text-ph-navy" /> Composite variable
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-3">
+              <p className="min-w-[16rem] flex-1 text-sm text-neutral-500">
+                Point at a paper, repo, or PDF defining a score — a frailty index, an intrinsic-capacity
+                score — and see whether this run's concepts can support it, and which ones compose it.
+              </p>
+              <Link href={`/job/${jobId}/composite`}>
+                <Button variant="outline" className="gap-1.5">
+                  <Calculator className="h-3.5 w-3.5" /> Build a composite
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
 
           {!running && (
           <Card>
