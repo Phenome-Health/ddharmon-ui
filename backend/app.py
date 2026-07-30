@@ -480,11 +480,15 @@ def analysis_ideas(
 
     from backend.analysis_ideas import generate_analysis_ideas
     from backend.engine.llm import build_llm_client
+    from backend.llm_errors import llm_call
 
     # Use the SAME model/provider the run was configured with (its persisted model_tag), not the SDK's stale
     # default. BYOK: the key is in-memory for this request only — never persisted or logged.
-    client = build_llm_client(job.config.get("model_tag"), x_anthropic_key)
-    out = generate_analysis_ideas(records, client.complete)
+    model_tag = job.config.get("model_tag")
+    client = build_llm_client(model_tag, x_anthropic_key)
+    # A rejected key or an overloaded provider is an expected condition, not a crash — surface it as such.
+    with llm_call(model=model_tag):
+        out = generate_analysis_ideas(records, client.complete)
     store.set_analysis_ideas(job_id, out["ideas"])
     return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
 
