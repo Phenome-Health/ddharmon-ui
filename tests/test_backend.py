@@ -1217,6 +1217,121 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
     assert unassigned_keys.isdisjoint(members)
 
 
+def _spy_on_core(monkeypatch, seen):
+    """Record the kwargs the adapter hands ``harmonize_leanb``.
+
+    ``functools.wraps`` matters: the adapter signature-guards optional knobs with
+    ``inspect.signature(harmonize_leanb)``, so a naive ``(embedded, **kw)`` wrapper would hide the real
+    parameters and make the guard skip the very kwarg under test — a false pass.
+    """
+    import functools
+
+    import ddharmon.harmonization as core
+
+    orig = core.harmonize_leanb
+
+    @functools.wraps(orig)
+    def spy(embedded, **kw):
+        seen["refine_cdes"] = kw.get("refine_cdes", "ABSENT")
+        seen["refine_cb"] = kw.get("refine") is not None
+        return orig(embedded, **kw)
+
+    monkeypatch.setattr(core, "harmonize_leanb", spy)
+
+
+def _refine_fixture(tmp_path, monkeypatch):
+    """Minimal two-cohort + CDE setup whose single concept classifies as ``refine``."""
+    a = tmp_path / "cohortA.csv"
+    a.write_text("var,desc,enc\nsmoke,Do you smoke,1=Yes|2=No\n")
+    b = tmp_path / "cohortB.csv"
+    b.write_text("var,desc,enc\nsmoke_b,Current smoker,1=Yes|0=No\n")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\tpermissible_values\nSmokeCDE\tSmoking status\t1=Yes|0=No\n")
+
+    roles = {"variable_name": "var", "description": "desc", "value_encoding": "enc"}
+    dict_specs = [
+        {"path": str(a), "cohort_name": "CohortA", "column_roles": roles},
+        {"path": str(b), "cohort_name": "CohortB", "column_roles": roles},
+    ]
+    cde_spec = {
+        "path": str(cde),
+        "cohort_name": "NIH_CDE",
+        "column_roles": {
+            "variable_name": "designation",
+            "description": "definition",
+            "value_encoding": "permissible_values",
+        },
+    }
+
+    def fake_topic_model(embedded, **kwargs):
+        docs, embeddings, field_refs, cohorts = collect_inputs(embedded)
+        members = [r for r in field_refs if r.dictionary_name != "NIH_CDE"]
+        return TopicModelResult(
+            model=None,
+            docs=docs,
+            embeddings=embeddings,
+            field_refs=field_refs,
+            clusters=[FieldCluster(cluster_id=0, label="all", members=members)],
+            outlier_cluster=None,
+            all_cohort_names=cohorts,
+        )
+
+    monkeypatch.setattr("ddharmon.clustering.topic_engine.topic_model_dictionaries", fake_topic_model)
+
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "refine", "cde_id": "1", "ranking": [1], "rationale": "mock"} for r in recs
+        },
+        "specgen": lambda recs: {},
+        "refine": lambda recs: {},
+    }
+    config = {
+        "run_mode": "batch",
+        "cde_cohort": "NIH_CDE",
+        "work_dir": str(tmp_path),
+        "min_cluster_size": 2,
+        "retrieval_floor": 0.0,
+        "gen_transform_specs": True,
+    }
+    return dict_specs, cde_spec, config, overrides
+
+
+def test_refine_cdes_is_wired_through_to_core(monkeypatch, tmp_path):
+    """The adapter must pass BOTH ``refine_cdes=True`` and a ``refine`` stage to core.
+
+    Regression guard for a silent gap: core defaults ``refine_cdes`` OFF and the knobs passthrough is an
+    allowlist, so for a while the refine bucket named a CDE but had nothing to harmonize ONTO and the
+    Refined CDE panel could never populate. This asserts the wiring rather than an LLM call, because
+    whether a prompt is actually produced is core's triage decision (a mis-assigned or deterministically
+    settled record correctly yields no paid call).
+    """
+    dict_specs, cde_spec, config, overrides = _refine_fixture(tmp_path, monkeypatch)
+    seen: dict = {}
+    _spy_on_core(monkeypatch, seen)
+
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert any(r["verdict"] == "refine" for r in result["records"]), "fixture should produce a refine record"
+    assert seen["refine_cdes"] is True, "refine_cdes never reached core — the refine bucket gets no target"
+    assert seen["refine_cb"], "the refine stage callback was not passed to core"
+    assert "refine" in result["phases"], "the refine phase should be advertised to the UI"
+
+
+def test_refine_cdes_can_be_gated_off(monkeypatch, tmp_path):
+    """``refine_cdes=false`` suppresses it — refinement costs an LLM call per group core can't settle free."""
+    dict_specs, cde_spec, config, overrides = _refine_fixture(tmp_path, monkeypatch)
+    config["refine_cdes"] = False
+    seen: dict = {}
+    _spy_on_core(monkeypatch, seen)
+
+    run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert seen["refine_cdes"] == "ABSENT", "refine_cdes=false should not pass the flag to core"
+    assert not seen["refine_cb"], "refine_cdes=false should not pass the refine callback either"
+
+
 def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
     """The adapter reports phases via the progress callback (data-driven progress for the UI)."""
     a = tmp_path / "cohortA.csv"

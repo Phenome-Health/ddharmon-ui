@@ -824,6 +824,7 @@ def run_pipeline(
             "classify": _sync_stage("assigning", progress, client, ledger, stopping),
             "gencde": _sync_stage("gencde", progress, client, ledger, stopping),
             "specgen": _sync_stage("specs", progress, client, ledger, stopping),
+            "refine": _sync_stage("refine", progress, client, ledger, stopping),
         }
     else:  # batch (default)
         stages = {
@@ -836,6 +837,7 @@ def run_pipeline(
             ),
             "gencde": _batch_stage("gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping),
             "specgen": _batch_stage("specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping),
+            "refine": _batch_stage("refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping),
         }
 
     gen_specs = config.get("gen_transform_specs", True)
@@ -850,6 +852,15 @@ def run_pipeline(
     gen_gencde_specs = config.get("gen_gencde_specs", True) and gen_gencde and gen_specs
     if gen_gencde_specs and "gencde_specgen" in inspect.signature(harmonize_leanb).parameters:
         kwargs["gencde_specgen"] = True
+    # Refinement authoring — ON by default for the same reason gencde is: without it the `refine` bucket names a
+    # CDE but produces nothing to harmonize ONTO, so those concepts have no target and the Refined CDE panel has
+    # nothing to show. Gate off with refine_cdes=false. Core defaults this OFF (it costs an LLM call per
+    # refine-bucket group that no deterministic rule could settle), so enabling it is the UI's choice, not core's.
+    # Signature-guarded like gencde_specgen: the dev channel swaps core versions, and a core pinned before the
+    # refine port must skip the flag rather than error on an unexpected kwarg.
+    refine_cdes = config.get("refine_cdes", True) and "refine_cdes" in inspect.signature(harmonize_leanb).parameters
+    if refine_cdes:
+        kwargs["refine_cdes"] = True
     progress("clustering", 0, 0)  # clustering + retrieval happen inside harmonize_leanb before the first callback
     result = harmonize_leanb(
         embedded,
@@ -858,6 +869,7 @@ def run_pipeline(
         classify=stages.get("classify"),
         gencde=stages.get("gencde") if gen_gencde else None,
         specgen=stages.get("specgen") if gen_specs else None,
+        **({"refine": stages.get("refine")} if refine_cdes else {}),
         **kwargs,
     )
     _save_substrate_if_new(substrate_path, result)

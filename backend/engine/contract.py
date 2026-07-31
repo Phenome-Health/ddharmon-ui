@@ -330,7 +330,18 @@ class UIResult(TypedDict):
 
 
 # Phase sequences the UI consumes to render progress (data-driven — see §1 "new/removed stage" row).
-PHASES_RUN = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "gencde", "specs"]
+# "refine" runs LAST — core authors derived CDEs after specgen, so its progress lands after "specs".
+PHASES_RUN = [
+    "loading",
+    "embedding",
+    "clustering",
+    "generating",
+    "splitting",
+    "assigning",
+    "gencde",
+    "specs",
+    "refine",
+]
 PHASES_PREVIEW = ["loading", "embedding", "clustering", "prepared"]
 
 
