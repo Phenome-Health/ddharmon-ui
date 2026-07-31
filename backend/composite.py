@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from ddharmon.harmonization.composite import derive_composite, records_from_payload, spec_to_dict
-from ddharmon.harmonization.score_sources import ScoreSource, from_pdf, from_text, from_url
+from ddharmon.harmonization.score_sources import ScoreSource, fetch_source, from_text, from_url
 
 # Cache the encoder across requests: hybrid retrieval is opt-in per call, and cold-loading BioLORD (768d)
 # per request would dominate the response time.
@@ -39,22 +39,26 @@ def resolve_source(
     *,
     text: str | None = None,
     ref: str | None = None,
-    pdf: bytes | None = None,
+    upload: bytes | None = None,
     filename: str = "",
 ) -> ScoreSource:
     """Turn whichever input the client supplied into a :class:`ScoreSource`.
 
-    Exactly one of ``text`` / ``ref`` / ``pdf`` is expected; precedence is pdf → ref → text so an explicit
-    upload always wins. ``ref`` may be a URL, a bare DOI, or a GitHub repo — core bounds that fetch (http(s)
-    only, redirect hops re-validated against non-public address space, byte cap, timeout).
+    Exactly one of ``text`` / ``ref`` / ``upload`` is expected; precedence is upload → ref → text so an
+    explicit upload always wins. ``ref`` may be a URL, a bare DOI, or a GitHub repo — core bounds that fetch
+    (http(s) only, redirect hops re-validated against non-public address space, byte cap, timeout).
+
+    An upload is routed by core's ``fetch_source`` on the bytes' MAGIC NUMBER, not on the filename: a PDF
+    goes to the PDF reader and a Word supplement (``.docx``) to the docx reader, which is what the caller
+    usually wants when a score's item table lives in the supplement rather than the article.
     """
-    if pdf:
-        return from_pdf(pdf, provenance=filename or "uploaded.pdf")
+    if upload:
+        return fetch_source(upload, provenance=filename or "uploaded document")
     if ref and ref.strip():
         return from_url(ref.strip())
     if text and text.strip():
         return from_text(text)
-    raise ValueError("provide the score's definition as pasted text, a URL/DOI/repo, or a PDF upload")
+    raise ValueError("provide the score's definition as pasted text, a URL/DOI/repo, or a PDF / Word (.docx) upload")
 
 
 def derive(
@@ -99,7 +103,5 @@ def upsert(existing: list[dict[str, Any]] | None, spec: dict[str, Any]) -> list[
     same score with no way to tell which is current.
     """
     name = str((spec.get("definition") or {}).get("name") or "").strip().lower()
-    kept = [
-        s for s in (existing or []) if str((s.get("definition") or {}).get("name") or "").strip().lower() != name
-    ]
+    kept = [s for s in (existing or []) if str((s.get("definition") or {}).get("name") or "").strip().lower() != name]
     return [*kept, spec]

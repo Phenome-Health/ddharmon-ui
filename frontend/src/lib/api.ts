@@ -187,16 +187,17 @@ export async function deriveComposite(
 }
 
 /**
- * Extract text from an uploaded PDF ($0 — no LLM call), so it can be reviewed BEFORE a derivation is paid
- * for. Publisher PDFs are often an access-check interstitial, and a component table may not survive
- * extraction at all; finding that out should be free.
+ * Extract text from an uploaded PDF or Word (.docx) document ($0 — no LLM call), so it can be reviewed
+ * BEFORE a derivation is paid for. Publisher PDFs are often an access-check interstitial, and a component
+ * table may not survive extraction at all; finding that out should be free. Word matters because a score's
+ * item table usually lives in the supplement, and supplements are routinely .docx.
  */
-export async function extractCompositePdf(
+export async function extractCompositeDocument(
   jobId: string,
   file: File,
 ): Promise<{ text: string; provenance: string; sha256: string; nChars: number }> {
   if (IS_STATIC) throw new Error(STATIC_MSG);
-  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to read a PDF.");
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to read a document.");
   const form = new FormData();
   form.append("file", file);
   return json(
