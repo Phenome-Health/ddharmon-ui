@@ -10,6 +10,7 @@ A StubClient stands in for the LLM; no network and no embedding model.
 
 from __future__ import annotations
 
+import io
 import json
 
 import pytest
@@ -269,6 +270,66 @@ def test_pdf_extract_rejects_a_non_pdf_body_with_a_clear_message():
     assert r.status_code == 400 and "not a PDF" in r.json()["detail"]
 
 
+def test_word_supplement_extract_reads_the_item_table():
+    """A score's item table usually lives in the supplement, and supplements are routinely .docx.
+
+    Uses a REAL .docx (not a stub) because the thing worth testing is that table cells survive at all —
+    python-docx's paragraph iteration drops them, which would silently lose the item list.
+    """
+    docx = pytest.importorskip("docx")
+    buffer = io.BytesIO()
+    document = docx.Document()
+    document.add_paragraph("Supplementary Table 1. Frailty index items.")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Deficit"
+    table.cell(0, 1).text = "Cut-point"
+    table.cell(1, 0).text = "Hemoglobin"
+    table.cell(1, 1).text = "<130 g/L"
+    document.save(buffer)
+
+    with TestClient(app_module.app) as c:
+        _completed_job(app_module)
+        r = c.post(
+            "/api/harmonize/jobs/j1/composite/extract",
+            files={
+                "file": (
+                    "supplement.docx",
+                    buffer.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "Supplementary Table 1" in body["text"]
+    assert "Hemoglobin | <130 g/L" in body["text"]  # the table survived, structure and all
+    assert body["provenance"] == "supplement.docx"
+
+
+def test_upload_is_routed_by_magic_number_not_by_filename(monkeypatch):
+    """Uploads arrive with whatever name the browser had; the bytes decide which reader runs."""
+    monkeypatch.setattr("ddharmon.harmonization.score_sources.pdf_to_text", lambda data: "FI-Lab: 32 deficits")
+    with TestClient(app_module.app) as c:
+        _completed_job(app_module)
+        r = c.post(
+            "/api/harmonize/jobs/j1/composite/extract",
+            files={"file": ("mislabeled.docx", b"%PDF-1.4 ...", "application/octet-stream")},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["text"] == "FI-Lab: 32 deficits"  # read as the PDF it actually is
+
+
+def test_legacy_doc_upload_says_to_re_save_it():
+    """A binary .doc is a different format, not a broken .docx — the message has to say so."""
+    with TestClient(app_module.app) as c:
+        _completed_job(app_module)
+        r = c.post(
+            "/api/harmonize/jobs/j1/composite/extract",
+            files={"file": ("supplement.doc", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 old word", "application/msword")},
+        )
+    assert r.status_code == 400 and "legacy binary .doc" in r.json()["detail"]
+
+
 # --- gating -----------------------------------------------------------------------------------
 
 
@@ -300,5 +361,11 @@ def test_another_users_run_is_not_derivable(monkeypatch, tmp_path, stub_llm):
 
     with TestClient(app_module.app) as c:
         _completed_job(app_module, "owned", owner="user_A")
-        assert c.post("/api/harmonize/jobs/owned/composite", json={"sourceText": "x"}, headers=_hdr("B")).status_code == 404
-        assert c.post("/api/harmonize/jobs/owned/composite", json={"sourceText": "x"}, headers=_hdr("A")).status_code == 200
+        assert (
+            c.post("/api/harmonize/jobs/owned/composite", json={"sourceText": "x"}, headers=_hdr("B")).status_code
+            == 404
+        )
+        assert (
+            c.post("/api/harmonize/jobs/owned/composite", json={"sourceText": "x"}, headers=_hdr("A")).status_code
+            == 200
+        )

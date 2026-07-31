@@ -532,14 +532,14 @@ class CompositeBody(BaseModel):
 
 
 @app.post("/api/harmonize/jobs/{job_id}/composite/extract")
-async def composite_extract_pdf(
-    job_id: str, request: Request, file: Annotated[UploadFile, File()]
-) -> dict[str, Any]:
-    """Extract text from an uploaded PDF so the client can review it before deriving ($0, no LLM call).
+async def composite_extract(job_id: str, request: Request, file: Annotated[UploadFile, File()]) -> dict[str, Any]:
+    """Extract text from an uploaded PDF or Word (.docx) document so the client can review it before
+    deriving ($0, no LLM call).
 
     Separated from the derive route on purpose: a publisher PDF may be an access-check interstitial, or its
     component table may not survive extraction at all (PMC does exactly this), and finding that out should
-    not cost a derivation.
+    not cost a derivation. Word matters because a score's item table is usually in the SUPPLEMENT, and
+    supplements are routinely .docx.
     """
     job = store.get(job_id)
     if job is None or not _visible_to(job, _subject(request)):
@@ -549,9 +549,9 @@ async def composite_extract_pdf(
 
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="PDF too large (20 MB cap)")
+        raise HTTPException(status_code=413, detail="Document too large (20 MB cap)")
     try:
-        source = resolve_source(pdf=data, filename=file.filename or "uploaded.pdf")
+        source = resolve_source(upload=data, filename=file.filename or "uploaded document")
     except (ValueError, ImportError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"text": source.text, "provenance": source.provenance, "sha256": source.sha256, "nChars": len(source.text)}
@@ -614,8 +614,8 @@ def _definition_from_payload(payload: dict[str, Any]) -> Any:
     """
     from ddharmon.harmonization.composite import (
         CodingKind,
-        CompositeKind,
         ComponentCoding,
+        CompositeKind,
         ScoreComponent,
         ScoreDefinition,
     )

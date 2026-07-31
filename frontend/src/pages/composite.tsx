@@ -1,4 +1,4 @@
-// Composite / derived-variable builder — point at a paper (or repo, or PDF) that defines a score and ask
+// Composite / derived-variable builder — point at a paper (or repo, PDF, or Word supplement) that defines a score and ask
 // whether THIS run's harmonized concepts can support it, and out of which concepts.
 //
 // Three things this surface must never soften, because they are the whole point of the feature:
@@ -28,7 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { deriveComposite, extractCompositePdf } from "@/lib/api";
+import { deriveComposite, extractCompositeDocument } from "@/lib/api";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
 type Mode = "paste" | "ref" | "pdf";
@@ -64,11 +64,11 @@ export default function CompositePage() {
     return m;
   }, [records]);
 
-  async function onPdf(file: File) {
+  async function onDocument(file: File) {
     setBusy("extract");
     setError("");
     try {
-      const out = await extractCompositePdf(jobId, file);
+      const out = await extractCompositeDocument(jobId, file);
       setText(out.text);
       setExtracted({ provenance: out.provenance, nChars: out.nChars });
       setMode("paste"); // the extracted text is now the source — reviewable before anything is spent
@@ -125,7 +125,7 @@ export default function CompositePage() {
           <Calculator className="h-5 w-5 text-ph-navy" /> Composite variable
         </h1>
         <p className="mt-1.5 max-w-3xl text-sm text-neutral-500">
-          Point at a paper, repo, or PDF that defines a score — a frailty index, an intrinsic-capacity score,
+          Point at a paper, repo, PDF, or Word supplement that defines a score — a frailty index, an intrinsic-capacity score,
           an SES index — and see whether this run's {records.length} harmonized concepts can support it, which
           concepts compose it, and how. ddharmon reads only metadata: it produces the derivation recipe and
           never computes the score.
@@ -143,7 +143,7 @@ export default function CompositePage() {
               [
                 ["paste", "Paste text", FileText],
                 ["ref", "URL / DOI / repo", Link2],
-                ["pdf", "Upload PDF", Upload],
+                ["pdf", "Upload PDF / Word", Upload],
               ] as const
             ).map(([m, label, Icon]) => (
               <Button
@@ -171,7 +171,7 @@ export default function CompositePage() {
                 <p className="text-xs text-neutral-500">
                   Extracted {extracted.nChars.toLocaleString()} chars from{" "}
                   <span className="font-medium text-neutral-600">{extracted.provenance}</span> — review it above
-                  before deriving. If the score's item table isn't here, the PDF didn't carry it.
+                  before deriving. If the score's item table isn't here, the document didn't carry it.
                 </p>
               )}
             </>
@@ -185,7 +185,7 @@ export default function CompositePage() {
               />
               <p className="text-xs text-neutral-500">
                 Fetched server-side and bounded (http(s) only, size-capped). A publisher page may omit the
-                score's item table — if the result looks under-enumerated, upload the PDF instead.
+                score's item table — if the result looks under-enumerated, upload the PDF or supplement instead.
               </p>
             </>
           )}
@@ -193,14 +193,15 @@ export default function CompositePage() {
             <div>
               <Input
                 type="file"
-                accept="application/pdf"
+                accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) void onPdf(f);
+                  if (f) void onDocument(f);
                 }}
               />
               <p className="mt-1.5 text-xs text-neutral-500">
-                Read for free — the extracted text lands in the paste box for review before anything is spent.
+                PDF or Word (.docx) — a score's item table is often in the supplement, and tables are read too.
+                Free — the extracted text lands in the paste box for review before anything is spent.
               </p>
             </div>
           )}
@@ -228,7 +229,7 @@ export default function CompositePage() {
           </p>
           {busy === "extract" && (
             <p className="flex items-center gap-1.5 text-xs text-neutral-500">
-              <Loader2 className="h-3 w-3 animate-spin" /> Reading the PDF…
+              <Loader2 className="h-3 w-3 animate-spin" /> Reading the document…
             </p>
           )}
           {error && (
