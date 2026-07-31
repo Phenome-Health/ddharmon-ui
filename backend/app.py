@@ -580,6 +580,7 @@ def composite(
 
     from backend.composite import derive, resolve_source, upsert
     from backend.engine.llm import build_llm_client
+    from backend.llm_errors import llm_call
 
     # A re-derive from an existing definition needs no document; a first derivation does.
     source = None
@@ -590,15 +591,18 @@ def composite(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Same model/provider the run was configured with. BYOK: in-memory for this request only.
-    client = build_llm_client(job.config.get("model_tag"), x_anthropic_key)
+    model_tag = job.config.get("model_tag")
+    client = build_llm_client(model_tag, x_anthropic_key)
     try:
-        spec = derive(
-            records,
-            source or _definition_from_payload(body.definition or {}),
-            client.complete,
-            overrides=body.overrides,
-            hybrid=body.hybrid,
-        )
+        # llm_call: a rejected key / rate limit / overload is the provider's condition, not our crash.
+        with llm_call(model=model_tag):
+            spec = derive(
+                records,
+                source or _definition_from_payload(body.definition or {}),
+                client.complete,
+                overrides=body.overrides,
+                hybrid=body.hybrid,
+            )
     except ValueError as exc:
         # e.g. the document defines no score, or its text extraction came back empty — a 400, not a 500.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
