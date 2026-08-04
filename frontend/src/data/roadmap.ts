@@ -8,6 +8,19 @@
 // Cross items off (shipped) as they ship.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+import type { ContentProvenance } from "./content-provenance";
+
+/** See ./content-provenance. NOT yet baselined — item statuses have not been re-checked against what
+ *  actually shipped. This is the manifest most prone to quiet drift: "planned" items go out without
+ *  anyone crossing them off, so the roadmap under-claims. First pass should reconcile every status
+ *  against the pipeline, then set a real coreCommit. */
+export const VERIFIED_AGAINST: ContentProvenance = {
+  coreCommit: "unverified",
+  contractVersion: "unverified",
+  checkedOn: "never",
+  scope: "Baseline not established — item statuses unreconciled against what has shipped.",
+};
+
 export type RoadmapStatus = "shipped" | "in-progress" | "planned" | "exploring";
 
 export interface RoadmapItem {

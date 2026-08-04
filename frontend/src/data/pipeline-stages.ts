@@ -24,6 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import type { LucideIcon } from "lucide-react";
+import type { ContentProvenance } from "./content-provenance";
 import {
   Boxes,
   ClipboardCheck,
@@ -33,11 +34,24 @@ import {
   GitBranch,
   Network,
   Search,
+  Sparkles,
   Split,
   Target,
 } from "lucide-react";
 
-/** The pipeline's reported progress phases — mirrors `PHASES_RUN` in backend/engine/contract.py. */
+/** See ./content-provenance — re-stamp only after re-reading the prose against the pipeline. The
+ *  stage/phase agreement itself is enforced mechanically by tests/test_content_drift.py. */
+export const VERIFIED_AGAINST: ContentProvenance = {
+  coreCommit: "f92abb6",
+  contractVersion: "4",
+  checkedOn: "2026-08-04",
+  scope: "Full stage list re-read against PHASES_RUN; added the gencde and refine stages.",
+};
+
+/** The pipeline's reported progress phases — mirrors `PHASES_RUN` in backend/engine/contract.py.
+ *  Enforced by `tests/test_content_drift.py`: this list, that list, and the stage entries below must
+ *  agree exactly. Both copies had silently drifted (`gencde` since the M12 work, `refine` on adding
+ *  the refine route) — hence the test. */
 export const PHASES_RUN = [
   "loading",
   "embedding",
@@ -45,7 +59,9 @@ export const PHASES_RUN = [
   "generating",
   "splitting",
   "assigning",
+  "gencde",
   "specs",
+  "refine",
 ] as const;
 
 export type PhaseId = (typeof PHASES_RUN)[number];
@@ -213,6 +229,23 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     ],
   },
   {
+    id: "gencde",
+    phase: "gencde",
+    name: "GenCDE synthesis",
+    short: "GenCDE",
+    kind: "llm",
+    icon: Sparkles,
+    whatItDoes:
+      "For each novel concept — one no existing CDE covers — the LLM synthesizes a spec-conformant candidate element: preferred name, definition, question text, and a permissible-value set pooled from the member variables. A GenCDE is a PROPOSAL for review, not a registered standard element.",
+    inputs: ["Novel records (the tail)", "Pooled member fields + their observed value sets"],
+    outputs: ["A proposed GenCDE per novel concept", "Member → GenCDE value recodes"],
+    keyDecisions: [
+      "The tail gets a harmonization target of its own — otherwise a novel concept ends the run with nothing to map onto.",
+      "Value coverage is reported per proposal: the share of the members' observed values the synthesized domain actually admits.",
+      "Nothing is registered anywhere — a GenCDE is a candidate you review, adopt, or discard.",
+    ],
+  },
+  {
     id: "specs",
     phase: "specs",
     name: "Transform-spec generation",
@@ -227,6 +260,28 @@ export const PIPELINE_STAGES: PipelineStage[] = [
       "Feeding the source variable's question_text lifts whole-variable recode accuracy ~7pp (ATHLOS 0.832 → 0.869).",
       "Arithmetic specs are always flagged for review.",
       "Nothing is applied to data — a spec is a recipe you run in your own environment.",
+    ],
+  },
+  {
+    id: "refine",
+    phase: "refine",
+    name: "Refinement authoring",
+    short: "Refined CDE",
+    kind: "llm",
+    icon: GitBranch,
+    whatItDoes:
+      "A refine verdict says the matched CDE is close but not right. This stage gives that verdict a real target: an element DERIVED from the matched CDE — the parent plus a typed, minimal, stated delta (a qualifier added, a value domain widened, a scope changed). Transform specs are then repointed at the refined element.",
+    inputs: ["Refine records + their matched parent CDE", "Pooled member value sets"],
+    outputs: [
+      "A derived element per refinement — parent, relation, axis, and the delta",
+      "Transform specs retargeted from the parent to the refined element",
+    ],
+    keyDecisions: [
+      "The NIH CDE model has no “refines” predicate, so the relation is stated with SKOS (narrow / broad / close / relatedMatch) and the derivation is recorded on the element itself.",
+      "Completions are tracked separately from changes and excluded from the delta size — the public catalog is sparse, and supplying an absent question text fills a blank rather than contradicting the standard.",
+      "Deltas a rule can derive (unit, structural) are applied for free first, so a model is never paid for an answer arithmetic already settles.",
+      "A match the earlier stages already doubt is gated OUT rather than refined — never build a refinement on a concept that looks mis-assigned.",
+      "A delta that rewrites more of the parent than it refines is flagged as over-refined: the honest verdict there is usually novel.",
     ],
   },
   {
