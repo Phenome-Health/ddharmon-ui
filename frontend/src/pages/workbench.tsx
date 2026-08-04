@@ -27,6 +27,8 @@ import {
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { SourceRows } from "@/components/source-rows";
 import { regenerateSpecs, submitVerdict } from "@/lib/api";
+import { DemoBanner } from "@/components/demo-banner";
+import { readSandbox, writeSandbox } from "@/lib/sandbox";
 import {
   VERDICT_STYLES,
   conceptLabel,
@@ -243,13 +245,29 @@ export function WorkbenchBody({
   const queryString = useSearch();
   const linkedId = new URLSearchParams(queryString).get("c");
   const [selectedId, setSelectedId] = useState<string | null>(linkedId);
-  const [decisions, setDecisions] = useState<Record<string, string>>({});
+  // On the read-only demo the server holds nothing, so verdict state is seeded from (and written back to)
+  // this tab's sandbox — that is what makes a refresh mid-evaluation not throw the work away.
+  //
+  // Seeded UNCONDITIONALLY, not behind `isDemo`: the stream hook's first jobState has an empty `config`, so
+  // isDemo is still false on the render where useState captures its initial value. Gating on it meant
+  // hydration silently missed and the mirror effect below then wrote the empty state OVER the saved work.
+  // A real run has no sandbox entry, so reading here is a no-op for it.
+  const seed = readSandbox(jobId);
+  const [decisions, setDecisions] = useState<Record<string, string>>(() => seed.decisions ?? {});
   // Second, independent verdict axis: approve/refine/reject each var→CDE transform spec, PER source variable
   // (keyed `${recordId}:${sourceVariable}`) — distinct from the concept→CDE match verdict above.
-  const [transformDecisions, setTransformDecisions] = useState<Record<string, string>>({});
+  const [transformDecisions, setTransformDecisions] = useState<Record<string, string>>(
+    () => seed.transformDecisions ?? {},
+  );
   // Third axis: approve/refine/reject the synthesized GenCDE itself (novel route), keyed by recordId.
-  const [gencdeDecisions, setGencdeDecisions] = useState<Record<string, string>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [gencdeDecisions, setGencdeDecisions] = useState<Record<string, string>>(() => seed.gencdeDecisions ?? {});
+  const [notes, setNotes] = useState<Record<string, string>>(() => seed.notes ?? {});
+  // Mirror sandbox state back on every change. Cheap (a few hundred keys at most) and it keeps the banner's
+  // "N unsaved changes" and the clone payload in step with what is on screen.
+  useEffect(() => {
+    if (isDemo) writeSandbox(jobId, { decisions, transformDecisions, gencdeDecisions, notes });
+  }, [isDemo, jobId, decisions, transformDecisions, gencdeDecisions, notes]);
+
   const [filter, setFilter] = useState("all");
   // Second, independent filter: the reviewer's OWN decision (the `decisions` map) — distinct from the pipeline
   // verdict above. "tbd" = no entry in `decisions` (undecided). Values mirror decide(): approve|refine|reject.
@@ -427,6 +445,17 @@ export function WorkbenchBody({
         </div>
         <div className="text-sm text-neutral-500">{records.length} concepts</div>
       </div>
+
+      {isDemo && (
+        <DemoBanner
+          jobId={jobId}
+          unsavedCount={
+            Object.keys(decisions).length +
+            Object.keys(transformDecisions).length +
+            Object.keys(gencdeDecisions).length
+          }
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
         {/* ── group list ── */}
