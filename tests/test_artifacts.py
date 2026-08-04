@@ -387,3 +387,86 @@ def test_deleting_a_run_over_the_api_cascades_to_its_artifacts(tmp_path, monkeyp
         assert artifacts_.get_all(owner=LOCAL_PRINCIPAL, job_id="j1")[VERDICT]
         assert c.delete("/api/harmonize/jobs/j1").status_code == 204
         assert artifacts_.get_all(owner=LOCAL_PRINCIPAL, job_id="j1") == {}
+
+
+# --- INV-5: cloning ---------------------------------------------------------------------------
+
+
+def test_cloning_a_demo_yields_an_owned_unpinned_independent_run(tmp_path, monkeypatch):
+    """The answer to "how do I keep this?". The copy must NOT inherit demo/pinned, or it would be immutable
+    and TTL-exempt — another shared demo, the opposite of the point."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True, "cde_set": "full"})
+        r = c.post("/api/harmonize/jobs/demo-1/clone", json={})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["jobId"]
+
+        clone = app_module.store.get(new_id)
+        assert clone.config.get("demo") is None and clone.config.get("clonedFrom") == "demo-1"
+        assert clone.config.get("cde_set") == "full"  # non-pinning config is carried
+        assert clone.display_name.endswith("(my copy)")
+
+        # the copy is writable, and the demo still is not
+        assert (
+            c.post(f"/api/harmonize/jobs/{new_id}/verdict", json={"recordId": "r1", "decision": "approve"}).status_code
+            == 200
+        )
+        assert (
+            c.post("/api/harmonize/jobs/demo-1/verdict", json={"recordId": "r1", "decision": "approve"}).status_code
+            == 403
+        )
+
+
+def test_editing_a_clone_does_not_mutate_the_canonical_demo(tmp_path, monkeypatch):
+    """A shallow copy would leave the clone sharing the demo's record list — editing one would edit both."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        new_id = c.post("/api/harmonize/jobs/demo-1/clone", json={}).json()["jobId"]
+        app_module.store.get(new_id).result["records"][0]["concept"] = "EDITED"
+    assert app_module.store.get("demo-1").result["records"][0]["concept"] == "Grip"
+
+
+def test_clone_with_my_changes_carries_sandbox_artifacts_and_record_patches(tmp_path, monkeypatch):
+    """ "Clone with my changes" needs no guest session or identity merge — the client already holds them."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        r = c.post(
+            "/api/harmonize/jobs/demo-1/clone",
+            json={
+                "displayName": "My frailty review",
+                "artifacts": [
+                    {"kind": VERDICT, "payload": {"recordId": "r1", "axis": "match", "decision": "approve"}},
+                    {"kind": COMPOSITE, "payload": {"definition": {"name": "Fried"}}},
+                ],
+                "recordPatches": [{"id": "r1", "concept": "Grip strength (corrected)"}],
+            },
+        )
+        assert r.status_code == 200, r.text
+        new_id = r.json()["jobId"]
+        snapshot = c.get(f"/api/harmonize/result/{new_id}").json()
+        # Read the store INSIDE the client block — the lifespan closes the DB on exit.
+        stored = app_module.store.artifacts.get_all(owner=LOCAL_PRINCIPAL, job_id=new_id)
+
+    assert snapshot["displayName"] == "My frailty review"
+    assert snapshot["decisions"]["r1"]["decision"] == "approve"
+    assert snapshot["result"]["records"][0]["concept"] == "Grip strength (corrected)"
+    assert [c_["definition"]["name"] for c_ in stored[COMPOSITE]] == ["Fried"]
+
+
+def test_clone_rejects_a_malformed_artifact_entry(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        r = c.post("/api/harmonize/jobs/demo-1/clone", json={"artifacts": [{"kind": VERDICT}]})
+    assert r.status_code == 400
+
+
+def test_cloning_an_unfinished_run_is_a_409(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        app_module.store.create("j2", "Running", {})
+        r = c.post("/api/harmonize/jobs/j2/clone", json={})
+    assert r.status_code == 409

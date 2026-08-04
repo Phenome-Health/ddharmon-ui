@@ -29,6 +29,7 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -43,7 +44,7 @@ from backend.auth import AuthError, authenticate
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
-from backend.jobs import TERMINAL_STATES, Job, _is_pinned, principal_of, store
+from backend.jobs import _PINNED_CONFIG_KEYS, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
 from backend.runner import run_harmonization
 
@@ -531,6 +532,67 @@ def analysis_ideas(
     out = generate_analysis_ideas(records, client.complete)
     store.set_analysis_ideas(job_id, out["ideas"], subject=_subject(request))
     return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
+
+
+# --- clone ------------------------------------------------------------------------------------
+class CloneBody(BaseModel):
+    """Take a copy of a run — how work done in the canonical demo is kept.
+
+    ``artifacts`` carries the browser's sandbox edits (verdicts, composite specs), so "clone with my changes"
+    needs no server-side guest session and no identity merge: the client already holds them. Omit it for a
+    clean copy. ``recordPatches`` carries edits that changed the run's own records (a corrected GenCDE),
+    which are applied to the copy's result blob.
+    """
+
+    displayName: str | None = None
+    artifacts: list[dict[str, Any]] | None = None  # [{kind, payload}, …]
+    recordPatches: list[dict[str, Any]] | None = None  # whole records, matched by id
+
+
+@app.post("/api/harmonize/jobs/{job_id}/clone")
+def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
+    """Copy a run into one the caller owns, optionally carrying their sandbox edits.
+
+    Requires an account (this route is gated): the copy is owned, and without a subject there is no one to
+    own it. The demo/pinned flags are STRIPPED — inheriting them would make the copy immutable and
+    TTL-exempt, i.e. another shared demo, which is the precise opposite of the point.
+    """
+    subject = _subject(request)
+    source = store.get(job_id)
+    if source is None or not _visible_to(source, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    if source.result is None:
+        raise HTTPException(status_code=409, detail="This run has no result to copy yet.")
+
+    new_id = uuid.uuid4().hex[:12]
+    # Deep copy: a shallow one leaves the copy sharing the demo's record list, so editing the copy would
+    # mutate the canonical demo for everyone — the very thing this design exists to prevent.
+    result = deepcopy(source.result)
+    records = result.get("records") or []
+    by_id = {r.get("id"): i for i, r in enumerate(records)}
+    for patch in body.recordPatches or []:
+        i = by_id.get(patch.get("id"))
+        if i is not None:
+            records[i] = patch
+
+    config = {k: v for k, v in source.config.items() if k not in _PINNED_CONFIG_KEYS}
+    config["clonedFrom"] = job_id
+    display = (body.displayName or "").strip() or f"{source.display_name} (my copy)"
+    # dict_specs are deliberately NOT copied: the uploads live under the SOURCE run's work dir, so the copy
+    # cannot be re-run from them. It is a review artifact, not a re-runnable run.
+    store.create(new_id, display, config, owner_subject=subject)
+    store.update(new_id, status="complete", phase="complete", result=result)
+
+    artifacts = store.artifacts
+    if artifacts is not None and body.artifacts:
+        owner = principal_of(subject, store.get(new_id))
+        with _writable_run():
+            for entry in body.artifacts:
+                kind, payload = entry.get("kind"), entry.get("payload")
+                if not kind or not isinstance(payload, dict):
+                    raise HTTPException(status_code=400, detail="each artifact needs a kind and a payload object")
+                artifacts.put(owner=owner, job_id=new_id, kind=str(kind), payload=payload)
+    return {"jobId": new_id}
 
 
 # --- user artifacts (generic) ----------------------------------------------------------------
