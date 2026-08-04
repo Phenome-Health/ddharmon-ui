@@ -27,8 +27,8 @@ import os
 import shutil
 import threading
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -37,11 +37,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
+from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
-from backend.jobs import TERMINAL_STATES, Job, _is_pinned, store
+from backend.jobs import TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
 from backend.runner import run_harmonization
 
@@ -161,8 +163,30 @@ def _subject(request: Request) -> str | None:
 
 
 def _visible_to(job: Job, subject: str | None) -> bool:
-    """A run is visible to a caller if they own it, or it's a public demo/pinned run (visible to everyone)."""
+    """A run is visible to a caller if they own it, or it's a public demo/pinned run (visible to everyone).
+
+    Visibility is NOT permission to write: a pinned run is readable by everyone and writable by no one (see
+    :func:`_writable_run` and ``JobStore._is_pinned``). When run sharing lands this returns a permission
+    rather than a bool — every write path must then check for write access, not mere visibility.
+    """
     return _is_pinned(job) or job.owner_subject == subject
+
+
+@contextmanager
+def _writable_run() -> Iterator[None]:
+    """Turn an attempted write to the immutable demo into a 403 that names the recovery.
+
+    Every write path goes through this, so a new endpoint gets the guarantee by using the same wrapper
+    rather than by remembering a rule.
+    """
+    try:
+        yield
+    except ReadOnlyRunError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except UnknownArtifactKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.middleware("http")
@@ -398,17 +422,19 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
 
 @app.get("/api/harmonize/result/{job_id}")
 def result(job_id: str, request: Request) -> dict[str, Any]:
+    subject = _subject(request)
     job = store.get(job_id)
-    if job is None or not _visible_to(job, _subject(request)):
+    if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
-    return job.to_dict()
+    return job.to_dict(store.artifacts_for(job, subject))
 
 
 # --- jobs list / delete ----------------------------------------------------------------------
 @app.get("/api/harmonize/jobs")
 def list_jobs(request: Request) -> list[dict[str, Any]]:
     """The caller's own runs (durable history + any live) plus the public demo(s), newest first."""
-    return [j.summary_dict() for j in store.list(_subject(request))]
+    subject = _subject(request)
+    return [j.summary_dict(store.artifacts_for(j, subject)) for j in store.list(subject)]
 
 
 @app.delete("/api/harmonize/jobs/{job_id}", status_code=204)
@@ -503,8 +529,55 @@ def analysis_ideas(
     # default. BYOK: the key is in-memory for this request only — never persisted or logged.
     client = build_llm_client(job.config.get("model_tag"), x_anthropic_key)
     out = generate_analysis_ideas(records, client.complete)
-    store.set_analysis_ideas(job_id, out["ideas"])
+    store.set_analysis_ideas(job_id, out["ideas"], subject=_subject(request))
     return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
+
+
+# --- user artifacts (generic) ----------------------------------------------------------------
+# One surface for every kind of user-generated work attached to a run. A new persisted feature registers
+# its kind in backend/artifact_kinds.py and is reachable here immediately — no new route, no new column,
+# no new setter. Feature endpoints that DO more than store (an LLM derivation, a result-blob merge) keep
+# their own route and persist through the same store.
+
+
+def _artifact_target(job_id: str, request: Request) -> tuple[Job, str]:
+    """The run and the caller's owner key, or 404/403. Rejects the immutable demo for writes."""
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job, principal_of(subject, job)
+
+
+@app.get("/api/harmonize/jobs/{job_id}/artifacts")
+def list_artifacts(job_id: str, request: Request) -> dict[str, Any]:
+    """Everything the CALLER has stored against this run, grouped by kind."""
+    job, owner = _artifact_target(job_id, request)
+    return {"kinds": registry.names(), "artifacts": store.artifacts_for(job, owner)}
+
+
+@app.put("/api/harmonize/jobs/{job_id}/artifacts/{kind}")
+def put_artifact(job_id: str, kind: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Upsert one artifact. Its identity (and so what it replaces) is derived by its kind."""
+    job, owner = _artifact_target(job_id, request)
+    artifacts = store.artifacts
+    if artifacts is None:
+        raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    with _writable_run():
+        stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload, pinned=_is_pinned(job))
+    return {"kind": stored.kind, "itemKey": stored.item_key, "updatedAt": stored.updated_at}
+
+
+@app.delete("/api/harmonize/jobs/{job_id}/artifacts/{kind}/{item_key:path}", status_code=204)
+def delete_artifact(job_id: str, kind: str, item_key: str, request: Request) -> None:
+    job, owner = _artifact_target(job_id, request)
+    artifacts = store.artifacts
+    if artifacts is None:
+        raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    with _writable_run():
+        if _is_pinned(job):
+            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified")
+        artifacts.delete(owner=owner, job_id=job_id, kind=kind, item_key=item_key)
 
 
 # --- human decisions -------------------------------------------------------------------------
@@ -532,15 +605,18 @@ def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str
     job = store.get(job_id)
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
-    if not store.set_decision(
-        job_id,
-        body.recordId,
-        body.decision,
-        body.note,
-        axis=body.axis,
-        source_variable=body.sourceVariable,
-        edited=body.edited,
-    ):
+    with _writable_run():
+        saved = store.set_decision(
+            job_id,
+            body.recordId,
+            body.decision,
+            body.note,
+            axis=body.axis,
+            source_variable=body.sourceVariable,
+            edited=body.edited,
+            subject=_subject(request),
+        )
+    if not saved:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
 

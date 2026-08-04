@@ -41,3 +41,6 @@ def _reset_store():
         with contextlib.suppress(Exception):  # best-effort teardown
             store.db.close()
         store.db = None
+    # The artifact store caches the JobDB it was built with, so dropping `db` alone would leave a stale
+    # connection — and one test's verdicts/ideas — visible to the next test.
+    store._artifacts = None

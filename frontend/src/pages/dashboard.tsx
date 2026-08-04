@@ -305,6 +305,9 @@ export default function DashboardPage() {
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
     setDecisions((p) => ({ ...p, [r.id]: decision }));
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save decision");

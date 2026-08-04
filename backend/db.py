@@ -17,13 +17,15 @@ import json
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from backend.artifacts import Artifact
     from backend.jobs import Job
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2  # 2: user_artifacts + the one-shot backfill out of the per-job artifact columns
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -49,6 +51,29 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 # Purpose-built for "list my runs, newest first".
 _CREATE_INDEX = "CREATE INDEX IF NOT EXISTS idx_jobs_owner_created ON jobs (owner_subject, created_at DESC)"
+
+# A user's own work ON a run — verdicts, composite specs, analysis ideas (see backend/artifacts.py). Keyed
+# by (owner, job, kind, item_key) because these belong to a (user, run) PAIR, not to the run: the canonical
+# demo is one shared row, so storing annotations on it made every user's work visible to all of them.
+# The UNIQUE constraint is the upsert semantics — re-voting a record or re-deriving a score replaces it.
+_CREATE_ARTIFACTS = """
+CREATE TABLE IF NOT EXISTS user_artifacts (
+    artifact_id    TEXT PRIMARY KEY,
+    owner_subject  TEXT NOT NULL,
+    job_id         TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    item_key       TEXT NOT NULL DEFAULT '',
+    payload        TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    created_at     REAL NOT NULL,
+    updated_at     REAL NOT NULL,
+    UNIQUE (owner_subject, job_id, kind, item_key)
+)
+"""
+_CREATE_ARTIFACT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_artifacts_owner_job ON user_artifacts (owner_subject, job_id)",
+    "CREATE INDEX IF NOT EXISTS idx_artifacts_job ON user_artifacts (job_id)",  # cascade on run delete
+)
 
 # Additive columns added after the table first shipped — ALTER-ed in on startup for DB files created by an
 # earlier version (CREATE TABLE IF NOT EXISTS won't add a column to an existing table). column -> SQL type.
@@ -78,6 +103,85 @@ def _loads(text: str | None, default: Any) -> Any:
         return default
 
 
+def _verdicts_from_legacy(record_id: str, verdict: Any) -> list[dict[str, Any]]:
+    """Flatten one legacy ``decisions[record_id]`` blob into per-axis verdict payloads.
+
+    The legacy shape nested three independent axes under one record key::
+
+        {"decision": …, "note": …,
+         "transforms": {source_variable: {"decision": …, "note": …}},
+         "gencde": {"decision": …, "note": …, "edited": …}}
+
+    Each axis becomes its own row, which is what makes concurrent writes on different axes stop clobbering
+    each other. A blob with no top-level decision (only transforms) yields no match-axis row.
+    """
+    if not isinstance(verdict, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    if verdict.get("decision"):
+        out.append(
+            {
+                "recordId": record_id,
+                "axis": "match",
+                "decision": verdict["decision"],
+                "note": verdict.get("note", ""),
+            }
+        )
+    for source_variable, entry in (verdict.get("transforms") or {}).items():
+        if isinstance(entry, dict) and entry.get("decision"):
+            out.append(
+                {
+                    "recordId": record_id,
+                    "axis": "transform",
+                    "sourceVariable": source_variable,
+                    "decision": entry["decision"],
+                    "note": entry.get("note", ""),
+                }
+            )
+    gencde = verdict.get("gencde")
+    if isinstance(gencde, dict) and gencde.get("decision"):
+        payload = {
+            "recordId": record_id,
+            "axis": "gencde",
+            "decision": gencde["decision"],
+            "note": gencde.get("note", ""),
+        }
+        if gencde.get("edited"):
+            payload["edited"] = gencde["edited"]
+        out.append(payload)
+    return out
+
+
+def _verdicts_to_legacy(payloads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Rebuild the legacy ``decisions`` mapping from per-axis verdict artifacts.
+
+    The wire contract the frontend reads (``result.decisions``) is unchanged by this refactor, so the
+    resolved artifacts are re-nested into the shape the workbench already understands.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for payload in payloads:
+        record_id = str(payload.get("recordId") or "")
+        if not record_id:
+            continue
+        entry = out.setdefault(record_id, {})
+        axis = payload.get("axis") or "match"
+        if axis == "match":
+            entry["decision"] = payload.get("decision")
+            entry["note"] = payload.get("note", "")
+        elif axis == "transform":
+            transforms = entry.setdefault("transforms", {})
+            transforms[str(payload.get("sourceVariable") or "")] = {
+                "decision": payload.get("decision"),
+                "note": payload.get("note", ""),
+            }
+        elif axis == "gencde":
+            gencde: dict[str, Any] = {"decision": payload.get("decision"), "note": payload.get("note", "")}
+            if payload.get("edited"):
+                gencde["edited"] = payload["edited"]
+            entry["gencde"] = gencde
+    return out
+
+
 class JobDB:
     """Thread-safe synchronous SQLite store for persisted runs.
 
@@ -95,10 +199,18 @@ class JobDB:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(_CREATE_TABLE)
             self._conn.execute(_CREATE_INDEX)
+            self._conn.execute(_CREATE_ARTIFACTS)
+            for stmt in _CREATE_ARTIFACT_INDEXES:
+                self._conn.execute(stmt)
             existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(jobs)")}
             for col, sqltype in _ADDITIVE_COLUMNS.items():  # migrate DBs created by an earlier schema
                 if col not in existing:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {sqltype}")
+            was = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            self._conn.commit()
+        if was < 2:
+            self.backfill_artifacts()
+        with self._lock:
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
 
@@ -175,6 +287,151 @@ class JobDB:
         with self._lock:
             self._conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
             self._conn.commit()
+
+    # --- user artifacts (see backend/artifacts.py) ---------------------------------------------
+
+    def upsert_artifact(
+        self,
+        *,
+        artifact_id: str,
+        owner_subject: str,
+        job_id: str,
+        kind: str,
+        item_key: str,
+        payload: dict[str, Any],
+        schema_version: int,
+    ) -> Artifact:
+        """Insert or replace one artifact and return what is now stored.
+
+        Returning the row (rather than a bool) is deliberate: the bug this table replaces was a setter that
+        reported success for a write it had silently dropped.
+        """
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO user_artifacts (artifact_id, owner_subject, job_id, kind, item_key,
+                                               payload, schema_version, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(owner_subject, job_id, kind, item_key) DO UPDATE SET
+                       payload=excluded.payload,
+                       schema_version=excluded.schema_version,
+                       updated_at=excluded.updated_at""",
+                (
+                    artifact_id,
+                    owner_subject,
+                    job_id,
+                    kind,
+                    item_key,
+                    json.dumps(payload),
+                    schema_version,
+                    now,
+                    now,
+                ),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                """SELECT * FROM user_artifacts
+                   WHERE owner_subject=? AND job_id=? AND kind=? AND item_key=?""",
+                (owner_subject, job_id, kind, item_key),
+            ).fetchone()
+        return self._row_to_artifact(row)
+
+    def list_artifacts(self, *, owner_subject: str, job_id: str) -> list[Artifact]:
+        """Every artifact one owner holds for one run. Scoped by owner by construction."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM user_artifacts WHERE owner_subject=? AND job_id=?
+                   ORDER BY kind, item_key""",
+                (owner_subject, job_id),
+            ).fetchall()
+        return [self._row_to_artifact(r) for r in rows]
+
+    def delete_artifact(self, *, owner_subject: str, job_id: str, kind: str, item_key: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                """DELETE FROM user_artifacts
+                   WHERE owner_subject=? AND job_id=? AND kind=? AND item_key=?""",
+                (owner_subject, job_id, kind, item_key),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def delete_artifacts(self, *, job_id: str | None = None, owner_subject: str | None = None) -> int:
+        """Bulk delete by run (cascade on run deletion) or by owner (delete-my-data)."""
+        if job_id is None and owner_subject is None:
+            raise ValueError("delete_artifacts needs a job_id or an owner_subject")
+        clauses, params = [], []
+        if job_id is not None:
+            clauses.append("job_id=?")
+            params.append(job_id)
+        if owner_subject is not None:
+            clauses.append("owner_subject=?")
+            params.append(owner_subject)
+        with self._lock:
+            cur = self._conn.execute(f"DELETE FROM user_artifacts WHERE {' AND '.join(clauses)}", params)
+            self._conn.commit()
+            return cur.rowcount
+
+    def backfill_artifacts(self) -> int:
+        """One-shot migration of the per-job artifact columns into ``user_artifacts``.
+
+        Only rows with an ``owner_subject`` are migrated. Ownerless (demo/pinned) rows are DROPPED on
+        purpose: their columns hold the cross-user mixture that the shared-demo bug produced, so there is no
+        single user they can honestly be attributed to.
+
+        Idempotent — re-running cannot duplicate, because the upsert is keyed by artifact identity.
+        """
+        from backend.artifact_kinds import ANALYSIS_IDEAS, VERDICT  # local: avoids an import cycle
+
+        migrated = 0
+        with self._lock:
+            rows = self._conn.execute("""SELECT job_id, owner_subject, decisions, analysis_ideas FROM jobs
+                   WHERE owner_subject IS NOT NULL""").fetchall()
+        for row in rows:
+            owner, job_id = row["owner_subject"], row["job_id"]
+            for record_id, verdict in (_loads(row["decisions"], {}) or {}).items():
+                for payload in _verdicts_from_legacy(record_id, verdict):
+                    self.upsert_artifact(
+                        artifact_id=uuid.uuid4().hex,
+                        owner_subject=owner,
+                        job_id=job_id,
+                        kind=VERDICT,
+                        item_key=f"{payload['recordId']}|{payload['axis']}|{payload.get('sourceVariable') or ''}",
+                        payload=payload,
+                        schema_version=1,
+                    )
+                    migrated += 1
+            # No key guard: the SELECT above names this column, and `"x" in row` on a sqlite3.Row tests its
+            # VALUES rather than its keys — a guard written that way silently skipped every ideas payload.
+            ideas = _loads(row["analysis_ideas"], None)
+            if ideas:
+                self.upsert_artifact(
+                    artifact_id=uuid.uuid4().hex,
+                    owner_subject=owner,
+                    job_id=job_id,
+                    kind=ANALYSIS_IDEAS,
+                    item_key="",
+                    payload={"ideas": ideas},
+                    schema_version=1,
+                )
+                migrated += 1
+        return migrated
+
+    @staticmethod
+    def _row_to_artifact(row: sqlite3.Row) -> Artifact:
+        from backend.artifacts import Artifact as _Artifact
+
+        return _Artifact(
+            artifact_id=row["artifact_id"],
+            owner_subject=row["owner_subject"],
+            job_id=row["job_id"],
+            kind=row["kind"],
+            item_key=row["item_key"],
+            payload=_loads(row["payload"], {}),
+            schema_version=row["schema_version"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def recover_stale(self) -> int:
         """On startup, any non-terminal row is a run whose worker died on a prior restart → mark it error."""

@@ -221,6 +221,7 @@ export default function WorkbenchPage() {
       jobId={jobId}
       records={jobState.result?.records ?? []}
       fieldIndex={jobState.result?.fieldIndex ?? {}}
+      isDemo={!!(jobState.config as { demo?: boolean }).demo}
     />
   );
 }
@@ -229,10 +230,14 @@ export function WorkbenchBody({
   jobId,
   records,
   fieldIndex = {},
+  isDemo = false,
 }: {
   jobId: string;
   records: UIRecord[];
   fieldIndex?: Record<string, FieldDetail>;
+  // The canonical demo is read-only server-side: verdicts stay in this component's state and are never
+  // sent. Keeping them means cloning the demo into a run of your own.
+  isDemo?: boolean;
 }) {
   // Deep link from the embedding atlas: /job/:id/workbench?c=<recordId> preselects that concept.
   const queryString = useSearch();
@@ -326,6 +331,9 @@ export function WorkbenchBody({
       return rest;
     });
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "");
       toast.success(cleared ? `Cleared verdict for "${conceptLabel(r)}"` : `Marked "${conceptLabel(r)}" ${decision}`);
     } catch (e) {
@@ -345,6 +353,9 @@ export function WorkbenchBody({
       return rest;
     });
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "transform", t.sourceVariable);
       toast.success(cleared ? `Cleared transform verdict for "${t.sourceVariable}"` : `Transform for "${t.sourceVariable}" ${decision}d`);
     } catch (e) {
@@ -370,6 +381,9 @@ export function WorkbenchBody({
       setStaleRecords((p) => ({ ...p, [r.id]: true }));
     }
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "gencde", undefined, edited);
       toast.success(
         cleared
