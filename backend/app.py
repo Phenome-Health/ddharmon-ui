@@ -642,6 +642,171 @@ def delete_artifact(job_id: str, kind: str, item_key: str, request: Request) -> 
         artifacts.delete(owner=owner, job_id=job_id, kind=kind, item_key=item_key)
 
 
+# --- composite / derived variables -----------------------------------------------------------
+class CompositeBody(BaseModel):
+    """Derive one composite score against this run's concepts.
+
+    Supply the score's definition as ONE of `sourceText` (pasted methods/component table) or `sourceRef`
+    (URL, bare DOI, or GitHub repo). For a PDF, call `/composite/extract` first and pass back the text it
+    returns — that way the extracted text is reviewable BEFORE any tokens are spent on it.
+
+    `definition` re-derives from an ALREADY-transcribed definition (the `definition` object of a previous
+    response), skipping the extraction call. `overrides` maps a component name to a concept id to pin it, or
+    to null to drop it; with every component pinned the re-derive costs no LLM call at all.
+    """
+
+    sourceText: str | None = None
+    sourceRef: str | None = None
+    definition: dict[str, Any] | None = None
+    overrides: dict[str, str | None] | None = None
+    hybrid: bool = False
+
+
+@app.post("/api/harmonize/jobs/{job_id}/composite/extract")
+async def composite_extract(job_id: str, request: Request, file: Annotated[UploadFile, File()]) -> dict[str, Any]:
+    """Extract text from an uploaded PDF or Word (.docx) document so the client can review it before
+    deriving ($0, no LLM call).
+
+    Separated from the derive route on purpose: a publisher PDF may be an access-check interstitial, or its
+    component table may not survive extraction at all (PMC does exactly this), and finding that out should
+    not cost a derivation. Word matters because a score's item table is usually in the SUPPLEMENT, and
+    supplements are routinely .docx.
+    """
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    from backend.composite import resolve_source
+
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Document too large (20 MB cap)")
+    try:
+        source = resolve_source(upload=data, filename=file.filename or "uploaded document")
+    except (ValueError, ImportError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"text": source.text, "provenance": source.provenance, "sha256": source.sha256, "nChars": len(source.text)}
+
+
+@app.post("/api/harmonize/jobs/{job_id}/composite")
+def composite(
+    job_id: str,
+    body: CompositeBody,
+    request: Request,
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """Derive a composite/derived-variable spec for this run — can a published score be computed, and how?
+
+    One opt-in BYOK pass over the run's OWN concepts (metadata only, like analysis-ideas): it transcribes the
+    score from the supplied document, matches each component to a concept actually present, and returns the
+    feasibility verdict + per-cohort coverage + the derivation recipe. Cached on the job (replacing any
+    previous spec for the same score) so a re-view isn't re-billed.
+    """
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    records = (job.result or {}).get("records") if job.result else None
+    if not records:
+        raise HTTPException(status_code=409, detail="This run has no harmonized concepts to build a score from.")
+
+    from backend.artifact_kinds import COMPOSITE
+    from backend.composite import derive, resolve_source
+    from backend.engine.llm import build_llm_client
+
+    # A re-derive from an existing definition needs no document; a first derivation does.
+    source = None
+    if body.definition is None:
+        try:
+            source = resolve_source(text=body.sourceText, ref=body.sourceRef)
+        except (ValueError, ImportError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Same model/provider the run was configured with. BYOK: in-memory for this request only.
+    client = build_llm_client(job.config.get("model_tag"), x_anthropic_key)
+    try:
+        spec = derive(
+            records,
+            source or _definition_from_payload(body.definition or {}),
+            client.complete,
+            overrides=body.overrides,
+            hybrid=body.hybrid,
+        )
+    except ValueError as exc:
+        # e.g. the document defines no score, or its text extraction came back empty — a 400, not a 500.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Durable home is the per-user artifact store, keyed by the score's name — so a re-derive REPLACES that
+    # score for THIS user (what `composite.upsert` used to do by hand) and one user's derivation is never
+    # visible to another on a shared run. A pinned run raises here rather than silently discarding the spec,
+    # which is the bug this whole layer exists to fix.
+    artifacts = store.artifacts
+    if artifacts is not None:
+        with _writable_run():
+            artifacts.put(
+                owner=principal_of(subject, job),
+                job_id=job_id,
+                kind=COMPOSITE,
+                payload=spec,
+                pinned=_is_pinned(job),
+            )
+    return spec
+
+
+def _definition_from_payload(payload: dict[str, Any]) -> Any:
+    """Rebuild a core ``ScoreDefinition`` from a previous response's `definition` object (the re-derive path).
+
+    Kept minimal and delegating: the field mapping belongs to core's contract, so this only inverts what
+    ``spec_to_dict`` emitted.
+    """
+    from ddharmon.harmonization.composite import (
+        CodingKind,
+        ComponentCoding,
+        CompositeKind,
+        ScoreComponent,
+        ScoreDefinition,
+    )
+
+    def _enum(cls: Any, value: Any, fallback: Any) -> Any:
+        """A client-supplied enum value, falling back rather than 500-ing on an unknown one."""
+        try:
+            return cls(str(value or "").strip().lower())
+        except ValueError:
+            return fallback
+
+    components = []
+    for c in payload.get("components") or []:
+        coding = c.get("coding") or {}
+        components.append(
+            ScoreComponent(
+                name=str(c.get("name", "")),
+                definition=str(c.get("definition", "") or ""),
+                required=bool(c.get("required", True)),
+                weight=c.get("weight"),
+                coding=ComponentCoding(
+                    kind=_enum(CodingKind, coding.get("kind"), CodingKind.UNSTATED),
+                    cutoff=str(coding.get("cutoff", "") or ""),
+                    reference_range=str(coding.get("referenceRange", "") or ""),
+                    code_map={str(k): str(v) for k, v in (coding.get("codeMap") or {}).items()},
+                    formula=str(coding.get("formula", "") or ""),
+                    units=str(coding.get("units", "") or ""),
+                    stated_in_source=bool(coding.get("statedInSource", False)),
+                ),
+            )
+        )
+    if not components:
+        raise HTTPException(status_code=400, detail="a re-derive needs the previous response's `definition`")
+    return ScoreDefinition(
+        name=str(payload.get("name", "") or "(unnamed composite)"),
+        kind=_enum(CompositeKind, payload.get("kind"), CompositeKind.CUSTOM),
+        components=components,
+        citation=str(payload.get("citation", "") or ""),
+        combination_rule=str(payload.get("combinationRule", "") or ""),
+        threshold=str(payload.get("threshold", "") or ""),
+        notes=str(payload.get("notes", "") or ""),
+        stated_n_items=(int(n) if isinstance(n := payload.get("statedNItems"), (int, float)) and n > 0 else None),
+    )
+
+
 # --- human decisions -------------------------------------------------------------------------
 class VerdictBody(BaseModel):
     recordId: str

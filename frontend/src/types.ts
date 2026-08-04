@@ -219,6 +219,8 @@ export interface JobResult {
   decisions: Record<string, { decision: string; note: string }>;
   // Opt-in, LLM-suggested downstream analyses (null until generated; see POST /jobs/{id}/analysis-ideas).
   analysisIdeas?: AnalysisIdea[] | null;
+  // Derived composite specs, one per score (null until the first derivation). See CompositeSpec.
+  composites?: CompositeSpec[] | null;
   createdAt: number;
   updatedAt: number;
   // Present on the bundled demo fixture: per-phase wall-clock from the real build run, used to pace the
@@ -247,6 +249,124 @@ export interface AnalysisIdea {
   method: string;
   whyNewlyPossible: string;
   category: string;
+}
+
+// --- composite / derived variables -----------------------------------------------------------
+// Mirrors ddharmon.harmonization.composite.spec_to_dict(). A composite is a published score (frailty
+// index, PHQ-9 sum, intrinsic capacity) derived FROM several harmonized concepts. Metadata-only: the
+// spec is a RECIPE the user applies to their own rows — ddharmon never computes it.
+
+/** How ONE component is scored. `unstated` = the source document named the item but not how to code it. */
+export type CodingKind =
+  | "threshold"
+  | "categorical"
+  | "identity"
+  | "unit"
+  | "arithmetic"
+  | "data_dependent"
+  | "unstated";
+
+/** How the components combine. criteria_count = Fried (k of n); deficit_proportion = a frailty index. */
+export type CompositeKind =
+  | "criteria_count"
+  | "deficit_proportion"
+  | "sum"
+  | "weighted_sum"
+  | "z_composite"
+  | "custom";
+
+export interface ComponentCoding {
+  kind: CodingKind;
+  cutoff: string; // VERBATIM from the source (strata, units and inequality direction preserved)
+  referenceRange: string;
+  codeMap: Record<string, string>;
+  formula: string;
+  units: string;
+  statedInSource: boolean;
+  needsReview: boolean; // unstated / arithmetic / sample-relative -> a human must supply the rule
+}
+
+export interface ScoreComponent {
+  name: string;
+  definition: string;
+  required: boolean;
+  weight: number | null;
+  coding: ComponentCoding;
+}
+
+export interface ScoreDefinition {
+  name: string;
+  kind: CompositeKind;
+  citation: string;
+  combinationRule: string;
+  threshold: string;
+  notes: string;
+  // The item count the DOCUMENT claims, vs how many were actually readable out of it. A positive
+  // `underEnumerated` means the source was incomplete (a table that didn't survive extraction) — the gap
+  // is reported, never filled in from prior knowledge.
+  statedNItems: number | null;
+  underEnumerated: number;
+  provenance: string; // URL / filename / "pasted text"
+  sourceSha256: string;
+  components: ScoreComponent[];
+}
+
+/** One component's verdict: the run concept that measures it, or an honest gap. */
+export interface ComponentMatch {
+  component: string;
+  conceptId: string | null; // a record id in THIS run; null = missing
+  concept: string;
+  column: string; // the harmonized column name the derivation references
+  cohorts: string[];
+  sourceVariables: string[];
+  confidence: number;
+  rationale: string;
+  required: boolean;
+  pinned: boolean; // set by a reviewer override rather than the judge
+  shortlist: string[]; // the ids retrieval offered — distinguishes "nothing found" from "all rejected"
+}
+
+export interface CohortCoverage {
+  cohort: string;
+  present: string[];
+  missing: string[]; // REQUIRED components this cohort lacks
+  computable: boolean;
+}
+
+export interface CompositeFeasibility {
+  verdict: "full" | "partial" | "infeasible";
+  nRequired: number;
+  nRequiredMatched: number;
+  matched: string[];
+  missing: string[];
+  needsReview: string[]; // matched, but the coding needs a human decision
+  computableCohorts: string[];
+  perCohort: CohortCoverage[];
+  caveats: string[];
+}
+
+export interface DerivationStep {
+  order: number;
+  kind: "code_component" | "combine" | "threshold";
+  description: string;
+  expression: string;
+  component: string;
+  conceptId: string | null;
+  needsReview: boolean;
+}
+
+export interface CompositeSpec {
+  definition: ScoreDefinition;
+  matches: ComponentMatch[];
+  feasibility: CompositeFeasibility;
+  derivation: DerivationStep[];
+  units: string;
+  validationRules: string[];
+  // Telemetry the panel shows so a derivation's cost is visible: 2 calls for a first derivation,
+  // 0 for a fully-pinned re-derive.
+  nConceptsIndexed?: number;
+  callsMade?: number;
+  sourceKind?: "paste" | "url" | "repo" | "pdf" | "definition";
 }
 
 export interface DictSpec {

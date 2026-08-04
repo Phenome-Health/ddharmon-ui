@@ -1,7 +1,18 @@
 // Tiny typed fetch client for the ddharmon harmonization API (replaces Orval codegen).
 // With VITE_STATIC=1 the client reads bundled fixtures under <base>/static-data instead of /api,
 // so the SPA runs fully static (sample runs + exports, no backend, no key) for a preview deploy.
-import type { DemosResponse, ExportFormat, GenCDE, JobResult, JobSummary, ModelInfo, RunConfig, UIRecord } from "@/types";
+import type {
+  CompositeSpec,
+  DemosResponse,
+  ExportFormat,
+  GenCDE,
+  JobResult,
+  JobSummary,
+  ModelInfo,
+  RunConfig,
+  ScoreDefinition,
+  UIRecord,
+} from "@/types";
 
 const BASE = "/api/harmonize";
 export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
@@ -165,6 +176,54 @@ export async function cloneJob(
       headers: await authed({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     }),
+  );
+}
+
+/**
+ * Derive a composite/derived-variable spec against this run's concepts (opt-in, BYOK, metadata-only).
+ *
+ * Supply the score's definition ONE of three ways: `sourceText` (pasted methods/component table),
+ * `sourceRef` (a URL, bare DOI, or GitHub repo — fetched and bounded server-side), or `definition` (a
+ * previous response's definition, re-derived without paying for extraction again). `overrides` pins a
+ * component to a concept id or drops it with null; with every component pinned the re-derive makes NO LLM
+ * call, so the reviewer's accept/swap/drop loop is free.
+ */
+export async function deriveComposite(
+  jobId: string,
+  body: {
+    sourceText?: string;
+    sourceRef?: string;
+    definition?: ScoreDefinition;
+    overrides?: Record<string, string | null>;
+    hybrid?: boolean;
+  },
+  apiKey?: string,
+): Promise<CompositeSpec> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to derive a composite variable.");
+  const headers = await authed({
+    "content-type": "application/json",
+    ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
+  });
+  return json(await fetch(`${BASE}/jobs/${jobId}/composite`, { method: "POST", headers, body: JSON.stringify(body) }));
+}
+
+/**
+ * Extract text from an uploaded PDF or Word (.docx) document ($0 — no LLM call), so it can be reviewed
+ * BEFORE a derivation is paid for. Publisher PDFs are often an access-check interstitial, and a component
+ * table may not survive extraction at all; finding that out should be free. Word matters because a score's
+ * item table usually lives in the supplement, and supplements are routinely .docx.
+ */
+export async function extractCompositeDocument(
+  jobId: string,
+  file: File,
+): Promise<{ text: string; provenance: string; sha256: string; nChars: number }> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to read a document.");
+  const form = new FormData();
+  form.append("file", file);
+  return json(
+    await fetch(`${BASE}/jobs/${jobId}/composite/extract`, { method: "POST", headers: await authed(), body: form }),
   );
 }
 

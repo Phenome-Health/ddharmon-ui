@@ -83,6 +83,12 @@ class Job:
     # Optional post-run "analysis ideas" (LLM-suggested downstream analyses). None = not generated yet;
     # a list once generated (cached so the opt-in LLM pass isn't re-billed on every view). Persisted.
     analysis_ideas: list[dict[str, Any]] | None = None
+    # Optional post-run composite/derived-variable specs (one per published score derived against this run's
+    # concepts). None = none derived yet. A list, because a run legitimately supports several scores; a
+    # LEGACY MIRROR: the durable home is the per-user artifact store (kind `composite`), whose identity
+    # function keys by the score's name — so a re-derive replaces that score rather than appending.
+    # This field only still serves DB rows written before the artifact layer.
+    composites: list[dict[str, Any]] | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     # Record count carried on a DB-hydrated summary (result blob not loaded); used by summary_dict when
@@ -118,6 +124,7 @@ class Job:
             owner_subject=d.get("owner_subject"),
             dict_specs=d.get("dict_specs"),
             analysis_ideas=d.get("analysis_ideas"),
+            composites=d.get("composites"),
             created_at=d["created_at"],
             updated_at=d["updated_at"],
             n_records=d.get("n_records", 0),
@@ -133,13 +140,17 @@ class Job:
         """
         decisions = self.decisions
         analysis_ideas = self.analysis_ideas
+        composites = self.composites
         if artifacts is not None:
-            from backend.artifact_kinds import ANALYSIS_IDEAS, VERDICT
+            from backend.artifact_kinds import ANALYSIS_IDEAS, COMPOSITE, VERDICT
             from backend.db import _verdicts_to_legacy
 
             decisions = _verdicts_to_legacy(artifacts.get(VERDICT, []))
             ideas_artifact = artifacts.get(ANALYSIS_IDEAS)
             analysis_ideas = (ideas_artifact or {}).get("ideas") if ideas_artifact else None
+            # A list, and `None` when the user has none — the panel distinguishes "no composites yet" from
+            # "an empty list", and the pre-artifact wire contract used null for the former.
+            composites = artifacts.get(COMPOSITE) or None
         return {
             "jobId": self.job_id,
             "displayName": self.display_name,
@@ -156,6 +167,7 @@ class Job:
             "config": self.config,
             "decisions": decisions,
             "analysisIdeas": analysis_ideas,
+            "composites": composites,
             "phaseStartedAt": self.phase_timings,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
