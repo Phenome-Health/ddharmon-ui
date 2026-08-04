@@ -27,6 +27,8 @@ import {
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { SourceRows } from "@/components/source-rows";
 import { regenerateSpecs, submitVerdict } from "@/lib/api";
+import { DemoBanner } from "@/components/demo-banner";
+import { readSandbox, writeSandbox } from "@/lib/sandbox";
 import {
   VERDICT_STYLES,
   conceptLabel,
@@ -221,6 +223,7 @@ export default function WorkbenchPage() {
       jobId={jobId}
       records={jobState.result?.records ?? []}
       fieldIndex={jobState.result?.fieldIndex ?? {}}
+      isDemo={!!(jobState.config as { demo?: boolean }).demo}
     />
   );
 }
@@ -229,22 +232,42 @@ export function WorkbenchBody({
   jobId,
   records,
   fieldIndex = {},
+  isDemo = false,
 }: {
   jobId: string;
   records: UIRecord[];
   fieldIndex?: Record<string, FieldDetail>;
+  // The canonical demo is read-only server-side: verdicts stay in this component's state and are never
+  // sent. Keeping them means cloning the demo into a run of your own.
+  isDemo?: boolean;
 }) {
   // Deep link from the embedding atlas: /job/:id/workbench?c=<recordId> preselects that concept.
   const queryString = useSearch();
   const linkedId = new URLSearchParams(queryString).get("c");
   const [selectedId, setSelectedId] = useState<string | null>(linkedId);
-  const [decisions, setDecisions] = useState<Record<string, string>>({});
+  // On the read-only demo the server holds nothing, so verdict state is seeded from (and written back to)
+  // this tab's sandbox — that is what makes a refresh mid-evaluation not throw the work away.
+  //
+  // Seeded UNCONDITIONALLY, not behind `isDemo`: the stream hook's first jobState has an empty `config`, so
+  // isDemo is still false on the render where useState captures its initial value. Gating on it meant
+  // hydration silently missed and the mirror effect below then wrote the empty state OVER the saved work.
+  // A real run has no sandbox entry, so reading here is a no-op for it.
+  const seed = readSandbox(jobId);
+  const [decisions, setDecisions] = useState<Record<string, string>>(() => seed.decisions ?? {});
   // Second, independent verdict axis: approve/refine/reject each var→CDE transform spec, PER source variable
   // (keyed `${recordId}:${sourceVariable}`) — distinct from the concept→CDE match verdict above.
-  const [transformDecisions, setTransformDecisions] = useState<Record<string, string>>({});
+  const [transformDecisions, setTransformDecisions] = useState<Record<string, string>>(
+    () => seed.transformDecisions ?? {},
+  );
   // Third axis: approve/refine/reject the synthesized GenCDE itself (novel route), keyed by recordId.
-  const [gencdeDecisions, setGencdeDecisions] = useState<Record<string, string>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [gencdeDecisions, setGencdeDecisions] = useState<Record<string, string>>(() => seed.gencdeDecisions ?? {});
+  const [notes, setNotes] = useState<Record<string, string>>(() => seed.notes ?? {});
+  // Mirror sandbox state back on every change. Cheap (a few hundred keys at most) and it keeps the banner's
+  // "N unsaved changes" and the clone payload in step with what is on screen.
+  useEffect(() => {
+    if (isDemo) writeSandbox(jobId, { decisions, transformDecisions, gencdeDecisions, notes });
+  }, [isDemo, jobId, decisions, transformDecisions, gencdeDecisions, notes]);
+
   const [filter, setFilter] = useState("all");
   // Second, independent filter: the reviewer's OWN decision (the `decisions` map) — distinct from the pipeline
   // verdict above. "tbd" = no entry in `decisions` (undecided). Values mirror decide(): approve|refine|reject.
@@ -326,6 +349,9 @@ export function WorkbenchBody({
       return rest;
     });
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "");
       toast.success(cleared ? `Cleared verdict for "${conceptLabel(r)}"` : `Marked "${conceptLabel(r)}" ${decision}`);
     } catch (e) {
@@ -345,6 +371,9 @@ export function WorkbenchBody({
       return rest;
     });
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "transform", t.sourceVariable);
       toast.success(cleared ? `Cleared transform verdict for "${t.sourceVariable}"` : `Transform for "${t.sourceVariable}" ${decision}d`);
     } catch (e) {
@@ -370,6 +399,9 @@ export function WorkbenchBody({
       setStaleRecords((p) => ({ ...p, [r.id]: true }));
     }
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, cleared ? "clear" : decision, notes[r.id] ?? "", "gencde", undefined, edited);
       toast.success(
         cleared
@@ -413,6 +445,17 @@ export function WorkbenchBody({
         </div>
         <div className="text-sm text-neutral-500">{records.length} concepts</div>
       </div>
+
+      {isDemo && (
+        <DemoBanner
+          jobId={jobId}
+          unsavedCount={
+            Object.keys(decisions).length +
+            Object.keys(transformDecisions).length +
+            Object.keys(gencdeDecisions).length
+          }
+        />
+      )}
 
       {/* minmax(0,1fr), not 1fr: a bare `1fr` floors at the content's min-content width, and the CDE
           table's widest cell blows the track past the container — clipping the detail pane on every

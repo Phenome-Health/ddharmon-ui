@@ -36,6 +36,8 @@ import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { buildRunIssueUrl } from "@/lib/links";
+import { DemoBanner } from "@/components/demo-banner";
+import { readSandbox, writeSandbox } from "@/lib/sandbox";
 import { RerunAction } from "@/components/rerun-action";
 import { StopRunAction } from "@/components/stop-run-action";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
@@ -210,8 +212,17 @@ export default function DashboardPage() {
   // ?results=1 (the demo page's "skip to results" link) → show the finished run immediately, no replay.
   const skipReplay = new URLSearchParams(useSearch()).get("results") === "1";
   const { jobState, error, cancel } = useHarmonizeStream(jobId, true, skipReplay);
-  const [decisions, setDecisions] = useState<Record<string, string>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  // Demo verdicts live in this tab's sandbox (the run is read-only server-side), so they survive a refresh
+  // and can be carried into a clone. A real run has no sandbox entry — its verdicts come from the server.
+  const [decisions, setDecisions] = useState<Record<string, string>>(() => readSandbox(jobId).decisions ?? {});
+  const [notes, setNotes] = useState<Record<string, string>>(() => readSandbox(jobId).notes ?? {});
+  // Mirror to the sandbox only for a demo — writing a real run's verdicts here would shadow the server's.
+  useEffect(() => {
+    if ((jobState?.config as { demo?: boolean } | undefined)?.demo) {
+      writeSandbox(jobId, { decisions, notes });
+    }
+  }, [jobId, jobState?.config, decisions, notes]);
+
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Shared brushing-and-linking selection: clicking any chart element sets it; it filters the review queue
   // and emphasizes the matching slice across every chart. Clicking the same element again clears it.
@@ -317,6 +328,9 @@ export default function DashboardPage() {
   async function decide(r: UIRecord, decision: "approve" | "refine" | "reject") {
     setDecisions((p) => ({ ...p, [r.id]: decision }));
     try {
+    // Canonical demo: read-only server-side, so the click stays local. The optimistic state above IS
+    // the whole effect — keeping demo work means cloning the demo into a run of your own.
+    if (isDemo) return;
       await submitVerdict(jobId, r.id, decision, notes[r.id] ?? "");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save decision");
@@ -345,6 +359,13 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      {isDemo && !running && (
+        <DemoBanner
+          jobId={jobId}
+          displayName={jobState.displayName}
+          unsavedCount={Object.keys(decisions).length}
+        />
+      )}
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">

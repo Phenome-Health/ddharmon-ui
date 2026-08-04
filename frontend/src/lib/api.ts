@@ -158,6 +158,28 @@ export async function generateAnalysisIdeas(
 }
 
 /**
+ * Copy a run into one you own — how work done on the read-only demo is kept.
+ *
+ * `artifacts` carries the browser's sandbox edits (see lib/sandbox.ts), which is why "clone with my
+ * changes" needs no server-side guest session: the client has held them all along and simply posts them.
+ * Requires an account; the copy has to belong to someone.
+ */
+export async function cloneJob(
+  jobId: string,
+  body: { displayName?: string; artifacts?: { kind: string; payload: Record<string, unknown> }[] } = {},
+): Promise<{ jobId: string }> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to keep a copy of this run.");
+  return json(
+    await fetch(`${BASE}/jobs/${jobId}/clone`, {
+      method: "POST",
+      headers: await authed({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+/**
  * Derive a composite/derived-variable spec against this run's concepts (opt-in, BYOK, metadata-only).
  *
  * Supply the score's definition ONE of three ways: `sourceText` (pasted methods/component table),

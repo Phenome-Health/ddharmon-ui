@@ -27,8 +27,9 @@ import os
 import shutil
 import threading
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -37,11 +38,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
+from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
-from backend.jobs import TERMINAL_STATES, Job, _is_pinned, store
+from backend.jobs import _PINNED_CONFIG_KEYS, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
 from backend.runner import run_harmonization
 
@@ -161,8 +164,30 @@ def _subject(request: Request) -> str | None:
 
 
 def _visible_to(job: Job, subject: str | None) -> bool:
-    """A run is visible to a caller if they own it, or it's a public demo/pinned run (visible to everyone)."""
+    """A run is visible to a caller if they own it, or it's a public demo/pinned run (visible to everyone).
+
+    Visibility is NOT permission to write: a pinned run is readable by everyone and writable by no one (see
+    :func:`_writable_run` and ``JobStore._is_pinned``). When run sharing lands this returns a permission
+    rather than a bool — every write path must then check for write access, not mere visibility.
+    """
     return _is_pinned(job) or job.owner_subject == subject
+
+
+@contextmanager
+def _writable_run() -> Iterator[None]:
+    """Turn an attempted write to the immutable demo into a 403 that names the recovery.
+
+    Every write path goes through this, so a new endpoint gets the guarantee by using the same wrapper
+    rather than by remembering a rule.
+    """
+    try:
+        yield
+    except ReadOnlyRunError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except UnknownArtifactKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.middleware("http")
@@ -398,17 +423,19 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
 
 @app.get("/api/harmonize/result/{job_id}")
 def result(job_id: str, request: Request) -> dict[str, Any]:
+    subject = _subject(request)
     job = store.get(job_id)
-    if job is None or not _visible_to(job, _subject(request)):
+    if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
-    return job.to_dict()
+    return job.to_dict(store.artifacts_for(job, subject))
 
 
 # --- jobs list / delete ----------------------------------------------------------------------
 @app.get("/api/harmonize/jobs")
 def list_jobs(request: Request) -> list[dict[str, Any]]:
     """The caller's own runs (durable history + any live) plus the public demo(s), newest first."""
-    return [j.summary_dict() for j in store.list(_subject(request))]
+    subject = _subject(request)
+    return [j.summary_dict(store.artifacts_for(j, subject)) for j in store.list(subject)]
 
 
 @app.delete("/api/harmonize/jobs/{job_id}", status_code=204)
@@ -507,8 +534,116 @@ def analysis_ideas(
     # A rejected key or an overloaded provider is an expected condition, not a crash — surface it as such.
     with llm_call(model=model_tag):
         out = generate_analysis_ideas(records, client.complete)
-    store.set_analysis_ideas(job_id, out["ideas"])
+    store.set_analysis_ideas(job_id, out["ideas"], subject=_subject(request))
     return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
+
+
+# --- clone ------------------------------------------------------------------------------------
+class CloneBody(BaseModel):
+    """Take a copy of a run — how work done in the canonical demo is kept.
+
+    ``artifacts`` carries the browser's sandbox edits (verdicts, composite specs), so "clone with my changes"
+    needs no server-side guest session and no identity merge: the client already holds them. Omit it for a
+    clean copy. ``recordPatches`` carries edits that changed the run's own records (a corrected GenCDE),
+    which are applied to the copy's result blob.
+    """
+
+    displayName: str | None = None
+    artifacts: list[dict[str, Any]] | None = None  # [{kind, payload}, …]
+    recordPatches: list[dict[str, Any]] | None = None  # whole records, matched by id
+
+
+@app.post("/api/harmonize/jobs/{job_id}/clone")
+def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
+    """Copy a run into one the caller owns, optionally carrying their sandbox edits.
+
+    Requires an account (this route is gated): the copy is owned, and without a subject there is no one to
+    own it. The demo/pinned flags are STRIPPED — inheriting them would make the copy immutable and
+    TTL-exempt, i.e. another shared demo, which is the precise opposite of the point.
+    """
+    subject = _subject(request)
+    source = store.get(job_id)
+    if source is None or not _visible_to(source, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    if source.result is None:
+        raise HTTPException(status_code=409, detail="This run has no result to copy yet.")
+
+    new_id = uuid.uuid4().hex[:12]
+    # Deep copy: a shallow one leaves the copy sharing the demo's record list, so editing the copy would
+    # mutate the canonical demo for everyone — the very thing this design exists to prevent.
+    result = deepcopy(source.result)
+    records = result.get("records") or []
+    by_id = {r.get("id"): i for i, r in enumerate(records)}
+    for patch in body.recordPatches or []:
+        i = by_id.get(patch.get("id"))
+        if i is not None:
+            records[i] = patch
+
+    config = {k: v for k, v in source.config.items() if k not in _PINNED_CONFIG_KEYS}
+    config["clonedFrom"] = job_id
+    display = (body.displayName or "").strip() or f"{source.display_name} (my copy)"
+    # dict_specs are deliberately NOT copied: the uploads live under the SOURCE run's work dir, so the copy
+    # cannot be re-run from them. It is a review artifact, not a re-runnable run.
+    store.create(new_id, display, config, owner_subject=subject)
+    store.update(new_id, status="complete", phase="complete", result=result)
+
+    artifacts = store.artifacts
+    if artifacts is not None and body.artifacts:
+        owner = principal_of(subject, store.get(new_id))
+        with _writable_run():
+            for entry in body.artifacts:
+                kind, payload = entry.get("kind"), entry.get("payload")
+                if not kind or not isinstance(payload, dict):
+                    raise HTTPException(status_code=400, detail="each artifact needs a kind and a payload object")
+                artifacts.put(owner=owner, job_id=new_id, kind=str(kind), payload=payload)
+    return {"jobId": new_id}
+
+
+# --- user artifacts (generic) ----------------------------------------------------------------
+# One surface for every kind of user-generated work attached to a run. A new persisted feature registers
+# its kind in backend/artifact_kinds.py and is reachable here immediately — no new route, no new column,
+# no new setter. Feature endpoints that DO more than store (an LLM derivation, a result-blob merge) keep
+# their own route and persist through the same store.
+
+
+def _artifact_target(job_id: str, request: Request) -> tuple[Job, str]:
+    """The run and the caller's owner key, or 404/403. Rejects the immutable demo for writes."""
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job, principal_of(subject, job)
+
+
+@app.get("/api/harmonize/jobs/{job_id}/artifacts")
+def list_artifacts(job_id: str, request: Request) -> dict[str, Any]:
+    """Everything the CALLER has stored against this run, grouped by kind."""
+    job, owner = _artifact_target(job_id, request)
+    return {"kinds": registry.names(), "artifacts": store.artifacts_for(job, owner)}
+
+
+@app.put("/api/harmonize/jobs/{job_id}/artifacts/{kind}")
+def put_artifact(job_id: str, kind: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Upsert one artifact. Its identity (and so what it replaces) is derived by its kind."""
+    job, owner = _artifact_target(job_id, request)
+    artifacts = store.artifacts
+    if artifacts is None:
+        raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    with _writable_run():
+        stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload, pinned=_is_pinned(job))
+    return {"kind": stored.kind, "itemKey": stored.item_key, "updatedAt": stored.updated_at}
+
+
+@app.delete("/api/harmonize/jobs/{job_id}/artifacts/{kind}/{item_key:path}", status_code=204)
+def delete_artifact(job_id: str, kind: str, item_key: str, request: Request) -> None:
+    job, owner = _artifact_target(job_id, request)
+    artifacts = store.artifacts
+    if artifacts is None:
+        raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    with _writable_run():
+        if _is_pinned(job):
+            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified")
+        artifacts.delete(owner=owner, job_id=job_id, kind=kind, item_key=item_key)
 
 
 # --- composite / derived variables -----------------------------------------------------------
@@ -571,14 +706,16 @@ def composite(
     feasibility verdict + per-cohort coverage + the derivation recipe. Cached on the job (replacing any
     previous spec for the same score) so a re-view isn't re-billed.
     """
+    subject = _subject(request)
     job = store.get(job_id)
-    if job is None or not _visible_to(job, _subject(request)):
+    if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
     records = (job.result or {}).get("records") if job.result else None
     if not records:
         raise HTTPException(status_code=409, detail="This run has no harmonized concepts to build a score from.")
 
-    from backend.composite import derive, resolve_source, upsert
+    from backend.artifact_kinds import COMPOSITE
+    from backend.composite import derive, resolve_source
     from backend.engine.llm import build_llm_client
     from backend.llm_errors import llm_call
 
@@ -606,7 +743,20 @@ def composite(
     except ValueError as exc:
         # e.g. the document defines no score, or its text extraction came back empty — a 400, not a 500.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    store.set_composites(job_id, upsert(job.composites, spec))
+    # Durable home is the per-user artifact store, keyed by the score's name — so a re-derive REPLACES that
+    # score for THIS user (what `composite.upsert` used to do by hand) and one user's derivation is never
+    # visible to another on a shared run. A pinned run raises here rather than silently discarding the spec,
+    # which is the bug this whole layer exists to fix.
+    artifacts = store.artifacts
+    if artifacts is not None:
+        with _writable_run():
+            artifacts.put(
+                owner=principal_of(subject, job),
+                job_id=job_id,
+                kind=COMPOSITE,
+                payload=spec,
+                pinned=_is_pinned(job),
+            )
     return spec
 
 
@@ -690,15 +840,18 @@ def submit_verdict(job_id: str, body: VerdictBody, request: Request) -> dict[str
     job = store.get(job_id)
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
-    if not store.set_decision(
-        job_id,
-        body.recordId,
-        body.decision,
-        body.note,
-        axis=body.axis,
-        source_variable=body.sourceVariable,
-        edited=body.edited,
-    ):
+    with _writable_run():
+        saved = store.set_decision(
+            job_id,
+            body.recordId,
+            body.decision,
+            body.note,
+            axis=body.axis,
+            source_variable=body.sourceVariable,
+            edited=body.edited,
+            subject=_subject(request),
+        )
+    if not saved:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
 

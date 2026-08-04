@@ -29,8 +29,24 @@ _PINNED_CONFIG_KEYS = ("demo", "pinned", "sample")
 
 
 def _is_pinned(job: Job) -> bool:
-    """A pinned run (demo/sample/explicitly-pinned) is exempt from TTL purging — it stays in Runs forever."""
+    """A pinned run (demo/sample/explicitly-pinned) is exempt from TTL purging — it stays in Runs forever.
+
+    It is also IMMUTABLE: the canonical demo is one shared row that every user can see, so writing user work
+    onto it would make one person's verdicts and composites visible to everyone else. Demo edits live in the
+    browser instead; cloning the demo produces a run of the user's own that does persist.
+    """
     return any(job.config.get(k) for k in _PINNED_CONFIG_KEYS)
+
+
+#: Owner key used when the auth gate is disabled (local dev, tests, the static preview). With no identity
+#: provider there is exactly one user, so their artifacts all belong to this principal. Prod always has a
+#: real Clerk subject; this never collides with one because Clerk subjects are prefixed ``user_``.
+LOCAL_PRINCIPAL = "local"
+
+
+def principal_of(subject: str | None, job: Job | None = None) -> str:
+    """The artifact owner key for a request: the verified subject, else the run's owner, else the local one."""
+    return subject or (job.owner_subject if job is not None else None) or LOCAL_PRINCIPAL
 
 
 @dataclass
@@ -69,7 +85,9 @@ class Job:
     analysis_ideas: list[dict[str, Any]] | None = None
     # Optional post-run composite/derived-variable specs (one per published score derived against this run's
     # concepts). None = none derived yet. A list, because a run legitimately supports several scores; a
-    # re-derive REPLACES the entry for that score name rather than appending (see backend.composite.upsert).
+    # LEGACY MIRROR: the durable home is the per-user artifact store (kind `composite`), whose identity
+    # function keys by the score's name — so a re-derive replaces that score rather than appending.
+    # This field only still serves DB rows written before the artifact layer.
     composites: list[dict[str, Any]] | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -116,7 +134,27 @@ class Job:
             n_records=d.get("n_records", 0),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, artifacts: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Wire view of this run.
+
+        ``artifacts`` is the CALLER's own artifacts for this run (see ``JobStore.artifacts_for``). When
+        supplied it overrides the in-memory mirrors, so the payload is scoped to whoever asked — the reason a
+        shared run can no longer hand one user another user's verdicts. Omitted (background/live paths) it
+        falls back to the in-memory mirrors, which for an owned run are that same user's work.
+        """
+        decisions = self.decisions
+        analysis_ideas = self.analysis_ideas
+        composites = self.composites
+        if artifacts is not None:
+            from backend.artifact_kinds import ANALYSIS_IDEAS, COMPOSITE, VERDICT
+            from backend.db import _verdicts_to_legacy
+
+            decisions = _verdicts_to_legacy(artifacts.get(VERDICT, []))
+            ideas_artifact = artifacts.get(ANALYSIS_IDEAS)
+            analysis_ideas = (ideas_artifact or {}).get("ideas") if ideas_artifact else None
+            # A list, and `None` when the user has none — the panel distinguishes "no composites yet" from
+            # "an empty list", and the pre-artifact wire contract used null for the former.
+            composites = artifacts.get(COMPOSITE) or None
         return {
             "jobId": self.job_id,
             "displayName": self.display_name,
@@ -131,18 +169,18 @@ class Job:
             "failedPhase": self.failed_phase,
             "result": self.result,
             "config": self.config,
-            "decisions": self.decisions,
-            "analysisIdeas": self.analysis_ideas,
-            "composites": self.composites,
+            "decisions": decisions,
+            "analysisIdeas": analysis_ideas,
+            "composites": composites,
             "phaseStartedAt": self.phase_timings,
             "costSoFar": self.cost_so_far,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
 
-    def summary_dict(self) -> dict[str, Any]:
+    def summary_dict(self, artifacts: dict[str, Any] | None = None) -> dict[str, Any]:
         """Lightweight view for the jobs list (omits the heavy result + analysis-ideas payloads)."""
-        d = self.to_dict()
+        d = self.to_dict(artifacts)
         d.pop("result", None)
         d.pop("analysisIdeas", None)
         # Prefer the live result count; fall back to the persisted n_records hint for DB-hydrated summaries.
@@ -170,6 +208,40 @@ class JobStore:
         self.work_root = work_root
         # Durable per-user store (backend.db.JobDB) or None (tests / no persistence -> legacy behavior).
         self.db = db
+        # Per-user artifacts (verdicts / composites / analysis ideas). Lazily built from ``db`` on first use
+        # so tests that attach a db after construction still get one. See backend/artifacts.py.
+        self._artifacts: Any | None = None
+
+    @property
+    def artifacts(self) -> Any | None:
+        """The :class:`~backend.artifacts.ArtifactStore` over this store's db, or None without a db."""
+        if self.db is None:
+            return None
+        if self._artifacts is None:
+            from backend.artifacts import ArtifactStore
+
+            self._artifacts = ArtifactStore(self.db)
+        return self._artifacts
+
+    def artifacts_for(self, job: Job, subject: str | None) -> dict[str, Any] | None:
+        """Everything ``subject`` has stored against ``job``, grouped by kind.
+
+        Resolves the owner key through :func:`principal_of` — the SAME way the write path does. Looking up
+        the raw subject instead reads under a different key than writes used whenever the auth gate is
+        disabled (dev, tests), and silently returns nothing.
+
+        ``None`` means "not resolved, keep the in-memory mirror" and is distinct from ``{}``, which means
+        "this user genuinely has no work on this run" and so must blank the payload.
+
+        A pinned run resolves to ``{}``: the canonical demo holds nobody's work by design — demo edits live
+        in the browser for the tab's lifetime, and are kept by cloning the demo into a run of your own.
+        """
+        store_ = self.artifacts
+        if store_ is None:
+            return None
+        if _is_pinned(job):
+            return {}
+        return store_.get_all(owner=principal_of(subject, job), job_id=job.job_id)
 
     def _teardown_work_dir(self, job_id: str) -> None:
         """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone."""
@@ -236,6 +308,11 @@ class JobStore:
         if self.db is not None:
             durable = self.db.get(job_id) is not None
             self.db.delete(job_id)
+            # Cascade: a deleted run takes every user's artifacts for it. Without this they are orphaned
+            # rows that a recycled job id would resurrect against the wrong run.
+            store_ = self.artifacts
+            if store_ is not None:
+                store_.delete_for_run(job_id)
             existed = existed or durable
         # rmtree outside the lock — filesystem I/O shouldn't block the registry. Idempotent either way.
         self._teardown_work_dir(job_id)
@@ -295,6 +372,7 @@ class JobStore:
         axis: str = "match",
         source_variable: str | None = None,
         edited: dict[str, Any] | None = None,
+        subject: str | None = None,
     ) -> bool:
         """Persist a human verdict on one of three independent axes.
 
@@ -312,9 +390,24 @@ class JobStore:
         Works on a past (evicted / post-restart) run too: if it's not live in memory it is hydrated from the
         durable store, the verdict applied, and the whole record re-persisted — so reviewing history later
         records verdicts durably.
+
+        The durable home is the per-user artifact store (``backend/artifacts.py``); the in-memory
+        ``job.decisions`` mirror is kept for the live workbench and the export paths that read it. A PINNED
+        run (the canonical demo) raises :class:`~backend.artifacts.ReadOnlyRunError` and writes nothing — it holds
+        nobody's work, so it cannot hold everybody's.
         """
         if axis == "transform" and not source_variable:
             return False
+        target = self.get(job_id)
+        if target is None:
+            return False
+        if _is_pinned(target):
+            from backend.artifacts import ReadOnlyRunError
+
+            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified — clone it to keep your work")
+
+        self._write_verdict_artifact(target, subject, record_id, decision, note, axis, source_variable, edited)
+
         with self._lock:
             job = self._jobs.get(job_id)
             if job is not None:
@@ -329,6 +422,35 @@ class JobStore:
             self._apply_decision(job, record_id, decision, note, axis, source_variable, edited)
         self._persist(job)  # verdicts must survive a restart
         return True
+
+    def _write_verdict_artifact(
+        self,
+        job: Job,
+        subject: str | None,
+        record_id: str,
+        decision: str,
+        note: str,
+        axis: str,
+        source_variable: str | None,
+        edited: dict[str, Any] | None,
+    ) -> None:
+        """Mirror one verdict into the per-user artifact store. "clear" deletes the row rather than storing it."""
+        from backend.artifact_kinds import VERDICT
+
+        store_ = self.artifacts
+        if store_ is None:
+            return
+        owner = principal_of(subject, job)
+        item_key = f"{record_id}|{axis}|{source_variable or ''}"
+        if decision == "clear":
+            store_.delete(owner=owner, job_id=job.job_id, kind=VERDICT, item_key=item_key)
+            return
+        payload: dict[str, Any] = {"recordId": record_id, "axis": axis, "decision": decision, "note": note}
+        if source_variable:
+            payload["sourceVariable"] = source_variable
+        if edited:
+            payload["edited"] = edited
+        store_.put(owner=owner, job_id=job.job_id, kind=VERDICT, payload=payload, pinned=_is_pinned(job))
 
     def replace_result_record(self, job_id: str, record_id: str, new_record: dict[str, Any]) -> bool:
         """Replace one record in a job's result blob (e.g. after a targeted recode regeneration) and persist.
@@ -364,29 +486,33 @@ class JobStore:
         self._persist(job)
         return True
 
-    def set_composites(self, job_id: str, composites: list[dict[str, Any]]) -> bool:
-        """Cache derived composite specs on a job (live or DB-hydrated) and persist them, so a derivation
-        survives reload/restart and a re-view isn't re-billed. Returns False if the job doesn't exist."""
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is not None:
-                job.composites = composites
-                job.updated_at = time.time()
-        if job is None:
-            if self.db is None:
-                return False
-            row = self.db.get(job_id)
-            if row is None:
-                return False
-            job = Job.from_db_row(row)
-            job.composites = composites
-            job.updated_at = time.time()
-        self._persist(job)
-        return True
-
-    def set_analysis_ideas(self, job_id: str, ideas: list[dict[str, Any]]) -> bool:
+    def set_analysis_ideas(self, job_id: str, ideas: list[dict[str, Any]], subject: str | None = None) -> bool:
         """Cache generated analysis ideas on a job (live or DB-hydrated) and persist them, so the opt-in
-        LLM pass runs once and survives reload/restart. Returns False if the job doesn't exist."""
+        LLM pass runs once and survives reload/restart. Returns False if the job doesn't exist.
+
+        Durable home is the per-user artifact store; the in-memory mirror serves the live view. A pinned run
+        raises :class:`~backend.artifacts.ReadOnlyRunError` — the demo ships pre-generated ideas instead.
+        """
+        target = self.get(job_id)
+        if target is None:
+            return False
+        if _is_pinned(target):
+            from backend.artifacts import ReadOnlyRunError
+
+            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified — clone it to keep your work")
+
+        store_ = self.artifacts
+        if store_ is not None:
+            from backend.artifact_kinds import ANALYSIS_IDEAS
+
+            store_.put(
+                owner=principal_of(subject, target),
+                job_id=job_id,
+                kind=ANALYSIS_IDEAS,
+                payload={"ideas": ideas},
+                pinned=False,
+            )
+
         with self._lock:
             job = self._jobs.get(job_id)
             if job is not None:

@@ -17,6 +17,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.app as app_module
+from backend.artifact_kinds import COMPOSITE
+from backend.jobs import LOCAL_PRINCIPAL
 
 _FRIED = {
     "name": "Fried frailty phenotype",
@@ -128,25 +130,63 @@ def test_derive_from_pasted_text_returns_the_core_payload(stub_llm):
     assert [s["kind"] for s in spec["derivation"]][-2:] == ["combine", "threshold"]
 
 
-def test_derive_persists_on_the_job_and_upserts_by_score_name(stub_llm):
+def test_derive_persists_and_upserts_by_score_name(stub_llm, tmp_path, monkeypatch):
+    """A re-derive REPLACES that score rather than appending — one verdict per score, always current.
+
+    The identity now comes from the `composite` artifact kind rather than a hand-rolled list rebuild, but
+    the guarantee is the same one the panel depends on.
+    """
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
     with TestClient(app_module.app) as c:
         _completed_job(app_module)
         c.post("/api/harmonize/jobs/j1/composite", json={"sourceText": "Fried text"}, headers=_hdr())
         c.post("/api/harmonize/jobs/j1/composite", json={"sourceText": "Fried text again"}, headers=_hdr())
-        stored = app_module.store.get("j1").composites
-        # Same score re-derived -> replaced, not appended (one verdict per score, always current).
-        assert len(stored) == 1 and stored[0]["definition"]["name"] == "Fried frailty phenotype"
-        assert c.get("/api/harmonize/result/j1").json()["composites"][0]["definition"]["kind"] == "criteria_count"
+        stored = c.get("/api/harmonize/result/j1").json()["composites"]
+    assert len(stored) == 1
+    assert stored[0]["definition"]["name"] == "Fried frailty phenotype"
+    assert stored[0]["definition"]["kind"] == "criteria_count"
 
 
-def test_a_second_distinct_score_is_kept_alongside_the_first(stub_llm):
+def test_a_second_distinct_score_is_kept_alongside_the_first(stub_llm, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
     with TestClient(app_module.app) as c:
         _completed_job(app_module)
         c.post("/api/harmonize/jobs/j1/composite", json={"sourceText": "Fried text"}, headers=_hdr())
-        other = dict(_FRIED, name="FI-Lab")
-        app_module.store.set_composites("j1", [*app_module.store.get("j1").composites, {"definition": other}])
-        names = {s["definition"]["name"] for s in app_module.store.get("j1").composites}
+        # A different score, written through the same store the endpoint uses.
+        app_module.store.artifacts.put(
+            owner=LOCAL_PRINCIPAL,
+            job_id="j1",
+            kind=COMPOSITE,
+            payload={"definition": dict(_FRIED, name="FI-Lab")},
+        )
+        names = {s["definition"]["name"] for s in c.get("/api/harmonize/result/j1").json()["composites"]}
     assert names == {"Fried frailty phenotype", "FI-Lab"}
+
+
+def test_a_derived_composite_survives_a_restart(stub_llm, tmp_path, monkeypatch):
+    """The bug that started this: a composite vanished on every service restart.
+
+    Derive, drop the in-memory store the way a restart does, and read it back.
+    """
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job(app_module)
+        assert (
+            c.post("/api/harmonize/jobs/j1/composite", json={"sourceText": "Fried"}, headers=_hdr()).status_code == 200
+        )
+        app_module.store._jobs.clear()  # evicted / restarted -> the run is DB-hydrated from here on
+        stored = c.get("/api/harmonize/result/j1").json()["composites"]
+    assert [s["definition"]["name"] for s in stored] == ["Fried frailty phenotype"]
+
+
+def test_deriving_on_the_shared_demo_is_refused_rather_than_silently_dropped(stub_llm, tmp_path, monkeypatch):
+    """It used to return 200 and discard the spec — the reviewer paid for a derivation that vanished."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job(app_module, "demo-1")
+        app_module.store.get("demo-1").config["demo"] = True
+        r = c.post("/api/harmonize/jobs/demo-1/composite", json={"sourceText": "Fried"}, headers=_hdr())
+    assert r.status_code == 403 and "clone" in r.json()["detail"].lower()
 
 
 def test_rederive_from_a_definition_with_all_components_pinned_costs_no_llm_call(stub_llm):

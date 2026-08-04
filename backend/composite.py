@@ -93,15 +93,3 @@ def derive(
     # mislabel a re-derive as e.g. "criteria_count" instead of naming where the definition came from.
     payload["sourceKind"] = source.kind if isinstance(source, ScoreSource) else "definition"
     return payload
-
-
-def upsert(existing: list[dict[str, Any]] | None, spec: dict[str, Any]) -> list[dict[str, Any]]:
-    """Add ``spec`` to a job's stored composites, REPLACING any previous spec for the same score name.
-
-    A job legitimately carries several composites (a frailty index and an intrinsic-capacity score), but
-    re-deriving one must not accumulate stale copies of it — the panel would then show two verdicts for the
-    same score with no way to tell which is current.
-    """
-    name = str((spec.get("definition") or {}).get("name") or "").strip().lower()
-    kept = [s for s in (existing or []) if str((s.get("definition") or {}).get("name") or "").strip().lower() != name]
-    return [*kept, spec]
