@@ -19,19 +19,20 @@
       "mode": "batch"
     },
     "decisions": {},
-    "createdAt": 1784258415,
-    "updatedAt": 1784258415,
+    "createdAt": 1785815701,
+    "updatedAt": 1785815701,
     "phaseTimings": {
-      "loading": 0.91,
-      "embedding": 4.53,
-      "clustering": 10.78,
-      "generating": 243.66,
-      "splitting": 188.02,
-      "assigning": 182.98,
-      "gencde": 303.39,
-      "specs": 242.94
+      "loading": 0.97,
+      "embedding": 17.06,
+      "clustering": 26.45,
+      "generating": 123.33,
+      "splitting": 128.47,
+      "assigning": 182.69,
+      "gencde": 122.61,
+      "specs": 182.34,
+      "refine": 428.15
     },
     "coreVersion": "1.2.0",
-    "nRecords": 537
+    "nRecords": 535
   }
 ]
