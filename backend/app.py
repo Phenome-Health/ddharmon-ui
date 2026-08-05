@@ -397,9 +397,12 @@ def _clean(s: Any) -> str:
 
 @app.get("/api/harmonize/stream/{job_id}")
 async def stream(job_id: str, request: Request) -> StreamingResponse:
+    # Resolved ONCE, outside the generator: `request` is still in scope while streaming, but the subject is a
+    # property of the connection, not of each tick, and re-deriving it per frame invites a mid-stream change.
+    subject = _subject(request)
     job = store.get(job_id)
     # 404 (not 403) on a run the caller doesn't own, so we never reveal that someone else's job exists.
-    if job is None or not _visible_to(job, _subject(request)):
+    if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def gen() -> Any:
@@ -409,7 +412,10 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
             if job is None:
                 yield _sse("error", {"message": "Job not found"})
                 return
-            yield _sse("progress", job.to_dict())
+            # Artifact-scoped like /result and /jobs. A bare to_dict() here falls back to the in-memory
+            # mirrors, which are NOT owner-scoped — on a shared run that hands one user another's verdicts,
+            # and it is the path the workbench actually reads (it is SSE-driven, not /result-driven).
+            yield _sse("progress", job.to_dict(store.artifacts_for(job, subject)))
             if job.status in TERMINAL_STATES:
                 return
             await asyncio.sleep(0.5)

@@ -7,6 +7,8 @@ annotations sharing one object) survived precisely because no test restarted the
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -470,3 +472,49 @@ def test_cloning_an_unfinished_run_is_a_409(tmp_path, monkeypatch):
         app_module.store.create("j2", "Running", {})
         r = c.post("/api/harmonize/jobs/j2/clone", json={})
     assert r.status_code == 409
+
+
+# --- the SSE stream: the payload the review surfaces actually read ----------------------------
+#
+# The workbench and dashboard are driven by /stream, not /result. That made the stream the one read path
+# where a bare to_dict() (in-memory mirrors, NOT owner-scoped) still handed out another user's verdicts —
+# and the one that had to be scoped before the frontend could safely hydrate from `decisions` at all.
+
+
+def _stream_payload(client, job_id: str) -> dict:
+    """The last `progress` frame of a completed run's stream (it yields once, then returns)."""
+    frames = [
+        json.loads(line[len("data: ") :])
+        for line in client.get(f"/api/harmonize/stream/{job_id}").text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert frames, "stream produced no progress frame"
+    return frames[-1]
+
+
+def test_the_stream_carries_the_callers_own_verdicts(tmp_path, monkeypatch):
+    """Hydration's precondition: what the workbench reads on mount has to contain the saved work."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        c.post(
+            "/api/harmonize/jobs/j1/verdict",
+            json={"recordId": "r1", "decision": "approve", "axis": "match", "note": "keep me"},
+        )
+        app_module.store._jobs.clear()  # evicted, as after a restart — the mirror is gone, the rows are not
+        decisions = _stream_payload(c, "j1")["decisions"]
+    assert decisions["r1"]["decision"] == "approve"
+    assert decisions["r1"]["note"] == "keep me"
+
+
+def test_the_stream_does_not_hand_one_user_anothers_verdicts(tmp_path, monkeypatch):
+    """The leak's last foothold. `_apply_decision` also updates the shared in-memory mirror, so an unscoped
+    stream frame served USER_B's verdict to whoever asked next — on the demo, that is everyone."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        # B annotates the run: their artifact row is written AND the shared mirror is mutated.
+        app_module.store.set_decision("j1", "r1", "reject", note="not mine", subject=USER_B)
+        assert app_module.store.get("j1").decisions["r1"]["decision"] == "reject"  # mirror is polluted
+        decisions = _stream_payload(c, "j1")["decisions"]  # read as the local principal, i.e. not B
+    assert decisions == {}, "the stream leaked another user's verdict"
