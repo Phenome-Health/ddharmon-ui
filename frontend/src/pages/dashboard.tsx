@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
 import {
@@ -38,6 +38,7 @@ import { exportUrl, submitVerdict } from "@/lib/api";
 import { buildRunIssueUrl } from "@/lib/links";
 import { DemoBanner } from "@/components/demo-banner";
 import { readSandbox, writeSandbox } from "@/lib/sandbox";
+import { isEmptyVerdicts, toLocalVerdicts } from "@/lib/verdicts";
 import { RerunAction } from "@/components/rerun-action";
 import { StopRunAction } from "@/components/stop-run-action";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
@@ -222,6 +223,18 @@ export default function DashboardPage() {
       writeSandbox(jobId, { decisions, notes });
     }
   }, [jobId, jobState?.config, decisions, notes]);
+  // Hydrate an owned run's saved verdicts from the server. Same three guards as the workbench (once per
+  // jobId, local wins the merge, skip an empty payload so the demo's sandbox is never overwritten) — see
+  // the long note there. The dashboard shows only the match axis, so it takes just those two maps.
+  const hydratedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (hydratedRef.current === jobId) return;
+    const v = toLocalVerdicts(jobState?.decisions);
+    if (isEmptyVerdicts(v)) return;
+    hydratedRef.current = jobId;
+    setDecisions((prev) => ({ ...v.decisions, ...prev }));
+    setNotes((prev) => ({ ...v.notes, ...prev }));
+  }, [jobId, jobState?.decisions]);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Shared brushing-and-linking selection: clicking any chart element sets it; it filters the review queue

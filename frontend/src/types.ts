@@ -268,6 +268,22 @@ export interface HarmonizationResult {
   previewClusters?: PreviewCluster[];
 }
 
+/**
+ * The caller's OWN verdicts on a run, nested by record — the wire shape the backend rebuilds from the
+ * per-axis artifact rows (`_verdicts_to_legacy`). Three axes share one entry: the concept→CDE match verdict
+ * sits at the top level, per-source-variable transform verdicts hang off `transforms`, and the GenCDE
+ * verdict off `gencde`. `lib/verdicts.ts` flattens this into the maps the review surfaces hold.
+ */
+export type ServerDecisions = Record<
+  string,
+  {
+    decision?: string;
+    note?: string;
+    transforms?: Record<string, { decision?: string; note?: string }>;
+    gencde?: { decision?: string; note?: string; edited?: Record<string, unknown> };
+  }
+>;
+
 export interface JobResult {
   jobId: string;
   displayName: string;
@@ -281,7 +297,7 @@ export interface JobResult {
   failedPhase?: string | null;
   result: HarmonizationResult | null;
   config: Record<string, unknown>;
-  decisions: Record<string, { decision: string; note: string }>;
+  decisions: ServerDecisions;
   // Opt-in, LLM-suggested downstream analyses (null until generated; see POST /jobs/{id}/analysis-ideas).
   analysisIdeas?: AnalysisIdea[] | null;
   // Derived composite specs, one per score (null until the first derivation). See CompositeSpec.

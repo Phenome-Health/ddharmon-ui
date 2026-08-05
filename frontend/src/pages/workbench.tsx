@@ -3,7 +3,7 @@
 // approve/refine/reject decision for the selected group. Renders the ranked candidates the pipeline saw
 // (contract `candidates`) — read-only alternatives with the chosen one flagged — since our backend records
 // one decision per group rather than a free re-pick. Deferred (future): ⌘K palette, batch mode, resizable.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
 import { AlertTriangle, ArrowLeft, Ban, Check, ExternalLink, GitBranch, Loader2, Pencil, Plus, RefreshCw, Save, Sparkles, Star, X } from "lucide-react";
@@ -29,6 +29,7 @@ import { SourceRows } from "@/components/source-rows";
 import { regenerateSpecs, submitVerdict } from "@/lib/api";
 import { DemoBanner } from "@/components/demo-banner";
 import { readSandbox, writeSandbox } from "@/lib/sandbox";
+import { isEmptyVerdicts, toLocalVerdicts } from "@/lib/verdicts";
 import {
   VERDICT_STYLES,
   conceptLabel,
@@ -37,6 +38,7 @@ import {
   type FieldDetail,
   type GenCDE,
   type ResponseOption,
+  type ServerDecisions,
   type UIRecord,
   type UITransform,
 } from "@/types";
@@ -224,6 +226,7 @@ export default function WorkbenchPage() {
       records={jobState.result?.records ?? []}
       fieldIndex={jobState.result?.fieldIndex ?? {}}
       isDemo={!!(jobState.config as { demo?: boolean }).demo}
+      serverDecisions={jobState.decisions}
     />
   );
 }
@@ -233,6 +236,7 @@ export function WorkbenchBody({
   records,
   fieldIndex = {},
   isDemo = false,
+  serverDecisions,
 }: {
   jobId: string;
   records: UIRecord[];
@@ -240,6 +244,9 @@ export function WorkbenchBody({
   // The canonical demo is read-only server-side: verdicts stay in this component's state and are never
   // sent. Keeping them means cloning the demo into a run of your own.
   isDemo?: boolean;
+  // This caller's own saved verdicts on an OWNED run, scoped server-side to them. Empty for the demo (a
+  // pinned run resolves to no artifacts by design), so the sandbox stays the demo's only source.
+  serverDecisions?: ServerDecisions;
 }) {
   // Deep link from the embedding atlas: /job/:id/workbench?c=<recordId> preselects that concept.
   const queryString = useSearch();
@@ -267,6 +274,31 @@ export function WorkbenchBody({
   useEffect(() => {
     if (isDemo) writeSandbox(jobId, { decisions, transformDecisions, gencdeDecisions, notes });
   }, [isDemo, jobId, decisions, transformDecisions, gencdeDecisions, notes]);
+
+  // Hydrate an OWNED run's verdicts from the server — the other half of `submitVerdict`. Without this the
+  // writes landed in `user_artifacts` and nothing ever read them, so navigating away and back looked like
+  // the work had been lost (it hadn't; it was never displayed).
+  //
+  // Three guards, each load-bearing:
+  //  - once per jobId (the ref), because SSE re-pushes the whole job every 0.5s while a run is live and a
+  //    re-hydrate on every frame would fight the user's clicks;
+  //  - merged with LOCAL WINNING (`{...server, ...prev}`), so a verdict clicked before the payload arrives
+  //    survives the merge instead of being reverted to its saved value;
+  //  - skipped when the payload carries nothing. This is what keeps the demo safe WITHOUT testing `isDemo`,
+  //    which is still false on the first render (the stream hook's first jobState has an empty `config` —
+  //    the same trap that made the original sandbox hydration miss). A pinned run resolves to no artifacts,
+  //    so its payload is always empty and the sandbox is never overwritten.
+  const hydratedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (hydratedRef.current === jobId) return;
+    const v = toLocalVerdicts(serverDecisions);
+    if (isEmptyVerdicts(v)) return;
+    hydratedRef.current = jobId;
+    setDecisions((prev) => ({ ...v.decisions, ...prev }));
+    setTransformDecisions((prev) => ({ ...v.transformDecisions, ...prev }));
+    setGencdeDecisions((prev) => ({ ...v.gencdeDecisions, ...prev }));
+    setNotes((prev) => ({ ...v.notes, ...prev }));
+  }, [jobId, serverDecisions]);
 
   const [filter, setFilter] = useState("all");
   // Second, independent filter: the reviewer's OWN decision (the `decisions` map) — distinct from the pipeline
