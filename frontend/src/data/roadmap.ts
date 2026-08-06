@@ -14,6 +14,12 @@ export interface RoadmapItem {
   status: RoadmapStatus;
   /** Optional one-line clarification, public-safe. */
   note?: string;
+  /**
+   * Optional link to a clickable DESIGN PREVIEW of a not-yet-built item — a mockup page showing the
+   * intended flow so it can be reviewed before it is built. Nothing behind a preview runs, and the
+   * preview page must say so plainly. Only meaningful for "planned" / "in-progress" items.
+   */
+  preview?: { href: string; label: string };
 }
 
 export interface RoadmapGroup {
@@ -62,6 +68,12 @@ export const ROADMAP: RoadmapGroup[] = [
       { label: "Live run progress — elapsed, ETA, and a per-stage timeline", status: "shipped" },
       { label: "Suggested downstream analyses unlocked by a run", status: "shipped" },
       { label: "Methods, Design-rationale, and external-Benchmarks pages", status: "shipped" },
+      {
+        label: "Staged review — approve each layer in turn: concept groups → CDEs → transform specs → export",
+        status: "planned",
+        note: "See and adjust the concept groups before anything is sent to a model, then choose which ones go on to the paid stages.",
+        preview: { href: "/roadmap/staged-review", label: "Walk through the design" },
+      },
       {
         label: "Inline inspection of the prompt behind each pipeline stage",
         status: "planned",

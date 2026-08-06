@@ -18,6 +18,7 @@ import DemoPage from "@/pages/demo";
 import RelatedWorkPage from "@/pages/related-work";
 import PhenomeHealthPage from "@/pages/phenome-health";
 import RoadmapPage from "@/pages/roadmap";
+import StagedReviewPreviewPage from "@/pages/staged-review-preview";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -42,6 +43,8 @@ export default function App() {
             <Route path="/design" component={DesignChoicesPage} />
             <Route path="/demo" component={DemoPage} />
             <Route path="/related" component={RelatedWorkPage} />
+            {/* Design preview of a planned roadmap item — a mockup; nothing behind it runs. */}
+            <Route path="/roadmap/staged-review" component={StagedReviewPreviewPage} />
             <Route path="/roadmap" component={RoadmapPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />
             <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
