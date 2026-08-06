@@ -19,9 +19,13 @@ import {
   ArrowRight,
   Ban,
   Check,
+  ChevronDown,
+  ChevronRight,
   FlaskConical,
+  GripVertical,
   Layers,
   Pencil,
+  RefreshCw,
   Scissors,
   Sparkles,
   Wallet,
@@ -38,44 +42,109 @@ import { estimateRunCost, formatUsd } from "@/types";
 // does not yet surface (group granularity, off-theme members, weak match support).
 type Flag = "split" | "qualify" | "mismatch" | "weak" | null;
 
-interface MockGroup {
+/** One source variable inside a concept group — the unit you drag. */
+interface Member {
+  id: string;
+  cohort: string;
   name: string;
-  vars: number;
-  cohorts: string[];
+}
+
+interface MockGroup {
+  id: string;
+  name: string;
+  members: Member[];
   flag: Flag;
   axis?: string;
   detail?: string;
   values?: string[];
 }
 
-const GROUPS: MockGroup[] = [
+/** Cohorts are DERIVED from membership, so the row stays truthful as variables are dragged. */
+const cohortsOf = (m: Member[]): string[] => [...new Set(m.map((x) => x.cohort))];
+
+const SEED_GROUPS: MockGroup[] = [
   {
+    id: "g-bp",
     name: "Blood pressure",
-    vars: 12,
-    cohorts: ["AoU", "MESA", "UKBB", "CLSA"],
     flag: "split",
     axis: "measurement",
     detail: "systolic, diastolic and pulse appear fused into one group",
+    members: [
+      { id: "m1", cohort: "UKBB", name: "systolic_bp_automated" },
+      { id: "m2", cohort: "MESA", name: "s1bp1" },
+      { id: "m3", cohort: "CLSA", name: "BP_DIASTOLIC_FIRST" },
+      { id: "m4", cohort: "AoU", name: "diastolic_bp_mmhg" },
+      { id: "m5", cohort: "MESA", name: "pulse_rate_seated" },
+      { id: "m6", cohort: "AI-READI", name: "bp1_diabp_vsorres" },
+    ],
   },
   {
+    id: "g-milk",
     name: "Milk consumption",
-    vars: 8,
-    cohorts: ["UKBB", "CLSA", "AoU"],
     flag: "qualify",
     axis: "fat content",
     values: ["whole", "semi-skimmed", "skimmed"],
     detail: "likely one concept with a qualifier slot — advisory only",
+    members: [
+      { id: "m7", cohort: "UKBB", name: "milk_type_used" },
+      { id: "m8", cohort: "CLSA", name: "NUT_MILK_TYPE" },
+      { id: "m9", cohort: "AoU", name: "dairy_milk_freq" },
+      { id: "m10", cohort: "UKBB", name: "semi_skimmed_freq" },
+    ],
   },
-  { name: "Age at visit", vars: 5, cohorts: ["AoU", "CLSA", "MESA", "UKBB", "AI-READI"], flag: null },
-  { name: "Standing height", vars: 5, cohorts: ["AoU", "CLSA", "MESA", "UKBB", "AI-READI"], flag: null },
-  { name: "Current smoking status", vars: 9, cohorts: ["AoU", "CLSA", "UKBB"], flag: null },
   {
+    id: "g-age",
+    name: "Age at visit",
+    flag: null,
+    members: [
+      { id: "m11", cohort: "AoU", name: "age_at_visit" },
+      { id: "m12", cohort: "CLSA", name: "AGE_NMBR" },
+      { id: "m13", cohort: "MESA", name: "age1c" },
+      { id: "m14", cohort: "UKBB", name: "age_when_attended_centre" },
+      { id: "m15", cohort: "AI-READI", name: "age_vsorres" },
+    ],
+  },
+  {
+    id: "g-height",
+    name: "Standing height",
+    flag: null,
+    members: [
+      { id: "m16", cohort: "AoU", name: "height_cm" },
+      { id: "m17", cohort: "CLSA", name: "HGT_HEIGHT_CM" },
+      { id: "m18", cohort: "MESA", name: "htcm1" },
+      { id: "m19", cohort: "UKBB", name: "standing_height" },
+      { id: "m20", cohort: "AI-READI", name: "height_vsorres" },
+    ],
+  },
+  {
+    id: "g-smoke",
+    name: "Current smoking status",
+    flag: null,
+    members: [
+      { id: "m21", cohort: "AoU", name: "smoking_status" },
+      { id: "m22", cohort: "CLSA", name: "SMK_CURRENT" },
+      { id: "m23", cohort: "UKBB", name: "current_tobacco_smoking" },
+      { id: "m24", cohort: "UKBB", name: "pack_years_adult_smoking" },
+    ],
+  },
+  {
+    id: "g-pa",
     name: "Physical activity — vigorous",
-    vars: 7,
-    cohorts: ["UKBB", "CLSA"],
     flag: "weak",
     detail: "closest element matched with low support",
+    members: [
+      { id: "m25", cohort: "UKBB", name: "vigorous_activity_days" },
+      { id: "m26", cohort: "CLSA", name: "PA2_VIG_FREQ" },
+    ],
   },
+];
+
+/** Variables the clustering left in no group — a drop target both ways, so a bad member has somewhere
+ *  to go and a stray one can be pulled back in. */
+const SEED_UNASSIGNED: Member[] = [
+  { id: "u1", cohort: "MESA", name: "bpdiaavg" },
+  { id: "u2", cohort: "AoU", name: "pulse_bpm" },
+  { id: "u3", cohort: "CLSA", name: "PA2_MOD_FREQ" },
 ];
 
 const STEPS = [
@@ -193,7 +262,8 @@ export default function PreviewStagedReviewPage() {
           <ul className="space-y-2.5 text-sm text-neutral-600">
             {[
               "Scope before triage, or triage before scope? A large corpus produces more flagged groups than anyone wants to clear, so the subset control probably has to come first — and the flag count should be reported for the selection, not the whole corpus.",
-              "How much editing belongs in step 1? Moving a variable between groups is cheap to support. Splitting, merging and creating a group from scratch each add more.",
+              "How much editing belongs in step 1? Moving one variable at a time is demonstrated above. Splitting a fused concept, merging two, and creating one from scratch each cost more to build — and a fused concept like blood pressure really wants splitting, not six separate drags.",
+              "After an edit, what gets re-checked? Re-running only the concepts you touched is the cheap and obvious answer, but a variable that moves changes two concepts, and the one it left may now be worth a second look too.",
               "Should a step be skippable? Accepting every group unchanged is a legitimate choice, and forcing four gates on someone re-running a known configuration would be worse than today.",
               "Where do composite scores get confirmed? They can be proposed at step 1, but whether they are actually computable can only be judged once elements are assigned at step 2.",
               "Two model queues instead of one. Splitting the paid work in two adds a second wait. Running a smaller selection interactively may be the better trade.",
@@ -216,9 +286,81 @@ export default function PreviewStagedReviewPage() {
 const CORPUS_FIELDS = 7451;
 const CORPUS_COHORTS = 5;
 
+/** Drop-target id for the "no group" tray — a real destination, not a sentinel to special-case. */
+const UNASSIGNED = "__unassigned__";
+
+/** A draggable variable chip — used inside a concept and inside the unassigned tray. Declared at module
+ *  scope on purpose: a component defined inside StepOne would be a NEW type on every render, remounting
+ *  every chip on each state change and cancelling any drag in flight. */
+function Chip({
+  m,
+  dragging,
+  onStart,
+  onEnd,
+}: {
+  m: Member;
+  dragging: boolean;
+  onStart: () => void;
+  onEnd: () => void;
+}) {
+  return (
+    <div
+      draggable
+      onDragStart={onStart}
+      onDragEnd={onEnd}
+      className={`flex cursor-grab items-center gap-1.5 rounded border border-neutral-200 bg-neutral-50 px-1.5 py-1 text-[11px] active:cursor-grabbing ${
+        dragging ? "opacity-40" : ""
+      }`}
+    >
+      <GripVertical className="h-3 w-3 shrink-0 text-neutral-300" />
+      <Badge variant="outline" className="shrink-0 px-1 py-0 text-[10px] font-normal text-neutral-500">
+        {m.cohort}
+      </Badge>
+      <span className="truncate font-mono text-neutral-600">{m.name}</span>
+    </div>
+  );
+}
+
 function StepOne() {
   const [granularity, setGranularity] = useState(50);
-  const [picked, setPicked] = useState<Record<string, boolean>>({ "Blood pressure": true, "Age at visit": true });
+  const [groups, setGroups] = useState<MockGroup[]>(SEED_GROUPS);
+  const [unassigned, setUnassigned] = useState<Member[]>(SEED_UNASSIGNED);
+  const [picked, setPicked] = useState<Record<string, boolean>>({ "g-bp": true, "g-age": true });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ "g-bp": true });
+  const [drag, setDrag] = useState<{ id: string; from: string } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  // Groups whose membership the reviewer changed — the real feature would re-check these with the model.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+
+  const edited =
+    groups.some((g) => touched[g.id]) || unassigned.length !== SEED_UNASSIGNED.length;
+
+  /** Move one variable between any two containers (a group, or the unassigned tray). */
+  function moveMember(memberId: string, from: string, to: string) {
+    if (from === to) return;
+    const source = from === UNASSIGNED ? unassigned : (groups.find((g) => g.id === from)?.members ?? []);
+    const member = source.find((m) => m.id === memberId);
+    if (!member) return;
+
+    setGroups((prev) =>
+      prev.map((g) => {
+        if (g.id === from) return { ...g, members: g.members.filter((m) => m.id !== memberId) };
+        if (g.id === to) return { ...g, members: [...g.members, member] };
+        return g;
+      }),
+    );
+    if (from === UNASSIGNED) setUnassigned((prev) => prev.filter((m) => m.id !== memberId));
+    if (to === UNASSIGNED) setUnassigned((prev) => [...prev, member]);
+
+    setTouched((t) => ({ ...t, ...(from !== UNASSIGNED && { [from]: true }), ...(to !== UNASSIGNED && { [to]: true }) }));
+    if (to !== UNASSIGNED) setExpanded((e) => ({ ...e, [to]: true })); // show where it landed
+  }
+
+  function reset() {
+    setGroups(SEED_GROUPS);
+    setUnassigned(SEED_UNASSIGNED);
+    setTouched({});
+  }
 
   // Looser grouping -> fewer, larger groups and fewer leftovers. Illustrative, not a model.
   const shaped = useMemo(() => {
@@ -230,15 +372,27 @@ function StepOne() {
     };
   }, [granularity]);
 
-  const chosen = GROUPS.filter((g) => picked[g.name]);
-  const chosenVars = chosen.reduce((s, g) => s + g.vars, 0);
-  const allVars = GROUPS.reduce((s, g) => s + g.vars, 0);
+  const chosen = groups.filter((g) => picked[g.id]);
+  const chosenVars = chosen.reduce((s, g) => s + g.members.length, 0);
+  // Every variable in play, including the tray — so dragging one OUT of a selected group genuinely
+  // lowers the estimate rather than silently re-normalising it away.
+  const allVars = groups.reduce((s, g) => s + g.members.length, 0) + unassigned.length;
   // The six groups above stand in for a whole corpus, so the selected fraction of THEM is applied to the
   // corpus size to get a field count the estimator can price at a realistic magnitude.
   const selectedFields = Math.round((chosenVars / allVars) * CORPUS_FIELDS);
   const full = estimateRunCost(CORPUS_FIELDS, CORPUS_COHORTS, "batch");
   const partial = estimateRunCost(selectedFields, CORPUS_COHORTS, "batch");
   const flaggedInScope = chosen.filter((g) => g.flag === "split" || g.flag === "weak").length;
+
+  const chip = (m: Member, from: string) => (
+    <Chip
+      key={m.id}
+      m={m}
+      dragging={drag?.id === m.id}
+      onStart={() => setDrag({ id: m.id, from })}
+      onEnd={() => { setDrag(null); setOver(null); }}
+    />
+  );
 
   return (
     <div className="space-y-4">
@@ -284,66 +438,134 @@ function StepOne() {
             </p>
           </div>
 
-          {/* groups */}
+          {/* groups — each row is a drop target; expand to drag its variables */}
+          <div className="flex items-center gap-2 text-xs text-neutral-400">
+            <GripVertical className="h-3.5 w-3.5" />
+            Drag a variable onto another concept, or into “No group” below.
+            {edited && (
+              <Button size="sm" variant="ghost" onClick={reset} className="ml-auto h-6 gap-1 text-[11px] text-neutral-500">
+                <RefreshCw className="h-3 w-3" /> Reset groups
+              </Button>
+            )}
+          </div>
           <div className="space-y-1.5">
-            {GROUPS.map((g) => {
-              const on = !!picked[g.name];
+            {groups.map((g) => {
+              const on = !!picked[g.id];
               const f = g.flag ? FLAG_STYLE[g.flag] : null;
+              const isOpen = !!expanded[g.id];
+              const isOver = over === g.id && drag?.from !== g.id;
               return (
-                <label
-                  key={g.name}
-                  className={`flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2.5 transition-colors ${
-                    on ? "border-ph-navy/30 bg-ph-navy/5" : "border-neutral-200 hover:bg-neutral-50"
+                <div
+                  key={g.id}
+                  onDragOver={(e) => { e.preventDefault(); setOver(g.id); }}
+                  onDragLeave={() => setOver((o) => (o === g.id ? null : o))}
+                  onDrop={() => { if (drag) moveMember(drag.id, drag.from, g.id); setDrag(null); setOver(null); }}
+                  className={`rounded-md border px-3 py-2.5 transition-colors ${
+                    isOver
+                      ? "border-ph-navy/50 bg-ph-navy/10 ring-1 ring-ph-navy/30"
+                      : on
+                        ? "border-ph-navy/30 bg-ph-navy/5"
+                        : "border-neutral-200 hover:bg-neutral-50"
                   }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={() => setPicked((p) => ({ ...p, [g.name]: !p[g.name] }))}
-                    className="mt-1 h-3.5 w-3.5 accent-ph-navy"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium text-neutral-700">{g.name}</span>
-                      {f && (
-                        <Badge variant="outline" className={`gap-1 px-1.5 py-0 text-[10px] ${f.cls}`}>
-                          {g.flag === "split" && <Scissors className="h-3 w-3" />}
-                          {g.flag === "weak" && <AlertTriangle className="h-3 w-3" />}
-                          {f.label}
-                          {g.axis ? `: ${g.axis}` : ""}
-                        </Badge>
+                  <div className="flex items-start gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setPicked((p) => ({ ...p, [g.id]: !p[g.id] }))}
+                      aria-label={`Include ${g.name}`}
+                      className="mt-1 h-3.5 w-3.5 shrink-0 cursor-pointer accent-ph-navy"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-neutral-700">{g.name}</span>
+                        {f && (
+                          <Badge variant="outline" className={`gap-1 px-1.5 py-0 text-[10px] ${f.cls}`}>
+                            {g.flag === "split" && <Scissors className="h-3 w-3" />}
+                            {g.flag === "weak" && <AlertTriangle className="h-3 w-3" />}
+                            {f.label}
+                            {g.axis ? `: ${g.axis}` : ""}
+                          </Badge>
+                        )}
+                        {touched[g.id] && (
+                          <Badge variant="outline" className="gap-1 border-ph-navy/30 px-1.5 py-0 text-[10px] text-ph-navy">
+                            <Pencil className="h-3 w-3" /> edited
+                          </Badge>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setExpanded((e) => ({ ...e, [g.id]: !e[g.id] }))}
+                        className="mt-0.5 flex items-center gap-1 text-xs text-neutral-400 hover:text-ph-navy"
+                      >
+                        {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                        {g.members.length} variable{g.members.length === 1 ? "" : "s"}
+                        {g.members.length > 0 && ` · ${cohortsOf(g.members).join(", ")}`}
+                      </button>
+                      {g.detail && <p className="mt-0.5 text-xs italic text-neutral-500">{g.detail}</p>}
+                      {g.values && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {g.values.map((v) => (
+                            <span key={v} className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                              {v}
+                            </span>
+                          ))}
+                        </div>
                       )}
-                    </span>
-                    <span className="mt-0.5 block text-xs text-neutral-400">
-                      {g.vars} variables · {g.cohorts.join(", ")}
-                    </span>
-                    {g.detail && <span className="mt-0.5 block text-xs italic text-neutral-500">{g.detail}</span>}
-                    {g.values && (
-                      <span className="mt-1 flex flex-wrap gap-1">
-                        {g.values.map((v) => (
-                          <span key={v} className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
-                            {v}
-                          </span>
-                        ))}
-                      </span>
-                    )}
-                    {g.flag === "split" && (
-                      <span className="mt-1.5 flex gap-1.5">
-                        <Button size="sm" variant="outline" className="h-6 gap-1 text-[11px]" disabled>
-                          <Scissors className="h-3 w-3" /> Split into 3
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-6 text-[11px]" disabled>
-                          Keep as one
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-6 gap-1 text-[11px]" disabled>
-                          <Pencil className="h-3 w-3" /> Edit members
-                        </Button>
-                      </span>
-                    )}
-                  </span>
-                </label>
+                      {isOpen && (
+                        <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                          {g.members.map((m) => chip(m, g.id))}
+                          {!g.members.length && (
+                            <div className="col-span-full rounded border border-dashed border-neutral-200 py-2 text-center text-[11px] text-neutral-300">
+                              Empty — drop a variable here
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {g.flag === "split" && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <Button size="sm" variant="outline" className="h-6 gap-1 text-[11px]" disabled>
+                            <Scissors className="h-3 w-3" /> Split into 3
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-6 text-[11px]" disabled>
+                            Keep as one
+                          </Button>
+                          <span className="text-[11px] text-neutral-400">— not in this preview; move variables by hand instead</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               );
             })}
+
+            {/* the "no group" tray — a real drop target both ways */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setOver(UNASSIGNED); }}
+              onDragLeave={() => setOver((o) => (o === UNASSIGNED ? null : o))}
+              onDrop={() => { if (drag) moveMember(drag.id, drag.from, UNASSIGNED); setDrag(null); setOver(null); }}
+              className={`rounded-md border border-dashed px-3 py-2.5 transition-colors ${
+                over === UNASSIGNED && drag?.from !== UNASSIGNED
+                  ? "border-ph-navy/50 bg-ph-navy/10"
+                  : "border-neutral-300"
+              }`}
+            >
+              <div className="text-xs font-medium text-neutral-500">
+                No group
+                <span className="ml-1 font-normal text-neutral-400">
+                  · {unassigned.length} variable{unassigned.length === 1 ? "" : "s"} the clustering left out — drop
+                  one here to remove it from a concept, or drag one into a concept above
+                </span>
+              </div>
+              <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                {unassigned.map((m) => chip(m, UNASSIGNED))}
+                {!unassigned.length && (
+                  <div className="col-span-full py-1 text-center text-[11px] text-neutral-300">
+                    Nothing left out
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* the gate */}
@@ -380,8 +602,16 @@ function StepOne() {
 
       <WhatChanges
         now="One page shows every concept the run produced, already assigned to elements, already carrying recodes. Grouping is fixed by the time you see it, and the whole run is already paid for."
-        proposed="Grouping comes first, costs nothing, and is adjustable. You fix mis-grouped concepts before they propagate, drop what you don't need, and only then commit to the paid stages."
+        proposed="Grouping comes first, costs nothing, and is adjustable — expand a concept and drag its variables somewhere better. You fix mis-grouped concepts before they propagate, drop what you don't need, and only then commit to the paid stages."
       />
+
+      <p className="text-xs text-neutral-400">
+        In the real feature, moving a variable would rewrite the run&apos;s stored grouping and re-check only
+        the concepts you touched — the pipeline already keys its cached work to a group&apos;s exact
+        membership, so an edited concept re-runs and the untouched ones do not. Splitting, merging and
+        creating concepts are the obvious next moves; this preview deliberately stops at moving one variable
+        at a time.
+      </p>
     </div>
   );
 }
