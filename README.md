@@ -1,5 +1,10 @@
 # ddharmon-ui
 
+> ⚠️ **Actively under development and internal review.** ddharmon-ui is under active development and
+> is undergoing internal review. The interface, API routes, and run outputs may change without notice,
+> and the harmonization results the app displays are **not yet validated** — treat them as provisional
+> and subject to expert review. Feedback and issues are welcome.
+
 Web GUI for the [**ddharmon**](https://github.com/Phenome-Health/ddharmon) harmonization
 pipeline. A React + Vite + Tailwind + shadcn/ui frontend talking to a FastAPI backend that
 wraps `ddharmon.harmonization`.
