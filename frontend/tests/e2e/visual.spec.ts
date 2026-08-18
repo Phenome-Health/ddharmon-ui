@@ -21,6 +21,46 @@ import { VISUAL_ROUTES, type VisualRoute } from "./routes";
 // Settle for longer than the default chart animation before capturing, so charts are baselined at rest.
 const SETTLE_MS = 1800;
 
+/** Layout viewport: 1440x900 desktop, matching playwright.config.ts. */
+const VIEWPORT_WIDTH = 1440;
+const LAYOUT_HEIGHT = 900;
+/** Hard ceiling on capture height, so one runaway page cannot commit a 20MB baseline. */
+const MAX_CAPTURE_HEIGHT = 8000;
+
+/**
+ * Grow the viewport to the page's content height so the baseline covers the WHOLE page, not just the fold.
+ *
+ * Playwright's `fullPage: true` captures the DOCUMENT's scroll height — but `AppShell` is
+ * `h-screen … overflow-hidden` wrapping an inner `<main class="overflow-y-auto">`, so the document is
+ * pinned to the viewport and content scrolls INSIDE main. `fullPage` is therefore a no-op here, and a
+ * 900px baseline would certify only the top of every long content page — precisely the below-the-fold
+ * retheme diff this gate exists to catch. Width stays 1440 (the responsive breakpoints are width-based),
+ * so the render is the real desktop layout, just unclipped vertically.
+ *
+ * @returns the capture height actually used.
+ */
+async function growViewportToContent(page: import("@playwright/test").Page): Promise<number> {
+  const measure = () =>
+    page.evaluate(() => {
+      const main = document.querySelector("main");
+      const doc = document.documentElement;
+      if (!main) return doc.scrollHeight;
+      // Chrome outside the scroll container (the top bar) + everything inside it.
+      return Math.ceil(main.scrollHeight + (doc.scrollHeight - main.clientHeight));
+    });
+
+  let height = LAYOUT_HEIGHT;
+  // Two passes: growing the viewport can reflow content (charts re-measure), changing the needed height.
+  for (let pass = 0; pass < 2; pass++) {
+    const wanted = Math.min(Math.max(await measure(), LAYOUT_HEIGHT), MAX_CAPTURE_HEIGHT);
+    if (wanted <= height) break;
+    height = wanted;
+    await page.setViewportSize({ width: VIEWPORT_WIDTH, height });
+    await page.waitForTimeout(SETTLE_MS);
+  }
+  return height;
+}
+
 /** Resolved once per worker: the concrete demo job id backing the `/job/:jobId/*` baselines. */
 let jobIdPromise: Promise<string> | null = null;
 
@@ -61,13 +101,16 @@ async function urlFor(route: VisualRoute, baseURL: string | undefined): Promise<
 }
 
 for (const route of VISUAL_ROUTES) {
-  test(`@visual ${route.name} (${route.path}) matches its baseline`, async ({ page, baseURL }) => {
+  test(`@visual ${route.name} (${route.path}) matches its baseline`, async ({ page, baseURL }, testInfo) => {
     await page.goto(await urlFor(route, baseURL));
     // Fonts must be loaded before capture or the first run baselines fallback metrics.
     await page.evaluate(() => document.fonts.ready);
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(SETTLE_MS);
-    await expect(page).toHaveScreenshot(`${route.name}.png`);
+    const height = await growViewportToContent(page);
+    testInfo.annotations.push({ type: "capture", description: `${VIEWPORT_WIDTH}x${height}` });
+    // `fullPage` must be passed HERE: as an `expect.toHaveScreenshot` config key it is silently dropped.
+    await expect(page).toHaveScreenshot(`${route.name}.png`, { fullPage: true });
   });
 }
 

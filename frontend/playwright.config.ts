@@ -28,7 +28,9 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
     toHaveScreenshot: {
-      fullPage: true,
+      // NOTE: `fullPage` is NOT honoured here — it is a per-call option only, and setting it in the config
+      // is silently ignored (which is how the first baseline came out viewport-cropped at 900px). It is
+      // passed at the toHaveScreenshot() call site in visual.spec.ts instead.
       animations: "disabled",
       caret: "hide",
       // Non-zero on purpose: font antialiasing differs run-to-run by a handful of subpixels, and a hard 0
@@ -40,7 +42,9 @@ export default defineConfig({
   },
   // Baselines are per-platform: a macOS capture and a linux capture of the same route legitimately differ.
   // Keeping {platform} in the name lets both live side by side instead of one overwriting the other.
-  snapshotPathTemplate: "{testFileDir}/{testFileName}-snapshots/{arg}-{platform}{ext}",
+  // `{snapshotDir}` (= testDir) must lead the template: `{testFileDir}` is RELATIVE to testDir and is
+  // empty for a spec sitting directly in it, which resolves to an absolute "/visual.spec.ts-snapshots".
+  snapshotPathTemplate: "{snapshotDir}/{testFileDir}/{testFileName}-snapshots/{arg}-{platform}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
