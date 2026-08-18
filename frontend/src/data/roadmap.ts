@@ -106,6 +106,12 @@ export const ROADMAP: RoadmapGroup[] = [
       },
       { label: "Richer cluster and atlas visualizations", status: "planned" },
       {
+        label: "Staged review — approve each layer in turn: concept groups → CDEs → transform specs → export",
+        status: "planned",
+        note: "See and adjust the concept groups before anything is sent to a model, then choose which ones go on to the paid stages.",
+        preview: "/preview/staged-review",
+      },
+      {
         label: "Drag-and-drop concept restructuring — move variables between concepts, then re-check with the model",
         status: "planned",
         preview: "/preview/restructure",
