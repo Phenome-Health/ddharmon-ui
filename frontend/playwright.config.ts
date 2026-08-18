@@ -33,10 +33,13 @@ export default defineConfig({
       // passed at the toHaveScreenshot() call site in visual.spec.ts instead.
       animations: "disabled",
       caret: "hide",
-      // Non-zero on purpose: font antialiasing differs run-to-run by a handful of subpixels, and a hard 0
-      // would make the gate permanently flaky (a flaky gate gets ignored, which defeats the point). This
-      // is an ANTIALIASING tolerance — never raise it to silence a genuinely non-deterministic route.
-      maxDiffPixelRatio: 0.002,
+      // An ABSOLUTE antialiasing budget, deliberately not `maxDiffPixelRatio`: the ratio is taken against
+      // the whole image, and these captures run 900-8000px tall, so 0.2% would hand /methods a ~19k-pixel
+      // allowance — enough for a small style regression to slip through unnoticed. Measured with a budget
+      // of 0, all 23 routes re-verify with ZERO differing pixels on a fixed platform (Playwright's default
+      // `threshold: 0.2` already absorbs subpixel antialiasing), so 100 is pure headroom, not slack.
+      // Never raise it to silence a genuinely non-deterministic route — fix the route.
+      maxDiffPixels: 100,
       timeout: 30_000,
     },
   },
