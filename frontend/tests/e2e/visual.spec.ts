@@ -107,6 +107,19 @@ for (const route of VISUAL_ROUTES) {
     await page.evaluate(() => document.fonts.ready);
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(SETTLE_MS);
+    // No horizontal scroll at 1440 — asserted rather than eyeballed, because the retheme changes spacing
+    // and type-size tokens and an overflow reads as a vague pixel diff instead of the layout bug it is.
+    // Measured clean on all 23 routes (scrollWidth == clientWidth at both the document and <main> level).
+    const overflow = await page.evaluate(() => {
+      const doc = document.documentElement;
+      const main = document.querySelector("main");
+      return {
+        doc: doc.scrollWidth - doc.clientWidth,
+        main: main ? main.scrollWidth - main.clientWidth : 0,
+      };
+    });
+    expect(overflow, `${route.path} overflows horizontally at ${VIEWPORT_WIDTH}px`).toEqual({ doc: 0, main: 0 });
+
     const height = await growViewportToContent(page);
     testInfo.annotations.push({ type: "capture", description: `${VIEWPORT_WIDTH}x${height}` });
     // `fullPage` must be passed HERE: as an `expect.toHaveScreenshot` config key it is silently dropped.
