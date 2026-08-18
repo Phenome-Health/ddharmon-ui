@@ -25,7 +25,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      # Smoke tests only. The @visual screenshot gate is EXCLUDED because its baselines are
+      # platform-specific (macOS font rasterisation != Linux) and only `-darwin` baselines are
+      # committed; running it here would fail on a missing `-linux` snapshot, not on a regression.
+      # To enforce it in CI, generate and commit `-linux` baselines from the official Playwright
+      # container and drop this flag. See frontend/README.md § Visual regression.
+      - run: npm run test:e2e -- --grep-invert "@visual"
         env:
           CI: "1"
       - uses: actions/upload-artifact@v4
