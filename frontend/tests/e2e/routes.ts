@@ -25,6 +25,41 @@ export interface VisualRoute {
   registered?: boolean;
 }
 
+/**
+ * 22 routes + the 404 fallback = 23 baselines, taken from `src/App.tsx`'s `<Switch>` — NOT from
+ * CONTEXT.md's stale 15-route list. 08-UI-SPEC §12 names `/roadmap/staged-review`; on this branch the
+ * staged-review preview is registered at `/preview/staged-review`, so that is what is baselined.
+ */
 export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "landing", path: "/" },
+  // Required by §12: the only route with <select>/<input> controls on a paper card, so a wrong
+  // `color-scheme` value shows up as a native-control diff here and nowhere else.
+  { name: "new-run", path: "/new" },
+  { name: "guide", path: "/guide" },
+  { name: "methods", path: "/methods" },
+  { name: "benchmarks", path: "/benchmarks" },
+  { name: "design", path: "/design" },
+  { name: "demo", path: "/demo" },
+  { name: "related", path: "/related" },
+  { name: "roadmap", path: "/roadmap" },
+  { name: "architecture", path: "/architecture" },
+  { name: "preview-restructure", path: "/preview/restructure" },
+  { name: "preview-payoff", path: "/preview/payoff" },
+  { name: "preview-composite", path: "/preview/composite" },
+  { name: "preview-reproducibility", path: "/preview/reproducibility" },
+  { name: "preview-knowledge-graph", path: "/preview/knowledge-graph" },
+  { name: "preview-staged-review", path: "/preview/staged-review" },
+  { name: "phenome", path: "/phenome" },
+  // The /job/:jobId/* family baselines against the bundled static demo fixture, so the suite needs no
+  // paid harmonization run. The sub-pages pass `instant` to useHarmonizeStream and settle on the full
+  // result immediately; the dashboard replays the run unless `?results=1` skips to the finished state —
+  // without that query the capture would race a client-side animation.
+  { name: "job-workbench", path: "/job/:jobId/workbench", needsJobFixture: true },
+  { name: "job-analysis", path: "/job/:jobId/analysis", needsJobFixture: true },
+  { name: "job-composite", path: "/job/:jobId/composite", needsJobFixture: true },
+  { name: "job-dashboard", path: "/job/:jobId", query: "?results=1", needsJobFixture: true },
+  { name: "jobs", path: "/jobs" },
+  // Registered nowhere on purpose — this is how the fallback branch of the <Switch> is reached. It must
+  // produce a baselined screenshot, not a test error.
+  { name: "not-found", path: "/__no_such_route__", registered: false },
 ];
