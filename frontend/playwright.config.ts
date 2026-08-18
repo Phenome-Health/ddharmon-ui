@@ -12,11 +12,35 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * Local:  npm run test:e2e
  * CI:     set CI=1 (uses the github reporter, no server reuse).
+ *
+ * It also carries the VISUAL-REGRESSION gate (tests/e2e/visual.spec.ts): one full-page screenshot per
+ * route at a single viewport in the single shipped theme. Baselines are platform-specific (font
+ * rasterisation differs), so `snapshotPathTemplate` keeps `{platform}` in the filename and CI runs the
+ * suite with `--grep-invert "@visual"` until linux baselines exist.
+ *   run:    npm run test:e2e -- --grep "@visual"
+ *   update: npm run test:e2e -- --grep "@visual" --update-snapshots
  */
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 30_000,
-  expect: { timeout: 10_000 },
+  // Full-page captures of the long content pages plus the chart-settle wait need more than the smoke
+  // gate's 30s.
+  timeout: 90_000,
+  expect: {
+    timeout: 10_000,
+    toHaveScreenshot: {
+      fullPage: true,
+      animations: "disabled",
+      caret: "hide",
+      // Non-zero on purpose: font antialiasing differs run-to-run by a handful of subpixels, and a hard 0
+      // would make the gate permanently flaky (a flaky gate gets ignored, which defeats the point). This
+      // is an ANTIALIASING tolerance — never raise it to silence a genuinely non-deterministic route.
+      maxDiffPixelRatio: 0.002,
+      timeout: 30_000,
+    },
+  },
+  // Baselines are per-platform: a macOS capture and a linux capture of the same route legitimately differ.
+  // Keeping {platform} in the name lets both live side by side instead of one overwriting the other.
+  snapshotPathTemplate: "{testFileDir}/{testFileName}-snapshots/{arg}-{platform}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -24,8 +48,16 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:4173",
     trace: "on-first-retry",
+    // Desktop-only product (>=1280px) and a single theme, so the visual contract is ONE screenshot per
+    // route: one viewport, one browser, no dark/light pair. Pinned here so every baseline shares it.
+    viewport: { width: 1440, height: 900 },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // The viewport is re-declared AFTER the device spread: `devices["Desktop Chrome"]` carries its own
+  // 1280x720 viewport and project-level `use` outranks the top-level one, so omitting it here would
+  // silently baseline every route 160px narrower than the contract.
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
+  ],
   webServer: {
     // Build in static mode, then serve the dist with vite preview on a fixed port.
     command: "VITE_STATIC=1 npm run build && npm run serve -- --port 4173 --strictPort",
