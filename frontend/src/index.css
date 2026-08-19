@@ -3,127 +3,191 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
-@custom-variant dark (&:where(.dark, .dark *));
+/* ══ 2026 Phenome Health identity — RAW layer ══════════════════════════════════
+   Sampled from phenomehealth.org computed styles. The S3 brand guide (Proxima
+   Nova on a white ground) is STALE — do not build from it.
 
-/* ── Light (default) + dark palette ──
-   Semantic + neutral + navy tokens below reference these raw vars, so adding `.dark` on <html> flips
-   the whole UI. Brand hues (crimson/teal), radii, fonts, and shadows stay fixed across themes. */
+   The identity is DARK-FIRST in the specific sense of "navy page, warm-white
+   cards" — NOT a uniformly dark UI. Getting that backwards produces a dark-mode
+   app rather than this identity.
+
+   Single theme (D-05): there is no `.dark` block, no `@custom-variant dark` and
+   no OS-preference reader anywhere in the tree. Only `@theme inline` below reads
+   these names; components read only the semantic names (D-06), which is what
+   makes a retheme a one-file change.
+
+   Three deliberate deviations from the mockup's `:root`, each with a reason:
+
+   1. `--b-deep #00063D` / `--b-navy #0D183B` are NOT introduced. In the mockup
+      they exist only for the `data-theme="deep"` variant and for `--page-2`,
+      which is declared and never referenced. Depth on the ground is made with
+      paper-alpha washes (rgba(255,255,248,.045–.08)) and paper-alpha rules
+      (.13–.28) — NEVER with a second navy.
+   2. `--warn` is darkened #A85B00 → #8F4E00. #A85B00 on `--warn-bg` measures
+      4.42:1, below AA. #8F4E00 measures 5.67:1 on warn-bg and 6.42:1 on paper.
+      The coherence flag is the most important signal on Gate 1; it may not ship
+      sub-AA.
+   3. `--b-crimson` is DECLARED. The mockup references `var(--crimson)` in its
+      reject button and required-field marker and never defines it, so those
+      render with no colour at all. That is a mockup bug; it is not ported.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --sf-0: #FFFFFF; --sf-50: #FAFBFD; --sf-100: #F4F6FA; --sf-200: #E3E7EE; --sf-300: #C9D0DC;
-  --sf-400: #8892A3; --sf-500: #5B6473; --sf-600: #3F4756; --sf-700: #2A3142; --sf-900: #0B152D;
-  --ink: #0B152D;
-  --navy: #113682; --navy-dark: #0d2a68; --navy-darker: #0a1f4f;
-  --success: #005B33; --success-bg: #E6F2EC; --success-border: #B8D9C7;
-  --warning: #B45309; --warning-bg: #FEF3C7; --warning-border: #FCD34D;
-  --danger: #B91C1C; --danger-bg: #FEE2E2; --danger-border: #FCA5A5;
-  --info: #1E40AF; --info-bg: #DBEAFE; --info-border: #93C5FD;
-  --card: #FFFFFF; --popover: #FFFFFF;
-  --chart-1: #113682; --chart-5: #0B152D;
-  /* Reproducibility-preview model series — dataviz-validated categorical (light steps). */
+  --b-ground:   #1E2A52;   /* page field */
+  --b-paper:    #FFFFF8;   /* warm off-white working surface — NOT pure white */
+  --b-indigo:   #222572;   /* ink on paper */
+  --b-blue:     #0D59F2;   /* action — NEVER on the ground (2.47:1) */
+  --b-teal:     #3AB3BB;   /* secondary accent — ON GROUND ONLY (5.53:1) */
+  --b-teal-ink: #1B7F86;   /* the same accent, contrast-corrected for paper (4.72:1) */
+  --b-crimson:  #E21C52;   /* destructive only — never a status, never an accent */
+
+  /* derived surfaces + rules — all ink-alpha over paper, or paper-alpha over ground */
+  --card:   var(--b-paper);
+  --card-2: #F7F6EC;                    /* header bands, row hover, inset panels */
+  --ink:    var(--b-indigo);            /* 13.27:1 on paper */
+  --muted:  rgba(34, 37, 114, .70);     /* secondary text on paper — 5.35:1 */
+  --faint:  rgba(34, 37, 114, .50);     /* HAIRLINES AND DASHED MARKS ONLY — 2.99:1 */
+  --line:   rgba(34, 37, 114, .13);
+  --line-2: rgba(34, 37, 114, .07);
+  --on-page:       #FFFFF8;                  /* text on ground — 13.86:1 */
+  --on-page-muted: rgba(255, 255, 248, .68); /* secondary text on ground — 7.23:1 */
+
+  /* status set — data encoding, not decoration */
+  --ok:        #0E7C63;
+  --warn:      #8F4E00;
+  --warn-bg:   #FCEFD6;
+  --warn-line: #E8C48A;
+
+  /* one elevation token, for paper surfaces that float on the ground */
+  --shadow: 0 2px 6px rgba(0, 6, 61, .14), 0 22px 48px -24px rgba(0, 6, 61, .55);
+
+  /* container geometry — see the radius block in @theme inline */
+  --r-card: 30px;
+  --r-inner: 14px;
+  --r-pill: 999px;
+
+  /* Reproducibility-preview model series — dataviz-validated categorical. Single
+     theme now, so only the one set of steps survives. */
   --rmv-1: #2a78d6; --rmv-2: #008300; --rmv-3: #e87ba4; --rmv-4: #eda100; --rmv-5: #1baf7a;
+
+  /* Replaces the removed `.dark` class as the signal to native chrome that this
+     is a dark UI. Paper surfaces re-declare `light` in @layer base below — cards
+     are cream, and a blanket dark scheme renders <select>, <input> internals,
+     autofill backgrounds and validation bubbles dark-on-cream inside every form. */
+  color-scheme: dark;
 }
 
-.dark {
-  --sf-0: #0E1626; --sf-50: #172038; --sf-100: #1E2A45; --sf-200: #2A3654; --sf-300: #3B4A6B;
-  --sf-400: #6E7A90; --sf-500: #93A0B5; --sf-600: #B4BECD; --sf-700: #D2D9E3; --sf-900: #F1F4F9;
-  --ink: #F1F4F9;
-  --navy: #5E93EB; --navy-dark: #4F86E8; --navy-darker: #4079E0;
-  --success: #4ADE80; --success-bg: #0F2A1C; --success-border: #1E5238;
-  --warning: #FBBF24; --warning-bg: #2E2410; --warning-border: #57430F;
-  --danger: #F87171; --danger-bg: #2C1416; --danger-border: #5B1D1D;
-  --info: #93C5FD; --info-bg: #12233F; --info-border: #1E3A6B;
-  --card: #0E1626; --popover: #141D33;
-  --chart-1: #5E93EB; --chart-5: #F1F4F9;
-  /* Reproducibility-preview model series — dataviz-validated categorical (dark steps). */
-  --rmv-1: #3987e5; --rmv-2: #008300; --rmv-3: #d55181; --rmv-4: #c98500; --rmv-5: #199e70;
-}
-
-/* ── Phenome Health Design System Tokens ── */
+/* ══ Semantic layer — keys UNCHANGED, sources re-pointed (D-06) ═══════════════
+   Every key below already existed and is read by components across the app. The
+   raw layer under it was replaced wholesale; not one semantic key was renamed,
+   so no component outside `card.tsx` / `button.tsx` changes in this plan.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 @theme inline {
-  /* Brand colors */
-  --color-ph-navy: var(--navy);
-  --color-ph-navy-dark: var(--navy-dark);
-  --color-ph-navy-darker: var(--navy-darker);
-  --color-ph-crimson: #E21C52;
-  --color-ph-crimson-dark: #c01746;
-  --color-ph-crimson-darker: #a3133b;
-  --color-ph-teal: #3AC2CB;
-  --color-ph-green: #005B33;
+  /* Brand colours. `ph-navy` is the ACTION register: the old #113682 navy is
+     retired and its 260 call sites now render the identity blue. The key keeps
+     its name because renaming it would touch every one of them. */
+  --color-ph-navy: var(--b-blue);
+  --color-ph-navy-dark: color-mix(in srgb, var(--b-blue) 82%, var(--b-indigo));
+  --color-ph-navy-darker: color-mix(in srgb, var(--b-blue) 64%, var(--b-indigo));
+  --color-ph-crimson: var(--b-crimson);
+  --color-ph-crimson-dark: color-mix(in srgb, var(--b-crimson) 84%, var(--b-indigo));
+  --color-ph-crimson-darker: color-mix(in srgb, var(--b-crimson) 68%, var(--b-indigo));
+  /* Teal has two forms and one token cannot serve both surfaces: #3AB3BB is
+     5.53:1 on the ground and 2.51:1 on paper. `ph-teal` is the GROUND form (its
+     call sites are the landing hero, which is ground); `ph-teal-ink` is added
+     for paper use so a paper call site has a legal token to reach for. */
+  --color-ph-teal: var(--b-teal);
+  --color-ph-teal-ink: var(--b-teal-ink);
+  --color-ph-green: var(--ok);
   --color-ph-ink: var(--ink);
 
-  /* Neutrals (flip under .dark) */
-  --color-neutral-0: var(--sf-0);
-  --color-neutral-50: var(--sf-50);
-  --color-neutral-100: var(--sf-100);
-  --color-neutral-200: var(--sf-200);
-  --color-neutral-300: var(--sf-300);
-  --color-neutral-400: var(--sf-400);
-  --color-neutral-500: var(--sf-500);
-  --color-neutral-600: var(--sf-600);
-  --color-neutral-700: var(--sf-700);
-  --color-neutral-900: var(--sf-900);
+  /* Neutrals — the paper→ink ramp. Nothing flips any more, so each step is an
+     OPAQUE ink-over-paper mix; opaque matters because a step may be used as a
+     background over the navy ground, where an alpha wash would tint navy instead
+     of paper. Ratios are against --b-paper: 400 and up are text-safe (the old
+     ramp's neutral-400 was 3.1:1 — sub-AA — and is now 4.59:1). */
+  --color-neutral-0: var(--b-paper);
+  --color-neutral-50: var(--card-2);
+  --color-neutral-100: color-mix(in srgb, var(--b-indigo) 6%, var(--b-paper));
+  --color-neutral-200: color-mix(in srgb, var(--b-indigo) 12%, var(--b-paper));
+  --color-neutral-300: color-mix(in srgb, var(--b-indigo) 22%, var(--b-paper));
+  --color-neutral-400: color-mix(in srgb, var(--b-indigo) 65%, var(--b-paper)); /* 4.59:1 */
+  --color-neutral-500: color-mix(in srgb, var(--b-indigo) 70%, var(--b-paper)); /* 5.35:1 */
+  --color-neutral-600: color-mix(in srgb, var(--b-indigo) 78%, var(--b-paper)); /* 6.83:1 */
+  --color-neutral-700: color-mix(in srgb, var(--b-indigo) 86%, var(--b-paper)); /* 8.75:1 */
+  --color-neutral-900: var(--ink);                                              /* 13.27:1 */
 
-  /* Semantic state colors */
-  --color-success: var(--success);
-  --color-success-bg: var(--success-bg);
-  --color-success-border: var(--success-border);
-  --color-warning: var(--warning);
-  --color-warning-bg: var(--warning-bg);
-  --color-warning-border: var(--warning-border);
-  --color-danger: var(--danger);
-  --color-danger-bg: var(--danger-bg);
-  --color-danger-border: var(--danger-border);
-  --color-info: var(--info);
-  --color-info-bg: var(--info-bg);
-  --color-info-border: var(--info-border);
+  /* Status colours. Every wash below keeps its own foreground at >= 4.5:1 on
+     paper — the pairs are used as `bg-*-bg text-*` badges, so the wash cannot be
+     chosen for looks alone. `danger` is the status/text register and is darkened
+     with indigo (#CB1D56, 5.43:1 on paper, 4.93:1 on its own wash) because pure
+     #E21C52 measures 4.62:1 on paper and ANY wash under it drops below AA;
+     `ph-crimson` and `destructive` keep the pure identity crimson for fills. */
+  --color-success: var(--ok);
+  --color-success-bg: color-mix(in srgb, var(--ok) 8%, var(--b-paper));         /* 4.62:1 */
+  --color-success-border: color-mix(in srgb, var(--ok) 34%, var(--b-paper));
+  --color-warning: var(--warn);
+  --color-warning-bg: var(--warn-bg);                                          /* 5.67:1 */
+  --color-warning-border: var(--warn-line);
+  --color-danger: color-mix(in srgb, var(--b-crimson) 88%, var(--b-indigo));
+  --color-danger-bg: color-mix(in srgb, var(--b-crimson) 6%, var(--b-paper));   /* 4.93:1 */
+  --color-danger-border: color-mix(in srgb, var(--b-crimson) 32%, var(--b-paper));
+  /* The raw --info* set is deleted; the informational register folds into the
+     action blue rather than inventing a second blue family. */
+  --color-info: var(--b-blue);
+  --color-info-bg: color-mix(in srgb, var(--b-blue) 8%, var(--b-paper));        /* 5.00:1 */
+  --color-info-border: color-mix(in srgb, var(--b-blue) 30%, var(--b-paper));
 
-  /* Semantic mappings for shadcn/ui compatibility */
-  --color-background: var(--sf-0);
-  --color-foreground: var(--ink);
-  --color-border: var(--sf-200);
-  --color-input: var(--sf-300);
-  --color-ring: var(--navy);
+  /* shadcn/ui semantic mappings. NOTE the split that the old white-ground theme
+     did not have: `background` is the GROUND (the page field) while `card` is
+     PAPER (the working surface). A component that means "surface" must read
+     `card`/`popover`, never `background`. */
+  --color-background: var(--b-ground);
+  --color-foreground: var(--on-page);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--b-blue);
 
-  --color-card: var(--card);
+  --color-card: var(--b-paper);
   --color-card-foreground: var(--ink);
-  --color-card-border: var(--sf-200);
+  --color-card-border: var(--line);
 
-  --color-popover: var(--popover);
+  --color-popover: var(--b-paper);
   --color-popover-foreground: var(--ink);
-  --color-popover-border: var(--sf-200);
+  --color-popover-border: var(--line);
 
-  --color-primary: var(--navy);
-  --color-primary-foreground: #FFFFFF;
+  --color-primary: var(--b-blue);
+  --color-primary-foreground: var(--b-paper);
 
-  --color-secondary: var(--sf-100);
+  --color-secondary: var(--card-2);
   --color-secondary-foreground: var(--ink);
 
-  --color-muted: var(--sf-100);
-  --color-muted-foreground: var(--sf-500);
+  --color-muted: var(--card-2);
+  --color-muted-foreground: var(--muted);
 
-  --color-accent: var(--sf-100);
+  --color-accent: var(--card-2);
   --color-accent-foreground: var(--ink);
 
-  --color-destructive: #E21C52;
-  --color-destructive-foreground: #FFFFFF;
+  --color-destructive: var(--b-crimson);
+  --color-destructive-foreground: var(--b-paper);
 
-  /* Chart colors — Phenome brand palette */
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: #3AC2CB;
-  --color-chart-3: #E21C52;
-  --color-chart-4: #005B33;
-  --color-chart-5: var(--chart-5);
+  /* Chart series. Teal appears in its PAPER form: charts live on paper cards and
+     #3AB3BB is 2.51:1 there, below even the 3:1 floor for a graphical object. */
+  --color-chart-1: var(--b-ground);
+  --color-chart-2: var(--b-blue);
+  --color-chart-3: var(--b-teal-ink);
+  --color-chart-4: var(--ok);
+  --color-chart-5: var(--b-crimson);
 
-  /* Sidebar — maps to Phenome neutral palette */
-  --color-sidebar: var(--sf-50);
+  /* Sidebar — a paper surface, so it draws from the paper family, not the ground. */
+  --color-sidebar: var(--card-2);
   --color-sidebar-foreground: var(--ink);
-  --color-sidebar-border: var(--sf-200);
-  --color-sidebar-primary: var(--navy);
-  --color-sidebar-primary-foreground: #FFFFFF;
-  --color-sidebar-accent: var(--sf-100);
+  --color-sidebar-border: var(--line);
+  --color-sidebar-primary: var(--b-blue);
+  --color-sidebar-primary-foreground: var(--b-paper);
+  --color-sidebar-accent: color-mix(in srgb, var(--b-indigo) 6%, var(--b-paper));
   --color-sidebar-accent-foreground: var(--ink);
-  --color-sidebar-ring: var(--navy);
+  --color-sidebar-ring: var(--b-blue);
 
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -145,11 +209,14 @@
   --font-size-2xl: 24px;
   --font-size-2xl--line-height: 32px;
 
-  /* Shadows — Phenome §3.5 */
-  --shadow-xs: 0 1px 2px 0 rgba(11, 21, 45, 0.04);
-  --shadow-sm: 0 1px 3px 0 rgba(11, 21, 45, 0.06), 0 1px 2px -1px rgba(11, 21, 45, 0.04);
-  --shadow-md: 0 4px 6px -1px rgba(11, 21, 45, 0.08), 0 2px 4px -2px rgba(11, 21, 45, 0.04);
-  --shadow-lg: 0 10px 15px -3px rgba(11, 21, 45, 0.10), 0 4px 6px -4px rgba(11, 21, 45, 0.05);
+  /* Shadows — re-tinted to the identity's deep navy (#00063D) rather than the
+     retired #0B152D ink. `shadow-card` is the single elevation token of the
+     identity; the xs–lg ramp stays because 54 shadcn components read it. */
+  --shadow-card: var(--shadow);
+  --shadow-xs: 0 1px 2px 0 rgba(0, 6, 61, 0.05);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 6, 61, 0.07), 0 1px 2px -1px rgba(0, 6, 61, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 6, 61, 0.09), 0 2px 4px -2px rgba(0, 6, 61, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 6, 61, 0.11), 0 4px 6px -4px rgba(0, 6, 61, 0.06);
 
   /* Border radius — Phenome §3.4 (explicit, no calc) */
   --radius-sm: 2px;
@@ -178,6 +245,36 @@
     font-feature-settings: "cv11", "ss01", "ss03";
   }
 
+  /* ── The `color-scheme` trap (UI-SPEC §1.3) ──
+     `:root` is `dark`, but the working surface is cream. Any element that IS a
+     paper surface re-declares `light` so the native chrome it contains — select
+     popups, date pickers, spinners, autofill fills, validation bubbles,
+     scrollbars — is drawn light-on-cream rather than dark-on-cream. Matching on
+     the surface utilities themselves (`~=` matches a whole class token, so
+     `hover:bg-neutral-50` deliberately does NOT match) keeps this working for
+     any component that paints a paper surface, without a marker class every
+     call site would have to remember to add. Native controls are listed
+     directly because the app has no ground-level form control today, and a
+     control that inherits `dark` on cream is the exact failure this prevents. */
+  [class~="bg-card"],
+  [class~="bg-popover"],
+  [class~="bg-neutral-0"],
+  [class~="bg-neutral-50"],
+  [class~="bg-neutral-100"],
+  [class~="bg-secondary"],
+  [class~="bg-muted"],
+  [class~="bg-sidebar"],
+  [role="dialog"],
+  [role="menu"],
+  [role="listbox"],
+  input,
+  select,
+  textarea,
+  option,
+  optgroup {
+    color-scheme: light;
+  }
+
   /* Tabular numerals for tables and numeric displays */
   table, .tabular {
     font-variant-numeric: tabular-nums;
@@ -185,7 +282,7 @@
 
   /* Global focus ring — Phenome §7 */
   :focus-visible {
-    @apply outline-none ring-2 ring-ph-navy ring-offset-2 ring-offset-background;
+    @apply outline-none ring-2 ring-ph-navy ring-offset-2 ring-offset-card;
   }
 }
 
