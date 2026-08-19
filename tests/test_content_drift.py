@@ -177,3 +177,105 @@ def test_no_hex_literals() -> None:
         f"{TOKEN_DEFINITIONS.relative_to(REPO)} — move each onto a token so a retheme "
         f"reaches it (UI-SPEC §5.6):\n  " + "\n  ".join(offenders)
     )
+
+
+# ── The staged flow is not free until the reviewer chooses ────────────────────────────
+#
+# UI-SPEC §0.4 / §7.2. `ddharmon-ui` is a public repo and its roadmap routes are
+# unauthenticated, so a cost claim the product no longer honours misleads a visitor about
+# money. Under §0.1 the first charge is Gate 0's Continue — it pays for concept
+# generation, splitting and the coherence judge — so "step 1 is free, you choose what to
+# spend on" is false FOR THE STAGED FLOW.
+#
+# The same sentence shape is still TRUE about **preview run mode**, which calls no model
+# at all. A test that banned the word "free" would force those true statements into
+# silence, which is its own dishonesty — so the assertion discriminates on the SUBJECT of
+# the claim, not on a keyword. Note that it cannot discriminate on "no model is called":
+# the false claim uses exactly that reasoning, applied to a stage of the staged flow.
+
+_FREE_CLAIM = re.compile(
+    r"\b(free|costs? nothing|cost nothing|no charge|nothing to pay|at no cost)\b", re.I
+)
+_STAGED_SUBJECT = re.compile(
+    r"\b(step 1|step one|first step|this step|grouping comes first|concept groups?|"
+    r"staged (?:flow|review)|gate 0|first gate)\b",
+    re.I,
+)
+# "preview" as the RUN MODE, not the word anywhere in a sentence: a page that merely
+# mentions a preview must not buy itself an exemption from the claim.
+_PREVIEW_SUBJECT = re.compile(
+    r"\bpreview (?:run )?mode\b|\bpreview runs?\b|\bin preview\b|\bpreview:", re.I
+)
+
+# `pages/preview-staged-review.tsx` carries the false claim and is NOT edited here: D-16
+# retires its ROUTE with a redirect (plan 08-17), which removes the claim from the product
+# rather than rewording a page nobody can reach. Excluded by path, with the file's
+# existence asserted so a rename cannot silently widen the exclusion.
+CLAIM_EXCLUSIONS = ("pages/preview-staged-review.tsx",)
+
+
+def _staged_flow_free_claims(text: str) -> list[str]:
+    """Sentences claiming the STAGED FLOW costs nothing. Preview-run-mode sentences pass."""
+    flat = " ".join(text.split())
+    hits = []
+    for sentence in re.split(r"(?<=[.!?])\s+", flat):
+        if _PREVIEW_SUBJECT.search(sentence):
+            continue
+        free = _FREE_CLAIM.search(sentence)
+        if free and _STAGED_SUBJECT.search(sentence):
+            # Report a window around the claim, not the whole sentence: source files carry
+            # few full stops, so a "sentence" can be half a component and unreadable.
+            lo, hi = max(0, free.start() - 90), min(len(sentence), free.end() + 90)
+            excerpt = sentence[lo:hi].strip()
+            hits.append(("…" if lo else "") + excerpt + ("…" if hi < len(sentence) else ""))
+    return hits
+
+
+def test_the_staged_flow_spend_claim_detector_distinguishes_the_two_claims() -> None:
+    """The discriminator is the claim's subject, not the word "free".
+
+    Fixtures, not the tree: the tree is expected to be clean, so a walk alone would pass
+    vacuously and could not show the assertion tells the two claims apart.
+    """
+    false_about_the_staged_flow = [
+        "step 1 is free, you choose what to spend on",
+        "Runs on your machine. No model is called, so this step is free and you can adjust it.",
+        "Grouping comes first, costs nothing, and is adjustable.",
+        "Reviewing your concept groups is free until you decide what to buy.",
+    ]
+    true_about_preview_run_mode = [
+        "Preview runs no LLM — free.",
+        "No LLM — clustering + retrieval only, to inspect groupings before spending credits.",
+        "Preview run mode calls no model at all, so this step is free.",
+        "Local · free",
+    ]
+    for claim in false_about_the_staged_flow:
+        assert _staged_flow_free_claims(claim), f"should be flagged but was not: {claim!r}"
+    for claim in true_about_preview_run_mode:
+        assert not _staged_flow_free_claims(claim), f"should NOT be flagged: {claim!r}"
+
+
+def test_no_public_surface_claims_the_staged_flow_is_free() -> None:
+    """The staged flow's first charge is Gate 0's Continue, and the copy must say so."""
+    if not FRONTEND_SRC.exists():  # pragma: no cover
+        pytest.skip(f"frontend source tree not found at {FRONTEND_SRC}")
+    for excluded in CLAIM_EXCLUSIONS:
+        assert (FRONTEND_SRC / excluded).exists(), (
+            f"the claim exclusion {excluded} names a file that no longer exists — "
+            f"drop the exclusion rather than leaving it to cover something else"
+        )
+
+    offenders: list[str] = []
+    for path in _frontend_sources():
+        rel = path.relative_to(FRONTEND_SRC).as_posix()
+        if rel in CLAIM_EXCLUSIONS:
+            continue
+        for claim in _staged_flow_free_claims(path.read_text()):
+            offenders.append(f"{path.relative_to(REPO)}: {claim}")
+
+    assert not offenders, (
+        "an unauthenticated surface claims the staged flow costs nothing until the "
+        "reviewer chooses. The first charge is Gate 0's Continue (concept generation, "
+        "splitting, the coherence judge); the reviewer scopes before the BULK of the "
+        "spend, not before all of it (UI-SPEC §0.4, §7.2):\n  " + "\n  ".join(offenders)
+    )
