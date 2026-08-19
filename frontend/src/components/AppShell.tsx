@@ -24,8 +24,8 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
       className={cn(
         "flex items-center gap-3 rounded px-3 py-2 text-sm transition-colors",
         active
-          ? "bg-neutral-200 font-semibold text-neutral-900"
-          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900",
+          ? "bg-on-page/12 font-semibold text-on-page"
+          : "text-on-page-muted hover:bg-on-page/8 hover:text-on-page",
       )}
     >
       {icon}
@@ -37,17 +37,17 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
 export function AppShell({ children }: { children: ReactNode }) {
   const { isGuest, exitGuest, email } = useAuthState();
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-neutral-0">
+    <div className="flex h-screen flex-col overflow-hidden bg-background">
       {/* Site-wide "under active development" notice — every page, both prod + dev channels. */}
       <GlobalStatusBanner />
       {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-neutral-0 px-4">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-on-page/15 bg-background px-4">
         <Link href="/" className="flex items-center gap-2.5">
-          <PhMark className="h-6 w-6" />
+          <PhMark tone="ground" className="h-6 w-6" />
           <div className="flex items-center gap-2 text-sm">
-            <span className="font-display font-semibold text-ph-ink">Phenome Health</span>
-            <span className="text-neutral-300">/</span>
-            <span className="font-display text-neutral-500">ddharmon</span>
+            <span className="font-display font-semibold text-on-page">Phenome Health</span>
+            <span className="text-on-page-faint">/</span>
+            <span className="font-display text-on-page-muted">ddharmon</span>
           </div>
         </Link>
         <div className="flex items-center gap-1">
@@ -80,7 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <button
                     type="button"
                     onClick={exitGuest}
-                    className="rounded px-2 py-1 text-xs font-semibold text-ph-navy transition-colors hover:bg-neutral-100 hover:text-ph-ink"
+                    className="rounded px-2 py-1 text-xs font-semibold text-on-page transition-colors hover:bg-on-page/10"
                   >
                     {email ? "Sign out" : "Sign in"}
                   </button>
@@ -95,7 +95,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-h-0 flex-1">
         {/* Left sidebar nav. */}
-        <aside className="hidden w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 px-3 py-4 lg:flex">
+        <aside className="hidden w-60 shrink-0 flex-col border-r border-on-page/15 bg-background px-3 py-4 lg:flex">
           <nav className="space-y-1">
             <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" />
             <NavLink href="/methods" icon={<Workflow className="h-4 w-4" />} label="Methods" />
@@ -109,23 +109,23 @@ export function AppShell({ children }: { children: ReactNode }) {
             <NavLink href="/architecture" icon={<Network className="h-4 w-4" />} label="Architecture" />
             <NavLink href="/phenome" icon={<Building2 className="h-4 w-4" />} label="Phenome Health" />
           </nav>
-          <div className="mt-auto space-y-1 border-t border-neutral-200 pt-3 text-xs">
+          <div className="mt-auto space-y-1 border-t border-on-page/15 pt-3 text-xs">
             <a
               href={PH.org}
               target="_blank"
               rel="noreferrer"
-              className="mb-1 flex items-center gap-1.5 whitespace-nowrap rounded px-3 py-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
+              className="mb-1 flex items-center gap-1.5 whitespace-nowrap rounded px-3 py-1.5 text-on-page-muted transition-colors hover:bg-on-page/10 hover:text-on-page"
             >
-              <PhMark className="h-3.5 w-3.5 shrink-0" />
+              <PhMark tone="ground" className="h-3.5 w-3.5 shrink-0" />
               <span>
-                A project of <span className="font-display font-semibold text-ph-ink">Phenome Health</span>
+                A project of <span className="font-display font-semibold text-on-page">Phenome Health</span>
               </span>
             </a>
             <a
               href={ISSUES_URL}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-2 rounded px-3 py-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
+              className="flex items-center gap-2 rounded px-3 py-1.5 text-on-page-muted transition-colors hover:bg-on-page/10 hover:text-on-page"
             >
               <Github className="h-3.5 w-3.5" /> Report an issue
             </a>
@@ -133,7 +133,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               href={REPO_URL}
               target="_blank"
               rel="noreferrer"
-              className="block px-3 text-xs text-neutral-400 transition-colors hover:text-ph-navy"
+              className="block px-3 text-xs text-on-page-muted transition-colors hover:text-on-page"
             >
               View source on GitHub
             </a>
@@ -141,7 +141,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               href="https://claude.com/claude-code"
               target="_blank"
               rel="noreferrer"
-              className="block px-3 text-xs text-neutral-400 transition-colors hover:text-ph-navy"
+              className="block px-3 text-xs text-on-page-muted transition-colors hover:text-on-page"
             >
               Built with Claude Code
             </a>
@@ -149,7 +149,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         {/* Scrolling content region. */}
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        <main className="min-w-0 flex-1 overflow-y-auto bg-neutral-50">
           <div className="mx-auto max-w-screen-2xl px-6 py-6 lg:px-8">{children}</div>
         </main>
       </div>

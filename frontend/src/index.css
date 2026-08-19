@@ -364,7 +364,7 @@
   body {
     /* `text-sm` is the body size (UI-SPEC §3.1): the 14/20 body tier is the app's
        default, not an opt-in class every page has to remember. */
-    @apply font-sans text-sm antialiased bg-neutral-0 text-neutral-900;
+    @apply font-sans text-sm antialiased bg-background text-foreground;
     font-feature-settings: "cv11", "ss01", "ss03";
   }
 
