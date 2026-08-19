@@ -8,13 +8,17 @@ import { DESIGN_CHOICES, type DesignChoice } from "@/data/design-choices";
 import { UnderReviewBanner } from "@/components/under-review-banner";
 
 /** Inline external link, styled + with an icon (matches the Methods/Benchmarks/Guide `A`). */
-function A({ href, children }: { href: string; children: React.ReactNode }) {
+function A({ href, children, tone = "raised" }: { href: string; children: React.ReactNode; tone?: "raised" | "field" }) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-0.5 text-link-on-raised underline decoration-rule-info underline-offset-2 hover:decoration-link-on-raised"
+      className={`inline-flex items-center gap-0.5 underline underline-offset-2 ${
+        tone === "field"
+          ? "text-link-on-field decoration-rule-on-field hover:decoration-link-on-field"
+          : "text-link-on-raised decoration-rule-info hover:decoration-link-on-raised"
+      }`}
     >
       {children}
       <ExternalLink className="h-3 w-3" />
@@ -65,17 +69,17 @@ export default function DesignChoicesPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Lightbulb className="h-6 w-6 text-accent-on-raised" /> Design choices
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Lightbulb className="h-6 w-6 text-on-field" /> Design choices
         </h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <p className="mt-1 text-sm text-on-field-muted">
           Why the pipeline is built the way it is. Each card states a non-obvious choice, the obvious
           alternative it rejected, and what the data said — the mirror image of the{" "}
-          <Link href="/methods" className="text-link-on-raised underline hover:text-on-raised">
+          <Link href="/methods" className="text-link-on-field underline hover:text-on-field">
             Methods
           </Link>{" "}
           page (what the stages are) and the{" "}
-          <Link href="/benchmarks" className="text-link-on-raised underline hover:text-on-raised">
+          <Link href="/benchmarks" className="text-link-on-field underline hover:text-on-field">
             Benchmarks
           </Link>{" "}
           page (the scores).
@@ -118,9 +122,9 @@ export default function DesignChoicesPage() {
       </div>
 
       {/* Grounding footnote — the numbers trace to the canonical, public methods doc. */}
-      <p className="text-xs text-on-raised-muted">
+      <p className="text-xs text-on-field-muted">
         Every choice and number here is grounded in the canonical{" "}
-        <A href={`${PH.ddharmon}/blob/main/docs/methods.md`}>ddharmon methods documentation</A> (the
+        <A tone="field" href={`${PH.ddharmon}/blob/main/docs/methods.md`}>ddharmon methods documentation</A> (the
         "Why assignment-first", "The pipeline", and "Evaluation" sections). Deltas are published results on
         named external benchmarks, not internal runs.
       </p>

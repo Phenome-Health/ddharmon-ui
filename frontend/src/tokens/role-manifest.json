@@ -77,12 +77,12 @@
     {
       "role": "--surface-field",
       "utility": "bg-surface-field",
-      "what": "The page field the raised surfaces sit on. Its foregrounds were the gap: no anchor covered text-on-field, so the field inherited the CHROME's foreground and bare copy rendered cream-on-cream while the contrast gate stayed green.",
+      "what": "The page field the raised surfaces sit on — the navy GROUND (UI-SPEC 5.1: dark page, cream cards). Its foregrounds were the gap that motivated this whole layer: no anchor covered text-on-field, so the field inherited the CHROME's foreground and bare copy rendered cream-on-cream while the contrast gate stayed green. Now the pair moves together or not at all.",
       "foregrounds": [
-        { "role": "--on-field", "utility": "text-on-field", "level": "AAA", "what": "Bare copy directly on the field." },
-        { "role": "--on-field-muted", "utility": "text-on-field-muted", "level": "AA", "what": "Secondary copy on the field." },
-        { "role": "--on-field-faint", "utility": "text-on-field-faint", "level": "non-text", "what": "Hairlines on the field." },
-        { "role": "--link-on-field", "utility": "text-link-on-field", "level": "AA", "what": "A link on the field." }
+        { "role": "--on-field", "utility": "text-on-field", "level": "AAA-body", "what": "Bare copy directly on the field. AAA-body, not AAA: the field carries running copy (page headers, section leads, standing notes) exactly as the chrome does, so it is held to the same 13:1 the other body surface is. 13.86:1." },
+        { "role": "--on-field-muted", "utility": "text-on-field-muted", "level": "AA", "what": "Secondary copy on the field — a page subtitle, a standing caveat. 7.23:1." },
+        { "role": "--on-field-faint", "utility": "text-on-field-faint", "level": "non-text", "what": "Hairlines and separator glyphs on the field. 4.04:1, deliberately inside the non-text band." },
+        { "role": "--link-on-field", "utility": "text-link-on-field", "level": "AA", "what": "A link on the field IS the foreground colour. The accent measures 2.47:1 on the ground and is prohibited (5.2), so this is the one field role that is not a mechanical copy of the chrome pair — it is the same DECISION the chrome made, re-made." }
       ],
       "rules": [{ "role": "--rule-on-field", "utility": "border-rule-on-field" }]
     },
@@ -226,10 +226,22 @@
       "why": "UI-SPEC 5.4: the dark-surface form of the secondary accent never touches a raised surface (2.51:1). Use --accent-2-on-raised."
     },
     {
-      "fg": "--accent-2-on-chrome",
+      "fg": "--accent",
       "bg": "--surface-field",
       "max": 3,
-      "why": "The same prohibition on the field, which is a light surface today. New coverage: the old gate had no field pair at all."
+      "why": "UI-SPEC 5.2, THE hard rule, now binding on the field too: blue never touches the ground, and the field IS the ground. 2.47:1. This row is what makes the flip a checkable act rather than a claim — before it, the accent on the field was legal (5.70:1 on cream-dim) and nothing would have objected to a blue link surviving the flip into illegibility."
+    },
+    {
+      "fg": "--accent-2-on-raised",
+      "bg": "--surface-field",
+      "max": 3,
+      "why": "The MIRROR of the pre-flip row this replaces. While the field was light, the prohibited pairing was the dark-surface teal on it; now the field is dark, it is the light-surface teal that is prohibited (2.93:1). The prohibition encodes a RELATIONSHIP — the wrong form of the accent for the surface — and the relationship is what survives a surface change."
+    },
+    {
+      "fg": "--on-raised",
+      "bg": "--surface-field",
+      "max": 3,
+      "why": "The paper ink on the navy field: 1.04:1, and the exact mirror of the cream-on-cream defect this plan was written for. An unmigrated component that kept `text-on-raised` while the field moved lands here, so the prohibition names the failure mode rather than trusting the migration to have been complete."
     }
   ]
 }

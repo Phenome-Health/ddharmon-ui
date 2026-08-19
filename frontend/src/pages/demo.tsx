@@ -91,16 +91,16 @@ export default function DemoPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Sparkles className="h-5 w-5 text-accent-on-raised" /> Demo
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Sparkles className="h-5 w-5 text-on-field" /> Demo
         </h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <p className="mt-1 text-sm text-on-field-muted">
           Watch a real cross-cohort harmonization run — mapping verdicts, transform specs, and the
           visualizations — over curated public cohorts. No uploads, no API credits.
         </p>
       </div>
 
-      <Card className="border-rule-info bg-accent-action/[0.03]">
+      <Card className="border-rule-info bg-surface-info">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
           <CardTitle className="text-sm">{combo?.label ?? "Cross-cohort demo"}</CardTitle>
           <Badge variant="secondary" className="font-normal">

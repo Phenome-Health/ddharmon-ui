@@ -239,8 +239,8 @@ export default function RelatedWorkPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">Related work</h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">Related work</h1>
+        <p className="mt-1 text-sm text-on-field-muted">
           ddharmon builds on and complements a broad ecosystem of data-harmonization tools, standards, and
           research groups. A non-exhaustive map of the neighborhood.
         </p>

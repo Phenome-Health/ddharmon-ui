@@ -65,7 +65,7 @@ export default function App() {
             <Route path="/job/:jobId" component={DashboardPage} />
             <Route path="/jobs" component={JobsPage} />
             <Route>
-              <div className="p-8 text-on-raised-muted">404 — page not found</div>
+              <div className="p-8 text-on-field-muted">404 — page not found</div>
             </Route>
             </Switch>
           </AppShell>

@@ -72,7 +72,7 @@ function ReproducibilityInfo() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-full border border-rule-on-raised px-2 py-0.5 text-xs text-on-raised-muted transition-colors hover:border-rule-info hover:text-accent-on-raised"
+          className="inline-flex items-center gap-1 rounded-full border border-rule-on-field px-2 py-0.5 text-xs text-on-field-muted transition-colors hover:border-on-field-faint hover:text-on-field"
         >
           <Info className="h-3 w-3" /> Reproducibility
         </button>
@@ -382,15 +382,15 @@ export default function DashboardPage() {
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <nav className="mb-1 text-xs text-on-raised-muted">
-              <Link href="/jobs" className="hover:text-link-on-raised hover:underline">
+            <nav className="mb-1 text-xs text-on-field-muted">
+              <Link href="/jobs" className="hover:text-link-on-field hover:underline">
                 Runs
               </Link>
-              <span className="mx-1 text-on-raised-faint">/</span>
+              <span className="mx-1 text-on-field-faint">/</span>
               <span className="font-mono">{jobId.slice(0, 8)}</span>
             </nav>
-            <h1 className="font-display text-xl font-semibold text-on-raised">{jobState.displayName}</h1>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-on-raised-muted">
+            <h1 className="font-display text-xl font-semibold text-on-field">{jobState.displayName}</h1>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-on-field-muted">
               {result && (
                 <Badge variant="neutral" className="font-normal">
                   {result.mode}
@@ -399,15 +399,15 @@ export default function DashboardPage() {
               <span>Split-aware CDE harmonization run</span>
               {headerCohorts.length > 0 && (
                 <>
-                  <span className="text-on-raised-faint">·</span>
-                  <span className="font-mono text-xs text-on-raised-muted">{headerCohorts.join(" · ")}</span>
+                  <span className="text-on-field-faint">·</span>
+                  <span className="font-mono text-xs text-on-field-muted">{headerCohorts.join(" · ")}</span>
                 </>
               )}
-              <span className="text-on-raised-faint">·</span>
+              <span className="text-on-field-faint">·</span>
               <ReproducibilityInfo />
             </div>
             {result?.cost && result.cost.actualUsd > 0 && !running && (
-              <div className="mt-1.5 text-xs text-on-raised-muted">
+              <div className="mt-1.5 text-xs text-on-field-muted">
                 Actual cost{" "}
                 <span
                   className="font-semibold tabular-nums text-on-raised"
@@ -1183,7 +1183,7 @@ function StatCard({
   accent?: boolean;
 }) {
   return (
-    <Card className={accent ? "border-rule-info bg-accent-action/[0.03]" : undefined}>
+    <Card className={accent ? "border-rule-info bg-surface-info" : undefined}>
       <CardContent>
         <div className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">{label}</div>
         <div className="mt-1 text-xl font-semibold tabular-nums text-on-raised">{value}</div>

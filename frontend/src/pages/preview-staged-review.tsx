@@ -170,7 +170,7 @@ export default function PreviewStagedReviewPage() {
     >
       {/* One honest exception to the shell's blanket "everything is illustrative": the money is real
           arithmetic from the shipped estimator, which is the whole point of the step-1 gate. */}
-      <p className="-mt-2 text-xs text-on-raised-muted">
+      <p className="-mt-2 text-xs text-on-field-muted">
         One exception to the banner above: the <b>cost figures are live</b>, computed by the same estimator
         the New Run form uses. The concept groups are illustrative.
       </p>
@@ -217,16 +217,16 @@ export default function PreviewStagedReviewPage() {
               key={s.n}
               onClick={() => setStep(s.n)}
               className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                active ? "border-rule-info bg-surface-info" : "border-rule-on-raised hover:bg-surface-inset"
+                active ? "border-rule-info bg-surface-info" : "border-rule-on-field hover:bg-surface-inset"
               }`}
             >
               <div className="flex items-center gap-1.5">
-                <s.icon className={`h-3.5 w-3.5 ${active ? "text-accent-on-raised" : "text-on-raised-muted"}`} />
-                <span className={`text-xs font-semibold ${active ? "text-accent-on-raised" : "text-on-raised-muted"}`}>
+                <s.icon className={`h-3.5 w-3.5 ${active ? "text-accent-on-raised" : "text-on-field-muted"}`} />
+                <span className={`text-xs font-semibold ${active ? "text-accent-on-raised" : "text-on-field-muted"}`}>
                   Step {s.n}
                 </span>
               </div>
-              <div className={`mt-0.5 text-sm font-semibold ${active ? "text-on-raised" : "text-on-raised"}`}>
+              <div className={`mt-0.5 text-sm font-semibold ${active ? "text-on-raised" : "text-on-field"}`}>
                 {s.title}
               </div>
             </button>
@@ -234,7 +234,7 @@ export default function PreviewStagedReviewPage() {
         })}
       </div>
 
-      <p className="-mt-2 text-sm italic text-on-raised-muted">{STEPS[step - 1].sub}</p>
+      <p className="-mt-2 text-sm italic text-on-field-muted">{STEPS[step - 1].sub}</p>
 
       {step === 1 && <StepOne />}
       {step === 2 && <StepTwo />}
@@ -605,7 +605,7 @@ function StepOne() {
         proposed="Grouping comes first, costs nothing, and is adjustable — expand a concept and drag its variables somewhere better. You fix mis-grouped concepts before they propagate, drop what you don't need, and only then commit to the paid stages."
       />
 
-      <p className="text-xs text-on-raised-muted">
+      <p className="text-xs text-on-field-muted">
         In the real feature, moving a variable would rewrite the run&apos;s stored grouping and re-check only
         the concepts you touched — the pipeline already keys its cached work to a group&apos;s exact
         membership, so an edited concept re-runs and the untouched ones do not. Splitting, merging and

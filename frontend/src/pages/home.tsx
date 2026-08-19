@@ -243,15 +243,15 @@ export default function HomePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div>
-        <h1 className="font-display text-xl font-semibold text-on-raised">New harmonization run</h1>
-        <p className="text-sm text-on-raised-muted">
+        <h1 className="font-display text-xl font-semibold text-on-field">New harmonization run</h1>
+        <p className="text-sm text-on-field-muted">
           Upload cohort data dictionaries, map their columns, and assign each concept to the CDE backbone
           (adopt / refine / novel) with transform specs. New here? See the{" "}
-          <Link href="/guide" className="text-link-on-raised underline hover:text-on-raised">
+          <Link href="/guide" className="text-link-on-field underline hover:text-on-field">
             Guide
           </Link>
           , or try the{" "}
-          <Link href="/demo" className="text-link-on-raised underline hover:text-on-raised">
+          <Link href="/demo" className="text-link-on-field underline hover:text-on-field">
             Demo
           </Link>
           .
@@ -264,13 +264,13 @@ export default function HomePage() {
       <div
         {...getRootProps()}
         className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed py-12 transition-colors ${
-          isDragActive ? "border-accent-action bg-surface-info" : "border-rule-control-on-raised hover:border-on-raised-faint"
+          isDragActive ? "border-accent-action bg-surface-info" : "border-rule-on-field hover:border-on-field-faint"
         }`}
       >
         <input {...getInputProps()} />
-        <Upload className="mb-2 h-7 w-7 text-on-raised-muted" />
-        <p className="text-sm font-semibold text-on-raised">Drop CSV/TSV data dictionaries here, or click to browse</p>
-        <p className="text-xs text-on-raised-muted">One file per cohort. The CDE catalog is added automatically server-side.</p>
+        <Upload className="mb-2 h-7 w-7 text-on-field-muted" />
+        <p className="text-sm font-semibold text-on-field">Drop CSV/TSV data dictionaries here, or click to browse</p>
+        <p className="text-xs text-on-field-muted">One file per cohort. The CDE catalog is added automatically server-side.</p>
       </div>
 
       {dicts.map((d, idx) => (
@@ -573,9 +573,9 @@ export default function HomePage() {
         </p>
       )}
       {IS_STATIC && (
-        <p className="text-center text-xs text-on-raised-muted">
+        <p className="text-center text-xs text-on-field-muted">
           New runs are disabled in this preview — explore the sample runs under{" "}
-          <Link href="/jobs" className="text-link-on-raised underline hover:text-on-raised">
+          <Link href="/jobs" className="text-link-on-field underline hover:text-on-field">
             Runs
           </Link>
           .
@@ -589,7 +589,7 @@ export default function HomePage() {
 
 function CostCard({ breakdown, time, meta }: { breakdown: CostBreakdown; time: TimeEstimate; meta: string }) {
   return (
-    <Card className="border-rule-info bg-accent-action/[0.03]">
+    <Card className="border-rule-info bg-surface-info">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm">Estimated cost</CardTitle>
         {breakdown.free ? (

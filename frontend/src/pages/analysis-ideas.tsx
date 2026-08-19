@@ -24,7 +24,7 @@ export default function AnalysisIdeasPage() {
 
   if (!jobState) {
     return (
-      <div className="flex items-center gap-2 p-8 text-on-raised-muted">
+      <div className="flex items-center gap-2 p-8 text-on-field-muted">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading run…
       </div>
     );
@@ -42,20 +42,20 @@ export default function AnalysisIdeasPage() {
       <div>
         <Link
           href={`/job/${jobId}`}
-          className="mb-1 flex items-center gap-1 text-xs text-on-raised-muted hover:text-accent-on-raised"
+          className="mb-1 flex items-center gap-1 text-xs text-on-field-muted hover:text-on-field"
         >
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Lightbulb className="h-5 w-5 text-accent-on-raised" /> Analysis ideas
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Lightbulb className="h-5 w-5 text-on-field" /> Analysis ideas
         </h1>
-        <p className="mt-1.5 max-w-3xl text-sm text-on-raised-muted">
+        <p className="mt-1.5 max-w-3xl text-sm text-on-field-muted">
           What this cross-cohort harmonization unlocks — analyses grounded in this run's own concepts.
           Hypotheses to explore, not validated findings; ddharmon reads only metadata and never runs them.
           Click any concept to open it in the review workbench.
         </p>
         {isDemo && (
-          <p className="mt-2 inline-block rounded-md border border-rule-on-raised bg-surface-inset px-3 py-1.5 text-xs text-on-raised-muted">
+          <p className="mt-2 inline-block rounded-md border border-rule-on-inset bg-surface-inset px-3 py-1.5 text-xs text-on-inset-muted">
             Pre-generated for this demo. Run your own cohorts to get ideas grounded in your data.
           </p>
         )}
@@ -68,9 +68,9 @@ export default function AnalysisIdeasPage() {
           ))}
         </div>
       ) : (
-        <p className="text-sm text-on-raised-muted">
+        <p className="text-sm text-on-field-muted">
           No analysis ideas for this run.{" "}
-          <Link href={`/job/${jobId}`} className="text-link-on-raised underline hover:text-on-raised">
+          <Link href={`/job/${jobId}`} className="text-link-on-field underline hover:text-on-field">
             Back to the run
           </Link>
           .

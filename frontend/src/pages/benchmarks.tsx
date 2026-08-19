@@ -120,14 +120,14 @@ export default function BenchmarksPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Gauge className="h-6 w-6 text-accent-on-raised" /> Benchmarks
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Gauge className="h-6 w-6 text-on-field" /> Benchmarks
         </h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
-          How ddharmon performs against <span className="font-semibold text-on-raised">external ground-truth</span>{" "}
+        <p className="mt-1 text-sm text-on-field-muted">
+          How ddharmon performs against <span className="font-semibold text-on-field">external ground-truth</span>{" "}
           benchmarks — not self-defined metrics. Each card carries a dev/held-out tag so the numbers are
           read honestly. A results complement to the{" "}
-          <Link href="/methods" className="text-link-on-raised underline hover:text-on-raised">
+          <Link href="/methods" className="text-link-on-field underline hover:text-on-field">
             Methods
           </Link>{" "}
           page.

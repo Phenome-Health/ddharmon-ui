@@ -303,7 +303,7 @@ export default function PreviewKnowledgeGraphPage() {
         </Card>
       </div>
 
-      <p className="text-xs text-on-raised-muted">
+      <p className="text-xs text-on-field-muted">
         In the real feature, each anchored concept is resolved to a graph node through an
         annotate → normalize → link → resolve pipeline, writing a thin concept layer: harmonized-concept, CDE
         and GenCDE nodes joined by mapping edges (exact/close match for adopt, related for refine), each tagged

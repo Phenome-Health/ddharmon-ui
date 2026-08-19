@@ -40,8 +40,8 @@ export default function GuidePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="font-display text-xl font-semibold text-on-raised">What this platform does</h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <h1 className="font-display text-xl font-semibold text-on-field">What this platform does</h1>
+        <p className="mt-1 text-sm text-on-field-muted">
           A guide to harmonizing cohort data dictionaries onto a Common Data Element backbone — what you
           provide, how a run works, and what you get back.
         </p>

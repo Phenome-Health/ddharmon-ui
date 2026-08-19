@@ -97,7 +97,7 @@ export default function JobsPage() {
   if (isGuest) {
     return (
       <div className="mx-auto max-w-4xl space-y-4">
-        <h1 className="font-display text-xl font-semibold text-on-raised">Runs</h1>
+        <h1 className="font-display text-xl font-semibold text-on-field">Runs</h1>
         <Card>
           <CardContent className="space-y-3 p-8 text-center">
             <p className="text-sm text-on-raised">Your runs live in your account.</p>
@@ -116,7 +116,7 @@ export default function JobsPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <h1 className="font-display text-xl font-semibold text-on-raised">Runs</h1>
+      <h1 className="font-display text-xl font-semibold text-on-field">Runs</h1>
       <Card>
         <CardContent className="p-0">
           <Table>

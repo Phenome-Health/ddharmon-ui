@@ -18,13 +18,17 @@ import { PH } from "@/lib/links";
 import { UnderReviewBanner } from "@/components/under-review-banner";
 
 /** Inline external link, styled + with an icon (matches the Methods/Design pages' `A`). */
-function A({ href, children }: { href: string; children: ReactNode }) {
+function A({ href, children, tone = "raised" }: { href: string; children: ReactNode; tone?: "raised" | "field" }) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-0.5 text-link-on-raised underline decoration-rule-info underline-offset-2 hover:decoration-link-on-raised"
+      className={`inline-flex items-center gap-0.5 underline underline-offset-2 ${
+        tone === "field"
+          ? "text-link-on-field decoration-rule-on-field hover:decoration-link-on-field"
+          : "text-link-on-raised decoration-rule-info hover:decoration-link-on-raised"
+      }`}
     >
       {children}
       <ExternalLink className="h-3 w-3" />
@@ -82,14 +86,14 @@ export default function DeploymentArchitecturePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Network className="h-6 w-6 text-accent-on-raised" /> Deployment architecture
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Network className="h-6 w-6 text-on-field" /> Deployment architecture
         </h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <p className="mt-1 text-sm text-on-field-muted">
           How the pieces of the live app connect — the request path, the two channels, and each third-party
           service (what it does, why it's here, and how it fails). The public overview; the full narrative also
           lives in the repo as{" "}
-          <A href={`${PH.ddharmonUi}/blob/main/docs/deployment_architecture.md`}>deployment_architecture.md</A>.
+          <A tone="field" href={`${PH.ddharmonUi}/blob/main/docs/deployment_architecture.md`}>deployment_architecture.md</A>.
         </p>
       </div>
 
@@ -152,11 +156,11 @@ export default function DeploymentArchitecturePage() {
 
       {/* Channels. */}
       <div>
-        <h2 className="mb-2 flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Table2 className="h-5 w-5 text-accent-on-raised" /> Channels
+        <h2 className="mb-2 flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Table2 className="h-5 w-5 text-on-field" /> Channels
         </h2>
-        <p className="mb-3 text-sm text-on-raised-muted">
-          Two fully isolated instances on the one VM (own systemd unit, port, vhost, and <code className="rounded bg-muted px-1 font-mono text-xs">.env</code>). A dev deploy
+        <p className="mb-3 text-sm text-on-field-muted">
+          Two fully isolated instances on the one VM (own systemd unit, port, vhost, and <code className="rounded bg-surface-inset px-1 font-mono text-xs text-on-inset">.env</code>). A dev deploy
           never touches prod; dev is the pre-release gate. Promotion is one-directional: validate on dev →
           publish core to PyPI → repin + deploy prod.
         </p>
@@ -199,7 +203,7 @@ export default function DeploymentArchitecturePage() {
 
       {/* Services. */}
       <div>
-        <h2 className="mb-3 font-display text-xl font-semibold text-on-raised">Services</h2>
+        <h2 className="mb-3 font-display text-xl font-semibold text-on-field">Services</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <ServiceCard icon={<Cloud className="h-4 w-4" />} title="Compute — cloud VM">
             <p>A single Linux VM (AWS Lightsail) hosts both channels.</p>
@@ -217,13 +221,13 @@ export default function DeploymentArchitecturePage() {
 
           <ServiceCard icon={<Server className="h-4 w-4" />} title="FastAPI app (uvicorn)">
             <p><code className="rounded bg-muted px-1 font-mono text-xs">backend.app:app</code> — the JSON API + static SPA. One worker only (more splits the in-memory store + breaks SSE).</p>
-            <p className="text-on-raised-muted">Config: a per-channel <code className="rounded bg-muted px-1 font-mono text-xs">.env</code> with Clerk vars and no LLM key (BYOK).</p>
+            <p className="text-on-raised-muted">Config: a per-channel <code className="rounded bg-surface-inset px-1 font-mono text-xs text-on-inset">.env</code> with Clerk vars and no LLM key (BYOK).</p>
             <Fails>worker dies → respawned; any in-flight run is flipped to error on reboot, uploads kept for a one-click re-run.</Fails>
           </ServiceCard>
 
           <ServiceCard icon={<ShieldCheck className="h-4 w-4" />} title="Clerk — authentication">
             <p>SSO (session JWT) + a guest demo mode (prod). The backend verifies the Bearer JWT against Clerk's JWKS (pyjwt); Google sign-in is a Clerk social connection.</p>
-            <p className="text-on-raised-muted">Config: the publishable key is baked into the frontend build; the issuer + optional org-domain guard live in the backend <code className="rounded bg-muted px-1 font-mono text-xs">.env</code>.</p>
+            <p className="text-on-raised-muted">Config: the publishable key is baked into the frontend build; the issuer + optional org-domain guard live in the backend <code className="rounded bg-surface-inset px-1 font-mono text-xs text-on-inset">.env</code>.</p>
             <Fails>a build missing the publishable key turns the client gate off (no token) while the backend stays gated → every API call 401s and the model catalog comes back empty.</Fails>
           </ServiceCard>
 

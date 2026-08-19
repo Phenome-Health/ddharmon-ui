@@ -226,8 +226,8 @@ export default function LandingPage() {
       {/* ── How it works (a real 3-step sequence) ────────────────────────────── */}
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="font-display text-xl font-semibold text-on-raised">How a run works</h2>
-          <Link href="/guide" className="text-sm text-link-on-raised underline underline-offset-2 hover:text-on-raised">
+          <h2 className="font-display text-xl font-semibold text-on-field">How a run works</h2>
+          <Link href="/guide" className="text-sm text-link-on-field underline underline-offset-2 hover:text-on-field">
             Full walkthrough →
           </Link>
         </div>

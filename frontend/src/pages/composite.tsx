@@ -118,13 +118,13 @@ export default function CompositePage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-on-raised-muted hover:text-link-on-raised">
+        <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-on-field-muted hover:text-on-field">
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Calculator className="h-5 w-5 text-accent-on-raised" /> Composite variable
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Calculator className="h-5 w-5 text-on-field" /> Composite variable
         </h1>
-        <p className="mt-1.5 max-w-3xl text-sm text-on-raised-muted">
+        <p className="mt-1.5 max-w-3xl text-sm text-on-field-muted">
           Point at a paper, repo, PDF, or Word supplement that defines a score — a frailty index, an intrinsic-capacity score,
           an SES index — and see whether this run's {records.length} harmonized concepts can support it, which
           concepts compose it, and how. ddharmon reads only metadata: it produces the derivation recipe and

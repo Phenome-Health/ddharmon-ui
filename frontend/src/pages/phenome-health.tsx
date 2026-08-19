@@ -56,10 +56,10 @@ export default function PhenomeHealthPage() {
       <div>
         <h1 className="sr-only">Phenome Health</h1>
         <PhLogo className="h-11 w-auto" />
-        <p className="mt-3 text-sm text-on-raised-muted">
+        <p className="mt-3 text-sm text-on-field-muted">
           The internal Phenome Health ecosystem ddharmon plugs into — mapping, knowledge-graph, and review tooling
           built alongside this app.{" "}
-          <a href={PH.org} target="_blank" rel="noreferrer" className="text-link-on-raised underline hover:text-on-raised">
+          <a href={PH.org} target="_blank" rel="noreferrer" className="text-link-on-field underline hover:text-on-field">
             phenomehealth.org
           </a>
         </p>

@@ -172,7 +172,7 @@ export default function PreviewPayoffPage() {
         </CardContent>
       </Card>
 
-      <p className="text-xs text-on-raised-muted">
+      <p className="text-xs text-on-field-muted">
         In the real feature, you would pick a harmonized concept from your run; ddharmon hands off a clean
         harmonized-variable spec; the pre/post regression + power calculation run on your data (securely, or on
         a synthetic testbed for a fully public version). The numbers above are illustrative, not from a real

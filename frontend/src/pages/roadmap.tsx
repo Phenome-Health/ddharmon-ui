@@ -25,10 +25,10 @@ export default function RoadmapPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
-          <Milestone className="h-6 w-6 text-accent-on-raised" /> Roadmap
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Milestone className="h-6 w-6 text-on-field" /> Roadmap
         </h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <p className="mt-1 text-sm text-on-field-muted">
           Where ddharmon is going — shipped features and what&apos;s next, crossed off as they land. An
           indicative direction, not dated commitments.
         </p>

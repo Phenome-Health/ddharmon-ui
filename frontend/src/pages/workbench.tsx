@@ -215,7 +215,7 @@ export default function WorkbenchPage() {
   const { jobState } = useHarmonizeStream(jobId, true, true);
   if (!jobState) {
     return (
-      <div className="flex items-center gap-2 p-8 text-on-raised-muted">
+      <div className="flex items-center gap-2 p-8 text-on-field-muted">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading run…
       </div>
     );
@@ -470,12 +470,12 @@ export function WorkbenchBody({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-on-raised-muted hover:text-link-on-raised">
+          <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-on-field-muted hover:text-on-field">
             <ArrowLeft className="h-3 w-3" /> Back to run
           </Link>
-          <h1 className="font-display text-xl font-semibold text-on-raised">Review workbench</h1>
+          <h1 className="font-display text-xl font-semibold text-on-field">Review workbench</h1>
         </div>
-        <div className="text-sm text-on-raised-muted">{records.length} concepts</div>
+        <div className="text-sm text-on-field-muted">{records.length} concepts</div>
       </div>
 
       {isDemo && (

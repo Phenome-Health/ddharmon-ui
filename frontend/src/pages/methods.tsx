@@ -169,11 +169,11 @@ export default function MethodsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">Methods</h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">Methods</h1>
+        <p className="mt-1 text-sm text-on-field-muted">
           A stage-by-stage walk through the harmonization pipeline — from the data dictionaries you upload
           to the review workbench. A deep-dive complement to the{" "}
-          <Link href="/guide" className="text-link-on-raised underline hover:text-on-raised">
+          <Link href="/guide" className="text-link-on-field underline hover:text-on-field">
             Guide
           </Link>
           .

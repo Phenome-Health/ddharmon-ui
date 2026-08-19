@@ -200,16 +200,23 @@
   --link-on-raised:        var(--brand-blue);
 
   /* ── FIELD — the page field the raised surfaces sit on ──────────────────────
-     ONE LINE is the whole of "flip the content field to navy": point
-     `--surface-field` at `--brand-navy` and its four bound foregrounds at the
-     chrome pair. That flip is 08-07 Part 2's, not this plan's — the point here is
-     that it becomes a tier-2 remap instead of a 22-page hunt. */
-  --surface-field:         var(--brand-cream-dim);
-  --on-field:              var(--brand-indigo);
-  --on-field-muted:        color-mix(in srgb, var(--brand-indigo) 70%, transparent);
-  --on-field-faint:        color-mix(in srgb, var(--brand-indigo) 50%, transparent);
-  --rule-on-field:         color-mix(in srgb, var(--brand-indigo) 13%, transparent);
-  --link-on-field:         var(--brand-blue);
+     FLIPPED TO THE GROUND (UI-SPEC 5.1: "dark page, cream cards" — a light field
+     under cream cards was a dark-MODE app, not this identity). This is the block
+     Part 1 was built to make cheap, and it is six lines: the surface and its four
+     bound foregrounds move together, which is the entire point of binding them.
+     Nothing outside this block chose a colour relative to the field, so nothing
+     outside this block had to change.
+
+     `--link-on-field` is the one that is NOT a mechanical copy of the chrome pair:
+     the accent on the ground measures 2.47:1 and is PROHIBITED (5.2), so a link on
+     the field is the foreground colour, exactly as it is on the chrome. Asserted,
+     not remembered — the prohibition has a manifest row. */
+  --surface-field:         var(--brand-navy);
+  --on-field:              var(--brand-cream);
+  --on-field-muted:        color-mix(in srgb, var(--brand-cream) 68%, transparent);
+  --on-field-faint:        color-mix(in srgb, var(--brand-cream) 45%, transparent);
+  --rule-on-field:         color-mix(in srgb, var(--brand-cream) 15%, transparent);
+  --link-on-field:         var(--on-field);
 
   /* ── INSET — header bands, row hover, inset panels ON a raised surface ──────
      Same value as the field TODAY and a different role: an inset sits inside a
@@ -647,7 +654,10 @@
      directly because the app has no ground-level form control today, and a
      control that inherits `dark` on cream is the exact failure this prevents. */
   [class~="bg-surface-raised"],
-  [class~="bg-surface-field"],
+  /* `bg-surface-field` is deliberately ABSENT: the field is the navy ground now, so
+     re-declaring `light` on it would draw every native control it contains as light
+     chrome on navy — the exact failure this split exists to prevent, arrived at from
+     the other direction. */
   [class~="bg-surface-inset"],
   [class~="bg-surface-inset-strong"],
   [class~="bg-surface-track"],

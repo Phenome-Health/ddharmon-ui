@@ -152,16 +152,16 @@ export default function PreviewRestructurePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div>
-        <Link href="/roadmap" className="inline-flex items-center gap-1 text-xs text-on-raised-muted hover:text-link-on-raised">
+        <Link href="/roadmap" className="inline-flex items-center gap-1 text-xs text-on-field-muted hover:text-link-on-field">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to roadmap
         </Link>
-        <h1 className="mt-1 flex flex-wrap items-center gap-2 font-display text-xl font-semibold text-on-raised">
+        <h1 className="mt-1 flex flex-wrap items-center gap-2 font-display text-xl font-semibold text-on-field">
           Restructuring workbench
           <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
             <FlaskConical className="h-3.5 w-3.5" /> Preview · mockup
           </Badge>
         </h1>
-        <p className="mt-1 text-sm text-on-raised-muted">
+        <p className="mt-1 text-sm text-on-field-muted">
           A design preview of a planned feature — hand the reviewer direct, drag-and-drop control over the
           harmonization structure, then let the model sanity-check the edits. The board below is seeded with
           sample data; drag chips between concepts to get a feel for it.
@@ -187,11 +187,11 @@ export default function PreviewRestructurePage() {
           <Plus className="h-4 w-4" /> New concept
         </Button>
         {findings && (
-          <Button size="sm" variant="ghost" onClick={() => { setConcepts(SEED); setFindings(null); }} className="gap-1.5 text-on-raised-muted">
+          <Button size="sm" variant="ghost" onClick={() => { setConcepts(SEED); setFindings(null); }} className="gap-1.5 text-on-field-muted">
             <RefreshCw className="h-3.5 w-3.5" /> Reset board
           </Button>
         )}
-        <span className="ml-auto text-xs text-on-raised-muted">Drag a chip onto another concept — or onto “New concept”.</span>
+        <span className="ml-auto text-xs text-on-field-muted">Drag a chip onto another concept — or onto “New concept”.</span>
       </div>
 
       {/* Board */}
@@ -292,16 +292,16 @@ export default function PreviewRestructurePage() {
           onDrop={() => { if (drag) addConcept(drag); setDrag(null); setOver(null); }}
           onClick={() => addConcept()}
           className={`flex min-h-[8rem] flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-sm ${
-            over === "__new__" ? "border-rule-info bg-surface-info text-accent-on-raised" : "border-rule-on-raised text-on-raised-muted hover:border-rule-info hover:text-accent-on-raised"
+            over === "__new__" ? "border-rule-info bg-surface-info text-accent-on-raised" : "border-rule-on-field text-on-field-muted hover:border-rule-info hover:text-accent-on-raised"
           }`}
         >
           <Plus className="h-5 w-5" />
           New concept
-          <span className="text-xs text-on-raised-muted">click, or drop a variable here</span>
+          <span className="text-xs text-on-field-muted">click, or drop a variable here</span>
         </button>
       </div>
 
-      <p className="text-xs text-on-raised-muted">
+      <p className="text-xs text-on-field-muted">
         In the real feature, edits would layer over ddharmon&apos;s output (never destroying the original run),
         the CDE “change” control would open the ranked candidate list, and “Re-check with the model” would run
         the coherence/assign pass over your edited structure and surface accept/ignore recommendations.

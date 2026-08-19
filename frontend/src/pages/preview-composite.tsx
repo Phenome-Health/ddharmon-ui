@@ -169,7 +169,7 @@ export default function PreviewCompositePage() {
         </Card>
       </div>
 
-      <p className="text-xs text-on-raised-muted">
+      <p className="text-xs text-on-field-muted">
         In the real feature, the builder would emit a portable derived-variable spec (inputs + method +
         thresholds, grounded in this run&apos;s harmonized concepts) that you apply to your participant data
         outside ddharmon; an LLM would sanity-check the definition and flag cohorts needing a proxy. Frailty is

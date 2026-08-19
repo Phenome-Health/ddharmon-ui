@@ -258,7 +258,7 @@ export default function PreviewReproducibilityPage() {
       <TradeoffScatter />
       <MetricDots />
       <Stability />
-      <p className="text-xs text-on-raised-muted">
+      <p className="text-xs text-on-field-muted">
         In the real feature, these come from a reproducibility experiment: each provider/model is run K times on
         the benchmark and expert-review sets; we report means, run-to-run spread, and cross-model agreement, plus
         realized cost and wall-clock. The numbers here are illustrative sample data, not measured results.
