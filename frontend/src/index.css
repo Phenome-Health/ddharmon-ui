@@ -248,11 +248,27 @@
   --shadow-md: 0 4px 6px -1px rgba(0, 6, 61, 0.09), 0 2px 4px -2px rgba(0, 6, 61, 0.05);
   --shadow-lg: 0 10px 15px -3px rgba(0, 6, 61, 0.11), 0 4px 6px -4px rgba(0, 6, 61, 0.06);
 
-  /* Border radius — Phenome §3.4 (explicit, no calc) */
+  /* Border radius — Phenome §3.4 (explicit, no calc).
+     The four working radii are UNCHANGED on purpose (RESEARCH §Q6): 42 of the 54
+     shadcn components read them across 289 call sites, and 30px is a CONTAINER
+     radius, not a working-surface one. The governing principle is brand geometry
+     at container level, instrument discipline at data level — a ledger row, a
+     table cell, a badge, a checkbox and an input never take a container radius,
+     because marketing proportions would wreck a screen whose job is aligning a
+     column of numbers. So the container scale is ADDITIVE. */
   --radius-sm: 2px;
   --radius: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+  /* `rounded-xl` is not one of Tailwind's theme-controlled aliases here: without
+     this key its single call site silently keeps Tailwind's own 0.75rem instead
+     of the identity's inner radius. Declaring the key (rather than rewriting the
+     call site) keeps the fix in the token layer, which is also the file this plan
+     owns — `landing.tsx` belongs to the screen-port plan. */
+  --radius-xl: 14px;
+  --radius-card: 30px;
+  --radius-inner: 14px;
+  --radius-pill: 999px;
 }
 
 @layer base {
@@ -310,9 +326,20 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Global focus ring — Phenome §7 */
+  /* Global focus treatment — UI-SPEC §4.
+     A real 2px outline at 2px offset, not a ring + ring-offset pair: the offset
+     colour would have to be painted, and the two surfaces this app has want
+     different paint. The COLOUR flips by surface, because blue on the ground
+     measures 2.47:1 and is prohibited (§5.2) — `light-dark()` reads the same
+     `color-scheme` split declared above, so a control on a cream card focuses
+     blue and one on the navy ground focuses cream, with no marker class. The
+     plain declaration first is the fallback for an engine without `light-dark()`.
+     The outline follows the element's own border-radius, which is how a pill
+     button gets a pill focus outline and a 4px input gets a 4px one. */
   :focus-visible {
-    @apply outline-none ring-2 ring-ph-navy ring-offset-2 ring-offset-card;
+    outline: 2px solid var(--b-blue);
+    outline-color: light-dark(var(--b-blue), var(--on-page));
+    outline-offset: 2px;
   }
 }
 

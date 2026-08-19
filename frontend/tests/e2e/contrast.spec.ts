@@ -164,3 +164,27 @@ test("the color-scheme split holds: dark root, light paper surfaces", async ({ p
   expect(controlScheme, "/new should render at least one native form control").not.toBeNull();
   expect(controlScheme, "a native form control must draw its chrome light-on-cream").toContain("light");
 });
+
+test("the focus outline colour flips with the surface, not with a marker class", async ({ page }) => {
+  // The focus treatment resolves its colour through `light-dark()` against the same `color-scheme`
+  // split asserted above — blue on paper, cream on the ground, because blue on the ground is 2.47:1
+  // and prohibited (§5.2). That mechanism degrades SILENTLY on an engine without `light-dark()`
+  // (the declaration is simply dropped and the fallback blue is used everywhere), so it is probed
+  // directly rather than through `:focus-visible`, whose matching depends on interaction heuristics.
+  const resolved = await page.evaluate(() => {
+    const probe = (scheme: string) => {
+      const el = document.createElement("div");
+      el.style.colorScheme = scheme;
+      el.style.outlineColor = "light-dark(var(--b-blue), var(--on-page))";
+      document.body.appendChild(el);
+      const value = getComputedStyle(el).outlineColor;
+      el.remove();
+      return value;
+    };
+    return { paper: probe("light"), ground: probe("dark") };
+  });
+
+  // --b-blue #0D59F2 and --on-page #FFFFF8.
+  expect(resolved.paper, "focus on a paper surface is the action blue").toBe("rgb(13, 89, 242)");
+  expect(resolved.ground, "focus on the ground is paper-coloured, never blue").toBe("rgb(255, 255, 248)");
+});

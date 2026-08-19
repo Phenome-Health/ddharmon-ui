@@ -9,7 +9,8 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "rounded border border-neutral-200 bg-neutral-0 text-neutral-900",
+      // Container radius (UI-SPEC §4): a card is brand geometry, its contents are not.
+      "rounded-card border border-neutral-200 bg-neutral-0 text-neutral-900",
       className
     )}
     {...props}
