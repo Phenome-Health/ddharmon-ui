@@ -10,8 +10,8 @@ import { ROADMAP, type RoadmapStatus } from "@/data/roadmap";
 // flask), badged like in-progress so it reads as a live bet, not a committed plan.
 const STATUS: Record<RoadmapStatus, { Icon: typeof Circle; cls: string; label: string }> = {
   shipped: { Icon: CheckCircle2, cls: "text-success", label: "Shipped" },
-  "in-progress": { Icon: CircleDot, cls: "text-ph-navy", label: "In progress" },
-  planned: { Icon: Circle, cls: "text-neutral-300", label: "Planned" },
+  "in-progress": { Icon: CircleDot, cls: "text-accent-on-raised", label: "In progress" },
+  planned: { Icon: Circle, cls: "text-on-raised-muted", label: "Planned" },
   exploring: { Icon: FlaskConical, cls: "text-warning", label: "Exploring" },
 };
 
@@ -25,10 +25,10 @@ export default function RoadmapPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
-          <Milestone className="h-6 w-6 text-ph-navy" /> Roadmap
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
+          <Milestone className="h-6 w-6 text-accent-on-raised" /> Roadmap
         </h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <p className="mt-1 text-sm text-on-raised-muted">
           Where ddharmon is going — shipped features and what&apos;s next, crossed off as they land. An
           indicative direction, not dated commitments.
         </p>
@@ -37,21 +37,21 @@ export default function RoadmapPage() {
       {/* Legend + at-a-glance counts. */}
       <Card>
         <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 py-4 text-sm">
-          <span className="inline-flex items-center gap-1.5 text-neutral-600">
+          <span className="inline-flex items-center gap-1.5 text-on-raised">
             <CheckCircle2 className="h-4 w-4 text-success" /> Shipped
-            <span className="tabular-nums text-neutral-400">· {shipped}</span>
+            <span className="tabular-nums text-on-raised-muted">· {shipped}</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 text-neutral-600">
-            <CircleDot className="h-4 w-4 text-ph-navy" /> In progress
-            <span className="tabular-nums text-neutral-400">· {inProgress}</span>
+          <span className="inline-flex items-center gap-1.5 text-on-raised">
+            <CircleDot className="h-4 w-4 text-accent-on-raised" /> In progress
+            <span className="tabular-nums text-on-raised-muted">· {inProgress}</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 text-neutral-600">
-            <Circle className="h-4 w-4 text-neutral-300" /> Planned
-            <span className="tabular-nums text-neutral-400">· {planned}</span>
+          <span className="inline-flex items-center gap-1.5 text-on-raised">
+            <Circle className="h-4 w-4 text-on-raised-muted" /> Planned
+            <span className="tabular-nums text-on-raised-muted">· {planned}</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 text-neutral-600">
+          <span className="inline-flex items-center gap-1.5 text-on-raised">
             <FlaskConical className="h-4 w-4 text-warning" /> Exploring
-            <span className="tabular-nums text-neutral-400">· {exploring}</span>
+            <span className="tabular-nums text-on-raised-muted">· {exploring}</span>
           </span>
         </CardContent>
       </Card>
@@ -60,7 +60,7 @@ export default function RoadmapPage() {
         <Card key={group.theme}>
           <CardHeader>
             <CardTitle className="text-sm">{group.theme}</CardTitle>
-            <p className="text-xs text-neutral-400">{group.blurb}</p>
+            <p className="text-xs text-on-raised-muted">{group.blurb}</p>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2.5">
@@ -70,7 +70,7 @@ export default function RoadmapPage() {
                   <li key={item.label} className="flex items-start gap-2.5 text-sm">
                     <s.Icon className={`mt-0.5 h-4 w-4 shrink-0 ${s.cls}`} />
                     <span className="min-w-0">
-                      <span className={item.status === "shipped" ? "text-neutral-500" : "text-neutral-700"}>
+                      <span className={item.status === "shipped" ? "text-on-raised-muted" : "text-on-raised"}>
                         {item.label}
                       </span>
                       {item.status === "in-progress" && (
@@ -86,12 +86,12 @@ export default function RoadmapPage() {
                       {item.preview && (
                         <Link
                           href={item.preview}
-                          className="ml-2 inline-flex items-center gap-1 rounded border border-ph-navy/30 px-1.5 py-0.5 align-middle text-xs font-semibold text-ph-navy hover:bg-ph-navy/5"
+                          className="ml-2 inline-flex items-center gap-1 rounded border border-rule-info px-1.5 py-0.5 align-middle text-xs font-semibold text-accent-on-raised hover:bg-surface-info"
                         >
                           <Eye className="h-3 w-3" /> Preview
                         </Link>
                       )}
-                      {item.note && <span className="mt-0.5 block text-xs text-neutral-400">{item.note}</span>}
+                      {item.note && <span className="mt-0.5 block text-xs text-on-raised-muted">{item.note}</span>}
                     </span>
                   </li>
                 );
@@ -101,8 +101,8 @@ export default function RoadmapPage() {
         </Card>
       ))}
 
-      <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <p className="text-sm text-neutral-600">Want something on here? Open an issue or try a run.</p>
+      <div className="flex items-center justify-between rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
+        <p className="text-sm text-on-raised">Want something on here? Open an issue or try a run.</p>
         <div className="flex gap-2">
           <Button asChild size="sm" variant="outline">
             <Link href="/methods">Methods</Link>

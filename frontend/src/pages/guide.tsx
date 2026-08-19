@@ -28,7 +28,7 @@ function A({ href, children }: { href: string; children: React.ReactNode }) {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-0.5 text-ph-navy underline decoration-ph-navy/30 underline-offset-2 hover:decoration-ph-navy"
+      className="inline-flex items-center gap-0.5 text-link-on-raised underline decoration-rule-info underline-offset-2 hover:decoration-link-on-raised"
     >
       {children}
       <ExternalLink className="h-3 w-3" />
@@ -40,8 +40,8 @@ export default function GuidePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="font-display text-xl font-semibold text-ph-ink">What this platform does</h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <h1 className="font-display text-xl font-semibold text-on-raised">What this platform does</h1>
+        <p className="mt-1 text-sm text-on-raised-muted">
           A guide to harmonizing cohort data dictionaries onto a Common Data Element backbone — what you
           provide, how a run works, and what you get back.
         </p>
@@ -51,27 +51,27 @@ export default function GuidePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <GitCompareArrows className="h-4 w-4 text-ph-navy" /> The problem it solves
+            <GitCompareArrows className="h-4 w-4 text-accent-on-raised" /> The problem it solves
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
+        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
           <p>
             Different studies describe the same measurement in different words — <code>bmi</code> in one
             cohort, <code>body_mass_index</code> in another, <code>Q47_weight_kg</code> in a third — and the same
             survey question gets reworded from study to study. One study asks{" "}
-            <span className="italic text-neutral-700">“In general, would you say your health is…”</span>; another
-            records the same thing as <span className="italic text-neutral-700">“Overall health rating”</span> under
+            <span className="italic text-on-raised">“In general, would you say your health is…”</span>; another
+            records the same thing as <span className="italic text-on-raised">“Overall health rating”</span> under
             a variable named <code>2178</code>. String matching misses these. Before you can pool cohorts for an analysis, those
             variables have to be mapped to a shared standard.
           </p>
           <p>
-            <span className="font-semibold text-ph-ink">ddharmon</span> reads the <em>data dictionaries</em>{" "}
+            <span className="font-semibold text-on-raised">ddharmon</span> reads the <em>data dictionaries</em>{" "}
             (the metadata that describes each variable) from two or more cohorts, groups variables that mean the
             same thing, and assigns each concept to a{" "}
             <A href={REF.cde}>Common Data Element (CDE)</A> — a curated, reusable standard definition (e.g. from
             the NIH CDE Repository, often coded with <A href={REF.loinc}>LOINC</A> or{" "}
             <A href={REF.snomed}>SNOMED CT</A>). For every assignment it also generates a{" "}
-            <span className="font-semibold text-ph-ink">transform spec</span>: the recipe for converting your
+            <span className="font-semibold text-on-raised">transform spec</span>: the recipe for converting your
             raw values into the CDE's expected form.
           </p>
         </CardContent>
@@ -83,7 +83,7 @@ export default function GuidePage() {
           <CardHeader>
             <CardTitle className="text-sm">What you provide</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm text-neutral-600">
+          <CardContent className="space-y-2 text-sm text-on-raised">
             <p>A data dictionary per cohort (CSV/TSV). Map at least one of:</p>
             <ul className="space-y-1">
               <FieldItem name="variable_name">
@@ -103,12 +103,12 @@ export default function GuidePage() {
           <CardHeader>
             <CardTitle className="text-sm">What you get back</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm text-neutral-600">
+          <CardContent className="space-y-2 text-sm text-on-raised">
             <ul className="space-y-1.5">
               <OutputItem>A reviewable queue of concepts with verdicts, confidence, and CDE candidates</OutputItem>
               <OutputItem>Transform specs — value recodes, unit conversions, formulas</OutputItem>
               <OutputItem>
-                <span className="font-semibold text-ph-ink">Python / R notebooks</span> that apply the transforms
+                <span className="font-semibold text-on-raised">Python / R notebooks</span> that apply the transforms
                 in your own environment
               </OutputItem>
               <OutputItem>Exports: expert-review TSV, records JSON, decisions CSV</OutputItem>
@@ -122,10 +122,10 @@ export default function GuidePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Layers className="h-4 w-4 text-ph-navy" /> The workflow
+            <Layers className="h-4 w-4 text-accent-on-raised" /> The workflow
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 text-sm text-neutral-600">
+        <CardContent className="space-y-4 text-sm text-on-raised">
           <Step
             n={1}
             icon={<Upload className="h-4 w-4" />}
@@ -163,22 +163,22 @@ export default function GuidePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Bot className="h-4 w-4 text-ph-navy" /> Where AI is used
+            <Bot className="h-4 w-4 text-accent-on-raised" /> Where AI is used
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
+        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
           <p>ddharmon is AI-assisted end to end — concretely:</p>
           <ul className="space-y-1.5">
             <li>
-              <span className="font-semibold text-neutral-700">Grouping</span> — sentence-embedding models place
+              <span className="font-semibold text-on-raised">Grouping</span> — sentence-embedding models place
               semantically similar variables near each other, then cluster them into concepts.
             </li>
             <li>
-              <span className="font-semibold text-neutral-700">Assignment</span> — a large language model weighs the
+              <span className="font-semibold text-on-raised">Assignment</span> — a large language model weighs the
               retrieved CDE candidates for each concept and decides adopt / refine / novel, with a written rationale.
             </li>
             <li>
-              <span className="font-semibold text-neutral-700">Transform specs</span> — the LLM drafts the value recodes
+              <span className="font-semibold text-on-raised">Transform specs</span> — the LLM drafts the value recodes
               and unit / arithmetic conversions.
             </li>
           </ul>
@@ -186,7 +186,7 @@ export default function GuidePage() {
             Embeddings run locally; the LLM steps are the only ones that call an external model — and the only paid
             part (you'll see a cost estimate before each run). <span className="font-semibold">Preview</span> mode runs
             the grouping with no LLM at all.{" "}
-            <span className="font-semibold text-ph-ink">Every AI output is a suggestion, never a silent commit</span> —
+            <span className="font-semibold text-on-raised">Every AI output is a suggestion, never a silent commit</span> —
             every concept is yours to approve, refine, or reject.
           </p>
         </CardContent>
@@ -197,9 +197,9 @@ export default function GuidePage() {
         <CardHeader>
           <CardTitle className="text-sm">Choosing run options</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 text-sm text-neutral-600">
+        <CardContent className="space-y-4 text-sm text-on-raised">
           <div>
-            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Run mode</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Run mode</div>
             <ul className="space-y-1">
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">batch</Badge>
@@ -216,14 +216,14 @@ export default function GuidePage() {
             </ul>
           </div>
           <div>
-            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">CDE catalog</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">CDE catalog</div>
             <ul className="space-y-1">
               <li>
-                <span className="font-semibold text-ph-ink">NIH-endorsed</span> — a focused, curated set. Fewer,
+                <span className="font-semibold text-on-raised">NIH-endorsed</span> — a focused, curated set. Fewer,
                 higher-signal candidates.
               </li>
               <li>
-                <span className="font-semibold text-ph-ink">Full repo</span> — the complete catalog (~22.7k). Broader
+                <span className="font-semibold text-on-raised">Full repo</span> — the complete catalog (~22.7k). Broader
                 coverage, more candidates to weigh.
               </li>
             </ul>
@@ -235,7 +235,7 @@ export default function GuidePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Sparkles className="h-4 w-4 text-ph-navy" /> How each concept is classified
+            <Sparkles className="h-4 w-4 text-accent-on-raised" /> How each concept is classified
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
@@ -264,12 +264,12 @@ export default function GuidePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <UserCheck className="h-4 w-4 text-ph-navy" /> You're in the loop
+            <UserCheck className="h-4 w-4 text-accent-on-raised" /> You're in the loop
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
+        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
           <p>
-            ddharmon is built for <span className="font-semibold text-ph-ink">expert-in-the-loop (EITL)</span> review —
+            ddharmon is built for <span className="font-semibold text-on-raised">expert-in-the-loop (EITL)</span> review —
             the AI drafts, a human decides. Every concept arrives with a verdict, a{" "}
             <span className="font-semibold">confidence score</span>, its ranked CDE candidates, and the exact transform,
             so you can <span className="font-semibold text-success">approve</span>,{" "}
@@ -277,10 +277,10 @@ export default function GuidePage() {
             <span className="font-semibold text-danger">reject</span> each — in the review queue or the candidate
             workbench. Export the whole queue as a TSV to split review across your team.
           </p>
-          <div className="flex items-start gap-2 rounded-md border border-neutral-200 p-3">
-            <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-ph-navy" />
+          <div className="flex items-start gap-2 rounded-md border border-rule-on-raised p-3">
+            <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-accent-on-raised" />
             <p className="text-xs leading-relaxed">
-              <span className="font-semibold text-neutral-700">Confidence score</span> = the semantic similarity (0–1,
+              <span className="font-semibold text-on-raised">Confidence score</span> = the semantic similarity (0–1,
               cosine) between your variable and the chosen CDE; higher means stronger support for the match. Use it to
               triage — skim the high-confidence adopts, and spend your time on low-confidence, “floored”, and novel
               items, which the queue flags for exactly that reason.
@@ -294,7 +294,7 @@ export default function GuidePage() {
         <CardHeader>
           <CardTitle className="text-sm">Learn more</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm text-neutral-600">
+        <CardContent className="space-y-2 text-sm text-on-raised">
           <ul className="grid gap-1.5 sm:grid-cols-2">
             <li>
               <A href={REF.cde}>NIH CDE Repository</A> — the Common Data Element catalog
@@ -318,13 +318,13 @@ export default function GuidePage() {
               <A href="https://harmonydata.ac.uk">Harmony</A> — related semantic questionnaire-item matching
             </li>
           </ul>
-          <p className="pt-1 text-xs text-neutral-400">
+          <p className="pt-1 text-xs text-on-raised-muted">
             Want the under-the-hood detail? See{" "}
-            <Link href="/methods" className="text-ph-navy underline hover:text-ph-ink">
+            <Link href="/methods" className="text-link-on-raised underline hover:text-on-raised">
               Methods
             </Link>{" "}
             for a stage-by-stage walk of the pipeline. The{" "}
-            <Link href="/related" className="text-ph-navy underline hover:text-ph-ink">
+            <Link href="/related" className="text-link-on-raised underline hover:text-on-raised">
               Related work
             </Link>{" "}
             tab covers the fuller ecosystem of tools and groups.
@@ -332,8 +332,8 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <p className="text-sm text-neutral-600">
+      <div className="flex items-center justify-between rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
+        <p className="text-sm text-on-raised">
           Ready to try it? Start a run, or load a precomputed demo — no API credits needed.
         </p>
         <Button asChild size="sm">
@@ -358,12 +358,12 @@ function VerdictCard({
   body: string;
 }) {
   return (
-    <div className="rounded-lg border border-neutral-200 p-3">
+    <div className="rounded-lg border border-rule-on-raised p-3">
       <Badge variant="outline" className={`gap-1.5 ${VERDICT_STYLES[verdict] ?? ""}`}>
         {icon}
         {title}
       </Badge>
-      <p className="mt-2 text-xs leading-relaxed text-neutral-600">{body}</p>
+      <p className="mt-2 text-xs leading-relaxed text-on-raised">{body}</p>
     </div>
   );
 }
@@ -371,15 +371,15 @@ function VerdictCard({
 function Step({ n, icon, title, body }: { n: number; icon: React.ReactNode; title: string; body: string }) {
   return (
     <div className="flex gap-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ph-navy/10 text-ph-navy">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-info text-accent-on-raised">
         {icon}
       </div>
       <div>
-        <div className="font-semibold text-neutral-700">
-          <span className="mr-1.5 text-neutral-400">{n}.</span>
+        <div className="font-semibold text-on-raised">
+          <span className="mr-1.5 text-on-raised-muted">{n}.</span>
           {title}
         </div>
-        <p className="text-neutral-600">{body}</p>
+        <p className="text-on-raised">{body}</p>
       </div>
     </div>
   );
@@ -388,8 +388,8 @@ function Step({ n, icon, title, body }: { n: number; icon: React.ReactNode; titl
 function FieldItem({ name, required, children }: { name: string; required?: boolean; children: React.ReactNode }) {
   return (
     <li className="flex items-baseline gap-2">
-      <code className="shrink-0 rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-ph-ink">{name}</code>
-      {required && <span className="text-xs font-semibold text-ph-crimson">required</span>}
+      <code className="shrink-0 rounded bg-surface-inset-strong px-1.5 py-0.5 text-xs text-on-raised">{name}</code>
+      {required && <span className="text-xs font-semibold text-status-destructive">required</span>}
       <span>— {children}</span>
     </li>
   );

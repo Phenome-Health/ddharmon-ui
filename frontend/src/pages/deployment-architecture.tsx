@@ -24,7 +24,7 @@ function A({ href, children }: { href: string; children: ReactNode }) {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-0.5 text-ph-navy underline decoration-ph-navy/30 underline-offset-2 hover:decoration-ph-navy"
+      className="inline-flex items-center gap-0.5 text-link-on-raised underline decoration-rule-info underline-offset-2 hover:decoration-link-on-raised"
     >
       {children}
       <ExternalLink className="h-3 w-3" />
@@ -37,18 +37,18 @@ function FlowNode({ icon, label, sub, accent }: { icon: ReactNode; label: string
   return (
     <div
       className={`flex min-w-[7.5rem] flex-col items-center gap-1 rounded-md border px-3 py-2 text-center ${
-        accent ? "border-ph-navy/40 bg-ph-navy/5" : "border-neutral-200 bg-card"
+        accent ? "border-rule-info bg-surface-info" : "border-rule-on-raised bg-card"
       }`}
     >
-      <span className={accent ? "text-ph-navy" : "text-neutral-500"}>{icon}</span>
-      <span className="text-xs font-semibold leading-tight text-ph-ink">{label}</span>
-      {sub && <span className="text-xs leading-tight text-neutral-400">{sub}</span>}
+      <span className={accent ? "text-accent-on-raised" : "text-on-raised-muted"}>{icon}</span>
+      <span className="text-xs font-semibold leading-tight text-on-raised">{label}</span>
+      {sub && <span className="text-xs leading-tight text-on-raised-muted">{sub}</span>}
     </div>
   );
 }
 
 function Arrow() {
-  return <ArrowRight className="h-4 w-4 shrink-0 text-neutral-300" aria-hidden />;
+  return <ArrowRight className="h-4 w-4 shrink-0 text-on-raised-faint" aria-hidden />;
 }
 
 /** A service section: what / why / where config lives / failure mode. */
@@ -57,11 +57,11 @@ function ServiceCard({ icon, title, children }: { icon: ReactNode; title: string
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
-          <span className="text-ph-navy">{icon}</span>
+          <span className="text-accent-on-raised">{icon}</span>
           {title}
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-1.5 text-sm leading-relaxed text-neutral-600">{children}</CardContent>
+      <CardContent className="space-y-1.5 text-sm leading-relaxed text-on-raised">{children}</CardContent>
     </Card>
   );
 }
@@ -72,7 +72,7 @@ function Fails({ children }: { children: ReactNode }) {
     <p className="flex items-start gap-1.5 border-t border-border pt-1.5 text-xs text-muted-foreground">
       <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
       <span>
-        <span className="font-semibold text-neutral-600">Fails:</span> {children}
+        <span className="font-semibold text-on-raised">Fails:</span> {children}
       </span>
     </p>
   );
@@ -82,10 +82,10 @@ export default function DeploymentArchitecturePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
-          <Network className="h-6 w-6 text-ph-navy" /> Deployment architecture
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
+          <Network className="h-6 w-6 text-accent-on-raised" /> Deployment architecture
         </h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <p className="mt-1 text-sm text-on-raised-muted">
           How the pieces of the live app connect — the request path, the two channels, and each third-party
           service (what it does, why it's here, and how it fails). The public overview; the full narrative also
           lives in the repo as{" "}
@@ -99,17 +99,17 @@ export default function DeploymentArchitecturePage() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Server className="h-4 w-4 text-ph-navy" /> Two repos, one app
+            <Server className="h-4 w-4 text-accent-on-raised" /> Two repos, one app
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm leading-relaxed text-neutral-600">
+        <CardContent className="space-y-2 text-sm leading-relaxed text-on-raised">
           <p>
-            <span className="font-semibold text-neutral-700">ddharmon</span> is the core harmonization library
-            (published to PyPI). <span className="font-semibold text-neutral-700">ddharmon-ui</span> is the web
+            <span className="font-semibold text-on-raised">ddharmon</span> is the core harmonization library
+            (published to PyPI). <span className="font-semibold text-on-raised">ddharmon-ui</span> is the web
             app — a FastAPI backend + a built React SPA — that runs it, depending on the core through a version
             pin. The app runs as a single small VM: nginx terminates TLS and reverse-proxies{" "}
-            <span className="font-semibold text-neutral-700">one</span> uvicorn worker serving both the JSON API
-            and the SPA. LLM calls are <span className="font-semibold text-neutral-700">BYOK</span> — each user
+            <span className="font-semibold text-on-raised">one</span> uvicorn worker serving both the JSON API
+            and the SPA. LLM calls are <span className="font-semibold text-on-raised">BYOK</span> — each user
             brings their own provider key at runtime; the server holds none.
           </p>
         </CardContent>
@@ -132,8 +132,8 @@ export default function DeploymentArchitecturePage() {
                 <Arrow />
                 <FlowNode icon={<Server className="h-4 w-4" />} label="FastAPI + SPA" sub="uvicorn · 1 worker" accent />
               </div>
-              <div className="flex flex-wrap items-stretch gap-2 border-l-2 border-dashed border-neutral-200 pl-3">
-                <span className="self-center text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">the app talks to →</span>
+              <div className="flex flex-wrap items-stretch gap-2 border-l-2 border-dashed border-rule-on-raised pl-3">
+                <span className="self-center text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">the app talks to →</span>
                 <FlowNode icon={<ShieldCheck className="h-4 w-4" />} label="Clerk" sub="verify JWT · JWKS" />
                 <FlowNode icon={<Bot className="h-4 w-4" />} label="LLM providers" sub="BYOK · per request" />
                 <FlowNode icon={<Database className="h-4 w-4" />} label="SQLite jobs.db" sub="durable history" />
@@ -141,9 +141,9 @@ export default function DeploymentArchitecturePage() {
               </div>
             </div>
           </div>
-          <p className="text-xs leading-relaxed text-neutral-500">
+          <p className="text-xs leading-relaxed text-on-raised-muted">
             Sign-in happens in the browser via Clerk's JS SDK; the backend is stateless and only{" "}
-            <span className="font-semibold text-neutral-600">verifies</span> the resulting JWT against Clerk's
+            <span className="font-semibold text-on-raised">verifies</span> the resulting JWT against Clerk's
             JWKS. Progress streams over Server-Sent Events (nginx runs <code className="rounded bg-muted px-1 font-mono text-xs">proxy_buffering off</code> on the API path). A
             LiteLLM proxy gateway is planned to normalize multi-provider routing + BYOK virtual keys.
           </p>
@@ -152,10 +152,10 @@ export default function DeploymentArchitecturePage() {
 
       {/* Channels. */}
       <div>
-        <h2 className="mb-2 flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
-          <Table2 className="h-5 w-5 text-ph-navy" /> Channels
+        <h2 className="mb-2 flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
+          <Table2 className="h-5 w-5 text-accent-on-raised" /> Channels
         </h2>
-        <p className="mb-3 text-sm text-neutral-500">
+        <p className="mb-3 text-sm text-on-raised-muted">
           Two fully isolated instances on the one VM (own systemd unit, port, vhost, and <code className="rounded bg-muted px-1 font-mono text-xs">.env</code>). A dev deploy
           never touches prod; dev is the pre-release gate. Promotion is one-directional: validate on dev →
           publish core to PyPI → repin + deploy prod.
@@ -167,9 +167,9 @@ export default function DeploymentArchitecturePage() {
                 Prod <Badge variant="neutral" className="text-xs">PyPI core</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-1 text-xs text-neutral-600">
+            <CardContent className="space-y-1 text-xs text-on-raised">
               <p>The real tool. Core pinned to the stable PyPI release.</p>
-              <p className="text-neutral-500">Clerk SSO + guest demo mode.</p>
+              <p className="text-on-raised-muted">Clerk SSO + guest demo mode.</p>
             </CardContent>
           </Card>
           <Card>
@@ -178,9 +178,9 @@ export default function DeploymentArchitecturePage() {
                 Dev <Badge variant="neutral" className="text-xs">git-ref core</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-1 text-xs text-neutral-600">
+            <CardContent className="space-y-1 text-xs text-on-raised">
               <p>Staging. Core pinned to an unreleased git ref for pre-PyPI validation.</p>
-              <p className="text-neutral-500">Clerk SSO, org-domain gated (no guest).</p>
+              <p className="text-on-raised-muted">Clerk SSO, org-domain gated (no guest).</p>
             </CardContent>
           </Card>
           <Card>
@@ -189,9 +189,9 @@ export default function DeploymentArchitecturePage() {
                 Static preview <Badge variant="neutral" className="text-xs">no backend</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-1 text-xs text-neutral-600">
+            <CardContent className="space-y-1 text-xs text-on-raised">
               <p>Client-side replay of committed demo fixtures (Netlify).</p>
-              <p className="text-neutral-500">No server, no keys — marketing/demo.</p>
+              <p className="text-on-raised-muted">No server, no keys — marketing/demo.</p>
             </CardContent>
           </Card>
         </div>
@@ -199,11 +199,11 @@ export default function DeploymentArchitecturePage() {
 
       {/* Services. */}
       <div>
-        <h2 className="mb-3 font-display text-xl font-semibold text-ph-ink">Services</h2>
+        <h2 className="mb-3 font-display text-xl font-semibold text-on-raised">Services</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <ServiceCard icon={<Cloud className="h-4 w-4" />} title="Compute — cloud VM">
             <p>A single Linux VM (AWS Lightsail) hosts both channels.</p>
-            <p className="text-neutral-500">
+            <p className="text-on-raised-muted">
               Chosen for simplicity: a low-traffic tool that must run one worker (the in-memory job registry +
               SSE rule out multi-worker / autoscale).
             </p>
@@ -217,13 +217,13 @@ export default function DeploymentArchitecturePage() {
 
           <ServiceCard icon={<Server className="h-4 w-4" />} title="FastAPI app (uvicorn)">
             <p><code className="rounded bg-muted px-1 font-mono text-xs">backend.app:app</code> — the JSON API + static SPA. One worker only (more splits the in-memory store + breaks SSE).</p>
-            <p className="text-neutral-500">Config: a per-channel <code className="rounded bg-muted px-1 font-mono text-xs">.env</code> with Clerk vars and no LLM key (BYOK).</p>
+            <p className="text-on-raised-muted">Config: a per-channel <code className="rounded bg-muted px-1 font-mono text-xs">.env</code> with Clerk vars and no LLM key (BYOK).</p>
             <Fails>worker dies → respawned; any in-flight run is flipped to error on reboot, uploads kept for a one-click re-run.</Fails>
           </ServiceCard>
 
           <ServiceCard icon={<ShieldCheck className="h-4 w-4" />} title="Clerk — authentication">
             <p>SSO (session JWT) + a guest demo mode (prod). The backend verifies the Bearer JWT against Clerk's JWKS (pyjwt); Google sign-in is a Clerk social connection.</p>
-            <p className="text-neutral-500">Config: the publishable key is baked into the frontend build; the issuer + optional org-domain guard live in the backend <code className="rounded bg-muted px-1 font-mono text-xs">.env</code>.</p>
+            <p className="text-on-raised-muted">Config: the publishable key is baked into the frontend build; the issuer + optional org-domain guard live in the backend <code className="rounded bg-muted px-1 font-mono text-xs">.env</code>.</p>
             <Fails>a build missing the publishable key turns the client gate off (no token) while the backend stays gated → every API call 401s and the model catalog comes back empty.</Fails>
           </ServiceCard>
 
@@ -239,12 +239,12 @@ export default function DeploymentArchitecturePage() {
 
           <ServiceCard icon={<Database className="h-4 w-4" />} title="Persistence & assets">
             <p>
-              <span className="font-semibold text-neutral-700">Run history</span> — a SQLite <code className="rounded bg-muted px-1 font-mono text-xs">jobs.db</code>; signed-in
+              <span className="font-semibold text-on-raised">Run history</span> — a SQLite <code className="rounded bg-muted px-1 font-mono text-xs">jobs.db</code>; signed-in
               users' completed runs are written through and survive a pull + restart (only a fresh clone or
               deleting the DB wipes them). A restart only interrupts in-flight runs.
             </p>
             <p>
-              <span className="font-semibold text-neutral-700">CDE catalog</span> — a large TSV kept on the box
+              <span className="font-semibold text-on-raised">CDE catalog</span> — a large TSV kept on the box
               (gitignored); a run with a non-empty CDE set needs it present. Demos re-seed on boot; guest runs
               are ephemeral.
             </p>
@@ -252,8 +252,8 @@ export default function DeploymentArchitecturePage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <p className="text-sm text-neutral-600">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
+        <p className="text-sm text-on-raised">
           The full narrative (with the mermaid diagram source) lives in the ddharmon-ui repo.
         </p>
         <A href={`${PH.ddharmonUi}/blob/main/docs/deployment_architecture.md`}>

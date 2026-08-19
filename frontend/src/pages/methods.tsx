@@ -14,7 +14,7 @@ function A({ href, children }: { href: string; children: React.ReactNode }) {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-0.5 text-ph-navy underline decoration-ph-navy/30 underline-offset-2 hover:decoration-ph-navy"
+      className="inline-flex items-center gap-0.5 text-link-on-raised underline decoration-rule-info underline-offset-2 hover:decoration-link-on-raised"
     >
       {children}
       <ExternalLink className="h-3 w-3" />
@@ -24,14 +24,14 @@ function A({ href, children }: { href: string; children: React.ReactNode }) {
 
 const KIND_LABEL: Record<StageKind, string> = { local: "Local · free", llm: "AI step", human: "Human" };
 const KIND_STYLE: Record<StageKind, string> = {
-  local: "bg-neutral-100 text-neutral-600 border-neutral-300",
-  llm: "bg-ph-navy/10 text-ph-navy border-ph-navy/30",
+  local: "bg-surface-inset-strong text-on-raised border-rule-control-on-raised",
+  llm: "bg-surface-info text-accent-on-raised border-rule-info",
   human: "bg-success-bg text-success border-success/30",
 };
 /** Diagram-chip styling per kind (theme-aware tokens only). */
 const CHIP_STYLE: Record<StageKind, string> = {
-  local: "border-border bg-neutral-50 text-neutral-700 hover:border-neutral-400",
-  llm: "border-ph-navy/30 bg-ph-navy/5 text-ph-navy hover:border-ph-navy/60",
+  local: "border-border bg-surface-inset text-on-raised hover:border-on-raised-faint",
+  llm: "border-rule-info bg-surface-info text-accent-on-raised hover:border-rule-info",
   human: "border-success/40 bg-success-bg text-success hover:border-success",
 };
 
@@ -64,7 +64,7 @@ function StageFlow() {
                   </span>
                 </a>
                 {i < PIPELINE_STAGES.length - 1 && (
-                  <ChevronRight className="h-4 w-4 shrink-0 text-neutral-300" aria-hidden />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-on-raised-faint" aria-hidden />
                 )}
               </li>
             );
@@ -73,10 +73,10 @@ function StageFlow() {
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm border border-border bg-neutral-50" /> Local · free
+          <span className="h-2.5 w-2.5 rounded-sm border border-border bg-surface-inset" /> Local · free
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm border border-ph-navy/30 bg-ph-navy/10" /> AI step (paid)
+          <span className="h-2.5 w-2.5 rounded-sm border border-rule-info bg-surface-info" /> AI step (paid)
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-sm border border-success/40 bg-success-bg" /> Human
@@ -94,7 +94,7 @@ function BulletList({ items }: { items: string[] }) {
     <ul className="space-y-1">
       {items.map((it) => (
         <li key={it} className="flex items-start gap-1.5">
-          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-neutral-400" />
+          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-on-raised-faint" />
           <span>{it}</span>
         </li>
       ))}
@@ -108,10 +108,10 @@ function StageSection({ stage, n }: { stage: PipelineStage; n: number }) {
     <Card id={`stage-${stage.id}`} className="scroll-mt-6">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ph-navy/10 text-xs font-semibold text-ph-navy">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-info text-xs font-semibold text-accent-on-raised">
             {n}
           </span>
-          <Icon className="h-4 w-4 text-ph-navy" />
+          <Icon className="h-4 w-4 text-accent-on-raised" />
           <CardTitle className="text-sm">{stage.name}</CardTitle>
           <div className="ml-auto flex items-center gap-2">
             <KindBadge kind={stage.kind} />
@@ -125,26 +125,26 @@ function StageSection({ stage, n }: { stage: PipelineStage; n: number }) {
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 text-sm text-neutral-600">
+      <CardContent className="space-y-4 text-sm text-on-raised">
         <p className="leading-relaxed">{stage.whatItDoes}</p>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Inputs</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Inputs</div>
             <BulletList items={stage.inputs} />
           </div>
           <div>
-            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Outputs</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Outputs</div>
             <BulletList items={stage.outputs} />
           </div>
         </div>
         <div>
-          <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Key decisions</div>
+          <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Key decisions</div>
           <BulletList items={stage.keyDecisions} />
         </div>
         {stage.link && (
           <Link
             href={stage.link.href}
-            className="inline-flex items-center gap-1 text-sm font-semibold text-ph-navy hover:text-ph-ink"
+            className="inline-flex items-center gap-1 text-sm font-semibold text-accent-on-raised hover:text-on-raised"
           >
             {stage.link.label}
             <ArrowRight className="h-3.5 w-3.5" />
@@ -159,8 +159,8 @@ function StageSection({ stage, n }: { stage: PipelineStage; n: number }) {
 function Term({ name, children }: { name: string; children: React.ReactNode }) {
   return (
     <div className="sm:flex sm:gap-3">
-      <dt className="shrink-0 font-semibold text-neutral-700 sm:w-44">{name}</dt>
-      <dd className="text-neutral-600">{children}</dd>
+      <dt className="shrink-0 font-semibold text-on-raised sm:w-44">{name}</dt>
+      <dd className="text-on-raised">{children}</dd>
     </div>
   );
 }
@@ -169,11 +169,11 @@ export default function MethodsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">Methods</h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">Methods</h1>
+        <p className="mt-1 text-sm text-on-raised-muted">
           A stage-by-stage walk through the harmonization pipeline — from the data dictionaries you upload
           to the review workbench. A deep-dive complement to the{" "}
-          <Link href="/guide" className="text-ph-navy underline hover:text-ph-ink">
+          <Link href="/guide" className="text-link-on-raised underline hover:text-on-raised">
             Guide
           </Link>
           .
@@ -186,11 +186,11 @@ export default function MethodsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <BookOpen className="h-4 w-4 text-ph-navy" /> Before you dive in: the key terms
+            <BookOpen className="h-4 w-4 text-accent-on-raised" /> Before you dive in: the key terms
           </CardTitle>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-on-raised-muted">
             New here? The{" "}
-            <Link href="/guide" className="text-ph-navy underline hover:text-ph-ink">
+            <Link href="/guide" className="text-link-on-raised underline hover:text-on-raised">
               Guide
             </Link>{" "}
             covers what the platform does and how to use it. This page is the under-the-hood detail — here's the
@@ -230,14 +230,14 @@ export default function MethodsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <SplitIcon className="h-4 w-4 text-ph-navy" /> Assignment-first, by design
+            <SplitIcon className="h-4 w-4 text-accent-on-raised" /> Assignment-first, by design
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
+        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
           <p>
-            ddharmon treats a <span className="font-semibold text-ph-ink">covered</span> concept as{" "}
-            <span className="font-semibold text-ph-ink">assignment to an existing Common Data Element (CDE)</span>,
-            and routes only the <span className="font-semibold text-ph-ink">uncovered</span> tail to generation and
+            ddharmon treats a <span className="font-semibold text-on-raised">covered</span> concept as{" "}
+            <span className="font-semibold text-on-raised">assignment to an existing Common Data Element (CDE)</span>,
+            and routes only the <span className="font-semibold text-on-raised">uncovered</span> tail to generation and
             clustering. It leads with assignment to the given CDE backbone rather than making clustering the
             primary engine — the division of labor the research harness settled empirically against external
             benchmarks.
@@ -245,23 +245,23 @@ export default function MethodsPage() {
           <p>Three findings shaped the design:</p>
           <ul className="space-y-1.5">
             <li>
-              <span className="font-semibold text-neutral-700">Two buckets, scored separately.</span>{" "}
+              <span className="font-semibold text-on-raised">Two buckets, scored separately.</span>{" "}
               Harmonization splits into a <em>head</em> (concepts that already have a CDE) and a diffuse{" "}
               <em>tail</em> (no matching CDE). Blending them hides the truth, so the two are measured
               independently — assign the head, cluster/generate the tail.
             </li>
             <li>
-              <span className="font-semibold text-neutral-700">One fused assignment call.</span> Ranking a wide
+              <span className="font-semibold text-on-raised">One fused assignment call.</span> Ranking a wide
               hybrid-retrieved candidate pool <em>and</em> committing a verdict in a single call beats a
               two-call rerank-then-verdict design on both accuracy and cost.
             </li>
             <li>
-              <span className="font-semibold text-neutral-700">A human gate for the boundary.</span> The
+              <span className="font-semibold text-on-raised">A human gate for the boundary.</span> The
               adopt/refine/novel cutoff is deliberately strict; final calibration is deferred to expert (EITL)
               review of the routed output.
             </li>
           </ul>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-on-raised-muted">
             Grounded in the canonical{" "}
             <A href={`${PH.ddharmon}/blob/main/docs/methods.md`}>ddharmon methods documentation</A>.
           </p>
@@ -272,9 +272,9 @@ export default function MethodsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Layers className="h-4 w-4 text-ph-navy" /> The pipeline at a glance
+            <Layers className="h-4 w-4 text-accent-on-raised" /> The pipeline at a glance
           </CardTitle>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-on-raised-muted">
             Each box is a stage below — click to jump. The flow and the sections both render from one stage
             manifest, so they never drift.
           </p>
@@ -293,10 +293,10 @@ export default function MethodsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <ShieldCheck className="h-4 w-4 text-ph-navy" /> How it's evaluated
+            <ShieldCheck className="h-4 w-4 text-accent-on-raised" /> How it's evaluated
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
+        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
           <p>
             The architecture was settled against external ground-truth benchmarks (CDEMapper, PhenX, AI-READI,
             ATHLOS) — portable and reproducible — plus a locked in-domain human (EITL) gate. CDEMapper is the
@@ -305,15 +305,15 @@ export default function MethodsPage() {
           </p>
           <Link
             href="/benchmarks"
-            className="inline-flex items-center gap-1 text-sm font-semibold text-ph-navy hover:text-ph-ink"
+            className="inline-flex items-center gap-1 text-sm font-semibold text-accent-on-raised hover:text-on-raised"
           >
             See the benchmark results <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <p className="text-sm text-neutral-600">
+      <div className="flex items-center justify-between rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
+        <p className="text-sm text-on-raised">
           See the pipeline in action — load a precomputed demo, or start your own run.
         </p>
         <div className="flex gap-2">

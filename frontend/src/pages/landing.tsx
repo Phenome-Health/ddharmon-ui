@@ -77,7 +77,7 @@ function ConvergenceViz() {
             <span className="truncate text-on-page-muted">{s.v}</span>
           </div>
           <div className="mt-0.5 text-xs font-semibold leading-snug text-on-page">{s.q}</div>
-          <div className="mt-1 truncate font-mono text-xs text-ph-teal">{s.r}</div>
+          <div className="mt-1 truncate font-mono text-xs text-accent-2-on-chrome">{s.r}</div>
         </div>
       ))}
 
@@ -93,12 +93,12 @@ function ConvergenceViz() {
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           {animate && (
             <span
-              className="ddh-anchor-pulse absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ph-crimson"
+              className="ddh-anchor-pulse absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-status-destructive"
               style={{ animation: "ddh-anchor-pulse 2.4s ease-out 1.2s 2" }}
             />
           )}
           <div
-            className="relative flex h-[74px] w-[74px] flex-col items-center justify-center rounded-full border-2 border-ph-crimson shadow-lg"
+            className="relative flex h-[74px] w-[74px] flex-col items-center justify-center rounded-full border-2 border-status-destructive shadow-lg"
             style={{
               background: "var(--surface-chrome)",
               opacity: shown ? 1 : 0,
@@ -106,7 +106,7 @@ function ConvergenceViz() {
               transition: animate ? "opacity .5s ease 1s, transform .5s cubic-bezier(.34,1.56,.64,1) 1s" : "none",
             }}
           >
-            <span className="font-mono text-xs font-semibold tracking-wide text-ph-teal">CDE</span>
+            <span className="font-mono text-xs font-semibold tracking-wide text-accent-2-on-chrome">CDE</span>
             <span className="text-xs font-semibold leading-none text-on-page">Smoking</span>
             <span className="text-xs leading-none text-on-page-muted">status</span>
           </div>
@@ -151,10 +151,10 @@ export default function LandingPage() {
     <div className="flex flex-col gap-[clamp(1rem,8vh_-_51px,2.25rem)]">
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
       <section
-        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-6 lg:px-14 lg:py-[clamp(1rem,16vh_-_117px,3.5rem)]"
+        className="relative overflow-hidden rounded-xl border border-rule-on-chrome px-7 py-6 lg:px-14 lg:py-[clamp(1rem,16vh_-_117px,3.5rem)]"
         style={{
           background:
-            "linear-gradient(135deg, var(--surface-chrome) 0%, color-mix(in srgb, var(--surface-chrome) 86%, var(--surface-raised)) 58%, var(--surface-chrome) 100%)",
+            "linear-gradient(135deg, var(--surface-chrome) 0%, color-mix(in srgb, var(--surface-chrome) 94%, var(--surface-raised)) 58%, var(--surface-chrome) 100%)",
         }}
       >
         {/* ambient glow behind the ring */}
@@ -165,13 +165,13 @@ export default function LandingPage() {
         />
         <div className="relative grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <div>
-            <p className="font-mono text-xs font-semibold uppercase tracking-eyebrow text-ph-teal">
+            <p className="font-mono text-xs font-semibold uppercase tracking-eyebrow text-accent-2-on-chrome">
               Cross-cohort data harmonization
             </p>
             <h1 className="mt-2 font-display text-display font-semibold leading-[1.03] tracking-tight text-on-page">
               Different words.
               <br />
-              <span className="text-ph-teal">One meaning.</span>
+              <span className="text-accent-2-on-chrome">One meaning.</span>
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-[1.5] text-on-page-muted">
               <span className="font-semibold text-on-page">ddharmon</span> reads each variable's metadata (question text, 
@@ -181,7 +181,7 @@ export default function LandingPage() {
               tooling draft every match; you make the final calls.
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <Button asChild size="lg" className="bg-ph-crimson text-on-page hover:bg-ph-crimson-dark">
+              <Button asChild size="lg" className="bg-status-destructive text-on-destructive hover:bg-status-destructive-hover">
                 <Link href="/new">
                   Start a run <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Link>
@@ -217,7 +217,7 @@ export default function LandingPage() {
             <p className="mt-3 text-center font-mono text-xs leading-relaxed text-on-page-muted">
               3 cohorts · different wording, different response codes
               <br />
-              → 1 CDE · Smoking status <span className="text-ph-teal/80">(Never · Former · Current)</span>
+              → 1 CDE · Smoking status <span className="text-accent-2-on-chrome">(Never · Former · Current)</span>
             </p>
           </div>
         </div>
@@ -226,20 +226,20 @@ export default function LandingPage() {
       {/* ── How it works (a real 3-step sequence) ────────────────────────────── */}
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="font-display text-xl font-semibold text-ph-ink">How a run works</h2>
-          <Link href="/guide" className="text-sm text-ph-navy underline underline-offset-2 hover:text-ph-ink">
+          <h2 className="font-display text-xl font-semibold text-on-raised">How a run works</h2>
+          <Link href="/guide" className="text-sm text-link-on-raised underline underline-offset-2 hover:text-on-raised">
             Full walkthrough →
           </Link>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s) => (
-            <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-[clamp(1rem,3.2vh_-_11px,1.5rem)]">
+            <div key={s.n} className="rounded-lg border border-rule-on-raised bg-surface-raised p-[clamp(1rem,3.2vh_-_11px,1.5rem)]">
               <div className="flex items-center gap-2.5">
-                <span className="font-mono text-xs font-semibold text-ph-crimson">{s.n}</span>
-                <s.icon className="h-4 w-4 text-ph-navy" />
+                <span className="font-mono text-xs font-semibold text-status-destructive">{s.n}</span>
+                <s.icon className="h-4 w-4 text-accent-on-raised" />
               </div>
-              <h3 className="mt-2 font-display text-sm font-semibold text-ph-ink">{s.title}</h3>
-              <p className="mt-1.5 text-sm leading-snug text-neutral-600">{s.body}</p>
+              <h3 className="mt-2 font-display text-sm font-semibold text-on-raised">{s.title}</h3>
+              <p className="mt-1.5 text-sm leading-snug text-on-raised">{s.body}</p>
             </div>
           ))}
         </div>
