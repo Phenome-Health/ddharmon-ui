@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Plus, ListChecks, BookOpen, Workflow, Gauge, Lightbulb, Sparkles, Boxes, Building2, Milestone, Network, Github, Moon, Sun } from "lucide-react";
+import { Plus, ListChecks, BookOpen, Workflow, Gauge, Lightbulb, Sparkles, Boxes, Building2, Milestone, Network, Github } from "lucide-react";
 import { UserButton } from "@clerk/react";
 import { cn } from "@/lib/utils";
-import { useTheme } from "@/hooks/use-theme";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
@@ -36,7 +35,6 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { theme, toggle } = useTheme();
   const { isGuest, exitGuest, email } = useAuthState();
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-neutral-0">
@@ -67,15 +65,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           )}
           <ActiveRunsIndicator />
-          <button
-            type="button"
-            onClick={toggle}
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            aria-label="Toggle theme"
-            className="flex h-8 w-8 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-ph-navy"
-          >
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
           {/* Account area — only when the SSO gate is active. Guests get a "Sign in" affordance; signed-in
               users get Clerk's UserButton (which must live inside the ClerkProvider AuthProvider mounts). */}
           {AUTH_ENABLED && (

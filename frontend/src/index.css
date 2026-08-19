@@ -3,6 +3,35 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
+/* ══ Display face — Byrl (D-07) ═══════════════════════════════════════════════
+   Byrl is the 2026 identity's display face. The licensed web files are still
+   owed, so these rules point at `public/fonts/` and 404 until the files land;
+   the stack in `--font-display` falls through to Space Grotesk in the meantime
+   and picks Byrl up the moment the files are dropped in — one commit, no visual
+   rework, nothing else to change.
+
+   The mockup hot-links the face from the marketing site's own CDN. That is
+   deliberately NOT done here (T-08-22): serving a licensed face from a
+   third-party host is a
+   licensing and supply-chain question, not a technical one. `local()` is also
+   deliberately absent — a locally-installed copy would make the rendering (and
+   therefore the visual baseline) differ per machine.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@font-face {
+  font-family: 'Byrl';
+  src: url('/fonts/byrl-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Byrl';
+  src: url('/fonts/byrl-semibold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ══ 2026 Phenome Health identity — RAW layer ══════════════════════════════════
    Sampled from phenomehealth.org computed styles. The S3 brand guide (Proxima
    Nova on a white ground) is STALE — do not build from it.
@@ -11,8 +40,8 @@
    cards" — NOT a uniformly dark UI. Getting that backwards produces a dark-mode
    app rather than this identity.
 
-   Single theme (D-05): there is no `.dark` block, no `@custom-variant dark` and
-   no OS-preference reader anywhere in the tree. Only `@theme inline` below reads
+   Single theme (D-05): the second-theme override block, its Tailwind variant
+   declaration and both OS-preference readers are gone from the tree. Only `@theme inline` below reads
    these names; components read only the semantic names (D-06), which is what
    makes a retheme a one-file change.
 
@@ -192,8 +221,9 @@
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, "SF Mono", Consolas, monospace;
-  /* Display face — landing hero only; geometric-modern, echoes the brand's Proxima Nova. */
-  --font-display: 'Space Grotesk', 'Inter', -apple-system, sans-serif;
+  /* Display face — Byrl first (D-07), Space Grotesk as the standing fallback until
+     the licensed files land. Geometric-modern either way. */
+  --font-display: 'Byrl', 'Space Grotesk', 'Inter', sans-serif;
 
   /* Font sizes — Phenome §3.2 type scale */
   --font-size-xs: 12px;
