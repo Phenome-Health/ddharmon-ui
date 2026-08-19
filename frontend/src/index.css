@@ -451,40 +451,21 @@
   --color-on-info: var(--on-info);
   --color-rule-info: var(--rule-info);
 
-  /* ── Legacy aliases — the 44 files Part 2 migrates still read these ─────────
-     Every one is now sourced from a ROLE, so a rebrand reaches them even before
-     their call sites are migrated. They are aliases, not a second tier: nothing
-     below introduces a value.
+  /* The `ph-*` and `neutral-*` alias keys that stood here are GONE — 10 `ph-*`
+     keys and 10 `neutral-*` ramp steps, and with them the 1,198 call sites that
+     read them. They existed only so a rebrand could reach the unmigrated pages;
+     with every page on a role they are dead weight, and a dead alias is an
+     invitation to reintroduce the slot it backed. Removed only after grepping
+     every read in the repo — the same discipline the `--chart-*` -> `--series-*`
+     rename should have had, which left 11 reads broken in Part 1.
 
-     `ph-navy` is the ACTION register — the previous brand's #113682 navy is
-     retired and its 260 call sites render the identity accent. The key keeps its
-     name only because renaming it would touch every one of them; the name is a
-     lie and that is why the slot gate bans it. */
-  --color-ph-navy: var(--accent);
-  --color-ph-navy-dark: color-mix(in srgb, var(--accent) 82%, var(--on-raised));
-  --color-ph-navy-darker: color-mix(in srgb, var(--accent) 64%, var(--on-raised));
-  --color-ph-crimson: var(--status-destructive);
-  --color-ph-crimson-dark: color-mix(in srgb, var(--status-destructive) 84%, var(--on-raised));
-  --color-ph-crimson-darker: color-mix(in srgb, var(--status-destructive) 68%, var(--on-raised));
-  --color-ph-teal: var(--accent-2-on-chrome);
-  --color-ph-teal-ink: var(--accent-2-on-raised);
-  --color-ph-green: var(--status-ok);
-  --color-ph-ink: var(--on-raised);
-
-  /* The paper→ink ramp. Each step is an OPAQUE role-over-role mix; opaque matters
-     because a step may be used as a background over the chrome, where an alpha
-     wash would tint navy instead of cream. */
-  --color-neutral-0: var(--surface-raised);
-  --color-neutral-50: var(--surface-inset);
-  --color-neutral-100: color-mix(in srgb, var(--on-raised) 6%, var(--surface-raised));
-  --color-neutral-200: color-mix(in srgb, var(--on-raised) 12%, var(--surface-raised));
-  --color-neutral-300: color-mix(in srgb, var(--on-raised) 22%, var(--surface-raised));
-  --color-neutral-400: color-mix(in srgb, var(--on-raised) 65%, var(--surface-raised));
-  --color-neutral-500: color-mix(in srgb, var(--on-raised) 70%, var(--surface-raised));
-  --color-neutral-600: color-mix(in srgb, var(--on-raised) 78%, var(--surface-raised));
-  --color-neutral-700: color-mix(in srgb, var(--on-raised) 86%, var(--surface-raised));
-  --color-neutral-900: var(--on-raised);
-
+     What is deliberately KEPT: `success` / `warning` / `danger` / `info` (and
+     their `-bg` / `-border` forms) on ~200 call sites, plus the shadcn semantic
+     names the 54 vendored components read. Neither is the defect this ban is
+     about: `ph-navy` named a navy that is now blue, whereas `success` describes
+     `--status-ok` accurately, and both are already sourced FROM roles, so a
+     rebrand reaches them — which the drill's leak scan confirms at 0. They are a
+     naming-consistency item, logged rather than swept in late. */
   --color-success: var(--status-ok);
   --color-success-bg: var(--surface-ok);
   --color-success-border: var(--rule-ok);
@@ -648,7 +629,7 @@
      popups, date pickers, spinners, autofill fills, validation bubbles,
      scrollbars — is drawn light-on-cream rather than dark-on-cream. Matching on
      the surface utilities themselves (`~=` matches a whole class token, so
-     `hover:bg-neutral-50` deliberately does NOT match) keeps this working for
+     `hover:bg-surface-inset` deliberately does NOT match) keeps this working for
      any component that paints a paper surface, without a marker class every
      call site would have to remember to add. Native controls are listed
      directly because the app has no ground-level form control today, and a
@@ -663,9 +644,6 @@
   [class~="bg-surface-track"],
   [class~="bg-card"],
   [class~="bg-popover"],
-  [class~="bg-neutral-0"],
-  [class~="bg-neutral-50"],
-  [class~="bg-neutral-100"],
   [class~="bg-secondary"],
   [class~="bg-muted"],
   [class~="bg-sidebar"],

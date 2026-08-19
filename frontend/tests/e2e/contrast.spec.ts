@@ -134,7 +134,7 @@ test("the color-scheme split holds: dark root, light raised surfaces", async ({ 
   // autofill fills, validation bubbles) renders dark-on-cream. `/new` is the route with controls.
   const paperScheme = await page.evaluate(() => {
     const el = document.querySelector<HTMLElement>(
-      ".bg-surface-raised, .bg-surface-inset, .bg-card, .bg-neutral-0, .bg-neutral-50",
+      ".bg-surface-raised, .bg-surface-inset, .bg-surface-inset-strong, .bg-card",
     );
     return el ? getComputedStyle(el).colorScheme : null;
   });
