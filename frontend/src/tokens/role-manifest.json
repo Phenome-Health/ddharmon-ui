@@ -127,11 +127,47 @@
       "rules": []
     },
     {
+      "role": "--accent-hover",
+      "utility": "bg-accent-action-hover",
+      "what": "The primary action under the pointer. A hover is a SURFACE with its own bound label, not an opacity trick — dropping the button's alpha would show the field through it.",
+      "foregrounds": [
+        { "role": "--on-accent", "utility": "text-on-accent-action", "level": "AA", "what": "The same label, on the hovered fill. It can only improve on the base (5.61 -> 6.55) because the fill darkens toward the paper ink." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--accent-active",
+      "utility": "bg-accent-action-active",
+      "what": "The primary action pressed.",
+      "foregrounds": [
+        { "role": "--on-accent", "utility": "text-on-accent-action", "level": "AA", "what": "The label on the pressed fill (7.73:1)." }
+      ],
+      "rules": []
+    },
+    {
       "role": "--status-destructive",
       "utility": "bg-status-destructive",
       "what": "A filled destructive action.",
       "foregrounds": [
         { "role": "--on-destructive", "utility": "text-on-destructive", "level": "AA", "what": "The label inside a filled destructive action." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--destructive-hover",
+      "utility": "bg-status-destructive-hover",
+      "what": "A destructive action under the pointer.",
+      "foregrounds": [
+        { "role": "--on-destructive", "utility": "text-on-destructive", "level": "AA", "what": "The label on the hovered destructive fill (5.75:1). The base is the thinnest margin in the system at 4.62:1, so the hover state is where it gets room." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--destructive-active",
+      "utility": "bg-status-destructive-active",
+      "what": "A destructive action pressed.",
+      "foregrounds": [
+        { "role": "--on-destructive", "utility": "text-on-destructive", "level": "AA", "what": "The label on the pressed destructive fill (7.09:1)." }
       ],
       "rules": []
     },

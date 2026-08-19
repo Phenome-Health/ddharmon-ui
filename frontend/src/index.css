@@ -14,9 +14,10 @@
    in step. It is the only reason an unmigrated role costs bytes, and it is cheap:
    one declaration each.
    ══════════════════════════════════════════════════════════════════════════════ */
-@source inline("bg-accent-action bg-status-destructive bg-surface-chrome bg-surface-danger bg-surface-field");
-@source inline("bg-surface-info bg-surface-inset bg-surface-inset-strong bg-surface-ok bg-surface-raised");
-@source inline("bg-surface-track bg-surface-warn border-rule-accent-2-on-raised");
+@source inline("bg-accent-action bg-accent-action-active bg-accent-action-hover bg-status-destructive");
+@source inline("bg-status-destructive-active bg-status-destructive-hover bg-surface-chrome bg-surface-danger");
+@source inline("bg-surface-field bg-surface-info bg-surface-inset bg-surface-inset-strong bg-surface-ok");
+@source inline("bg-surface-raised bg-surface-track bg-surface-warn border-rule-accent-2-on-raised");
 @source inline("border-rule-control-on-raised border-rule-danger border-rule-info border-rule-ok");
 @source inline("border-rule-on-chrome border-rule-on-field border-rule-on-inset border-rule-on-raised");
 @source inline("border-rule-quiet-on-chrome border-rule-quiet-on-raised border-rule-warn");
@@ -249,6 +250,13 @@
      same class of lie as `ph-navy` for a colour that is no longer navy. Two rows,
      two assertions, one value. */
   --accent-on-raised:      var(--accent);
+  /* A filled action has to acknowledge the pointer, so hover and pressed are
+     SURFACES with their own bound label — not an opacity trick, which would show
+     the field through the button. Both mix toward the paper ink rather than toward
+     black, so a rebrand re-darkens them from its own primitives; both are darker
+     than the base, so the label's contrast can only improve (5.61 → 6.55 → 7.73). */
+  --accent-hover:          color-mix(in srgb, var(--accent) 82%, var(--on-raised));
+  --accent-active:         color-mix(in srgb, var(--accent) 64%, var(--on-raised));
   /* The secondary accent has two forms because one token cannot serve both
      surfaces. Reserved for four things (cohort code, declared-score scope band,
      the attribution callout rule, a collection badge) — never a coverage bar. */
@@ -287,6 +295,8 @@
   /* The FILL form: a destructive button, not a status label. */
   --status-destructive:    var(--brand-crimson);
   --on-destructive:        var(--brand-cream);
+  --destructive-hover:     color-mix(in srgb, var(--status-destructive) 84%, var(--on-raised));
+  --destructive-active:    color-mix(in srgb, var(--status-destructive) 68%, var(--on-raised));
 
   /* The informational register folds into the action accent rather than inventing
      a second blue family. */
@@ -401,6 +411,8 @@
   --color-on-track: var(--on-track);
 
   --color-accent-action: var(--accent);
+  --color-accent-action-hover: var(--accent-hover);
+  --color-accent-action-active: var(--accent-active);
   --color-on-accent-action: var(--on-accent);
   --color-accent-2-on-chrome: var(--accent-2-on-chrome);
   --color-accent-2-on-raised: var(--accent-2-on-raised);
@@ -424,6 +436,8 @@
   --color-on-danger: var(--on-danger);
   --color-rule-danger: var(--rule-danger);
   --color-status-destructive: var(--status-destructive);
+  --color-status-destructive-hover: var(--destructive-hover);
+  --color-status-destructive-active: var(--destructive-active);
   --color-on-destructive: var(--on-destructive);
   --color-status-info: var(--status-info);
   --color-surface-info: var(--surface-info);
