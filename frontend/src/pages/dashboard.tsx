@@ -700,7 +700,7 @@ export default function DashboardPage() {
               accent
             />
             <StatCard
-              label="Single-cohort · CDE-mapping"
+              label="Single-cohort · CDE"
               value={stats.nSingle}
               sub={`${stats.nSingleAssigned} mapped · ${stats.nSingleNovel} novel`}
             />

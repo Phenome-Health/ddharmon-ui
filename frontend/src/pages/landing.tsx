@@ -13,7 +13,7 @@ const SOURCES = [
   { cohort: "Cohort B", v: "smoking_status", q: "Current smoking status", r: "Never · Former · Current", y: 50 },
   { cohort: "Cohort C", v: "cig_use_30d", q: "Cigarette use, last 30 days", r: "0 · 1 · 2", y: 84 },
 ];
-const LINE_X1 = 46; // right edge of the source cards (viewBox units)
+const LINE_X1 = 53; // right edge of the source cards (viewBox units)
 const RING_EDGE_X = 66; // left edge of the ring
 const RING_Y = 50;
 
@@ -63,7 +63,7 @@ function ConvergenceViz() {
       {SOURCES.map((s, i) => (
         <div
           key={s.cohort}
-          className="absolute left-0 w-[45%] rounded-md border border-on-page/15 bg-on-page/[0.06] px-2.5 py-1.5 backdrop-blur-sm"
+          className="absolute left-0 w-[52%] rounded-md border border-on-page/15 bg-on-page/[0.06] px-2.5 py-1.5 backdrop-blur-sm"
           style={{
             top: `${s.y}%`,
             transform: shown ? "translateY(-50%)" : "translateY(-50%) translateX(-18px)",
@@ -71,10 +71,10 @@ function ConvergenceViz() {
             transition: animate ? `opacity .55s ease ${i * 0.13}s, transform .55s cubic-bezier(.22,1,.36,1) ${i * 0.13}s` : "none",
           }}
         >
-          <div className="flex items-center gap-1 font-mono text-xs font-semibold uppercase tracking-eyebrow text-on-page-muted">
-            <span>{s.cohort}</span>
+          <div className="flex min-w-0 items-center gap-1 font-mono text-xs font-semibold text-on-page-muted">
+            <span className="shrink-0">{s.cohort}</span>
             <span className="text-on-page-faint">·</span>
-            <span className="normal-case text-on-page-muted">{s.v}</span>
+            <span className="truncate text-on-page-muted">{s.v}</span>
           </div>
           <div className="mt-0.5 text-xs font-semibold leading-snug text-on-page">{s.q}</div>
           <div className="mt-1 truncate font-mono text-xs text-ph-teal">{s.r}</div>
@@ -207,7 +207,7 @@ export default function LandingPage() {
               rel="noreferrer"
               className="mt-6 inline-flex items-center gap-3 opacity-90 transition-opacity hover:opacity-100"
             >
-              <span className="font-mono text-xs uppercase tracking-eyebrow text-on-page-muted">A project of</span>
+              <span className="font-mono text-xs font-semibold uppercase tracking-eyebrow text-on-page-muted">A project of</span>
               <PhLogo tone="dark" className="h-7 w-auto" />
             </a>
           </div>
