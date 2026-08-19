@@ -15,16 +15,19 @@
    one declaration each.
    ══════════════════════════════════════════════════════════════════════════════ */
 @source inline("bg-accent-action bg-status-destructive bg-surface-chrome bg-surface-danger bg-surface-field");
-@source inline("bg-surface-info bg-surface-inset bg-surface-ok bg-surface-raised bg-surface-warn");
-@source inline("border-rule-danger border-rule-info border-rule-ok border-rule-on-chrome");
-@source inline("border-rule-on-field border-rule-on-inset border-rule-on-raised border-rule-quiet-on-chrome");
-@source inline("border-rule-quiet-on-raised border-rule-warn text-accent-2-on-chrome text-accent-2-on-raised");
-@source inline("text-link-on-chrome text-link-on-field text-link-on-inset text-link-on-raised");
-@source inline("text-on-accent-action text-on-chrome text-on-chrome-faint text-on-chrome-muted");
-@source inline("text-on-danger text-on-destructive text-on-field text-on-field-faint text-on-field-muted");
-@source inline("text-on-info text-on-inset text-on-inset-muted text-on-ok text-on-raised");
-@source inline("text-on-raised-faint text-on-raised-muted text-on-warn text-status-danger");
-@source inline("text-status-destructive text-status-info text-status-ok text-status-warn");
+@source inline("bg-surface-info bg-surface-inset bg-surface-inset-strong bg-surface-ok bg-surface-raised");
+@source inline("bg-surface-track bg-surface-warn border-rule-accent-2-on-raised");
+@source inline("border-rule-control-on-raised border-rule-danger border-rule-info border-rule-ok");
+@source inline("border-rule-on-chrome border-rule-on-field border-rule-on-inset border-rule-on-raised");
+@source inline("border-rule-quiet-on-chrome border-rule-quiet-on-raised border-rule-warn");
+@source inline("text-accent-2-on-chrome text-accent-2-on-raised text-accent-on-inset-strong");
+@source inline("text-accent-on-raised text-link-on-chrome text-link-on-field text-link-on-inset");
+@source inline("text-link-on-raised text-on-accent-action text-on-chrome text-on-chrome-faint");
+@source inline("text-on-chrome-muted text-on-danger text-on-destructive text-on-field text-on-field-faint");
+@source inline("text-on-field-muted text-on-info text-on-inset text-on-inset-muted text-on-inset-strong");
+@source inline("text-on-inset-strong-muted text-on-ok text-on-raised text-on-raised-faint");
+@source inline("text-on-raised-muted text-on-track text-on-warn text-status-danger text-status-destructive");
+@source inline("text-status-info text-status-ok text-status-warn");
 
 /* ══ Display face — Byrl (D-07) ═══════════════════════════════════════════════
    Byrl is the 2026 identity's display face. The licensed web files are still
@@ -187,6 +190,12 @@
   --on-raised-faint:       color-mix(in srgb, var(--brand-indigo) 50%, transparent);
   --rule-on-raised:        color-mix(in srgb, var(--brand-indigo) 13%, transparent);
   --rule-quiet-on-raised:  color-mix(in srgb, var(--brand-indigo) 7%, transparent);
+  /* The AFFORDANCE-strength hairline. A divider says "these are separate"; the
+     border of an input, a select or an outline button says "you can act here", and
+     it has to read as an edge rather than as a rule. That is a different role, not
+     a darker divider — which is why `border-neutral-300` sat on 16 controls and no
+     divider. */
+  --rule-control-on-raised: color-mix(in srgb, var(--brand-indigo) 22%, transparent);
   --link-on-raised:        var(--brand-blue);
 
   /* ── FIELD — the page field the raised surfaces sit on ──────────────────────
@@ -211,14 +220,44 @@
   --rule-on-inset:         color-mix(in srgb, var(--brand-indigo) 13%, transparent);
   --link-on-inset:         var(--brand-blue);
 
+  /* ── INSET-STRONG — the second inset step: pressed, selected, a badge fill ───
+     An inset has TWO steps because an interaction has two states: hover is a hint,
+     pressed/selected is a commitment. One step cannot say both, and collapsing them
+     is how a button stops acknowledging the click. Derived from the raised surface
+     at the same 6% the ramp it replaces used, so it moves with a rebrand.
+     The accent gets its own bound form here because a blue label on this grey is
+     5.03:1 — legal, but only just, and only because the step stayed at 6%. */
+  --surface-inset-strong:      color-mix(in srgb, var(--on-raised) 6%, var(--surface-raised));
+  --on-inset-strong:           var(--on-raised);
+  --on-inset-strong-muted:     color-mix(in srgb, var(--on-raised) 70%, var(--surface-inset-strong));
+  --accent-on-inset-strong:    var(--accent);
+
+  /* ── TRACK — the well a coverage/verdict bar is drawn in ─────────────────────
+     A bar and its track are a (surface, foreground) pair like any other, and this
+     is the pair that forced `--series-residual` from 55% to 62%: the achromatic
+     bar has to clear the GRAPHICAL floor against its own track, which is a much
+     tighter constraint than clearing it against paper. At 55% it measured 2.97:1
+     on this track — a bar you cannot see is not a bar. */
+  --surface-track:         color-mix(in srgb, var(--on-raised) 8%, var(--surface-raised));
+
   /* ── ACCENT — the single primary action per screen, selection, "you changed it" ── */
   --accent:                var(--brand-blue);
   --on-accent:             var(--brand-cream);
+  /* The accent as a FOREGROUND on paper — a glyph, an active label, an emphasised
+     figure. Deliberately NOT `--link-on-raised`, which is the same value and a
+     different statement: a card-title icon is not a link, and naming it one is the
+     same class of lie as `ph-navy` for a colour that is no longer navy. Two rows,
+     two assertions, one value. */
+  --accent-on-raised:      var(--accent);
   /* The secondary accent has two forms because one token cannot serve both
      surfaces. Reserved for four things (cohort code, declared-score scope band,
      the attribution callout rule, a collection badge) — never a coverage bar. */
   --accent-2-on-chrome:    var(--brand-teal);
   --accent-2-on-raised:    var(--brand-teal-ink);
+  /* The secondary accent as a RULE on paper (the attribution callout's left rule,
+     a collection badge's edge) — half strength, because a full-strength teal edge
+     out-shouts the verdict it sits beside. */
+  --rule-accent-2-on-raised: color-mix(in srgb, var(--brand-teal-ink) 50%, var(--surface-raised));
 
   /* ── FOCUS — the colour flips with the surface, because blue on navy is 2.47:1 ── */
   --focus-ring-on-raised:  var(--accent);
@@ -279,8 +318,14 @@
   --series-8: var(--brand-slate);
   /* The residual mark: a field or record the pipeline did not classify. Muted on
      purpose but still a graphical object, so it clears 3:1 rather than sitting at
-     the 1.48:1 a light grey measured. NOT `--on-raised-faint`, which is hairlines. */
-  --series-residual: color-mix(in srgb, var(--brand-indigo) 55%, var(--brand-cream));
+     the 1.48:1 a light grey measured. NOT `--on-raised-faint`, which is hairlines.
+     RAISED from 55% to 62% by the track pair below: 55% cleared 3:1 against PAPER
+     (3.16:1) but only 2.97:1 against the track it is actually drawn in, and the
+     tighter of two constraints is the one that decides a value. */
+  --series-residual: color-mix(in srgb, var(--brand-indigo) 62%, var(--brand-cream));
+  /* The bar drawn in `--surface-track` IS the residual mark, so the track's bound
+     foreground is that one value rather than a second neutral half a step away. */
+  --on-track: var(--series-residual);
   /* One chart's model series, kept whole as a validated categorical set. */
   --series-model-1: var(--brand-series-1);
   --series-model-2: var(--brand-series-2);
@@ -330,7 +375,9 @@
   --color-on-raised-faint: var(--on-raised-faint);
   --color-rule-on-raised: var(--rule-on-raised);
   --color-rule-quiet-on-raised: var(--rule-quiet-on-raised);
+  --color-rule-control-on-raised: var(--rule-control-on-raised);
   --color-link-on-raised: var(--link-on-raised);
+  --color-accent-on-raised: var(--accent-on-raised);
 
   --color-surface-field: var(--surface-field);
   --color-on-field: var(--on-field);
@@ -345,10 +392,24 @@
   --color-rule-on-inset: var(--rule-on-inset);
   --color-link-on-inset: var(--link-on-inset);
 
+  --color-surface-inset-strong: var(--surface-inset-strong);
+  --color-on-inset-strong: var(--on-inset-strong);
+  --color-on-inset-strong-muted: var(--on-inset-strong-muted);
+  --color-accent-on-inset-strong: var(--accent-on-inset-strong);
+
+  --color-surface-track: var(--surface-track);
+  --color-on-track: var(--on-track);
+
   --color-accent-action: var(--accent);
   --color-on-accent-action: var(--on-accent);
   --color-accent-2-on-chrome: var(--accent-2-on-chrome);
   --color-accent-2-on-raised: var(--accent-2-on-raised);
+  --color-rule-accent-2-on-raised: var(--rule-accent-2-on-raised);
+  /* The focus rings get colour utilities too: a control's focus BORDER and focus
+     RING are set by a class, and `ring-ring` would route them through a legacy
+     shadcn alias instead of naming the role. */
+  --color-focus-ring-on-raised: var(--focus-ring-on-raised);
+  --color-focus-ring-on-chrome: var(--focus-ring-on-chrome);
 
   --color-status-ok: var(--status-ok);
   --color-surface-ok: var(--surface-ok);
@@ -460,6 +521,7 @@
   --color-chart-7: var(--series-7);
   --color-chart-8: var(--series-8);
   --color-chart-residual: var(--series-residual);
+  --color-series-residual: var(--series-residual);
 
   --color-sidebar: var(--surface-inset);
   --color-sidebar-foreground: var(--on-inset);
@@ -573,6 +635,8 @@
   [class~="bg-surface-raised"],
   [class~="bg-surface-field"],
   [class~="bg-surface-inset"],
+  [class~="bg-surface-inset-strong"],
+  [class~="bg-surface-track"],
   [class~="bg-card"],
   [class~="bg-popover"],
   [class~="bg-neutral-0"],

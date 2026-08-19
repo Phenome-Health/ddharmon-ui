@@ -64,11 +64,14 @@
         { "role": "--status-warn", "utility": "text-status-warn", "level": "AA", "what": "refine / split / qualify — the coherence flag, the most important signal on Gate 1." },
         { "role": "--status-danger", "utility": "text-status-danger", "level": "AA", "what": "The destructive TEXT register." },
         { "role": "--status-destructive", "utility": "text-status-destructive", "level": "AA", "what": "The destructive FILL hue, also used as a text colour. Thin margin by construction — never tint it further." },
-        { "role": "--status-info", "utility": "text-status-info", "level": "AA", "what": "The informational register, folded into the action accent." }
+        { "role": "--status-info", "utility": "text-status-info", "level": "AA", "what": "The informational register, folded into the action accent." },
+        { "role": "--accent-on-raised", "utility": "text-accent-on-raised", "level": "AA", "what": "The accent as a GLYPH or emphasised figure on paper — a card-title icon, an active label. Same value as --link-on-raised and a different statement: a title icon is not a link, and calling it one is the lie `ph-navy` was." }
       ],
       "rules": [
         { "role": "--rule-on-raised", "utility": "border-rule-on-raised" },
-        { "role": "--rule-quiet-on-raised", "utility": "border-rule-quiet-on-raised" }
+        { "role": "--rule-quiet-on-raised", "utility": "border-rule-quiet-on-raised" },
+        { "role": "--rule-control-on-raised", "utility": "border-rule-control-on-raised" },
+        { "role": "--rule-accent-2-on-raised", "utility": "border-rule-accent-2-on-raised" }
       ]
     },
     {
@@ -93,6 +96,26 @@
         { "role": "--link-on-inset", "utility": "text-link-on-inset", "level": "AA", "what": "A link in an inset panel." }
       ],
       "rules": [{ "role": "--rule-on-inset", "utility": "border-rule-on-inset" }]
+    },
+    {
+      "role": "--surface-inset-strong",
+      "utility": "bg-surface-inset-strong",
+      "what": "The SECOND inset step: pressed, selected, a badge fill. An interaction has two states — hover is a hint, pressed is a commitment — and one step cannot say both. Collapsing the two is how a button stops acknowledging the click.",
+      "foregrounds": [
+        { "role": "--on-inset-strong", "utility": "text-on-inset-strong", "level": "AAA", "what": "Copy on a pressed control or a badge fill." },
+        { "role": "--on-inset-strong-muted", "utility": "text-on-inset-strong-muted", "level": "AA", "what": "Secondary copy on that fill — a toast's description line." },
+        { "role": "--accent-on-inset-strong", "utility": "text-accent-on-inset-strong", "level": "AA", "what": "The accent as a label on the fill. It measures 5.03:1 and it is ONLY legal because the step stayed at 6% — at 10% it is 4.65:1 and at 12% it is sub-AA. This row is the assertion that keeps the step light enough to carry it." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--surface-track",
+      "utility": "bg-surface-track",
+      "what": "The well a coverage/verdict bar is drawn in. A bar and its track are a (surface, foreground) pair like any other, and asserting it is what forced --series-residual from 55% to 62%: 55% clears the graphical floor against PAPER (3.16:1) but only 2.97:1 against the track it is actually drawn in, and the tighter of two constraints is the one that decides the value.",
+      "foregrounds": [
+        { "role": "--on-track", "utility": "text-on-track", "level": "graphical", "what": "Probed as `text-` because the gate reads a foreground as `color`; the bar itself is painted with `bg-on-track`, which is the SAME `--color-on-track` key, so proving one proves the other. The achromatic bar itself — the residual mark, aliased so the two are one value rather than two neutrals half a step apart." }
+      ],
+      "rules": []
     },
     {
       "role": "--accent",
