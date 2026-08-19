@@ -135,3 +135,45 @@ def test_shipped_demo_reflects_the_current_phase_list(snapshot: Path) -> None:
         f"{snapshot.name} was built against phases {result['phases']} but the pipeline now reports "
         f"{list(PHASES_RUN)} — rebuild the demo (see the deploy skill, §C2)"
     )
+
+
+# ── The token layer is the only place a colour is allowed to be spelled out ──────────
+#
+# UI-SPEC §5.6 (R10). A colour literal in a component is a retheme that silently does not
+# happen: `index.css` is re-pointed, the component keeps painting last year's brand, and
+# nothing fails. The acceptance criterion is "no colour literals outside the token
+# definitions", and a criterion nobody can run is a criterion that rots — so it is a test.
+
+FRONTEND_SRC = REPO / "frontend" / "src"
+TOKEN_DEFINITIONS = FRONTEND_SRC / "index.css"
+SOURCE_SUFFIXES = {".ts", ".tsx", ".css"}
+HEX_LITERAL = re.compile(r"#[0-9a-fA-F]{6}\b")
+
+
+def _frontend_sources() -> list[Path]:
+    return sorted(
+        p
+        for p in FRONTEND_SRC.rglob("*")
+        if p.is_file() and p.suffix in SOURCE_SUFFIXES and p != TOKEN_DEFINITIONS
+    )
+
+
+def test_no_hex_literals() -> None:
+    """A six-digit colour literal anywhere under frontend/src except index.css is a defect.
+
+    Reports file, line and value, because "there is a literal somewhere" is not actionable.
+    """
+    if not FRONTEND_SRC.exists():  # pragma: no cover - the frontend is always present
+        pytest.skip(f"frontend source tree not found at {FRONTEND_SRC}")
+
+    offenders: list[str] = []
+    for path in _frontend_sources():
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            for literal in HEX_LITERAL.findall(line):
+                offenders.append(f"{path.relative_to(REPO)}:{lineno}: {literal}")
+
+    assert not offenders, (
+        f"{len(offenders)} colour literal(s) live outside the token definitions in "
+        f"{TOKEN_DEFINITIONS.relative_to(REPO)} — move each onto a token so a retheme "
+        f"reaches it (UI-SPEC §5.6):\n  " + "\n  ".join(offenders)
+    )
