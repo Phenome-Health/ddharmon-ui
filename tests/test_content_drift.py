@@ -438,22 +438,16 @@ def test_every_manifest_utility_is_safelisted() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "EXPECTED TO FAIL until 08-07 Part 2 migrates pages/composite.tsx. Every hit is on a "
-        "conditional state (feasibility badges, an upload error banner) that the static demo never "
-        "renders, so the rebrand drill cannot see them — this is the only gate that can. "
-        "`strict=True`: when Part 2 lands, the unexpected pass fails the suite and forces the "
-        "marker off."
-    ),
-)
 def test_no_default_palette_utilities() -> None:
     """Tailwind's own palette bypasses the token layer entirely.
 
     `bg-amber-50` is not wired to any brand primitive, so it would survive a rebrand untouched.
     The rendered rebrand drill cannot catch these: every one of them is on a conditional state
     (composite feasibility badges, an upload error banner) that the static demo never reaches.
+    That is why this gate exists as a STATIC one — it is the only gate that could see the 24 that
+    shipped, and it went from 24 to 0 when they were mapped onto the status registers, which is
+    what they were standing in for all along: emerald = computable, amber = needs review, red =
+    infeasible.
     """
     offenders: list[str] = []
     for path in _frontend_sources():
@@ -499,21 +493,17 @@ def test_components_read_only_role_tokens() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "EXPECTED TO FAIL until 08-07 Part 2 migrates the 22 page files onto role utilities. The "
-        "list this assertion prints IS that work-list. `strict=True` on purpose: when Part 2 lands, "
-        "the unexpected pass fails the suite and forces this marker off, so the gate cannot be "
-        "left permanently muted."
-    ),
-)
 def test_no_palette_slot_utilities_outside_the_token_layer() -> None:
     """A palette slot is not a role, and a component that reaches for one cannot be rethemed as a pair.
 
     Kept as a SEPARATE assertion from `test_no_hex_literals` rather than folded into it: the hex
-    gate passes today, and marking one combined test `xfail` would silently stop enforcing the
-    literal ban — a loosening dressed up as a merge.
+    gate passed while this one was red, and marking one combined test `xfail` would have silently
+    stopped enforcing the literal ban — a loosening dressed up as a merge. They stay separate now
+    that both are green, for the same reason: they ban different things.
+
+    Went from 1,198 hits across 47 files to 0. The `xfail(strict=True)` marker is what forced this
+    line to be written rather than forgotten: an unexpected pass fails a strict xfail, so the gate
+    could not be left muted once the work landed.
     """
     offenders: list[str] = []
     for path in _frontend_sources():

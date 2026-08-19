@@ -34,9 +34,9 @@ import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/
 type Mode = "paste" | "ref" | "pdf";
 
 const VERDICT_STYLE: Record<string, { label: string; className: string; Icon: typeof CheckCircle2 }> = {
-  full: { label: "Computable", className: "text-emerald-700 border-emerald-200 bg-emerald-50", Icon: CheckCircle2 },
-  partial: { label: "Partially computable", className: "text-amber-700 border-amber-200 bg-amber-50", Icon: AlertTriangle },
-  infeasible: { label: "Not computable", className: "text-red-700 border-red-200 bg-red-50", Icon: XCircle },
+  full: { label: "Computable", className: "text-on-ok border-rule-ok bg-surface-ok", Icon: CheckCircle2 },
+  partial: { label: "Partially computable", className: "text-on-warn border-rule-warn bg-surface-warn", Icon: AlertTriangle },
+  infeasible: { label: "Not computable", className: "text-on-danger border-rule-danger bg-surface-danger", Icon: XCircle },
 };
 
 export default function CompositePage() {
@@ -107,7 +107,7 @@ export default function CompositePage() {
 
   if (!jobState) {
     return (
-      <div className="flex items-center gap-2 p-8 text-neutral-500">
+      <div className="flex items-center gap-2 p-8 text-on-raised-muted">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading run…
       </div>
     );
@@ -118,13 +118,13 @@ export default function CompositePage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-neutral-500 hover:text-ph-navy">
+        <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-on-raised-muted hover:text-link-on-raised">
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
-        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
-          <Calculator className="h-5 w-5 text-ph-navy" /> Composite variable
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-raised">
+          <Calculator className="h-5 w-5 text-accent-on-raised" /> Composite variable
         </h1>
-        <p className="mt-1.5 max-w-3xl text-sm text-neutral-500">
+        <p className="mt-1.5 max-w-3xl text-sm text-on-raised-muted">
           Point at a paper, repo, PDF, or Word supplement that defines a score — a frailty index, an intrinsic-capacity score,
           an SES index — and see whether this run's {records.length} harmonized concepts can support it, which
           concepts compose it, and how. ddharmon reads only metadata: it produces the derivation recipe and
@@ -168,9 +168,9 @@ export default function CompositePage() {
                 className="font-mono text-xs"
               />
               {extracted && (
-                <p className="text-xs text-neutral-500">
+                <p className="text-xs text-on-raised-muted">
                   Extracted {extracted.nChars.toLocaleString()} chars from{" "}
-                  <span className="font-semibold text-neutral-600">{extracted.provenance}</span> — review it above
+                  <span className="font-semibold text-on-raised">{extracted.provenance}</span> — review it above
                   before deriving. If the score's item table isn't here, the document didn't carry it.
                 </p>
               )}
@@ -183,7 +183,7 @@ export default function CompositePage() {
                 onChange={(e) => setRef(e.target.value)}
                 placeholder="https://… , 10.1007/s11357-017-9993-7, or https://github.com/owner/repo"
               />
-              <p className="text-xs text-neutral-500">
+              <p className="text-xs text-on-raised-muted">
                 Fetched server-side and bounded (http(s) only, size-capped). A publisher page may omit the
                 score's item table — if the result looks under-enumerated, upload the PDF or supplement instead.
               </p>
@@ -199,7 +199,7 @@ export default function CompositePage() {
                   if (f) void onDocument(f);
                 }}
               />
-              <p className="mt-1.5 text-xs text-neutral-500">
+              <p className="mt-1.5 text-xs text-on-raised-muted">
                 PDF or Word (.docx) — a score's item table is often in the supplement, and tables are read too.
                 Free — the extracted text lands in the paste box for review before anything is spent.
               </p>
@@ -214,7 +214,7 @@ export default function CompositePage() {
               placeholder="Anthropic API key (this call only)"
               className="max-w-xs"
             />
-            <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+            <label className="flex items-center gap-1.5 text-xs text-on-raised-muted">
               <input type="checkbox" checked={hybrid} onChange={(e) => setHybrid(e.target.checked)} />
               Hybrid retrieval (slower first call, better matching on large runs)
             </label>
@@ -223,17 +223,17 @@ export default function CompositePage() {
               Derive
             </Button>
           </div>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-on-raised-muted">
             Two LLM calls: transcribe the score, then match its components to this run's concepts. Editing a
             match afterwards re-derives for free.
           </p>
           {busy === "extract" && (
-            <p className="flex items-center gap-1.5 text-xs text-neutral-500">
+            <p className="flex items-center gap-1.5 text-xs text-on-raised-muted">
               <Loader2 className="h-3 w-3 animate-spin" /> Reading the document…
             </p>
           )}
           {error && (
-            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
+            <p className="rounded-md border border-rule-danger bg-surface-danger px-3 py-2 text-xs text-on-danger">{error}</p>
           )}
         </CardContent>
       </Card>
@@ -278,33 +278,33 @@ function SpecView({
           </div>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          {definition.citation && <p className="text-xs text-neutral-500">{definition.citation}</p>}
+          {definition.citation && <p className="text-xs text-on-raised-muted">{definition.citation}</p>}
           {definition.combinationRule && (
-            <p className="text-neutral-600">
-              <span className="font-semibold text-neutral-700">Rule: </span>
+            <p className="text-on-raised">
+              <span className="font-semibold text-on-raised">Rule: </span>
               {definition.combinationRule}
             </p>
           )}
-          <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-neutral-500">
+          <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-on-raised-muted">
             <div>
               <dt className="inline font-semibold">Source: </dt>
-              <dd className="inline text-neutral-600">{definition.provenance || "pasted text"}</dd>
+              <dd className="inline text-on-raised">{definition.provenance || "pasted text"}</dd>
             </div>
             {definition.threshold && (
               <div>
                 <dt className="inline font-semibold">Threshold: </dt>
-                <dd className="inline text-neutral-600">{definition.threshold}</dd>
+                <dd className="inline text-on-raised">{definition.threshold}</dd>
               </div>
             )}
             {spec.units && (
               <div>
                 <dt className="inline font-semibold">Units: </dt>
-                <dd className="inline text-neutral-600">{spec.units}</dd>
+                <dd className="inline text-on-raised">{spec.units}</dd>
               </div>
             )}
             <div>
               <dt className="inline font-semibold">Cost: </dt>
-              <dd className="inline text-neutral-600">
+              <dd className="inline text-on-raised">
                 {spec.callsMade ?? 0} LLM call{(spec.callsMade ?? 0) === 1 ? "" : "s"}
                 {spec.nConceptsIndexed != null && ` over ${spec.nConceptsIndexed} concepts`}
               </dd>
@@ -312,7 +312,7 @@ function SpecView({
           </dl>
 
           {definition.underEnumerated > 0 && (
-            <p className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <p className="flex items-start gap-1.5 rounded-md border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
                 The source describes a {definition.statedNItems}-item score but only{" "}
@@ -355,7 +355,7 @@ function SpecView({
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-border text-left text-neutral-500">
+                <tr className="border-b border-border text-left text-on-raised-muted">
                   <th className="py-1.5 pr-3 font-semibold">Cohort</th>
                   <th className="py-1.5 pr-3 font-semibold">Present</th>
                   <th className="py-1.5 pr-3 font-semibold">Missing (required)</th>
@@ -365,14 +365,14 @@ function SpecView({
               <tbody>
                 {feasibility.perCohort.map((c) => (
                   <tr key={c.cohort} className="border-b border-border/60 last:border-0">
-                    <td className="py-1.5 pr-3 font-semibold text-neutral-700">{c.cohort}</td>
-                    <td className="py-1.5 pr-3 text-neutral-600">{c.present.length}</td>
-                    <td className="py-1.5 pr-3 text-neutral-500">{c.missing.join(", ") || "—"}</td>
+                    <td className="py-1.5 pr-3 font-semibold text-on-raised">{c.cohort}</td>
+                    <td className="py-1.5 pr-3 text-on-raised">{c.present.length}</td>
+                    <td className="py-1.5 pr-3 text-on-raised-muted">{c.missing.join(", ") || "—"}</td>
                     <td className="py-1.5">
                       {c.computable ? (
-                        <span className="text-emerald-700">yes</span>
+                        <span className="text-status-ok">yes</span>
                       ) : (
-                        <span className="text-neutral-400">no</span>
+                        <span className="text-on-raised-muted">no</span>
                       )}
                     </td>
                   </tr>
@@ -380,7 +380,7 @@ function SpecView({
               </tbody>
             </table>
           </div>
-          <p className="mt-2 text-xs text-neutral-400">
+          <p className="mt-2 text-xs text-on-raised-muted">
             A cohort is computable only when every required component is present in it. Presence is per data
             dictionary — participant-level missingness, and therefore effective N, cannot be derived from
             metadata.
@@ -397,25 +397,25 @@ function SpecView({
           {derivation.map((s) => (
             <div key={s.order} className="rounded-md border border-border bg-muted/40 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-neutral-500">{s.order}.</span>
+                <span className="text-xs text-on-raised-muted">{s.order}.</span>
                 <Badge variant="neutral" className="text-xs">{s.kind.replace(/_/g, " ")}</Badge>
                 {s.needsReview && (
-                  <Badge className="border-amber-200 bg-amber-50 text-xs text-amber-800">needs review</Badge>
+                  <Badge className="border-rule-warn bg-surface-warn text-xs text-on-warn">needs review</Badge>
                 )}
               </div>
-              <p className="mt-1 text-xs text-neutral-600">{s.description}</p>
+              <p className="mt-1 text-xs text-on-raised">{s.description}</p>
               {s.expression && (
-                <pre className="mt-1.5 overflow-x-auto rounded bg-neutral-0 px-2 py-1.5 font-mono text-xs text-neutral-700">
+                <pre className="mt-1.5 overflow-x-auto rounded bg-surface-raised px-2 py-1.5 font-mono text-xs text-on-raised">
                   {s.expression}
                 </pre>
               )}
             </div>
           ))}
           {spec.validationRules.length > 0 && (
-            <ul className="mt-3 space-y-1 border-t border-border pt-3 text-xs text-neutral-500">
+            <ul className="mt-3 space-y-1 border-t border-border pt-3 text-xs text-on-raised-muted">
               {spec.validationRules.map((r) => (
                 <li key={r} className="flex gap-1.5">
-                  <span className="text-neutral-400">•</span>
+                  <span className="text-on-raised-muted">•</span>
                   {r}
                 </li>
               ))}
@@ -430,10 +430,10 @@ function SpecView({
             <CardTitle className="text-sm">Caveats</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-1.5 text-xs text-neutral-600">
+            <ul className="space-y-1.5 text-xs text-on-raised">
               {feasibility.caveats.map((c) => (
                 <li key={c} className="flex gap-1.5">
-                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-neutral-400" />
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-on-raised-muted" />
                   {c}
                 </li>
               ))}
@@ -477,13 +477,13 @@ function MatchRow({
     <div className="rounded-md border border-border px-3 py-2.5">
       <div className="flex flex-wrap items-start gap-2">
         {match.conceptId ? (
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-status-ok" />
         ) : (
-          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-neutral-300" />
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-on-raised-muted" />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-semibold text-neutral-700">{match.component}</span>
+            <span className="text-sm font-semibold text-on-raised">{match.component}</span>
             {!match.required && <Badge variant="neutral" className="text-xs">optional</Badge>}
             {match.pinned && (
               <Badge variant="neutral" className="gap-1 text-xs">
@@ -491,36 +491,36 @@ function MatchRow({
               </Badge>
             )}
             {coding?.needsReview && (
-              <Badge className="border-amber-200 bg-amber-50 text-xs text-amber-800">
+              <Badge className="border-rule-warn bg-surface-warn text-xs text-on-warn">
                 {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
               </Badge>
             )}
           </div>
 
-          {component?.definition && <p className="mt-0.5 text-xs text-neutral-500">{component.definition}</p>}
+          {component?.definition && <p className="mt-0.5 text-xs text-on-raised-muted">{component.definition}</p>}
 
           {match.conceptId ? (
             <div className="mt-1.5 text-xs">
               <Link
                 href={`/job/${jobId}/workbench?c=${encodeURIComponent(match.conceptId)}`}
-                className="text-neutral-700 underline decoration-neutral-300 hover:text-ph-navy"
+                className="text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
                 title="Open this concept in the review workbench"
               >
                 {match.concept || concept?.concept || match.conceptId}
               </Link>
-              <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-neutral-500">
+              <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-on-raised-muted">
                 <span>{match.cohorts.join(", ") || "—"}</span>
-                <span className={lowConfidence ? "text-amber-700" : ""}>
+                <span className={lowConfidence ? "text-status-warn" : ""}>
                   confidence {match.confidence.toFixed(2)}
                   {lowConfidence && " — review"}
                 </span>
                 {match.column && <span className="font-mono text-xs">{match.column}</span>}
               </div>
-              {match.rationale && <p className="mt-1 text-neutral-500">{match.rationale}</p>}
+              {match.rationale && <p className="mt-1 text-on-raised-muted">{match.rationale}</p>}
             </div>
           ) : (
-            <p className="mt-1.5 text-xs text-neutral-500">
-              <span className="font-semibold text-neutral-600">Missing.</span>{" "}
+            <p className="mt-1.5 text-xs text-on-raised-muted">
+              <span className="font-semibold text-on-raised">Missing.</span>{" "}
               {match.shortlist.length > 0
                 ? `${match.shortlist.length} candidate concept${match.shortlist.length === 1 ? "" : "s"} were retrieved and none measures this component.`
                 : "Nothing in this run retrieved for it."}
@@ -528,7 +528,7 @@ function MatchRow({
           )}
 
           {coding && (coding.cutoff || coding.referenceRange) && (
-            <p className="mt-1 text-xs text-neutral-500">
+            <p className="mt-1 text-xs text-on-raised-muted">
               <span className="font-semibold">As stated: </span>
               <span className="font-mono text-xs">{coding.cutoff || coding.referenceRange}</span>
             </p>
@@ -554,7 +554,7 @@ function MatchRow({
 
           {swapping && (
             <select
-              className="mt-1.5 w-full rounded-md border border-border bg-neutral-0 px-2 py-1 text-xs text-neutral-700"
+              className="mt-1.5 w-full rounded-md border border-border bg-surface-raised px-2 py-1 text-xs text-on-raised"
               defaultValue={match.conceptId ?? ""}
               disabled={busy}
               onChange={(e) => {
