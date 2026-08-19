@@ -146,8 +146,32 @@ def test_shipped_demo_reflects_the_current_phase_list(snapshot: Path) -> None:
 
 FRONTEND_SRC = REPO / "frontend" / "src"
 TOKEN_DEFINITIONS = FRONTEND_SRC / "index.css"
+ROLE_MANIFEST = FRONTEND_SRC / "tokens" / "role-manifest.json"
 SOURCE_SUFFIXES = {".ts", ".tsx", ".css"}
-HEX_LITERAL = re.compile(r"#[0-9a-fA-F]{6}\b")
+
+# Three-, six- and eight-digit hex. The six-digit-only form this replaces was blind to `#fff`,
+# which is how a literal white sat in the analytics heatmap through a whole retheme.
+HEX_LITERAL = re.compile(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b")
+# `rgb()` / `rgba()` / `hsl()` written out with NUMBERS is the same bypass in another notation:
+# `rgba(17, 54, 130, .3)` is #113682, the PREVIOUS brand's navy, and it survived the 2026 retheme
+# in two files precisely because the hex gate could not see it. A `color-mix(... var(--role) ...)`
+# is fine — it is derived from a token — so the check is for numeric channels, not for the function.
+NUMERIC_COLOUR_FN = re.compile(r"\b(?:rgba?|hsla?)\(\s*[\d.]+[\s,%]")
+# CSS named colours that mean a specific paint. `transparent`, `currentColor` and `inherit` are
+# relationships rather than colours and are allowed.
+NAMED_COLOUR = re.compile(
+    r"\b(?:bg|text|border|fill|stroke|ring|from|via|to|decoration|divide|outline|caret|accent|shadow)"
+    r"-(?:white|black)\b"
+)
+
+# ── Two exemptions, each narrow and each with a reason ────────────────────────────────
+#
+# `components/ui/chart.tsx` matches recharts' OWN emitted markup with attribute selectors —
+# `[&_.recharts-dot[stroke='#fff']]:stroke-transparent`. Those hexes are selectors, not paint:
+# they name a colour recharts writes so the rule can override it. Rewriting them would break the
+# match. Recorded rather than allowed wholesale: the exemption is per-file and per-pattern.
+SELECTOR_HEX_FILES = {"components/ui/chart.tsx"}
+SELECTOR_HEX = re.compile(r"\[[^\]]*['\"]#[0-9a-fA-F]{3,8}['\"][^\]]*\]")
 
 
 def _frontend_sources() -> list[Path]:
@@ -158,8 +182,18 @@ def _frontend_sources() -> list[Path]:
     )
 
 
+def _rel(path: Path) -> str:
+    return path.relative_to(FRONTEND_SRC).as_posix()
+
+
 def test_no_hex_literals() -> None:
-    """A six-digit colour literal anywhere under frontend/src except index.css is a defect.
+    """No spelled-out colour anywhere under frontend/src except index.css.
+
+    Widened from six-digit hex to every notation a colour can hide in: 3/4/6/8-digit hex,
+    numeric `rgb()`/`rgba()`/`hsl()`, and the `text-white` / `bg-black` utilities. All three
+    forms were live in this tree while the six-digit gate reported success — including two
+    values from the PREVIOUS brand, which is the exact failure the gate exists to prevent:
+    a retheme that silently does not reach a component.
 
     Reports file, line and value, because "there is a literal somewhere" is not actionable.
     """
@@ -168,13 +202,19 @@ def test_no_hex_literals() -> None:
 
     offenders: list[str] = []
     for path in _frontend_sources():
+        rel = _rel(path)
         for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            for literal in HEX_LITERAL.findall(line):
-                offenders.append(f"{path.relative_to(REPO)}:{lineno}: {literal}")
+            probe = SELECTOR_HEX.sub("", line) if rel in SELECTOR_HEX_FILES else line
+            for literal in HEX_LITERAL.findall(probe):
+                offenders.append(f"{rel}:{lineno}: {literal}")
+            for literal in NUMERIC_COLOUR_FN.findall(probe):
+                offenders.append(f"{rel}:{lineno}: {literal.strip()}… (numeric colour function)")
+            for literal in NAMED_COLOUR.findall(probe):
+                offenders.append(f"{rel}:{lineno}: {literal} (named colour)")
 
     assert not offenders, (
         f"{len(offenders)} colour literal(s) live outside the token definitions in "
-        f"{TOKEN_DEFINITIONS.relative_to(REPO)} — move each onto a token so a retheme "
+        f"{TOKEN_DEFINITIONS.relative_to(REPO)} — move each onto a ROLE so a retheme "
         f"reaches it (UI-SPEC §5.6):\n  " + "\n  ".join(offenders)
     )
 
@@ -278,4 +318,214 @@ def test_no_public_surface_claims_the_staged_flow_is_free() -> None:
         "reviewer chooses. The first charge is Gate 0's Continue (concept generation, "
         "splitting, the coherence judge); the reviewer scopes before the BULK of the "
         "spend, not before all of it (UI-SPEC §0.4, §7.2):\n  " + "\n  ".join(offenders)
+    )
+
+
+# ── Tier 3: components reference ROLES, never a primitive and never a palette slot ────
+#
+# The token layer is three tiers (see the headers in `index.css`):
+#
+#   tier 1  --brand-*        named for the VALUE. Replaced wholesale on a rebrand.
+#   tier 2  --surface-* / --on-* / --status-* / --rule-* / --link-* / --series-*
+#                            named for the ROLE, and every surface carries its foreground
+#                            as a BOUND PAIR so the two cannot drift.
+#   tier 3  the utilities    what components are allowed to reference.
+#
+# A palette SLOT (`bg-neutral-50`, `text-ph-ink`, `text-neutral-400`) is not a role. It names a
+# step on a ramp, which says nothing about which surface the text sits on — so it cannot be
+# remapped as a pair, and a surface change cannot be expressed as a token edit. That is the
+# mechanism behind the defect this whole plan exists to remove: the content field inherited the
+# CHROME's cream foreground and bare copy rendered cream-on-cream, and no gate could see it
+# because "text-neutral-400" is not a statement about a background.
+
+PALETTE_SLOT = re.compile(
+    r"\b(?:bg|text|border|divide|ring|from|via|to|fill|stroke|placeholder|caret|accent|outline"
+    r"|decoration|shadow)-(?:neutral|ph)-[a-zA-Z0-9]+(?:/\d+)?\b"
+)
+
+# Tailwind's OWN default palette. Worse than a slot: it is not wired to the token layer at all, so
+# it would survive a rebrand untouched. The rebrand drill cannot see these because the states that
+# render them (composite feasibility badges, an error banner) never appear in the static demo.
+DEFAULT_PALETTE = re.compile(
+    r"\b(?:bg|text|border|divide|ring|from|via|to|fill|stroke|placeholder|caret|accent|outline"
+    r"|decoration|shadow)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo"
+    r"|violet|purple|fuchsia|pink|rose|slate|gray|zinc|stone)-\d{2,3}(?:/\d+)?\b"
+)
+
+# Raw `var(--token)` reads. Components may read a tier-2 ROLE by name (charts and SVG attributes
+# have to, because a colour consumed in JS cannot come from a utility) but never a tier-1
+# primitive and never a name that no longer exists.
+VAR_READ = re.compile(r"var\(\s*(--[a-zA-Z0-9-]+)")
+ROLE_PREFIXES = (
+    "--surface-", "--on-", "--rule-", "--link-", "--accent", "--status-", "--series-",
+    "--focus-ring-", "--elevation-",
+)
+# Names that are NOT ours: Radix and shadcn set these on the element themselves.
+FOREIGN_VAR_PREFIXES = ("--radix-", "--sidebar-", "--skeleton-", "--spacing-", "--radius", "--tw-")
+
+
+def _declared_root_tokens() -> set[str]:
+    """Every custom property `index.css` declares in `:root` (tiers 1 and 2)."""
+    src = TOKEN_DEFINITIONS.read_text()
+    return set(re.findall(r"^\s*(--[a-zA-Z0-9-]+)\s*:", src, re.M))
+
+
+def _role_manifest() -> dict:
+    return json.loads(ROLE_MANIFEST.read_text())
+
+
+def test_the_role_manifest_matches_the_declared_role_layer() -> None:
+    """Every role the manifest names must exist in index.css, and vice versa for surfaces.
+
+    This is the gate that makes "a new surface cannot ship without its contrast pair" true rather
+    than aspirational: the manifest is the contrast suite's input, so a surface with no manifest
+    row is a surface with no contrast assertion.
+    """
+    declared = _declared_root_tokens()
+    m = _role_manifest()
+    named: set[str] = set()
+    for s in m["surfaces"]:
+        named.add(s["role"])
+        named.update(f["role"] for f in s["foregrounds"])
+        named.update(r["role"] for r in s["rules"])
+    named.update(m["graphicalMarks"]["roles"])
+    named.add(m["graphicalMarks"]["surface"])
+    for f in m["focus"]:
+        named.add(f["ring"])
+        named.add(f["surface"])
+    for p in m["prohibited"]:
+        named.add(p["fg"])
+        named.add(p["bg"])
+
+    phantom = sorted(named - declared)
+    assert not phantom, (
+        f"the role manifest names {phantom} but {TOKEN_DEFINITIONS.name} does not declare them — "
+        f"the contrast suite would measure an unresolved role"
+    )
+
+    # The converse, restricted to SURFACES: a surface with no manifest row has no asserted
+    # foreground, which is exactly the gap that let the field/copy pairing ship broken.
+    surfaces = {t for t in declared if t.startswith("--surface-")}
+    unregistered = sorted(surfaces - named)
+    assert not unregistered, (
+        f"{unregistered} are declared as surfaces but carry no row in "
+        f"{ROLE_MANIFEST.relative_to(REPO)}. A surface without a manifest row has no contrast "
+        f"assertion for its foreground — add the pair (and its required level) rather than "
+        f"shipping an unmeasured surface"
+    )
+
+
+def test_every_manifest_utility_is_safelisted() -> None:
+    """Each manifest role's utility must be safelisted, or it may generate nothing.
+
+    Tailwind v4 emits a utility only where it finds the class in a source file. A role whose call
+    sites have not been migrated yet would therefore generate NOTHING — indistinguishable from the
+    `--font-size-*` class of namespace mistake, where six keys produced no utilities at all while a
+    grep gate reported success. Safelisting makes each one provable in the built stylesheet.
+    """
+    safelisted = set(re.findall(r'@source inline\("([^"]+)"\)', TOKEN_DEFINITIONS.read_text()))
+    classes = {c for group in safelisted for c in group.split()}
+    m = _role_manifest()
+    wanted: set[str] = set()
+    for s in m["surfaces"]:
+        wanted.add(s["utility"])
+        wanted.update(f["utility"] for f in s["foregrounds"])
+        wanted.update(r["utility"] for r in s["rules"])
+    missing = sorted(wanted - classes)
+    assert not missing, (
+        f"{missing} are named in the role manifest but not safelisted in "
+        f"{TOKEN_DEFINITIONS.name} — add them to an `@source inline(...)` line"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "EXPECTED TO FAIL until 08-07 Part 2 migrates pages/composite.tsx. Every hit is on a "
+        "conditional state (feasibility badges, an upload error banner) that the static demo never "
+        "renders, so the rebrand drill cannot see them — this is the only gate that can. "
+        "`strict=True`: when Part 2 lands, the unexpected pass fails the suite and forces the "
+        "marker off."
+    ),
+)
+def test_no_default_palette_utilities() -> None:
+    """Tailwind's own palette bypasses the token layer entirely.
+
+    `bg-amber-50` is not wired to any brand primitive, so it would survive a rebrand untouched.
+    The rendered rebrand drill cannot catch these: every one of them is on a conditional state
+    (composite feasibility badges, an upload error banner) that the static demo never reaches.
+    """
+    offenders: list[str] = []
+    for path in _frontend_sources():
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            for hit in DEFAULT_PALETTE.findall(line):
+                offenders.append(f"{_rel(path)}:{lineno}: {hit}")
+    assert not offenders, (
+        f"{len(offenders)} Tailwind default-palette utility/utilities bypass the token layer "
+        f"completely — map each onto a status role (--status-ok / --status-warn / --status-danger "
+        f"and their washes):\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_components_read_only_role_tokens() -> None:
+    """A `var()` read must name a tier-2 ROLE, never a tier-1 primitive and never a dead name.
+
+    Charts and SVG attributes have to read a colour by name — a value consumed in JS cannot come
+    from a utility — so this is the one sanctioned way a component touches the token layer, and it
+    is worth policing. It also catches the failure that is otherwise invisible: `var(--sf-700)`
+    resolves to NOTHING, and because an invalid `var()` falls back to the INHERITED value the
+    element keeps rendering something plausible. Four such reads survived a whole retheme.
+
+    `components/ui/` is excluded: it is vendored shadcn, it reads shadcn's own semantic names, and
+    its one raw read (`hsl(var(--sidebar-border))` in a sidebar component this app never mounts) is
+    upstream dead code. Logged in WINDOWS.md rather than rewritten in a vendored file.
+    """
+    declared = _declared_root_tokens()
+    offenders: list[str] = []
+    for path in _frontend_sources():
+        rel = _rel(path)
+        if rel.startswith("components/ui/"):
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            for name in VAR_READ.findall(line):
+                if name.startswith(FOREIGN_VAR_PREFIXES):
+                    continue
+                if name not in declared:
+                    offenders.append(f"{rel}:{lineno}: var({name}) — NOT DECLARED, resolves to nothing")
+                elif not name.startswith(ROLE_PREFIXES):
+                    offenders.append(f"{rel}:{lineno}: var({name}) — a tier-1 primitive, not a role")
+    assert not offenders, (
+        f"{len(offenders)} raw token read(s) are not tier-2 roles:\n  " + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "EXPECTED TO FAIL until 08-07 Part 2 migrates the 22 page files onto role utilities. The "
+        "list this assertion prints IS that work-list. `strict=True` on purpose: when Part 2 lands, "
+        "the unexpected pass fails the suite and forces this marker off, so the gate cannot be "
+        "left permanently muted."
+    ),
+)
+def test_no_palette_slot_utilities_outside_the_token_layer() -> None:
+    """A palette slot is not a role, and a component that reaches for one cannot be rethemed as a pair.
+
+    Kept as a SEPARATE assertion from `test_no_hex_literals` rather than folded into it: the hex
+    gate passes today, and marking one combined test `xfail` would silently stop enforcing the
+    literal ban — a loosening dressed up as a merge.
+    """
+    offenders: list[str] = []
+    for path in _frontend_sources():
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            for hit in PALETTE_SLOT.findall(line):
+                offenders.append(f"{_rel(path)}:{lineno}: {hit}")
+    by_file: dict[str, int] = {}
+    for o in offenders:
+        by_file[o.split(":")[0]] = by_file.get(o.split(":")[0], 0) + 1
+    ranked = "\n  ".join(f"{n:4d}  {f}" for f, n in sorted(by_file.items(), key=lambda kv: -kv[1]))
+    assert not offenders, (
+        f"{len(offenders)} palette-slot utility/utilities across {len(by_file)} file(s) name a step "
+        f"on a ramp instead of a surface role, so they cannot be remapped as a (surface, "
+        f"foreground) pair. This is 08-07 Part 2's migration work, ranked by file:\n  " + ranked
     )

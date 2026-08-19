@@ -13,7 +13,7 @@ export const VERDICT_COLOR: Record<string, string> = {
   adopt: "var(--status-ok)",
   refine: "var(--status-warn)",
   novel: "var(--accent)",
-  unclassified: "var(--chart-residual)",
+  unclassified: "var(--series-residual)",
 };
 
 export const VERDICT_LABEL: Record<string, string> = {
@@ -23,17 +23,17 @@ export const VERDICT_LABEL: Record<string, string> = {
   unclassified: "Unclassified",
 };
 
-/** Cohort series palette (embedding atlas + any cohort encoding); teal leads, in its
- *  paper-legal `--b-teal-ink` form, because charts render on paper cards. */
+/** Cohort series palette (embedding atlas + any cohort encoding); the secondary accent leads,
+ *  in its `--accent-2-on-raised` form, because charts render on raised surfaces. */
 export const COHORT_PALETTE = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-  "var(--chart-6)",
-  "var(--chart-7)",
-  "var(--chart-8)",
+  "var(--series-1)",
+  "var(--series-2)",
+  "var(--series-3)",
+  "var(--series-4)",
+  "var(--series-5)",
+  "var(--series-6)",
+  "var(--series-7)",
+  "var(--series-8)",
 ];
 
 export function verdictColor(v: string): string {

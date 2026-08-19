@@ -189,9 +189,9 @@ function StackedVerdictBars({
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-        {/* `stroke` as well as `tick.fill`: recharts defaults the axis LINE to its own #666, which
-            the token layer cannot reach — the rebrand drill found it as the one painted colour in
-            the whole app that did not move when the brand was replaced. */}
+        {/* `stroke` as well as `tick.fill`: recharts defaults the axis LINE to a mid-grey of its
+            own, which the token layer cannot reach — the rebrand drill found it as the one painted
+            colour in the whole app that did not move when the brand was replaced. */}
         <XAxis dataKey="name" stroke={CHART_AXIS} tick={{ fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }} />
         <YAxis
           allowDecimals={false}

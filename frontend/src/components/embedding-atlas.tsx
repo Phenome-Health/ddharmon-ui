@@ -41,7 +41,7 @@ const RESPONSE_CAP = 12; // max code=label options shown inline in the detail pa
 const AGREEMENT_COLOR: Record<Agreement, string> = {
   agree: "var(--status-ok)", // concept-mates cluster nearby (geometry respected)
   disagree: "var(--status-warn)", // concept-mates are scattered elsewhere (a QA signal)
-  unassigned: "var(--chart-residual)", // = UNASSIGNED_COLOR — no concept
+  unassigned: "var(--series-residual)", // = UNASSIGNED_COLOR — no concept
 };
 const AGREEMENT_LABEL: Record<Agreement, string> = {
   agree: "Agree — concept shared with neighbors",
@@ -54,7 +54,7 @@ const AGREEMENT_LABEL: Record<Agreement, string> = {
 // made these points show as a verdict the review queue has none of. Its own muted color + non-filterable
 // legend entry keeps the distinction honest.
 const UNASSIGNED = "unassigned";
-const UNASSIGNED_COLOR = "var(--chart-residual)"; // muted vs the verdict palette, still >= 3:1
+const UNASSIGNED_COLOR = "var(--series-residual)"; // muted vs the verdict palette, still >= 3:1
 const catLabel = (v: string): string => (v === UNASSIGNED ? "Unassigned (no concept)" : (VERDICT_LABEL[v] ?? v));
 const catColor = (v: string): string => (v === UNASSIGNED ? UNASSIGNED_COLOR : verdictColor(v));
 
