@@ -1,161 +1,145 @@
-import { test, expect, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { loadManifest, measure, requiredPairs, shortfalls } from "./role-probe";
 
 /**
- * Contrast gate for the 2026 identity token layer (UI-SPEC §5.5).
+ * The contrast gate, driven by `src/tokens/role-manifest.json`.
  *
- * Every anchor in that table is asserted here rather than trusted to a document: the ratios are read
- * out of the SHIPPED stylesheet (`getComputedStyle` on `:root`, in the built app) and recomputed
- * against WCAG 2.x relative luminance in page. A future token edit that quietly drops a pairing below
- * AA fails this file — and the file that fails also explains why the pairing exists.
+ * **Why this was rewritten.** The gate it replaces asserted eleven HARDCODED anchors. It passed
+ * all the way through the retheme while the field/copy pairing was broken — bare copy on the
+ * content field inherited the CHROME's cream foreground and rendered cream-on-cream — precisely
+ * because no anchor covered text-on-field. A gate whose coverage is a hand-written list grows
+ * blind spots exactly where new surfaces appear.
  *
- * The two PROHIBITIONS are asserted numerically for the same reason. `--b-blue` on the ground and
- * `--b-teal` on paper are both unusable (2.5:1), and the temptation to reach for them there is
- * constant — so the numbers that forbid them live beside the numbers that permit everything else.
+ * Iterating the manifest inverts that: a surface cannot ship without a row, and a row cannot
+ * exist without a contrast requirement. All eleven original AA/AAA anchors and all three
+ * original prohibitions are still enforced — see `role-manifest.json`, where each carries the
+ * threshold it was given in UI-SPEC §5.5 — plus the pairs the old list had no row for:
+ * text-on-field, text-on-inset, the label inside a filled action, every status wash's own
+ * foreground, both focus rings and all nine chart steps.
  *
- * Route: `/new`. It is the only baselined route with native form controls on a paper card, which makes
- * it the right place to also assert the `color-scheme` split (dark root, light paper surfaces) that
- * keeps a `<select>` from rendering dark-on-cream.
+ * Route: `/new`. It is the only baselined route with native form controls on a raised card,
+ * which makes it the right place to also assert the `color-scheme` split.
  */
 
-/**
- * Reads every §5.5 pairing out of the live stylesheet and returns the measured ratios.
- *
- * All of the colour maths is declared INSIDE `page.evaluate` on purpose: the callback is serialised
- * into the browser and cannot close over Node-side helpers, so anything it needs has to be in its own
- * body.
- */
-async function measure(page: Page) {
-  return page.evaluate(() => {
-    type Rgba = [number, number, number, number];
-
-    /** Resolve a custom property to a concrete colour, following `var()` indirection. */
-    const token = (name: string, depth = 0): string => {
-      const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-      if (!raw) throw new Error(`token ${name} is not defined`);
-      const indirect = /^var\(\s*(--[\w-]+)\s*(?:,.*)?\)$/.exec(raw);
-      if (indirect && depth < 8) return token(indirect[1], depth + 1);
-      return raw;
-    };
-
-    /**
-     * Parse a colour as the BUILD emits it, not as it was authored. The production stylesheet is
-     * minified, which rewrites `rgba(34,37,114,.70)` to the 8-digit hex `#222572b3` — so a parser that
-     * only understood the authored form would pass in dev and fail on the shipped bundle.
-     */
-    const parse = (value: string): Rgba => {
-      const v = value.trim();
-      const hex = /^#([0-9a-f]{3,8})$/i.exec(v);
-      if (hex) {
-        const d = hex[1];
-        const wide = d.length <= 4 ? d.split("").map((c) => c + c).join("") : d;
-        if (wide.length !== 6 && wide.length !== 8) throw new Error(`unparseable colour: ${value}`);
-        const n = parseInt(wide.slice(0, 6), 16);
-        const alpha = wide.length === 8 ? parseInt(wide.slice(6, 8), 16) / 255 : 1;
-        return [(n >> 16) & 255, (n >> 8) & 255, n & 255, alpha];
-      }
-      const fn = /^rgba?\(([^)]+)\)$/i.exec(v);
-      if (fn) {
-        const p = fn[1]
-          .split(/[,\s/]+/)
-          .filter(Boolean)
-          .map((part) => (part.endsWith("%") ? Number(part.slice(0, -1)) / 100 : Number(part)));
-        return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
-      }
-      throw new Error(`unparseable colour: ${value}`);
-    };
-
-    /** Composite a possibly-translucent foreground over an opaque background before measuring it. */
-    const over = (fg: Rgba, bg: Rgba): Rgba => [
-      Math.round(fg[0] * fg[3] + bg[0] * (1 - fg[3])),
-      Math.round(fg[1] * fg[3] + bg[1] * (1 - fg[3])),
-      Math.round(fg[2] * fg[3] + bg[2] * (1 - fg[3])),
-      1,
-    ];
-
-    const luminance = (c: Rgba): number => {
-      const channel = (x: number) => {
-        const s = x / 255;
-        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-      };
-      return 0.2126 * channel(c[0]) + 0.7152 * channel(c[1]) + 0.0722 * channel(c[2]);
-    };
-
-    const ratio = (fgToken: string, bgToken: string): number => {
-      const bg = parse(token(bgToken));
-      const fg = over(parse(token(fgToken)), bg);
-      const a = luminance(fg);
-      const b = luminance(bg);
-      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-    };
-
-    return {
-      inkOnPaper: ratio("--ink", "--b-paper"),
-      mutedOnPaper: ratio("--muted", "--b-paper"),
-      faintOnPaper: ratio("--faint", "--b-paper"),
-      onPageOnGround: ratio("--on-page", "--b-ground"),
-      onPageMutedOnGround: ratio("--on-page-muted", "--b-ground"),
-      blueOnPaper: ratio("--b-blue", "--b-paper"),
-      blueOnGround: ratio("--b-blue", "--b-ground"),
-      okOnPaper: ratio("--ok", "--b-paper"),
-      warnOnWarnBg: ratio("--warn", "--warn-bg"),
-      warnOnPaper: ratio("--warn", "--b-paper"),
-      crimsonOnPaper: ratio("--b-crimson", "--b-paper"),
-      tealInkOnPaper: ratio("--b-teal-ink", "--b-paper"),
-      tealOnGround: ratio("--b-teal", "--b-ground"),
-      tealOnPaper: ratio("--b-teal", "--b-paper"),
-    };
-  });
-}
+const manifest = loadManifest();
+const pairs = requiredPairs(manifest);
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/new");
 });
 
-test("every UI-SPEC §5.5 contrast anchor holds in the shipped stylesheet", async ({ page }) => {
-  const m = await measure(page);
-
-  // The two body pairings clear AAA — this is a reading tool, and both surfaces carry running text.
-  expect.soft(m.inkOnPaper, "--ink on --b-paper").toBeGreaterThanOrEqual(13);
-  expect.soft(m.onPageOnGround, "--on-page on --b-ground").toBeGreaterThanOrEqual(13);
-
-  // Secondary text and every coloured signal clear AA for normal-size text.
-  expect.soft(m.mutedOnPaper, "--muted on --b-paper").toBeGreaterThanOrEqual(4.5);
-  expect.soft(m.onPageMutedOnGround, "--on-page-muted on --b-ground").toBeGreaterThanOrEqual(4.5);
-  expect.soft(m.blueOnPaper, "--b-blue on --b-paper").toBeGreaterThanOrEqual(4.5);
-  expect.soft(m.okOnPaper, "--ok on --b-paper").toBeGreaterThanOrEqual(4.5);
-  // The coherence flag is the most important signal on Gate 1; it is why --warn was darkened.
-  expect.soft(m.warnOnWarnBg, "--warn on --warn-bg").toBeGreaterThanOrEqual(4.5);
-  expect.soft(m.warnOnPaper, "--warn on --b-paper").toBeGreaterThanOrEqual(4.5);
-  expect.soft(m.crimsonOnPaper, "--b-crimson on --b-paper").toBeGreaterThanOrEqual(4.5);
-  expect.soft(m.tealInkOnPaper, "--b-teal-ink on --b-paper").toBeGreaterThanOrEqual(4.5);
-  expect.soft(m.tealOnGround, "--b-teal on --b-ground").toBeGreaterThanOrEqual(4.5);
+test("every role in the manifest resolves to a real colour in the shipped stylesheet", async ({ page }) => {
+  const { unresolved } = await measure(page, pairs);
+  expect(
+    unresolved,
+    "a role that resolves to nothing does not fail loudly — `var(--gone)` is invalid at " +
+      "computed-value time, so the declaration falls back to the INHERITED value and the element " +
+      "keeps rendering something plausible. That is how four `--sf-*` reads survived 08-05:\n  " +
+      unresolved.join("\n  "),
+  ).toEqual([]);
 });
 
-test("the two prohibited pairings stay prohibited — and stay prohibited by their numbers", async ({ page }) => {
-  const m = await measure(page);
-
-  // §5.2: blue never touches the ground. §5.4: raw teal never touches paper. Asserted as measurements
-  // rather than as taste: if a token edit ever made either legal, this test is where that shows up.
-  expect(m.blueOnGround, "--b-blue on --b-ground is prohibited (§5.2)").toBeLessThan(3);
-  expect(m.tealOnPaper, "--b-teal on --b-paper is prohibited (§5.4) — use --b-teal-ink").toBeLessThan(3);
-
-  // --faint is a hairline colour, not a text colour. Asserting that it is BELOW AA is what documents
-  // the distinction: raise it to text contrast and the hairlines it draws stop reading as hairlines.
-  expect(m.faintOnPaper, "--faint is for hairlines and dashed marks only").toBeLessThan(4.5);
+test("every (surface, foreground) pair in the manifest meets its required contrast", async ({ page }) => {
+  const required = pairs.filter((p) => p.level !== "prohibited");
+  const { measured } = await measure(page, required);
+  // `DDH_ROLE_TABLE=1` prints every measured ratio. The gate only needs the shortfalls, but the
+  // full table is what a reviewer (or a plan summary) needs to see, and recomputing it by hand
+  // is how a documented ratio drifts from the shipped one.
+  if (process.env.DDH_ROLE_TABLE) {
+    for (const p of required) {
+      const m = measured.find((x) => x.label === p.label);
+      console.log(`${p.label.padEnd(46)} ${String(m?.ratio ?? "unresolved").padStart(6)}:1  ${p.level}`);
+    }
+  }
+  const bad = shortfalls(required, measured);
+  expect(
+    bad,
+    `${bad.length} of ${required.length} manifest pairs miss their requirement. Each row names ` +
+      `the pair, the measured ratio and the level it is declared at in role-manifest.json:\n  ` +
+      bad.join("\n  "),
+  ).toEqual([]);
 });
 
-test("the color-scheme split holds: dark root, light paper surfaces", async ({ page }) => {
+test("the prohibited pairings stay prohibited — and stay prohibited by their numbers", async ({ page }) => {
+  // Asserted as measurements rather than as taste: if a token edit ever made one of these legal,
+  // this is where it shows up. The `non-text` rows carry the same discipline from the other side —
+  // a hairline colour raised to text contrast stops reading as a hairline — so they are folded in
+  // here, which is how the third original prohibition (--faint is not a text colour) survives.
+  const banned = pairs.filter((p) => p.level === "prohibited" || p.level === "non-text");
+  const { measured } = await measure(page, banned);
+  const bad = shortfalls(banned, measured);
+  expect(
+    bad,
+    `a prohibited or non-text pairing is out of bounds:\n  ` + bad.join("\n  "),
+  ).toEqual([]);
+});
+
+test("every manifest role generates a real Tailwind utility, verified on the rendered element", async ({
+  page,
+}) => {
+  // THE NAMESPACE TRAP, asserted. Six `--font-size-*` keys in this file generated NOTHING for
+  // months because Tailwind v4's font-size namespace is `--text-*`, and a grep gate reported
+  // success the whole time. A role whose utility does not exist is worse than no role: the class
+  // silently does not apply. So each utility is applied to a probe element and the computed
+  // paint is compared against the token it is supposed to carry.
+  const spec = manifest.surfaces.flatMap((s) => [
+    { utility: s.utility, token: s.role, property: "backgroundColor" as const },
+    ...s.foregrounds.map((f) => ({ utility: f.utility, token: f.role, property: "color" as const })),
+    ...s.rules.map((r) => ({ utility: r.utility, token: r.role, property: "borderTopColor" as const })),
+  ]);
+
+  const bad = await page.evaluate((spec) => {
+    const host = document.createElement("div");
+    host.style.position = "fixed";
+    host.style.left = "-9999px";
+    document.documentElement.appendChild(host);
+    const failures: string[] = [];
+    for (const s of spec) {
+      const viaUtility = document.createElement("div");
+      viaUtility.className = s.utility;
+      viaUtility.style.borderStyle = "solid";
+      viaUtility.style.borderWidth = "1px";
+      const viaToken = document.createElement("div");
+      viaToken.style.setProperty(
+        s.property === "backgroundColor" ? "background-color" : s.property === "color" ? "color" : "border-top-color",
+        `var(${s.token})`,
+      );
+      viaToken.style.borderStyle = "solid";
+      viaToken.style.borderWidth = "1px";
+      host.append(viaUtility, viaToken);
+      const got = getComputedStyle(viaUtility)[s.property];
+      const want = getComputedStyle(viaToken)[s.property];
+      if (got !== want) failures.push(`.${s.utility} paints ${got} but var(${s.token}) is ${want}`);
+      viaUtility.remove();
+      viaToken.remove();
+    }
+    host.remove();
+    return failures;
+  }, spec);
+
+  expect(
+    bad,
+    `${bad.length} of ${spec.length} role utilities do not paint their own token. An empty or ` +
+      `transparent paint means the utility DOES NOT EXIST — check the Tailwind v4 namespace ` +
+      `(--color-* for paint, --text-* for size, --font-weight-* for weight):\n  ` +
+      bad.join("\n  "),
+  ).toEqual([]);
+});
+
+test("the color-scheme split holds: dark root, light raised surfaces", async ({ page }) => {
   const rootScheme = await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
   expect(rootScheme, ":root carries the dark scheme the removed .dark class used to signal").toContain("dark");
 
-  // A paper surface must re-declare `light`, or the native chrome inside it (select popups, autofill
-  // fills, validation bubbles) renders dark-on-cream. `/new` is the route that has such controls.
+  // A raised surface must re-declare `light`, or the native chrome inside it (select popups,
+  // autofill fills, validation bubbles) renders dark-on-cream. `/new` is the route with controls.
   const paperScheme = await page.evaluate(() => {
-    const el = document.querySelector<HTMLElement>(".bg-card, .bg-neutral-0, .bg-neutral-50");
+    const el = document.querySelector<HTMLElement>(
+      ".bg-surface-raised, .bg-surface-inset, .bg-card, .bg-neutral-0, .bg-neutral-50",
+    );
     return el ? getComputedStyle(el).colorScheme : null;
   });
-  expect(paperScheme, "/new should render at least one paper surface").not.toBeNull();
-  expect(paperScheme, "a paper surface must re-declare the light scheme").toContain("light");
+  expect(paperScheme, "/new should render at least one raised surface").not.toBeNull();
+  expect(paperScheme, "a raised surface must re-declare the light scheme").toContain("light");
 
   const controlScheme = await page.evaluate(() => {
     const el = document.querySelector<HTMLElement>("input, select, textarea");
@@ -166,25 +150,42 @@ test("the color-scheme split holds: dark root, light paper surfaces", async ({ p
 });
 
 test("the focus outline colour flips with the surface, not with a marker class", async ({ page }) => {
-  // The focus treatment resolves its colour through `light-dark()` against the same `color-scheme`
-  // split asserted above — blue on paper, cream on the ground, because blue on the ground is 2.47:1
-  // and prohibited (§5.2). That mechanism degrades SILENTLY on an engine without `light-dark()`
-  // (the declaration is simply dropped and the fallback blue is used everywhere), so it is probed
-  // directly rather than through `:focus-visible`, whose matching depends on interaction heuristics.
+  // The focus treatment resolves through `light-dark()` against the same `color-scheme` split —
+  // the accent on a raised surface, the chrome's foreground on the chrome, because the accent on
+  // the chrome is 2.47:1 and prohibited. That mechanism degrades SILENTLY on an engine without
+  // `light-dark()` (the declaration is dropped and the fallback is used everywhere), so it is
+  // probed directly rather than through `:focus-visible`, whose matching depends on interaction.
   const resolved = await page.evaluate(() => {
     const probe = (scheme: string) => {
       const el = document.createElement("div");
       el.style.colorScheme = scheme;
-      el.style.outlineColor = "light-dark(var(--b-blue), var(--on-page))";
+      el.style.outlineColor = "light-dark(var(--focus-ring-on-raised), var(--focus-ring-on-chrome))";
       document.body.appendChild(el);
       const value = getComputedStyle(el).outlineColor;
       el.remove();
       return value;
     };
-    return { paper: probe("light"), ground: probe("dark") };
+    const token = (name: string) => {
+      const el = document.createElement("div");
+      el.style.outlineColor = `var(${name})`;
+      document.body.appendChild(el);
+      const value = getComputedStyle(el).outlineColor;
+      el.remove();
+      return value;
+    };
+    return {
+      paper: probe("light"),
+      ground: probe("dark"),
+      onRaised: token("--focus-ring-on-raised"),
+      onChrome: token("--focus-ring-on-chrome"),
+    };
   });
 
-  // --b-blue #0D59F2 and --on-page #FFFFF8.
-  expect(resolved.paper, "focus on a paper surface is the action blue").toBe("rgb(13, 89, 242)");
-  expect(resolved.ground, "focus on the ground is paper-coloured, never blue").toBe("rgb(255, 255, 248)");
+  expect(resolved.paper, "focus on a raised surface is the action accent").toBe(resolved.onRaised);
+  expect(resolved.ground, "focus on the chrome is the chrome's own foreground, never the accent").toBe(
+    resolved.onChrome,
+  );
+  expect(resolved.onRaised, "the two focus rings must differ, or the flip is decorative").not.toBe(
+    resolved.onChrome,
+  );
 });
