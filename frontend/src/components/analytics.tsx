@@ -381,6 +381,9 @@ function OverlapHeatmap({
   const colOn = (j: number) => hc?.j === j || fi === j;
   const rowOn = (i: number) => hc?.i === i || fi === i;
   const clickCohort = (c: string) => onFocus?.({ kind: "cohort", value: c });
+  // The strongest wash a cell may carry. At 55% of the accent over paper the ink still
+  // measures 5.37:1; at 65% it is 4.44:1 and already sub-AA.
+  const WASH_MAX = 0.55;
   return (
     <div>
       <div className="overflow-x-auto">
@@ -421,8 +424,18 @@ function OverlapHeatmap({
                       onMouseEnter={() => setHc({ i, j })}
                       className="h-8 w-12 border text-center transition-colors"
                       style={{
-                        backgroundColor: `color-mix(in srgb, var(--accent) ${(Math.max(v ? 0.08 : 0, alpha) * 100).toFixed(2)}%, transparent)`,
-                        color: alpha > 0.5 ? "var(--on-accent)" : "var(--on-raised)",
+                        // The wash is CAPPED at WASH_MAX rather than running to the full accent,
+                        // and the number is always the paper ink. Measured, because the obvious
+                        // alternative does not work: a two-colour switch over a single-hue wash
+                        // passes through a mid-tone where NEITHER the ink nor the cream clears AA.
+                        // The dead band bottoms out at ~3.67:1 for every endpoint tried (pure
+                        // accent, and accent/ink blends from 80% down to 0%), so it is a property
+                        // of the ramp, not a badly-chosen switch point — the old `alpha > 0.5`
+                        // rule shipped cells at 2.43:1, 3.47:1 and 4.30:1. Capping keeps the
+                        // encoding monotonic, keeps every cell legible at >= 5.37:1, and deletes
+                        // the conditional entirely.
+                        backgroundColor: `color-mix(in srgb, var(--accent) ${(Math.max(v ? 0.08 : 0, alpha * WASH_MAX) * 100).toFixed(2)}%, transparent)`,
+                        color: "var(--on-raised)",
                         borderColor: isCell ? "var(--on-raised)" : inCross ? "var(--rule-on-raised)" : "transparent",
                         outline: isCell ? "1px solid var(--on-raised)" : "none",
                         cursor: "default",

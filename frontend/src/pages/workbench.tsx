@@ -47,8 +47,8 @@ const NIH_CDE_URL = "https://cde.nlm.nih.gov/deView?tinyId=";
 const VERDICT_BAR: Record<string, string> = {
   adopt: "bg-success",
   refine: "bg-warning",
-  novel: "bg-ph-navy",
-  unclassified: "bg-neutral-400",
+  novel: "bg-accent-action",
+  unclassified: "bg-on-track",
 };
 
 // User-verdict → {icon, color}. Single source of truth for the concept-list sidebar badge AND the
@@ -75,9 +75,9 @@ function cos(x: number | null | undefined): string {
 
 function MiniBar({ value, verdict }: { value: number; verdict: string }) {
   return (
-    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-200">
+    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-track">
       <div
-        className={`h-full rounded-full ${VERDICT_BAR[verdict] ?? "bg-neutral-400"}`}
+        className={`h-full rounded-full ${VERDICT_BAR[verdict] ?? "bg-on-track"}`}
         style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }}
       />
     </div>
@@ -118,7 +118,7 @@ function CodeLabel({ code, label, codeClass }: { code: string; label?: string; c
   return (
     <span className="inline-flex min-w-0 items-baseline gap-1">
       <span className={`font-mono ${codeClass}`}>{code}</span>
-      {label ? <span className="truncate text-neutral-400">({label})</span> : null}
+      {label ? <span className="truncate text-on-raised-muted">({label})</span> : null}
     </span>
   );
 }
@@ -144,7 +144,7 @@ function TransformDetail({
     const moreCodes = entries.length - shown.length;
     const unmapped = t.unmappedSourceCodes ?? [];
     return (
-      <div className="mt-2 space-y-1 border-t border-neutral-100 pt-2 pl-1">
+      <div className="mt-2 space-y-1 border-t border-rule-quiet-on-raised pt-2 pl-1">
         {shown.length > 0 && (
           <div className="grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
             {shown.map(([src, tgt]) => (
@@ -153,14 +153,14 @@ function TransformDetail({
                 className="flex items-center gap-1.5 text-xs"
                 title={`${src}${srcLabels[src] ? ` = ${srcLabels[src]}` : ""}  →  ${tgt}${tgtLabels[tgt] ? ` = ${tgtLabels[tgt]}` : ""}`}
               >
-                <CodeLabel code={src} label={srcLabels[src]} codeClass="text-neutral-500" />
-                <span className="shrink-0 text-neutral-300">→</span>
-                <CodeLabel code={tgt} label={tgtLabels[tgt]} codeClass="text-neutral-700" />
+                <CodeLabel code={src} label={srcLabels[src]} codeClass="text-on-raised-muted" />
+                <span className="shrink-0 text-on-raised-faint">→</span>
+                <CodeLabel code={tgt} label={tgtLabels[tgt]} codeClass="text-on-raised" />
               </div>
             ))}
           </div>
         )}
-        {moreCodes > 0 && <div className="text-xs text-neutral-400">+{moreCodes} more mapped</div>}
+        {moreCodes > 0 && <div className="text-xs text-on-raised-muted">+{moreCodes} more mapped</div>}
         {unmapped.length > 0 && (
           <div className="text-xs text-warning">
             <span className="font-semibold">unmapped:</span>{" "}
@@ -179,10 +179,10 @@ function TransformDetail({
   }
   if (t.kind === "unit") {
     return (
-      <div className="mt-2 border-t border-neutral-100 pt-2 pl-1 font-mono text-xs text-neutral-600">
+      <div className="mt-2 border-t border-rule-quiet-on-raised pt-2 pl-1 font-mono text-xs text-on-raised">
         target = source × {t.factor ?? "?"}
         {t.offset ? ` + ${t.offset}` : ""}
-        <span className="ml-2 font-sans text-neutral-400">
+        <span className="ml-2 font-sans text-on-raised-muted">
           ({t.sourceUnit ?? "?"} → {t.targetUnit ?? "?"})
         </span>
       </div>
@@ -190,16 +190,16 @@ function TransformDetail({
   }
   if (t.kind === "arithmetic") {
     return (
-      <div className="mt-2 border-t border-neutral-100 pt-2 pl-1 font-mono text-xs text-neutral-600">
+      <div className="mt-2 border-t border-rule-quiet-on-raised pt-2 pl-1 font-mono text-xs text-on-raised">
         {t.formula ?? "—"}
-        {t.inputs?.length ? <span className="ml-2 font-sans text-neutral-400">inputs: {t.inputs.join(", ")}</span> : null}
+        {t.inputs?.length ? <span className="ml-2 font-sans text-on-raised-muted">inputs: {t.inputs.join(", ")}</span> : null}
       </div>
     );
   }
   if (t.kind === "data_dependent") {
     return (
-      <div className="mt-2 border-t border-neutral-100 pt-2 pl-1 text-xs text-neutral-500">
-        method <span className="font-mono text-neutral-600">{t.method ?? "data-dependent"}</span> — needs row-level
+      <div className="mt-2 border-t border-rule-quiet-on-raised pt-2 pl-1 text-xs text-on-raised-muted">
+        method <span className="font-mono text-on-raised">{t.method ?? "data-dependent"}</span> — needs row-level
         data at apply-time
       </div>
     );
@@ -215,7 +215,7 @@ export default function WorkbenchPage() {
   const { jobState } = useHarmonizeStream(jobId, true, true);
   if (!jobState) {
     return (
-      <div className="flex items-center gap-2 p-8 text-neutral-500">
+      <div className="flex items-center gap-2 p-8 text-on-raised-muted">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading run…
       </div>
     );
@@ -470,12 +470,12 @@ export function WorkbenchBody({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-neutral-500 hover:text-ph-navy">
+          <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-on-raised-muted hover:text-link-on-raised">
             <ArrowLeft className="h-3 w-3" /> Back to run
           </Link>
-          <h1 className="font-display text-xl font-semibold text-ph-ink">Review workbench</h1>
+          <h1 className="font-display text-xl font-semibold text-on-raised">Review workbench</h1>
         </div>
-        <div className="text-sm text-neutral-500">{records.length} concepts</div>
+        <div className="text-sm text-on-raised-muted">{records.length} concepts</div>
       </div>
 
       {isDemo && (
@@ -501,7 +501,7 @@ export function WorkbenchBody({
             {/* Two independent filters. Verdict = the PIPELINE's call (adopt/refine/novel). Review status =
                 the REVIEWER's own decision (the `decisions` map). Both have a "refine" — labels disambiguate. */}
             <div className="space-y-1">
-              <span className="block text-xs font-semibold text-neutral-400">Verdict · pipeline</span>
+              <span className="block text-xs font-semibold text-on-raised-muted">Verdict · pipeline</span>
               <Select value={filter} onValueChange={setFilter}>
                 <SelectTrigger className="h-8">
                   <SelectValue />
@@ -516,7 +516,7 @@ export function WorkbenchBody({
               </Select>
             </div>
             <div className="space-y-1">
-              <span className="block text-xs font-semibold text-neutral-400">Review status · yours</span>
+              <span className="block text-xs font-semibold text-on-raised-muted">Review status · yours</span>
               <Select value={userFilter} onValueChange={setUserFilter}>
                 <SelectTrigger className="h-8">
                   <SelectValue />
@@ -540,24 +540,24 @@ export function WorkbenchBody({
                 key={g.id}
                 onClick={() => setSelectedId(g.id)}
                 className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                  g.id === selectedId ? "bg-ph-navy/5 ring-1 ring-ph-navy/25" : "hover:bg-neutral-50"
+                  g.id === selectedId ? "bg-surface-info ring-1 ring-rule-info" : "hover:bg-surface-inset"
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-semibold text-neutral-700">{conceptLabel(g)}</span>
+                  <span className="truncate text-sm font-semibold text-on-raised">{conceptLabel(g)}</span>
                   <VerdictBadge verdict={decisions[g.id]} />
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
                   <Badge variant="outline" className={`${VERDICT_STYLES[g.verdict] ?? ""} px-1.5 py-0`}>
                     {g.verdict}
                   </Badge>
-                  <span className="text-xs text-neutral-400">
+                  <span className="text-xs text-on-raised-muted">
                     {g.nMembers} · {g.cohorts.join(", ")}
                   </span>
                 </div>
               </button>
             ))}
-            {!groups.length && <p className="py-8 text-center text-sm text-neutral-400">No concepts match.</p>}
+            {!groups.length && <p className="py-8 text-center text-sm text-on-raised-muted">No concepts match.</p>}
           </CardContent>
         </Card>
 
@@ -573,7 +573,7 @@ export function WorkbenchBody({
                       {selected.verdict}
                     </Badge>
                   </CardTitle>
-                  <p className="mt-1 text-xs text-neutral-500">
+                  <p className="mt-1 text-xs text-on-raised-muted">
                     {selected.nMembers} variables · {selected.cohorts.join(", ")} · route {selected.route}
                   </p>
                 </div>
@@ -607,17 +607,17 @@ export function WorkbenchBody({
                   )}
                   {selected.rationale && (
                     <div className="mt-1 space-y-1">
-                      <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
+                      <div className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
                         Why this CDE — model rationale
                       </div>
-                      <blockquote className="border-l-2 border-neutral-300 pl-3 italic text-neutral-600">
+                      <blockquote className="border-l-2 border-rule-control-on-raised pl-3 italic text-on-raised">
                         {selected.rationale}
                       </blockquote>
                     </div>
                   )}
                   {candInfo.reranked && candInfo.chosen && candInfo.bestCos != null && (
-                    <div className="flex items-start gap-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2 text-xs text-neutral-600">
-                      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ph-navy" />
+                    <div className="flex items-start gap-2 rounded-md border border-rule-info bg-surface-info px-3 py-2 text-xs text-on-raised">
+                      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-on-raised" />
                       <span>
                         The model chose a candidate at cos{" "}
                         <span className="tabular-nums">{cos(candInfo.chosen.cosine)}</span> over a
@@ -653,7 +653,7 @@ export function WorkbenchBody({
             <Card>
               <CardHeader className="space-y-1">
                 <CardTitle className="text-sm">CDE candidates ({selected.candidates.length})</CardTitle>
-                <p className="text-xs text-neutral-400">
+                <p className="text-xs text-on-raised-muted">
                   Ordered by the model&apos;s concept-fit ranking. ★ = the model&apos;s pick · cos = embedding
                   similarity (retrieval signal, which can differ from the pick).
                 </p>
@@ -662,7 +662,7 @@ export function WorkbenchBody({
                 {selected.candidates.length ? (
                   <div className="max-h-[24rem] overflow-y-auto">
                   <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-neutral-0">
+                    <TableHeader className="sticky top-0 z-10 bg-surface-raised">
                       <TableRow>
                         <TableHead className="w-8">#</TableHead>
                         <TableHead>CDE</TableHead>
@@ -674,27 +674,27 @@ export function WorkbenchBody({
                     <TableBody>
                       {orderedCandidates.map((c, i) => (
                         <TableRow key={c.rank} className={c.isChosen ? "bg-success-bg/40" : undefined}>
-                          <TableCell className="tabular-nums text-neutral-500">{i + 1}</TableCell>
+                          <TableCell className="tabular-nums text-on-raised-muted">{i + 1}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <span className="font-semibold text-neutral-700">{c.cdeId}</span>
+                              <span className="font-semibold text-on-raised">{c.cdeId}</span>
                               {c.isChosen && <Star className="h-3.5 w-3.5 fill-success text-success" />}
-                              {c.llmSuggested && <Sparkles className="h-3.5 w-3.5 text-ph-navy" />}
+                              {c.llmSuggested && <Sparkles className="h-3.5 w-3.5 text-accent-on-raised" />}
                               {c.rank === candInfo.bestRank && !c.isChosen && (
-                                <span className="rounded bg-neutral-100 px-1 py-0.5 text-xs font-semibold text-neutral-500">
+                                <span className="rounded bg-surface-inset-strong px-1 py-0.5 text-xs font-semibold text-on-raised-muted">
                                   highest cos
                                 </span>
                               )}
                             </div>
-                            {c.cdeExternalId && <div className="font-mono text-xs text-neutral-400">{c.cdeExternalId}</div>}
+                            {c.cdeExternalId && <div className="font-mono text-xs text-on-raised-muted">{c.cdeExternalId}</div>}
                           </TableCell>
                           <TableCell className="max-w-md">
-                            <span className="line-clamp-2 text-xs text-neutral-500">{c.definition || "—"}</span>
+                            <span className="line-clamp-2 text-xs text-on-raised-muted">{c.definition || "—"}</span>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-2">
                               <MiniBar value={c.cosine} verdict={selected.verdict} />
-                              <span className="tabular-nums text-xs text-neutral-600">{cos(c.cosine)}</span>
+                              <span className="tabular-nums text-xs text-on-raised">{cos(c.cosine)}</span>
                             </div>
                           </TableCell>
                           <TableCell>
@@ -703,7 +703,7 @@ export function WorkbenchBody({
                                 href={`${NIH_CDE_URL}${encodeURIComponent(c.cdeExternalId)}`}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-neutral-400 hover:text-ph-navy"
+                                className="text-on-raised-muted hover:text-accent-on-raised"
                                 title="Open in NIH CDE Repository"
                               >
                                 <ExternalLink className="h-4 w-4" />
@@ -716,7 +716,7 @@ export function WorkbenchBody({
                   </Table>
                   </div>
                 ) : (
-                  <p className="py-8 text-center text-sm text-neutral-400">
+                  <p className="py-8 text-center text-sm text-on-raised-muted">
                     No candidates retained (novel / GenCDE route).
                   </p>
                 )}
@@ -758,7 +758,7 @@ export function WorkbenchBody({
                   )}
                 </div>
                 {gencdeId && (
-                  <p className="text-xs text-neutral-500">
+                  <p className="text-xs text-on-raised-muted">
                     These recodes map each source variable&apos;s values <b>into the proposed GenCDE&apos;s domain</b>{" "}
                     (this concept is novel — the target is the synthesized GenCDE above, not an existing CDE).
                   </p>
@@ -783,16 +783,16 @@ export function WorkbenchBody({
                       const srcLabels = sourceValueLabels(fieldIndex[t.sourceVariable]);
                       const tgtLabels = permissibleValueLabels(selected.gencde?.permissibleValues);
                       return (
-                        <div key={i} className="rounded border border-neutral-100 px-3 py-2 text-xs">
+                        <div key={i} className="rounded border border-rule-quiet-on-raised px-3 py-2 text-xs">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge variant="secondary" className="font-mono">
                               {t.kind}
                             </Badge>
-                            <span className="font-mono text-neutral-600">{t.sourceVariable}</span>
-                            <span className="text-neutral-300">→</span>
-                            <span className="text-neutral-600">{transformSummary(t)}</span>
+                            <span className="font-mono text-on-raised">{t.sourceVariable}</span>
+                            <span className="text-on-raised-faint">→</span>
+                            <span className="text-on-raised">{transformSummary(t)}</span>
                             {toGenCDE && (
-                              <Badge variant="outline" className="gap-1 border-ph-navy/30 text-ph-navy">
+                              <Badge variant="outline" className="gap-1 border-rule-info text-accent-on-raised">
                                 {selected.gencde?.parentCdeId ? (
                                   <>
                                     <GitBranch className="h-3 w-3" /> → Refined CDE
@@ -809,7 +809,7 @@ export function WorkbenchBody({
                                 <AlertTriangle className="h-3 w-3" /> stale — regenerate
                               </Badge>
                             )}
-                            <span className="text-neutral-400">coverage {(t.coverage * 100).toFixed(0)}%</span>
+                            <span className="text-on-raised-muted">coverage {(t.coverage * 100).toFixed(0)}%</span>
                             {t.needsReview && <Badge variant="outline" className="border-warning/40 text-warning">review</Badge>}
                             {t.needsUnits && <Badge variant="outline" className="border-warning/40 text-warning">units</Badge>}
                             {t.needsData && <Badge variant="outline" className="border-warning/40 text-warning">data</Badge>}
@@ -831,7 +831,7 @@ export function WorkbenchBody({
                     })}
                   </div>
                 ) : (
-                  <p className="py-6 text-center text-sm text-neutral-400">No transform specs for this concept.</p>
+                  <p className="py-6 text-center text-sm text-on-raised-muted">No transform specs for this concept.</p>
                 )}
               </CardContent>
             </Card>
@@ -875,7 +875,7 @@ export function WorkbenchBody({
           </div>
         ) : (
           <Card>
-            <CardContent className="py-16 text-center text-sm text-neutral-400">
+            <CardContent className="py-16 text-center text-sm text-on-raised-muted">
               {records.length ? "Select a concept to review." : "No records in this run yet."}
             </CardContent>
           </Card>
@@ -888,8 +888,8 @@ export function WorkbenchBody({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-2">
-      <span className="w-24 shrink-0 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">{label}</span>
-      <span className="text-neutral-700">{children}</span>
+      <span className="w-24 shrink-0 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">{label}</span>
+      <span className="text-on-raised">{children}</span>
     </div>
   );
 }
@@ -914,12 +914,12 @@ function DerivationBlock({ g }: { g: GenCDE }) {
   const pct = g.deltaSize != null ? `${Math.round(g.deltaSize * 100)}%` : null;
 
   return (
-    <div className="space-y-1.5 rounded border border-ph-navy/15 bg-neutral-50 px-2.5 py-2 text-xs">
+    <div className="space-y-1.5 rounded border border-rule-info bg-surface-inset px-2.5 py-2 text-xs">
       <div className="flex flex-wrap items-baseline gap-x-1.5">
-        <span className="font-semibold uppercase tracking-eyebrow text-neutral-500">Refines</span>
+        <span className="font-semibold uppercase tracking-eyebrow text-on-raised-muted">Refines</span>
         {g.parentCdeExternalId ? (
           <a
-            className="font-semibold text-ph-navy hover:underline"
+            className="font-semibold text-link-on-raised hover:underline"
             href={`${NIH_CDE_URL}${g.parentCdeExternalId}`}
             target="_blank"
             rel="noreferrer"
@@ -929,25 +929,25 @@ function DerivationBlock({ g }: { g: GenCDE }) {
             {g.parentCdeId} <ExternalLink className="ml-0.5 inline h-3 w-3 align-[-2px]" />
           </a>
         ) : (
-          <span className="font-semibold text-neutral-700">{g.parentCdeId}</span>
+          <span className="font-semibold text-on-raised">{g.parentCdeId}</span>
         )}
       </div>
       {g.relation && (
-        <div className="text-neutral-600">
-          <span className="font-semibold uppercase tracking-eyebrow text-neutral-500">Relation </span>
+        <div className="text-on-raised">
+          <span className="font-semibold uppercase tracking-eyebrow text-on-raised-muted">Relation </span>
           {RELATION_LABEL[g.relation] ?? g.relation}
-          <span className="ml-1 font-mono text-xs text-neutral-500">{g.relation}</span>
+          <span className="ml-1 font-mono text-xs text-on-raised-muted">{g.relation}</span>
         </div>
       )}
       {g.qualifierAdded && (
-        <div className="text-neutral-600">
-          <span className="font-semibold uppercase tracking-eyebrow text-neutral-500">Qualifier added </span>
+        <div className="text-on-raised">
+          <span className="font-semibold uppercase tracking-eyebrow text-on-raised-muted">Qualifier added </span>
           {g.qualifierAdded}
         </div>
       )}
       {(changed.length > 0 || completed.length > 0 || pct) && (
         <div className="flex flex-wrap items-center gap-1">
-          <span className="font-semibold uppercase tracking-eyebrow text-neutral-500">Delta</span>
+          <span className="font-semibold uppercase tracking-eyebrow text-on-raised-muted">Delta</span>
           {changed.map((f) => (
             <Badge key={f} variant="outline" className="border-warning/40 font-mono text-xs text-warning">
               {f.replace(/_/g, " ")}
@@ -956,24 +956,24 @@ function DerivationBlock({ g }: { g: GenCDE }) {
           {/* Completions are NOT changes: the public CDE catalog is sparse (most matched parents carry no
               question text), so supplying one fills a blank rather than contradicting the standard. */}
           {completed.map((f) => (
-            <Badge key={f} variant="outline" className="font-mono text-xs text-neutral-500" title="Parent field was empty — supplied, not changed">
+            <Badge key={f} variant="outline" className="font-mono text-xs text-on-raised-muted" title="Parent field was empty — supplied, not changed">
               +{f.replace(/_/g, " ")}
             </Badge>
           ))}
-          {pct && <span className="text-neutral-500">{pct} of the original changed</span>}
+          {pct && <span className="text-on-raised-muted">{pct} of the original changed</span>}
         </div>
       )}
       {(added.length > 0 || deprecated.length > 0) && (
-        <div className="text-neutral-600">
+        <div className="text-on-raised">
           {added.length > 0 && (
             <span>
-              <span className="font-semibold uppercase tracking-eyebrow text-neutral-500">Values added </span>
+              <span className="font-semibold uppercase tracking-eyebrow text-on-raised-muted">Values added </span>
               {added.map((o) => o.label).join(", ")}
             </span>
           )}
           {deprecated.length > 0 && (
             <span className="ml-2">
-              <span className="font-semibold uppercase tracking-eyebrow text-neutral-500">Unused </span>
+              <span className="font-semibold uppercase tracking-eyebrow text-on-raised-muted">Unused </span>
               {deprecated.join(", ")}
             </span>
           )}
@@ -1037,9 +1037,9 @@ function GenCDECard({
   const derived = !!g.parentCdeId;
 
   return (
-    <div className="mt-1 space-y-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2.5">
+    <div className="mt-1 space-y-2 rounded-md border border-rule-info bg-surface-info px-3 py-2.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-ph-navy">
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-accent-on-raised">
           {derived ? <GitBranch className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
           {derived ? "Refined CDE" : "Proposed GenCDE"}
         </span>
@@ -1066,7 +1066,7 @@ function GenCDECard({
       {/* GenCDE-axis verdict: approve/refine/reject the proposed target itself (distinct from the concept→CDE
           match verdict and the per-variable transform verdicts). "refine" opens the edit form below. */}
       <div className="flex items-center gap-1.5">
-        <span className="text-xs text-neutral-500">{derived ? "Review refinement:" : "Review proposal:"}</span>
+        <span className="text-xs text-on-raised-muted">{derived ? "Review refinement:" : "Review proposal:"}</span>
         <DecisionBtn active={decision === "approve"} onClick={() => onDecide("approve")} title="Approve GenCDE" color="text-success">
           <Check className="h-4 w-4" />
         </DecisionBtn>
@@ -1134,13 +1134,13 @@ function GenCDECard({
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-500">Permissible values (code = label)</Label>
+              <Label className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Permissible values (code = label)</Label>
               <Button type="button" size="sm" variant="ghost" className="h-6 gap-1 text-xs" onClick={addPV}>
                 <Plus className="h-3 w-3" /> Add value
               </Button>
             </div>
             {draft.permissibleValues.length === 0 && (
-              <p className="text-xs text-neutral-400">No permissible values (numeric / open-text GenCDE).</p>
+              <p className="text-xs text-on-raised-muted">No permissible values (numeric / open-text GenCDE).</p>
             )}
             {draft.permissibleValues.map((o, i) => (
               <div key={i} className="flex items-center gap-1.5">
@@ -1150,7 +1150,7 @@ function GenCDECard({
                   value={o.code}
                   onChange={(e) => setPV(i, { code: e.target.value })}
                 />
-                <span className="text-neutral-300">=</span>
+                <span className="text-on-raised-faint">=</span>
                 <Input
                   className="h-7 flex-1 text-xs"
                   placeholder="label"
@@ -1161,7 +1161,7 @@ function GenCDECard({
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className="h-7 w-7 text-neutral-400 hover:text-danger"
+                  className="h-7 w-7 text-on-raised-muted hover:text-danger"
                   title="Remove value"
                   onClick={() => removePV(i)}
                 >
@@ -1183,16 +1183,16 @@ function GenCDECard({
         // ── read-only display ────────────────────────────────────────────────────────────────
         <>
           <div className="text-sm">
-            <span className="font-mono font-semibold text-ph-ink">{g.preferredName || "—"}</span>
-            {g.title && <span className="text-neutral-500"> · {g.title}</span>}
+            <span className="font-mono font-semibold text-on-raised">{g.preferredName || "—"}</span>
+            {g.title && <span className="text-on-raised-muted"> · {g.title}</span>}
           </div>
-          {g.definition && <p className="text-sm text-neutral-600">{g.definition}</p>}
+          {g.definition && <p className="text-sm text-on-raised">{g.definition}</p>}
           {g.permissibleValues.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {g.permissibleValues.map((o) => (
                 <span
                   key={`${o.code}=${o.label}`}
-                  className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-xs text-neutral-600"
+                  className="rounded bg-surface-inset-strong px-1.5 py-0.5 font-mono text-xs text-on-raised"
                 >
                   {o.code}={o.label}
                 </span>
@@ -1200,7 +1200,7 @@ function GenCDECard({
             </div>
           )}
           {(g.units || hasRange) && (
-            <div className="text-xs text-neutral-500">
+            <div className="text-xs text-on-raised-muted">
               {g.units && (
                 <>
                   units <span className="font-mono">{g.units}</span>
@@ -1217,7 +1217,7 @@ function GenCDECard({
               )}
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-neutral-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-on-raised-muted">
             <span>
               coverage{" "}
               <span className="tabular-nums">
@@ -1244,7 +1244,7 @@ function GenCDECard({
 function EditField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
-      <Label className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-500">{label}</Label>
+      <Label className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">{label}</Label>
       {children}
     </div>
   );
@@ -1268,7 +1268,7 @@ function DecisionBtn({
       type="button"
       variant={active ? "secondary" : "ghost"}
       size="icon"
-      className={`h-8 w-8 ${active ? color : "text-neutral-400"}`}
+      className={`h-8 w-8 ${active ? color : "text-on-raised-muted"}`}
       onClick={onClick}
       title={title}
     >

@@ -58,8 +58,8 @@ const PHASE_ORDER = ["loading", "embedding", "clustering", "generating", "splitt
 const VERDICT_BAR: Record<string, string> = {
   adopt: "bg-success",
   refine: "bg-warning",
-  novel: "bg-ph-navy",
-  unclassified: "bg-neutral-400",
+  novel: "bg-accent-action",
+  unclassified: "bg-on-track",
 };
 // Preview shows the biggest clusters (most likely to be restructured by a full run) first; cap the rendered
 // list so a large corpus doesn't produce hundreds of cards. The rest are noted with a "+N more" line.
@@ -72,17 +72,17 @@ function ReproducibilityInfo() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-2 py-0.5 text-xs text-neutral-500 transition-colors hover:border-ph-navy/40 hover:text-ph-navy"
+          className="inline-flex items-center gap-1 rounded-full border border-rule-on-raised px-2 py-0.5 text-xs text-on-raised-muted transition-colors hover:border-rule-info hover:text-accent-on-raised"
         >
           <Info className="h-3 w-3" /> Reproducibility
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 text-xs font-normal leading-relaxed">
-        <p className="mb-2 text-sm font-semibold text-ph-ink">How reproducible is a run?</p>
-        <p className="mb-2 text-neutral-600">
+        <p className="mb-2 text-sm font-semibold text-on-raised">How reproducible is a run?</p>
+        <p className="mb-2 text-on-raised">
           Embeddings are deterministic. Two stages are <span className="font-semibold">not</span> bitwise-reproducible:
         </p>
-        <ul className="mb-2 list-disc space-y-1 pl-4 text-neutral-600">
+        <ul className="mb-2 list-disc space-y-1 pl-4 text-on-raised">
           <li>
             <span className="font-semibold">Clustering</span> (UMAP/HDBSCAN) — cluster boundaries can shift run to run.
           </li>
@@ -91,16 +91,16 @@ function ReproducibilityInfo() {
             bitwise guarantee, so a few borderline verdicts may flip.
           </li>
         </ul>
-        <p className="mb-2 text-neutral-600">
+        <p className="mb-2 text-on-raised">
           The split-aware assignment re-derives concepts from each cluster, so most of that drift washes out of the
           final grouping.
         </p>
-        <p className="mb-2 rounded-md bg-neutral-50 p-2 text-neutral-600">
-          <span className="font-semibold text-ph-ink">Reference</span> (5×200-variable cohorts): across independent fresh
+        <p className="mb-2 rounded-md bg-surface-inset p-2 text-on-raised">
+          <span className="font-semibold text-on-raised">Reference</span> (5×200-variable cohorts): across independent fresh
           runs most concepts recur and keep the same verdict — the split-aware assignment washes most UMAP/LLM
           drift out of the final grouping.
         </p>
-        <p className="text-neutral-500">
+        <p className="text-on-raised-muted">
           A <span className="font-semibold">saved / demo run</span> replays a frozen snapshot + cached responses —
           identical every time.
         </p>
@@ -141,20 +141,20 @@ function RunTimeline({
   const terminalAt = timings.complete ?? timings.error ?? null;
   const endOf = (i: number): number => (i + 1 < seq.length ? timings[seq[i + 1]] : (terminalAt ?? now));
   return (
-    <div className="space-y-1 border-t border-neutral-200 pt-2 text-xs">
+    <div className="space-y-1 border-t border-rule-on-raised pt-2 text-xs">
       {seq.map((p, i) => {
         const active = p === currentPhase && terminalAt === null;
         return (
           <div key={p} className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 capitalize text-neutral-600">
+            <span className="flex items-center gap-1.5 capitalize text-on-raised">
               {active ? (
-                <Loader2 className="h-3 w-3 animate-spin text-ph-navy" />
+                <Loader2 className="h-3 w-3 animate-spin text-accent-on-raised" />
               ) : (
                 <Check className="h-3 w-3 text-success" />
               )}
               {p}
             </span>
-            <span className="tabular-nums text-neutral-500">{formatDuration(Math.max(0, endOf(i) - timings[p]))}</span>
+            <span className="tabular-nums text-on-raised-muted">{formatDuration(Math.max(0, endOf(i) - timings[p]))}</span>
           </div>
         );
       })}
@@ -352,7 +352,7 @@ export default function DashboardPage() {
 
   if (!jobState) {
     return (
-      <div className="flex items-center gap-2 p-8 text-neutral-500">
+      <div className="flex items-center gap-2 p-8 text-on-raised-muted">
         <Loader2 className="h-4 w-4 animate-spin" /> Connecting to run…
       </div>
     );
@@ -382,15 +382,15 @@ export default function DashboardPage() {
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <nav className="mb-1 text-xs text-neutral-500">
-              <Link href="/jobs" className="hover:text-ph-navy hover:underline">
+            <nav className="mb-1 text-xs text-on-raised-muted">
+              <Link href="/jobs" className="hover:text-link-on-raised hover:underline">
                 Runs
               </Link>
-              <span className="mx-1 text-neutral-300">/</span>
+              <span className="mx-1 text-on-raised-faint">/</span>
               <span className="font-mono">{jobId.slice(0, 8)}</span>
             </nav>
-            <h1 className="font-display text-xl font-semibold text-ph-ink">{jobState.displayName}</h1>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-neutral-500">
+            <h1 className="font-display text-xl font-semibold text-on-raised">{jobState.displayName}</h1>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-on-raised-muted">
               {result && (
                 <Badge variant="neutral" className="font-normal">
                   {result.mode}
@@ -399,29 +399,29 @@ export default function DashboardPage() {
               <span>Split-aware CDE harmonization run</span>
               {headerCohorts.length > 0 && (
                 <>
-                  <span className="text-neutral-300">·</span>
-                  <span className="font-mono text-xs text-neutral-400">{headerCohorts.join(" · ")}</span>
+                  <span className="text-on-raised-faint">·</span>
+                  <span className="font-mono text-xs text-on-raised-muted">{headerCohorts.join(" · ")}</span>
                 </>
               )}
-              <span className="text-neutral-300">·</span>
+              <span className="text-on-raised-faint">·</span>
               <ReproducibilityInfo />
             </div>
             {result?.cost && result.cost.actualUsd > 0 && !running && (
-              <div className="mt-1.5 text-xs text-neutral-500">
+              <div className="mt-1.5 text-xs text-on-raised-muted">
                 Actual cost{" "}
                 <span
-                  className="font-semibold tabular-nums text-ph-ink"
+                  className="font-semibold tabular-nums text-on-raised"
                   title="Real token spend for this run — captured usage priced at provider rates (Batch billed at 50%). For a BYOK run this is your own bill, not an estimate."
                 >
                   {formatUsd(result.cost.actualUsd)}
                 </span>
-                <span className="text-neutral-400">
+                <span className="text-on-raised-muted">
                   {" · "}
                   {result.cost.tokens.input.toLocaleString()} in / {result.cost.tokens.output.toLocaleString()} out
                   tokens
                 </span>
                 {Object.entries(result.cost.perStage).filter(([, s]) => s.usd > 0).length > 0 && (
-                  <span className="text-neutral-400">
+                  <span className="text-on-raised-muted">
                     {" · "}
                     {Object.entries(result.cost.perStage)
                       .filter(([, s]) => s.usd > 0)
@@ -440,8 +440,8 @@ export default function DashboardPage() {
         </div>
 
         {result && !isPreview && !running && records.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
-            <span className="mr-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Export</span>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rule-on-raised bg-surface-inset px-3 py-2">
+            <span className="mr-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Export</span>
             <ExportButton
               href={exportUrl(jobId, "eitl_tsv")}
               icon={Download}
@@ -480,20 +480,20 @@ export default function DashboardPage() {
         <Card>
           <CardContent className="space-y-2 py-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="font-semibold capitalize text-neutral-700">
+              <span className="font-semibold capitalize text-on-raised">
                 {error ? "Error" : `Phase: ${jobState.phase}`}
               </span>
-              <span className="text-neutral-500">{jobState.total > 0 ? `${jobState.completed}/${jobState.total}` : ""}</span>
+              <span className="text-on-raised-muted">{jobState.total > 0 ? `${jobState.completed}/${jobState.total}` : ""}</span>
             </div>
             <Progress value={error ? 100 : pct} />
             {running && (
               <>
-                <div className="flex items-center justify-between text-xs text-neutral-500">
+                <div className="flex items-center justify-between text-xs text-on-raised-muted">
                   <div className="flex items-center gap-3">
                     <span className="tabular-nums">Elapsed {formatDuration(elapsed)}</span>
                     {typeof jobState.costSoFar === "number" && jobState.costSoFar > 0 && (
                       <span
-                        className="tabular-nums text-ph-navy"
+                        className="tabular-nums text-accent-on-raised"
                         title="Realized spend so far — actual token cost of the stages done, not an estimate"
                       >
                         Spent {formatUsd(jobState.costSoFar)}
@@ -505,7 +505,7 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() => setVerbose((v) => !v)}
-                      className="text-neutral-400 underline-offset-2 hover:text-ph-navy hover:underline"
+                      className="text-on-raised-muted underline-offset-2 hover:text-link-on-raised hover:underline"
                     >
                       {verbose ? "Hide details" : "Show details"}
                     </button>
@@ -519,7 +519,7 @@ export default function DashboardPage() {
                     checkpoint — swap the control for a "Stopping…" indicator so it can't be re-fired. */}
                 <div className="flex justify-end pt-1">
                   {jobState.stopping ? (
-                    <span className="flex items-center gap-1.5 text-xs text-neutral-500">
+                    <span className="flex items-center gap-1.5 text-xs text-on-raised-muted">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" /> Stopping…
                     </span>
                   ) : (
@@ -554,7 +554,7 @@ export default function DashboardPage() {
                     <Bug className="mr-1.5 h-3.5 w-3.5" /> Report this problem
                   </a>
                 </Button>
-                <span className="text-xs text-neutral-400">
+                <span className="text-xs text-on-raised-muted">
                   Opens a prefilled GitHub issue — run metadata only, no uploaded data.
                 </span>
               </div>
@@ -566,11 +566,11 @@ export default function DashboardPage() {
       {jobState.status === "cancelled" && (
         <Card>
           <CardContent className="space-y-3 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-neutral-700">
-              <CircleStop className="h-4 w-4 text-neutral-400" />
+            <div className="flex items-center gap-2 text-sm font-semibold text-on-raised">
+              <CircleStop className="h-4 w-4 text-on-raised-muted" />
               {records.length > 0 ? "Run stopped — partial results kept" : "Run stopped"}
             </div>
-            <p className="text-sm text-neutral-500">
+            <p className="text-sm text-on-raised-muted">
               {records.length > 0
                 ? `You stopped this run early. The stage in flight finished, so the results it produced are shown below (${records.length} ${records.length === 1 ? "concept" : "concepts"}); the remaining stages were skipped. Re-run from the same inputs for a complete run.`
                 : "You stopped this run before it produced any results. You can re-run it from the same inputs."}
@@ -588,10 +588,10 @@ export default function DashboardPage() {
         <>
           {/* Honest disclaimer — a preview is the deterministic FRONT HALF only (embed → cluster → retrieve).
               The LLM stages a full run adds are exactly the ones that restructure clusters + finalize matches. */}
-          <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-neutral-600">
+          <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-on-raised">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div>
-              <span className="font-semibold text-ph-ink">Preview — clustering + retrieved CDE candidates only.</span>{" "}
+              <span className="font-semibold text-on-raised">Preview — clustering + retrieved CDE candidates only.</span>{" "}
               A full run adds LLM-based <b>splitting</b>, <b>assignment</b>, and <b>verification</b> that can
               substantially change both the clusters and the CDE matches. The candidates below are retrieval hits,
               not final assignments.
@@ -610,7 +610,7 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <EmbeddingAtlas points={result.atlas} fieldIndex={result.fieldIndex ?? {}} />
-                <p className="mt-1 text-xs text-neutral-400">PCA of variable embeddings · colored by cohort</p>
+                <p className="mt-1 text-xs text-on-raised-muted">PCA of variable embeddings · colored by cohort</p>
               </CardContent>
             </Card>
           )}
@@ -628,19 +628,19 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {previewClusters.slice(0, PREVIEW_CLUSTER_CAP).map((c) => (
-                  <div key={c.clusterId} className="rounded-md border border-neutral-200 p-3">
+                  <div key={c.clusterId} className="rounded-md border border-rule-on-raised p-3">
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="font-semibold text-ph-ink">
+                      <span className="font-semibold text-on-raised">
                         {c.nMembers} variable{c.nMembers === 1 ? "" : "s"}
                       </span>
                       {c.crossCohort && (
-                        <Badge variant="outline" className="border-ph-teal/50 text-ph-navy">
+                        <Badge variant="outline" className="border-rule-accent-2-on-raised text-accent-on-raised">
                           cross-cohort
                         </Badge>
                       )}
-                      <span className="text-xs text-neutral-400">{c.cohorts.join(" · ")}</span>
+                      <span className="text-xs text-on-raised-muted">{c.cohorts.join(" · ")}</span>
                     </div>
-                    <div className="mt-1 text-xs text-neutral-500">
+                    <div className="mt-1 text-xs text-on-raised-muted">
                       {c.members.slice(0, 6).map((m, i) => (
                         <span key={`${m.cohort}:${m.variable}`}>
                           {i > 0 ? ", " : ""}
@@ -650,13 +650,13 @@ export default function DashboardPage() {
                       {c.nMembers > 6 ? ` +${c.nMembers - 6} more` : ""}
                     </div>
                     {c.candidates.length > 0 && (
-                      <div className="mt-2 border-t border-neutral-100 pt-2">
-                        <div className="text-xs font-semibold text-neutral-400">Top CDE candidates · retrieval</div>
+                      <div className="mt-2 border-t border-rule-quiet-on-raised pt-2">
+                        <div className="text-xs font-semibold text-on-raised-muted">Top CDE candidates · retrieval</div>
                         <ul className="mt-1 space-y-0.5">
                           {c.candidates.slice(0, 3).map((cd) => (
                             <li key={cd.rank} className="flex items-baseline gap-2 text-xs">
-                              <span className="w-8 shrink-0 font-mono text-neutral-400">{cd.cosine.toFixed(2)}</span>
-                              <span className="text-neutral-600">{cd.cdeId}</span>
+                              <span className="w-8 shrink-0 font-mono text-on-raised-muted">{cd.cosine.toFixed(2)}</span>
+                              <span className="text-on-raised">{cd.cdeId}</span>
                             </li>
                           ))}
                         </ul>
@@ -665,7 +665,7 @@ export default function DashboardPage() {
                   </div>
                 ))}
                 {previewClusters.length > PREVIEW_CLUSTER_CAP && (
-                  <p className="text-xs text-neutral-400">
+                  <p className="text-xs text-on-raised-muted">
                     +{previewClusters.length - PREVIEW_CLUSTER_CAP} more clusters — run in full mode to review them all.
                   </p>
                 )}
@@ -675,9 +675,9 @@ export default function DashboardPage() {
 
           {/* Promote CTA — RerunAction offers the full/batch/sync modes, carrying inputs forward. */}
           <Card>
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm text-neutral-600">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm text-on-raised">
               <span>
-                <span className="font-semibold text-ph-ink">{result.prompts.ideal}</span> concept prompts were built.
+                <span className="font-semibold text-on-raised">{result.prompts.ideal}</span> concept prompts were built.
                 Re-run in <span className="font-semibold">batch</span> or <span className="font-semibold">sync</span> mode
                 to produce adopt / refine / novel decisions.
               </span>
@@ -712,23 +712,23 @@ export default function DashboardPage() {
           </div>
 
           {focus && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2 text-sm">
-              <span className="text-neutral-500">Focused on</span>
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-rule-info bg-surface-info px-3 py-2 text-sm">
+              <span className="text-on-raised-muted">Focused on</span>
               <Badge
                 variant="outline"
-                className={focus.kind === "verdict" ? (VERDICT_STYLES[focus.value] ?? "") : "border-ph-teal/50 text-ph-navy"}
+                className={focus.kind === "verdict" ? (VERDICT_STYLES[focus.value] ?? "") : "border-rule-accent-2-on-raised text-accent-on-raised"}
               >
                 {focus.kind === "cohort" ? "cohort · " : ""}
                 {focusLabel(focus)}
               </Badge>
-              <span className="text-neutral-500">
+              <span className="text-on-raised-muted">
                 {showUnassigned
                   ? `${filteredUnassigned.length} unclustered ${filteredUnassigned.length === 1 ? "variable" : "variables"} · click any chart to change`
                   : `${filtered.length} of ${records.length} concepts · click any chart to change`}
               </span>
               <button
                 onClick={() => setFocus(null)}
-                className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-ph-navy"
+                className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-xs text-on-raised-muted hover:bg-surface-inset-strong hover:text-accent-on-raised"
               >
                 Clear <X className="h-3.5 w-3.5" />
               </button>
@@ -771,7 +771,7 @@ export default function DashboardPage() {
                   onFocus={toggleFocus}
                   onOpenConcept={(id) => navigate(`/job/${jobId}/workbench?c=${encodeURIComponent(id)}`)}
                 />
-                <p className="mt-1 text-xs text-neutral-400">PCA of variable embeddings · colored by cohort or verdict</p>
+                <p className="mt-1 text-xs text-on-raised-muted">PCA of variable embeddings · colored by cohort or verdict</p>
               </CardContent>
             </Card>
           )}
@@ -785,11 +785,11 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <Calculator className="h-4 w-4 text-ph-navy" /> Composite variable
+                <Calculator className="h-4 w-4 text-accent-on-raised" /> Composite variable
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-3">
-              <p className="min-w-[16rem] flex-1 text-sm text-neutral-500">
+              <p className="min-w-[16rem] flex-1 text-sm text-on-raised-muted">
                 Point at a paper, repo, or PDF defining a score — a frailty index, an intrinsic-capacity
                 score — and see whether this run's concepts can support it, and which ones compose it.
               </p>
@@ -818,7 +818,7 @@ export default function DashboardPage() {
                   type="button"
                   variant={xcOnly ? "secondary" : "outline"}
                   size="sm"
-                  className={`h-8 ${xcOnly ? "text-ph-navy" : "text-neutral-500"}`}
+                  className={`h-8 ${xcOnly ? "text-accent-on-raised" : "text-on-raised-muted"}`}
                   onClick={() => setXcOnly((v) => !v)}
                   title="Show only concepts pooled from 2+ cohorts (the harmonization subset)"
                 >
@@ -883,7 +883,7 @@ export default function DashboardPage() {
                       filteredUnassigned.map((u) => <UnassignedRow key={`${u.cohort}:${u.variable}`} u={u} />)
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={9} className="py-8 text-center text-sm text-neutral-400">
+                        <TableCell colSpan={9} className="py-8 text-center text-sm text-on-raised-muted">
                           No unclustered variables{search ? " match your search" : ""}.
                         </TableCell>
                       </TableRow>
@@ -940,23 +940,23 @@ function RecordRows({
   return (
     <>
       <TableRow className="cursor-pointer" onClick={toggle}>
-        <TableCell className="align-top text-neutral-400">
+        <TableCell className="align-top text-on-raised-muted">
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </TableCell>
         <TableCell className="max-w-xs align-top">
-          <div className="font-semibold text-neutral-700">{conceptLabel(r)}</div>
-          <div className="truncate text-xs text-neutral-400">
+          <div className="font-semibold text-on-raised">{conceptLabel(r)}</div>
+          <div className="truncate text-xs text-on-raised-muted">
             {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"}
             {r.crossCohort && " · cross-cohort"}
             {r.coverageGap && " · coverage gap"}
             {r.floored && " · floored"}
           </div>
         </TableCell>
-        <TableCell className="align-top text-sm text-neutral-600">
+        <TableCell className="align-top text-sm text-on-raised">
           {r.cde ? (
             <div>
               <div>{r.cde.id}</div>
-              {r.cde.externalId && <div className="text-xs text-neutral-400">{r.cde.externalId}</div>}
+              {r.cde.externalId && <div className="text-xs text-on-raised-muted">{r.cde.externalId}</div>}
             </div>
           ) : (
             "—"
@@ -968,7 +968,7 @@ function RecordRows({
           </Badge>
         </TableCell>
         <TableCell className="align-top text-right text-sm tabular-nums">{cos(r.cosines.chosen ?? r.cosines.top1)}</TableCell>
-        <TableCell className="align-top text-xs text-neutral-500">{r.cohorts.join(", ")}</TableCell>
+        <TableCell className="align-top text-xs text-on-raised-muted">{r.cohorts.join(", ")}</TableCell>
         <TableCell className="align-top text-right text-sm tabular-nums">{r.cohorts.length}</TableCell>
         <TableCell className="align-top text-right text-sm tabular-nums">{r.transforms.length || "—"}</TableCell>
         <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
@@ -992,26 +992,26 @@ function RecordRows({
         </TableCell>
       </TableRow>
       {open && (
-        <TableRow className="bg-neutral-50/60 hover:bg-neutral-50/60">
+        <TableRow className="bg-surface-inset hover:bg-surface-inset">
           <TableCell />
           <TableCell colSpan={8} className="space-y-3 py-4 text-sm">
             {/* provenance triple: source → verdict → CDE (Monarch association-detail idiom) */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded border border-neutral-200 bg-neutral-0 px-2 py-0.5 text-xs text-neutral-600">
+              <span className="rounded border border-rule-on-raised bg-surface-raised px-2 py-0.5 text-xs text-on-raised">
                 {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"} · {r.cohorts.join(", ") || "—"}
               </span>
-              <span className="text-neutral-300">→</span>
+              <span className="text-on-raised-faint">→</span>
               <Badge variant="outline" className={VERDICT_STYLES[r.verdict] ?? ""}>
                 {r.verdict}
               </Badge>
-              <span className="text-neutral-300">→</span>
+              <span className="text-on-raised-faint">→</span>
               {r.cde ? (
-                <span className="rounded border border-neutral-200 bg-neutral-0 px-2 py-0.5 text-xs">
-                  <span className="font-semibold text-neutral-700">{r.cde.id}</span>
-                  {r.cde.externalId && <span className="ml-1 font-mono text-neutral-400">{r.cde.externalId}</span>}
+                <span className="rounded border border-rule-on-raised bg-surface-raised px-2 py-0.5 text-xs">
+                  <span className="font-semibold text-on-raised">{r.cde.id}</span>
+                  {r.cde.externalId && <span className="ml-1 font-mono text-on-raised-muted">{r.cde.externalId}</span>}
                 </span>
               ) : (
-                <span className="text-xs text-neutral-500">GenCDE (novel)</span>
+                <span className="text-xs text-on-raised-muted">GenCDE (novel)</span>
               )}
               <Badge variant="neutral" className="ml-auto font-normal">
                 {r.decidedBy === "deterministic" ? "rule" : "AI"}
@@ -1021,18 +1021,18 @@ function RecordRows({
             {/* Novel concepts route to a generated CDE — surface it here so a novel row never looks empty. */}
             {!r.cde && r.idealCde && (
               <div className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Concept summary (proposed)</div>
-                <blockquote className="border-l-2 border-ph-navy/40 pl-3 text-neutral-600">{r.idealCde}</blockquote>
+                <div className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Concept summary (proposed)</div>
+                <blockquote className="border-l-2 border-rule-info pl-3 text-on-raised">{r.idealCde}</blockquote>
               </div>
             )}
 
             {(r.cosines.chosen ?? r.cosines.top1) != null && (
               <div className="flex items-center gap-2">
-                <span className="flex w-24 shrink-0 items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
+                <span className="flex w-24 shrink-0 items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
                   Cosine
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Info className="h-3 w-3 cursor-help text-neutral-300" />
+                      <Info className="h-3 w-3 cursor-help text-on-raised-muted" />
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs whitespace-normal text-left font-normal normal-case leading-relaxed">
                       Cosine similarity to the chosen CDE embedding (0–1) — the retrieval signal behind this match.
@@ -1042,12 +1042,12 @@ function RecordRows({
                   </Tooltip>
                 </span>
                 <ConfidenceBar value={r.cosines.chosen ?? r.cosines.top1 ?? 0} verdict={r.verdict} />
-                <span className="text-xs tabular-nums text-neutral-600">{cos(r.cosines.chosen ?? r.cosines.top1)}</span>
+                <span className="text-xs tabular-nums text-on-raised">{cos(r.cosines.chosen ?? r.cosines.top1)}</span>
               </div>
             )}
 
             {reranked && (
-              <p className="text-xs text-neutral-500">
+              <p className="text-xs text-on-raised-muted">
                 The model ranked concept fit over similarity — it chose a candidate at cos{" "}
                 <span className="tabular-nums">{cos(r.cosines.chosen)}</span> over a nearer one at cos{" "}
                 <span className="tabular-nums">{cos(r.cosines.top1)}</span>. See the rationale.
@@ -1056,8 +1056,8 @@ function RecordRows({
 
             {r.rationale && (
               <div className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Model rationale</div>
-                <blockquote className="border-l-2 border-neutral-300 pl-3 italic text-neutral-600">
+                <div className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Model rationale</div>
+                <blockquote className="border-l-2 border-rule-control-on-raised pl-3 italic text-on-raised">
                   {r.rationale}
                 </blockquote>
               </div>
@@ -1065,7 +1065,7 @@ function RecordRows({
 
             {/* Summary only — the full detail (source variables, ranked CDE candidates, value mapping) lives
                 in the workbench, one click away. Keeps the queue a scannable triage surface. */}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-raised-muted">
               <span>
                 {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"} · {r.cohorts.join(", ") || "—"}
                 {r.crossCohort ? " · cross-cohort" : ""}
@@ -1080,7 +1080,7 @@ function RecordRows({
             <div className="pt-1">
               <Link
                 href={`/job/${jobId}/workbench?c=${encodeURIComponent(r.id)}`}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-ph-navy hover:underline"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-link-on-raised hover:underline"
               >
                 Open in review workbench — source variables, all CDE candidates &amp; value mapping
                 <ChevronRight className="h-3 w-3" />
@@ -1098,23 +1098,23 @@ function RecordRows({
 // Primary label is the raw variable id; the embedded text is the subline; cohort sits in the Cohorts column.
 function UnassignedRow({ u }: { u: UnassignedField }) {
   return (
-    <TableRow className="hover:bg-neutral-50/60">
+    <TableRow className="hover:bg-surface-inset">
       <TableCell className="align-top" />
       <TableCell className="max-w-xs align-top">
-        <div className="truncate font-mono text-sm font-semibold text-neutral-700">{u.variable}</div>
-        {u.text && <div className="truncate text-xs text-neutral-400">{u.text}</div>}
+        <div className="truncate font-mono text-sm font-semibold text-on-raised">{u.variable}</div>
+        {u.text && <div className="truncate text-xs text-on-raised-muted">{u.text}</div>}
       </TableCell>
-      <TableCell className="align-top text-sm text-neutral-400">—</TableCell>
+      <TableCell className="align-top text-sm text-on-raised-muted">—</TableCell>
       <TableCell className="align-top">
-        <Badge variant="outline" className="whitespace-nowrap border-neutral-300 bg-neutral-100 text-neutral-500">
+        <Badge variant="outline" className="whitespace-nowrap border-rule-control-on-raised bg-surface-inset-strong text-on-raised-muted">
           unclustered · not mapped
         </Badge>
       </TableCell>
-      <TableCell className="align-top text-right text-sm text-neutral-400">—</TableCell>
-      <TableCell className="align-top text-xs text-neutral-500">{u.cohort}</TableCell>
-      <TableCell className="align-top text-right text-sm text-neutral-400">—</TableCell>
-      <TableCell className="align-top text-right text-sm text-neutral-400">—</TableCell>
-      <TableCell className="align-top text-sm text-neutral-400">—</TableCell>
+      <TableCell className="align-top text-right text-sm text-on-raised-muted">—</TableCell>
+      <TableCell className="align-top text-xs text-on-raised-muted">{u.cohort}</TableCell>
+      <TableCell className="align-top text-right text-sm text-on-raised-muted">—</TableCell>
+      <TableCell className="align-top text-right text-sm text-on-raised-muted">—</TableCell>
+      <TableCell className="align-top text-sm text-on-raised-muted">—</TableCell>
     </TableRow>
   );
 }
@@ -1122,8 +1122,8 @@ function UnassignedRow({ u }: { u: UnassignedField }) {
 function ConfidenceBar({ value, verdict }: { value: number; verdict: string }) {
   const pct = Math.max(0, Math.min(1, value)) * 100;
   return (
-    <div className="h-1.5 w-40 overflow-hidden rounded-full bg-neutral-200">
-      <div className={`h-full rounded-full ${VERDICT_BAR[verdict] ?? "bg-neutral-400"}`} style={{ width: `${pct}%` }} />
+    <div className="h-1.5 w-40 overflow-hidden rounded-full bg-surface-track">
+      <div className={`h-full rounded-full ${VERDICT_BAR[verdict] ?? "bg-on-track"}`} style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -1151,15 +1151,15 @@ function SortableHead({
         <button
           type="button"
           onClick={() => onSort(sortKey)}
-          className="inline-flex items-center gap-1 font-semibold hover:text-ph-navy"
+          className="inline-flex items-center gap-1 font-semibold hover:text-accent-on-raised"
         >
           {label}
-          <Icon className={`h-3 w-3 ${active ? "text-ph-navy" : "text-neutral-300"}`} />
+          <Icon className={`h-3 w-3 ${active ? "text-accent-on-raised" : "text-on-raised-muted"}`} />
         </button>
         {tip && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Info className="h-3 w-3 cursor-help text-neutral-300" />
+              <Info className="h-3 w-3 cursor-help text-on-raised-muted" />
             </TooltipTrigger>
             <TooltipContent className="max-w-xs whitespace-normal text-left font-normal leading-relaxed">
               {tip}
@@ -1183,11 +1183,11 @@ function StatCard({
   accent?: boolean;
 }) {
   return (
-    <Card className={accent ? "border-ph-navy/30 bg-ph-navy/[0.03]" : undefined}>
+    <Card className={accent ? "border-rule-info bg-accent-action/[0.03]" : undefined}>
       <CardContent>
-        <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-500">{label}</div>
-        <div className="mt-1 text-xl font-semibold tabular-nums text-ph-ink">{value}</div>
-        {sub && <div className="mt-0.5 text-xs text-neutral-400">{sub}</div>}
+        <div className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">{label}</div>
+        <div className="mt-1 text-xl font-semibold tabular-nums text-on-raised">{value}</div>
+        {sub && <div className="mt-0.5 text-xs text-on-raised-muted">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -1236,7 +1236,7 @@ function DecisionBtn({
       type="button"
       variant={active ? "secondary" : "ghost"}
       size="icon"
-      className={`h-7 w-7 ${active ? color : "text-neutral-400"}`}
+      className={`h-7 w-7 ${active ? color : "text-on-raised-muted"}`}
       onClick={onClick}
       title={title}
     >

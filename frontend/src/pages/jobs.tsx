@@ -55,7 +55,7 @@ function DeleteAction({ job }: { job: JobSummary }) {
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <Button variant="ghost" size="icon" aria-label="Delete" title="Delete this run" onClick={() => setOpen(true)}>
-        <Trash2 className="h-4 w-4 text-neutral-400" />
+        <Trash2 className="h-4 w-4 text-on-raised-muted" />
       </Button>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -97,13 +97,13 @@ export default function JobsPage() {
   if (isGuest) {
     return (
       <div className="mx-auto max-w-4xl space-y-4">
-        <h1 className="font-display text-xl font-semibold text-ph-ink">Runs</h1>
+        <h1 className="font-display text-xl font-semibold text-on-raised">Runs</h1>
         <Card>
           <CardContent className="space-y-3 p-8 text-center">
-            <p className="text-sm text-neutral-600">Your runs live in your account.</p>
-            <p className="text-xs text-neutral-500">
+            <p className="text-sm text-on-raised">Your runs live in your account.</p>
+            <p className="text-xs text-on-raised-muted">
               Sign in to upload cohorts and see your harmonization runs here — or try the{" "}
-              <Link href="/demo" className="text-ph-navy underline hover:text-ph-ink">
+              <Link href="/demo" className="text-link-on-raised underline hover:text-on-raised">
                 demo
               </Link>{" "}
               without an account.
@@ -116,7 +116,7 @@ export default function JobsPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <h1 className="font-display text-xl font-semibold text-ph-ink">Runs</h1>
+      <h1 className="font-display text-xl font-semibold text-on-raised">Runs</h1>
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -141,12 +141,12 @@ export default function JobsPage() {
                             ? `/job/${j.jobId}?results=1`
                             : `/job/${j.jobId}`
                         }
-                        className="font-semibold text-ph-navy hover:underline"
+                        className="font-semibold text-link-on-raised hover:underline"
                       >
                         {j.displayName}
                       </Link>
                       {(j.config as { demo?: boolean })?.demo && (
-                        <Badge variant="outline" className="border-ph-navy/30 text-ph-navy">
+                        <Badge variant="outline" className="border-rule-info text-accent-on-raised">
                           Demo
                         </Badge>
                       )}
@@ -159,12 +159,12 @@ export default function JobsPage() {
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{j.nRecords || "—"}</TableCell>
                   <TableCell
-                    className="text-right tabular-nums text-neutral-600"
+                    className="text-right tabular-nums text-on-raised"
                     title={j.costSoFar ? "Actual token cost of this run (real spend, not an estimate)" : undefined}
                   >
                     {j.costSoFar ? formatUsd(j.costSoFar) : "—"}
                   </TableCell>
-                  <TableCell className="text-sm text-neutral-500">
+                  <TableCell className="text-sm text-on-raised-muted">
                     {new Date(j.createdAt * 1000).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-right">
@@ -191,8 +191,8 @@ export default function JobsPage() {
               ))}
               {!jobs.length && !isLoading && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-sm text-neutral-400">
-                    No runs yet. <Link href="/new" className="text-ph-navy hover:underline">Start one →</Link>
+                  <TableCell colSpan={6} className="py-8 text-center text-sm text-on-raised-muted">
+                    No runs yet. <Link href="/new" className="text-link-on-raised hover:underline">Start one →</Link>
                   </TableCell>
                 </TableRow>
               )}
