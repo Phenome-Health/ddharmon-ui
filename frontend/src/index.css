@@ -398,6 +398,18 @@
     color-scheme: light;
   }
 
+  /* `<b>` and `<strong>` inherit Tailwind preflight's `font-weight: bolder`, which
+     resolves to 700 — a third weight the scale does not have (§3.2), and one no
+     class-name grep can see because it comes from the element, not a utility.
+     Emphasis in running copy is 600, the same weight a name or a label carries. */
+  b,
+  strong,
+  /* A bare `<th>` also arrives at the UA's bold 700. A column header IS the eyebrow
+     register, so 600 is where it belonged anyway. */
+  th {
+    font-weight: 600;
+  }
+
   /* Tabular numerals for tables and numeric displays.
      UI-SPEC §3.3 binds tabular numerals to the MONO FACE rather than to a second
      class at every call site: mono means "the pipeline computed this", and
