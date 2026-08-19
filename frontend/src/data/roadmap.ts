@@ -28,8 +28,13 @@ export interface RoadmapItem {
   status: RoadmapStatus;
   /** Optional one-line clarification, public-safe. */
   note?: string;
-  /** Optional in-app route to a design preview / mockup of this item (renders a "Preview" tag). */
+  /** Optional design preview / mockup of this item (renders a "Preview" tag). Normally an in-app
+   *  route. */
   preview?: string;
+  /** Set when `preview` is a self-contained static page served outside the SPA rather than an in-app
+   *  route. Such a page is only ever returned by a real request, so its link must be a plain anchor —
+   *  client-side routing would swallow the navigation and find no matching route. */
+  previewStandalone?: boolean;
 }
 
 export interface RoadmapGroup {
@@ -109,7 +114,9 @@ export const ROADMAP: RoadmapGroup[] = [
         label: "Staged review — approve each layer in turn: concept groups → CDEs → transform specs → export",
         status: "planned",
         note: "See and adjust the concept groups before anything is sent to a model, then choose which ones go on to the paid stages.",
-        preview: "/preview/staged-review",
+        // Trailing slash = the page's canonical URL (a directory index), so the click skips a redirect.
+        preview: "/preview/staged-review/",
+        previewStandalone: true,
       },
       {
         label: "Drag-and-drop concept restructuring — move variables between concepts, then re-check with the model",
