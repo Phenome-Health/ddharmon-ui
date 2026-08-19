@@ -52,7 +52,7 @@ export function StopRunAction({
         </Button>
       ) : (
         <Button variant="ghost" size="icon" aria-label="Stop" title="Stop this run" onClick={() => setOpen(true)}>
-          <CircleStop className="h-4 w-4 text-neutral-400" />
+          <CircleStop className="h-4 w-4 text-on-raised-muted" />
         </Button>
       )}
       <AlertDialogContent>
@@ -61,20 +61,20 @@ export function StopRunAction({
           <AlertDialogDescription asChild>
             <div className="space-y-2">
               <p>
-                <span className="font-semibold text-neutral-700">Stop &amp; keep results</span> lets the current
+                <span className="font-semibold text-on-raised">Stop &amp; keep results</span> lets the current
                 stage finish and keeps its partial output, then skips the rest.{" "}
-                <span className="font-semibold text-neutral-700">Discard now</span> stops immediately and produces
+                <span className="font-semibold text-on-raised">Discard now</span> stops immediately and produces
                 no results. Either way you can re-run later from the same inputs.
               </p>
               {costNote?.hasEstimate ? (
-                <p className="rounded-md bg-neutral-50 px-2.5 py-1.5 text-xs text-neutral-600">
-                  ≈<span className="tabular-nums text-neutral-700">{formatUsd(costNote.committed)}</span>{" "}
+                <p className="rounded-md bg-surface-inset px-2.5 py-1.5 text-xs text-on-raised">
+                  ≈<span className="tabular-nums text-on-raised">{formatUsd(costNote.committed)}</span>{" "}
                   already committed · stopping now avoids ≈
-                  <span className="tabular-nums text-neutral-700">{formatUsd(costNote.avoided)}</span> more{" "}
-                  <span className="text-neutral-400">(of a ≈{formatUsd(costNote.total)} run · estimate)</span>
+                  <span className="tabular-nums text-on-raised">{formatUsd(costNote.avoided)}</span> more{" "}
+                  <span className="text-on-raised-muted">(of a ≈{formatUsd(costNote.total)} run · estimate)</span>
                 </p>
               ) : (
-                <p className="text-xs text-neutral-500">
+                <p className="text-xs text-on-raised-muted">
                   Work already sent to the model may still be billed; stopping now avoids the remaining stages.
                 </p>
               )}

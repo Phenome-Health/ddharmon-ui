@@ -28,7 +28,7 @@ export function PhenomeMark({ className }: { className?: string }) {
 // The mark on its branded navy chip. `size` is the chip edge in Tailwind sizing units.
 export function PhenomeChip({ className }: { className?: string }) {
   return (
-    <span className={`flex items-center justify-center rounded bg-ph-navy ${className ?? "h-6 w-6"}`}>
+    <span className={`flex items-center justify-center rounded bg-accent-action ${className ?? "h-6 w-6"}`}>
       <PhenomeMark className="h-[85%] w-[85%]" />
     </span>
   );

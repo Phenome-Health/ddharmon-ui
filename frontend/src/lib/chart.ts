@@ -58,7 +58,7 @@ export const CHART_AXIS = "var(--on-raised-muted)";
 
 /** Branded floating-tooltip container. (Single theme now — nothing flips.) */
 export const CHART_TOOLTIP_CLASS =
-  "pointer-events-none rounded-md border border-neutral-200 bg-neutral-0 px-2.5 py-1.5 text-xs shadow-md";
+  "pointer-events-none rounded-md border border-rule-on-raised bg-surface-raised px-2.5 py-1.5 text-xs shadow-md";
 
 // ── Brushing & linking: one shared selection across all run charts + the review queue ──
 // A focus is a single axis of the run — one verdict, one cohort, or the "unassigned" residual (source

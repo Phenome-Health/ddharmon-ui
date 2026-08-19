@@ -354,7 +354,7 @@ export function MatchSankey({
   };
 
   if (!data.links.length) {
-    return <p className="py-8 text-center text-sm text-neutral-400">No flows to display.</p>;
+    return <p className="py-8 text-center text-sm text-on-raised-muted">No flows to display.</p>;
   }
   const height = Math.max(280, data.nodes.length * 30);
   // recharts mutates the data it receives (resolves link source/target indices into node objects and writes
@@ -440,13 +440,13 @@ export function MatchSankey({
                     : "translate(-50%, -100%)",
             }}
           >
-            <div className="font-semibold text-neutral-700">{tip.title}</div>
-            <div className="tabular-nums text-neutral-500">{tip.sub}</div>
+            <div className="font-semibold text-on-raised">{tip.title}</div>
+            <div className="tabular-nums text-on-raised-muted">{tip.sub}</div>
           </div>
         )}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
-        <span className="text-neutral-400">Cohort &rarr; verdict &rarr; destination &middot; width = variable count</span>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-raised-muted">
+        <span className="text-on-raised-muted">Cohort &rarr; verdict &rarr; destination &middot; width = variable count</span>
         {LEGEND.map((l) => (
           <span key={l.label} className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: l.color }} />

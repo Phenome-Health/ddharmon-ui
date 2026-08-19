@@ -71,7 +71,7 @@ export function RerunAction({
           disabled={busy}
           onClick={() => (needsKey ? setOpen(true) : go())}
         >
-          <RotateCcw className="h-4 w-4 text-neutral-400" />
+          <RotateCcw className="h-4 w-4 text-on-raised-muted" />
         </Button>
       )}
       <Dialog open={open} onOpenChange={setOpen}>

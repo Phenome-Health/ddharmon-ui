@@ -755,8 +755,8 @@ export function formatDurationRange(t: TimeEstimate): string {
 export const VERDICT_STYLES: Record<string, string> = {
   adopt: "bg-success-bg text-success border-success/30",
   refine: "bg-warning-bg text-warning border-warning/30",
-  novel: "bg-ph-navy/10 text-ph-navy border-ph-navy/30",
-  unclassified: "bg-neutral-100 text-neutral-600 border-neutral-300",
+  novel: "bg-surface-info text-accent-on-raised border-rule-info",
+  unclassified: "bg-surface-inset-strong text-on-raised border-rule-control-on-raised",
 };
 
 // ── concept display label ────────────────────────────────────────────────────────────────────

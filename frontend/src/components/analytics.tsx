@@ -151,17 +151,17 @@ function makeBarTooltip(formatLabel: (name: string) => string) {
     const total = payload.reduce((s, p) => s + (p.value ?? 0), 0);
     return (
       <div className={CHART_TOOLTIP_CLASS}>
-        <div className="mb-1 font-semibold text-neutral-700">{formatLabel(String(label))}</div>
+        <div className="mb-1 font-semibold text-on-raised">{formatLabel(String(label))}</div>
         {rows.map((p) => (
           <div key={String(p.dataKey)} className="flex items-center justify-between gap-4">
-            <span className="flex items-center gap-1.5 text-neutral-600">
+            <span className="flex items-center gap-1.5 text-on-raised">
               <span className="inline-block h-2 w-2 rounded-sm" style={{ backgroundColor: p.color }} />
               {VERDICT_LABEL[String(p.dataKey)] ?? String(p.dataKey)}
             </span>
-            <span className="tabular-nums text-neutral-600">{p.value}</span>
+            <span className="tabular-nums text-on-raised">{p.value}</span>
           </div>
         ))}
-        <div className="mt-1 flex items-center justify-between gap-4 border-t border-neutral-100 pt-1 text-neutral-500">
+        <div className="mt-1 flex items-center justify-between gap-4 border-t border-rule-quiet-on-raised pt-1 text-on-raised-muted">
           <span>Total</span>
           <span className="tabular-nums">{total}</span>
         </div>
@@ -205,7 +205,7 @@ function StackedVerdictBars({
           iconSize={9}
           onClick={onFocus ? (e: { value?: string }) => e.value && onFocus({ kind: "verdict", value: e.value }) : undefined}
           formatter={(v: string) => (
-            <span className="cursor-pointer text-neutral-500" style={{ opacity: dimmed(v as Verdict) ? 0.4 : 1 }}>
+            <span className="cursor-pointer text-on-raised-muted" style={{ opacity: dimmed(v as Verdict) ? 0.4 : 1 }}>
               {VERDICT_LABEL[v] ?? v}
             </span>
           )}
@@ -279,12 +279,12 @@ export function Analytics({
                   <TableRow
                     key={r.cohort}
                     onClick={onFocus ? () => onFocus({ kind: "cohort", value: r.cohort }) : undefined}
-                    className={`${onFocus ? "cursor-pointer" : ""} ${on ? "bg-ph-navy/5" : "hover:bg-neutral-50"}`}
+                    className={`${onFocus ? "cursor-pointer" : ""} ${on ? "bg-surface-info" : "hover:bg-surface-inset"}`}
                   >
-                    <TableCell className={`font-semibold ${on ? "text-ph-navy" : "text-neutral-700"}`}>{r.cohort}</TableCell>
+                    <TableCell className={`font-semibold ${on ? "text-accent-on-raised" : "text-on-raised"}`}>{r.cohort}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.total}</TableCell>
                     <TableCell className="text-right tabular-nums text-success">{r.assigned}</TableCell>
-                    <TableCell className="text-right tabular-nums text-ph-navy">{r.novel}</TableCell>
+                    <TableCell className="text-right tabular-nums text-accent-on-raised">{r.novel}</TableCell>
                     <TableCell className="text-right tabular-nums ">{(r.coverage * 100).toFixed(0)}%</TableCell>
                   </TableRow>
                 );
@@ -308,9 +308,9 @@ export function Analytics({
           {sizeBars.length ? (
             <StackedVerdictBars data={sizeBars} formatLabel={sizeLabel} focus={focus} onFocus={onFocus} />
           ) : (
-            <p className="py-8 text-center text-sm text-neutral-400">No concepts.</p>
+            <p className="py-8 text-center text-sm text-on-raised-muted">No concepts.</p>
           )}
-          <p className="mt-1 text-xs text-neutral-400">x = variables pooled per concept · bars stacked by verdict</p>
+          <p className="mt-1 text-xs text-on-raised-muted">x = variables pooled per concept · bars stacked by verdict</p>
         </CardContent>
       </Card>
 
@@ -327,9 +327,9 @@ export function Analytics({
           {hist.length ? (
             <StackedVerdictBars data={hist} formatLabel={binLabel} focus={focus} onFocus={onFocus} />
           ) : (
-            <p className="py-8 text-center text-sm text-neutral-400">No retrieval scores.</p>
+            <p className="py-8 text-center text-sm text-on-raised-muted">No retrieval scores.</p>
           )}
-          <p className="mt-1 text-xs text-neutral-400">
+          <p className="mt-1 text-xs text-on-raised-muted">
             nearest-CDE cosine (binned) · adopts cluster high, novels low
           </p>
         </CardContent>
@@ -348,7 +348,7 @@ export function Analytics({
           {overlap.cohorts.length ? (
             <OverlapHeatmap {...overlap} focus={focus} onFocus={onFocus} />
           ) : (
-            <p className="py-8 text-center text-sm text-neutral-400">No cohorts.</p>
+            <p className="py-8 text-center text-sm text-on-raised-muted">No cohorts.</p>
           )}
         </CardContent>
       </Card>
@@ -392,7 +392,7 @@ function OverlapHeatmap({
                 <th
                   key={c}
                   onClick={onFocus ? () => clickCohort(c) : undefined}
-                  className={`max-w-[64px] truncate p-1 ${onFocus ? "cursor-pointer" : ""} ${colOn(j) ? "font-semibold text-ph-navy" : "text-neutral-500"}`}
+                  className={`max-w-[64px] truncate p-1 ${onFocus ? "cursor-pointer" : ""} ${colOn(j) ? "font-semibold text-accent-on-raised" : "text-on-raised-muted"}`}
                   title={c}
                 >
                   {c}
@@ -405,7 +405,7 @@ function OverlapHeatmap({
               <tr key={rc}>
                 <td
                   onClick={onFocus ? () => clickCohort(rc) : undefined}
-                  className={`max-w-[100px] truncate p-1 pr-2 text-right ${onFocus ? "cursor-pointer" : ""} ${rowOn(i) ? "text-ph-navy" : "text-neutral-600"}`}
+                  className={`max-w-[100px] truncate p-1 pr-2 text-right ${onFocus ? "cursor-pointer" : ""} ${rowOn(i) ? "text-accent-on-raised" : "text-on-raised"}`}
                   title={rc}
                 >
                   {rc}
@@ -437,7 +437,7 @@ function OverlapHeatmap({
           </tbody>
         </table>
       </div>
-      <p className={`mt-2 text-xs ${hc ? "text-neutral-600" : "text-neutral-400"}`}>{readout}</p>
+      <p className={`mt-2 text-xs ${hc ? "text-on-raised" : "text-on-raised-muted"}`}>{readout}</p>
     </div>
   );
 }

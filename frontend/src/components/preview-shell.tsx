@@ -10,18 +10,18 @@ export function PreviewShell({ title, intro, children }: { title: string; intro:
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div>
-        <Link href="/roadmap" className="inline-flex items-center gap-1 text-xs text-neutral-500 hover:text-ph-navy">
+        <Link href="/roadmap" className="inline-flex items-center gap-1 text-xs text-on-raised-muted hover:text-link-on-raised">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to roadmap
         </Link>
-        <h1 className="mt-1 flex flex-wrap items-center gap-2 font-display text-xl font-semibold text-ph-ink">
+        <h1 className="mt-1 flex flex-wrap items-center gap-2 font-display text-xl font-semibold text-on-raised">
           {title}
           <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
             <FlaskConical className="h-3.5 w-3.5" /> Preview · mockup
           </Badge>
         </h1>
-        <p className="mt-1 text-sm text-neutral-500">{intro}</p>
+        <p className="mt-1 text-sm text-on-raised-muted">{intro}</p>
       </div>
-      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm text-neutral-700">
+      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm text-on-raised">
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
         <span>
           <span className="font-semibold">This is a mockup, not a live tool.</span> Everything here runs in your
