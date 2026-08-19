@@ -37,7 +37,7 @@ function FlowNode({ icon, label, sub, accent }: { icon: ReactNode; label: string
   return (
     <div
       className={`flex min-w-[7.5rem] flex-col items-center gap-1 rounded-md border px-3 py-2 text-center ${
-        accent ? "border-ph-navy/40 bg-ph-navy/5" : "border-neutral-200 bg-white"
+        accent ? "border-ph-navy/40 bg-ph-navy/5" : "border-neutral-200 bg-card"
       }`}
     >
       <span className={accent ? "text-ph-navy" : "text-neutral-500"}>{icon}</span>

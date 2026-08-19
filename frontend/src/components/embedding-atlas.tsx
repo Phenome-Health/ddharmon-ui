@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import {
   CHART_AXIS,
+  CHART_LABEL_SIZE,
   CHART_GRID,
   CHART_TOOLTIP_CLASS,
   COHORT_PALETTE,
@@ -38,9 +39,9 @@ type Agreement = "agree" | "disagree" | "unassigned";
 const K_NEIGHBORS = 10; // atlas is capped at 2500 pts server-side, so an O(n²) k-NN pass here is cheap.
 const RESPONSE_CAP = 12; // max code=label options shown inline in the detail panel before "+N more".
 const AGREEMENT_COLOR: Record<Agreement, string> = {
-  agree: "#16A34A", // green — concept-mates cluster nearby (geometry respected)
-  disagree: "#F59E0B", // amber — concept-mates are scattered elsewhere (a QA signal)
-  unassigned: "#CBD5E1", // = UNASSIGNED_COLOR — no concept
+  agree: "var(--ok)", // concept-mates cluster nearby (geometry respected)
+  disagree: "var(--warn)", // concept-mates are scattered elsewhere (a QA signal)
+  unassigned: "var(--chart-residual)", // = UNASSIGNED_COLOR — no concept
 };
 const AGREEMENT_LABEL: Record<Agreement, string> = {
   agree: "Agree — concept shared with neighbors",
@@ -53,7 +54,7 @@ const AGREEMENT_LABEL: Record<Agreement, string> = {
 // made these points show as a verdict the review queue has none of. Its own muted color + non-filterable
 // legend entry keeps the distinction honest.
 const UNASSIGNED = "unassigned";
-const UNASSIGNED_COLOR = "#CBD5E1"; // slate-300 — clearly muted vs the verdict palette
+const UNASSIGNED_COLOR = "var(--chart-residual)"; // muted vs the verdict palette, still >= 3:1
 const catLabel = (v: string): string => (v === UNASSIGNED ? "Unassigned (no concept)" : (VERDICT_LABEL[v] ?? v));
 const catColor = (v: string): string => (v === UNASSIGNED ? UNASSIGNED_COLOR : verdictColor(v));
 
@@ -262,7 +263,7 @@ export function EmbeddingAtlas({
             <button
               key={c}
               onClick={() => setColorBy(c)}
-              className={`px-2.5 py-1 capitalize ${colorBy === c ? "bg-ph-navy text-white" : "text-neutral-500 hover:bg-neutral-50"}`}
+              className={`px-2.5 py-1 capitalize ${colorBy === c ? "bg-ph-navy text-on-page" : "text-neutral-500 hover:bg-neutral-50"}`}
             >
               {c}
             </button>
@@ -300,7 +301,7 @@ export function EmbeddingAtlas({
             axisLine={false}
             allowDataOverflow
             domain={zoom ? zoom.x : ["auto", "auto"]}
-            label={{ value: "PC1", position: "insideBottom", fontSize: 11, fill: CHART_AXIS }}
+            label={{ value: "PC1", position: "insideBottom", fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }}
           />
           <YAxis
             type="number"
@@ -311,7 +312,7 @@ export function EmbeddingAtlas({
             width={20}
             allowDataOverflow
             domain={zoom ? zoom.y : ["auto", "auto"]}
-            label={{ value: "PC2", angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_AXIS }}
+            label={{ value: "PC2", angle: -90, position: "insideLeft", fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }}
           />
           <ZAxis range={[18, 18]} />
           <RTooltip content={<AtlasTooltip />} cursor={{ strokeDasharray: "3 3" }} />

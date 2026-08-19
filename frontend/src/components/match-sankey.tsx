@@ -8,7 +8,7 @@
 // tooltip reads out the exact counts (share of total). All hover state is local; colors come from lib/chart.
 import { useMemo, useState } from "react";
 import { ResponsiveContainer, Sankey, Tooltip } from "recharts";
-import { CHART_TOOLTIP_CLASS, COHORT_PALETTE, VERDICT_COLOR, type Focus } from "@/lib/chart";
+import { CHART_LABEL_SIZE, CHART_TOOLTIP_CLASS, COHORT_PALETTE, VERDICT_COLOR, type Focus } from "@/lib/chart";
 import type { UIRecord } from "@/types";
 
 const VERDICT_NODE: Record<string, string> = {
@@ -223,7 +223,7 @@ function NodeShape({ x, y, width, height, payload, state, onEnter, onLeave, onCl
         y={ty}
         textAnchor={anchor}
         dominantBaseline="middle"
-        fontSize={11}
+        fontSize={CHART_LABEL_SIZE}
         fill="var(--sf-700)"
         fillOpacity={dim ? 0.35 : 1}
         style={{ fontWeight: state === "on" ? 600 : 400 }}
@@ -268,7 +268,7 @@ function LinkShape({
     <path
       d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
       fill="none"
-      stroke={payload.color ?? "#9CA3AF"}
+      stroke={payload.color ?? "var(--muted)"}
       strokeWidth={Math.max(1, linkWidth)}
       strokeOpacity={opacity}
       style={{ cursor: "pointer", transition: "stroke-opacity 120ms" }}

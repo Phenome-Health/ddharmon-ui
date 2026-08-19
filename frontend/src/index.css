@@ -94,6 +94,36 @@
   --r-inner: 14px;
   --r-pill: 999px;
 
+  /* Categorical series — the runtime-readable palette every chart draws from.
+     It lives in the RAW layer, not only in `@theme inline`: `inline` substitutes
+     its values into utilities and emits NOTHING to `:root`, so a chart that reads
+     its colour in JS (recharts fills, SVG strokes, the atlas canvas) can only see
+     raw names. Steps 1-5 are the identity, in the paper-legal form — charts live
+     on paper cards, so teal appears as `--b-teal-ink`. Steps 6-8 exist because a
+     categorical scale needs distinguishable hues and the identity supplies five;
+     they were literals in `lib/chart.ts` and are declared here so every colour in
+     the product is reachable from one file (R10). Two were also below the 3:1
+     graphical-object floor on paper and are darkened: sky #0EA5E9 was 2.76:1 and
+     slate #8892A3 was 3.13:1. */
+  --chart-1: var(--b-teal-ink);   /* 4.72:1 on paper */
+  --chart-2: var(--b-blue);       /* 5.61:1 */
+  --chart-3: var(--b-crimson);    /* 4.62:1 */
+  --chart-4: var(--ok);           /* 5.12:1 */
+  --chart-5: var(--warn);         /* 6.42:1 */
+  --chart-6: #7C3AED;             /* violet — 5.67:1 */
+  --chart-7: #0369A1;             /* deep sky — 5.91:1, was #0EA5E9 at 2.76:1 */
+  --chart-8: #5B667A;             /* slate — 5.77:1, was #8892A3 at 3.13:1 */
+  /* The residual mark: a field or record the pipeline did not classify. Muted on
+     purpose but still a graphical object, so it clears 3:1 (3.44:1) rather than
+     sitting at the 1.48:1 the retired #CBD5E1 measured. NOT `--faint`, which is
+     hairlines and dashed marks only. */
+  --chart-residual: color-mix(in srgb, var(--b-indigo) 55%, var(--b-paper));
+
+  /* A third step on the ground, below `--on-page-muted`, for pure decoration —
+     the hero's separator dots. 4.04:1: legible, deliberately recessive, and NOT
+     to be used for a meaningful glyph. */
+  --on-page-faint: rgba(255, 255, 248, .45);
+
   /* Reproducibility-preview model series — dataviz-validated categorical. Single
      theme now, so only the one set of steps survives. */
   --rmv-1: #2a78d6; --rmv-2: #008300; --rmv-3: #e87ba4; --rmv-4: #eda100; --rmv-5: #1baf7a;
@@ -173,6 +203,12 @@
      `card`/`popover`, never `background`. */
   --color-background: var(--b-ground);
   --color-foreground: var(--on-page);
+  /* The on-ground text steps as utilities, so chrome and the hero can reach them
+     by name instead of by literal: `text-on-page-muted` (7.23:1) for secondary
+     copy on the ground, `text-on-page-faint` (4.04:1) for decoration only. */
+  --color-on-page: var(--on-page);
+  --color-on-page-muted: var(--on-page-muted);
+  --color-on-page-faint: var(--on-page-faint);
   --color-border: var(--line);
   --color-input: var(--line);
   --color-ring: var(--b-blue);
@@ -202,11 +238,15 @@
 
   /* Chart series. Teal appears in its PAPER form: charts live on paper cards and
      #3AB3BB is 2.51:1 there, below even the 3:1 floor for a graphical object. */
-  --color-chart-1: var(--b-ground);
-  --color-chart-2: var(--b-blue);
-  --color-chart-3: var(--b-teal-ink);
-  --color-chart-4: var(--ok);
-  --color-chart-5: var(--b-crimson);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-residual: var(--chart-residual);
 
   /* Sidebar — a paper surface, so it draws from the paper family, not the ground. */
   --color-sidebar: var(--card-2);

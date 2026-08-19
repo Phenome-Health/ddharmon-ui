@@ -7,10 +7,13 @@ export type Verdict = (typeof VERDICTS)[number];
 
 /** Verdict encoding — mirrors VERDICT_STYLES badges + the Phenome brand palette. */
 export const VERDICT_COLOR: Record<string, string> = {
-  adopt: "#005B33", // ph-green
-  refine: "#B45309", // warning
-  novel: "#113682", // ph-navy
-  unclassified: "#8892A3", // neutral-400
+  // §5.3: adopt is the ok green, refine the warn amber, novel the action blue
+  // (a deliberate overload — "novel" means we generated one, the same register
+  // as "you acted"), and unclassified takes the residual mark, not a hue.
+  adopt: "var(--ok)",
+  refine: "var(--warn)",
+  novel: "var(--b-blue)",
+  unclassified: "var(--chart-residual)",
 };
 
 export const VERDICT_LABEL: Record<string, string> = {
@@ -20,16 +23,17 @@ export const VERDICT_LABEL: Record<string, string> = {
   unclassified: "Unclassified",
 };
 
-/** Cohort series palette (embedding atlas + any cohort encoding); ph-teal leads. */
+/** Cohort series palette (embedding atlas + any cohort encoding); teal leads, in its
+ *  paper-legal `--b-teal-ink` form, because charts render on paper cards. */
 export const COHORT_PALETTE = [
-  "#3AC2CB",
-  "#113682",
-  "#E21C52",
-  "#005B33",
-  "#B45309",
-  "#7C3AED",
-  "#0EA5E9",
-  "#8892A3",
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--chart-6)",
+  "var(--chart-7)",
+  "var(--chart-8)",
 ];
 
 export function verdictColor(v: string): string {
@@ -40,11 +44,19 @@ export function isVerdict(v: string): v is Verdict {
   return (VERDICTS as readonly string[]).includes(v);
 }
 
-/** Grid + axis hues that read on both themes (token-backed via CSS vars where possible). */
-export const CHART_GRID = "var(--sf-200)";
-export const CHART_AXIS = "var(--sf-400)";
+/** Grid + axis hues. These read `--sf-200` / `--sf-400` until 08-07: that raw layer
+ *  was deleted with the retheme, so every chart grid line and axis has been resolving
+ *  to an undefined variable. Re-pointed at the surviving rule/ink tokens. */
+/** Axis, label and legend type inside a chart: the meta size (`--text-xs`, 12px).
+ *  Recharts takes a NUMBER for these, so the scale cannot be applied as a class —
+ *  naming it here keeps the six call sites on the token's value instead of an 11px
+ *  literal that sits off the four-size scale entirely. */
+export const CHART_LABEL_SIZE = 12;
 
-/** Branded floating-tooltip container — neutral tokens flip under `.dark`. */
+export const CHART_GRID = "var(--line)";
+export const CHART_AXIS = "var(--muted)";
+
+/** Branded floating-tooltip container. (Single theme now — nothing flips.) */
 export const CHART_TOOLTIP_CLASS =
   "pointer-events-none rounded-md border border-neutral-200 bg-neutral-0 px-2.5 py-1.5 text-xs shadow-md";
 

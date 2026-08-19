@@ -45,7 +45,7 @@ function ConvergenceViz() {
               y1={s.y}
               x2={RING_EDGE_X}
               y2={RING_Y}
-              stroke="#3AC2CB"
+              stroke="var(--b-teal)"
               strokeWidth={0.5}
               strokeLinecap="round"
               style={{
@@ -63,7 +63,7 @@ function ConvergenceViz() {
       {SOURCES.map((s, i) => (
         <div
           key={s.cohort}
-          className="absolute left-0 w-[45%] rounded-md border border-white/12 bg-white/[0.06] px-2.5 py-1.5 backdrop-blur-sm"
+          className="absolute left-0 w-[45%] rounded-md border border-on-page/15 bg-on-page/[0.06] px-2.5 py-1.5 backdrop-blur-sm"
           style={{
             top: `${s.y}%`,
             transform: shown ? "translateY(-50%)" : "translateY(-50%) translateX(-18px)",
@@ -71,12 +71,12 @@ function ConvergenceViz() {
             transition: animate ? `opacity .55s ease ${i * 0.13}s, transform .55s cubic-bezier(.22,1,.36,1) ${i * 0.13}s` : "none",
           }}
         >
-          <div className="flex items-center gap-1 font-mono text-xs font-semibold uppercase tracking-eyebrow text-[#7f92b8]">
+          <div className="flex items-center gap-1 font-mono text-xs font-semibold uppercase tracking-eyebrow text-on-page-muted">
             <span>{s.cohort}</span>
-            <span className="text-[#5a6b8c]">·</span>
-            <span className="normal-case text-[#7f92b8]">{s.v}</span>
+            <span className="text-on-page-faint">·</span>
+            <span className="normal-case text-on-page-muted">{s.v}</span>
           </div>
-          <div className="mt-0.5 text-xs font-semibold leading-snug text-white">{s.q}</div>
+          <div className="mt-0.5 text-xs font-semibold leading-snug text-on-page">{s.q}</div>
           <div className="mt-1 truncate font-mono text-xs text-ph-teal">{s.r}</div>
         </div>
       ))}
@@ -85,9 +85,9 @@ function ConvergenceViz() {
       <div className="absolute right-0 top-1/2 aspect-square w-[44%] -translate-y-1/2">
         <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden="true">
           <g className="ddh-ring-spin" style={{ transformBox: "view-box", transformOrigin: "50% 50%", animation: "ddh-ring-spin 60s linear infinite" }}>
-            <circle cx="50" cy="50" r="42" fill="none" stroke="#E21C52" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="190 265" />
-            <circle cx="50" cy="50" r="33" fill="none" stroke="#FFFFFF" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="126 208" transform="rotate(80 50 50)" opacity="0.7" />
-            <circle cx="50" cy="50" r="24" fill="none" stroke="#3AC2CB" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="90 152" transform="rotate(210 50 50)" />
+            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--b-crimson)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="190 265" />
+            <circle cx="50" cy="50" r="33" fill="none" stroke="var(--on-page)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="126 208" transform="rotate(80 50 50)" opacity="0.7" />
+            <circle cx="50" cy="50" r="24" fill="none" stroke="var(--b-teal)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="90 152" transform="rotate(210 50 50)" />
           </g>
         </svg>
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
@@ -100,15 +100,15 @@ function ConvergenceViz() {
           <div
             className="relative flex h-[74px] w-[74px] flex-col items-center justify-center rounded-full border-2 border-ph-crimson shadow-lg"
             style={{
-              background: "#0B152D",
+              background: "var(--b-ground)",
               opacity: shown ? 1 : 0,
               transform: shown ? "scale(1)" : "scale(0.6)",
               transition: animate ? "opacity .5s ease 1s, transform .5s cubic-bezier(.34,1.56,.64,1) 1s" : "none",
             }}
           >
             <span className="font-mono text-xs font-semibold tracking-wide text-ph-teal">CDE</span>
-            <span className="text-xs font-semibold leading-none text-white">Smoking</span>
-            <span className="text-xs leading-none text-white/60">status</span>
+            <span className="text-xs font-semibold leading-none text-on-page">Smoking</span>
+            <span className="text-xs leading-none text-on-page-muted">status</span>
           </div>
         </div>
       </div>
@@ -152,7 +152,10 @@ export default function LandingPage() {
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
       <section
         className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-6 lg:px-14 lg:py-[clamp(1rem,16vh_-_117px,3.5rem)]"
-        style={{ background: "linear-gradient(135deg, #0B152D 0%, #113682 62%, #0d2a68 100%)" }}
+        style={{
+          background:
+            "linear-gradient(135deg, var(--b-ground) 0%, color-mix(in srgb, var(--b-ground) 86%, var(--b-paper)) 58%, var(--b-ground) 100%)",
+        }}
       >
         {/* ambient glow behind the ring */}
         <div
@@ -162,23 +165,23 @@ export default function LandingPage() {
         />
         <div className="relative grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <div>
-            <p className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-ph-teal">
+            <p className="font-mono text-xs font-semibold uppercase tracking-eyebrow text-ph-teal">
               Cross-cohort data harmonization
             </p>
-            <h1 className="mt-2 font-display text-display font-semibold leading-[1.03] tracking-tight text-white">
+            <h1 className="mt-2 font-display text-display font-semibold leading-[1.03] tracking-tight text-on-page">
               Different words.
               <br />
               <span className="text-ph-teal">One meaning.</span>
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-[1.5] text-[#c3cfe6]">
-              <span className="font-semibold text-white">ddharmon</span> reads each variable's metadata (question text, 
+            <p className="mt-3 max-w-2xl text-sm leading-[1.5] text-on-page-muted">
+              <span className="font-semibold text-on-page">ddharmon</span> reads each variable's metadata (question text, 
               description, variable name) — the fields that carry meaning — along with its response options,
               groups the variables that mean the same thing across cohorts, and anchors each concept group to a shared Common
               Data Element (CDE), generating variable → CDE transformation specs along the way. NLP &amp; AI
               tooling draft every match; you make the final calls.
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <Button asChild size="lg" className="bg-ph-crimson text-white hover:bg-ph-crimson-dark">
+              <Button asChild size="lg" className="bg-ph-crimson text-on-page hover:bg-ph-crimson-dark">
                 <Link href="/new">
                   Start a run <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Link>
@@ -187,13 +190,13 @@ export default function LandingPage() {
                 asChild
                 size="lg"
                 variant="outline"
-                className="border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white"
+                className="border-on-page/35 bg-transparent text-on-page hover:bg-on-page/10 hover:text-on-page"
               >
                 <Link href="/guide">Read the guide</Link>
               </Button>
               <Link
                 href="/demo"
-                className="ml-1 text-sm text-[#c3cfe6] underline decoration-white/25 underline-offset-4 transition-colors hover:text-white"
+                className="ml-1 text-sm text-on-page-muted underline decoration-on-page/25 underline-offset-4 transition-colors hover:text-on-page"
               >
                 or explore a live demo →
               </Link>
@@ -204,14 +207,14 @@ export default function LandingPage() {
               rel="noreferrer"
               className="mt-6 inline-flex items-center gap-3 opacity-90 transition-opacity hover:opacity-100"
             >
-              <span className="font-mono text-xs uppercase tracking-[0.16em] text-white/55">A project of</span>
+              <span className="font-mono text-xs uppercase tracking-eyebrow text-on-page-muted">A project of</span>
               <PhLogo tone="dark" className="h-7 w-auto" />
             </a>
           </div>
 
           <div>
             <ConvergenceViz />
-            <p className="mt-3 text-center font-mono text-xs leading-relaxed text-[#8fa1c4]">
+            <p className="mt-3 text-center font-mono text-xs leading-relaxed text-on-page-muted">
               3 cohorts · different wording, different response codes
               <br />
               → 1 CDE · Smoking status <span className="text-ph-teal/80">(Never · Former · Current)</span>

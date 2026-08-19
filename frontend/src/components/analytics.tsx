@@ -14,6 +14,7 @@ import { PlotInfo } from "@/components/plot-info";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   CHART_AXIS,
+  CHART_LABEL_SIZE,
   CHART_GRID,
   CHART_TOOLTIP_CLASS,
   isVerdict,
@@ -188,8 +189,8 @@ function StackedVerdictBars({
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-        <XAxis dataKey="name" tick={{ fontSize: 11, fill: CHART_AXIS }} />
-        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: CHART_AXIS }} width={28} />
+        <XAxis dataKey="name" tick={{ fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }} />
+        <YAxis allowDecimals={false} tick={{ fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }} width={28} />
         <RTooltip content={<BarTooltip />} cursor={{ fill: "var(--sf-100)" }} />
         <Legend
           iconType="square"
@@ -200,7 +201,7 @@ function StackedVerdictBars({
               {VERDICT_LABEL[v] ?? v}
             </span>
           )}
-          wrapperStyle={{ fontSize: 11, cursor: onFocus ? "pointer" : "default" }}
+          wrapperStyle={{ fontSize: CHART_LABEL_SIZE, cursor: onFocus ? "pointer" : "default" }}
         />
         {VERDICTS.map((v) => (
           <Bar
