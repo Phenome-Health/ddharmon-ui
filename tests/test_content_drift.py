@@ -176,9 +176,7 @@ SELECTOR_HEX = re.compile(r"\[[^\]]*['\"]#[0-9a-fA-F]{3,8}['\"][^\]]*\]")
 
 def _frontend_sources() -> list[Path]:
     return sorted(
-        p
-        for p in FRONTEND_SRC.rglob("*")
-        if p.is_file() and p.suffix in SOURCE_SUFFIXES and p != TOKEN_DEFINITIONS
+        p for p in FRONTEND_SRC.rglob("*") if p.is_file() and p.suffix in SOURCE_SUFFIXES and p != TOKEN_DEFINITIONS
     )
 
 
@@ -233,35 +231,92 @@ def test_no_hex_literals() -> None:
 # the claim, not on a keyword. Note that it cannot discriminate on "no model is called":
 # the false claim uses exactly that reasoning, applied to a stage of the staged flow.
 
+# `(?<![-\w])` on `free`: "backbone-free mode" and "schema-free" use the suffix to mean
+# WITHOUT, not AT NO COST. The roadmap already carries one, and it is a claim about
+# capability, not money.
+# "it is local" and "it runs on your machine" are cost claims in this product's own idiom —
+# the whole staged-review argument is local-work-is-free — and the reader takes them as such.
+# The original false claim was literally "Gate 0 and Gate 1's grouping run on your machine",
+# which carried none of the money words and so scored zero against a keyword-only detector.
 _FREE_CLAIM = re.compile(
-    r"\b(free|costs? nothing|cost nothing|no charge|nothing to pay|at no cost)\b", re.I
-)
-_STAGED_SUBJECT = re.compile(
-    r"\b(step 1|step one|first step|this step|grouping comes first|concept groups?|"
-    r"staged (?:flow|review)|gate 0|first gate)\b",
+    r"\b((?<![-\w])free|costs? nothing|cost nothing|no charge|nothing to pay|at no cost"
+    r"|(?:is|are|was|were|runs?|stays?|happens?) local|on your machine|local(?:ly)? too)\b",
     re.I,
 )
+# A sentence that names where the charge DOES land has reconciled the claim rather than made
+# it — "Starting costs nothing — the first charge is Continue at Gate 0" is the corrected copy
+# §0.1 asks for. Flagging it would leave a writer no true sentence to write.
+_NAMES_THE_CHARGE = re.compile(
+    r"\bfirst charge\b|\bis charged\b|\bare charged\b|\bpays for\b|\bpaid\b|\bnot free\b"
+    r"|\bcharged on\b|\bcosts? \$|\bthen paid\b",
+    re.I,
+)
+_STAGED_SUBJECT = re.compile(
+    r"\b(step 1|step one|first step|this step|this gate|grouping comes first|concept groups?|"
+    r"staged (?:flow|review)|gate 0|first gate|gates? 0 and 1|the grouping|"
+    r"gate 1(?:\'s)? grouping)\b",
+    re.I,
+)
+# Widening the subject list above made a NEGATION guard mandatory. "this gate is cheap,
+# but not free" and "the grouping is charged either way" are the honest statements this
+# gate wants copy to converge ON — flagging them would push a writer back toward silence,
+# which is the failure mode the module header warns about. Two of these sentences are live
+# in the staged-review mockup right now, and both were written as corrections.
+_DENIAL = re.compile(r"\b(not|never|isn't|aren't|no longer|rather than)\s*$", re.I)
 # "preview" as the RUN MODE, not the word anywhere in a sentence: a page that merely
 # mentions a preview must not buy itself an exemption from the claim.
-_PREVIEW_SUBJECT = re.compile(
-    r"\bpreview (?:run )?mode\b|\bpreview runs?\b|\bin preview\b|\bpreview:", re.I
-)
+_PREVIEW_SUBJECT = re.compile(r"\bpreview (?:run )?mode\b|\bpreview runs?\b|\bin preview\b|\bpreview:", re.I)
 
-# `pages/preview-staged-review.tsx` carries the false claim and is NOT edited here: D-16
-# retires its ROUTE with a redirect (plan 08-17), which removes the claim from the product
-# rather than rewording a page nobody can reach. Excluded by path, with the file's
-# existence asserted so a rename cannot silently widen the exclusion.
-CLAIM_EXCLUSIONS = ("pages/preview-staged-review.tsx",)
+# Empty ON PURPOSE, and the emptiness is load-bearing. The one entry that used to sit here
+# (`pages/preview-staged-review.tsx`) was excluded because D-16 planned to retire its ROUTE,
+# so rewording a page nobody could reach was pointless. That file is now DELETED and its
+# content lives in `frontend/public/preview/staged-review/index.html` — which is a standalone
+# static page, outside every `frontend/src` gate. The claim did not get fixed by the move; it
+# got hidden by it, and it came back in five places. Standalone pages are walked below, so the
+# exclusion is no longer needed and must not be re-added: it is the mechanism that let a known
+# false cost claim ship un-gated.
+CLAIM_EXCLUSIONS: tuple[str, ...] = ()
+
+
+# Block-level tags ARE the sentence boundaries in markup. Without this the whole gate rail
+# is one "sentence", so `Gate 4 … free` (true — Gate 4 is a terminal read) gets convicted by
+# the `Gate 0` sitting 90 characters away in a different button.
+# BLOCK-level only. `span`, `b` and `i` are INLINE: treating them as boundaries chops a
+# sentence mid-clause, which severs a claim from the very words that reconcile it —
+# "<span>Nothing is charged yet</span> — … The first charge is Continue at Gate 0" became
+# three sentences, and the middle one read as a bare false claim.
+_BLOCK_END = re.compile(r"</(?:div|p|li|ul|ol|button|h[1-6]|td|th|tr|section)>|<br\s*/?>", re.I)
+# CSS lives in `<style>` and carries selectors like `.howto li .free` — a class name, not a
+# claim. Prose, however, DOES live inside `<script>` (the how-to steps are JS template
+# strings), so scripts are kept.
+_STYLE_BLOCK = re.compile(r"<style\b[^>]*>.*?</style>", re.I | re.S)
+# Attribute values are identifiers: `class="free"`, `data-gate="4"`. Four of the five false
+# positives this gate first produced were `class="free"`.
+_ATTR = re.compile(r"""\s[-\w:]+=(?:"[^"]*"|'[^']*')""")
+
+
+def _visible_prose(text: str) -> str:
+    """Markup reduced to the claims a reader can actually see, with sentence boundaries."""
+    if "<" not in text:
+        return text
+    text = _STYLE_BLOCK.sub(" ", text)
+    text = _BLOCK_END.sub(". ", text)
+    text = _ATTR.sub(" ", text)
+    return re.sub(r"<[^>]+>", " ", text)
 
 
 def _staged_flow_free_claims(text: str) -> list[str]:
     """Sentences claiming the STAGED FLOW costs nothing. Preview-run-mode sentences pass."""
-    flat = " ".join(text.split())
+    flat = " ".join(_visible_prose(text).split())
     hits = []
     for sentence in re.split(r"(?<=[.!?])\s+", flat):
         if _PREVIEW_SUBJECT.search(sentence):
             continue
         free = _FREE_CLAIM.search(sentence)
+        if free and _DENIAL.search(sentence[: free.start()]):
+            continue  # "…is not free" DENIES the claim; it does not make it
+        if free and _NAMES_THE_CHARGE.search(sentence):
+            continue  # the sentence says where the money goes; it is reconciled, not false
         if free and _STAGED_SUBJECT.search(sentence):
             # Report a window around the claim, not the whole sentence: source files carry
             # few full stops, so a "sentence" can be half a component and unreadable.
@@ -283,11 +338,59 @@ def test_the_staged_flow_spend_claim_detector_distinguishes_the_two_claims() -> 
         "Grouping comes first, costs nothing, and is adjustable.",
         "Reviewing your concept groups is free until you decide what to buy.",
     ]
+    # The widened subject vocabulary: these are the shapes the staged-review mockup
+    # actually shipped, and the pre-widening detector saw none of them.
+    false_about_the_staged_flow += [
+        "This gate is free and repeatable — the cheapest place to catch a mistake.",
+        "Starting costs nothing — gates 0 and 1 are local.",
+        "Gate 0 and gate 1's grouping are free either way.",
+        "The grouping costs nothing, so scope it however you like.",
+    ]
     true_about_preview_run_mode = [
         "Preview runs no LLM — free.",
         "No LLM — clustering + retrieval only, to inspect groupings before spending credits.",
         "Preview run mode calls no model at all, so this step is free.",
         "Local · free",
+        # Denials. Widening the subject list would flag these without the guard, which
+        # would penalise the corrected copy and push a writer back toward saying nothing.
+        "That is what produces the flags below, so this gate is not free.",
+        "The grouping is never free — it pays for ideal, split and the judge.",
+        "Gate 0 is local either way; the grouping is charged, rather than free.",
+        # A sentence that names where the charge lands. This is the copy §0.1 asks for.
+        "Starting costs nothing — the first charge is Continue at Gate 0.",
+        "Nothing is charged yet. The first charge is Continue at Gate 0, which pays for the grouping.",
+        # "free" as a WITHOUT-suffix, not a price. Live in the roadmap today.
+        "Backbone-free mode — harmonize with no pre-existing catalog, one element per concept.",
+        # Inline tags must NOT split a sentence: this is one claim reconciled by its own
+        # second half, and an inline-tag boundary convicted it.
+        (
+            '<li>Press <b>Start run</b>. <span class="free">Nothing is charged yet</span> — Gate 0\'s '
+            "preparation runs on your machine. The first charge is <b>Continue</b> at Gate 0, which "
+            "pays for the grouping.</li>"
+        ),
+        # A local claim that names the charge is reconciled copy, not a false claim.
+        "Gate 0 is local either way; the grouping is charged either way, batch at about half.",
+        "Embedding and clustering are local — naming and splitting the groups are paid.",
+        # Markup noise: a CSS class name and a selector are not claims.
+        '<div class="free"><span>Gate 0 · local</span><span>$0.00</span></div>',
+        "<style>.howto li .free { color:var(--ok); } .gate.is-off { opacity:.5 }</style>",
+        # Block-level tags are sentence boundaries: Gate 4 IS free (a terminal read), and the
+        # `Gate 0` in a different button must not convict it.
+        (
+            "<button><div>Gate 0</div><div>Load &amp; prepare</div><div>local</div></button>"
+            "<button><div>Gate 4</div><div>Export</div><div>free</div></button>"
+        ),
+    ]
+    # Proves the markup handling did not simply BLIND the gate — the same false claim,
+    # wrapped in the same markup, must still be convicted.
+    false_about_the_staged_flow += [
+        '<div class="fhelp">Starting costs nothing — gates 0 and 1 are local.</div>',
+        '<li>Press <b>Start run</b>. <span class="free">This gate is free and repeatable</span></li>',
+        # The claim form that scored ZERO against the keyword-only detector — no "free",
+        # no "costs nothing", and false all the same. This is the fixture that matters.
+        "Press Start run. Gate 0 and Gate 1's grouping run on your machine.",
+        "Still nothing spent. Gate 1's grouping is local too.",
+        "This is where spending begins; concept groups before it were local.",
     ]
     for claim in false_about_the_staged_flow:
         assert _staged_flow_free_claims(claim), f"should be flagged but was not: {claim!r}"
@@ -310,6 +413,11 @@ def test_no_public_surface_claims_the_staged_flow_is_free() -> None:
         rel = path.relative_to(FRONTEND_SRC).as_posix()
         if rel in CLAIM_EXCLUSIONS:
             continue
+        for claim in _staged_flow_free_claims(path.read_text()):
+            offenders.append(f"{path.relative_to(REPO)}: {claim}")
+    # Standalone static pages are the same public surface reached by the same roadmap link.
+    # Scoping this walk to `frontend/src` is exactly how the claim went un-gated.
+    for path in _standalone_pages():
         for claim in _staged_flow_free_claims(path.read_text()):
             offenders.append(f"{path.relative_to(REPO)}: {claim}")
 
@@ -357,8 +465,15 @@ DEFAULT_PALETTE = re.compile(
 # primitive and never a name that no longer exists.
 VAR_READ = re.compile(r"var\(\s*(--[a-zA-Z0-9-]+)")
 ROLE_PREFIXES = (
-    "--surface-", "--on-", "--rule-", "--link-", "--accent", "--status-", "--series-",
-    "--focus-ring-", "--elevation-",
+    "--surface-",
+    "--on-",
+    "--rule-",
+    "--link-",
+    "--accent",
+    "--status-",
+    "--series-",
+    "--focus-ring-",
+    "--elevation-",
 )
 # Names that are NOT ours: Radix and shadcn set these on the element themselves.
 FOREIGN_VAR_PREFIXES = ("--radix-", "--sidebar-", "--skeleton-", "--spacing-", "--radius", "--tw-")
@@ -488,9 +603,7 @@ def test_components_read_only_role_tokens() -> None:
                     offenders.append(f"{rel}:{lineno}: var({name}) — NOT DECLARED, resolves to nothing")
                 elif not name.startswith(ROLE_PREFIXES):
                     offenders.append(f"{rel}:{lineno}: var({name}) — a tier-1 primitive, not a role")
-    assert not offenders, (
-        f"{len(offenders)} raw token read(s) are not tier-2 roles:\n  " + "\n  ".join(offenders)
-    )
+    assert not offenders, f"{len(offenders)} raw token read(s) are not tier-2 roles:\n  " + "\n  ".join(offenders)
 
 
 def test_no_palette_slot_utilities_outside_the_token_layer() -> None:
@@ -518,4 +631,180 @@ def test_no_palette_slot_utilities_outside_the_token_layer() -> None:
         f"{len(offenders)} palette-slot utility/utilities across {len(by_file)} file(s) name a step "
         f"on a ramp instead of a surface role, so they cannot be remapped as a (surface, "
         f"foreground) pair. This is 08-07 Part 2's migration work, ranked by file:\n  " + ranked
+    )
+
+
+# ── Standalone static pages get the SAME token discipline as the SPA ──────────────────
+#
+# `frontend/public/**/*.html` is served verbatim, outside the SPA, with no build step and
+# no Tailwind — so every colour/type gate above, all of which are scoped to `frontend/src`,
+# is blind to it. That blindness is not hypothetical: the staged-review mockup arrived
+# carrying a known-false cost claim in five places, one straight drift from the brand's
+# amber, and twelve colour literals in component rules — through a retheme whose whole
+# point was that a colour cannot be spelled out outside the token layer.
+#
+# A standalone page cannot reference the SPA's utilities, so the rule is not "use the
+# tokens" — it is the rule `index.css` itself lives by: **a colour may be spelled out ONLY
+# where the tokens are declared.** A page that declares its own `:root` block then earns
+# the same property the SPA has — a rebrand is a token edit, not a hunt.
+
+FRONTEND_PUBLIC = REPO / "frontend" / "public"
+
+# A token block is a rule whose selector is EXACTLY `:root` or `:root[...]`. A DESCENDANT
+# selector that merely starts with `:root` — `:root[data-theme="deep"] .chip { … }` — is a
+# component rule wearing a token block's prefix, and two literals hid behind precisely that.
+_TOKEN_BLOCK = re.compile(r"(?m)^\s*:root(?:\[[^\]]+\])?\s*\{[^}]*\}", re.S)
+# The DEFAULT theme only: bare `:root` plus the theme the page actually loads with.
+_DEFAULT_THEME_BLOCK = re.compile(r'(?m)^\s*:root(?:\[data-theme="brand"\])?\s*\{([^}]*)\}', re.S)
+_DECL = re.compile(r"(--[a-zA-Z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})")
+
+# A colour the mockup PROPOSES that the brand does not have. Recorded per value with its
+# reason, never as a blanket pass, and asserted to still be present so a stale entry cannot
+# quietly widen into cover for the next divergence.
+PROPOSED_COLOURS = {
+    "#0D183B": (
+        "a mid-navy between --brand-navy (#1E2A52) and --brand-navy-deep (#00063D). The "
+        "brand has no step there; the mockup proposes one for its secondary page ground. "
+        "Kept as a design proposal, logged in WINDOWS.md — re-point it or add the primitive."
+    ),
+}
+
+
+def _decomment(src: str) -> str:
+    """Blank out CSS and HTML comments, preserving line numbers.
+
+    The staged-review page documents its sampled palette as prose in a comment. That is a
+    reference, not paint — flagging it would teach the next author to delete the note.
+    """
+    src = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
+    return re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
+
+
+def _standalone_pages() -> list[Path]:
+    if not FRONTEND_PUBLIC.exists():  # pragma: no cover
+        return []
+    return sorted(FRONTEND_PUBLIC.rglob("*.html"))
+
+
+def _token_block_lines(src: str) -> set[int]:
+    lines: set[int] = set()
+    for m in _TOKEN_BLOCK.finditer(src):
+        lines.update(range(src[: m.start()].count("\n"), src[: m.end()].count("\n") + 1))
+    return lines
+
+
+def test_a_standalone_page_exists_to_gate() -> None:
+    """Guard against the walk passing vacuously.
+
+    Every assertion below iterates a glob. If `frontend/public` ever stops holding an HTML
+    page — renamed directory, moved mockup — the two gates would go green by finding nothing,
+    which is the failure this module already met once in another form ("0 of 23 baselines
+    changed" verified file identity, not that the suite passed).
+    """
+    assert _standalone_pages(), (
+        f"no standalone HTML page found under {FRONTEND_PUBLIC.relative_to(REPO)} — if the "
+        f"mockups genuinely moved, re-point FRONTEND_PUBLIC rather than leaving a glob that "
+        f"cannot fail"
+    )
+
+
+@pytest.mark.parametrize("page", _standalone_pages(), ids=lambda p: p.name)
+def test_standalone_pages_keep_colour_literals_in_their_token_block(page: Path) -> None:
+    """A colour spelled out in a component rule is a rebrand that silently does not happen."""
+    src = page.read_text()
+    allowed = _token_block_lines(src)
+    offenders = [
+        f"{page.relative_to(REPO)}:{i + 1}: {literal}"
+        for i, line in enumerate(_decomment(src).splitlines())
+        if i not in allowed
+        for literal in (HEX_LITERAL.findall(line) + NUMERIC_COLOUR_FN.findall(line))
+    ]
+    assert not offenders, (
+        f"{len(offenders)} colour literal(s) sit in component rules on a standalone page "
+        f"instead of its `:root` token block, so a rebrand cannot reach them — re-point each "
+        f"onto a token the page already declares:\n  " + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("page", _standalone_pages(), ids=lambda p: p.name)
+def test_standalone_page_default_theme_matches_the_brand(page: Path) -> None:
+    """A standalone page samples the brand independently, so it drifts independently.
+
+    This is the assertion that actually earns its keep. The page's own token block is only
+    worth having if its values ARE the brand's — otherwise a rebrand updates `index.css`,
+    every gate stays green, and the mockup keeps painting last year's colours on a public
+    route. It caught one real drift on arrival: the page's warn amber was `#A85B00` where
+    `--brand-amber` is `#8F4E00`.
+
+    Scoped to the DEFAULT theme. The page also carries a second `deep` theme, which the SPA
+    deleted in 08-05 — asserting brand parity for a theme the product no longer has would be
+    asserting against nothing. That mismatch is a design question, logged in WINDOWS.md.
+    """
+    brand = {
+        v.upper() for v in re.findall(r"--brand-[a-z0-9-]+\s*:\s*(#[0-9a-fA-F]{3,8})", TOKEN_DEFINITIONS.read_text())
+    }
+    src = page.read_text()
+    declared = {
+        name: val for block in _DEFAULT_THEME_BLOCK.finditer(src) for name, val in _DECL.findall(block.group(1))
+    }
+    if not declared:
+        pytest.skip(f"{page.name} declares no default-theme colour tokens")
+
+    for value, reason in PROPOSED_COLOURS.items():
+        assert value.upper() in {v.upper() for v in declared.values()}, (
+            f"PROPOSED_COLOURS records {value} with a reason, but no default-theme token on "
+            f"{page.name} declares it any more — drop the entry rather than leaving it to "
+            f"cover the next divergence. Recorded reason: {reason}"
+        )
+
+    proposed = {v.upper() for v in PROPOSED_COLOURS}
+    offenders = [
+        f"{name}: {val}"
+        for name, val in sorted(declared.items())
+        if val.upper() not in brand and val.upper() not in proposed
+    ]
+    assert not offenders, (
+        f"{len(offenders)} default-theme token(s) on {page.name} hold a value that no "
+        f"`--brand-*` primitive in {TOKEN_DEFINITIONS.name} holds, so a rebrand would leave "
+        f"this public page painting the old identity. Re-point each onto the brand's value, "
+        f"or record it in PROPOSED_COLOURS with a reason:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_every_standalone_route_is_one_of_the_pages_gated_here() -> None:
+    """The exemption and the replacement gate must name the SAME set of pages.
+
+    `routes.ts` marks a route `standalone: true` to exempt it from the three rendered
+    token-architecture suites (typography, surface-pairing, the rebrand drill), on the
+    stated grounds that the two assertions above cover it instead. That trade is only
+    honest if the page really is walked here. Nothing otherwise connects the two files, so
+    a standalone route pointing at a path this module never sees would buy an exemption
+    from three gates and gain none — the precise shape of the hole this whole section
+    exists to close, one level up.
+    """
+    routes_ts = REPO / "frontend" / "tests" / "e2e" / "routes.ts"
+    if not routes_ts.exists():  # pragma: no cover
+        pytest.skip(f"route registry not found at {routes_ts}")
+
+    declared = re.findall(r'\{[^{}]*\bpath:\s*"([^"]+)"[^{}]*\bstandalone:\s*true[^{}]*\}', routes_ts.read_text())
+    assert declared, (
+        f"{routes_ts.relative_to(REPO)} declares no `standalone: true` route, but this module "
+        f"gates standalone pages and TOKEN_LAYER_ROUTES exempts them — if the category is gone, "
+        f"remove the exemption too rather than leaving an unused escape hatch"
+    )
+
+    # A route path maps to the file the static build serves for it: a trailing slash is a
+    # directory index.
+    gated = {p.relative_to(FRONTEND_PUBLIC).as_posix() for p in _standalone_pages()}
+    missing = []
+    for route in declared:
+        rel = route.lstrip("/")
+        candidate = f"{rel}index.html" if route.endswith("/") else rel
+        if candidate not in gated:
+            missing.append(f"{route} -> expected frontend/public/{candidate}")
+    assert not missing, (
+        f"route(s) marked `standalone: true` in {routes_ts.relative_to(REPO)} are exempt from the "
+        f"typography, surface-pairing and rebrand-drill suites, but no page under "
+        f"{FRONTEND_PUBLIC.relative_to(REPO)} backs them — so they are exempt from those three and "
+        f"gated by nothing here either:\n  " + "\n  ".join(missing)
     )

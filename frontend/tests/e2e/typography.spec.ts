@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { routeUrl, VISUAL_ROUTES } from "./routes";
+import { routeUrl, TOKEN_LAYER_ROUTES } from "./routes";
 
 /**
  * The four-size scale, asserted on the RENDERED page — the automated half of the R10 type
@@ -33,7 +33,7 @@ const WEIGHTS = [400, 600];
  */
 const NON_TEXT = new Set([0]);
 
-for (const route of VISUAL_ROUTES) {
+for (const route of TOKEN_LAYER_ROUTES) {
   test(`@type ${route.name} (${route.path}) renders only the four sizes and two weights`, async ({
     page,
     baseURL,

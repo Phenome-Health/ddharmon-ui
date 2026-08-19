@@ -25,7 +25,6 @@ import PreviewPayoffPage from "@/pages/preview-payoff";
 import PreviewCompositePage from "@/pages/preview-composite";
 import PreviewReproducibilityPage from "@/pages/preview-reproducibility";
 import PreviewKnowledgeGraphPage from "@/pages/preview-knowledge-graph";
-import PreviewStagedReviewPage from "@/pages/preview-staged-review";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -57,7 +56,6 @@ export default function App() {
             <Route path="/preview/composite" component={PreviewCompositePage} />
             <Route path="/preview/reproducibility" component={PreviewReproducibilityPage} />
             <Route path="/preview/knowledge-graph" component={PreviewKnowledgeGraphPage} />
-            <Route path="/preview/staged-review" component={PreviewStagedReviewPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />
             <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
             <Route path="/job/:jobId/analysis" component={AnalysisIdeasPage} />

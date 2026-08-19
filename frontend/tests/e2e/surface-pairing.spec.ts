@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { loadManifest } from "./role-probe";
-import { routeUrl, VISUAL_ROUTES } from "./routes";
+import { routeUrl, TOKEN_LAYER_ROUTES } from "./routes";
 
 /**
  * THE PAIRING GATE — every rendered run of text, measured against the surface it is
@@ -50,7 +50,7 @@ test("@pairing every rendered run of text clears its threshold against the surfa
   const failures: string[] = [];
   const counts: { route: string; measured: number; bad: number }[] = [];
 
-  for (const route of VISUAL_ROUTES) {
+  for (const route of TOKEN_LAYER_ROUTES) {
     const url = await routeUrl(route, baseURL);
     await page.goto(url);
     await page.evaluate(() => document.fonts.ready);

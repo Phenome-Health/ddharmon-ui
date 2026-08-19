@@ -5,6 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ROADMAP, type RoadmapStatus } from "@/data/roadmap";
 
+// Shared by both link forms below so the tag looks identical whether it points at an in-app route or
+// at a standalone static page.
+const PREVIEW_TAG =
+  "ml-2 inline-flex items-center gap-1 rounded border border-rule-info px-1.5 py-0.5 align-middle text-xs font-semibold text-accent-on-raised hover:bg-surface-info";
+
 // Per-status presentation. Shipped = crossed off (a filled check); planned = an empty circle; in-progress
 // sits between, with a badge so it isn't mistaken for either. Exploring = an open research direction (a
 // flask), badged like in-progress so it reads as a live bet, not a committed plan.
@@ -83,14 +88,16 @@ export default function RoadmapPage() {
                           Exploring
                         </Badge>
                       )}
-                      {item.preview && (
-                        <Link
-                          href={item.preview}
-                          className="ml-2 inline-flex items-center gap-1 rounded border border-rule-info px-1.5 py-0.5 align-middle text-xs font-semibold text-accent-on-raised hover:bg-surface-info"
-                        >
-                          <Eye className="h-3 w-3" /> Preview
-                        </Link>
-                      )}
+                      {item.preview &&
+                        (item.previewStandalone ? (
+                          <a href={item.preview} className={PREVIEW_TAG}>
+                            <Eye className="h-3 w-3" /> Preview
+                          </a>
+                        ) : (
+                          <Link href={item.preview} className={PREVIEW_TAG}>
+                            <Eye className="h-3 w-3" /> Preview
+                          </Link>
+                        ))}
                       {item.note && <span className="mt-0.5 block text-xs text-on-raised-muted">{item.note}</span>}
                     </span>
                   </li>
