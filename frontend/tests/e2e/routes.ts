@@ -84,12 +84,12 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "jobs", path: "/jobs" },
   // The staged review flow. One baseline per gate, all against the PAUSED-run fixture, so each screen is
   // captured holding real state rather than its empty state.
-  {
-    name: "run-gate1",
-    path: "/run/:jobId/gate1",
+  ...(["setup", "gate0", "gate1", "gate2", "gate3", "gate4"] as const).map((gate) => ({
+    name: `run-${gate}`,
+    path: `/run/:jobId/${gate}`,
     needsJobFixture: true,
     jobIdOverride: PAUSED_RUN_FIXTURE,
-  },
+  })),
   // Registered nowhere on purpose — this is how the fallback branch of the <Switch> is reached. It must
   // produce a baselined screenshot, not a test error.
   { name: "not-found", path: "/__no_such_route__", registered: false },
