@@ -12,12 +12,12 @@ export function GlobalStatusBanner() {
   return (
     <div
       role="status"
-      className="flex shrink-0 items-center justify-center gap-2 px-4 py-1.5 text-center text-[13px] font-medium leading-snug"
+      className="flex shrink-0 items-center justify-center gap-2 px-4 py-1.5 text-center text-sm font-semibold leading-snug"
       style={{ backgroundColor: "#FACC15", color: "#1C1917", borderBottom: "1px solid #EAB308" }}
     >
       <AlertTriangle className="hidden h-4 w-4 shrink-0 sm:block" aria-hidden />
       <p>
-        <span className="font-bold">ddharmon is under active development.</span> Variable-cluster
+        <span className="font-semibold">ddharmon is under active development.</span> Variable-cluster
         coherence is still being fine-tuned, and the UI is undergoing regular cosmetic &amp;
         functional updates — treat results as provisional. We welcome your feedback: use{" "}
         <span className="font-semibold">&ldquo;Report an issue&rdquo;</span> at the bottom left.

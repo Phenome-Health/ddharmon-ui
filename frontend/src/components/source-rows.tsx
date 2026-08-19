@@ -71,7 +71,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
   return (
     <th
       className={cn(
-        "border-b border-neutral-200 px-2.5 py-1.5 text-left align-bottom font-medium uppercase tracking-wide text-neutral-500",
+        "border-b border-neutral-200 px-2.5 py-1.5 text-left align-bottom font-semibold uppercase tracking-eyebrow text-neutral-500",
         className,
       )}
     >

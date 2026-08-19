@@ -215,7 +215,7 @@ function ReferencesCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Works cited</CardTitle>
+        <CardTitle className="text-sm">Works cited</CardTitle>
         <p className="text-xs text-neutral-400">
           Papers that shaped ddharmon's design, in Nature style and ordered by influence — the embedding → clustering →
           LLM-labeling lineage for variable/CDE harmonization, then the topic-coherence work behind its
@@ -239,7 +239,7 @@ export default function RelatedWorkPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">Related work</h1>
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">Related work</h1>
         <p className="mt-1 text-sm text-neutral-500">
           ddharmon builds on and complements a broad ecosystem of data-harmonization tools, standards, and
           research groups. A non-exhaustive map of the neighborhood.
@@ -258,7 +258,7 @@ function Section({ title, subtitle, entries }: { title: string; subtitle: string
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle className="text-sm">{title}</CardTitle>
         <p className="text-xs text-neutral-400">{subtitle}</p>
       </CardHeader>
       <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -274,7 +274,7 @@ function EntryCard({ entry }: { entry: Entry }) {
   const inner = (
     <>
       <div className="flex items-center gap-1.5">
-        <span className="font-medium text-neutral-700 group-hover:text-ph-navy">{entry.name}</span>
+        <span className="font-semibold text-neutral-700 group-hover:text-ph-navy">{entry.name}</span>
         {entry.href && <ExternalLink className="h-3 w-3 text-neutral-400 group-hover:text-ph-navy" />}
       </div>
       {entry.by && <div className="text-xs text-neutral-400">{entry.by}</div>}

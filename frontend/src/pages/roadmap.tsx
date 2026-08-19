@@ -25,7 +25,7 @@ export default function RoadmapPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
           <Milestone className="h-6 w-6 text-ph-navy" /> Roadmap
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
@@ -59,7 +59,7 @@ export default function RoadmapPage() {
       {ROADMAP.map((group) => (
         <Card key={group.theme}>
           <CardHeader>
-            <CardTitle className="text-base">{group.theme}</CardTitle>
+            <CardTitle className="text-sm">{group.theme}</CardTitle>
             <p className="text-xs text-neutral-400">{group.blurb}</p>
           </CardHeader>
           <CardContent>
@@ -74,19 +74,19 @@ export default function RoadmapPage() {
                         {item.label}
                       </span>
                       {item.status === "in-progress" && (
-                        <Badge variant="secondary" className="ml-2 align-middle text-[10px]">
+                        <Badge variant="secondary" className="ml-2 align-middle text-xs">
                           In progress
                         </Badge>
                       )}
                       {item.status === "exploring" && (
-                        <Badge variant="outline" className="ml-2 align-middle border-warning/40 text-[10px] text-warning">
+                        <Badge variant="outline" className="ml-2 align-middle border-warning/40 text-xs text-warning">
                           Exploring
                         </Badge>
                       )}
                       {item.preview && (
                         <Link
                           href={item.preview}
-                          className="ml-2 inline-flex items-center gap-1 rounded border border-ph-navy/30 px-1.5 py-0.5 align-middle text-[10px] font-medium text-ph-navy hover:bg-ph-navy/5"
+                          className="ml-2 inline-flex items-center gap-1 rounded border border-ph-navy/30 px-1.5 py-0.5 align-middle text-xs font-semibold text-ph-navy hover:bg-ph-navy/5"
                         >
                           <Eye className="h-3 w-3" /> Preview
                         </Link>

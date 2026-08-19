@@ -80,14 +80,14 @@ function ReproducibilityInfo() {
       <PopoverContent align="start" className="w-80 text-xs font-normal leading-relaxed">
         <p className="mb-2 text-sm font-semibold text-ph-ink">How reproducible is a run?</p>
         <p className="mb-2 text-neutral-600">
-          Embeddings are deterministic. Two stages are <span className="font-medium">not</span> bitwise-reproducible:
+          Embeddings are deterministic. Two stages are <span className="font-semibold">not</span> bitwise-reproducible:
         </p>
         <ul className="mb-2 list-disc space-y-1 pl-4 text-neutral-600">
           <li>
-            <span className="font-medium">Clustering</span> (UMAP/HDBSCAN) — cluster boundaries can shift run to run.
+            <span className="font-semibold">Clustering</span> (UMAP/HDBSCAN) — cluster boundaries can shift run to run.
           </li>
           <li>
-            <span className="font-medium">LLM assignment</span> — runs at temperature 0, but the model gives no
+            <span className="font-semibold">LLM assignment</span> — runs at temperature 0, but the model gives no
             bitwise guarantee, so a few borderline verdicts may flip.
           </li>
         </ul>
@@ -96,12 +96,12 @@ function ReproducibilityInfo() {
           final grouping.
         </p>
         <p className="mb-2 rounded-md bg-neutral-50 p-2 text-neutral-600">
-          <span className="font-medium text-ph-ink">Reference</span> (5×200-variable cohorts): across independent fresh
+          <span className="font-semibold text-ph-ink">Reference</span> (5×200-variable cohorts): across independent fresh
           runs most concepts recur and keep the same verdict — the split-aware assignment washes most UMAP/LLM
           drift out of the final grouping.
         </p>
         <p className="text-neutral-500">
-          A <span className="font-medium">saved / demo run</span> replays a frozen snapshot + cached responses —
+          A <span className="font-semibold">saved / demo run</span> replays a frozen snapshot + cached responses —
           identical every time.
         </p>
       </PopoverContent>
@@ -389,7 +389,7 @@ export default function DashboardPage() {
               <span className="mx-1 text-neutral-300">/</span>
               <span className="font-mono">{jobId.slice(0, 8)}</span>
             </nav>
-            <h1 className="text-2xl font-semibold text-ph-ink">{jobState.displayName}</h1>
+            <h1 className="font-display text-xl font-semibold text-ph-ink">{jobState.displayName}</h1>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-neutral-500">
               {result && (
                 <Badge variant="neutral" className="font-normal">
@@ -441,7 +441,7 @@ export default function DashboardPage() {
 
         {result && !isPreview && !running && records.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
-            <span className="mr-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Export</span>
+            <span className="mr-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Export</span>
             <ExportButton
               href={exportUrl(jobId, "eitl_tsv")}
               icon={Download}
@@ -480,7 +480,7 @@ export default function DashboardPage() {
         <Card>
           <CardContent className="space-y-2 py-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="font-medium capitalize text-neutral-700">
+              <span className="font-semibold capitalize text-neutral-700">
                 {error ? "Error" : `Phase: ${jobState.phase}`}
               </span>
               <span className="text-neutral-500">{jobState.total > 0 ? `${jobState.completed}/${jobState.total}` : ""}</span>
@@ -566,7 +566,7 @@ export default function DashboardPage() {
       {jobState.status === "cancelled" && (
         <Card>
           <CardContent className="space-y-3 py-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-neutral-700">
+            <div className="flex items-center gap-2 text-sm font-semibold text-neutral-700">
               <CircleStop className="h-4 w-4 text-neutral-400" />
               {records.length > 0 ? "Run stopped — partial results kept" : "Run stopped"}
             </div>
@@ -602,7 +602,7 @@ export default function DashboardPage() {
           {result.atlas.length > 0 && (
             <Card>
               <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-                <CardTitle className="text-base">Embedding atlas</CardTitle>
+                <CardTitle className="text-sm">Embedding atlas</CardTitle>
                 <PlotInfo>
                   Each dot is one variable, placed by the meaning of its text (a 2-D PCA of the embeddings the
                   clustering used) — nearby dots are semantically similar. Colored by <b>cohort</b>.
@@ -619,7 +619,7 @@ export default function DashboardPage() {
           {previewClusters.length > 0 && (
             <Card>
               <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-                <CardTitle className="text-base">Clusters &amp; candidate CDEs ({previewClusters.length})</CardTitle>
+                <CardTitle className="text-sm">Clusters &amp; candidate CDEs ({previewClusters.length})</CardTitle>
                 <PlotInfo>
                   Each cluster is a group of variables the embedding pooled, with the top CDE candidates that
                   retrieval found. A full run&apos;s LLM stages decide which (if any) is adopted, split the cluster,
@@ -630,7 +630,7 @@ export default function DashboardPage() {
                 {previewClusters.slice(0, PREVIEW_CLUSTER_CAP).map((c) => (
                   <div key={c.clusterId} className="rounded-md border border-neutral-200 p-3">
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="font-medium text-ph-ink">
+                      <span className="font-semibold text-ph-ink">
                         {c.nMembers} variable{c.nMembers === 1 ? "" : "s"}
                       </span>
                       {c.crossCohort && (
@@ -651,7 +651,7 @@ export default function DashboardPage() {
                     </div>
                     {c.candidates.length > 0 && (
                       <div className="mt-2 border-t border-neutral-100 pt-2">
-                        <div className="text-[11px] font-medium text-neutral-400">Top CDE candidates · retrieval</div>
+                        <div className="text-xs font-semibold text-neutral-400">Top CDE candidates · retrieval</div>
                         <ul className="mt-1 space-y-0.5">
                           {c.candidates.slice(0, 3).map((cd) => (
                             <li key={cd.rank} className="flex items-baseline gap-2 text-xs">
@@ -678,7 +678,7 @@ export default function DashboardPage() {
             <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm text-neutral-600">
               <span>
                 <span className="font-semibold text-ph-ink">{result.prompts.ideal}</span> concept prompts were built.
-                Re-run in <span className="font-medium">batch</span> or <span className="font-medium">sync</span> mode
+                Re-run in <span className="font-semibold">batch</span> or <span className="font-semibold">sync</span> mode
                 to produce adopt / refine / novel decisions.
               </span>
               <RerunAction job={jobState} labeled />
@@ -737,7 +737,7 @@ export default function DashboardPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-              <CardTitle className="text-base">Match journey</CardTitle>
+              <CardTitle className="text-sm">Match journey</CardTitle>
               <PlotInfo>
                 Where every variable goes: <b>cohort → verdict → destination</b>, flow width = number of variables.
                 <b>Adopt/Refine</b> map onto an existing CDE, <b>Novel</b> routes to a proposed GenCDE, and
@@ -755,7 +755,7 @@ export default function DashboardPage() {
           {result.atlas.length > 0 && (
             <Card>
               <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-                <CardTitle className="text-base">Embedding atlas</CardTitle>
+                <CardTitle className="text-sm">Embedding atlas</CardTitle>
                 <PlotInfo>
                   Each dot is one variable, placed by the meaning of its text (a 2-D PCA of the embeddings the
                   clustering used) — nearby dots are semantically similar. Color by <b>cohort</b> or{" "}
@@ -784,7 +784,7 @@ export default function DashboardPage() {
               (like analysis ideas) because a derivation carries a source document + a full spec. */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
+              <CardTitle className="flex items-center gap-2 text-sm">
                 <Calculator className="h-4 w-4 text-ph-navy" /> Composite variable
               </CardTitle>
             </CardHeader>
@@ -804,7 +804,7 @@ export default function DashboardPage() {
           {!running && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">
+              <CardTitle className="text-sm">
                 Review queue ({showUnassigned ? filteredUnassigned.length : filtered.length})
               </CardTitle>
               <div className="flex items-center gap-2">
@@ -944,7 +944,7 @@ function RecordRows({
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </TableCell>
         <TableCell className="max-w-xs align-top">
-          <div className="font-medium text-neutral-700">{conceptLabel(r)}</div>
+          <div className="font-semibold text-neutral-700">{conceptLabel(r)}</div>
           <div className="truncate text-xs text-neutral-400">
             {r.nMembers} {r.nMembers === 1 ? "variable" : "variables"}
             {r.crossCohort && " · cross-cohort"}
@@ -1007,7 +1007,7 @@ function RecordRows({
               <span className="text-neutral-300">→</span>
               {r.cde ? (
                 <span className="rounded border border-neutral-200 bg-neutral-0 px-2 py-0.5 text-xs">
-                  <span className="font-medium text-neutral-700">{r.cde.id}</span>
+                  <span className="font-semibold text-neutral-700">{r.cde.id}</span>
                   {r.cde.externalId && <span className="ml-1 font-mono text-neutral-400">{r.cde.externalId}</span>}
                 </span>
               ) : (
@@ -1021,14 +1021,14 @@ function RecordRows({
             {/* Novel concepts route to a generated CDE — surface it here so a novel row never looks empty. */}
             {!r.cde && r.idealCde && (
               <div className="space-y-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">Concept summary (proposed)</div>
+                <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Concept summary (proposed)</div>
                 <blockquote className="border-l-2 border-ph-navy/40 pl-3 text-neutral-600">{r.idealCde}</blockquote>
               </div>
             )}
 
             {(r.cosines.chosen ?? r.cosines.top1) != null && (
               <div className="flex items-center gap-2">
-                <span className="flex w-24 shrink-0 items-center gap-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+                <span className="flex w-24 shrink-0 items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
                   Cosine
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1056,7 +1056,7 @@ function RecordRows({
 
             {r.rationale && (
               <div className="space-y-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">Model rationale</div>
+                <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Model rationale</div>
                 <blockquote className="border-l-2 border-neutral-300 pl-3 italic text-neutral-600">
                   {r.rationale}
                 </blockquote>
@@ -1080,7 +1080,7 @@ function RecordRows({
             <div className="pt-1">
               <Link
                 href={`/job/${jobId}/workbench?c=${encodeURIComponent(r.id)}`}
-                className="inline-flex items-center gap-1 text-xs font-medium text-ph-navy hover:underline"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-ph-navy hover:underline"
               >
                 Open in review workbench — source variables, all CDE candidates &amp; value mapping
                 <ChevronRight className="h-3 w-3" />
@@ -1101,7 +1101,7 @@ function UnassignedRow({ u }: { u: UnassignedField }) {
     <TableRow className="hover:bg-neutral-50/60">
       <TableCell className="align-top" />
       <TableCell className="max-w-xs align-top">
-        <div className="truncate font-mono text-sm font-medium text-neutral-700">{u.variable}</div>
+        <div className="truncate font-mono text-sm font-semibold text-neutral-700">{u.variable}</div>
         {u.text && <div className="truncate text-xs text-neutral-400">{u.text}</div>}
       </TableCell>
       <TableCell className="align-top text-sm text-neutral-400">—</TableCell>
@@ -1151,7 +1151,7 @@ function SortableHead({
         <button
           type="button"
           onClick={() => onSort(sortKey)}
-          className="inline-flex items-center gap-1 font-medium hover:text-ph-navy"
+          className="inline-flex items-center gap-1 font-semibold hover:text-ph-navy"
         >
           {label}
           <Icon className={`h-3 w-3 ${active ? "text-ph-navy" : "text-neutral-300"}`} />
@@ -1185,8 +1185,8 @@ function StatCard({
   return (
     <Card className={accent ? "border-ph-navy/30 bg-ph-navy/[0.03]" : undefined}>
       <CardContent>
-        <div className="text-xs font-medium uppercase tracking-wider text-neutral-500">{label}</div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums text-ph-ink">{value}</div>
+        <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-500">{label}</div>
+        <div className="mt-1 text-xl font-semibold tabular-nums text-ph-ink">{value}</div>
         {sub && <div className="mt-0.5 text-xs text-neutral-400">{sub}</div>}
       </CardContent>
     </Card>

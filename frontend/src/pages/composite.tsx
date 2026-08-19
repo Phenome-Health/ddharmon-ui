@@ -121,7 +121,7 @@ export default function CompositePage() {
         <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-neutral-500 hover:text-ph-navy">
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
           <Calculator className="h-5 w-5 text-ph-navy" /> Composite variable
         </h1>
         <p className="mt-1.5 max-w-3xl text-sm text-neutral-500">
@@ -170,7 +170,7 @@ export default function CompositePage() {
               {extracted && (
                 <p className="text-xs text-neutral-500">
                   Extracted {extracted.nChars.toLocaleString()} chars from{" "}
-                  <span className="font-medium text-neutral-600">{extracted.provenance}</span> — review it above
+                  <span className="font-semibold text-neutral-600">{extracted.provenance}</span> — review it above
                   before deriving. If the score's item table isn't here, the document didn't carry it.
                 </p>
               )}
@@ -269,9 +269,9 @@ function SpecView({
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-start gap-2">
-            <CardTitle className="text-base">{definition.name}</CardTitle>
-            <Badge variant="neutral" className="text-[10px]">{definition.kind.replace(/_/g, " ")}</Badge>
-            <span className={`ml-auto flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${style.className}`}>
+            <CardTitle className="text-sm">{definition.name}</CardTitle>
+            <Badge variant="neutral" className="text-xs">{definition.kind.replace(/_/g, " ")}</Badge>
+            <span className={`ml-auto flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${style.className}`}>
               <style.Icon className="h-3.5 w-3.5" />
               {style.label} · {feasibility.nRequiredMatched}/{feasibility.nRequired} required components
             </span>
@@ -281,29 +281,29 @@ function SpecView({
           {definition.citation && <p className="text-xs text-neutral-500">{definition.citation}</p>}
           {definition.combinationRule && (
             <p className="text-neutral-600">
-              <span className="font-medium text-neutral-700">Rule: </span>
+              <span className="font-semibold text-neutral-700">Rule: </span>
               {definition.combinationRule}
             </p>
           )}
           <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-neutral-500">
             <div>
-              <dt className="inline font-medium">Source: </dt>
+              <dt className="inline font-semibold">Source: </dt>
               <dd className="inline text-neutral-600">{definition.provenance || "pasted text"}</dd>
             </div>
             {definition.threshold && (
               <div>
-                <dt className="inline font-medium">Threshold: </dt>
+                <dt className="inline font-semibold">Threshold: </dt>
                 <dd className="inline text-neutral-600">{definition.threshold}</dd>
               </div>
             )}
             {spec.units && (
               <div>
-                <dt className="inline font-medium">Units: </dt>
+                <dt className="inline font-semibold">Units: </dt>
                 <dd className="inline text-neutral-600">{spec.units}</dd>
               </div>
             )}
             <div>
-              <dt className="inline font-medium">Cost: </dt>
+              <dt className="inline font-semibold">Cost: </dt>
               <dd className="inline text-neutral-600">
                 {spec.callsMade ?? 0} LLM call{(spec.callsMade ?? 0) === 1 ? "" : "s"}
                 {spec.nConceptsIndexed != null && ` over ${spec.nConceptsIndexed} concepts`}
@@ -318,7 +318,7 @@ function SpecView({
                 The source describes a {definition.statedNItems}-item score but only{" "}
                 {definition.components.length} item{definition.components.length === 1 ? "" : "s"} could be read
                 out of it. The document is incomplete — supply the publisher PDF or supplement. The missing
-                items were <span className="font-medium">not</span> filled in from prior knowledge.
+                items were <span className="font-semibold">not</span> filled in from prior knowledge.
               </span>
             </p>
           )}
@@ -356,16 +356,16 @@ function SpecView({
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-neutral-500">
-                  <th className="py-1.5 pr-3 font-medium">Cohort</th>
-                  <th className="py-1.5 pr-3 font-medium">Present</th>
-                  <th className="py-1.5 pr-3 font-medium">Missing (required)</th>
-                  <th className="py-1.5 font-medium">Computable</th>
+                  <th className="py-1.5 pr-3 font-semibold">Cohort</th>
+                  <th className="py-1.5 pr-3 font-semibold">Present</th>
+                  <th className="py-1.5 pr-3 font-semibold">Missing (required)</th>
+                  <th className="py-1.5 font-semibold">Computable</th>
                 </tr>
               </thead>
               <tbody>
                 {feasibility.perCohort.map((c) => (
                   <tr key={c.cohort} className="border-b border-border/60 last:border-0">
-                    <td className="py-1.5 pr-3 font-medium text-neutral-700">{c.cohort}</td>
+                    <td className="py-1.5 pr-3 font-semibold text-neutral-700">{c.cohort}</td>
                     <td className="py-1.5 pr-3 text-neutral-600">{c.present.length}</td>
                     <td className="py-1.5 pr-3 text-neutral-500">{c.missing.join(", ") || "—"}</td>
                     <td className="py-1.5">
@@ -397,15 +397,15 @@ function SpecView({
           {derivation.map((s) => (
             <div key={s.order} className="rounded-md border border-border bg-muted/40 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-neutral-500">{s.order}.</span>
-                <Badge variant="neutral" className="text-[10px]">{s.kind.replace(/_/g, " ")}</Badge>
+                <span className="text-xs text-neutral-500">{s.order}.</span>
+                <Badge variant="neutral" className="text-xs">{s.kind.replace(/_/g, " ")}</Badge>
                 {s.needsReview && (
-                  <Badge className="border-amber-200 bg-amber-50 text-[10px] text-amber-800">needs review</Badge>
+                  <Badge className="border-amber-200 bg-amber-50 text-xs text-amber-800">needs review</Badge>
                 )}
               </div>
               <p className="mt-1 text-xs text-neutral-600">{s.description}</p>
               {s.expression && (
-                <pre className="mt-1.5 overflow-x-auto rounded bg-neutral-0 px-2 py-1.5 font-mono text-[11px] text-neutral-700">
+                <pre className="mt-1.5 overflow-x-auto rounded bg-neutral-0 px-2 py-1.5 font-mono text-xs text-neutral-700">
                   {s.expression}
                 </pre>
               )}
@@ -483,15 +483,15 @@ function MatchRow({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-medium text-neutral-700">{match.component}</span>
-            {!match.required && <Badge variant="neutral" className="text-[10px]">optional</Badge>}
+            <span className="text-sm font-semibold text-neutral-700">{match.component}</span>
+            {!match.required && <Badge variant="neutral" className="text-xs">optional</Badge>}
             {match.pinned && (
-              <Badge variant="neutral" className="gap-1 text-[10px]">
+              <Badge variant="neutral" className="gap-1 text-xs">
                 <Pin className="h-2.5 w-2.5" /> pinned
               </Badge>
             )}
             {coding?.needsReview && (
-              <Badge className="border-amber-200 bg-amber-50 text-[10px] text-amber-800">
+              <Badge className="border-amber-200 bg-amber-50 text-xs text-amber-800">
                 {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
               </Badge>
             )}
@@ -514,13 +514,13 @@ function MatchRow({
                   confidence {match.confidence.toFixed(2)}
                   {lowConfidence && " — review"}
                 </span>
-                {match.column && <span className="font-mono text-[10px]">{match.column}</span>}
+                {match.column && <span className="font-mono text-xs">{match.column}</span>}
               </div>
               {match.rationale && <p className="mt-1 text-neutral-500">{match.rationale}</p>}
             </div>
           ) : (
             <p className="mt-1.5 text-xs text-neutral-500">
-              <span className="font-medium text-neutral-600">Missing.</span>{" "}
+              <span className="font-semibold text-neutral-600">Missing.</span>{" "}
               {match.shortlist.length > 0
                 ? `${match.shortlist.length} candidate concept${match.shortlist.length === 1 ? "" : "s"} were retrieved and none measures this component.`
                 : "Nothing in this run retrieved for it."}
@@ -529,14 +529,14 @@ function MatchRow({
 
           {coding && (coding.cutoff || coding.referenceRange) && (
             <p className="mt-1 text-xs text-neutral-500">
-              <span className="font-medium">As stated: </span>
-              <span className="font-mono text-[11px]">{coding.cutoff || coding.referenceRange}</span>
+              <span className="font-semibold">As stated: </span>
+              <span className="font-mono text-xs">{coding.cutoff || coding.referenceRange}</span>
             </p>
           )}
 
           {/* accept / swap / drop — every re-derive is free (all other matches are pinned) */}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => setSwapping((s) => !s)} className="h-6 px-2 text-[11px]">
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => setSwapping((s) => !s)} className="h-6 px-2 text-xs">
               {match.conceptId ? "Swap" : "Choose concept"}
             </Button>
             {match.conceptId && (
@@ -545,7 +545,7 @@ function MatchRow({
                 variant="outline"
                 disabled={busy}
                 onClick={() => onEdit(match.component, null)}
-                className="h-6 px-2 text-[11px]"
+                className="h-6 px-2 text-xs"
               >
                 Drop
               </Button>

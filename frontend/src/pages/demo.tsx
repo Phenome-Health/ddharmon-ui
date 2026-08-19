@@ -91,7 +91,7 @@ export default function DemoPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
           <Sparkles className="h-5 w-5 text-ph-navy" /> Demo
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
@@ -102,7 +102,7 @@ export default function DemoPage() {
 
       <Card className="border-ph-navy/20 bg-ph-navy/[0.03]">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-          <CardTitle className="text-base">{combo?.label ?? "Cross-cohort demo"}</CardTitle>
+          <CardTitle className="text-sm">{combo?.label ?? "Cross-cohort demo"}</CardTitle>
           <Badge variant="secondary" className="font-normal">
             no API credits
           </Badge>
@@ -122,7 +122,7 @@ export default function DemoPage() {
                     key={d.id}
                     className="flex flex-col gap-1 rounded-md border border-neutral-200 bg-neutral-0 p-3 text-sm"
                   >
-                    <span className="font-medium text-neutral-700">{d.label}</span>
+                    <span className="font-semibold text-neutral-700">{d.label}</span>
                     <span className="text-xs text-neutral-400">{d.nFields} variables</span>
                     {d.description && <span className="text-xs text-neutral-400">{d.description}</span>}
                   </div>
@@ -169,7 +169,7 @@ export default function DemoPage() {
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-medium text-neutral-700">Run it yourself</div>
+            <div className="text-sm font-semibold text-neutral-700">Run it yourself</div>
             <p className="mt-0.5 text-xs text-neutral-500">
               Download the curated cohort CSVs and the build scripts, then reproduce this run locally.
             </p>
@@ -195,9 +195,9 @@ export default function DemoPage() {
 
       {/* Data provenance — public source dictionaries + how the ~200-variable subset was curated. */}
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <div className="text-sm font-medium text-neutral-700">Where the demo data comes from</div>
+        <div className="text-sm font-semibold text-neutral-700">Where the demo data comes from</div>
         <p className="mt-0.5 text-xs text-neutral-500">
-          Every demo cohort is built from a <span className="font-medium">public data dictionary</span> —
+          Every demo cohort is built from a <span className="font-semibold">public data dictionary</span> —
           metadata only (variable names, descriptions, value codings), never participant-level data. Each links
           to its public source and the script that reproduces our copy.
         </p>
@@ -208,7 +208,7 @@ export default function DemoPage() {
                 href={s.href}
                 target="_blank"
                 rel="noreferrer"
-                className="font-medium text-ph-navy hover:underline"
+                className="font-semibold text-ph-navy hover:underline"
               >
                 {s.name}
               </a>{" "}
@@ -217,7 +217,7 @@ export default function DemoPage() {
           ))}
         </ul>
         <p className="mt-3 text-xs text-neutral-500">
-          <span className="font-medium text-neutral-600">How the ~200 variables per cohort were chosen:</span>{" "}
+          <span className="font-semibold text-neutral-600">How the ~200 variables per cohort were chosen:</span>{" "}
           each cohort&apos;s full public dictionary is filtered to variables touching a shared set of common
           health &amp; demographic domains (sex, age, race, education, smoking, blood pressure, diabetes, …),
           grouped by domain and taken round-robin so the subset spans domains rather than piling into one

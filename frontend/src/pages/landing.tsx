@@ -71,13 +71,13 @@ function ConvergenceViz() {
             transition: animate ? `opacity .55s ease ${i * 0.13}s, transform .55s cubic-bezier(.22,1,.36,1) ${i * 0.13}s` : "none",
           }}
         >
-          <div className="flex items-center gap-1 font-mono text-[8.5px] uppercase tracking-wide text-[#7f92b8]">
+          <div className="flex items-center gap-1 font-mono text-xs font-semibold uppercase tracking-eyebrow text-[#7f92b8]">
             <span>{s.cohort}</span>
             <span className="text-[#5a6b8c]">·</span>
             <span className="normal-case text-[#7f92b8]">{s.v}</span>
           </div>
-          <div className="mt-0.5 text-[11.5px] font-medium leading-snug text-white">{s.q}</div>
-          <div className="mt-1 truncate font-mono text-[9.5px] text-ph-teal">{s.r}</div>
+          <div className="mt-0.5 text-xs font-semibold leading-snug text-white">{s.q}</div>
+          <div className="mt-1 truncate font-mono text-xs text-ph-teal">{s.r}</div>
         </div>
       ))}
 
@@ -106,9 +106,9 @@ function ConvergenceViz() {
               transition: animate ? "opacity .5s ease 1s, transform .5s cubic-bezier(.34,1.56,.64,1) 1s" : "none",
             }}
           >
-            <span className="font-mono text-[9px] font-medium tracking-wide text-ph-teal">CDE</span>
-            <span className="text-[12px] font-semibold leading-none text-white">Smoking</span>
-            <span className="text-[8.5px] leading-none text-white/60">status</span>
+            <span className="font-mono text-xs font-semibold tracking-wide text-ph-teal">CDE</span>
+            <span className="text-xs font-semibold leading-none text-white">Smoking</span>
+            <span className="text-xs leading-none text-white/60">status</span>
           </div>
         </div>
       </div>
@@ -162,15 +162,15 @@ export default function LandingPage() {
         />
         <div className="relative grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <div>
-            <p className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-ph-teal">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-ph-teal">
               Cross-cohort data harmonization
             </p>
-            <h1 className="mt-2 font-display text-5xl font-bold leading-[1.03] tracking-tight text-white sm:text-6xl">
+            <h1 className="mt-2 font-display text-display font-semibold leading-[1.03] tracking-tight text-white">
               Different words.
               <br />
               <span className="text-ph-teal">One meaning.</span>
             </h1>
-            <p className="mt-3 max-w-2xl text-[15px] leading-[1.5] text-[#c3cfe6] lg:text-base">
+            <p className="mt-3 max-w-2xl text-sm leading-[1.5] text-[#c3cfe6]">
               <span className="font-semibold text-white">ddharmon</span> reads each variable's metadata (question text, 
               description, variable name) — the fields that carry meaning — along with its response options,
               groups the variables that mean the same thing across cohorts, and anchors each concept group to a shared Common
@@ -211,7 +211,7 @@ export default function LandingPage() {
 
           <div>
             <ConvergenceViz />
-            <p className="mt-3 text-center font-mono text-[11px] leading-relaxed text-[#8fa1c4]">
+            <p className="mt-3 text-center font-mono text-xs leading-relaxed text-[#8fa1c4]">
               3 cohorts · different wording, different response codes
               <br />
               → 1 CDE · Smoking status <span className="text-ph-teal/80">(Never · Former · Current)</span>
@@ -223,7 +223,7 @@ export default function LandingPage() {
       {/* ── How it works (a real 3-step sequence) ────────────────────────────── */}
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="font-display text-lg font-semibold text-ph-ink">How a run works</h2>
+          <h2 className="font-display text-xl font-semibold text-ph-ink">How a run works</h2>
           <Link href="/guide" className="text-sm text-ph-navy underline underline-offset-2 hover:text-ph-ink">
             Full walkthrough →
           </Link>
@@ -232,10 +232,10 @@ export default function LandingPage() {
           {STEPS.map((s) => (
             <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-[clamp(1rem,3.2vh_-_11px,1.5rem)]">
               <div className="flex items-center gap-2.5">
-                <span className="font-mono text-xs font-medium text-ph-crimson">{s.n}</span>
+                <span className="font-mono text-xs font-semibold text-ph-crimson">{s.n}</span>
                 <s.icon className="h-4 w-4 text-ph-navy" />
               </div>
-              <h3 className="mt-2 font-display text-base font-semibold text-ph-ink">{s.title}</h3>
+              <h3 className="mt-2 font-display text-sm font-semibold text-ph-ink">{s.title}</h3>
               <p className="mt-1.5 text-sm leading-snug text-neutral-600">{s.body}</p>
             </div>
           ))}

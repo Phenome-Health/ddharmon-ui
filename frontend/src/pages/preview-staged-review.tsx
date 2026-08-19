@@ -178,7 +178,7 @@ export default function PreviewStagedReviewPage() {
       {/* ── why ─────────────────────────────────────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Why change it</CardTitle>
+          <CardTitle className="text-sm">Why change it</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-neutral-600">
           <p>
@@ -222,11 +222,11 @@ export default function PreviewStagedReviewPage() {
             >
               <div className="flex items-center gap-1.5">
                 <s.icon className={`h-3.5 w-3.5 ${active ? "text-ph-navy" : "text-neutral-400"}`} />
-                <span className={`text-xs font-medium ${active ? "text-ph-navy" : "text-neutral-500"}`}>
+                <span className={`text-xs font-semibold ${active ? "text-ph-navy" : "text-neutral-500"}`}>
                   Step {s.n}
                 </span>
               </div>
-              <div className={`mt-0.5 text-sm font-medium ${active ? "text-ph-ink" : "text-neutral-600"}`}>
+              <div className={`mt-0.5 text-sm font-semibold ${active ? "text-ph-ink" : "text-neutral-600"}`}>
                 {s.title}
               </div>
             </button>
@@ -253,7 +253,7 @@ export default function PreviewStagedReviewPage() {
       {/* ── open questions ──────────────────────────────────────────────────────────────────── */}
       <Card className="border-dashed">
         <CardHeader>
-          <CardTitle className="text-base">Open questions</CardTitle>
+          <CardTitle className="text-sm">Open questions</CardTitle>
           <p className="text-xs text-neutral-400">
             Decisions still to make — the point of previewing this before building it.
           </p>
@@ -308,12 +308,12 @@ function Chip({
       draggable
       onDragStart={onStart}
       onDragEnd={onEnd}
-      className={`flex cursor-grab items-center gap-1.5 rounded border border-neutral-200 bg-neutral-50 px-1.5 py-1 text-[11px] active:cursor-grabbing ${
+      className={`flex cursor-grab items-center gap-1.5 rounded border border-neutral-200 bg-neutral-50 px-1.5 py-1 text-xs active:cursor-grabbing ${
         dragging ? "opacity-40" : ""
       }`}
     >
       <GripVertical className="h-3 w-3 shrink-0 text-neutral-300" />
-      <Badge variant="outline" className="shrink-0 px-1 py-0 text-[10px] font-normal text-neutral-500">
+      <Badge variant="outline" className="shrink-0 px-1 py-0 text-xs font-normal text-neutral-500">
         {m.cohort}
       </Badge>
       <span className="truncate font-mono text-neutral-600">{m.name}</span>
@@ -398,7 +398,7 @@ function StepOne() {
     <div className="space-y-4">
       <Card>
         <CardHeader className="space-y-1">
-          <CardTitle className="text-base">Step 1 · Concept groups</CardTitle>
+          <CardTitle className="text-sm">Step 1 · Concept groups</CardTitle>
           <p className="text-xs text-neutral-400">
             Runs on your machine. No model is called, so this step is free and you can adjust it as much as
             you like before committing to anything.
@@ -408,7 +408,7 @@ function StepOne() {
           {/* granularity */}
           <div className="rounded-md border border-neutral-200 p-3">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-medium uppercase tracking-wide text-neutral-500">Grouping</span>
+              <span className="font-semibold uppercase tracking-eyebrow text-neutral-500">Grouping</span>
               <span className="text-neutral-400">
                 {granularity < 35 ? "tighter — more, narrower groups" : granularity > 65 ? "looser — fewer, broader groups" : "balanced"}
               </span>
@@ -432,7 +432,7 @@ function StepOne() {
                 <b className="text-neutral-700">{shaped.unassigned}</b> variables in no group
               </span>
             </div>
-            <p className="mt-2 text-[11px] text-neutral-400">
+            <p className="mt-2 text-xs text-neutral-400">
               Looser grouping pools more variables together, which means fewer leftovers but coarser
               concepts — the trade-off is between how much you can combine and how much detail survives.
             </p>
@@ -443,7 +443,7 @@ function StepOne() {
             <GripVertical className="h-3.5 w-3.5" />
             Drag a variable onto another concept, or into “No group” below.
             {edited && (
-              <Button size="sm" variant="ghost" onClick={reset} className="ml-auto h-6 gap-1 text-[11px] text-neutral-500">
+              <Button size="sm" variant="ghost" onClick={reset} className="ml-auto h-6 gap-1 text-xs text-neutral-500">
                 <RefreshCw className="h-3 w-3" /> Reset groups
               </Button>
             )}
@@ -478,9 +478,9 @@ function StepOne() {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-neutral-700">{g.name}</span>
+                        <span className="text-sm font-semibold text-neutral-700">{g.name}</span>
                         {f && (
-                          <Badge variant="outline" className={`gap-1 px-1.5 py-0 text-[10px] ${f.cls}`}>
+                          <Badge variant="outline" className={`gap-1 px-1.5 py-0 text-xs ${f.cls}`}>
                             {g.flag === "split" && <Scissors className="h-3 w-3" />}
                             {g.flag === "weak" && <AlertTriangle className="h-3 w-3" />}
                             {f.label}
@@ -488,7 +488,7 @@ function StepOne() {
                           </Badge>
                         )}
                         {touched[g.id] && (
-                          <Badge variant="outline" className="gap-1 border-ph-navy/30 px-1.5 py-0 text-[10px] text-ph-navy">
+                          <Badge variant="outline" className="gap-1 border-ph-navy/30 px-1.5 py-0 text-xs text-ph-navy">
                             <Pencil className="h-3 w-3" /> edited
                           </Badge>
                         )}
@@ -506,7 +506,7 @@ function StepOne() {
                       {g.values && (
                         <div className="mt-1 flex flex-wrap gap-1">
                           {g.values.map((v) => (
-                            <span key={v} className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                            <span key={v} className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-500">
                               {v}
                             </span>
                           ))}
@@ -516,7 +516,7 @@ function StepOne() {
                         <div className="mt-2 grid gap-1 sm:grid-cols-2">
                           {g.members.map((m) => chip(m, g.id))}
                           {!g.members.length && (
-                            <div className="col-span-full rounded border border-dashed border-neutral-200 py-2 text-center text-[11px] text-neutral-300">
+                            <div className="col-span-full rounded border border-dashed border-neutral-200 py-2 text-center text-xs text-neutral-300">
                               Empty — drop a variable here
                             </div>
                           )}
@@ -524,13 +524,13 @@ function StepOne() {
                       )}
                       {g.flag === "split" && (
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          <Button size="sm" variant="outline" className="h-6 gap-1 text-[11px]" disabled>
+                          <Button size="sm" variant="outline" className="h-6 gap-1 text-xs" disabled>
                             <Scissors className="h-3 w-3" /> Split into 3
                           </Button>
-                          <Button size="sm" variant="ghost" className="h-6 text-[11px]" disabled>
+                          <Button size="sm" variant="ghost" className="h-6 text-xs" disabled>
                             Keep as one
                           </Button>
-                          <span className="text-[11px] text-neutral-400">— not in this preview; move variables by hand instead</span>
+                          <span className="text-xs text-neutral-400">— not in this preview; move variables by hand instead</span>
                         </div>
                       )}
                     </div>
@@ -550,7 +550,7 @@ function StepOne() {
                   : "border-neutral-300"
               }`}
             >
-              <div className="text-xs font-medium text-neutral-500">
+              <div className="text-xs font-semibold text-neutral-500">
                 No group
                 <span className="ml-1 font-normal text-neutral-400">
                   · {unassigned.length} variable{unassigned.length === 1 ? "" : "s"} the clustering left out — drop
@@ -560,7 +560,7 @@ function StepOne() {
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 {unassigned.map((m) => chip(m, UNASSIGNED))}
                 {!unassigned.length && (
-                  <div className="col-span-full py-1 text-center text-[11px] text-neutral-300">
+                  <div className="col-span-full py-1 text-center text-xs text-neutral-300">
                     Nothing left out
                   </div>
                 )}
@@ -573,7 +573,7 @@ function StepOne() {
             <div className="flex items-start gap-2">
               <Wallet className="mt-0.5 h-4 w-4 shrink-0 text-success" />
               <div className="min-w-0 flex-1 space-y-1">
-                <div className="text-sm font-medium text-ph-ink">
+                <div className="text-sm font-semibold text-ph-ink">
                   {chosen.length} group{chosen.length === 1 ? "" : "s"} selected
                   <span className="ml-1 font-normal text-neutral-500">
                     ·{" "}
@@ -587,7 +587,7 @@ function StepOne() {
                   <b className="tabular-nums text-ph-ink">{formatUsd(partial.mid)}</b> instead of{" "}
                   <b className="tabular-nums">{formatUsd(full.mid)}</b> for the whole corpus.
                 </div>
-                <div className="text-[11px] text-neutral-400">
+                <div className="text-xs text-neutral-400">
                   Estimated with the same calculator as the New Run form. Actual cost depends on your model
                   and provider.
                 </div>
@@ -621,7 +621,7 @@ function StepTwo() {
     <div className="space-y-4">
       <Card>
         <CardHeader className="space-y-1">
-          <CardTitle className="text-base">Step 2 · Concepts → Common Data Elements</CardTitle>
+          <CardTitle className="text-sm">Step 2 · Concepts → Common Data Elements</CardTitle>
           <p className="text-xs text-neutral-400">
             Runs only on what you kept. For each group: the ranked candidate elements the pipeline
             considered, and — where nothing fits — a proposed new element built from the pooled variables.
@@ -629,7 +629,7 @@ function StepTwo() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="rounded-md border border-neutral-200">
-            <div className="border-b border-neutral-100 px-3 py-2 text-sm font-medium text-neutral-700">
+            <div className="border-b border-neutral-100 px-3 py-2 text-sm font-semibold text-neutral-700">
               Blood pressure, systolic
               <span className="ml-2 text-xs font-normal text-neutral-400">4 variables · AoU, MESA, UKBB, CLSA</span>
             </div>
@@ -642,16 +642,16 @@ function StepTwo() {
                 <div key={c.id} className="flex items-center gap-2 px-3 py-2 text-xs">
                   <span className="w-4 tabular-nums text-neutral-400">{i + 1}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="font-medium text-neutral-700">{c.id}</span>
+                    <span className="font-semibold text-neutral-700">{c.id}</span>
                     {c.axis && <span className="ml-2 text-neutral-400">would need to change — {c.axis}</span>}
                   </span>
                   <span className="tabular-nums text-neutral-500">{c.cos.toFixed(3)}</span>
                   {c.chosen ? (
-                    <Badge variant="outline" className="border-success/40 bg-success-bg text-[10px] text-success">
+                    <Badge variant="outline" className="border-success/40 bg-success-bg text-xs text-success">
                       selected
                     </Badge>
                   ) : (
-                    <Button size="sm" variant="outline" className="h-6 text-[11px]" disabled>
+                    <Button size="sm" variant="outline" className="h-6 text-xs" disabled>
                       Choose this
                     </Button>
                   )}
@@ -679,7 +679,7 @@ function StepThree() {
     <div className="space-y-4">
       <Card>
         <CardHeader className="space-y-1">
-          <CardTitle className="text-base">Step 3 · Transform specs</CardTitle>
+          <CardTitle className="text-sm">Step 3 · Transform specs</CardTitle>
           <p className="text-xs text-neutral-400">
             Generated only for elements you approved. One recipe per source variable, showing exactly what it
             does.
@@ -693,7 +693,7 @@ function StepThree() {
           ].map((t) => (
             <div key={t.src} className="rounded border border-neutral-100 px-3 py-2 text-xs">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="font-mono text-[10px]">
+                <Badge variant="secondary" className="font-mono text-xs">
                   {t.kind}
                 </Badge>
                 <span className="font-mono text-neutral-600">{t.src}</span>
@@ -701,7 +701,7 @@ function StepThree() {
                 <span className="text-neutral-600">{t.body}</span>
                 <span className="text-neutral-400">coverage {t.cov}%</span>
                 {t.review && (
-                  <Badge variant="outline" className="border-warning/40 text-[10px] text-warning">
+                  <Badge variant="outline" className="border-warning/40 text-xs text-warning">
                     always reviewed
                   </Badge>
                 )}
@@ -733,7 +733,7 @@ function StepFour() {
     <div className="space-y-4">
       <Card>
         <CardHeader className="space-y-1">
-          <CardTitle className="text-base">Step 4 · Export</CardTitle>
+          <CardTitle className="text-sm">Step 4 · Export</CardTitle>
           <p className="text-xs text-neutral-400">Choose what leaves the tool.</p>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-neutral-600">
@@ -747,7 +747,7 @@ function StepFour() {
             <div key={t} className="flex items-start gap-2.5 rounded border border-neutral-100 px-3 py-2">
               <input type="checkbox" defaultChecked className="mt-1 h-3.5 w-3.5 accent-ph-navy" disabled />
               <span>
-                <span className="text-sm font-medium text-neutral-700">{t}</span>
+                <span className="text-sm font-semibold text-neutral-700">{t}</span>
                 <span className="mt-0.5 block text-xs text-neutral-400">{d}</span>
               </span>
             </div>
@@ -766,11 +766,11 @@ function WhatChanges({ now, proposed }: { now: string; proposed: string }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Today</div>
+        <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Today</div>
         <p className="mt-1 text-xs text-neutral-600">{now}</p>
       </div>
       <div className="rounded-md border border-ph-navy/20 bg-ph-navy/5 px-3 py-2.5">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-ph-navy">Proposed</div>
+        <div className="text-xs font-semibold uppercase tracking-eyebrow text-ph-navy">Proposed</div>
         <p className="mt-1 text-xs text-neutral-600">{proposed}</p>
       </div>
     </div>

@@ -67,7 +67,7 @@ export default function PreviewCompositePage() {
         {/* Left — harmonized inputs palette */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Harmonized inputs</CardTitle>
+            <CardTitle className="text-sm">Harmonized inputs</CardTitle>
             <p className="text-xs text-neutral-400">Toggle concepts to include. Chips show which cohorts carry each.</p>
           </CardHeader>
           <CardContent className="space-y-1.5">
@@ -90,12 +90,12 @@ export default function PreviewCompositePage() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="text-neutral-700">{i.label}</span>
-                    {i.fried && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-neutral-400">Fried</span>}
+                    {i.fried && <span className="ml-1.5 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Fried</span>}
                     <span className="mt-1 flex flex-wrap gap-1">
                       {COHORTS.map((c) => (
                         <span
                           key={c}
-                          className={`rounded px-1 py-0.5 text-[10px] ${
+                          className={`rounded px-1 py-0.5 text-xs ${
                             i.cohorts.includes(c) ? "bg-neutral-100 text-neutral-500" : "bg-transparent text-neutral-300 line-through"
                           }`}
                         >
@@ -113,14 +113,14 @@ export default function PreviewCompositePage() {
         {/* Right — composite definition */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle className="flex items-center gap-2 text-sm">
               <Layers className="h-4 w-4 text-ph-navy" /> Frailty phenotype
             </CardTitle>
             <p className="text-xs text-neutral-400">A derived variable defined over the selected harmonized inputs.</p>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             <div>
-              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Combination method</div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Combination method</div>
               <select
                 value={method}
                 onChange={(e) => setMethod(e.target.value)}
@@ -133,7 +133,7 @@ export default function PreviewCompositePage() {
             </div>
 
             <div>
-              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Definition</div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Definition</div>
               <div className="rounded-md border border-neutral-200 bg-muted p-3 font-mono text-xs text-neutral-600">
                 <div>frailty = f({chosen.map((i) => i.id).join(", ") || "—"})</div>
                 <div className="mt-1 text-neutral-500">{methodDef.formula(chosen.map((i) => i.id))}</div>
@@ -141,7 +141,7 @@ export default function PreviewCompositePage() {
             </div>
 
             <div>
-              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
                 Computable in {computable.length} of {COHORTS.length} cohorts
               </div>
               <div className="flex flex-wrap gap-1.5">

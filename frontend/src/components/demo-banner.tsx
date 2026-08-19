@@ -55,7 +55,7 @@ export function DemoBanner({
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-xs text-warning">
-      <span className="flex items-center gap-1.5 font-medium">
+      <span className="flex items-center gap-1.5 font-semibold">
         <FlaskConical className="h-3.5 w-3.5" /> Shared demo
       </span>
       <span className="text-warning">
@@ -76,7 +76,7 @@ export function DemoBanner({
         </Button>
       </div>
       {AUTH_ENABLED && (
-        <span className="w-full text-[11px] text-warning">
+        <span className="w-full text-xs text-warning">
           Copying needs an account — the copy is yours, and everything you do in it is saved.
         </span>
       )}

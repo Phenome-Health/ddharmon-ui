@@ -155,7 +155,7 @@ export default function PreviewRestructurePage() {
         <Link href="/roadmap" className="inline-flex items-center gap-1 text-xs text-neutral-500 hover:text-ph-navy">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to roadmap
         </Link>
-        <h1 className="mt-1 flex flex-wrap items-center gap-2 text-2xl font-semibold text-ph-ink">
+        <h1 className="mt-1 flex flex-wrap items-center gap-2 font-display text-xl font-semibold text-ph-ink">
           Restructuring workbench
           <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
             <FlaskConical className="h-3.5 w-3.5" /> Preview · mockup
@@ -172,7 +172,7 @@ export default function PreviewRestructurePage() {
       <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm text-neutral-700">
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
         <span>
-          <span className="font-medium">This is a mockup, not a live tool.</span> Drag-and-drop and “Re-check
+          <span className="font-semibold">This is a mockup, not a live tool.</span> Drag-and-drop and “Re-check
           with the model” run entirely in your browser on sample data — no run, no data upload, no LLM call.
           The real feature would start from your run&apos;s output and persist edits as a user-owned layer.
         </span>
@@ -226,7 +226,7 @@ export default function PreviewRestructurePage() {
                       <Pencil className="mt-0.5 h-3 w-3 shrink-0 text-neutral-300 group-hover:text-ph-navy" />
                     </button>
                   )}
-                  <Badge variant="neutral" className="ml-auto shrink-0 text-[10px]">
+                  <Badge variant="neutral" className="ml-auto shrink-0 text-xs">
                     {c.chips.length}
                   </Badge>
                 </div>
@@ -297,7 +297,7 @@ export default function PreviewRestructurePage() {
         >
           <Plus className="h-5 w-5" />
           New concept
-          <span className="text-[11px] text-neutral-400">click, or drop a variable here</span>
+          <span className="text-xs text-neutral-400">click, or drop a variable here</span>
         </button>
       </div>
 

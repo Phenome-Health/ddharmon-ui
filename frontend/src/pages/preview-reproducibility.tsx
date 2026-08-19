@@ -75,12 +75,12 @@ function TradeoffScatter() {
   const xOf = (m: Model) => (xKey === "cost" ? m.cost : m.time.mean);
   const xTicks = xKey === "cost" ? [0, 0.5, 1, 1.5, 2, 2.5] : [0, 4, 8, 12, 16];
   const yTicks = yKey === "expert" ? [0.85, 0.9, 0.95] : [0.55, 0.65, 0.75];
-  const seg = (on: boolean) => (on ? "bg-ph-navy/10 font-medium text-ph-navy" : "text-neutral-500");
+  const seg = (on: boolean) => (on ? "bg-ph-navy/10 font-semibold text-ph-navy" : "text-neutral-500");
 
   return (
     <Card>
       <CardHeader className="gap-2 pb-3">
-        <CardTitle className="text-base">Pick your tradeoff — quality vs. {xKey === "cost" ? "cost" : "time"}</CardTitle>
+        <CardTitle className="text-sm">Pick your tradeoff — quality vs. {xKey === "cost" ? "cost" : "time"}</CardTitle>
         <p className="text-xs text-neutral-400">
           Each provider/model as one choice; the vertical bar is the run-to-run spread over repeat runs. Up and
           to the left is better value. Toggle the axes to optimize for what you care about.
@@ -104,18 +104,18 @@ function TradeoffScatter() {
             {yTicks.map((t) => (
               <g key={t}>
                 <line x1={L} y1={sy(t)} x2={W - R} y2={sy(t)} stroke="currentColor" className="text-neutral-200" strokeWidth={1} />
-                <text x={L - 8} y={sy(t) + 3} textAnchor="end" className="fill-neutral-400 text-[10px] tabular-nums">{t.toFixed(2)}</text>
+                <text x={L - 8} y={sy(t) + 3} textAnchor="end" className="fill-neutral-400 text-xs tabular-nums">{t.toFixed(2)}</text>
               </g>
             ))}
             {xTicks.map((t) => (
-              <text key={t} x={sx(t)} y={H - B + 16} textAnchor="middle" className="fill-neutral-400 text-[10px] tabular-nums">
+              <text key={t} x={sx(t)} y={H - B + 16} textAnchor="middle" className="fill-neutral-400 text-xs tabular-nums">
                 {xKey === "cost" ? `$${t}` : `${t}m`}
               </text>
             ))}
-            <text x={(L + W - R) / 2} y={H - 6} textAnchor="middle" className="fill-neutral-500 text-[11px]">
+            <text x={(L + W - R) / 2} y={H - 6} textAnchor="middle" className="fill-neutral-500 text-xs">
               {xKey === "cost" ? "Cost per run (USD)" : "Wall-clock per run (min)"}
             </text>
-            <text x={14} y={T + 4} className="fill-neutral-500 text-[11px]">{yKey === "expert" ? "Expert agreement" : "Benchmark score"}</text>
+            <text x={14} y={T + 4} className="fill-neutral-500 text-xs">{yKey === "expert" ? "Expert agreement" : "Benchmark score"}</text>
             {/* points */}
             {MODELS.map((m) => {
               const y = yOf(m);
@@ -124,7 +124,7 @@ function TradeoffScatter() {
                 <g key={m.id} style={{ color: `var(${m.cvar})` }}>
                   <line x1={cx} y1={sy(y.mean - y.sd)} x2={cx} y2={sy(y.mean + y.sd)} stroke="currentColor" strokeWidth={2} />
                   <circle cx={cx} cy={sy(y.mean)} r={5.5} fill="currentColor" stroke="var(--card)" strokeWidth={1.5} />
-                  <text x={cx + 9} y={sy(y.mean) + 3} className="fill-neutral-600 text-[10px]">{m.label}</text>
+                  <text x={cx + 9} y={sy(y.mean) + 3} className="fill-neutral-600 text-xs">{m.label}</text>
                 </g>
               );
             })}
@@ -149,7 +149,7 @@ function MetricDots() {
   return (
     <Card>
       <CardHeader className="gap-2 pb-3">
-        <CardTitle className="text-base">Performance by benchmark &amp; expert review</CardTitle>
+        <CardTitle className="text-sm">Performance by benchmark &amp; expert review</CardTitle>
         <p className="text-xs text-neutral-400">Per-metric score for each model; the bar is the run-to-run spread. Expert-review agreement is the internal locked human gate.</p>
         <Legend />
       </CardHeader>
@@ -159,14 +159,14 @@ function MetricDots() {
             {xTicks.map((t) => (
               <g key={t}>
                 <line x1={sx(t)} y1={TOP} x2={sx(t)} y2={H - 20} stroke="currentColor" className="text-neutral-200" strokeWidth={1} />
-                <text x={sx(t)} y={H - 6} textAnchor="middle" className="fill-neutral-400 text-[10px] tabular-nums">{t.toFixed(1)}</text>
+                <text x={sx(t)} y={H - 6} textAnchor="middle" className="fill-neutral-400 text-xs tabular-nums">{t.toFixed(1)}</text>
               </g>
             ))}
             {METRICS.map((metric, mi) => {
               const yBase = TOP + mi * ROW + ROW / 2;
               return (
                 <g key={metric.id}>
-                  <text x={8} y={yBase + 3} className="fill-neutral-600 text-[11px] font-medium">{metric.label}</text>
+                  <text x={8} y={yBase + 3} className="fill-neutral-600 text-xs font-semibold">{metric.label}</text>
                   {MODELS.map((m, i) => {
                     const d = m[metric.id];
                     const y = yBase + (i - 2) * 6; // fan the 5 models vertically so bars don't overlap
@@ -198,7 +198,7 @@ function Stability() {
   return (
     <Card>
       <CardHeader className="gap-2 pb-3">
-        <CardTitle className="text-base">Run-to-run stability</CardTitle>
+        <CardTitle className="text-sm">Run-to-run stability</CardTitle>
         <p className="text-xs text-neutral-400">Eight repeat runs of one model, same config — how much each score wanders between identical runs.</p>
         <div className="flex flex-wrap gap-1.5">
           {MODELS.map((x) => (
@@ -227,12 +227,12 @@ function Stability() {
               const cv = ((d.sd / d.mean) * 100).toFixed(1);
               return (
                 <g key={metric.id} style={{ color: `var(${m.cvar})` }}>
-                  <text x={8} y={y + 3} className="fill-neutral-600 text-[11px] font-medium">{metric.label}</text>
+                  <text x={8} y={y + 3} className="fill-neutral-600 text-xs font-semibold">{metric.label}</text>
                   {JITTER.map((j, k) => (
                     <circle key={k} cx={sx(d.mean + j * d.sd)} cy={y} r={3.5} fill="currentColor" fillOpacity={0.5} />
                   ))}
                   <line x1={sx(d.mean)} y1={y - 9} x2={sx(d.mean)} y2={y + 9} stroke="currentColor" strokeWidth={2} />
-                  <text x={W - R + 8} y={y + 3} className="fill-neutral-500 text-[10px] tabular-nums">
+                  <text x={W - R + 8} y={y + 3} className="fill-neutral-500 text-xs tabular-nums">
                     ±{d.sd.toFixed(3)} · CV {cv}%
                   </text>
                 </g>

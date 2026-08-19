@@ -40,7 +40,7 @@ export default function GuidePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-ph-ink">What this platform does</h1>
+        <h1 className="font-display text-xl font-semibold text-ph-ink">What this platform does</h1>
         <p className="mt-1 text-sm text-neutral-500">
           A guide to harmonizing cohort data dictionaries onto a Common Data Element backbone — what you
           provide, how a run works, and what you get back.
@@ -50,7 +50,7 @@ export default function GuidePage() {
       {/* 1 · The problem it solves (incl. meaning-not-wording) --------------------------------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <GitCompareArrows className="h-4 w-4 text-ph-navy" /> The problem it solves
           </CardTitle>
         </CardHeader>
@@ -65,13 +65,13 @@ export default function GuidePage() {
             variables have to be mapped to a shared standard.
           </p>
           <p>
-            <span className="font-medium text-ph-ink">ddharmon</span> reads the <em>data dictionaries</em>{" "}
+            <span className="font-semibold text-ph-ink">ddharmon</span> reads the <em>data dictionaries</em>{" "}
             (the metadata that describes each variable) from two or more cohorts, groups variables that mean the
             same thing, and assigns each concept to a{" "}
             <A href={REF.cde}>Common Data Element (CDE)</A> — a curated, reusable standard definition (e.g. from
             the NIH CDE Repository, often coded with <A href={REF.loinc}>LOINC</A> or{" "}
             <A href={REF.snomed}>SNOMED CT</A>). For every assignment it also generates a{" "}
-            <span className="font-medium text-ph-ink">transform spec</span>: the recipe for converting your
+            <span className="font-semibold text-ph-ink">transform spec</span>: the recipe for converting your
             raw values into the CDE's expected form.
           </p>
         </CardContent>
@@ -81,7 +81,7 @@ export default function GuidePage() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">What you provide</CardTitle>
+            <CardTitle className="text-sm">What you provide</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-neutral-600">
             <p>A data dictionary per cohort (CSV/TSV). Map at least one of:</p>
@@ -101,14 +101,14 @@ export default function GuidePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">What you get back</CardTitle>
+            <CardTitle className="text-sm">What you get back</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-neutral-600">
             <ul className="space-y-1.5">
               <OutputItem>A reviewable queue of concepts with verdicts, confidence, and CDE candidates</OutputItem>
               <OutputItem>Transform specs — value recodes, unit conversions, formulas</OutputItem>
               <OutputItem>
-                <span className="font-medium text-ph-ink">Python / R notebooks</span> that apply the transforms
+                <span className="font-semibold text-ph-ink">Python / R notebooks</span> that apply the transforms
                 in your own environment
               </OutputItem>
               <OutputItem>Exports: expert-review TSV, records JSON, decisions CSV</OutputItem>
@@ -121,7 +121,7 @@ export default function GuidePage() {
       {/* 3 · The workflow ---------------------------------------------------------------------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <Layers className="h-4 w-4 text-ph-navy" /> The workflow
           </CardTitle>
         </CardHeader>
@@ -162,7 +162,7 @@ export default function GuidePage() {
       {/* 4 · Where AI is used ------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <Bot className="h-4 w-4 text-ph-navy" /> Where AI is used
           </CardTitle>
         </CardHeader>
@@ -170,23 +170,23 @@ export default function GuidePage() {
           <p>ddharmon is AI-assisted end to end — concretely:</p>
           <ul className="space-y-1.5">
             <li>
-              <span className="font-medium text-neutral-700">Grouping</span> — sentence-embedding models place
+              <span className="font-semibold text-neutral-700">Grouping</span> — sentence-embedding models place
               semantically similar variables near each other, then cluster them into concepts.
             </li>
             <li>
-              <span className="font-medium text-neutral-700">Assignment</span> — a large language model weighs the
+              <span className="font-semibold text-neutral-700">Assignment</span> — a large language model weighs the
               retrieved CDE candidates for each concept and decides adopt / refine / novel, with a written rationale.
             </li>
             <li>
-              <span className="font-medium text-neutral-700">Transform specs</span> — the LLM drafts the value recodes
+              <span className="font-semibold text-neutral-700">Transform specs</span> — the LLM drafts the value recodes
               and unit / arithmetic conversions.
             </li>
           </ul>
           <p>
             Embeddings run locally; the LLM steps are the only ones that call an external model — and the only paid
-            part (you'll see a cost estimate before each run). <span className="font-medium">Preview</span> mode runs
+            part (you'll see a cost estimate before each run). <span className="font-semibold">Preview</span> mode runs
             the grouping with no LLM at all.{" "}
-            <span className="font-medium text-ph-ink">Every AI output is a suggestion, never a silent commit</span> —
+            <span className="font-semibold text-ph-ink">Every AI output is a suggestion, never a silent commit</span> —
             every concept is yours to approve, refine, or reject.
           </p>
         </CardContent>
@@ -195,11 +195,11 @@ export default function GuidePage() {
       {/* 5 · Choosing run options -------------------------------------------------------------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Choosing run options</CardTitle>
+          <CardTitle className="text-sm">Choosing run options</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-sm text-neutral-600">
           <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Run mode</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Run mode</div>
             <ul className="space-y-1">
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">batch</Badge>
@@ -216,14 +216,14 @@ export default function GuidePage() {
             </ul>
           </div>
           <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">CDE catalog</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">CDE catalog</div>
             <ul className="space-y-1">
               <li>
-                <span className="font-medium text-ph-ink">NIH-endorsed</span> — a focused, curated set. Fewer,
+                <span className="font-semibold text-ph-ink">NIH-endorsed</span> — a focused, curated set. Fewer,
                 higher-signal candidates.
               </li>
               <li>
-                <span className="font-medium text-ph-ink">Full repo</span> — the complete catalog (~22.7k). Broader
+                <span className="font-semibold text-ph-ink">Full repo</span> — the complete catalog (~22.7k). Broader
                 coverage, more candidates to weigh.
               </li>
             </ul>
@@ -234,7 +234,7 @@ export default function GuidePage() {
       {/* 6 · How each concept is classified ---------------------------------------------------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <Sparkles className="h-4 w-4 text-ph-navy" /> How each concept is classified
           </CardTitle>
         </CardHeader>
@@ -263,24 +263,24 @@ export default function GuidePage() {
       {/* 7 · You're in the loop ---------------------------------------------------------------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <UserCheck className="h-4 w-4 text-ph-navy" /> You're in the loop
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-600">
           <p>
-            ddharmon is built for <span className="font-medium text-ph-ink">expert-in-the-loop (EITL)</span> review —
+            ddharmon is built for <span className="font-semibold text-ph-ink">expert-in-the-loop (EITL)</span> review —
             the AI drafts, a human decides. Every concept arrives with a verdict, a{" "}
-            <span className="font-medium">confidence score</span>, its ranked CDE candidates, and the exact transform,
-            so you can <span className="font-medium text-success">approve</span>,{" "}
-            <span className="font-medium text-warning">refine</span>, or{" "}
-            <span className="font-medium text-danger">reject</span> each — in the review queue or the candidate
+            <span className="font-semibold">confidence score</span>, its ranked CDE candidates, and the exact transform,
+            so you can <span className="font-semibold text-success">approve</span>,{" "}
+            <span className="font-semibold text-warning">refine</span>, or{" "}
+            <span className="font-semibold text-danger">reject</span> each — in the review queue or the candidate
             workbench. Export the whole queue as a TSV to split review across your team.
           </p>
           <div className="flex items-start gap-2 rounded-md border border-neutral-200 p-3">
             <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-ph-navy" />
             <p className="text-xs leading-relaxed">
-              <span className="font-medium text-neutral-700">Confidence score</span> = the semantic similarity (0–1,
+              <span className="font-semibold text-neutral-700">Confidence score</span> = the semantic similarity (0–1,
               cosine) between your variable and the chosen CDE; higher means stronger support for the match. Use it to
               triage — skim the high-confidence adopts, and spend your time on low-confidence, “floored”, and novel
               items, which the queue flags for exactly that reason.
@@ -292,7 +292,7 @@ export default function GuidePage() {
       {/* 8 · Learn more ------------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Learn more</CardTitle>
+          <CardTitle className="text-sm">Learn more</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-neutral-600">
           <ul className="grid gap-1.5 sm:grid-cols-2">
@@ -375,7 +375,7 @@ function Step({ n, icon, title, body }: { n: number; icon: React.ReactNode; titl
         {icon}
       </div>
       <div>
-        <div className="font-medium text-neutral-700">
+        <div className="font-semibold text-neutral-700">
           <span className="mr-1.5 text-neutral-400">{n}.</span>
           {title}
         </div>
@@ -389,7 +389,7 @@ function FieldItem({ name, required, children }: { name: string; required?: bool
   return (
     <li className="flex items-baseline gap-2">
       <code className="shrink-0 rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-ph-ink">{name}</code>
-      {required && <span className="text-xs font-medium text-ph-crimson">required</span>}
+      {required && <span className="text-xs font-semibold text-ph-crimson">required</span>}
       <span>— {children}</span>
     </li>
   );

@@ -67,7 +67,7 @@ export default function PhenomeHealthPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Tools &amp; platforms</CardTitle>
+          <CardTitle className="text-sm">Tools &amp; platforms</CardTitle>
           <p className="text-xs text-neutral-400">How ddharmon fits with the rest of the Phenome Health stack</p>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -84,7 +84,7 @@ function ToolCard({ tool }: { tool: Tool }) {
   const inner = (
     <>
       <div className="flex items-center gap-1.5">
-        <span className="font-medium text-neutral-700 group-hover:text-ph-navy">{tool.name}</span>
+        <span className="font-semibold text-neutral-700 group-hover:text-ph-navy">{tool.name}</span>
         {tool.href && <ExternalLink className="h-3 w-3 text-neutral-400 group-hover:text-ph-navy" />}
         {tool.tag && (
           <Badge variant="secondary" className="ml-auto font-normal">

@@ -77,7 +77,7 @@ function AtlasTooltip({ active, payload }: { active?: boolean; payload?: Tooltip
         <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: catColor(p.verdict) }} />
         <span>{catLabel(p.verdict)}</span>
       </div>
-      <div className="mt-0.5 text-[10px] text-neutral-400">click for details</div>
+      <div className="mt-0.5 text-xs text-neutral-400">click for details</div>
     </div>
   );
 }
@@ -374,7 +374,7 @@ export function EmbeddingAtlas({
       </div>
 
       {colorBy === "agreement" && (
-        <p className="mt-1.5 rounded-md border border-warning-border bg-warning-bg px-2.5 py-1.5 text-[11px] leading-relaxed text-neutral-700">
+        <p className="mt-1.5 rounded-md border border-warning-border bg-warning-bg px-2.5 py-1.5 text-xs leading-relaxed text-neutral-700">
           <b className="text-warning">Reading this view:</b> the agree/disagree color is a{" "}
           <b>2-D geometry check only</b> — it asks whether a variable&apos;s concept-mates fall among its {K_NEIGHBORS}{" "}
           nearest neighbors on this PCA plot. Concept assignment itself is <b>not</b> pure atlas proximity: the split
@@ -436,7 +436,7 @@ export function EmbeddingAtlas({
                 {onOpenConcept && (
                   <button
                     onClick={() => onOpenConcept(selectedRec.id)}
-                    className="mt-1 font-medium text-ph-navy hover:underline"
+                    className="mt-1 font-semibold text-ph-navy hover:underline"
                   >
                     → open concept
                   </button>

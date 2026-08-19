@@ -24,7 +24,7 @@ function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: 
       className={cn(
         "flex items-center gap-3 rounded px-3 py-2 text-sm transition-colors",
         active
-          ? "bg-neutral-200 font-medium text-neutral-900"
+          ? "bg-neutral-200 font-semibold text-neutral-900"
           : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900",
       )}
     >
@@ -45,22 +45,22 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Link href="/" className="flex items-center gap-2.5">
           <PhMark className="h-6 w-6" />
           <div className="flex items-center gap-2 text-sm">
-            <span className="font-semibold text-ph-ink">Phenome Health</span>
+            <span className="font-display font-semibold text-ph-ink">Phenome Health</span>
             <span className="text-neutral-300">/</span>
-            <span className="text-neutral-500">ddharmon</span>
+            <span className="font-display text-neutral-500">ddharmon</span>
           </div>
         </Link>
         <div className="flex items-center gap-1">
           {IS_DEV_CHANNEL && (
             <span
               title="Development build — pinned to an unreleased core from GitHub, not the PyPI release. For pre-release testing only."
-              className="mr-2 rounded border border-danger-border bg-danger-bg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-danger"
+              className="mr-2 rounded border border-danger-border bg-danger-bg px-2 py-0.5 text-xs font-semibold uppercase tracking-eyebrow text-danger"
             >
               Dev · unreleased core
             </span>
           )}
           {IS_STATIC && (
-            <span className="mr-2 rounded bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning">
+            <span className="mr-2 rounded bg-warning-bg px-2 py-0.5 text-xs font-semibold text-warning">
               Preview · sample data
             </span>
           )}
@@ -73,14 +73,14 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <>
                   <span
                     title={email ? `Signed in as ${email} — read-only demo (running is limited to Phenome Health accounts)` : undefined}
-                    className="max-w-[16rem] truncate rounded bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-500"
+                    className="max-w-[16rem] truncate rounded bg-neutral-100 px-2 py-0.5 text-xs font-semibold text-neutral-500"
                   >
                     {email ? `${email} · read-only` : "Guest"}
                   </span>
                   <button
                     type="button"
                     onClick={exitGuest}
-                    className="rounded px-2 py-1 text-xs font-medium text-ph-navy transition-colors hover:bg-neutral-100 hover:text-ph-ink"
+                    className="rounded px-2 py-1 text-xs font-semibold text-ph-navy transition-colors hover:bg-neutral-100 hover:text-ph-ink"
                   >
                     {email ? "Sign out" : "Sign in"}
                   </button>
@@ -118,7 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               <PhMark className="h-3.5 w-3.5 shrink-0" />
               <span>
-                A project of <span className="font-semibold text-ph-ink">Phenome Health</span>
+                A project of <span className="font-display font-semibold text-ph-ink">Phenome Health</span>
               </span>
             </a>
             <a
@@ -133,7 +133,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               href={REPO_URL}
               target="_blank"
               rel="noreferrer"
-              className="block px-3 text-[11px] text-neutral-400 transition-colors hover:text-ph-navy"
+              className="block px-3 text-xs text-neutral-400 transition-colors hover:text-ph-navy"
             >
               View source on GitHub
             </a>
@@ -141,7 +141,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               href="https://claude.com/claude-code"
               target="_blank"
               rel="noreferrer"
-              className="block px-3 text-[11px] text-neutral-400 transition-colors hover:text-ph-navy"
+              className="block px-3 text-xs text-neutral-400 transition-colors hover:text-ph-navy"
             >
               Built with Claude Code
             </a>

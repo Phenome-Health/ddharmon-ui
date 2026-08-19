@@ -150,7 +150,7 @@ function makeBarTooltip(formatLabel: (name: string) => string) {
     const total = payload.reduce((s, p) => s + (p.value ?? 0), 0);
     return (
       <div className={CHART_TOOLTIP_CLASS}>
-        <div className="mb-1 font-medium text-neutral-700">{formatLabel(String(label))}</div>
+        <div className="mb-1 font-semibold text-neutral-700">{formatLabel(String(label))}</div>
         {rows.map((p) => (
           <div key={String(p.dataKey)} className="flex items-center justify-between gap-4">
             <span className="flex items-center gap-1.5 text-neutral-600">
@@ -245,7 +245,7 @@ export function Analytics({
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-base">Coverage by cohort</CardTitle>
+          <CardTitle className="text-sm">Coverage by cohort</CardTitle>
           <PlotInfo>
             Per cohort: <b>Variables</b> it contributed, how many were <b>Assigned</b> to an existing CDE
             (adopt/refine) vs proposed <b>Novel</b>, and <b>Coverage</b> = assigned ÷ variables. Assigned + Novel
@@ -272,11 +272,11 @@ export function Analytics({
                     onClick={onFocus ? () => onFocus({ kind: "cohort", value: r.cohort }) : undefined}
                     className={`${onFocus ? "cursor-pointer" : ""} ${on ? "bg-ph-navy/5" : "hover:bg-neutral-50"}`}
                   >
-                    <TableCell className={`font-medium ${on ? "text-ph-navy" : "text-neutral-700"}`}>{r.cohort}</TableCell>
+                    <TableCell className={`font-semibold ${on ? "text-ph-navy" : "text-neutral-700"}`}>{r.cohort}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.total}</TableCell>
                     <TableCell className="text-right tabular-nums text-success">{r.assigned}</TableCell>
                     <TableCell className="text-right tabular-nums text-ph-navy">{r.novel}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">{(r.coverage * 100).toFixed(0)}%</TableCell>
+                    <TableCell className="text-right tabular-nums ">{(r.coverage * 100).toFixed(0)}%</TableCell>
                   </TableRow>
                 );
               })}
@@ -287,7 +287,7 @@ export function Analytics({
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-base">Concepts by size × verdict</CardTitle>
+          <CardTitle className="text-sm">Concepts by size × verdict</CardTitle>
           <PlotInfo>
             How many concepts pooled 1, 2, 3… variables (x-axis), with each bar stacked by verdict
             (adopt/refine/novel). A higher x-tier means more variables pooled into one shared concept
@@ -307,7 +307,7 @@ export function Analytics({
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-base">Retrieval score distribution</CardTitle>
+          <CardTitle className="text-sm">Retrieval score distribution</CardTitle>
           <PlotInfo>
             Distribution of each concept&apos;s cosine similarity to its nearest CDE (binned), stacked by verdict.
             Adopts cluster at high similarity, novels at low — a quick read on match quality and where the
@@ -328,7 +328,7 @@ export function Analytics({
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-base">Cross-cohort overlap</CardTitle>
+          <CardTitle className="text-sm">Cross-cohort overlap</CardTitle>
           <PlotInfo>
             A heatmap of how many concepts each pair of cohorts <b>share</b> — i.e. variables from both cohorts
             pooled into the same harmonized concept. Darker cells = more shared concepts, the core payoff of
@@ -396,7 +396,7 @@ function OverlapHeatmap({
               <tr key={rc}>
                 <td
                   onClick={onFocus ? () => clickCohort(rc) : undefined}
-                  className={`max-w-[100px] truncate p-1 pr-2 text-right font-medium ${onFocus ? "cursor-pointer" : ""} ${rowOn(i) ? "text-ph-navy" : "text-neutral-600"}`}
+                  className={`max-w-[100px] truncate p-1 pr-2 text-right ${onFocus ? "cursor-pointer" : ""} ${rowOn(i) ? "text-ph-navy" : "text-neutral-600"}`}
                   title={rc}
                 >
                   {rc}
@@ -428,7 +428,7 @@ function OverlapHeatmap({
           </tbody>
         </table>
       </div>
-      <p className={`mt-2 text-xs ${hc ? "font-medium text-neutral-600" : "text-neutral-400"}`}>{readout}</p>
+      <p className={`mt-2 text-xs ${hc ? "text-neutral-600" : "text-neutral-400"}`}>{readout}</p>
     </div>
   );
 }

@@ -440,7 +440,7 @@ export function MatchSankey({
                     : "translate(-50%, -100%)",
             }}
           >
-            <div className="font-medium text-neutral-700">{tip.title}</div>
+            <div className="font-semibold text-neutral-700">{tip.title}</div>
             <div className="tabular-nums text-neutral-500">{tip.sub}</div>
           </div>
         )}

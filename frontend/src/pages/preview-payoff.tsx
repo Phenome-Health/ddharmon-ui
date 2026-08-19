@@ -46,10 +46,10 @@ function Forest({ rows, pooled }: { rows: Row[]; pooled?: Row }) {
     <svg viewBox={`0 0 800 ${height}`} className="w-full" role="img" aria-label="Forest plot of effect estimates">
       {/* null line */}
       <line x1={scale(0)} y1={14} x2={scale(0)} y2={all.length * ROW_H + 8} stroke="currentColor" className="text-neutral-300" strokeDasharray="4 3" />
-      <text x={scale(0)} y={all.length * ROW_H + 30} textAnchor="middle" className="fill-neutral-400 text-[10px]">no effect</text>
+      <text x={scale(0)} y={all.length * ROW_H + 30} textAnchor="middle" className="fill-neutral-400 text-xs">no effect</text>
       {/* axis ticks */}
       {ticks.map((t) => (
-        <text key={t} x={scale(t)} y={all.length * ROW_H + 42} textAnchor="middle" className="fill-neutral-400 text-[10px] tabular-nums">
+        <text key={t} x={scale(t)} y={all.length * ROW_H + 42} textAnchor="middle" className="fill-neutral-400 text-xs tabular-nums">
           {t}
         </text>
       ))}
@@ -61,8 +61,8 @@ function Forest({ rows, pooled }: { rows: Row[]; pooled?: Row }) {
         const w = Math.max(5, Math.min(13, Math.sqrt(r.n) / 6)); // marker size ∝ √n (study weight)
         return (
           <g key={r.label} className={cls}>
-            <text x={8} y={y - 3} className="fill-neutral-600 text-[11px] font-medium">{r.label}</text>
-            <text x={8} y={y + 10} className="fill-neutral-400 text-[10px] tabular-nums">n = {r.n.toLocaleString()}</text>
+            <text x={8} y={y - 3} className="fill-neutral-600 text-xs font-semibold">{r.label}</text>
+            <text x={8} y={y + 10} className="fill-neutral-400 text-xs tabular-nums">n = {r.n.toLocaleString()}</text>
             {/* CI */}
             <line x1={scale(r.lo)} y1={y} x2={scale(r.hi)} y2={y} stroke="currentColor" strokeWidth={isPooled ? 2 : 1.5} />
             <line x1={scale(r.lo)} y1={y - 3} x2={scale(r.lo)} y2={y + 3} stroke="currentColor" strokeWidth={1.5} />
@@ -77,7 +77,7 @@ function Forest({ rows, pooled }: { rows: Row[]; pooled?: Row }) {
               <rect x={scale(r.est) - w / 2} y={y - w / 2} width={w} height={w} fill="currentColor" />
             )}
             {/* value */}
-            <text x={VAL_X} y={y + 3} textAnchor="start" className="fill-neutral-600 text-[10px] tabular-nums">{fmt(r)}</text>
+            <text x={VAL_X} y={y + 3} textAnchor="start" className="fill-neutral-600 text-xs tabular-nums">{fmt(r)}</text>
           </g>
         );
       })}
@@ -111,7 +111,7 @@ export default function PreviewPayoffPage() {
       {/* Illustrative hypothesis + the toggle that tells the story. */}
       <Card>
         <CardHeader className="gap-2">
-          <CardTitle className="text-base">Association of a questionnaire exposure with an outcome</CardTitle>
+          <CardTitle className="text-sm">Association of a questionnaire exposure with an outcome</CardTitle>
           <p className="text-xs text-neutral-400">
             Illustrative hypothesis over sample data. ddharmon produces the harmonized crosswalk (which variable
             in each cohort measures the exposure and the outcome); the regression runs outside, on your data.
@@ -119,13 +119,13 @@ export default function PreviewPayoffPage() {
           <div className="mt-1 inline-flex rounded-md border border-neutral-200 p-0.5 text-sm">
             <button
               onClick={() => setPooled(false)}
-              className={`rounded px-3 py-1 ${!pooled ? "bg-neutral-100 font-medium text-ph-ink" : "text-neutral-500"}`}
+              className={`rounded px-3 py-1 ${!pooled ? "bg-neutral-100 font-semibold text-ph-ink" : "text-neutral-500"}`}
             >
               Single cohort
             </button>
             <button
               onClick={() => setPooled(true)}
-              className={`rounded px-3 py-1 ${pooled ? "bg-ph-navy/10 font-medium text-ph-navy" : "text-neutral-500"}`}
+              className={`rounded px-3 py-1 ${pooled ? "bg-ph-navy/10 font-semibold text-ph-navy" : "text-neutral-500"}`}
             >
               Harmonized (pooled)
             </button>
@@ -142,7 +142,7 @@ export default function PreviewPayoffPage() {
               <div className="flex items-center gap-1.5 text-xs text-neutral-400">
                 <Users className="h-3.5 w-3.5" /> Effective sample size
               </div>
-              <div className="mt-0.5 font-mono text-2xl font-semibold text-ph-ink tabular-nums">
+              <div className="mt-0.5 font-mono text-xl font-semibold text-ph-ink tabular-nums">
                 {view.N.toLocaleString()}
               </div>
               <div className="text-xs text-neutral-400">{view.cohorts} cohort{view.cohorts === 1 ? "" : "s"}</div>

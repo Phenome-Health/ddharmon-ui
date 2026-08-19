@@ -46,7 +46,7 @@ export default function AnalysisIdeasPage() {
         >
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
           <Lightbulb className="h-5 w-5 text-ph-navy" /> Analysis ideas
         </h1>
         <p className="mt-1.5 max-w-3xl text-sm text-neutral-500">

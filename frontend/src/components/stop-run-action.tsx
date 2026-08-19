@@ -61,16 +61,16 @@ export function StopRunAction({
           <AlertDialogDescription asChild>
             <div className="space-y-2">
               <p>
-                <span className="font-medium text-neutral-700">Stop &amp; keep results</span> lets the current
+                <span className="font-semibold text-neutral-700">Stop &amp; keep results</span> lets the current
                 stage finish and keeps its partial output, then skips the rest.{" "}
-                <span className="font-medium text-neutral-700">Discard now</span> stops immediately and produces
+                <span className="font-semibold text-neutral-700">Discard now</span> stops immediately and produces
                 no results. Either way you can re-run later from the same inputs.
               </p>
               {costNote?.hasEstimate ? (
                 <p className="rounded-md bg-neutral-50 px-2.5 py-1.5 text-xs text-neutral-600">
-                  ≈<span className="font-medium tabular-nums text-neutral-700">{formatUsd(costNote.committed)}</span>{" "}
+                  ≈<span className="tabular-nums text-neutral-700">{formatUsd(costNote.committed)}</span>{" "}
                   already committed · stopping now avoids ≈
-                  <span className="font-medium tabular-nums text-neutral-700">{formatUsd(costNote.avoided)}</span> more{" "}
+                  <span className="tabular-nums text-neutral-700">{formatUsd(costNote.avoided)}</span> more{" "}
                   <span className="text-neutral-400">(of a ≈{formatUsd(costNote.total)} run · estimate)</span>
                 </p>
               ) : (

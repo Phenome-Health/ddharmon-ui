@@ -165,7 +165,7 @@ export default function PreviewKnowledgeGraphPage() {
         {/* Left — harmonized concepts from the run */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Harmonized concepts</CardTitle>
+            <CardTitle className="text-sm">Harmonized concepts</CardTitle>
             <p className="text-xs text-neutral-400">This run&apos;s crosswalk. Select one to see its graph linkage.</p>
           </CardHeader>
           <CardContent className="space-y-1.5">
@@ -182,16 +182,16 @@ export default function PreviewKnowledgeGraphPage() {
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-neutral-700">{l.concept}</span>
-                    <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                    <span className="mt-0.5 block truncate text-xs text-neutral-400">
                       {l.node ? l.nodeId : "no existing node — propose new"}
                     </span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1">
-                    <Badge variant={VERDICT[l.verdict].variant} className="text-[10px]">
+                    <Badge variant={VERDICT[l.verdict].variant} className="text-xs">
                       {VERDICT[l.verdict].label}
                     </Badge>
                     {flag && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-warning">
+                      <span className="inline-flex items-center gap-0.5 text-xs text-warning">
                         <AlertTriangle className="h-3 w-3" /> review
                       </span>
                     )}
@@ -205,7 +205,7 @@ export default function PreviewKnowledgeGraphPage() {
         {/* Right — the graph linkage for the active concept */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle className="flex items-center gap-2 text-sm">
               <Network className="h-4 w-4 text-ph-navy" /> Graph linkage
             </CardTitle>
             <p className="text-xs text-neutral-400">
@@ -217,46 +217,46 @@ export default function PreviewKnowledgeGraphPage() {
             <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
               {/* Concept node */}
               <div className="flex-1 rounded-lg border border-ph-navy/30 bg-ph-navy/5 p-3">
-                <div className="text-[10px] font-medium uppercase tracking-wide text-ph-navy">Harmonized concept</div>
+                <div className="text-xs font-semibold uppercase tracking-eyebrow text-ph-navy">Harmonized concept</div>
                 <div className="mt-0.5 text-sm font-semibold text-ph-ink">{active.concept}</div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                  <Badge variant={VERDICT[active.verdict].variant} className="text-[10px]">
+                  <Badge variant={VERDICT[active.verdict].variant} className="text-xs">
                     {VERDICT[active.verdict].label}
                   </Badge>
-                  <span className="text-[11px] text-neutral-500">{active.cohorts.length} cohorts</span>
+                  <span className="text-xs text-neutral-500">{active.cohorts.length} cohorts</span>
                 </div>
               </div>
 
               {/* Relation edge */}
               <div className="flex shrink-0 flex-col items-center gap-1">
-                <Badge variant="neutral" className={`font-mono text-[10px] ${REL[active.relation].className}`}>
+                <Badge variant="neutral" className={`font-mono text-xs ${REL[active.relation].className}`}>
                   {REL[active.relation].label}
                 </Badge>
                 <ArrowRight className="h-4 w-4 rotate-90 text-neutral-300 sm:rotate-0" />
-                <span className="text-[10px] text-neutral-400">provided by ddharmon</span>
+                <span className="text-xs text-neutral-400">provided by ddharmon</span>
               </div>
 
               {/* Graph node */}
               {active.node ? (
                 <div className="flex-1 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">Graph node (CDE)</div>
+                  <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Graph node (CDE)</div>
                   <div className="mt-0.5 text-sm font-semibold text-neutral-700">{active.node}</div>
-                  <div className="mt-1 font-mono text-[11px] text-neutral-500">{active.nodeId}</div>
+                  <div className="mt-1 font-mono text-xs text-neutral-500">{active.nodeId}</div>
                 </div>
               ) : (
                 <div className="flex-1 rounded-lg border border-dashed border-ph-navy/40 bg-ph-navy/5 p-3">
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-ph-navy">New graph node</div>
+                  <div className="text-xs font-semibold uppercase tracking-eyebrow text-ph-navy">New graph node</div>
                   <div className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-ph-navy">
                     <Sparkles className="h-3.5 w-3.5" /> Proposed (GenCDE)
                   </div>
-                  <div className="mt-1 text-[11px] text-neutral-500">No existing element matched — a new node would be created.</div>
+                  <div className="mt-1 text-xs text-neutral-500">No existing element matched — a new node would be created.</div>
                 </div>
               )}
             </div>
 
             {/* Cross-vocabulary equivalents */}
             <div>
-              <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-neutral-400">
+              <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
                 <Link2 className="h-3.5 w-3.5" /> Equivalent identifiers
               </div>
               {active.equivalents.length ? (
@@ -264,7 +264,7 @@ export default function PreviewKnowledgeGraphPage() {
                   {active.equivalents.map((e) => (
                     <span
                       key={`${e.vocab}:${e.id}`}
-                      className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5 font-mono text-[11px] text-neutral-600"
+                      className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5 font-mono text-xs text-neutral-600"
                     >
                       <span className="text-neutral-400">{e.vocab}:</span>
                       {e.id}
@@ -281,7 +281,7 @@ export default function PreviewKnowledgeGraphPage() {
             {/* Link confidence + review routing */}
             <div>
               <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="font-medium uppercase tracking-wide text-neutral-400">Link confidence</span>
+                <span className="font-semibold uppercase tracking-eyebrow text-neutral-400">Link confidence</span>
                 <span className={`font-mono font-semibold ${confTone}`}>{active.confidence.toFixed(2)}</span>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">

@@ -27,7 +27,7 @@ function DecisionCard({ d }: { d: DesignChoice }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-start gap-2 text-base">
+        <CardTitle className="flex items-start gap-2 text-sm">
           <Icon className="mt-0.5 h-4 w-4 shrink-0 text-ph-navy" />
           <span>{d.title}</span>
         </CardTitle>
@@ -35,7 +35,7 @@ function DecisionCard({ d }: { d: DesignChoice }) {
       <CardContent className="space-y-3 text-sm">
         {/* The rejected alternative — the "why not just…" the page exists to answer. */}
         <p className="text-neutral-600">
-          <span className="font-medium text-neutral-500">Instead of</span> {d.rejected}.
+          <span className="font-semibold text-neutral-500">Instead of</span> {d.rejected}.
         </p>
         <p className="leading-relaxed text-neutral-600">{d.rationale}</p>
 
@@ -44,7 +44,7 @@ function DecisionCard({ d }: { d: DesignChoice }) {
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md border border-border bg-muted px-3 py-2">
             <span className="text-xs text-neutral-600">
               {d.evidence.metric}
-              <Badge variant="neutral" className="ml-2 align-middle text-[10px]">
+              <Badge variant="neutral" className="ml-2 align-middle text-xs">
                 {d.evidence.source}
               </Badge>
             </span>
@@ -54,7 +54,7 @@ function DecisionCard({ d }: { d: DesignChoice }) {
 
         <div className="flex items-start gap-1.5 border-t border-border pt-2.5 text-xs text-muted-foreground">
           <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-neutral-400" />
-          <span className="font-medium text-neutral-600">{d.takeaway}</span>
+          <span className="font-semibold text-neutral-600">{d.takeaway}</span>
         </div>
       </CardContent>
     </Card>
@@ -65,7 +65,7 @@ export default function DesignChoicesPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
           <Lightbulb className="h-6 w-6 text-ph-navy" /> Design choices
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
@@ -87,19 +87,19 @@ export default function DesignChoicesPage() {
       {/* Reading frame — how to interpret the cards, before any of them. */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <ScaleIcon className="h-4 w-4 text-ph-navy" /> Choices made because the data said so
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm leading-relaxed text-neutral-600">
           <p>
             None of these are default settings left unexamined. Each was settled by an A/B against{" "}
-            <span className="font-medium text-neutral-700">external ground truth</span>, or is a
+            <span className="font-semibold text-neutral-700">external ground truth</span>, or is a
             structural choice with a stated rationale. Where a decision has a published delta, the card
             shows it and names the benchmark it was measured on.
           </p>
           <p className="text-xs text-neutral-500">
-            Only <span className="font-medium text-neutral-600">mechanistically-justified</span> changes
+            Only <span className="font-semibold text-neutral-600">mechanistically-justified</span> changes
             are adopted — never benchmark-chasing. Numbers are development-set figures where the benchmark
             is CDEMapper (read as optimistic); see the{" "}
             <Link href="/benchmarks" className="text-ph-navy underline hover:text-ph-ink">

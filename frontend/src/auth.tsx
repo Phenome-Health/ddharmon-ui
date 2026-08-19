@@ -79,7 +79,7 @@ function SignInWall({ onGuest }: { onGuest?: () => void }) {
         <button
           type="button"
           onClick={onGuest}
-          className="text-sm font-medium text-ph-navy underline underline-offset-4 transition-colors hover:text-ph-ink"
+          className="text-sm font-semibold text-ph-navy underline underline-offset-4 transition-colors hover:text-ph-ink"
         >
           Or explore the demo without signing in →
         </button>

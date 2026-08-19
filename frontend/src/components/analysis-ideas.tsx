@@ -34,7 +34,7 @@ export function IdeaCard({
         <div className="flex flex-wrap items-start gap-2">
           <CardTitle className="text-sm">{idea.title}</CardTitle>
           {idea.category && (
-            <Badge variant="neutral" className="ml-auto shrink-0 text-[10px]">
+            <Badge variant="neutral" className="ml-auto shrink-0 text-xs">
               {idea.category}
             </Badge>
           )}
@@ -66,13 +66,13 @@ export function IdeaCard({
         <dl className="space-y-1 text-xs text-neutral-500">
           {idea.cohorts.length > 0 && (
             <div className="flex gap-1.5">
-              <dt className="font-medium text-neutral-500">Cohorts</dt>
+              <dt className="font-semibold text-neutral-500">Cohorts</dt>
               <dd className="text-neutral-600">{idea.cohorts.join(", ")}</dd>
             </div>
           )}
           {idea.method && (
             <div className="flex gap-1.5">
-              <dt className="font-medium text-neutral-500">Method</dt>
+              <dt className="font-semibold text-neutral-500">Method</dt>
               <dd className="text-neutral-600">{idea.method}</dd>
             </div>
           )}
@@ -81,7 +81,7 @@ export function IdeaCard({
           <p className="flex items-start gap-1.5 rounded-md border border-border bg-muted px-2.5 py-1.5 text-xs text-neutral-600">
             <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-ph-navy" />
             <span>
-              <span className="font-medium text-neutral-700">Newly possible: </span>
+              <span className="font-semibold text-neutral-700">Newly possible: </span>
               {idea.whyNewlyPossible}
             </span>
           </p>
@@ -148,7 +148,7 @@ export function AnalysisIdeasPanel({
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <Lightbulb className="h-4 w-4 text-ph-navy" /> Analysis ideas
           </CardTitle>
           {alreadyHasIdeas && !isDemo && (

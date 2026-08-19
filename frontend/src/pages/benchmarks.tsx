@@ -54,7 +54,7 @@ function BenchmarkCard({ b }: { b: Benchmark }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-base">{b.name}</CardTitle>
+          <CardTitle className="text-sm">{b.name}</CardTitle>
           <Badge variant={tier.badge} className="ml-auto">
             {tier.label}
           </Badge>
@@ -63,14 +63,14 @@ function BenchmarkCard({ b }: { b: Benchmark }) {
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
             Task
           </div>
           <p className="text-neutral-600">{b.task}</p>
         </div>
 
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
             Ground truth &amp; provenance
           </div>
           <p className="text-neutral-600">{b.groundTruth}</p>
@@ -87,7 +87,7 @@ function BenchmarkCard({ b }: { b: Benchmark }) {
         </div>
 
         <div>
-          <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-neutral-400">
+          <div className="mb-1.5 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
             {b.metrics.length > 1 ? "Headline metrics" : "Headline metric"}
           </div>
           <div className="space-y-1.5">
@@ -107,7 +107,7 @@ function BenchmarkCard({ b }: { b: Benchmark }) {
         <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
           <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-neutral-400" />
           <span>
-            <span className="font-medium text-neutral-600">{tier.blurb}</span>
+            <span className="font-semibold text-neutral-600">{tier.blurb}</span>
             {b.note ? <> {b.note}</> : null}
           </span>
         </div>
@@ -120,11 +120,11 @@ export default function BenchmarksPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-ph-ink">
           <Gauge className="h-6 w-6 text-ph-navy" /> Benchmarks
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
-          How ddharmon performs against <span className="font-medium text-neutral-600">external ground-truth</span>{" "}
+          How ddharmon performs against <span className="font-semibold text-neutral-600">external ground-truth</span>{" "}
           benchmarks — not self-defined metrics. Each card carries a dev/held-out tag so the numbers are
           read honestly. A results complement to the{" "}
           <Link href="/methods" className="text-ph-navy underline hover:text-ph-ink">
@@ -139,7 +139,7 @@ export default function BenchmarksPage() {
       {/* Benchmark-usage policy (honesty) — sets the reading frame before any number is shown. */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <ScaleIcon className="h-4 w-4 text-ph-navy" /> How to read these numbers
           </CardTitle>
           <p className="text-xs text-neutral-400">
@@ -154,7 +154,7 @@ export default function BenchmarksPage() {
                 Development set
               </Badge>
               <p className="text-xs text-neutral-600">
-                <span className="font-medium text-neutral-700">CDEMapper.</span> Already tuned on, so
+                <span className="font-semibold text-neutral-700">CDEMapper.</span> Already tuned on, so
                 read it as <em>optimistic</em> — an upper bound, not a generalization claim.
               </p>
             </div>
@@ -163,7 +163,7 @@ export default function BenchmarksPage() {
                 Held-out
               </Badge>
               <p className="text-xs text-neutral-600">
-                <span className="font-medium text-neutral-700">PhenX, AI-READI.</span> Generalization
+                <span className="font-semibold text-neutral-700">PhenX, AI-READI.</span> Generalization
                 checks — measured, never tuned on.
               </p>
             </div>
@@ -172,13 +172,13 @@ export default function BenchmarksPage() {
                 Locked gate
               </Badge>
               <p className="text-xs text-neutral-600">
-                <span className="font-medium text-neutral-700">EITL human verdicts.</span> The locked
+                <span className="font-semibold text-neutral-700">EITL human verdicts.</span> The locked
                 in-domain acceptance gate — the arbiter of the boundary.
               </p>
             </div>
           </div>
           <p className="text-xs text-neutral-500">
-            Only <span className="font-medium text-neutral-600">mechanistically-justified</span> changes
+            Only <span className="font-semibold text-neutral-600">mechanistically-justified</span> changes
             are adopted — never benchmark-chasing.
           </p>
         </CardContent>
@@ -194,7 +194,7 @@ export default function BenchmarksPage() {
       {/* Metric definitions — so a value isn't read without knowing exactly what it measures. */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <BookOpen className="h-4 w-4 text-ph-navy" /> What the metrics mean
           </CardTitle>
           <p className="text-xs text-neutral-400">
@@ -205,13 +205,13 @@ export default function BenchmarksPage() {
           <dl className="space-y-2.5">
             {METRIC_DEFS.map((m) => (
               <div key={m.term} className="grid gap-0.5 sm:grid-cols-[minmax(9rem,13rem)_1fr] sm:gap-3">
-                <dt className="font-mono text-xs font-medium text-ph-ink">{m.term}</dt>
+                <dt className="font-mono text-xs font-semibold text-ph-ink">{m.term}</dt>
                 <dd className="text-neutral-600">{m.def}</dd>
               </div>
             ))}
           </dl>
           <p className="rounded-md border border-border bg-muted p-3 text-xs">
-            <span className="font-medium text-neutral-700">What&apos;s good?</span> recall@k, assignment, and
+            <span className="font-semibold text-neutral-700">What&apos;s good?</span> recall@k, assignment, and
             recode-accuracy run 0–1 (1 = perfect; a chance / naive baseline sits far below). Separability Δ is a
             distributional gap, not an accuracy — larger means the encoder separates concepts more cleanly, 0
             means no separation.
@@ -222,7 +222,7 @@ export default function BenchmarksPage() {
       {/* The value layer needs context — the ATHLOS lift, called out. */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <ShieldCheck className="h-4 w-4 text-ph-navy" /> The value layer needs question context
           </CardTitle>
         </CardHeader>
@@ -231,7 +231,7 @@ export default function BenchmarksPage() {
             Value recodes aren't generated blind. On the ATHLOS benchmark, feeding the source variable's{" "}
             <span className="font-mono text-xs text-ph-ink">question_text</span> into the recode
             generator lifts recode accuracy about{" "}
-            <span className="font-medium text-neutral-700">7 percentage points</span>{" "}
+            <span className="font-semibold text-neutral-700">7 percentage points</span>{" "}
             <span className="font-mono text-xs">(0.832 → 0.869)</span> by resolving polarity and
             granularity judgment calls.
           </p>
@@ -241,7 +241,7 @@ export default function BenchmarksPage() {
       {/* Reproducibility — the plain-language "what this means". */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <RefreshCcw className="h-4 w-4 text-ph-navy" /> Reproducibility
           </CardTitle>
         </CardHeader>
@@ -249,12 +249,12 @@ export default function BenchmarksPage() {
           <p>
             The benchmarks live in a portable{" "}
             <span className="font-mono text-xs text-ph-ink">benchmarks/</span> package — it runs at{" "}
-            <span className="font-medium text-neutral-700">$0</span> (no paid API calls to reproduce the
+            <span className="font-semibold text-neutral-700">$0</span> (no paid API calls to reproduce the
             reported figures) and is deterministic under{" "}
             <span className="font-mono text-xs text-ph-ink">PYTHONHASHSEED=0</span>.
           </p>
           <p className="rounded-md border border-border bg-muted p-3 text-xs">
-            <span className="font-medium text-neutral-700">What this means:</span> anyone can re-run the
+            <span className="font-semibold text-neutral-700">What this means:</span> anyone can re-run the
             same evaluation on the same public gold datasets and get the same numbers on this page —
             they aren't one-off results from a private run.
           </p>

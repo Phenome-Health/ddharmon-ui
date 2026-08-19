@@ -225,19 +225,54 @@
      the licensed files land. Geometric-modern either way. */
   --font-display: 'Byrl', 'Space Grotesk', 'Inter', sans-serif;
 
-  /* Font sizes — Phenome §3.2 type scale */
-  --font-size-xs: 12px;
-  --font-size-xs--line-height: 16px;
-  --font-size-sm: 14px;
-  --font-size-sm--line-height: 20px;
-  --font-size-base: 15px;
-  --font-size-base--line-height: 22px;
-  --font-size-lg: 16px;
-  --font-size-lg--line-height: 24px;
-  --font-size-xl: 20px;
-  --font-size-xl--line-height: 28px;
-  --font-size-2xl: 24px;
-  --font-size-2xl--line-height: 32px;
+  /* ── Type scale — UI-SPEC §3.1: EXACTLY FOUR SIZES ────────────────────────
+     The namespace is `--text-*`, not `--font-size-*`. The six `--font-size-*`
+     keys this replaces generated NOTHING: Tailwind v4's font-size namespace is
+     `--text-*` (the compiled utility is
+     `.text-sm{font-size:var(--text-sm)}`), so those keys only ever produced
+     junk `font-size-*` FAMILY utilities and the app rendered Tailwind's own
+     default scale throughout. `--font-size-base: 15px` never shipped 15px;
+     `text-base` was Tailwind's 16px. Declaring the scale under the real
+     namespace is what makes the four sizes actually load-bearing.
+
+     `--text-*: initial` clears the whole inherited namespace FIRST, so
+     `text-base`, `text-lg`, `text-2xl` and everything from `text-3xl` to
+     `text-9xl` stop existing as utilities rather than silently falling back to
+     Tailwind's defaults. Four keys are declared after the reset; there is no
+     fifth size anywhere in the theme.
+
+     xs/sm/xl happen to coincide with Tailwind's own values — the four-size cap
+     is what is new, not the numbers. `display` is the one new key: 30/34 in
+     `--font-display` at 600, and it carries its weight on the token so a hero
+     cannot ship at a different one. Folding 30 into 20 would make 20px the
+     largest type in the product (landing hero, /methods, /benchmarks included)
+     and would render the one dominant cost figure at pane-heading size. */
+  --text-*: initial;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-display: 30px;
+  --text-display--line-height: 34px;
+  --text-display--font-weight: 600;
+
+  /* ── Weights — UI-SPEC §3.2: EXACTLY TWO ──────────────────────────────────
+     400 and 600. 500 and 700 are banned, including on the display face, so the
+     namespace is reset and only the two survive: `font-medium` and `font-bold`
+     stop being utilities at all rather than being kept honest by a grep. The
+     eyebrow register is carried by uppercase + .10em tracking + 600 — never by
+     a third weight and never by a smaller size. */
+  /* The eyebrow's tracking, named. UI-SPEC §3.1 folds the former 10px eyebrow up
+     into 12px and compensates with 0.10em, so a tracked-uppercase band occupies
+     roughly the width it did at 10px/0.14em. It is a token because the register
+     is a treatment shared by ~45 labels, not a per-call-site guess. */
+  --tracking-eyebrow: 0.10em;
+
+  --font-weight-*: initial;
+  --font-weight-normal: 400;
+  --font-weight-semibold: 600;
 
   /* Shadows — re-tinted to the identity's deep navy (#00063D) rather than the
      retired #0B152D ink. `shadow-card` is the single elevation token of the
@@ -287,7 +322,9 @@
   }
 
   body {
-    @apply font-sans antialiased bg-neutral-0 text-neutral-900;
+    /* `text-sm` is the body size (UI-SPEC §3.1): the 14/20 body tier is the app's
+       default, not an opt-in class every page has to remember. */
+    @apply font-sans text-sm antialiased bg-neutral-0 text-neutral-900;
     font-feature-settings: "cv11", "ss01", "ss03";
   }
 
@@ -321,8 +358,12 @@
     color-scheme: light;
   }
 
-  /* Tabular numerals for tables and numeric displays */
-  table, .tabular {
+  /* Tabular numerals for tables and numeric displays.
+     UI-SPEC §3.3 binds tabular numerals to the MONO FACE rather than to a second
+     class at every call site: mono means "the pipeline computed this", and
+     computed output aligns. `code`/`kbd`/`samp`/`pre` render in the mono face by
+     UA default, so they inherit the same rule. */
+  table, .tabular, .font-mono, code, kbd, samp, pre {
     font-variant-numeric: tabular-nums;
   }
 
