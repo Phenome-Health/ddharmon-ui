@@ -1,5 +1,5 @@
-import { expect, request as playwrightRequest, test } from "@playwright/test";
-import { VISUAL_ROUTES, type VisualRoute } from "./routes";
+import { expect, test } from "@playwright/test";
+import { routeUrl, VISUAL_ROUTES } from "./routes";
 
 /**
  * The four-size scale, asserted on the RENDERED page — the automated half of the R10 type
@@ -33,34 +33,12 @@ const WEIGHTS = [400, 600];
  */
 const NON_TEXT = new Set([0]);
 
-async function resolveJobId(baseURL: string | undefined): Promise<string> {
-  const ctx = await playwrightRequest.newContext({ baseURL });
-  try {
-    const res = await ctx.get("/static-data/jobs.json");
-    const data: unknown = await res.json();
-    const jobs = (Array.isArray(data) ? data : ((data as { jobs?: unknown[] }).jobs ?? [])) as {
-      jobId?: string;
-      status?: string;
-    }[];
-    return (jobs.find((j) => j.status === "complete") ?? jobs[0])!.jobId!;
-  } finally {
-    await ctx.dispose();
-  }
-}
-
-async function urlFor(route: VisualRoute, baseURL: string | undefined): Promise<string> {
-  const resolved = route.needsJobFixture
-    ? route.path.replace(":jobId", await resolveJobId(baseURL))
-    : route.path;
-  return `${resolved}${route.query ?? ""}`;
-}
-
 for (const route of VISUAL_ROUTES) {
   test(`@type ${route.name} (${route.path}) renders only the four sizes and two weights`, async ({
     page,
     baseURL,
   }) => {
-    await page.goto(await urlFor(route, baseURL));
+    await page.goto(await routeUrl(route, baseURL));
     await page.evaluate(() => document.fonts.ready);
     await page.waitForLoadState("networkidle");
 

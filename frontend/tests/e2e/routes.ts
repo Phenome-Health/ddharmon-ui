@@ -63,3 +63,27 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   // produce a baselined screenshot, not a test error.
   { name: "not-found", path: "/__no_such_route__", registered: false },
 ];
+
+/**
+ * Resolve a route template to a navigable URL, substituting the `:jobId` of the first complete
+ * demo job from the bundled static fixtures. Lives here rather than in a spec because three
+ * suites now walk the same route list (visual, typography, the rebrand drill's leak scan) and a
+ * second copy of this is how one of them silently starts covering a different set of pages.
+ */
+export async function routeUrl(route: VisualRoute, baseURL: string | undefined): Promise<string> {
+  if (!route.needsJobFixture) return `${route.path}${route.query ?? ""}`;
+  const { request } = await import("@playwright/test");
+  const ctx = await request.newContext({ baseURL });
+  try {
+    const res = await ctx.get("/static-data/jobs.json");
+    const data: unknown = await res.json();
+    const jobs = (Array.isArray(data) ? data : ((data as { jobs?: unknown[] }).jobs ?? [])) as {
+      jobId?: string;
+      status?: string;
+    }[];
+    const jobId = (jobs.find((j) => j.status === "complete") ?? jobs[0])!.jobId!;
+    return `${route.path.replace(":jobId", jobId)}${route.query ?? ""}`;
+  } finally {
+    await ctx.dispose();
+  }
+}
