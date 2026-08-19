@@ -73,7 +73,7 @@ def test_health_ok():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["contractVersion"] == "4"
+    assert body["contractVersion"] == "5"
     assert set(body["cde"]) == {"endorsed", "full"}
     assert "frontendBuilt" in body
 
@@ -181,7 +181,7 @@ def _canned_records() -> list[LeanBRecord]:
 
 def test_contract_mapping_record_and_summary():
     result = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
     assert result["mode"] == "batch"
     rec0 = result["records"][0]
     assert rec0["id"] == "c1#g0"
@@ -1192,7 +1192,7 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
 
     result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
 
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
     # v3 additive: every result carries a realized-cost block. Zero here (stage_overrides bypass the priced
     # sync/batch stages); a real run populates it from captured token usage.
     assert result["cost"] == {"actualUsd": 0.0, "tokens": {"input": 0, "output": 0}, "perStage": {}}
@@ -1477,7 +1477,7 @@ def test_run_pipeline_real_clustering_smoke(tmp_path):
     # No stage_overrides -> the adapter takes the real preview branch: real cluster + retrieve, no LLM.
     result = run_pipeline(dict_specs, cde_spec, config, provider=_StructuredStubProvider())
 
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
     assert result["mode"] == "preview"
     assert result["phases"] and "clustering" in result["phases"]
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1  # 40 cohort fields projected
@@ -1541,7 +1541,7 @@ def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_
         provider=StubProvider(),
         stage_overrides=overrides,
     )
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
 
 
 def test_seed_demos_prepopulates_a_complete_run():

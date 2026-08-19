@@ -474,11 +474,18 @@ def test_cloning_an_unfinished_run_is_a_409(tmp_path, monkeypatch):
     assert r.status_code == 409
 
 
-# --- the SSE stream: the payload the review surfaces actually read ----------------------------
+# --- the read paths the review surfaces actually use -----------------------------------------
 #
-# The workbench and dashboard are driven by /stream, not /result. That made the stream the one read path
-# where a bare to_dict() (in-memory mirrors, NOT owner-scoped) still handed out another user's verdicts —
-# and the one that had to be scoped before the frontend could safely hydrate from `decisions` at all.
+# HISTORY, because it changes what these tests can assert. The workbench and dashboard used to be driven
+# by /stream, which made the stream the one read path where a bare to_dict() (in-memory mirrors, NOT
+# owner-scoped) still handed out another user's verdicts.
+#
+# 08-08 (D-03) took the PAYLOAD off the stream entirely: the frame is now live fields plus a
+# `resultVersion` token, and the client refetches /result when the token moves. So the leak's foothold is
+# gone by construction rather than by scoping — there is no `decisions` key on the frame to leak — and the
+# scoping guarantee is asserted where the payload now lives. Both halves are checked below, because
+# "the frame is thin" and "the payload is owner-scoped" are different claims and dropping either one is
+# how this leak came back the first time.
 
 
 def _stream_payload(client, job_id: str) -> dict:
@@ -492,8 +499,24 @@ def _stream_payload(client, job_id: str) -> dict:
     return frames[-1]
 
 
-def test_the_stream_carries_the_callers_own_verdicts(tmp_path, monkeypatch):
-    """Hydration's precondition: what the workbench reads on mount has to contain the saved work."""
+def test_the_stream_frame_carries_no_verdicts_at_all(tmp_path, monkeypatch):
+    """D-03: the leak's foothold is removed rather than scoped — the frame has no payload to leak.
+
+    It also cannot regrow one silently: `Job.progress_dict` enumerates its keys positively, so a future
+    heavy or user-scoped field has to be added here deliberately.
+    """
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        app_module.store.set_decision("j1", "r1", "reject", note="not mine", subject=USER_B)
+        frame = _stream_payload(c, "j1")
+    for owner_scoped in ("decisions", "result", "analysisIdeas", "composites", "config"):
+        assert owner_scoped not in frame, f"{owner_scoped} is back on the 2 Hz frame"
+    assert frame["resultVersion"] >= 1, "without a version token the client can never know to refetch"
+
+
+def test_the_result_endpoint_carries_the_callers_own_verdicts(tmp_path, monkeypatch):
+    """Hydration's precondition, moved: what the workbench refetches has to contain the saved work."""
     monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
     with TestClient(app_module.app) as c:
         _completed_job("j1")
@@ -502,19 +525,22 @@ def test_the_stream_carries_the_callers_own_verdicts(tmp_path, monkeypatch):
             json={"recordId": "r1", "decision": "approve", "axis": "match", "note": "keep me"},
         )
         app_module.store._jobs.clear()  # evicted, as after a restart — the mirror is gone, the rows are not
-        decisions = _stream_payload(c, "j1")["decisions"]
+        decisions = c.get("/api/harmonize/result/j1").json()["decisions"]
     assert decisions["r1"]["decision"] == "approve"
     assert decisions["r1"]["note"] == "keep me"
 
 
-def test_the_stream_does_not_hand_one_user_anothers_verdicts(tmp_path, monkeypatch):
-    """The leak's last foothold. `_apply_decision` also updates the shared in-memory mirror, so an unscoped
-    stream frame served USER_B's verdict to whoever asked next — on the demo, that is everyone."""
+def test_the_result_endpoint_does_not_hand_one_user_anothers_verdicts(tmp_path, monkeypatch):
+    """The leak's last foothold, re-asserted on the path that now carries the payload.
+
+    `_apply_decision` still updates the shared in-memory mirror, so an UNSCOPED read of a shared run would
+    serve USER_B's verdict to whoever asked next — on the demo, that is everyone. /result is artifact-scoped
+    and must stay so; moving the payload here would otherwise have moved the leak here with it.
+    """
     monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
     with TestClient(app_module.app) as c:
         _completed_job("j1")
-        # B annotates the run: their artifact row is written AND the shared mirror is mutated.
         app_module.store.set_decision("j1", "r1", "reject", note="not mine", subject=USER_B)
         assert app_module.store.get("j1").decisions["r1"]["decision"] == "reject"  # mirror is polluted
-        decisions = _stream_payload(c, "j1")["decisions"]  # read as the local principal, i.e. not B
-    assert decisions == {}, "the stream leaked another user's verdict"
+        decisions = c.get("/api/harmonize/result/j1").json()["decisions"]  # read as the local principal
+    assert decisions == {}, "the result endpoint leaked another user's verdict"

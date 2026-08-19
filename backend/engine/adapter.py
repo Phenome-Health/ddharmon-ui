@@ -45,6 +45,7 @@ from backend.engine.contract import (
     PreviewCluster,
     ResponseOptionUI,
     UICandidate,
+    UIConceptGroup,
     UICost,
     UIGenCDE,
     UIMember,
@@ -411,6 +412,39 @@ def _preview_clusters(leanb_result: Any, cap: int = _PREVIEW_MEMBER_CAP) -> list
     return out
 
 
+def _concept_groups_to_ui(leanb_result: Any) -> list[UIConceptGroup]:
+    """Map core's post-split ``ConceptGroup``s onto the contract — the rows Gate 1 renders (UI-SPEC §0.1).
+
+    Read off ``LeanBResult.concept_groups``, which 08-04 added and which the ``classify=None`` early
+    return carries. ``getattr`` with a default rather than an attribute access: the dev channel swaps core
+    versions, and a core pinned before that change must yield an empty list here, not an AttributeError
+    that unwinds a run whose paid stages have already completed.
+
+    Sorted biggest-first (deterministic per R4, and the biggest groups are the ones worth eyeballing).
+    Nothing assign produced is copied: no verdict, no route, no CDE, no candidates. This is the shape
+    BEFORE any of those exist, and filling them with defaults is how "not computed" starts reading as
+    "computed and empty".
+    """
+    out: list[UIConceptGroup] = []
+    for g in getattr(leanb_result, "concept_groups", []) or []:
+        top1 = getattr(g, "top1_cos", None)
+        out.append(
+            {
+                "groupId": getattr(g, "group_id", "") or "",
+                "clusterId": getattr(g, "cluster_id", "") or "",
+                "concept": getattr(g, "concept", "") or "",
+                "idealCde": getattr(g, "ideal_cde", "") or "",
+                "nMembers": int(getattr(g, "n_members", 0) or 0),
+                "cohorts": list(getattr(g, "cohorts", []) or []),
+                "crossCohort": bool(getattr(g, "cross_cohort", False)),
+                "top1Cos": float(top1) if top1 is not None else None,
+                "memberVariableNames": list(getattr(g, "member_variable_names", []) or []),
+            }
+        )
+    out.sort(key=lambda g: (-g["nMembers"], g["clusterId"], g["groupId"]))
+    return out
+
+
 def build_ui_result(
     leanb_result: Any,
     *,
@@ -421,6 +455,8 @@ def build_ui_result(
     field_index: dict[str, FieldDetail] | None = None,
     cost: UICost | None = None,
     preview_clusters: list[PreviewCluster] | None = None,
+    gate_position: str | None = None,
+    result_version: int | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
 
@@ -435,7 +471,7 @@ def build_ui_result(
     fidx = field_index or {}
     atlas_pts = atlas or []
     records = [_record_to_ui(r, idx) for r in leanb_result.records]
-    return {
+    result: UIResult = {
         "contractVersion": CONTRACT_VERSION,
         "mode": mode,
         "phases": phases,
@@ -453,7 +489,16 @@ def build_ui_result(
         "unassignedFields": _unassigned_fields(fidx, records, atlas_pts),
         "cost": cost if cost is not None else empty_cost(),
         "previewClusters": preview_clusters or [],
+        # v5 additive. Read off the LeanBResult unconditionally rather than only on a staged run: a
+        # one-shot run passed THROUGH the Gate 1 boundary, so its groups are a real artifact of it and
+        # withholding them would make the same run answer differently depending on how it was launched.
+        "conceptGroups": _concept_groups_to_ui(leanb_result),
     }
+    if gate_position is not None:
+        result["gatePosition"] = cast(Any, gate_position)
+    if result_version is not None:
+        result["resultVersion"] = result_version
+    return result
 
 
 def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list[AtlasPoint]:
@@ -677,6 +722,90 @@ def _save_substrate_if_new(substrate_path: Path | None, result: Any) -> None:
         save_substrate(result.substrate, substrate_path)
 
 
+# ── staged review: the resumable boundary, and how a resumed leg avoids paying twice ─────────
+#
+# The gate a run stops at is expressed in core's OWN vocabulary; this adapter invents no new stop
+# mechanism (UI-SPEC §0.1's boundary table is authoritative):
+#
+#   gate1  — withhold the ``classify`` callable. That is the ALREADY-SHIPPED early return, and after
+#            08-04's reorder it fires after ``generate(ideal)``, ``split`` and the judge, which is exactly
+#            where Gate 1 sits. 08-04's one new named boundary is for Gate 1 → Gate 2, not for entering
+#            Gate 1, and using it here would stop the run a whole paid stage too late.
+#   gate2  — ``stop_after="gencde"``, the one named boundary 08-04 shipped.
+#
+# Gates 0, 3 and 4 need no core boundary at all (Gate 0 is adapter-side and free; Gate 3 is the finished
+# pipeline held by the UI backend; Gate 4 is a pure read), so they are not stop targets here.
+_GATE_STOP_MECHANISM = {"gate1": "withhold_classify", "gate2": "stop_after_gencde"}
+
+
+#: Recorded against a prompt id the stage was ASKED about but returned nothing for. JSON-serialisable
+#: because it lands in the checkpoint file.
+#:
+#: Recording *asked* rather than *answered* is the load-bearing choice. A stage that a leg invoked and
+#: which came back empty (a malformed LLM response, core's single-group split fallback) was still PAID
+#: FOR. Keying replay on answers alone would re-issue exactly those calls on every resume — the runs that
+#: already cost money and produced nothing — which is the most expensive possible reading of
+#: "no re-charge for work already done".
+_NO_ANSWER = {"__no_answer__": True}
+
+
+def _recording_stage(name: str, fn: StageFn, sink: dict[str, dict[str, Any]]) -> StageFn:
+    """Wrap a stage so what it was asked, and what it answered, is captured for the checkpoint."""
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        out = fn(prompts) or {}
+        answers = {str(k): v for k, v in out.items()}
+        recorded = sink.setdefault(name, {})
+        for p in prompts:
+            pid = str(p.id)
+            recorded[pid] = answers.get(pid, _NO_ANSWER)
+        return out
+
+    return stage
+
+
+def _replaying_stage(
+    name: str,
+    fn: StageFn,
+    replay: dict[str, dict[str, Any]],
+    sink: dict[str, dict[str, Any]],
+) -> StageFn:
+    """Answer a stage's prompts from the checkpoint where possible, and call ``fn`` only for the rest.
+
+    This is what makes *"resume issues no new paid call for work already done"* a property of the code
+    rather than of a cache. The batch stages already replay ``responses_<tag>.jsonl`` for free, but that
+    guarantee (a) is invisible to a test, (b) does not hold for ``sync`` mode, and (c) evaporates if the
+    work dir is ever relocated. Replaying from the checkpoint holds in all three cases, and composes with
+    the batch cache rather than replacing it.
+
+    A prompt id absent from the checkpoint is genuinely NEW work — a group the previous leg never asked
+    about — and is passed through to the real stage. Partial replay is the normal case, not an error.
+
+    An id recorded as :data:`_NO_ANSWER` counts as ASKED and is not re-issued; it is simply omitted from
+    the returned mapping, which reproduces exactly what the first leg's stage handed core.
+    """
+    cached = replay.get(name) or {}
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        answers = {
+            str(p.id): cached[str(p.id)] for p in prompts if str(p.id) in cached and cached[str(p.id)] != _NO_ANSWER
+        }
+        replayed = sum(1 for p in prompts if str(p.id) in cached)
+        missing = [p for p in prompts if str(p.id) not in cached]
+        if missing:
+            logger.info("stage %s: replaying %d, running %d", name, replayed, len(missing))
+            answers.update({str(k): v for k, v in (fn(missing) or {}).items()})
+        else:
+            logger.info("stage %s: fully replayed from the checkpoint (%d prompts, $0)", name, replayed)
+        recorded = sink.setdefault(name, {})
+        for p in prompts:
+            pid = str(p.id)
+            recorded[pid] = answers.get(pid, cached.get(pid, _NO_ANSWER))
+        return answers
+
+    return stage
+
+
 def run_pipeline(
     dict_specs: list[dict[str, Any]],
     cde_spec: dict[str, Any] | None,
@@ -688,6 +817,8 @@ def run_pipeline(
     api_key: str | None = None,
     stopping: StoppingFn | None = None,
     substrate_path: str | Path | None = None,
+    stage_responses: dict[str, dict[str, Any]] | None = None,
+    replay_responses: dict[str, dict[str, Any]] | None = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -706,7 +837,19 @@ def run_pipeline(
         substrate_path: optional path to a frozen clustering substrate for reproducibility. When the file
                     exists it is reloaded (UMAP skipped, the exact partition reproduced); after a fresh run the
                     built partition is saved there. Combined with the cache-aware batch stages, a re-run over
-                    the same ``work_dir`` + ``substrate_path`` is byte-identical. Unused by normal per-job runs.
+                    the same ``work_dir`` + ``substrate_path`` is byte-identical. A STAGED run
+                    (``config["stop_at_gate"]``) defaults it to ``<work_dir>/substrate.joblib`` — the next
+                    leg must reproduce the exact partition its Gate 1 decisions were made against, or the
+                    reviewer's scoping is applied to a different set of groups than the one they saw.
+        stage_responses: an OUT parameter — a dict this call fills with ``{stage: {prompt_id: response}}``
+                    for every stage it ran, so the caller can persist it in the checkpoint. Passed in rather
+                    than returned because the return value is the frozen ``UIResult`` contract, which must
+                    not grow a raw-LLM-response field.
+        replay_responses: the same structure read back OUT of a checkpoint. Any prompt id present here is
+                    answered from it and never sent to a provider — the "no re-charge on resume" mechanism.
+
+    A staged run (``config["stop_at_gate"]`` set to ``"gate1"`` or ``"gate2"``) returns a PARTIAL result
+    carrying ``gatePosition`` plus whatever the stages before that boundary produced.
     """
     from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
@@ -718,6 +861,18 @@ def run_pipeline(
     mode: str = config.get("run_mode", "batch")
     cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
     work_dir = Path(config.get("work_dir", "."))
+    # --- staged review: which gate boundary (if any) this leg stops at ---
+    stop_at_gate: str | None = config.get("stop_at_gate")
+    if stop_at_gate is not None and stop_at_gate not in _GATE_STOP_MECHANISM:
+        # Validated BEFORE any work, and by raising rather than ignoring. A silently-dropped typo would
+        # run the whole paid pipeline past the boundary the caller asked for — the same failure core's
+        # own `stop_after` validation exists to prevent (T-08-20).
+        raise ValueError(
+            f"stop_at_gate={stop_at_gate!r} is not a resumable boundary; "
+            f"expected one of {sorted(_GATE_STOP_MECHANISM)}"
+        )
+    recorded: dict[str, dict[str, Any]] = stage_responses if stage_responses is not None else {}
+    replay: dict[str, dict[str, Any]] = replay_responses or {}
     # Realized-cost accumulator: each LLM stage folds its captured token usage in (sync = full price, batch =
     # 50%), so build_ui_result can emit real spend (UIResult.cost) and the stages can stream a live total.
     ledger = CostLedger()
@@ -785,6 +940,12 @@ def run_pipeline(
     # --- reproducibility: reload a frozen clustering substrate if one exists (skip UMAP, reproduce the exact
     #     partition). After a fresh run the built partition is saved (see _save_substrate_if_new). ---
     substrate_path = Path(substrate_path) if substrate_path else None
+    if substrate_path is None and (stop_at_gate is not None or replay):
+        # A staged run is resumed later, and the resume leg MUST see the same partition: the reviewer's
+        # Gate 1 scoping is expressed as group ids, and UMAP+HDBSCAN is not bit-reproducible, so a
+        # re-clustered second leg would apply their decisions to a different set of groups. Freezing it is
+        # local and costs a file. Legacy one-shot runs are unchanged (no path -> no freeze).
+        substrate_path = work_dir / "substrate.joblib"
     if substrate_path and substrate_path.exists():
         from ddharmon.harmonization.substrate import load_substrate
 
@@ -840,6 +1001,13 @@ def run_pipeline(
             "refine": _batch_stage("refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping),
         }
 
+    # --- wrap every stage so its answers are captured, and replayed when the checkpoint has them ---
+    # Applied to whichever strategy was chosen above (overrides included, so the guarantee is testable).
+    stages = {
+        name: (_replaying_stage(name, fn, replay, recorded) if name in replay else _recording_stage(name, fn, recorded))
+        for name, fn in stages.items()
+    }
+
     gen_specs = config.get("gen_transform_specs", True)
     # GenCDE synthesis for novel concepts — ON by default (a value-add verifying pass like transform specs);
     # gate off with gen_gencde=false. Runs after merge, before specgen; batch stage caches to
@@ -861,12 +1029,29 @@ def run_pipeline(
     refine_cdes = config.get("refine_cdes", True) and "refine_cdes" in inspect.signature(harmonize_leanb).parameters
     if refine_cdes:
         kwargs["refine_cdes"] = True
+    # --- the staged boundary, expressed in CORE's vocabulary (see _GATE_STOP_MECHANISM) ---
+    classify_stage = stages.get("classify")
+    if stop_at_gate == "gate1":
+        # Withhold `classify`: the shipped early return, which after 08-04's reorder fires once
+        # generate(ideal), split and the judge have run. This is where Gate 1 sits.
+        classify_stage = None
+    elif stop_at_gate == "gate2":
+        if "stop_after" not in inspect.signature(harmonize_leanb).parameters:
+            # NOT signature-guarded into a silent skip, unlike gencde_specgen / refine_cdes below. Those
+            # are optional enhancements a run can do without; a BOUNDARY is not. Degrading here would run
+            # the whole pipeline — and charge for it — past the point the reviewer asked to stop at.
+            raise ValueError(
+                "the pinned ddharmon core has no `stop_after` parameter, so the Gate 2 boundary cannot be "
+                "honoured; upgrade core rather than running past the boundary"
+            )
+        kwargs["stop_after"] = "gencde"
+
     progress("clustering", 0, 0)  # clustering + retrieval happen inside harmonize_leanb before the first callback
     result = harmonize_leanb(
         embedded,
         generate=stages.get("generate"),
         split=stages.get("split"),
-        classify=stages.get("classify"),
+        classify=classify_stage,
         gencde=stages.get("gencde") if gen_gencde else None,
         specgen=stages.get("specgen") if gen_specs else None,
         **({"refine": stages.get("refine")} if refine_cdes else {}),
@@ -881,6 +1066,7 @@ def run_pipeline(
         member_index=member_index,
         field_index=field_index,
         cost=cast(UICost, ledger.to_dict()),
+        gate_position=stop_at_gate,
     )
 
 

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from backend.artifacts import Artifact
     from backend.jobs import Job
 
-_SCHEMA_VERSION = 2  # 2: user_artifacts + the one-shot backfill out of the per-job artifact columns
+_SCHEMA_VERSION = 3  # 3: staged-review checkpoint columns (gate position, pointer, realized cost, version)
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -46,7 +46,17 @@ CREATE TABLE IF NOT EXISTS jobs (
     composites    TEXT,
     n_records     INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL,
-    updated_at    REAL NOT NULL
+    updated_at    REAL NOT NULL,
+    -- Staged review (08 D-01/D-02). A run parked at a gate has no worker; these four columns are how it
+    -- is found again. `gate_position` is the screen it is parked on; `checkpoint_ref` is a path RELATIVE
+    -- to the work root (an absolute path does not survive a redeploy that moves it) pointing at the
+    -- payload on the per-run work dir; `realized_cost` is what has actually been spent so far, persisted
+    -- so a rehydrated run cannot report zero; `result_version` is the token the progress stream carries
+    -- so the client knows WHEN to refetch the payload instead of being handed it twice a second.
+    gate_position  TEXT,
+    checkpoint_ref TEXT,
+    realized_cost  REAL NOT NULL DEFAULT 0,
+    result_version INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -78,21 +88,61 @@ _CREATE_ARTIFACT_INDEXES = (
 
 # Additive columns added after the table first shipped — ALTER-ed in on startup for DB files created by an
 # earlier version (CREATE TABLE IF NOT EXISTS won't add a column to an existing table). column -> SQL type.
-_ADDITIVE_COLUMNS = {"analysis_ideas": "TEXT", "failed_phase": "TEXT", "composites": "TEXT"}
+_ADDITIVE_COLUMNS = {
+    "analysis_ideas": "TEXT",
+    "failed_phase": "TEXT",
+    "composites": "TEXT",
+    "gate_position": "TEXT",
+    "checkpoint_ref": "TEXT",
+    "realized_cost": "REAL NOT NULL DEFAULT 0",
+    "result_version": "INTEGER NOT NULL DEFAULT 0",
+}
 
 # Columns hydrated for the runs LIST. Omits the heavy result/dict_specs blobs but KEEPS the small config
 # (the UI reads run_mode/demo from it), failed_phase (an error row's failing stage, for the report link),
 # and n_records (record count without loading the result payload).
 _SUMMARY_COLS = (
     "job_id, owner_subject, display_name, status, phase, completed, total, "
-    "error_message, failed_phase, config, decisions, n_records, created_at, updated_at"
+    "error_message, failed_phase, config, decisions, n_records, created_at, updated_at, "
+    # All four checkpoint columns are tiny scalars, so the runs LIST can say "Paused at Gate 1 · spent
+    # $2.14" without loading a result blob — which is the whole reason the payload is not in this row.
+    "gate_position, checkpoint_ref, realized_cost, result_version"
 )
 # A full read adds the heavy blobs (result + dict_specs + analysis_ideas) alongside the summary columns.
 _ALL_COLS = _SUMMARY_COLS.replace("config,", "config, result, dict_specs, analysis_ideas, composites,")
 
-# A run is durably terminal only when complete/error. Anything else on disk after a restart means the
-# worker thread died mid-run — recover_stale() reconciles those to error.
-_TERMINAL = ("complete", "error")
+# Durably terminal. MUST stay identical to ``backend.jobs.TERMINAL_STATES`` — asserted by
+# ``tests/test_checkpoint.py::test_the_two_terminal_definitions_agree``. It omitted ``cancelled`` until
+# 08-08, so a "keep" stop (the user finishing the in-flight stage to collect work they had already paid
+# for) was re-labelled ``error`` on the next restart, with a message telling them to re-run and pay again.
+_TERMINAL = ("complete", "error", "cancelled")
+
+# Statuses that imply a LIVE WORKER THREAD. `recover_stale` is an ALLOW-LIST over these, not a deny-list
+# over the terminal set, because "non-terminal" is not evidence that a worker died: a run parked at
+# ``awaiting_review`` has no worker BY CONSTRUCTION (08 D-01 makes a gate pause an exit, not a block).
+# The old blanket `WHERE status NOT IN (terminal)` therefore destroyed every paused run on every deploy
+# — T-08-40, the single most expensive defect in this phase.
+#
+# Held as a literal rather than imported from ``backend.engine.contract`` so this module stays free of the
+# engine; ``tests/test_checkpoint.py::test_the_live_worker_allowlist_covers_every_reported_phase`` asserts
+# it covers every phase the engine reports, which is the drift this literal would otherwise invite.
+# The two states the sweep must NEVER touch. Kept minimal and explicit, because this is the set whose
+# membership decides whether a user's paid work survives a deploy.
+_NEVER_RECOVERED = _TERMINAL + ("awaiting_review",)
+
+_LIVE_WORKER_STATUSES = (
+    "pending",
+    "loading",
+    "embedding",
+    "clustering",
+    "generating",
+    "splitting",
+    "assigning",
+    "gencde",
+    "specs",
+    "refine",
+    "prepared",
+)
 
 
 def _loads(text: str | None, default: Any) -> Any:
@@ -241,13 +291,18 @@ class JobDB:
             n_records,
             job.created_at,
             job.updated_at,
+            job.gate_position,
+            job.checkpoint_ref,
+            job.cost_so_far,
+            job.result_version,
         )
         with self._lock:
             self._conn.execute(
                 """INSERT INTO jobs (job_id, owner_subject, display_name, status, phase, completed, total,
                                      error_message, failed_phase, result, config, dict_specs, decisions,
-                                     analysis_ideas, composites, n_records, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                     analysis_ideas, composites, n_records, created_at, updated_at,
+                                     gate_position, checkpoint_ref, realized_cost, result_version)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(job_id) DO UPDATE SET
                        owner_subject=excluded.owner_subject,
                        display_name=excluded.display_name,
@@ -264,7 +319,11 @@ class JobDB:
                        analysis_ideas=excluded.analysis_ideas,
                        composites=excluded.composites,
                        n_records=excluded.n_records,
-                       updated_at=excluded.updated_at""",
+                       updated_at=excluded.updated_at,
+                       gate_position=excluded.gate_position,
+                       checkpoint_ref=excluded.checkpoint_ref,
+                       realized_cost=excluded.realized_cost,
+                       result_version=excluded.result_version""",
                 row,
             )
             self._conn.commit()
@@ -437,15 +496,38 @@ class JobDB:
         )
 
     def recover_stale(self) -> int:
-        """On startup, any non-terminal row is a run whose worker died on a prior restart → mark it error."""
+        """On startup, reconcile rows whose WORKER died on a prior restart → mark them error.
+
+        An ALLOW-LIST over :data:`_LIVE_WORKER_STATUSES`, deliberately not a deny-list over the terminal
+        set. The old blanket ``WHERE status NOT IN (terminal)`` treated "non-terminal" as "its worker
+        died", which is false for a run parked at ``awaiting_review``: a gate pause is an EXIT (08 D-01),
+        so a paused run has no worker to have died and the sweep destroyed it — on every deploy, silently,
+        after the user had paid for the stages it held (T-08-40).
+
+        Two clauses, each doing a different job:
+
+        1. **The allow-list.** A status naming a pipeline stage in flight positively implies a thread that
+           no longer exists. This is the set the sweep is FOR.
+        2. **The unknown-status catch-all.** A status this build does not recognise — written by an older
+           version, or by a stage since renamed — is not one of the two states we protect, and leaving it
+           alone strands the run forever in a state no UI can explain. An allow-list alone has exactly
+           that blind spot; the shipped ``jobs`` table already contains such a row in one test fixture.
+
+        What survives is therefore only what :data:`_NEVER_RECOVERED` names, which is the point: that set
+        is small, explicit, and is the one whose membership decides whether a user's paid work survives.
+        """
+        known = _LIVE_WORKER_STATUSES + _NEVER_RECOVERED
+        live = ",".join("?" for _ in _LIVE_WORKER_STATUSES)
+        allknown = ",".join("?" for _ in known)
         with self._lock:
             cur = self._conn.execute(
-                """UPDATE jobs
+                f"""UPDATE jobs
                    SET status='error', phase='error',
                        error_message='Run interrupted by a server restart. Please re-run.',
                        updated_at=?
-                   WHERE status NOT IN (?, ?)""",
-                (time.time(), *_TERMINAL),
+                   WHERE status IN ({live})
+                      OR status NOT IN ({allknown})""",
+                (time.time(), *_LIVE_WORKER_STATUSES, *known),
             )
             self._conn.commit()
             return cur.rowcount
@@ -468,6 +550,13 @@ class JobDB:
             "n_records": row["n_records"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            # Guarded like failed_phase: a row read through a legacy SELECT (or a DB opened before the
+            # ALTER ran) has no such column, and `"x" in row.keys()` is the only correct membership test
+            # here — `"x" in row` on a sqlite3.Row tests its VALUES.
+            "gate_position": row["gate_position"] if "gate_position" in keys else None,
+            "checkpoint_ref": row["checkpoint_ref"] if "checkpoint_ref" in keys else None,
+            "realized_cost": (row["realized_cost"] or 0.0) if "realized_cost" in keys else 0.0,
+            "result_version": (row["result_version"] or 0) if "result_version" in keys else 0,
         }
         if full and "result" in keys:
             d["result"] = _loads(row["result"], None)

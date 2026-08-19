@@ -41,7 +41,7 @@ from backend.checkpoint import (
     read_checkpoint,
     write_checkpoint,
 )
-from backend.db import _LIVE_WORKER_STATUSES, _TERMINAL, JobDB
+from backend.db import _LIVE_WORKER_STATUSES, _NEVER_RECOVERED, _TERMINAL, JobDB
 from backend.engine.contract import PHASES_PREVIEW, PHASES_RUN
 from backend.jobs import AWAITING_REVIEW, FIRST_GATE, TERMINAL_STATES, Job, JobStore
 
@@ -121,6 +121,24 @@ def test_recover_stale_still_errors_a_row_whose_worker_really_died(tmp_path):
     db2.close()
 
 
+def test_recover_stale_also_reconciles_a_status_this_build_does_not_recognise(tmp_path):
+    """The allow-list's own blind spot, closed by the second clause.
+
+    A row written by an older build (or by a stage since renamed) names a status the allow-list has never
+    heard of. Recovering only the recognised set would strand it forever in a state no UI can explain —
+    the mirror image of T-08-40, and just as invisible.
+    """
+    dbp = tmp_path / "jobs.db"
+    db1 = JobDB(dbp)
+    db1.upsert(Job(job_id="legacy", display_name="Old build", status="running", phase="running"))
+    db1.close()
+
+    db2 = JobDB(dbp)
+    assert db2.recover_stale() == 1
+    assert db2.get("legacy")["status"] == "error"
+    db2.close()
+
+
 def test_the_live_worker_allowlist_covers_every_reported_phase():
     """A new pipeline phase must not silently fall OUT of the sweep's allow-list and become unrecoverable.
 
@@ -135,6 +153,9 @@ def test_the_live_worker_allowlist_covers_every_reported_phase():
     # And the mirror: nothing terminal, and nothing checkpointed, may be in the allow-list.
     assert not set(_LIVE_WORKER_STATUSES) & set(TERMINAL_STATES)
     assert AWAITING_REVIEW not in _LIVE_WORKER_STATUSES
+    # The two sets the sweep reasons over are disjoint, so no status can be both protected and swept.
+    assert not set(_LIVE_WORKER_STATUSES) & set(_NEVER_RECOVERED)
+    assert set(_NEVER_RECOVERED) == set(TERMINAL_STATES) | {AWAITING_REVIEW}
 
 
 def test_the_two_terminal_definitions_agree():
@@ -440,9 +461,7 @@ def test_a_run_that_reaches_gate_1_pauses_with_its_concept_groups(tmp_path, _one
     assert not result.get("previewClusters")
 
 
-def test_resume_after_a_simulated_kill_preserves_the_paid_stage_and_issues_no_new_paid_call(
-    tmp_path, _one_cluster
-):
+def test_resume_after_a_simulated_kill_preserves_the_paid_stage_and_issues_no_new_paid_call(tmp_path, _one_cluster):
     """MUST NOT discard completed paid stage output on failure, restart or redeploy.
 
     Leg 1 reaches Gate 1 and is checkpointed. The process is then "killed" (a brand-new store on the same
@@ -468,9 +487,7 @@ def test_resume_after_a_simulated_kill_preserves_the_paid_stage_and_issues_no_ne
         return {
             "generate": _count("generate", lambda recs: {r.id: {"ideal_cde": "Smoking status"} for r in recs}),
             "split": _count("split", lambda recs: {}),
-            "classify": _count(
-                "classify", lambda recs: {r.id: {"verdict": "adopt", "cde_id": "1"} for r in recs}
-            ),
+            "classify": _count("classify", lambda recs: {r.id: {"verdict": "adopt", "cde_id": "1"} for r in recs}),
             "gencde": _count("gencde", lambda recs: {}),
             "specgen": _count("specgen", lambda recs: {}),
         }
@@ -581,6 +598,9 @@ def test_the_result_endpoint_rehydrates_a_paused_run_from_its_checkpoint(monkeyp
     """The reviewer closed the browser. Reopening must show the SAME groups, read off disk, not re-run."""
     monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    # The checkpoint pointer is written RELATIVE to the store's work root and resolved against the same
+    # attribute, so a test that moves one and not the other is testing a mismatch it created itself.
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
     with TestClient(app_module.app) as c:
         app_module.store.create("p", "Paused", {}, owner_subject=None)
         groups = [{"groupId": "0:0", "clusterId": "0", "concept": "Smoking status", "nMembers": 2}]
@@ -592,9 +612,7 @@ def test_the_result_endpoint_rehydrates_a_paused_run_from_its_checkpoint(monkeyp
             responses={},
             realized_cost=2.14,
         )
-        app_module.store.checkpoint(
-            "p", gate="gate1", checkpoint_ref="p/checkpoint_gate1.json", realized_cost=2.14
-        )
+        app_module.store.checkpoint("p", gate="gate1", checkpoint_ref="p/checkpoint_gate1.json", realized_cost=2.14)
 
         body = c.get("/api/harmonize/result/p").json()
         assert body["status"] == AWAITING_REVIEW
@@ -609,6 +627,9 @@ def test_a_foreign_paused_run_is_404_not_403(monkeypatch, tmp_path):
 
     monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    # The checkpoint pointer is written RELATIVE to the store's work root and resolved against the same
+    # attribute, so a test that moves one and not the other is testing a mismatch it created itself.
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
     monkeypatch.setattr(auth, "_decode_claims", _decode_by_token)
     with TestClient(app_module.app) as c:
@@ -627,6 +648,9 @@ def test_a_guest_can_read_a_demo_runs_gate_state_without_signing_in(monkeypatch,
 
     monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    # The checkpoint pointer is written RELATIVE to the store's work root and resolved against the same
+    # attribute, so a test that moves one and not the other is testing a mismatch it created itself.
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
     monkeypatch.setattr(auth, "_decode_claims", _decode_by_token)
     with TestClient(app_module.app) as c:
@@ -639,9 +663,7 @@ def test_a_guest_can_read_a_demo_runs_gate_state_without_signing_in(monkeypatch,
             responses={},
             realized_cost=0.0,
         )
-        app_module.store.checkpoint(
-            "dg", gate="gate1", checkpoint_ref="dg/checkpoint_gate1.json", realized_cost=0.0
-        )
+        app_module.store.checkpoint("dg", gate="gate1", checkpoint_ref="dg/checkpoint_gate1.json", realized_cost=0.0)
 
         assert c.get("/api/harmonize/checkpoint/dg").status_code == 200
         assert c.get("/api/harmonize/result/dg").status_code == 200
@@ -656,11 +678,7 @@ def test_the_stream_frame_is_the_thin_progress_dict(monkeypatch, tmp_path):
         app_module.store.create("s", "S", {"demo": True})
         app_module.store.update("s", status="complete", phase="complete", result={"records": [{"id": "r"}]})
         with c.stream("GET", "/api/harmonize/stream/s") as resp:
-            frame = next(
-                json.loads(line[len("data: ") :])
-                for line in resp.iter_lines()
-                if line.startswith("data: ")
-            )
+            frame = next(json.loads(line[len("data: ") :]) for line in resp.iter_lines() if line.startswith("data: "))
     assert "result" not in frame
     assert "decisions" not in frame
     assert frame["resultVersion"] >= 1

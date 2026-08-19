@@ -21,6 +21,29 @@ from typing import Any
 # terminal state distinct from ``error`` (a user stopped the run) and ``complete`` — a cancelled run is
 # re-runnable from its retained uploads, exactly like an errored one.
 TERMINAL_STATES = {"complete", "error", "cancelled"}
+
+#: A run parked at a review gate. NON-terminal — the run is not finished and will continue when the
+#: reviewer presses Continue — but it has NO WORKER THREAD: 08 D-01 makes a gate pause an *exit*, not a
+#: block, precisely so a run can wait days for a human without holding a thread or its embeddings.
+#:
+#: That combination is what every naive predicate in this backend got wrong. "Non-terminal" does not imply
+#: a live worker (``JobDB.recover_stale``), and "terminal" is not the only reason to persist a row (see
+#: :data:`PERSISTED_STATES` and ``JobStore.update``).
+AWAITING_REVIEW = "awaiting_review"
+
+#: Non-terminal statuses that are nonetheless DURABLE. A checkpoint transition must reach SQLite: the
+#: whole point is that the reviewer can come back after a redeploy, and a state that lives only in the
+#: in-memory store is exactly the state a redeploy destroys.
+CHECKPOINT_STATES = frozenset({AWAITING_REVIEW})
+
+#: Statuses that write through to the durable store. Progress ticks still do not (they live in memory and
+#: the SSE endpoint reads them there) — only a transition whose loss would cost the user money.
+PERSISTED_STATES = frozenset(TERMINAL_STATES) | CHECKPOINT_STATES
+
+#: The first screen of the staged flow. "Resuming a run with no decisions resumes at the first gate"
+#: (UI-SPEC §8.2) means the first UNCOMMITTED gate — see :meth:`Job.resume_gate`.
+FIRST_GATE = "setup"
+
 _TTL_SECONDS = 3600
 
 # Runs the TTL purge must never evict: the prepopulated demo (``demo``) and any pinned/sample run. These
@@ -99,9 +122,27 @@ class Job:
     # (a DB-hydrated historical run starts empty here, so the UI falls back to total elapsed for old runs).
     phase_timings: dict[str, float] = field(default_factory=dict)
     # Realized cost-so-far in USD, streamed for the live "spent so far" counter — each LLM stage updates it as
-    # it prices its captured token usage (see the adapter's cost ledger). LIVE only (like phase_timings): not
-    # persisted, so a DB-hydrated historical run starts 0 and the UI reads the final cost from result["cost"].
+    # it prices its captured token usage (see the adapter's cost ledger). PERSISTED as of 08-08 (the
+    # `realized_cost` column): a run paused at a gate is resumed by a human hours later, and reporting zero
+    # spend to someone who has already been billed for ideal + split + the judge is a cost-transparency
+    # defect under R8/R14, not cosmetics (T-08-44). A pre-08-08 historical row still reads 0 and the UI
+    # falls back to result["cost"] there.
     cost_so_far: float = 0.0
+    # --- staged review (08 D-01/D-02) ---
+    # The screen this run is parked on ("setup".."gate4"), or None for a run that never entered the staged
+    # flow. Persisted; it is what a returning reviewer is routed to.
+    gate_position: str | None = None
+    # Pointer to the checkpoint payload, RELATIVE to the JobStore's work root (e.g.
+    # "<job_id>/checkpoint_gate1.json"). Relative because an absolute path does not survive a redeploy
+    # that moves the work root, and "the file is where the new container cannot see it" is
+    # indistinguishable from "your paid output is gone". The payload itself is NEVER in this row — the row
+    # is rewritten whole on every write (see backend/checkpoint.py).
+    checkpoint_ref: str | None = None
+    # Monotonic token for "the result payload changed". The progress frame carries it and the client
+    # refetches the (already auth-scoped) result endpoint when it MOVES — which is what lets the 2 Hz frame
+    # stop carrying a multi-megabyte result (D-03 / T-08-38). Deliberately NOT derived from `updated_at`:
+    # that moves on every progress tick and would turn one refetch into a refetch storm.
+    result_version: int = 0
     # Cooperative-cancellation mode, set by ``JobStore.request_cancel`` when the user hits Stop:
     #   "discard" — abort ASAP (the runner's progress checkpoint raises), keep NO partial result.
     #   "keep"    — finish the in-flight stage (deliver work already paid for), then skip the remaining stages;
@@ -132,6 +173,12 @@ class Job:
             created_at=d["created_at"],
             updated_at=d["updated_at"],
             n_records=d.get("n_records", 0),
+            gate_position=d.get("gate_position"),
+            checkpoint_ref=d.get("checkpoint_ref"),
+            # The persisted realized spend rehydrates INTO the live field, so every reader (to_dict,
+            # progress_dict, the run view) sees one number and cannot disagree with itself about it.
+            cost_so_far=float(d.get("realized_cost") or 0.0),
+            result_version=int(d.get("result_version") or 0),
         )
 
     def to_dict(self, artifacts: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -174,9 +221,55 @@ class Job:
             "composites": composites,
             "phaseStartedAt": self.phase_timings,
             "costSoFar": self.cost_so_far,
+            "gatePosition": self.gate_position,
+            "resultVersion": self.result_version,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
+
+    def progress_dict(self) -> dict[str, Any]:
+        """The 2 Hz SSE frame: live fields plus a version token, and NOTHING that could grow (D-03).
+
+        Built POSITIVELY — every key enumerated here — rather than by popping fields off :meth:`to_dict`.
+        That direction matters. The shipped stream yielded the whole job twice a second, ``result``
+        included, which was free ONLY because ``result`` stayed ``None`` until the run went terminal.
+        Checkpointing breaks that assumption: a paused Gate 2 run has a multi-megabyte partial result, and
+        a subtractive frame would have shipped it 120 times a minute to every open tab (T-08-38). A
+        subtractive frame also silently re-admits the next heavy field somebody adds to ``to_dict``; an
+        additive one cannot.
+
+        The payload itself is fetched from ``/api/harmonize/result/{job_id}`` — already owner-scoped and
+        demo-scoped — when ``resultVersion`` changes. There is deliberately no owner-scoping parameter
+        here, because there is nothing owner-specific left in the frame: no result, no decisions, no
+        analysis ideas, no composites, not even ``config``.
+        """
+        return {
+            "jobId": self.job_id,
+            "displayName": self.display_name,
+            "status": self.status,
+            "phase": self.phase,
+            "stopping": self.cancel_mode is not None and self.status not in TERMINAL_STATES,
+            "completed": self.completed,
+            "total": self.total,
+            "errorMessage": self.error_message,
+            "failedPhase": self.failed_phase,
+            "phaseStartedAt": self.phase_timings,
+            "costSoFar": self.cost_so_far,
+            "gatePosition": self.gate_position,
+            "resultVersion": self.result_version,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        }
+
+    def resume_gate(self) -> str:
+        """Where a returning reviewer lands.
+
+        UI-SPEC §8.2: *"resuming a run with no decisions resumes at the first gate"*. "First gate" is the
+        first **uncommitted** gate — this run's own checkpoint when it has one, and :data:`FIRST_GATE`
+        when it has reached none. Read as "always Setup" it would contradict R7 (resume where you left
+        off) and the truth that closing the browser at Gate 1 returns you to Gate 1.
+        """
+        return self.gate_position or FIRST_GATE
 
     def summary_dict(self, artifacts: dict[str, Any] | None = None) -> dict[str, Any]:
         """Lightweight view for the jobs list (omits the heavy result + analysis-ideas payloads)."""
@@ -331,10 +424,51 @@ class JobStore:
             new_phase = fields.get("phase")
             if new_phase:
                 job.phase_timings.setdefault(new_phase, time.time())
+            # A write that CHANGES THE PAYLOAD moves the version token, so the client refetches the result
+            # exactly then. A plain progress tick must not — a token derived from `updated_at` would move
+            # twice a second and turn one refetch into a storm (D-03).
+            if "result" in fields:
+                job.result_version += 1
             job.updated_at = time.time()
-            persist = job.status in TERMINAL_STATES  # mirror only on terminal transitions, not every tick
+            # Mirror on any PERSISTED state, not only a terminal one: a checkpoint transition is the whole
+            # reason this phase exists, and a checkpoint that lives only in memory is exactly what a
+            # redeploy destroys. Progress ticks are still memory-only.
+            persist = job.status in PERSISTED_STATES
         if persist:
             self._persist(job)
+
+    def checkpoint(
+        self,
+        job_id: str,
+        *,
+        gate: str,
+        checkpoint_ref: str,
+        realized_cost: float | None = None,
+    ) -> bool:
+        """Park a run at a review gate: ``awaiting_review``, a gate position, a pointer, a bumped token.
+
+        The payload is NOT passed here and never touches the jobs row (D-02) — the caller has already
+        written it to the per-run work dir via :mod:`backend.checkpoint`, and ``checkpoint_ref`` is the
+        pointer to it, relative to :attr:`work_root`.
+
+        Returns False for an unknown run. Idempotent: re-checkpointing the same gate is safe and simply
+        moves the token again, which costs one refetch and no money.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            job.status = AWAITING_REVIEW
+            job.phase = AWAITING_REVIEW
+            job.gate_position = gate
+            job.checkpoint_ref = checkpoint_ref
+            if realized_cost is not None:
+                job.cost_so_far = float(realized_cost)
+            job.result_version += 1
+            job.phase_timings.setdefault(AWAITING_REVIEW, time.time())
+            job.updated_at = time.time()
+        self._persist(job)
+        return True
 
     def request_cancel(self, job_id: str, mode: str = "discard") -> bool:
         """Flag a live, in-flight run to stop. ``mode`` is "keep" (finish the current stage, keep its partial
@@ -590,17 +724,24 @@ class JobStore:
         run (the original WS-3 guarantee).
         """
         cutoff = time.time() - self._ttl
+        # A run parked at a gate is evicted from MEMORY too (T-08-39: otherwise it holds its embeddings in
+        # RAM for as long as the human review takes, which is days by design), but ONLY when there is a
+        # durable row to rehydrate it from — and its row and work dir are always kept, because the work
+        # dir IS the checkpoint. Without a `db` there is nothing to come back to, so a paused run stays.
+        evictable = set(TERMINAL_STATES) | (CHECKPOINT_STATES if self.db is not None else frozenset())
         with self._lock:
             stale = [
                 jid
                 for jid, j in self._jobs.items()
-                if j.updated_at < cutoff and j.status in TERMINAL_STATES and not _is_pinned(j)
+                if j.updated_at < cutoff and j.status in evictable and not _is_pinned(j)
             ]
+            paused = {jid for jid in stale if self._jobs[jid].status in CHECKPOINT_STATES}
             for jid in stale:
                 self._jobs.pop(jid, None)
         if self.db is None:  # legacy: no durable copy -> uploads must not outlive the run
             for jid in stale:
-                self._teardown_work_dir(jid)
+                if jid not in paused:  # never tear down the dir a paused run resumes FROM
+                    self._teardown_work_dir(jid)
 
 
 # Module-level singleton used by the app.
