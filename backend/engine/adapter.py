@@ -41,6 +41,7 @@ from backend.engine.contract import (
     PHASES_PREVIEW,
     PHASES_RUN,
     AtlasPoint,
+    CoherenceState,
     FieldDetail,
     PreviewCluster,
     ResponseOptionUI,
@@ -54,6 +55,7 @@ from backend.engine.contract import (
     UISummary,
     UITransform,
     UnassignedField,
+    coherence_state,
     empty_cost,
     empty_summary,
 )
@@ -412,7 +414,24 @@ def _preview_clusters(leanb_result: Any, cap: int = _PREVIEW_MEMBER_CAP) -> list
     return out
 
 
-def _concept_groups_to_ui(leanb_result: Any) -> list[UIConceptGroup]:
+#: Members carried on a COLLAPSED Gate 1 group row. The true count travels beside it (``nMembers``) and
+#: the uncapped membership travels in ``UIResult.conceptGroupMembers``, so nothing has to guess.
+_GROUP_MEMBER_CAP = 25
+
+
+def _coherence_cell(obj: Any) -> CoherenceState:
+    """The four-state coherence cell for one group or record.
+
+    Derived from core's ``coherence_verdict`` ONLY. Core's ``coherent`` boolean is deliberately not read:
+    it defaults to ``True`` and the judge skips groups under its member floor, so a group nobody asked
+    about is indistinguishable from a group the judge blessed — and the boolean is the attribute that
+    makes them indistinguishable. Everything that is not one of the judge's three verdicts (never asked,
+    no usable response, a runner that raised) becomes ``not_judged``.
+    """
+    return coherence_state(getattr(obj, "coherence_verdict", ""))
+
+
+def _concept_groups_to_ui(leanb_result: Any, cap: int = _GROUP_MEMBER_CAP) -> list[UIConceptGroup]:
     """Map core's post-split ``ConceptGroup``s onto the contract — the rows Gate 1 renders (UI-SPEC §0.1).
 
     Read off ``LeanBResult.concept_groups``, which 08-04 added and which the ``classify=None`` early
@@ -420,29 +439,81 @@ def _concept_groups_to_ui(leanb_result: Any) -> list[UIConceptGroup]:
     versions, and a core pinned before that change must yield an empty list here, not an AttributeError
     that unwinds a run whose paid stages have already completed.
 
-    Sorted biggest-first (deterministic per R4, and the biggest groups are the ones worth eyeballing).
-    Nothing assign produced is copied: no verdict, no route, no CDE, no candidates. This is the shape
-    BEFORE any of those exist, and filling them with defaults is how "not computed" starts reading as
-    "computed and empty".
+    Deterministic order: ``(-nMembers, clusterId, groupId)``. The size term is what a reviewer wants
+    first; the two id terms are what make it STABLE, because a pure size sort leaves equal-sized groups in
+    whatever order the prompts happened to come back in, and "the list reordered itself between two looks
+    at the same paused run" is indistinguishable from the run having changed.
+
+    Members are capped to ``cap`` for the collapsed row; ``nMembers`` stays the TRUE count and
+    ``membersTruncated`` says which it is. Nothing assign produced is copied: no verdict, no route, no
+    CDE, no candidates. This is the shape BEFORE any of those exist, and filling them with defaults is how
+    "not computed" starts reading as "computed and empty".
     """
     out: list[UIConceptGroup] = []
     for g in getattr(leanb_result, "concept_groups", []) or []:
         top1 = getattr(g, "top1_cos", None)
+        members = list(getattr(g, "member_variable_names", []) or [])
+        n_members = int(getattr(g, "n_members", 0) or 0) or len(members)
         out.append(
             {
                 "groupId": getattr(g, "group_id", "") or "",
                 "clusterId": getattr(g, "cluster_id", "") or "",
                 "concept": getattr(g, "concept", "") or "",
+                # A ConceptGroup's name is what generate(ideal) authored. Stated positively on every row.
+                "conceptIsGenerated": True,
                 "idealCde": getattr(g, "ideal_cde", "") or "",
-                "nMembers": int(getattr(g, "n_members", 0) or 0),
+                "nMembers": n_members,
                 "cohorts": list(getattr(g, "cohorts", []) or []),
                 "crossCohort": bool(getattr(g, "cross_cohort", False)),
                 "top1Cos": float(top1) if top1 is not None else None,
-                "memberVariableNames": list(getattr(g, "member_variable_names", []) or []),
+                "memberVariableNames": members[:cap],
+                "membersTruncated": len(members) > cap,
+                # The judge's verdicts, stamped pre-assign by 08-04's verdict pass. A group the judge was
+                # never asked about lands on `not_judged` — never on the clean state.
+                "coherence": _coherence_cell(g),
+                "coherenceSummary": str(getattr(g, "coherence_summary", "") or ""),
+                "coherenceAxis": str(getattr(g, "coherence_axis", "") or ""),
+                "coherenceDistinctValues": list(getattr(g, "coherence_distinct_values", []) or []),
+                "coherenceOutliers": list(getattr(g, "coherence_outliers", []) or []),
+                "incoherent": bool(getattr(g, "incoherent", False)),
+                "matrixSuspect": bool(getattr(g, "matrix_suspect", False)),
             }
         )
     out.sort(key=lambda g: (-g["nMembers"], g["clusterId"], g["groupId"]))
     return out
+
+
+def _concept_group_members(leanb_result: Any) -> dict[str, list[str]]:
+    """The UNCAPPED membership per group id — what an expanded Gate 1 row reads.
+
+    A sibling lookup rather than a second endpoint, and for a concrete reason: a paused run's state is
+    persisted as this contract, not as core objects, so an expansion path that needed a ``LeanBResult``
+    would be unimplementable the moment the reviewer closed the browser. ``fieldIndex`` is uncapped in
+    this contract for the same reason.
+    """
+    out: dict[str, list[str]] = {}
+    for g in getattr(leanb_result, "concept_groups", []) or []:
+        gid = (getattr(g, "group_id", "") or "") or (getattr(g, "cluster_id", "") or "")
+        if gid:
+            out[gid] = list(getattr(g, "member_variable_names", []) or [])
+    return out
+
+
+def expand_concept_group(result: UIResult, group_id: str) -> list[str]:
+    """The expanded row's members for one group — the FULL membership, never the collapsed sample.
+
+    A regroup verb (drag a variable out of one group into another) writes back the membership it was
+    shown. Given a 25-of-40 sample it would silently drop 15 members, so the expanded read is a backend
+    shape requirement rather than a UI nicety.
+    """
+    full = (result.get("conceptGroupMembers") or {}).get(group_id)
+    if full is not None:
+        return list(full)
+    for g in result.get("conceptGroups") or []:
+        if g["groupId"] == group_id:
+            # No uncapped map (a pre-v5 payload): return what there is, and only when it IS everything.
+            return [] if g["membersTruncated"] else list(g["memberVariableNames"])
+    return []
 
 
 def build_ui_result(
@@ -493,6 +564,8 @@ def build_ui_result(
         # one-shot run passed THROUGH the Gate 1 boundary, so its groups are a real artifact of it and
         # withholding them would make the same run answer differently depending on how it was launched.
         "conceptGroups": _concept_groups_to_ui(leanb_result),
+        # The uncapped membership behind the collapsed rows above (the expanded row's source).
+        "conceptGroupMembers": _concept_group_members(leanb_result),
     }
     if gate_position is not None:
         result["gatePosition"] = cast(Any, gate_position)

@@ -13,15 +13,55 @@ pyright still checks the shape.
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, TypedDict
+from collections.abc import Iterable
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 # Bump (and handle additively) only when a genuinely new output concept appears — a new verdict class,
 # row-level data, a new artifact kind. Field renames/reshapes do NOT bump this; they stay in the adapter.
-CONTRACT_VERSION = "5"  # v5: staged-review gates — UIResult.conceptGroups + gatePosition + resultVersion
+CONTRACT_VERSION = "5"  # v5: staged-review gates — conceptGroups / gatePosition / resultVersion (08-08),
+#                         plus the triage signals, the four-state coherence cell, the two-kind
+#                         not-computed register and the preparation report (08-09). Every one of them
+#                         additive: `NotRequired` on an existing shape, or a brand-new TypedDict for a
+#                         genuinely new output concept. Nothing renamed, nothing reshaped.
 
 RunMode = Literal["batch", "sync", "preview"]
 Verdict = Literal["adopt", "refine", "novel", "unclassified"]
 Route = Literal["assigned", "gencde_residual"]
+#: The coherence judge's state for one concept group — a CLOSED four-value cell, and the load-bearing
+#: invariant of the whole triage surface.
+#:
+#: Three of the four are the judge's own verdicts. The fourth, ``not_judged``, is what makes the cell
+#: honest, and it is emphatically NOT a boolean's ``False``: core's record defaults ``coherent`` to
+#: ``True`` and ``prepare_coherence`` builds no prompt at all for a group under its member floor, so a
+#: group nobody ever asked about arrives from core looking exactly like a group the judge blessed. Put
+#: that on the wire as a boolean and every unjudged row reads as a pass — SPEC prohibition #1, T-08-46.
+#:
+#: A judge error and a judge timeout land here too (see the adapter's resilient-stage wrapper): the
+#: runner returns nothing, so no verdict is stamped and the state stays ``not_judged``. "We could not
+#: tell" is a different claim from "it is fine", and only one of them is true.
+CoherenceState = Literal["single", "qualify", "split", "not_judged"]
+COHERENCE_STATES: tuple[str, ...] = ("single", "qualify", "split", "not_judged")
+COHERENCE_NOT_JUDGED = "not_judged"
+#: Core's three verdict strings — the ONLY inputs that may leave ``not_judged``.
+_JUDGE_VERDICTS = frozenset({"single", "qualify", "split"})
+
+
+def coherence_state(core_verdict: object) -> CoherenceState:
+    """Map core's ``coherence_verdict`` onto the closed four-state cell.
+
+    Deliberately a whitelist, not a fallback chain: anything that is not one of the judge's own three
+    verdicts — ``""`` (never asked, or no usable response), ``None``, whitespace, a hallucinated word,
+    a boolean that leaked in — becomes ``not_judged``. The inverse function (default to the clean state,
+    special-case the bad values) has the same shape and the opposite failure mode, and its failure mode
+    is a reviewer signing off on a group nothing ever looked at.
+
+    Never reads core's ``coherent`` boolean. That attribute cannot distinguish "judged coherent" from
+    "not judged", so consulting it at all would reintroduce the defect this function exists to remove.
+    """
+    verdict = core_verdict if isinstance(core_verdict, str) else ""
+    return cast(CoherenceState, verdict.strip() if verdict.strip() in _JUDGE_VERDICTS else COHERENCE_NOT_JUDGED)
+
+
 #: The six staged-review screens, in order — a CLOSED literal like the three above it, so a typo cannot
 #: name a boundary that does not exist. The set is fixed by UI-SPEC §0.1's gate↔boundary table; the *stop
 #: mechanism* per gate lives in the adapter, not here (Setup and Gate 0 need no pipeline call at all,
@@ -172,6 +212,15 @@ class UIGenCDE(TypedDict, total=False):
     """
 
     # always present
+    #: TRUE, always, on every element of this shape. A generated element is authored by ddharmon and this
+    #: is the wire's explicit statement of that (T-08-47). It is a positive marker rather than "the
+    #: absence of a catalog id" because an absence is not a claim: a consumer that forgot to check would
+    #: render a synthesized element in the same chrome as a published NIH one, and the reviewer would
+    #: have no way to tell. Deliberately NOT paired with any catalog identity of its own — no tinyId, no
+    #: endorsement, no registry status — see ``tests/test_contract_completeness.py::test_gencde_labelled``.
+    #: The one external identifier this shape may carry is ``parentCdeExternalId``, namespaced so it can
+    #: only ever be read as the PARENT's.
+    isGenerated: bool
     gencdeId: str
     preferredName: str
     title: str
@@ -233,6 +282,166 @@ class UIRecord(TypedDict):
     candidates: list[UICandidate]  # ranked CDE candidates the assign stage saw (best-first)
     rationale: str
     decidedBy: str  # llm | deterministic
+    # ── v5 additive: the TRIAGE SIGNALS (all `NotRequired`, following the `previewClusters` template) ──
+    #
+    # Twelve of these returned zero occurrences on every shipped artifact before this version, for two
+    # different reasons: three were computed and simply never mapped, and the rest belonged to stages the
+    # product never injected. Both halves are closed here (see the adapter). They are `NotRequired` so a
+    # hand-built record (a fixture, a canned test payload) stays valid — but the adapter emits every one
+    # of them on every record, so an absent key means "this payload predates v5", never "clean".
+    #
+    #: The closed four-state coherence cell. NEVER a boolean — see :data:`CoherenceState`.
+    coherence: NotRequired[CoherenceState]
+    coherenceSummary: NotRequired[str]  # the judge's one-sentence theme of the group's core
+    coherenceAxis: NotRequired[str]  # qualify/split: the slot that varied ("condition", "body site")
+    coherenceDistinctValues: NotRequired[list[str]]  # the distinct fillers the judge found on that axis
+    coherenceOutliers: NotRequired[list[str]]  # periphery members judged off-theme ("cohort:var")
+    coherenceKind: NotRequired[str]  # R2 discriminator: "" | values_of_one_property | distinct_kinds
+    incoherent: NotRequired[bool]  # the HARD flag -> needs_review. FLAG, never a gate: nothing auto-splits
+    matrixSuspect: NotRequired[bool]  # the $0 deterministic frequent-template/rare-slot pre-filter
+    #: M3: the group's coded edges are mostly unmappable, so the match is over-broad. NOT `coverageGap`,
+    #: which is the unrelated novel-below-tau retrieval diagnostic one letter away from it.
+    coherenceGap: NotRequired[bool]
+    adoptDemoted: NotRequired[bool]  # M5's adopt_floor demoted a weak-support adopt -> refine
+    #: M7's concept-match gate: right values, wrong concept. OPT-IN (``concept_gate``) and off by default,
+    #: so on a normal run this key is absent and the not-computed register says so, PER-RUN.
+    conceptMismatch: NotRequired[bool]
+    #: This record is a re-adjudication child; the value is the parent group id it was carved out of.
+    #: Only ever populated by a caller-invoked re-adjudication — nothing in the pipeline re-splits on its
+    #: own, so on a normal run this is absent and the register records it PER-RUN.
+    readjudicatedFrom: NotRequired[str]
+
+
+#: Core ``LeanBRecord`` signal attribute -> where the wire carries it. The completeness gate
+#: (``tests/test_contract_completeness.py``) resolves every core signal through this map or through the
+#: not-computed register, and fails naming any signal that resolves through neither.
+#:
+#: ``ranking`` is the interesting entry: core carries it as an orphan list of candidate INDICES, and the
+#: wire already delivers it MATERIALISED as ``UICandidate.rank`` + ``llmSuggested``. Adding a literal
+#: ``ranking`` field would duplicate data already on the wire in a worse shape, so the map records where
+#: it actually lives instead of demanding a same-named field.
+TRIAGE_SIGNAL_FIELDS: dict[str, str] = {
+    "coverage_gap": "UIRecord.coverageGap",
+    "floored": "UIRecord.floored",
+    "adopt_demoted": "UIRecord.adoptDemoted",
+    "coherence_gap": "UIRecord.coherenceGap",
+    "matrix_suspect": "UIRecord.matrixSuspect",
+    # Both of core's coherence-state attributes fold into ONE wire cell, on purpose: `coherent` alone
+    # cannot express "not judged", so the contract derives the state from the verdict and drops the
+    # boolean rather than shipping two fields that can disagree.
+    "coherent": "UIRecord.coherence (folded into the four-state cell; the boolean is never read)",
+    "coherence_verdict": "UIRecord.coherence",
+    "coherence_summary": "UIRecord.coherenceSummary",
+    "coherence_axis": "UIRecord.coherenceAxis",
+    "coherence_distinct_values": "UIRecord.coherenceDistinctValues",
+    "coherence_outliers": "UIRecord.coherenceOutliers",
+    "coherence_kind": "UIRecord.coherenceKind",
+    "incoherent": "UIRecord.incoherent",
+    "ranking": "UIRecord.candidates[].rank + .llmSuggested (materialised, not duplicated)",
+    "concept_mismatch": "UIRecord.conceptMismatch",
+    "readjudicated_from": "UIRecord.readjudicatedFrom",
+}
+
+#: Why a signal carries no value. TWO KINDS, because two different claims are being made and a reviewer
+#: acts differently on each:
+#:
+#: * ``permanent`` — no stage in the product path produces this at all. Nothing to enable; the product
+#:   does not have the capability.
+#: * ``per_run`` — the stage exists and is wired, but it is opt-in and THIS run did not enable it. The
+#:   reviewer can act: turn the option on and re-run.
+#:
+#: Collapsing them costs in both directions. Calling an opt-in permanent understates the product; calling
+#: a permanent gap per-run sends someone hunting for a switch that does not exist (T-08-55).
+NotComputedKind = Literal["permanent", "per_run"]
+
+
+class NotComputedEntry(TypedDict):
+    """One signal that carries no value on this run, with the reason and the kind of absence.
+
+    An entry is the difference between "we know this is absent, and why" and "we forgot". A field left
+    empty makes the same shape as a real zero; an entry cannot be mistaken for a value.
+    """
+
+    signal: str  # the core signal name, so it joins to TRIAGE_SIGNAL_FIELDS
+    kind: NotComputedKind
+    reason: str  # non-empty, always — an absence with no reason is indistinguishable from an oversight
+
+
+def not_computed_register(
+    *,
+    concept_gate: bool = False,
+    readjudicated: bool = False,
+    permanent: bool = True,
+) -> list[NotComputedEntry]:
+    """The signals that carry no value on THIS run, each with its reason and kind.
+
+    Args:
+        concept_gate: whether the opt-in M7 concept-match gate ran. When it did, ``concept_mismatch``
+            is a real value on the wire and must NOT also be declared absent.
+        readjudicated: whether a caller-invoked re-adjudication produced children on this run.
+        permanent: include the permanent entries (the product-level gaps). Off only so a test can prove
+            an EMPTY register is a legal value of the shape.
+
+    Nothing anywhere asserts this list is non-empty. Every signal being mapped is the goal, not a
+    regression, and an assertion that the register has entries would fail on the day the work finishes.
+    """
+    out: list[NotComputedEntry] = []
+    if permanent:
+        out.append(
+            {
+                "signal": "preprocessing_rule_provenance",
+                "kind": "permanent",
+                "reason": (
+                    "No stage stamps WHICH rule changed a given variable. The preparation report is "
+                    "per-rule counts plus a per-variable before/after diff; the join between them is "
+                    "inferred, not recorded. Per-field rule provenance is deferred by SPEC, so this is a "
+                    "product-level gap rather than a switch someone can turn on."
+                ),
+            }
+        )
+    if not concept_gate:
+        out.append(
+            {
+                "signal": "concept_mismatch",
+                "kind": "per_run",
+                "reason": (
+                    "The M7 concept-match gate is an opt-in LLM stage and this run did not enable it, so "
+                    "no run paid for it. It IS wired: set the run's concept_gate option and the signal "
+                    "arrives as a real value. Absent here means not asked, not 'no mismatch found'."
+                ),
+            }
+        )
+    if not readjudicated:
+        out.append(
+            {
+                "signal": "readjudicated_from",
+                "kind": "per_run",
+                "reason": (
+                    "Re-adjudication is caller-invoked with an explicit list of group ids and nothing on "
+                    "this run invoked it, so no record is a re-split child. The pipeline never re-splits "
+                    "an over-merged group on its own — the coherence flag is a suggestion for a human."
+                ),
+            }
+        )
+    return out
+
+
+def resolve_signal(name: str, *, register: list[NotComputedEntry]) -> str:
+    """How one core signal reaches (or does not reach) the wire on a given run.
+
+    Returns exactly one of ``"field"`` / ``"permanent"`` / ``"per_run"`` / ``"unresolved"``. A register
+    entry WINS over a field mapping: a mapped field that carries no value on this run is an absence, and
+    reporting it as a live field is precisely the "empty reads as clean" failure the register exists for.
+    """
+    for entry in register:
+        if entry["signal"] == name:
+            return entry["kind"]
+    return "field" if name in TRIAGE_SIGNAL_FIELDS else "unresolved"
+
+
+def unresolved_signals(names: Iterable[str], *, register: list[NotComputedEntry]) -> list[str]:
+    """The DARK signals: computed by the pipeline, on the wire nowhere, declared absent nowhere."""
+    return sorted(n for n in names if resolve_signal(n, register=register) == "unresolved")
 
 
 class PromptCounts(TypedDict):
@@ -333,12 +542,112 @@ class UIConceptGroup(TypedDict):
     groupId: str
     clusterId: str  # the parent cluster this group was split out of — provenance, not identity
     concept: str  # the GENERATED concept name; marked as generated on screen
+    #: TRUE, always. The positive statement that ``concept`` was authored by ddharmon rather than read off
+    #: a catalog — the same reasoning as :attr:`UIGenCDE.isGenerated`, and the reason this shape carries no
+    #: catalog badge, no external identifier and no endorsement field of any kind.
+    conceptIsGenerated: bool
     idealCde: str  # the generated coverage anchor's description (free text)
     nMembers: int  # the TRUE member count, even when memberVariableNames is a capped sample
     cohorts: list[str]
     crossCohort: bool
     top1Cos: float | None
-    memberVariableNames: list[str]  # "cohort:var" ids
+    #: The COLLAPSED row's member sample — capped, because a Gate 1 table renders hundreds of rows and a
+    #: row does not need every member to be read. ``nMembers`` above is the true count regardless, and
+    #: ``membersTruncated`` says whether this list is the whole membership or a sample.
+    memberVariableNames: list[str]  # "cohort:var" ids — a capped SAMPLE when membersTruncated is true
+    #: Whether ``memberVariableNames`` is a sample rather than the full membership. The expanded row reads
+    #: the uncapped list from :attr:`UIResult.conceptGroupMembers`; a regroup verb (drag a variable from
+    #: one group to another) is unimplementable against a partial sample, because the members it cannot
+    #: see would be silently dropped from whatever it writes back.
+    membersTruncated: bool
+    #: The judge's four-state cell for THIS group — REQUIRED, not optional. Gate 1 renders before assign,
+    #: so this row is the only place the verdict can be shown, and an omitted key is an absence, which is
+    #: exactly what a consumer reads as clean.
+    coherence: CoherenceState
+    coherenceSummary: str  # the judge's theme sentence for the group core ("" when not judged)
+    coherenceAxis: str  # qualify/split: the slot that varied ("" when not judged / single)
+    coherenceDistinctValues: list[str]
+    coherenceOutliers: list[str]  # periphery members judged off-theme ("cohort:var")
+    incoherent: bool  # the HARD flag. A FLAG: this group is never auto-split, only surfaced for a human
+    matrixSuspect: bool  # the $0 deterministic pre-filter, stamped whether or not the LLM judge ran
+
+
+#: What became of one preprocessing rule on one dictionary. FOUR values, because there are four
+#: distinguishable claims and three of them are routinely collapsed into "0":
+#:
+#: * ``changed``  — the rule ran and changed ``nChanged`` variables
+#: * ``no_change`` — the rule RAN and changed nothing (the corpus did not need it)
+#: * ``not_run``  — the rule was not applied at all (its switch was off, or it had nothing configured)
+#: * ``failed``   — preprocessing raised, so this rule's outcome is unknown, not zero
+#:
+#: ``no_change`` and ``not_run`` rendering identically is how a preparation report starts lying: "we
+#: looked and there was nothing to fix" and "we never looked" are opposite statements about the data.
+RuleOutcome = Literal["changed", "no_change", "not_run", "failed"]
+RULE_OUTCOMES: tuple[str, ...] = ("changed", "no_change", "not_run", "failed")
+
+
+class UIPreprocessRule(TypedDict):
+    """One preprocessing rule's outcome on one dictionary (Gate 0's row)."""
+
+    rule: str  # stable rule id, e.g. "common_prefix_stripping"
+    label: str  # the rule in plain words, for the screen
+    outcome: RuleOutcome
+    nChanged: int  # variables this rule changed; 0 for every outcome except `changed`
+    #: The denominator, and it is a ROW count: the number of variables (dictionary rows) the rule was
+    #: applied to. Never a count of metadata attributes — a "field" is an attribute, a "variable" is a row.
+    nVariables: int
+    detail: str  # plain DATA (the prefix stripped, the placeholder replaced). Never renderable markup
+    error: str  # populated only when outcome == "failed"
+
+
+class UIPreprocessDiff(TypedDict):
+    """One variable's before/after, for the variables preprocessing actually changed.
+
+    Deliberately carries NO rule name. The pipeline does not stamp which rule changed a given variable
+    (per-field provenance is SPEC-deferred and sits in the not-computed register as a PERMANENT gap), so a
+    ``rule`` key here would assert provenance the product does not have.
+
+    Every string is plain data. Uploaded dictionary text is echoed back to the browser here (T-08-48), and
+    React escapes text children by construction — the only way mojibake becomes executable is an explicit
+    raw-HTML injection, which is prohibited on this surface and asserted absent by grep.
+    """
+
+    variableName: str
+    rawVariableName: str
+    rawDescription: str
+    cleanedDescription: str
+    nameChanged: bool
+    descChanged: bool
+    embedNameSuppressed: bool  # the variable name was dropped from the embedding text (it echoed the description)
+
+
+class UIPreprocessReport(TypedDict):
+    """What preprocessing did to ONE dictionary — Gate 0's payload.
+
+    Counts are over dictionary ROWS. ``nVariables`` is the row count the rules were applied to, and every
+    rule's ``nVariables`` equals it, so the arithmetic closes against a number the reviewer can see on
+    their own file.
+    """
+
+    cohort: str
+    nVariables: int  # rows the dictionary loaded with — the denominator for every rule
+    #: Unique variable names after preprocessing. LOWER than ``nVariables`` means names collided and
+    #: ``load_dictionary``'s dict keying dropped variables SILENTLY, last-wins — a known and expensive
+    #: debugging cost in this project. Surfaced rather than swallowed.
+    nUniqueVariableNames: int
+    nDuplicateVariableNames: int  # nVariables - nUniqueVariableNames, precomputed for the screen
+    #: Variables whose embedding text came out EMPTY (no question, no description, and the variable name
+    #: suppressed or absent). They embed nothing and cluster nowhere — a silent loss unless it is counted.
+    nNothingToEmbed: int
+    namesChanged: int
+    descriptionsChanged: int
+    ran: bool  # False when preprocessing did not run for this dictionary at all
+    failed: bool  # True when preprocessing raised; every rule is then reported `failed`, not zero
+    error: str  # the failure message when `failed`, else ""
+    rules: list[UIPreprocessRule]
+    diff: list[UIPreprocessDiff]  # per-variable before/after — a capped sample of the changed variables
+    nChangedVariables: int  # the TRUE number of changed variables, even when `diff` is capped
+    diffTruncated: bool
 
 
 class UIResult(TypedDict):
@@ -366,6 +675,19 @@ class UIResult(TypedDict):
     # paused at (or passed through) the Gate 1 boundary; absent on a preview run, which never gets there.
     # NotRequired — additive-optional, following the previewClusters template.
     conceptGroups: NotRequired[list[UIConceptGroup]]
+    # The UNCAPPED membership per group id — the expanded row's source, and the only shape a regroup verb
+    # can be implemented against (a drag over a 25-of-40 sample would silently discard the 15 it never
+    # saw). A sibling lookup rather than a second request, for the same reason `fieldIndex` is one: a
+    # paused run's state is persisted as THIS contract, so anything an expansion needs has to be in it.
+    conceptGroupMembers: NotRequired[dict[str, list[str]]]
+    # Signals that carry no value on this run, each with a reason and an entry kind (permanent vs per-run).
+    # An explicit reasoned absence, so "we know, and here is why" cannot be confused with "we forgot" —
+    # and so an opt-in nobody enabled does not read as a capability the product lacks.
+    notComputed: NotRequired[list[NotComputedEntry]]
+    # What preprocessing did to each source dictionary, between loading and embedding. One entry per
+    # dictionary. Absent when preprocessing did not run at all (an older payload, or a run that gated it
+    # off) — which is a different statement from an entry with `ran: false`.
+    preprocessing: NotRequired[list[UIPreprocessReport]]
     # The screen this result is the state OF, when the run paused at a gate rather than finishing. Absent
     # on a normal one-shot run. A closed literal, so it can only name a screen that exists.
     gatePosition: NotRequired[GatePosition]

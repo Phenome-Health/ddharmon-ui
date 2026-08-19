@@ -36,6 +36,11 @@ OUT = STATIC / "result-demo-staged-gate1.json"
 #: identity, not a scroll length.
 GROUP_CAP = 12
 
+#: Members carried on a collapsed group row — mirrors ``adapter._GROUP_MEMBER_CAP``. ``nMembers`` stays the
+#: true count and ``membersTruncated`` says which this list is.
+MEMBER_CAP = 25
+
+
 #: What reaching Gate 1 cost on this fixture. Taken from the source run's realized cost so the number on
 #: screen is a real one; the demo is a $0 replay, so a zero here is honest rather than a placeholder.
 def _realized(result: dict) -> float:
@@ -49,16 +54,30 @@ def _group_from_record(rec: dict) -> dict:
     `transforms` and `gencde` are all products of the assign stage and are dropped: a group that carried
     them would be describing a state the Gate 1 boundary has not reached.
     """
+    members = list(rec.get("members") or [])
     return {
         "groupId": rec.get("groupId") or rec.get("id") or "",
         "clusterId": rec.get("clusterId") or "",
         "concept": rec.get("concept") or "",
+        "conceptIsGenerated": True,
         "idealCde": rec.get("idealCde") or "",
-        "nMembers": int(rec.get("nMembers") or len(rec.get("members") or [])),
+        "nMembers": int(rec.get("nMembers") or len(members)),
         "cohorts": list(rec.get("cohorts") or []),
         "crossCohort": bool(rec.get("crossCohort")),
         "top1Cos": (rec.get("cosines") or {}).get("top1"),
-        "memberVariableNames": list(rec.get("members") or []),
+        "memberVariableNames": members[:MEMBER_CAP],
+        "membersTruncated": len(members) > MEMBER_CAP,
+        # The source demo ran with NO coherence judge injected (that is what 08-09 fixes), so every group
+        # here is genuinely UNJUDGED. Stamping `single` to make the fixture look complete would be the
+        # exact "unjudged reads as clean" failure the four-state cell exists to prevent — the fixture says
+        # not_judged because that is the truth about the run it was derived from.
+        "coherence": rec.get("coherence") or "not_judged",
+        "coherenceSummary": rec.get("coherenceSummary") or "",
+        "coherenceAxis": rec.get("coherenceAxis") or "",
+        "coherenceDistinctValues": list(rec.get("coherenceDistinctValues") or []),
+        "coherenceOutliers": list(rec.get("coherenceOutliers") or []),
+        "incoherent": bool(rec.get("incoherent")),
+        "matrixSuspect": bool(rec.get("matrixSuspect")),
     }
 
 
