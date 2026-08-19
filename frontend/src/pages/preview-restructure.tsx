@@ -152,16 +152,16 @@ export default function PreviewRestructurePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div>
-        <Link href="/roadmap" className="inline-flex items-center gap-1 text-xs text-neutral-500 hover:text-ph-navy">
+        <Link href="/roadmap" className="inline-flex items-center gap-1 text-xs text-on-raised-muted hover:text-link-on-raised">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to roadmap
         </Link>
-        <h1 className="mt-1 flex flex-wrap items-center gap-2 font-display text-xl font-semibold text-ph-ink">
+        <h1 className="mt-1 flex flex-wrap items-center gap-2 font-display text-xl font-semibold text-on-raised">
           Restructuring workbench
           <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
             <FlaskConical className="h-3.5 w-3.5" /> Preview · mockup
           </Badge>
         </h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <p className="mt-1 text-sm text-on-raised-muted">
           A design preview of a planned feature — hand the reviewer direct, drag-and-drop control over the
           harmonization structure, then let the model sanity-check the edits. The board below is seeded with
           sample data; drag chips between concepts to get a feel for it.
@@ -169,7 +169,7 @@ export default function PreviewRestructurePage() {
       </div>
 
       {/* Honesty banner — this is not a functional feature. */}
-      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm text-neutral-700">
+      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm text-on-raised">
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
         <span>
           <span className="font-semibold">This is a mockup, not a live tool.</span> Drag-and-drop and “Re-check
@@ -187,11 +187,11 @@ export default function PreviewRestructurePage() {
           <Plus className="h-4 w-4" /> New concept
         </Button>
         {findings && (
-          <Button size="sm" variant="ghost" onClick={() => { setConcepts(SEED); setFindings(null); }} className="gap-1.5 text-neutral-500">
+          <Button size="sm" variant="ghost" onClick={() => { setConcepts(SEED); setFindings(null); }} className="gap-1.5 text-on-raised-muted">
             <RefreshCw className="h-3.5 w-3.5" /> Reset board
           </Button>
         )}
-        <span className="ml-auto text-xs text-neutral-400">Drag a chip onto another concept — or onto “New concept”.</span>
+        <span className="ml-auto text-xs text-on-raised-muted">Drag a chip onto another concept — or onto “New concept”.</span>
       </div>
 
       {/* Board */}
@@ -204,7 +204,7 @@ export default function PreviewRestructurePage() {
               onDragOver={(e) => { e.preventDefault(); setOver(c.id); }}
               onDragLeave={() => setOver((o) => (o === c.id ? null : o))}
               onDrop={() => { if (drag) moveChip(drag.chipId, drag.from, c.id); setDrag(null); setOver(null); }}
-              className={over === c.id ? "ring-2 ring-ph-navy/40" : undefined}
+              className={over === c.id ? "ring-2 ring-rule-info" : undefined}
             >
               <CardHeader className="space-y-2 pb-3">
                 <div className="flex items-start gap-1.5">
@@ -214,16 +214,16 @@ export default function PreviewRestructurePage() {
                       defaultValue={c.name}
                       onBlur={(e) => { rename(c.id, e.target.value.trim() || c.name); setEditing(null); }}
                       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                      className="w-full rounded border border-ph-navy/30 bg-transparent px-1.5 py-0.5 text-sm font-semibold text-ph-ink outline-none"
+                      className="w-full rounded border border-rule-info bg-transparent px-1.5 py-0.5 text-sm font-semibold text-on-raised outline-none"
                     />
                   ) : (
                     <button
                       onClick={() => setEditing(c.id)}
-                      className="group flex items-start gap-1 text-left text-sm font-semibold text-ph-ink"
+                      className="group flex items-start gap-1 text-left text-sm font-semibold text-on-raised"
                       title="Rename concept"
                     >
                       {c.name}
-                      <Pencil className="mt-0.5 h-3 w-3 shrink-0 text-neutral-300 group-hover:text-ph-navy" />
+                      <Pencil className="mt-0.5 h-3 w-3 shrink-0 text-on-raised-muted group-hover:text-accent-on-raised" />
                     </button>
                   )}
                   <Badge variant="neutral" className="ml-auto shrink-0 text-xs">
@@ -232,15 +232,15 @@ export default function PreviewRestructurePage() {
                 </div>
                 {/* CDE anchor row — a "change" affordance stands in for the candidate-picker popover. */}
                 <div className="flex items-center gap-1.5 text-xs">
-                  <span className="text-neutral-400">CDE</span>
+                  <span className="text-on-raised-muted">CDE</span>
                   {c.cde ? (
-                    <span className="truncate text-neutral-600">{c.cde}</span>
+                    <span className="truncate text-on-raised">{c.cde}</span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-ph-navy">
+                    <span className="inline-flex items-center gap-1 text-accent-on-raised">
                       <Sparkles className="h-3 w-3" /> propose GenCDE
                     </span>
                   )}
-                  <button className="ml-auto shrink-0 text-neutral-400 underline decoration-dotted hover:text-ph-navy" title="Pick a different CDE (mock)">
+                  <button className="ml-auto shrink-0 text-on-raised-muted underline decoration-dotted hover:text-link-on-raised" title="Pick a different CDE (mock)">
                     change
                   </button>
                 </div>
@@ -252,24 +252,24 @@ export default function PreviewRestructurePage() {
                     draggable
                     onDragStart={() => setDrag({ chipId: ch.id, from: c.id })}
                     onDragEnd={() => { setDrag(null); setOver(null); }}
-                    className={`flex cursor-grab items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1.5 text-xs active:cursor-grabbing ${
+                    className={`flex cursor-grab items-center gap-2 rounded-md border border-rule-on-raised bg-surface-inset px-2 py-1.5 text-xs active:cursor-grabbing ${
                       drag?.chipId === ch.id ? "opacity-40" : ""
                     }`}
                   >
-                    <GripVertical className="h-3.5 w-3.5 shrink-0 text-neutral-300" />
+                    <GripVertical className="h-3.5 w-3.5 shrink-0 text-on-raised-muted" />
                     <Badge variant="neutral" className="shrink-0 font-normal">{ch.cohort}</Badge>
-                    <span className="truncate font-mono text-neutral-600">{ch.name}</span>
+                    <span className="truncate font-mono text-on-raised">{ch.name}</span>
                   </div>
                 ))}
                 {!c.chips.length && (
-                  <div className="rounded-md border border-dashed border-neutral-200 py-3 text-center text-xs text-neutral-300">
+                  <div className="rounded-md border border-dashed border-rule-on-raised py-3 text-center text-xs text-on-raised-muted">
                     Drop variables here
                   </div>
                 )}
                 {f && (
                   <div
                     className={`mt-1 flex items-start gap-1.5 rounded-md px-2 py-1.5 text-xs ${
-                      f.level === "warn" ? "bg-warning-bg text-neutral-700" : "bg-success-bg text-neutral-700"
+                      f.level === "warn" ? "bg-warning-bg text-on-raised" : "bg-success-bg text-on-raised"
                     }`}
                   >
                     {f.level === "warn" ? (
@@ -292,16 +292,16 @@ export default function PreviewRestructurePage() {
           onDrop={() => { if (drag) addConcept(drag); setDrag(null); setOver(null); }}
           onClick={() => addConcept()}
           className={`flex min-h-[8rem] flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-sm ${
-            over === "__new__" ? "border-ph-navy/50 bg-ph-navy/5 text-ph-navy" : "border-neutral-200 text-neutral-400 hover:border-ph-navy/40 hover:text-ph-navy"
+            over === "__new__" ? "border-rule-info bg-surface-info text-accent-on-raised" : "border-rule-on-raised text-on-raised-muted hover:border-rule-info hover:text-accent-on-raised"
           }`}
         >
           <Plus className="h-5 w-5" />
           New concept
-          <span className="text-xs text-neutral-400">click, or drop a variable here</span>
+          <span className="text-xs text-on-raised-muted">click, or drop a variable here</span>
         </button>
       </div>
 
-      <p className="text-xs text-neutral-400">
+      <p className="text-xs text-on-raised-muted">
         In the real feature, edits would layer over ddharmon&apos;s output (never destroying the original run),
         the CDE “change” control would open the ranked candidate list, and “Re-check with the model” would run
         the coherence/assign pass over your edited structure and surface accept/ignore recommendations.

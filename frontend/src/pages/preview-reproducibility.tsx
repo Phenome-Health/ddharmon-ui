@@ -52,7 +52,7 @@ function Legend() {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
       {MODELS.map((m) => (
-        <span key={m.id} className="inline-flex items-center gap-1.5 text-neutral-600">
+        <span key={m.id} className="inline-flex items-center gap-1.5 text-on-raised">
           <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: `var(${m.cvar})` }} />
           {m.label}
         </span>
@@ -75,22 +75,22 @@ function TradeoffScatter() {
   const xOf = (m: Model) => (xKey === "cost" ? m.cost : m.time.mean);
   const xTicks = xKey === "cost" ? [0, 0.5, 1, 1.5, 2, 2.5] : [0, 4, 8, 12, 16];
   const yTicks = yKey === "expert" ? [0.85, 0.9, 0.95] : [0.55, 0.65, 0.75];
-  const seg = (on: boolean) => (on ? "bg-ph-navy/10 font-semibold text-ph-navy" : "text-neutral-500");
+  const seg = (on: boolean) => (on ? "bg-surface-info font-semibold text-accent-on-raised" : "text-on-raised-muted");
 
   return (
     <Card>
       <CardHeader className="gap-2 pb-3">
         <CardTitle className="text-sm">Pick your tradeoff — quality vs. {xKey === "cost" ? "cost" : "time"}</CardTitle>
-        <p className="text-xs text-neutral-400">
+        <p className="text-xs text-on-raised-muted">
           Each provider/model as one choice; the vertical bar is the run-to-run spread over repeat runs. Up and
           to the left is better value. Toggle the axes to optimize for what you care about.
         </p>
         <div className="flex flex-wrap gap-2 text-sm">
-          <div className="inline-flex rounded-md border border-neutral-200 p-0.5">
+          <div className="inline-flex rounded-md border border-rule-on-raised p-0.5">
             <button onClick={() => setYKey("expert")} className={`rounded px-2.5 py-1 ${seg(yKey === "expert")}`}>Expert review</button>
             <button onClick={() => setYKey("benchmark")} className={`rounded px-2.5 py-1 ${seg(yKey === "benchmark")}`}>Benchmark score</button>
           </div>
-          <div className="inline-flex rounded-md border border-neutral-200 p-0.5">
+          <div className="inline-flex rounded-md border border-rule-on-raised p-0.5">
             <button onClick={() => setXKey("cost")} className={`rounded px-2.5 py-1 ${seg(xKey === "cost")}`}>Cost / run</button>
             <button onClick={() => setXKey("time")} className={`rounded px-2.5 py-1 ${seg(xKey === "time")}`}>Time / run</button>
           </div>
@@ -103,19 +103,19 @@ function TradeoffScatter() {
             {/* grid + axes */}
             {yTicks.map((t) => (
               <g key={t}>
-                <line x1={L} y1={sy(t)} x2={W - R} y2={sy(t)} stroke="currentColor" className="text-neutral-200" strokeWidth={1} />
-                <text x={L - 8} y={sy(t) + 3} textAnchor="end" className="fill-neutral-400 text-xs tabular-nums">{t.toFixed(2)}</text>
+                <line x1={L} y1={sy(t)} x2={W - R} y2={sy(t)} stroke="currentColor" className="text-rule-on-raised" strokeWidth={1} />
+                <text x={L - 8} y={sy(t) + 3} textAnchor="end" className="fill-on-raised-muted text-xs tabular-nums">{t.toFixed(2)}</text>
               </g>
             ))}
             {xTicks.map((t) => (
-              <text key={t} x={sx(t)} y={H - B + 16} textAnchor="middle" className="fill-neutral-400 text-xs tabular-nums">
+              <text key={t} x={sx(t)} y={H - B + 16} textAnchor="middle" className="fill-on-raised-muted text-xs tabular-nums">
                 {xKey === "cost" ? `$${t}` : `${t}m`}
               </text>
             ))}
-            <text x={(L + W - R) / 2} y={H - 6} textAnchor="middle" className="fill-neutral-500 text-xs">
+            <text x={(L + W - R) / 2} y={H - 6} textAnchor="middle" className="fill-on-raised-muted text-xs">
               {xKey === "cost" ? "Cost per run (USD)" : "Wall-clock per run (min)"}
             </text>
-            <text x={14} y={T + 4} className="fill-neutral-500 text-xs">{yKey === "expert" ? "Expert agreement" : "Benchmark score"}</text>
+            <text x={14} y={T + 4} className="fill-on-raised-muted text-xs">{yKey === "expert" ? "Expert agreement" : "Benchmark score"}</text>
             {/* points */}
             {MODELS.map((m) => {
               const y = yOf(m);
@@ -124,13 +124,13 @@ function TradeoffScatter() {
                 <g key={m.id} style={{ color: `var(${m.cvar})` }}>
                   <line x1={cx} y1={sy(y.mean - y.sd)} x2={cx} y2={sy(y.mean + y.sd)} stroke="currentColor" strokeWidth={2} />
                   <circle cx={cx} cy={sy(y.mean)} r={5.5} fill="currentColor" stroke="var(--surface-raised)" strokeWidth={1.5} />
-                  <text x={cx + 9} y={sy(y.mean) + 3} className="fill-neutral-600 text-xs">{m.label}</text>
+                  <text x={cx + 9} y={sy(y.mean) + 3} className="fill-on-raised text-xs">{m.label}</text>
                 </g>
               );
             })}
           </svg>
         </div>
-        <p className="mt-1 text-xs text-neutral-400">
+        <p className="mt-1 text-xs text-on-raised-muted">
           e.g. Claude Opus tops quality but costs most; Gemini/Sonnet sit on a strong value frontier; the local
           model is near-free but lower and slower, with the widest run-to-run spread.
         </p>
@@ -150,7 +150,7 @@ function MetricDots() {
     <Card>
       <CardHeader className="gap-2 pb-3">
         <CardTitle className="text-sm">Performance by benchmark &amp; expert review</CardTitle>
-        <p className="text-xs text-neutral-400">Per-metric score for each model; the bar is the run-to-run spread. Expert-review agreement is the internal locked human gate.</p>
+        <p className="text-xs text-on-raised-muted">Per-metric score for each model; the bar is the run-to-run spread. Expert-review agreement is the internal locked human gate.</p>
         <Legend />
       </CardHeader>
       <CardContent>
@@ -158,15 +158,15 @@ function MetricDots() {
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[540px]" role="img" aria-label="Per-metric performance by model">
             {xTicks.map((t) => (
               <g key={t}>
-                <line x1={sx(t)} y1={TOP} x2={sx(t)} y2={H - 20} stroke="currentColor" className="text-neutral-200" strokeWidth={1} />
-                <text x={sx(t)} y={H - 6} textAnchor="middle" className="fill-neutral-400 text-xs tabular-nums">{t.toFixed(1)}</text>
+                <line x1={sx(t)} y1={TOP} x2={sx(t)} y2={H - 20} stroke="currentColor" className="text-rule-on-raised" strokeWidth={1} />
+                <text x={sx(t)} y={H - 6} textAnchor="middle" className="fill-on-raised-muted text-xs tabular-nums">{t.toFixed(1)}</text>
               </g>
             ))}
             {METRICS.map((metric, mi) => {
               const yBase = TOP + mi * ROW + ROW / 2;
               return (
                 <g key={metric.id}>
-                  <text x={8} y={yBase + 3} className="fill-neutral-600 text-xs font-semibold">{metric.label}</text>
+                  <text x={8} y={yBase + 3} className="fill-on-raised text-xs font-semibold">{metric.label}</text>
                   {MODELS.map((m, i) => {
                     const d = m[metric.id];
                     const y = yBase + (i - 2) * 6; // fan the 5 models vertically so bars don't overlap
@@ -199,14 +199,14 @@ function Stability() {
     <Card>
       <CardHeader className="gap-2 pb-3">
         <CardTitle className="text-sm">Run-to-run stability</CardTitle>
-        <p className="text-xs text-neutral-400">Eight repeat runs of one model, same config — how much each score wanders between identical runs.</p>
+        <p className="text-xs text-on-raised-muted">Eight repeat runs of one model, same config — how much each score wanders between identical runs.</p>
         <div className="flex flex-wrap gap-1.5">
           {MODELS.map((x) => (
             <button
               key={x.id}
               onClick={() => setSel(x.id)}
               className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs ${
-                sel === x.id ? "border-ph-navy/40 bg-ph-navy/5 text-ph-navy" : "border-neutral-200 text-neutral-500"
+                sel === x.id ? "border-rule-info bg-surface-info text-accent-on-raised" : "border-rule-on-raised text-on-raised-muted"
               }`}
             >
               <span className="inline-block h-2 w-2 rounded-full" style={{ background: `var(${x.cvar})` }} />
@@ -219,7 +219,7 @@ function Stability() {
         <div className="overflow-x-auto">
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[540px]" role="img" aria-label={`Run-to-run spread for ${m.label}`}>
             {[0.5, 0.6, 0.7, 0.8, 0.9, 1.0].map((t) => (
-              <line key={t} x1={sx(t)} y1={TOP} x2={sx(t)} y2={H - 6} stroke="currentColor" className="text-neutral-100" strokeWidth={1} />
+              <line key={t} x1={sx(t)} y1={TOP} x2={sx(t)} y2={H - 6} stroke="currentColor" className="text-rule-quiet-on-raised" strokeWidth={1} />
             ))}
             {METRICS.map((metric, mi) => {
               const d = m[metric.id];
@@ -227,12 +227,12 @@ function Stability() {
               const cv = ((d.sd / d.mean) * 100).toFixed(1);
               return (
                 <g key={metric.id} style={{ color: `var(${m.cvar})` }}>
-                  <text x={8} y={y + 3} className="fill-neutral-600 text-xs font-semibold">{metric.label}</text>
+                  <text x={8} y={y + 3} className="fill-on-raised text-xs font-semibold">{metric.label}</text>
                   {JITTER.map((j, k) => (
                     <circle key={k} cx={sx(d.mean + j * d.sd)} cy={y} r={3.5} fill="currentColor" fillOpacity={0.5} />
                   ))}
                   <line x1={sx(d.mean)} y1={y - 9} x2={sx(d.mean)} y2={y + 9} stroke="currentColor" strokeWidth={2} />
-                  <text x={W - R + 8} y={y + 3} className="fill-neutral-500 text-xs tabular-nums">
+                  <text x={W - R + 8} y={y + 3} className="fill-on-raised-muted text-xs tabular-nums">
                     ±{d.sd.toFixed(3)} · CV {cv}%
                   </text>
                 </g>
@@ -240,9 +240,9 @@ function Stability() {
             })}
           </svg>
         </div>
-        <div className="mt-2 flex flex-wrap gap-4 text-xs text-neutral-500">
-          <span className="inline-flex items-center gap-1.5"><DollarSign className="h-3.5 w-3.5" /> ~${m.cost.toFixed(2)} / run <span className="text-neutral-400">(stable)</span></span>
-          <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> {m.time.mean.toFixed(0)} ± {m.time.sd.toFixed(0)} min / run <span className="text-neutral-400">(batch-queue variance)</span></span>
+        <div className="mt-2 flex flex-wrap gap-4 text-xs text-on-raised-muted">
+          <span className="inline-flex items-center gap-1.5"><DollarSign className="h-3.5 w-3.5" /> ~${m.cost.toFixed(2)} / run <span className="text-on-raised-muted">(stable)</span></span>
+          <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> {m.time.mean.toFixed(0)} ± {m.time.sd.toFixed(0)} min / run <span className="text-on-raised-muted">(batch-queue variance)</span></span>
         </div>
       </CardContent>
     </Card>
@@ -258,7 +258,7 @@ export default function PreviewReproducibilityPage() {
       <TradeoffScatter />
       <MetricDots />
       <Stability />
-      <p className="text-xs text-neutral-400">
+      <p className="text-xs text-on-raised-muted">
         In the real feature, these come from a reproducibility experiment: each provider/model is run K times on
         the benchmark and expert-review sets; we report means, run-to-run spread, and cross-model agreement, plus
         realized cost and wall-clock. The numbers here are illustrative sample data, not measured results.

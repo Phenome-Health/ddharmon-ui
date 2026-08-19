@@ -68,7 +68,7 @@ export default function PreviewCompositePage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Harmonized inputs</CardTitle>
-            <p className="text-xs text-neutral-400">Toggle concepts to include. Chips show which cohorts carry each.</p>
+            <p className="text-xs text-on-raised-muted">Toggle concepts to include. Chips show which cohorts carry each.</p>
           </CardHeader>
           <CardContent className="space-y-1.5">
             {INPUTS.map((i) => {
@@ -78,25 +78,25 @@ export default function PreviewCompositePage() {
                   key={i.id}
                   onClick={() => toggle(i.id)}
                   className={`flex w-full items-center gap-2.5 rounded-md border px-2.5 py-2 text-left text-sm ${
-                    on ? "border-ph-navy/30 bg-ph-navy/5" : "border-neutral-200 hover:border-neutral-300"
+                    on ? "border-rule-info bg-surface-info" : "border-rule-on-raised hover:border-rule-control-on-raised"
                   }`}
                 >
                   <span
                     className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                      on ? "border-ph-navy bg-ph-navy text-on-page" : "border-neutral-300"
+                      on ? "border-accent-action bg-accent-action text-on-page" : "border-rule-control-on-raised"
                     }`}
                   >
                     {on && <Check className="h-3 w-3" />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="text-neutral-700">{i.label}</span>
-                    {i.fried && <span className="ml-1.5 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Fried</span>}
+                    <span className="text-on-raised">{i.label}</span>
+                    {i.fried && <span className="ml-1.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Fried</span>}
                     <span className="mt-1 flex flex-wrap gap-1">
                       {COHORTS.map((c) => (
                         <span
                           key={c}
                           className={`rounded px-1 py-0.5 text-xs ${
-                            i.cohorts.includes(c) ? "bg-neutral-100 text-neutral-500" : "bg-transparent text-neutral-300 line-through"
+                            i.cohorts.includes(c) ? "bg-surface-inset-strong text-on-raised-muted" : "bg-transparent text-on-raised-muted line-through"
                           }`}
                         >
                           {c}
@@ -114,17 +114,17 @@ export default function PreviewCompositePage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-sm">
-              <Layers className="h-4 w-4 text-ph-navy" /> Frailty phenotype
+              <Layers className="h-4 w-4 text-accent-on-raised" /> Frailty phenotype
             </CardTitle>
-            <p className="text-xs text-neutral-400">A derived variable defined over the selected harmonized inputs.</p>
+            <p className="text-xs text-on-raised-muted">A derived variable defined over the selected harmonized inputs.</p>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Combination method</div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Combination method</div>
               <select
                 value={method}
                 onChange={(e) => setMethod(e.target.value)}
-                className="w-full rounded-md border border-neutral-200 bg-transparent px-2.5 py-1.5 text-sm text-neutral-700 outline-none focus:border-ph-navy/40"
+                className="w-full rounded-md border border-rule-on-raised bg-transparent px-2.5 py-1.5 text-sm text-on-raised outline-none focus:border-rule-info"
               >
                 {METHODS.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
@@ -133,15 +133,15 @@ export default function PreviewCompositePage() {
             </div>
 
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Definition</div>
-              <div className="rounded-md border border-neutral-200 bg-muted p-3 font-mono text-xs text-neutral-600">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Definition</div>
+              <div className="rounded-md border border-rule-on-raised bg-muted p-3 font-mono text-xs text-on-raised">
                 <div>frailty = f({chosen.map((i) => i.id).join(", ") || "—"})</div>
-                <div className="mt-1 text-neutral-500">{methodDef.formula(chosen.map((i) => i.id))}</div>
+                <div className="mt-1 text-on-raised-muted">{methodDef.formula(chosen.map((i) => i.id))}</div>
               </div>
             </div>
 
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
                 Computable in {computable.length} of {COHORTS.length} cohorts
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -155,7 +155,7 @@ export default function PreviewCompositePage() {
                   );
                 })}
               </div>
-              <p className="mt-1.5 text-xs text-neutral-400">
+              <p className="mt-1.5 text-xs text-on-raised-muted">
                 A cohort must carry a harmonized variable for <em>every</em> selected input to compute the score;
                 the rest need a proxy or are excluded. Drop a hard-to-find criterion (e.g. gait speed) to widen
                 coverage.
@@ -169,7 +169,7 @@ export default function PreviewCompositePage() {
         </Card>
       </div>
 
-      <p className="text-xs text-neutral-400">
+      <p className="text-xs text-on-raised-muted">
         In the real feature, the builder would emit a portable derived-variable spec (inputs + method +
         thresholds, grounded in this run&apos;s harmonized concepts) that you apply to your participant data
         outside ddharmon; an LLM would sanity-check the definition and flag cohorts needing a proxy. Frailty is

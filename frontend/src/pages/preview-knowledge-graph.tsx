@@ -123,7 +123,7 @@ const REL: Record<Relation, { label: string; className: string }> = {
   exact_match: { label: "skos:exactMatch", className: "border-success-border bg-success-bg text-success" },
   close_match: { label: "skos:closeMatch", className: "border-success-border bg-success-bg text-success" },
   related_to: { label: "skos:relatedMatch", className: "border-info-border bg-info-bg text-info" },
-  new: { label: "would create node", className: "border-ph-navy/30 bg-ph-navy/5 text-ph-navy" },
+  new: { label: "would create node", className: "border-rule-info bg-surface-info text-accent-on-raised" },
 };
 
 const REVIEW_THRESHOLD = 0.6;
@@ -147,13 +147,13 @@ export default function PreviewKnowledgeGraphPage() {
     >
       {/* Summary strip */}
       <div className="flex flex-wrap gap-2 text-xs">
-        <span className="rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-neutral-600">
-          <span className="font-semibold text-ph-ink">{LINKS.length}</span> concepts
+        <span className="rounded-md border border-rule-on-raised bg-surface-inset px-2.5 py-1 text-on-raised">
+          <span className="font-semibold text-on-raised">{LINKS.length}</span> concepts
         </span>
         <span className="rounded-md border border-success-border bg-success-bg px-2.5 py-1 text-success">
           <span className="font-semibold">{resolved}</span> resolved to existing nodes
         </span>
-        <span className="rounded-md border border-ph-navy/30 bg-ph-navy/5 px-2.5 py-1 text-ph-navy">
+        <span className="rounded-md border border-rule-info bg-surface-info px-2.5 py-1 text-accent-on-raised">
           <span className="font-semibold">{proposed}</span> would create a new node
         </span>
         <span className="rounded-md border border-warning-border bg-warning-bg px-2.5 py-1 text-warning">
@@ -166,7 +166,7 @@ export default function PreviewKnowledgeGraphPage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Harmonized concepts</CardTitle>
-            <p className="text-xs text-neutral-400">This run&apos;s crosswalk. Select one to see its graph linkage.</p>
+            <p className="text-xs text-on-raised-muted">This run&apos;s crosswalk. Select one to see its graph linkage.</p>
           </CardHeader>
           <CardContent className="space-y-1.5">
             {LINKS.map((l) => {
@@ -177,12 +177,12 @@ export default function PreviewKnowledgeGraphPage() {
                   key={l.id}
                   onClick={() => setActiveId(l.id)}
                   className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left text-sm ${
-                    on ? "border-ph-navy/30 bg-ph-navy/5" : "border-neutral-200 hover:border-neutral-300"
+                    on ? "border-rule-info bg-surface-info" : "border-rule-on-raised hover:border-rule-control-on-raised"
                   }`}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-neutral-700">{l.concept}</span>
-                    <span className="mt-0.5 block truncate text-xs text-neutral-400">
+                    <span className="block truncate text-on-raised">{l.concept}</span>
+                    <span className="mt-0.5 block truncate text-xs text-on-raised-muted">
                       {l.node ? l.nodeId : "no existing node — propose new"}
                     </span>
                   </span>
@@ -206,24 +206,24 @@ export default function PreviewKnowledgeGraphPage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-sm">
-              <Network className="h-4 w-4 text-ph-navy" /> Graph linkage
+              <Network className="h-4 w-4 text-accent-on-raised" /> Graph linkage
             </CardTitle>
-            <p className="text-xs text-neutral-400">
-              How <span className="text-neutral-600">{active.concept}</span> resolves into the knowledge graph.
+            <p className="text-xs text-on-raised-muted">
+              How <span className="text-on-raised">{active.concept}</span> resolves into the knowledge graph.
             </p>
           </CardHeader>
           <CardContent className="space-y-5">
             {/* Concept → relation → node flow */}
             <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
               {/* Concept node */}
-              <div className="flex-1 rounded-lg border border-ph-navy/30 bg-ph-navy/5 p-3">
-                <div className="text-xs font-semibold uppercase tracking-eyebrow text-ph-navy">Harmonized concept</div>
-                <div className="mt-0.5 text-sm font-semibold text-ph-ink">{active.concept}</div>
+              <div className="flex-1 rounded-lg border border-rule-info bg-surface-info p-3">
+                <div className="text-xs font-semibold uppercase tracking-eyebrow text-accent-on-raised">Harmonized concept</div>
+                <div className="mt-0.5 text-sm font-semibold text-on-raised">{active.concept}</div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1">
                   <Badge variant={VERDICT[active.verdict].variant} className="text-xs">
                     {VERDICT[active.verdict].label}
                   </Badge>
-                  <span className="text-xs text-neutral-500">{active.cohorts.length} cohorts</span>
+                  <span className="text-xs text-on-raised-muted">{active.cohorts.length} cohorts</span>
                 </div>
               </div>
 
@@ -232,31 +232,31 @@ export default function PreviewKnowledgeGraphPage() {
                 <Badge variant="neutral" className={`font-mono text-xs ${REL[active.relation].className}`}>
                   {REL[active.relation].label}
                 </Badge>
-                <ArrowRight className="h-4 w-4 rotate-90 text-neutral-300 sm:rotate-0" />
-                <span className="text-xs text-neutral-400">provided by ddharmon</span>
+                <ArrowRight className="h-4 w-4 rotate-90 text-on-raised-faint sm:rotate-0" />
+                <span className="text-xs text-on-raised-muted">provided by ddharmon</span>
               </div>
 
               {/* Graph node */}
               {active.node ? (
-                <div className="flex-1 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">Graph node (CDE)</div>
-                  <div className="mt-0.5 text-sm font-semibold text-neutral-700">{active.node}</div>
-                  <div className="mt-1 font-mono text-xs text-neutral-500">{active.nodeId}</div>
+                <div className="flex-1 rounded-lg border border-rule-on-raised bg-surface-inset p-3">
+                  <div className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Graph node (CDE)</div>
+                  <div className="mt-0.5 text-sm font-semibold text-on-raised">{active.node}</div>
+                  <div className="mt-1 font-mono text-xs text-on-raised-muted">{active.nodeId}</div>
                 </div>
               ) : (
-                <div className="flex-1 rounded-lg border border-dashed border-ph-navy/40 bg-ph-navy/5 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-eyebrow text-ph-navy">New graph node</div>
-                  <div className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-ph-navy">
+                <div className="flex-1 rounded-lg border border-dashed border-rule-info bg-surface-info p-3">
+                  <div className="text-xs font-semibold uppercase tracking-eyebrow text-accent-on-raised">New graph node</div>
+                  <div className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-accent-on-raised">
                     <Sparkles className="h-3.5 w-3.5" /> Proposed (GenCDE)
                   </div>
-                  <div className="mt-1 text-xs text-neutral-500">No existing element matched — a new node would be created.</div>
+                  <div className="mt-1 text-xs text-on-raised-muted">No existing element matched — a new node would be created.</div>
                 </div>
               )}
             </div>
 
             {/* Cross-vocabulary equivalents */}
             <div>
-              <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-neutral-400">
+              <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
                 <Link2 className="h-3.5 w-3.5" /> Equivalent identifiers
               </div>
               {active.equivalents.length ? (
@@ -264,15 +264,15 @@ export default function PreviewKnowledgeGraphPage() {
                   {active.equivalents.map((e) => (
                     <span
                       key={`${e.vocab}:${e.id}`}
-                      className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5 font-mono text-xs text-neutral-600"
+                      className="rounded-md border border-rule-on-raised bg-surface-inset px-2 py-0.5 font-mono text-xs text-on-raised"
                     >
-                      <span className="text-neutral-400">{e.vocab}:</span>
+                      <span className="text-on-raised-muted">{e.vocab}:</span>
                       {e.id}
                     </span>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-neutral-400">
+                <p className="text-xs text-on-raised-muted">
                   None yet — cross-vocabulary links would be attached when the new node is created.
                 </p>
               )}
@@ -281,19 +281,19 @@ export default function PreviewKnowledgeGraphPage() {
             {/* Link confidence + review routing */}
             <div>
               <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="font-semibold uppercase tracking-eyebrow text-neutral-400">Link confidence</span>
+                <span className="font-semibold uppercase tracking-eyebrow text-on-raised-muted">Link confidence</span>
                 <span className={`font-mono font-semibold ${confTone}`}>{active.confidence.toFixed(2)}</span>
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
-                <div className="h-full rounded-full bg-ph-navy/70" style={{ width: `${Math.round(active.confidence * 100)}%` }} />
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-inset-strong">
+                <div className="h-full rounded-full bg-accent-action" style={{ width: `${Math.round(active.confidence * 100)}%` }} />
               </div>
               {needsReview ? (
-                <div className="mt-2 flex items-start gap-1.5 rounded-md bg-warning-bg px-2 py-1.5 text-xs text-neutral-700">
+                <div className="mt-2 flex items-start gap-1.5 rounded-md bg-warning-bg px-2 py-1.5 text-xs text-on-raised">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
                   <span>Low link confidence — routed to expert review before it&apos;s written to the graph.</span>
                 </div>
               ) : (
-                <div className="mt-2 flex items-start gap-1.5 rounded-md bg-success-bg px-2 py-1.5 text-xs text-neutral-700">
+                <div className="mt-2 flex items-start gap-1.5 rounded-md bg-success-bg px-2 py-1.5 text-xs text-on-raised">
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
                   <span>High-confidence link — ready to write as a mapping edge.</span>
                 </div>
@@ -303,7 +303,7 @@ export default function PreviewKnowledgeGraphPage() {
         </Card>
       </div>
 
-      <p className="text-xs text-neutral-400">
+      <p className="text-xs text-on-raised-muted">
         In the real feature, each anchored concept is resolved to a graph node through an
         annotate → normalize → link → resolve pipeline, writing a thin concept layer: harmonized-concept, CDE
         and GenCDE nodes joined by mapping edges (exact/close match for adopt, related for refine), each tagged
