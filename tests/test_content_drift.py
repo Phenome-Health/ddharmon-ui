@@ -658,16 +658,12 @@ _TOKEN_BLOCK = re.compile(r"(?m)^\s*:root(?:\[[^\]]+\])?\s*\{[^}]*\}", re.S)
 _DEFAULT_THEME_BLOCK = re.compile(r'(?m)^\s*:root(?:\[data-theme="brand"\])?\s*\{([^}]*)\}', re.S)
 _DECL = re.compile(r"(--[a-zA-Z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})")
 
-# A colour the mockup PROPOSES that the brand does not have. Recorded per value with its
-# reason, never as a blanket pass, and asserted to still be present so a stale entry cannot
-# quietly widen into cover for the next divergence.
-PROPOSED_COLOURS = {
-    "#0D183B": (
-        "a mid-navy between --brand-navy (#1E2A52) and --brand-navy-deep (#00063D). The "
-        "brand has no step there; the mockup proposes one for its secondary page ground. "
-        "Kept as a design proposal, logged in WINDOWS.md — re-point it or add the primitive."
-    ),
-}
+# Empty, and the emptiness is the point. This recorded #0D183B — a mid-navy the mockup
+# proposed that no --brand-* primitive holds. It has since been REMOVED from the page
+# (WINDOWS id13) rather than blessed, so nothing is exempt any more. An entry here must
+# name a real, still-present divergence with its reason; the assertion below enforces that,
+# so a stale entry cannot linger and quietly widen into cover for the next one.
+PROPOSED_COLOURS: dict[str, str] = {}
 
 
 def _decomment(src: str) -> str:

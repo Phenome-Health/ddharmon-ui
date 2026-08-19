@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="brand">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -24,7 +24,7 @@
    styles, not from the retired brand guide (which is still on Proxima Nova
    and a white ground).
      ground     #1E2A52  the navy sections sit on
-     deep       #0D183B / #00063D
+     deep       #00063D
      paper      #FFFFF8  warm off-white — cards, NOT pure white
      indigo     #222572  body copy on paper
      blue       #0D59F2  primary action, pill
@@ -34,13 +34,15 @@
    default theme here rather than an inversion of it.
    ══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --b-deep:#00063D; --b-navy:#0D183B; --b-ground:#1E2A52; --b-indigo:#222572;
+  --b-deep:#00063D; --b-ground:#1E2A52; --b-indigo:#222572;
   --b-paper:#FFFFF8; --b-blue:#0D59F2; --b-teal:#3AB3BB; --b-teal-ink:#1B7F86;
   --r-card:30px; --r-inner:14px; --r-pill:999px;
 }
-/* Brand (default): navy ground, warm-white working surface. */
-:root[data-theme="brand"] {
-  --page:var(--b-ground); --page-2:var(--b-navy);
+/* The single shipped theme: navy ground, warm-white working surface. There is no second
+   theme and no toggle — 08-05 removed both from the product, so offering one here would
+   promise a capability we are not building. */
+:root {
+  --page:var(--b-ground);
   --card:var(--b-paper); --card-2:#F7F6EC;
   --ink:var(--b-indigo); --muted:rgba(34,37,114,.70); --faint:rgba(34,37,114,.50);
   --line:rgba(34,37,114,.13); --line-2:rgba(34,37,114,.07);
@@ -49,18 +51,6 @@
   --ok:#0E7C63; --warn:#8F4E00; --warn-bg:#FCEFD6; --warn-line:#E8C48A;
   --shadow:0 2px 6px rgba(0,6,61,.14), 0 22px 48px -24px rgba(0,6,61,.55);
 }
-/* Deep: the same identity with the working surface dark too. */
-:root[data-theme="deep"] {
-  --page:#00042B; --page-2:#000320;
-  --card:var(--b-navy); --card-2:#122043;
-  --ink:var(--b-paper); --muted:rgba(255,255,248,.70); --faint:rgba(255,255,248,.48);
-  --line:rgba(255,255,248,.13); --line-2:rgba(255,255,248,.07);
-  --on-page:var(--b-paper); --on-page-muted:rgba(255,255,248,.62);
-  --accent:#4C86F7; --accent-ink:#00063D;
-  --ok:#49C9A7; --warn:#F2B544; --warn-bg:rgba(242,181,68,.13); --warn-line:rgba(242,181,68,.38);
-  --shadow:0 2px 6px rgba(0,0,0,.4), 0 22px 48px -24px rgba(0,0,0,.9);
-}
-
 *, *::before, *::after { box-sizing:border-box; }
 body {
   margin:0; background:var(--page); color:var(--on-page);
@@ -102,9 +92,6 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .eyebrow { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--on-page-muted); font-weight:600; }
 .mast h1 { margin:8px 0 6px; font-size:30px; line-height:34px; color:var(--on-page); }
 .mast p { margin:0; font-size:14.5px; line-height:21px; color:var(--on-page-muted); max-width:60ch; }
-.themebtn { font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--on-page-muted);
-  border:1px solid color-mix(in srgb, var(--b-paper) 28%, transparent); border-radius:var(--r-pill); padding:7px 15px; white-space:nowrap; font-weight:600; }
-.themebtn:hover { color:var(--b-paper); border-color:color-mix(in srgb, var(--b-paper) 60%, transparent); }
 
 /* ── gate rail — the active gate lights up as a paper card on navy ───────── */
 .rail { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-bottom:12px; }
@@ -263,7 +250,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .chip.dragging { opacity:.35; }
 .chip.active { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 9%, transparent); }
 .chip .co { font-size:10px; font-weight:700; letter-spacing:.06em; color:var(--b-teal); }
-:root[data-theme="brand"] .chip .co { color:var(--b-teal-ink); }
+.chip .co { color:var(--b-teal-ink); }
 .chip .vn { color:var(--muted); }
 .hint { font-size:11.5px; color:var(--muted); margin:10px 0 0; }
 .hint b { color:var(--ink); font-weight:500; }
@@ -361,7 +348,6 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .bdg { font-size:9.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; padding:2px 8px; border-radius:var(--r-pill); border:1px solid transparent; }
 .bdg.score { background:var(--ink); color:var(--card); font-family:'JetBrains Mono',monospace; letter-spacing:0; }
 .bdg.coll { background:color-mix(in srgb, var(--b-teal) 18%, transparent); color:var(--b-teal-ink); border-color:color-mix(in srgb, var(--b-teal) 40%, transparent); }
-:root[data-theme="deep"] .bdg.coll { color:var(--b-teal); }
 .bdg.endorsed { background:color-mix(in srgb, var(--ok) 15%, transparent); color:var(--ok); border-color:color-mix(in srgb, var(--ok) 38%, transparent); }
 .bdg.llm { background:var(--warn-bg); color:var(--warn); border-color:var(--warn-line); }
 .bdg.sel { background:var(--accent); color:var(--accent-ink); }
@@ -413,7 +399,6 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .dbtn.on.approve { background:var(--ok); border-color:var(--ok); color:var(--card); }
 .dbtn.on.change { background:var(--warn); border-color:var(--warn); color:var(--card); }
 .dbtn.on.reject { background:var(--crimson); border-color:var(--crimson); color:var(--b-paper); }
-:root[data-theme="deep"] .dbtn.on.approve, :root[data-theme="deep"] .dbtn.on.change { color:var(--b-deep); }
 .decide .dnote2 { font-size:11.5px; color:var(--muted); margin-left:auto; max-width:38ch; text-align:right; }
 
 /* ══ SETUP · GATE 3 · GATE 4 ═══════════════════════════════════════════════ */
@@ -598,7 +583,6 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .rolechip { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
             padding:1px 7px; border-radius:var(--r-pill); background:color-mix(in srgb, var(--b-teal) 18%, transparent);
             color:var(--b-teal-ink); border:1px solid color-mix(in srgb, var(--b-teal) 40%, transparent); margin-left:6px; }
-:root[data-theme="deep"] .rolechip { color:var(--b-teal); }
 .rolechip.off { background:transparent; color:var(--faint); border-color:var(--line); }
 .embedbox { border:1px solid var(--accent); border-radius:var(--r-inner); padding:13px 15px;
             background:color-mix(in srgb, var(--accent) 6%, transparent); }
@@ -654,7 +638,6 @@ body.drawer-open .drawer { transform:translateX(0); }
 .dhead .dlabel { font-size:9.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint); font-weight:700; }
 .dhead .dvar { font-size:15.5px; font-weight:600; margin-top:7px; word-break:break-all; }
 .dhead .dco { font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--b-teal-ink); margin-top:6px; display:block; }
-:root[data-theme="deep"] .dhead .dco { color:var(--b-teal); }
 .dclose { position:absolute; top:18px; right:18px; width:30px; height:30px; border-radius:var(--r-pill);
           display:grid; place-items:center; color:var(--muted); font-size:16px; line-height:1; }
 .dclose:hover { background:var(--card-2); color:var(--ink); }
@@ -713,12 +696,11 @@ body.drawer-open .drawer { transform:translateX(0); }
     <span class="apptag">Data dictionary harmonization</span>
     <span class="appspacer"></span>
     <span class="runchip m">cardiometabolic risk · 5 cohorts</span>
-    <button class="themebtn" id="theme">Deep</button>
   </header>
 
   <div class="mast">
     <div>
-      <div class="eyebrow" id="mastEyebrow">Gate 1 of 4</div>
+      <div class="eyebrow" id="mastEyebrow">Gate 1 · 3 of 6 screens</div>
       <h1 class="dsp" id="mastTitle">Concept groups</h1>
       <p id="mastSub">Variables the run grouped on its own, and the judge's read on which groups fuse more than one concept. Correct what is wrong, then choose what goes to the paid stages.</p>
     </div>
@@ -744,7 +726,9 @@ body.drawer-open .drawer { transform:translateX(0); }
     <div class="gsep"></div>
     <div class="gk"><span class="kl">Left unassigned</span><span class="kv m">780</span></div>
     <div class="gsep"></div>
-    <div class="gk"><span class="kl">Judged</span><span class="kv m">1,807 <span class="unit">of 3,904</span></span></div>
+    <div class="gk"><span class="kl">Judged</span><span class="kv m">885 <span class="unit">&ge;6 members</span></span></div>
+    <div class="gsep"></div>
+    <div class="gk"><span class="kl">Flagged</span><span class="kv m">349 <span class="unit">of 885 · 39%</span></span></div>
     <div class="regroup">
       <span class="conseq">Re-clusters locally in seconds, then re-judges only the groups whose membership changed.</span>
       <button class="rbtn">Regroup at a different size</button>
@@ -2060,7 +2044,7 @@ const STUBS = {
      ["Run mode", ["Guided — stop at every gate (default)", "Auto with gates — run through, pause only when a stage flags more than N", "Full auto — terminal result; what the shipped demo requires"]],
      ["Cost", ["Batch or synchronous, and the estimate that follows from it", "Gate 0 is local either way; the grouping is charged either way, batch at about half"]],
    ]},
-  3: { note:"Not built in this mockup yet. The shipped workbench already does most of it — inline code maps with labels, unit factor/offset, arithmetic formula, coverage %, and a per-variable approve/refine/reject.",
+  3: { note:"Not drawn in this mockup — but it IS being built (08-16), and the shipped workbench already does most of it: inline code maps with labels, unit factor/offset, arithmetic formula, coverage %, and a per-variable approve/refine/reject. Gate 3 needs no core stop point (UI-SPEC §0.1) — the pipeline has finished and the backend holds the run awaiting review; the hard requirement is that a spec edit survives a CONCEPT SWITCH, not merely a reload.",
    blocks:[["What would change here", ["Regenerate becomes a first-class step transition, not an edge case — anything re-picked at gate 2 arrives flagged as stale","Arithmetic specs always route to review, surfaced as a standing filter rather than a per-row chip"]]] },
   4: { note:"Not built in this mockup yet.",
    blocks:[["What would change here", ["Per-spec export selection, rather than all-or-nothing per format","Composite recipes, revisited with their feasibility verdict","The decision log promoted to a visible deliverable rather than a by-product"]]] },
@@ -2901,8 +2885,8 @@ function paint(){
   const [title, sub] = GATE_META[state.gate];
   document.getElementById("mastEyebrow").textContent =
     state.gate === -1 ? "Before the run"
-    : state.gate === 0 ? "Gate 0 — local"
-    : `Gate ${state.gate} of 4`;
+    : state.gate === 0 ? "Gate 0 · local · 2 of 6 screens"
+    : `Gate ${state.gate} · ${state.gate + 2} of 6 screens`;
   document.getElementById("mastTitle").textContent = title;
   document.getElementById("mastSub").textContent = sub;
   document.querySelectorAll("[data-gate]").forEach(b => {
@@ -2935,11 +2919,6 @@ qbox.addEventListener("keydown", e => {
   }
 });
 
-document.getElementById("theme").onclick = e => {
-  const deep = document.documentElement.dataset.theme === "deep";
-  document.documentElement.dataset.theme = deep ? "brand" : "deep";
-  e.target.textContent = deep ? "Deep" : "Brand";
-};
 paint();
 </script>
 </body>
