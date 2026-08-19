@@ -94,8 +94,10 @@ async function resolveJobId(baseURL: string | undefined): Promise<string> {
 }
 
 async function urlFor(route: VisualRoute, baseURL: string | undefined): Promise<string> {
+  // `jobIdOverride` pins a specific fixture (the paused staged-review run); otherwise `:jobId` resolves to
+  // the first COMPLETE demo job, which is what the /job/* family baselines against.
   const resolved = route.needsJobFixture
-    ? route.path.replace(":jobId", await resolveJobId(baseURL))
+    ? route.path.replace(":jobId", route.jobIdOverride ?? (await resolveJobId(baseURL)))
     : route.path;
   return `${resolved}${route.query ?? ""}`;
 }

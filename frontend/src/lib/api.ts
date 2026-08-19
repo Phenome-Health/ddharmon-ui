@@ -2,8 +2,10 @@
 // With VITE_STATIC=1 the client reads bundled fixtures under <base>/static-data instead of /api,
 // so the SPA runs fully static (sample runs + exports, no backend, no key) for a preview deploy.
 import type {
+  CheckpointState,
   CompositeSpec,
   DemosResponse,
+  GatePosition,
   ExportFormat,
   GenCDE,
   JobResult,
@@ -15,6 +17,8 @@ import type {
 } from "@/types";
 
 const BASE = "/api/harmonize";
+/** The six screens in order — the client-side half of contract.py's `GatePosition` literal. */
+export const GATE_ORDER: GatePosition[] = ["setup", "gate0", "gate1", "gate2", "gate3", "gate4"];
 export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
 const STATIC_BASE = `${import.meta.env.BASE_URL}static-data`;
 
@@ -230,6 +234,45 @@ export async function extractCompositeDocument(
 export async function getResult(jobId: string): Promise<JobResult> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/result-${jobId}.json`));
   return json(await fetch(`${BASE}/result/${jobId}`, { headers: await authed() }));
+}
+
+/**
+ * Where a run is parked and what it is parked with — the gate screens' entry read.
+ *
+ * In the static build there is no backend, so this is DERIVED from the bundled result fixture rather than
+ * faked: a fixture that carries `gatePosition` describes a paused run, and one that does not describes a
+ * finished one. Inventing a paused state the fixture does not claim would make the e2e walk assert against
+ * something no real run produces.
+ */
+export async function getCheckpoint(jobId: string): Promise<CheckpointState> {
+  if (IS_STATIC) {
+    const job = await getResult(jobId);
+    const gate = job.result?.gatePosition ?? job.gatePosition ?? null;
+    return {
+      jobId,
+      status: job.status,
+      gatePosition: gate,
+      resumeGate: gate ?? "setup",
+      nextGate: gate ? (GATE_ORDER[GATE_ORDER.indexOf(gate) + 1] ?? null) : null,
+      resultVersion: job.resultVersion ?? job.result?.resultVersion ?? 0,
+      costSoFar: job.costSoFar ?? job.result?.cost?.actualUsd ?? 0,
+      result: job.result,
+    };
+  }
+  return json(await fetch(`${BASE}/checkpoint/${jobId}`, { headers: await authed() }));
+}
+
+/**
+ * Commit the current gate and continue the run to the next boundary — the Continue action.
+ *
+ * Disabled in the static build for the same reason `startHarmonize` is: this is the SPEND path, and a
+ * preview with no backend has nothing to spend against. The gate walk itself is fully explorable there.
+ */
+export async function resumeRun(jobId: string, apiKey?: string): Promise<{ jobId: string; target: string }> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  const extra: Record<string, string> = {};
+  if (apiKey) extra["x-anthropic-key"] = apiKey;
+  return json(await fetch(`${BASE}/resume/${jobId}`, { method: "POST", headers: await authed(extra) }));
 }
 
 export async function listJobs(): Promise<JobSummary[]> {

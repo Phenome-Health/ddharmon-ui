@@ -10,6 +10,8 @@ export type CdeSet = "endorsed" | "full";
 // renders whatever phase string a run reports and reads result.phases for the sequence.
 export type JobStatus =
   | "pending"
+  // A run parked at a review gate: non-terminal, but with no worker (08 D-01 makes a pause an exit).
+  | "awaiting_review"
   | "loading"
   | "embedding"
   | "clustering"
@@ -247,6 +249,37 @@ export interface PreviewCluster {
   candidates: PreviewCandidate[];
 }
 
+/**
+ * The six staged-review screens, in order. Mirrors `GatePosition` in contract.py.
+ *
+ * A gate is a REVIEW STOP, not a pipeline stage: six gates span eleven stage boundaries, and only Gate 1
+ * and Gate 2 correspond to a boundary inside the pipeline at all.
+ */
+export type GatePosition = "setup" | "gate0" | "gate1" | "gate2" | "gate3" | "gate4";
+
+/**
+ * One POST-SPLIT concept group — the row Gate 1 renders (UI-SPEC §0.1).
+ *
+ * It exists between `split` and `classify`, so it deliberately carries no verdict, no route and no CDE:
+ * nothing has assigned it one yet. `concept` is the name `generate(ideal)` produced, so it is GENERATED
+ * and is always marked as such — no catalog badge, no identifier link, no endorsement. It is not a GenCDE
+ * either; a GenCDE is minted later and only for `novel` records.
+ *
+ * Not to be confused with `PreviewCluster`, which is preview run mode's shape and is NOT Gate 1's row
+ * source. `clusterId` is where a group's provenance comes from.
+ */
+export interface ConceptGroup {
+  groupId: string;
+  clusterId: string;
+  concept: string;
+  idealCde: string;
+  nMembers: number;
+  cohorts: string[];
+  crossCohort: boolean;
+  top1Cos: number | null;
+  memberVariableNames: string[];
+}
+
 export interface HarmonizationResult {
   contractVersion: string;
   mode: string;
@@ -266,6 +299,14 @@ export interface HarmonizationResult {
   // PREVIEW ONLY (contract v4+): clusters + retrieved CDE candidates from the deterministic front half, so a
   // preview shows viz + candidate matches instead of a bare status string. Absent/empty on a full run.
   previewClusters?: PreviewCluster[];
+  // STAGED REVIEW (contract v5+): the post-split concept groups Gate 1 renders. Optional so pre-v5
+  // fixtures and preview runs (which never reach the Gate 1 boundary) still parse.
+  conceptGroups?: ConceptGroup[];
+  // Present when this result is a PAUSED run's state rather than a finished one.
+  gatePosition?: GatePosition;
+  // Mirrors the progress frame's token, so a client that refetched because the token moved can tell it got
+  // the version it asked for rather than a racing older payload.
+  resultVersion?: number;
 }
 
 /**
@@ -319,6 +360,24 @@ export interface JobResult {
   // "spent so far" counter. Absent on DB-hydrated historical runs (not persisted); the final total is in
   // result.cost.actualUsd. A demo fixture may carry it so the Runs list shows the demo's build cost.
   costSoFar?: number;
+  // STAGED REVIEW: the screen this run is parked on, or absent for a run that never entered the flow.
+  gatePosition?: GatePosition | null;
+  // The token the 2 Hz progress frame carries. The client refetches /result when it MOVES — which is what
+  // lets the frame stop carrying the (multi-megabyte) payload. Bumped only on a payload change, never on a
+  // progress tick, so it cannot provoke a refetch storm.
+  resultVersion?: number;
+}
+
+/** Where a run is parked and what reaching it cost — GET /api/harmonize/checkpoint/{jobId}. */
+export interface CheckpointState {
+  jobId: string;
+  status: JobStatus;
+  gatePosition: GatePosition | null;
+  resumeGate: GatePosition;
+  nextGate: GatePosition | null;
+  resultVersion: number;
+  costSoFar: number;
+  result: HarmonizationResult | null;
 }
 
 export interface JobSummary extends Omit<JobResult, "result" | "analysisIdeas"> {

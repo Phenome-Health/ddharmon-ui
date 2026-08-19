@@ -25,6 +25,8 @@ import PreviewPayoffPage from "@/pages/preview-payoff";
 import PreviewCompositePage from "@/pages/preview-composite";
 import PreviewReproducibilityPage from "@/pages/preview-reproducibility";
 import PreviewKnowledgeGraphPage from "@/pages/preview-knowledge-graph";
+// The staged review flow: one page file per gate, so no later screen plan has to touch this router.
+import Gate1Page from "@/pages/run/gate1";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -57,6 +59,7 @@ export default function App() {
             <Route path="/preview/reproducibility" component={PreviewReproducibilityPage} />
             <Route path="/preview/knowledge-graph" component={PreviewKnowledgeGraphPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />
+            <Route path="/run/:jobId/gate1" component={Gate1Page} />
             <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
             <Route path="/job/:jobId/analysis" component={AnalysisIdeasPage} />
             <Route path="/job/:jobId/composite" component={CompositePage} />

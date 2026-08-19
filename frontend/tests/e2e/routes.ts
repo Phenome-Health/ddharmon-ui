@@ -31,7 +31,20 @@ export interface VisualRoute {
    * covered by every colour, type and visual gate at once.
    */
   standalone?: boolean;
+  /**
+   * A LITERAL job id to substitute for `:jobId`, instead of the first complete demo job.
+   *
+   * The staged-review gate routes need it: `needsJobFixture` resolves a FINISHED run, and a finished run
+   * carries no gate position, so every gate baseline would render its empty state. The paused-run fixture
+   * (`result-demo-staged-gate1.json`, built by `scripts/build_gate_fixture.py`) is deliberately absent from
+   * `jobs.json` — it is a route fixture, not a run in anyone's history, and adding it there would move the
+   * `/jobs` baseline for no reason.
+   */
+  jobIdOverride?: string;
 }
+
+/** The paused-run fixture every gate baseline renders against. See `jobIdOverride`. */
+export const PAUSED_RUN_FIXTURE = "demo-staged-gate1";
 
 /**
  * 22 routes + the 404 fallback = 23 baselines, taken from `src/App.tsx`'s `<Switch>` — NOT from
@@ -69,6 +82,14 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "job-composite", path: "/job/:jobId/composite", needsJobFixture: true },
   { name: "job-dashboard", path: "/job/:jobId", query: "?results=1", needsJobFixture: true },
   { name: "jobs", path: "/jobs" },
+  // The staged review flow. One baseline per gate, all against the PAUSED-run fixture, so each screen is
+  // captured holding real state rather than its empty state.
+  {
+    name: "run-gate1",
+    path: "/run/:jobId/gate1",
+    needsJobFixture: true,
+    jobIdOverride: PAUSED_RUN_FIXTURE,
+  },
   // Registered nowhere on purpose — this is how the fallback branch of the <Switch> is reached. It must
   // produce a baselined screenshot, not a test error.
   { name: "not-found", path: "/__no_such_route__", registered: false },
@@ -101,6 +122,9 @@ export const TOKEN_LAYER_ROUTES: VisualRoute[] = VISUAL_ROUTES.filter((r) => !r.
  */
 export async function routeUrl(route: VisualRoute, baseURL: string | undefined): Promise<string> {
   if (!route.needsJobFixture) return `${route.path}${route.query ?? ""}`;
+  if (route.jobIdOverride) {
+    return `${route.path.replace(":jobId", route.jobIdOverride)}${route.query ?? ""}`;
+  }
   const { request } = await import("@playwright/test");
   const ctx = await request.newContext({ baseURL });
   try {

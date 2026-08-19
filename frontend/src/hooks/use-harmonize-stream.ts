@@ -1,7 +1,22 @@
 // SSE hook for live harmonization-run progress.
 // Adapted from biomapper-ui's use-mapping-stream.ts (same EventSource + exponential-backoff
 // retry + terminal-status close), pointed at /api/harmonize/stream and typed to JobResult.
-import { useCallback, useEffect, useRef, useState } from "react";
+//
+// TWO CHANNELS, AS OF 08-08 (D-03). The SSE frame is THIN — live fields plus a `resultVersion` token —
+// and the payload (`result`, `decisions`, `analysisIdeas`, `composites`, `config`) is fetched separately
+// from /result, which is already owner- and demo-scoped. The frame used to carry the whole job twice a
+// second, which was free only while `result` stayed null until terminal; a checkpointed run has a
+// multi-megabyte partial from Gate 2 onward, so the same code would have shipped ~6.8 MB at 2 Hz.
+//
+// Consumers still read ONE object: `jobState` is the frame merged with the latest fetched payload, so
+// `jobState.result` / `.decisions` / `.config` mean what they always did.
+//
+// The refetch fires exactly once per version change BY CONSTRUCTION, not by a guard: the React Query key
+// includes the version, so a repeated version resolves from cache and a new one is a new key. That is why
+// the backend asserts the token does NOT move on a progress tick — a ticking token would make "once per
+// change" mean "twice a second".
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { JobResult } from "@/types";
 import { IS_STATIC, appendAuthToken, cancelJob, getResult } from "@/lib/api";
 
@@ -12,6 +27,14 @@ export interface StreamError {
   message: string;
 }
 
+/** The keys the thin frame does NOT carry, and which therefore come from the fetched payload. */
+type Payload = Pick<JobResult, "result" | "decisions" | "analysisIdeas" | "composites" | "config">;
+
+/** Statuses at which the stream closes: terminal, plus a gate pause (which has no worker to report). */
+function isClosing(status: JobResult["status"]): boolean {
+  return status === "complete" || status === "error" || status === "cancelled" || status === "awaiting_review";
+}
+
 // `instant` shows the finished result immediately, skipping the demo replay animation — used by the demo
 // page's "skip to results" deep-link (?results=1). Live/backend runs ignore it (a complete job streams its
 // final state at once anyway).
@@ -19,14 +42,30 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
   const [jobState, setJobState] = useState<JobResult | null>(null);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<StreamError | null>(null);
+  // Set when the transport drops and a retry is pending. Rendered as a notice by the run views: a frozen
+  // readout that still looks live is indistinguishable from a stalled run, which is the worse failure.
+  const [reconnecting, setReconnecting] = useState(false);
+  // The version token the newest frame announced. 0 = nothing to fetch yet.
+  const [resultVersion, setResultVersion] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   // Pending timers for the static (Netlify) client-side replay — held in a ref so cancel() can stop them.
   const staticTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // The payload channel. Keyed BY VERSION, so each announced version is fetched once and a repeat is a
+  // cache hit — "exactly once per change" is a property of the key, not of a hand-rolled guard.
+  // Disabled in the static build, whose branch below loads the whole fixture in one shot.
+  const payloadQuery = useQuery({
+    queryKey: ["harmonize-result", jobId, resultVersion],
+    queryFn: () => getResult(jobId),
+    enabled: enabled && !!jobId && !IS_STATIC && resultVersion > 0,
+    staleTime: Infinity,
+  });
+
   useEffect(() => {
     mountedRef.current = true;
+    setReconnecting(false);
     if (!enabled || !jobId) return;
 
     // Static preview (Netlify): no SSE. Load the bundled result; for a DEMO fixture, pace it through the
@@ -112,17 +151,18 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
         if (!mountedRef.current) return;
         try {
           const data: JobResult = JSON.parse((e as MessageEvent).data);
+          setReconnecting(false);
           setJobState(data);
-          if (data.status === "complete") {
-            setDone(true);
-            es.close();
-          } else if (data.status === "error") {
+          // Announce the payload version. Bumping this state changes the query key, which fetches it once.
+          setResultVersion((prev) => (data.resultVersion && data.resultVersion !== prev ? data.resultVersion : prev));
+          if (data.status === "error") {
             setError({ message: data.errorMessage ?? "Harmonization failed" });
-            setDone(true);
-            es.close();
-          } else if (data.status === "cancelled") {
-            // User stopped the run — terminal, but not an error. Settle and close the stream.
-            setDone(true);
+          }
+          if (isClosing(data.status)) {
+            // `awaiting_review` closes too: a gate pause is an EXIT (08 D-01), so there is no worker left
+            // to report progress and holding the stream open would poll a dead run forever. It is NOT
+            // terminal, though — `done` stays false so a resumed leg reconnects normally.
+            if (data.status !== "awaiting_review") setDone(true);
             es.close();
           }
         } catch (err) {
@@ -134,9 +174,11 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
         es.close();
         if (!mountedRef.current) return;
         if (retryCount < MAX_RETRIES) {
+          setReconnecting(true);
           const delay = BASE_RETRY_MS * Math.pow(2, retryCount);
           retryTimerRef.current = setTimeout(() => connect(retryCount + 1), delay);
         } else {
+          setReconnecting(false);
           setError({ message: "Connection to harmonization service lost after multiple retries" });
           setDone(true);
         }
@@ -170,5 +212,29 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
     }
   }, [jobId]);
 
-  return { jobState, done, error, cancel };
+  // The single object every consumer reads: the thin frame with the fetched payload folded in.
+  //
+  // The payload is only ever ADDED to a frame, never allowed to overwrite a live field — a fetch that
+  // lands a tick late would otherwise rewind `status`/`phase`/`costSoFar` to the moment it was issued and
+  // make the readout visibly jump backwards. The static branch already carries its own payload, so
+  // spreading nothing over it is what keeps a checkpointed fixture from being double-applied.
+  const merged = useMemo<JobResult | null>(() => {
+    if (!jobState) return null;
+    if (IS_STATIC) return jobState;
+    const fetched = payloadQuery.data;
+    // The five payload keys are ALWAYS present, defaulted, even before the first fetch lands. Consumers
+    // read `jobState.config.demo` and `jobState.decisions` unguarded, so handing them an object missing
+    // those keys would turn a thinner frame into a runtime crash — the defect a purely subtractive change
+    // would have shipped.
+    const payload: Payload = {
+      result: fetched?.result ?? null,
+      decisions: fetched?.decisions ?? {},
+      analysisIdeas: fetched?.analysisIdeas ?? null,
+      composites: fetched?.composites ?? null,
+      config: fetched?.config ?? {},
+    };
+    return { ...payload, ...jobState };
+  }, [jobState, payloadQuery.data]);
+
+  return { jobState: merged, done, error, cancel, reconnecting };
 }
