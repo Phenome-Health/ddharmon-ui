@@ -26,11 +26,11 @@ interface Model {
 
 // Illustrative reproducibility experiment: 5 provider/model choices, each run repeatedly.
 const MODELS: Model[] = [
-  { id: "opus", label: "Claude Opus", cvar: "--rmv-1", cdemapper: { mean: 0.64, sd: 0.01 }, aireadi: { mean: 0.66, sd: 0.01 }, athlos: { mean: 0.875, sd: 0.008 }, expert: { mean: 0.94, sd: 0.015 }, cost: 2.4, time: { mean: 6.5, sd: 2.5 } },
-  { id: "sonnet", label: "Claude Sonnet", cvar: "--rmv-2", cdemapper: { mean: 0.63, sd: 0.012 }, aireadi: { mean: 0.655, sd: 0.014 }, athlos: { mean: 0.869, sd: 0.01 }, expert: { mean: 0.93, sd: 0.02 }, cost: 1.1, time: { mean: 5.0, sd: 2.0 } },
-  { id: "gpt", label: "GPT-5", cvar: "--rmv-3", cdemapper: { mean: 0.615, sd: 0.02 }, aireadi: { mean: 0.64, sd: 0.018 }, athlos: { mean: 0.855, sd: 0.018 }, expert: { mean: 0.915, sd: 0.03 }, cost: 1.55, time: { mean: 5.5, sd: 2.5 } },
-  { id: "gemini", label: "Gemini 2.5", cvar: "--rmv-4", cdemapper: { mean: 0.6, sd: 0.02 }, aireadi: { mean: 0.63, sd: 0.02 }, athlos: { mean: 0.845, sd: 0.02 }, expert: { mean: 0.9, sd: 0.03 }, cost: 0.85, time: { mean: 4.5, sd: 2.0 } },
-  { id: "llama", label: "Llama (local)", cvar: "--rmv-5", cdemapper: { mean: 0.55, sd: 0.03 }, aireadi: { mean: 0.585, sd: 0.03 }, athlos: { mean: 0.805, sd: 0.028 }, expert: { mean: 0.865, sd: 0.04 }, cost: 0.06, time: { mean: 12.0, sd: 3.0 } },
+  { id: "opus", label: "Claude Opus", cvar: "--series-model-1", cdemapper: { mean: 0.64, sd: 0.01 }, aireadi: { mean: 0.66, sd: 0.01 }, athlos: { mean: 0.875, sd: 0.008 }, expert: { mean: 0.94, sd: 0.015 }, cost: 2.4, time: { mean: 6.5, sd: 2.5 } },
+  { id: "sonnet", label: "Claude Sonnet", cvar: "--series-model-2", cdemapper: { mean: 0.63, sd: 0.012 }, aireadi: { mean: 0.655, sd: 0.014 }, athlos: { mean: 0.869, sd: 0.01 }, expert: { mean: 0.93, sd: 0.02 }, cost: 1.1, time: { mean: 5.0, sd: 2.0 } },
+  { id: "gpt", label: "GPT-5", cvar: "--series-model-3", cdemapper: { mean: 0.615, sd: 0.02 }, aireadi: { mean: 0.64, sd: 0.018 }, athlos: { mean: 0.855, sd: 0.018 }, expert: { mean: 0.915, sd: 0.03 }, cost: 1.55, time: { mean: 5.5, sd: 2.5 } },
+  { id: "gemini", label: "Gemini 2.5", cvar: "--series-model-4", cdemapper: { mean: 0.6, sd: 0.02 }, aireadi: { mean: 0.63, sd: 0.02 }, athlos: { mean: 0.845, sd: 0.02 }, expert: { mean: 0.9, sd: 0.03 }, cost: 0.85, time: { mean: 4.5, sd: 2.0 } },
+  { id: "llama", label: "Llama (local)", cvar: "--series-model-5", cdemapper: { mean: 0.55, sd: 0.03 }, aireadi: { mean: 0.585, sd: 0.03 }, athlos: { mean: 0.805, sd: 0.028 }, expert: { mean: 0.865, sd: 0.04 }, cost: 0.06, time: { mean: 12.0, sd: 3.0 } },
 ];
 
 const METRICS: { id: "cdemapper" | "aireadi" | "athlos" | "expert"; label: string }[] = [
@@ -123,7 +123,7 @@ function TradeoffScatter() {
               return (
                 <g key={m.id} style={{ color: `var(${m.cvar})` }}>
                   <line x1={cx} y1={sy(y.mean - y.sd)} x2={cx} y2={sy(y.mean + y.sd)} stroke="currentColor" strokeWidth={2} />
-                  <circle cx={cx} cy={sy(y.mean)} r={5.5} fill="currentColor" stroke="var(--card)" strokeWidth={1.5} />
+                  <circle cx={cx} cy={sy(y.mean)} r={5.5} fill="currentColor" stroke="var(--surface-raised)" strokeWidth={1.5} />
                   <text x={cx + 9} y={sy(y.mean) + 3} className="fill-neutral-600 text-xs">{m.label}</text>
                 </g>
               );
@@ -173,7 +173,7 @@ function MetricDots() {
                     return (
                       <g key={m.id} style={{ color: `var(${m.cvar})` }}>
                         <line x1={sx(d.mean - d.sd)} y1={y} x2={sx(d.mean + d.sd)} y2={y} stroke="currentColor" strokeWidth={1.5} />
-                        <circle cx={sx(d.mean)} cy={y} r={4} fill="currentColor" stroke="var(--card)" strokeWidth={1} />
+                        <circle cx={sx(d.mean)} cy={y} r={4} fill="currentColor" stroke="var(--surface-raised)" strokeWidth={1} />
                       </g>
                     );
                   })}

@@ -39,8 +39,8 @@ type Agreement = "agree" | "disagree" | "unassigned";
 const K_NEIGHBORS = 10; // atlas is capped at 2500 pts server-side, so an O(n²) k-NN pass here is cheap.
 const RESPONSE_CAP = 12; // max code=label options shown inline in the detail panel before "+N more".
 const AGREEMENT_COLOR: Record<Agreement, string> = {
-  agree: "var(--ok)", // concept-mates cluster nearby (geometry respected)
-  disagree: "var(--warn)", // concept-mates are scattered elsewhere (a QA signal)
+  agree: "var(--status-ok)", // concept-mates cluster nearby (geometry respected)
+  disagree: "var(--status-warn)", // concept-mates are scattered elsewhere (a QA signal)
   unassigned: "var(--chart-residual)", // = UNASSIGNED_COLOR — no concept
 };
 const AGREEMENT_LABEL: Record<Agreement, string> = {
@@ -345,8 +345,8 @@ export function EmbeddingAtlas({
               y1={drag.y1}
               y2={drag.y2}
               strokeOpacity={0.3}
-              stroke="var(--navy)"
-              fill="var(--navy)"
+              stroke="var(--on-raised)"
+              fill="var(--on-raised)"
               fillOpacity={0.08}
             />
           )}

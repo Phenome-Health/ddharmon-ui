@@ -10,9 +10,9 @@ export const VERDICT_COLOR: Record<string, string> = {
   // §5.3: adopt is the ok green, refine the warn amber, novel the action blue
   // (a deliberate overload — "novel" means we generated one, the same register
   // as "you acted"), and unclassified takes the residual mark, not a hue.
-  adopt: "var(--ok)",
-  refine: "var(--warn)",
-  novel: "var(--b-blue)",
+  adopt: "var(--status-ok)",
+  refine: "var(--status-warn)",
+  novel: "var(--accent)",
   unclassified: "var(--chart-residual)",
 };
 
@@ -53,8 +53,8 @@ export function isVerdict(v: string): v is Verdict {
  *  literal that sits off the four-size scale entirely. */
 export const CHART_LABEL_SIZE = 12;
 
-export const CHART_GRID = "var(--line)";
-export const CHART_AXIS = "var(--muted)";
+export const CHART_GRID = "var(--rule-on-raised)";
+export const CHART_AXIS = "var(--on-raised-muted)";
 
 /** Branded floating-tooltip container. (Single theme now — nothing flips.) */
 export const CHART_TOOLTIP_CLASS =

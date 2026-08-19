@@ -16,9 +16,9 @@ export function GlobalStatusBanner() {
       role="status"
       className="flex shrink-0 items-center justify-center gap-2 px-4 py-1.5 text-center text-sm font-semibold leading-snug"
       style={{
-        backgroundColor: "var(--warn-bg)",
-        color: "var(--warn)",
-        borderBottom: "1px solid var(--warn-line)",
+        backgroundColor: "var(--surface-warn)",
+        color: "var(--on-warn)",
+        borderBottom: "1px solid var(--rule-warn)",
       }}
     >
       <AlertTriangle className="hidden h-4 w-4 shrink-0 sm:block" aria-hidden />

@@ -45,7 +45,7 @@ function ConvergenceViz() {
               y1={s.y}
               x2={RING_EDGE_X}
               y2={RING_Y}
-              stroke="var(--b-teal)"
+              stroke="var(--accent-2-on-chrome)"
               strokeWidth={0.5}
               strokeLinecap="round"
               style={{
@@ -85,9 +85,9 @@ function ConvergenceViz() {
       <div className="absolute right-0 top-1/2 aspect-square w-[44%] -translate-y-1/2">
         <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden="true">
           <g className="ddh-ring-spin" style={{ transformBox: "view-box", transformOrigin: "50% 50%", animation: "ddh-ring-spin 60s linear infinite" }}>
-            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--b-crimson)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="190 265" />
-            <circle cx="50" cy="50" r="33" fill="none" stroke="var(--on-page)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="126 208" transform="rotate(80 50 50)" opacity="0.7" />
-            <circle cx="50" cy="50" r="24" fill="none" stroke="var(--b-teal)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="90 152" transform="rotate(210 50 50)" />
+            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--status-destructive)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="190 265" />
+            <circle cx="50" cy="50" r="33" fill="none" stroke="var(--on-chrome)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="126 208" transform="rotate(80 50 50)" opacity="0.7" />
+            <circle cx="50" cy="50" r="24" fill="none" stroke="var(--accent-2-on-chrome)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="90 152" transform="rotate(210 50 50)" />
           </g>
         </svg>
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
@@ -100,7 +100,7 @@ function ConvergenceViz() {
           <div
             className="relative flex h-[74px] w-[74px] flex-col items-center justify-center rounded-full border-2 border-ph-crimson shadow-lg"
             style={{
-              background: "var(--b-ground)",
+              background: "var(--surface-chrome)",
               opacity: shown ? 1 : 0,
               transform: shown ? "scale(1)" : "scale(0.6)",
               transition: animate ? "opacity .5s ease 1s, transform .5s cubic-bezier(.34,1.56,.64,1) 1s" : "none",
@@ -154,13 +154,13 @@ export default function LandingPage() {
         className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-6 lg:px-14 lg:py-[clamp(1rem,16vh_-_117px,3.5rem)]"
         style={{
           background:
-            "linear-gradient(135deg, var(--b-ground) 0%, color-mix(in srgb, var(--b-ground) 86%, var(--b-paper)) 58%, var(--b-ground) 100%)",
+            "linear-gradient(135deg, var(--surface-chrome) 0%, color-mix(in srgb, var(--surface-chrome) 86%, var(--surface-raised)) 58%, var(--surface-chrome) 100%)",
         }}
       >
         {/* ambient glow behind the ring */}
         <div
           className="pointer-events-none absolute -right-24 top-1/2 h-[460px] w-[460px] -translate-y-1/2 rounded-full opacity-40 blur-3xl"
-          style={{ background: "radial-gradient(circle, rgba(58,194,203,0.35), transparent 70%)" }}
+          style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--accent-2-on-chrome) 35%, transparent), transparent 70%)" }}
           aria-hidden="true"
         />
         <div className="relative grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr]">

@@ -8,17 +8,17 @@ export function PhenomeMark({ className }: { className?: string }) {
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
       {/* outer — crimson */}
       <circle
-        cx="12" cy="12" r="8.5" stroke="var(--b-crimson)" strokeWidth="1.6" strokeLinecap="round"
+        cx="12" cy="12" r="8.5" stroke="var(--status-destructive)" strokeWidth="1.6" strokeLinecap="round"
         strokeDasharray="38.6 53.4" transform="rotate(-50 12 12)"
       />
       {/* middle — white */}
       <circle
-        cx="12" cy="12" r="5.7" stroke="var(--on-page)" strokeWidth="1.6" strokeLinecap="round"
+        cx="12" cy="12" r="5.7" stroke="var(--on-chrome)" strokeWidth="1.6" strokeLinecap="round"
         strokeDasharray="25.9 35.8" transform="rotate(80 12 12)"
       />
       {/* inner — teal */}
       <circle
-        cx="12" cy="12" r="2.9" stroke="var(--b-teal)" strokeWidth="1.6" strokeLinecap="round"
+        cx="12" cy="12" r="2.9" stroke="var(--accent-2-on-chrome)" strokeWidth="1.6" strokeLinecap="round"
         strokeDasharray="13.2 18.2" transform="rotate(200 12 12)"
       />
     </svg>

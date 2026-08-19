@@ -191,7 +191,7 @@ function StackedVerdictBars({
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
         <XAxis dataKey="name" tick={{ fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }} />
         <YAxis allowDecimals={false} tick={{ fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }} width={28} />
-        <RTooltip content={<BarTooltip />} cursor={{ fill: "var(--sf-100)" }} />
+        <RTooltip content={<BarTooltip />} cursor={{ fill: "var(--surface-inset)" }} />
         <Legend
           iconType="square"
           iconSize={9}
@@ -413,10 +413,10 @@ function OverlapHeatmap({
                       onMouseEnter={() => setHc({ i, j })}
                       className="h-8 w-12 border text-center transition-colors"
                       style={{
-                        backgroundColor: `rgba(17, 54, 130, ${Math.max(v ? 0.08 : 0, alpha)})`,
-                        color: alpha > 0.5 ? "#fff" : "var(--sf-700)",
-                        borderColor: isCell ? "var(--navy)" : inCross ? "var(--sf-300)" : "var(--sf-0)",
-                        outline: isCell ? "1px solid var(--navy)" : "none",
+                        backgroundColor: `color-mix(in srgb, var(--accent) ${(Math.max(v ? 0.08 : 0, alpha) * 100).toFixed(2)}%, transparent)`,
+                        color: alpha > 0.5 ? "var(--on-accent)" : "var(--on-raised)",
+                        borderColor: isCell ? "var(--on-raised)" : inCross ? "var(--rule-on-raised)" : "transparent",
+                        outline: isCell ? "1px solid var(--on-raised)" : "none",
                         cursor: "default",
                       }}
                     >

@@ -3,6 +3,28 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
+/* ══ Role utilities, safelisted ════════════════════════════════════════════════
+   Tailwind generates a utility only where it finds the class in a source file, so a
+   role whose call sites have not been migrated yet would generate NOTHING and its
+   absence would be indistinguishable from a namespace mistake. Safelisting the
+   manifest's role utilities makes each one PROVABLE in the built stylesheet, and
+   lets contrast.spec.ts probe a real utility rather than trust the token alone.
+   This list is generated from `src/tokens/role-manifest.json`;
+   `tests/test_content_drift.py::test_every_manifest_utility_is_safelisted` keeps it
+   in step. It is the only reason an unmigrated role costs bytes, and it is cheap:
+   one declaration each.
+   ══════════════════════════════════════════════════════════════════════════════ */
+@source inline("bg-accent-action bg-status-destructive bg-surface-chrome bg-surface-danger bg-surface-field");
+@source inline("bg-surface-info bg-surface-inset bg-surface-ok bg-surface-raised bg-surface-warn border-");
+@source inline("rule-danger border-rule-info border-rule-ok border-rule-on-chrome border-rule-on-field");
+@source inline("border-rule-on-inset border-rule-on-raised border-rule-quiet-on-chrome border-rule-quiet-on-");
+@source inline("raised border-rule-warn text-accent-2-on-chrome text-accent-2-on-raised text-link-on-chrome");
+@source inline("text-link-on-field text-link-on-inset text-link-on-raised text-on-accent-action text-on-");
+@source inline("chrome text-on-chrome-faint text-on-chrome-muted text-on-danger text-on-destructive text-on-");
+@source inline("field text-on-field-faint text-on-field-muted text-on-info text-on-inset text-on-inset-muted");
+@source inline("text-on-ok text-on-raised text-on-raised-faint text-on-raised-muted text-on-warn text-");
+@source inline("status-danger text-status-destructive text-status-info text-status-ok text-status-warn");
+
 /* ══ Display face — Byrl (D-07) ═══════════════════════════════════════════════
    Byrl is the 2026 identity's display face. The licensed web files are still
    owed, so these rules point at `public/fonts/` and 404 until the files land;
@@ -32,319 +54,487 @@
   font-display: swap;
 }
 
-/* ══ 2026 Phenome Health identity — RAW layer ══════════════════════════════════
-   Sampled from phenomehealth.org computed styles. The S3 brand guide (Proxima
-   Nova on a white ground) is STALE — do not build from it.
+/* ══════════════════════════════════════════════════════════════════════════════
+   TIER 1 — PRIMITIVES.  Named for the VALUE, never for the use.
+   ══════════════════════════════════════════════════════════════════════════════
+   This is the ONLY block a rebrand replaces, and it is replaced WHOLESALE. Nothing
+   here says what a colour is for; `--brand-navy` is a navy, not "the page field".
+   The moment a primitive is named for its use ("--b-ground") the two tiers fuse and
+   a rebrand has to be reasoned about at every call site again.
 
-   The identity is DARK-FIRST in the specific sense of "navy page, warm-white
-   cards" — NOT a uniformly dark UI. Getting that backwards produces a dark-mode
-   app rather than this identity.
+   Values sampled from phenomehealth.org computed styles (2026 identity). The S3
+   brand guide (Roboto / proxima-nova, #0B152D navy, #EDEDED grey, #E21C52 magenta)
+   is the PREVIOUS brand — it is not stale trivia, it is the fixture the rebrand
+   drill swaps in (`tests/e2e/rebrand-drill.spec.ts`). Both brands moved on every
+   axis: type, dark neutral, light neutral, dominant accent, radii. That is why this
+   tier exists.
 
-   Single theme (D-05): the second-theme override block, its Tailwind variant
-   declaration and both OS-preference readers are gone from the tree. Only `@theme inline` below reads
-   these names; components read only the semantic names (D-06), which is what
-   makes a retheme a one-file change.
-
-   Three deliberate deviations from the mockup's `:root`, each with a reason:
-
-   1. `--b-deep #00063D` / `--b-navy #0D183B` are NOT introduced. In the mockup
-      they exist only for the `data-theme="deep"` variant and for `--page-2`,
-      which is declared and never referenced. Depth on the ground is made with
-      paper-alpha washes (rgba(255,255,248,.045–.08)) and paper-alpha rules
-      (.13–.28) — NEVER with a second navy.
-   2. `--warn` is darkened #A85B00 → #8F4E00. #A85B00 on `--warn-bg` measures
-      4.42:1, below AA. #8F4E00 measures 5.67:1 on warn-bg and 6.42:1 on paper.
-      The coherence flag is the most important signal on Gate 1; it may not ship
-      sub-AA.
-   3. `--b-crimson` is DECLARED. The mockup references `var(--crimson)` in its
-      reject button and required-field marker and never defines it, so those
-      render with no colour at all. That is a mockup bug; it is not ported.
-   ═══════════════════════════════════════════════════════════════════════════ */
+   Two forms per accent, both primitive. An accent that must read as TEXT on a light
+   surface needs a contrast-corrected form, and that form is brand data, not a role
+   decision: #3AB3BB is 5.53:1 on navy and 2.51:1 on cream, so `--brand-teal-ink`
+   is declared beside it. Same for crimson, whose pure form is 4.62:1 on cream —
+   legal for a fill, too thin for a text register that also sits on its own wash.
+   ══════════════════════════════════════════════════════════════════════════════ */
 :root {
-  --b-ground:   #1E2A52;   /* page field */
-  --b-paper:    #FFFFF8;   /* warm off-white working surface — NOT pure white */
-  --b-indigo:   #222572;   /* ink on paper */
-  --b-blue:     #0D59F2;   /* action — NEVER on the ground (2.47:1) */
-  --b-teal:     #3AB3BB;   /* secondary accent — ON GROUND ONLY (5.53:1) */
-  --b-teal-ink: #1B7F86;   /* the same accent, contrast-corrected for paper (4.72:1) */
-  --b-crimson:  #E21C52;   /* destructive only — never a status, never an accent */
+  /* ── Colour ─────────────────────────────────────────────────────────────── */
+  --brand-navy:        #1E2A52;   /* the dominant dark neutral */
+  --brand-navy-deep:   #00063D;   /* deepest navy — shadow/scrim tint only */
+  --brand-cream:       #FFFFF8;   /* the light neutral — warm off-white, NOT pure white */
+  --brand-cream-dim:   #F7F6EC;   /* one step down from cream */
+  --brand-indigo:      #222572;   /* the dark chromatic — reads as ink on cream */
+  --brand-blue:        #0D59F2;   /* the dominant accent */
+  --brand-teal:        #3AB3BB;   /* secondary accent — dark-surface form */
+  --brand-teal-ink:    #1B7F86;   /* secondary accent — light-surface form (4.72:1 on cream) */
+  --brand-crimson:     #E21C52;   /* the destructive hue — fill form */
+  /* Text form of crimson. Pure #E21C52 is 4.62:1 on cream and drops below AA over
+     any wash of itself, so the register that has to READ gets its own primitive. */
+  --brand-crimson-ink: color-mix(in srgb, var(--brand-crimson) 88%, var(--brand-indigo));
+  --brand-green:       #0E7C63;
+  --brand-amber:       #8F4E00;
+  --brand-amber-pale:  #FCEFD6;
+  --brand-amber-mid:   #E8C48A;
+  /* Extra categorical hues. A categorical scale needs distinguishable steps and the
+     identity supplies five; these three are the make-up, declared here so every
+     colour in the product is reachable from one block. Both were raised above the
+     3:1 graphical-object floor on cream (sky was 2.76:1, slate 3.13:1). */
+  --brand-violet:      #7C3AED;
+  --brand-sky-deep:    #0369A1;
+  --brand-slate:       #5B667A;
+  /* A five-step categorical set used for one chart's model series (dataviz-validated
+     as a set, so it is kept whole rather than folded into the eight above). */
+  --brand-series-1: #2a78d6;
+  --brand-series-2: #008300;
+  --brand-series-3: #e87ba4;
+  --brand-series-4: #eda100;
+  --brand-series-5: #1baf7a;
 
-  /* derived surfaces + rules — all ink-alpha over paper, or paper-alpha over ground */
-  --card:   var(--b-paper);
-  --card-2: #F7F6EC;                    /* header bands, row hover, inset panels */
-  --ink:    var(--b-indigo);            /* 13.27:1 on paper */
-  --muted:  rgba(34, 37, 114, .70);     /* secondary text on paper — 5.35:1 */
-  --faint:  rgba(34, 37, 114, .50);     /* HAIRLINES AND DASHED MARKS ONLY — 2.99:1 */
-  --line:   rgba(34, 37, 114, .13);
-  --line-2: rgba(34, 37, 114, .07);
-  --on-page:       #FFFFF8;                  /* text on ground — 13.86:1 */
-  --on-page-muted: rgba(255, 255, 248, .68); /* secondary text on ground — 7.23:1 */
+  /* ── Type ───────────────────────────────────────────────────────────────── */
+  --brand-font-body:    'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --brand-font-mono:    'JetBrains Mono', ui-monospace, "SF Mono", Consolas, monospace;
+  /* Byrl first (D-07), Space Grotesk as the standing fallback until the licensed
+     files land. Both are the CURRENT identity; the previous brand's display face
+     was proxima-nova, which is 100% replaced — type is a rebrand axis too, which is
+     why the families are primitives and not literals in a `@theme` key. */
+  --brand-font-display: 'Byrl', 'Space Grotesk', 'Inter', sans-serif;
+  --brand-weight-regular: 400;
+  --brand-weight-strong:  600;
+  --brand-text-meta:      12px;
+  --brand-leading-meta:   16px;
+  --brand-text-body:      14px;
+  --brand-leading-body:   20px;
+  --brand-text-heading:   20px;
+  --brand-leading-heading: 28px;
+  --brand-text-display:   30px;
+  --brand-leading-display: 34px;
+  --brand-tracking-eyebrow: 0.10em;
 
-  /* status set — data encoding, not decoration */
-  --ok:        #0E7C63;
-  --warn:      #8F4E00;
-  --warn-bg:   #FCEFD6;
-  --warn-line: #E8C48A;
+  /* ── Geometry ───────────────────────────────────────────────────────────────
+     Container radii are brand geometry (the live site is 30px-dominant, with 100px
+     and 200px on marketing shapes); control radii are instrument discipline and
+     deliberately small. A rebrand moves both, which is why both are primitives.
+     Recorded divergence, NOT fixed here: `--brand-radius-inner` is 14px where the
+     live brand's smallest container radius is 30px (see WINDOWS.md). */
+  --brand-radius-container:  30px;
+  --brand-radius-inner:      14px;
+  --brand-radius-pill:       999px;
+  --brand-radius-hairline:   2px;
+  --brand-radius-control:    4px;
+  --brand-radius-control-md: 6px;
+  --brand-radius-control-lg: 8px;
+}
 
-  /* one elevation token, for paper surfaces that float on the ground */
-  --shadow: 0 2px 6px rgba(0, 6, 61, .14), 0 22px 48px -24px rgba(0, 6, 61, .55);
+/* ══════════════════════════════════════════════════════════════════════════════
+   TIER 2 — SEMANTIC ROLES.  The only layer a rebrand should have to REMAP.
+   ══════════════════════════════════════════════════════════════════════════════
+   Every surface carries its foreground as a BOUND PAIR. That is the whole point:
+   the bug this tier exists to prevent is a component picking its text colour
+   independently of its background, which is how a surface change turns into a
+   22-page hunt. `--surface-field` and `--on-field` move together or not at all.
 
-  /* container geometry — see the radius block in @theme inline */
-  --r-card: 30px;
-  --r-inner: 14px;
-  --r-pill: 999px;
+   Three consequences worth stating, because they are easy to undo by accident:
 
-  /* Categorical series — the runtime-readable palette every chart draws from.
-     It lives in the RAW layer, not only in `@theme inline`: `inline` substitutes
-     its values into utilities and emits NOTHING to `:root`, so a chart that reads
-     its colour in JS (recharts fills, SVG strokes, the atlas canvas) can only see
-     raw names. Steps 1-5 are the identity, in the paper-legal form — charts live
-     on paper cards, so teal appears as `--b-teal-ink`. Steps 6-8 exist because a
-     categorical scale needs distinguishable hues and the identity supplies five;
-     they were literals in `lib/chart.ts` and are declared here so every colour in
-     the product is reachable from one file (R10). Two were also below the 3:1
-     graphical-object floor on paper and are darkened: sky #0EA5E9 was 2.76:1 and
-     slate #8892A3 was 3.13:1. */
-  --chart-1: var(--b-teal-ink);   /* 4.72:1 on paper */
-  --chart-2: var(--b-blue);       /* 5.61:1 */
-  --chart-3: var(--b-crimson);    /* 4.62:1 */
-  --chart-4: var(--ok);           /* 5.12:1 */
-  --chart-5: var(--warn);         /* 6.42:1 */
-  --chart-6: #7C3AED;             /* violet — 5.67:1 */
-  --chart-7: #0369A1;             /* deep sky — 5.91:1, was #0EA5E9 at 2.76:1 */
-  --chart-8: #5B667A;             /* slate — 5.77:1, was #8892A3 at 3.13:1 */
+   1. Every alpha step is mixed FROM a primitive (`color-mix(… 68%, transparent)`),
+      never written as `rgba(255,255,248,.68)`. A literal rgba is a hardcoded cream
+      that survives a rebrand — the exact leak the drill hunts for.
+   2. "Muted" is declared PER SURFACE. Muted text is only meaningful relative to
+      what it sits on, so there is no global `--muted`.
+   3. Every (surface, foreground) pair here has a row in `tokens/role-manifest.json`
+      with a required contrast level, and the gates iterate that manifest. Adding a
+      role without its contrast assertion fails
+      `tests/test_content_drift.py::test_every_role_pair_is_declared_in_the_manifest`.
+   ══════════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ── CHROME — the top bar and the left rail ─────────────────────────────── */
+  --surface-chrome:        var(--brand-navy);
+  --on-chrome:             var(--brand-cream);
+  --on-chrome-muted:       color-mix(in srgb, var(--brand-cream) 68%, transparent);
+  /* Decoration only (the hero's separator dots). Legible, deliberately recessive,
+     and NOT for a meaningful glyph — asserted BELOW text contrast, which is what
+     documents the distinction. */
+  --on-chrome-faint:       color-mix(in srgb, var(--brand-cream) 45%, transparent);
+  --rule-on-chrome:        color-mix(in srgb, var(--brand-cream) 15%, transparent);
+  --rule-quiet-on-chrome:  color-mix(in srgb, var(--brand-cream) 8%, transparent);
+  /* The accent is PROHIBITED on chrome (2.47:1). A link on the chrome is the
+     foreground colour, and an action on the chrome is outlined in paper-alpha. */
+  --link-on-chrome:        var(--on-chrome);
+
+  /* ── RAISED — cards, panes, popovers: the working surface ───────────────── */
+  --surface-raised:        var(--brand-cream);
+  --on-raised:             var(--brand-indigo);
+  --on-raised-muted:       color-mix(in srgb, var(--brand-indigo) 70%, transparent);
+  /* HAIRLINES AND DASHED MARKS ONLY — never text, never a meaningful glyph. */
+  --on-raised-faint:       color-mix(in srgb, var(--brand-indigo) 50%, transparent);
+  --rule-on-raised:        color-mix(in srgb, var(--brand-indigo) 13%, transparent);
+  --rule-quiet-on-raised:  color-mix(in srgb, var(--brand-indigo) 7%, transparent);
+  --link-on-raised:        var(--brand-blue);
+
+  /* ── FIELD — the page field the raised surfaces sit on ──────────────────────
+     ONE LINE is the whole of "flip the content field to navy": point
+     `--surface-field` at `--brand-navy` and its four bound foregrounds at the
+     chrome pair. That flip is 08-07 Part 2's, not this plan's — the point here is
+     that it becomes a tier-2 remap instead of a 22-page hunt. */
+  --surface-field:         var(--brand-cream-dim);
+  --on-field:              var(--brand-indigo);
+  --on-field-muted:        color-mix(in srgb, var(--brand-indigo) 70%, transparent);
+  --on-field-faint:        color-mix(in srgb, var(--brand-indigo) 50%, transparent);
+  --rule-on-field:         color-mix(in srgb, var(--brand-indigo) 13%, transparent);
+  --link-on-field:         var(--brand-blue);
+
+  /* ── INSET — header bands, row hover, inset panels ON a raised surface ──────
+     Same value as the field TODAY and a different role: an inset sits inside a
+     card, a field sits under one. Keeping them separate is what lets Part 2 move
+     the field without dragging every table header band with it. */
+  --surface-inset:         var(--brand-cream-dim);
+  --on-inset:              var(--brand-indigo);
+  --on-inset-muted:        color-mix(in srgb, var(--brand-indigo) 70%, transparent);
+  --rule-on-inset:         color-mix(in srgb, var(--brand-indigo) 13%, transparent);
+  --link-on-inset:         var(--brand-blue);
+
+  /* ── ACCENT — the single primary action per screen, selection, "you changed it" ── */
+  --accent:                var(--brand-blue);
+  --on-accent:             var(--brand-cream);
+  /* The secondary accent has two forms because one token cannot serve both
+     surfaces. Reserved for four things (cohort code, declared-score scope band,
+     the attribution callout rule, a collection badge) — never a coverage bar. */
+  --accent-2-on-chrome:    var(--brand-teal);
+  --accent-2-on-raised:    var(--brand-teal-ink);
+
+  /* ── FOCUS — the colour flips with the surface, because blue on navy is 2.47:1 ── */
+  --focus-ring-on-raised:  var(--accent);
+  --focus-ring-on-chrome:  var(--on-chrome);
+
+  /* ── STATUS — data encoding, not decoration ─────────────────────────────────
+     Each register is a text colour, a wash to sit on, a rule, and the foreground
+     that wash carries. The wash is DERIVED from the primitive over the raised
+     surface, so a rebrand moves the wash with the hue instead of leaving last
+     year's tint behind. */
+  --status-ok:             var(--brand-green);
+  --surface-ok:            color-mix(in srgb, var(--brand-green) 8%, var(--surface-raised));
+  --on-ok:                 var(--status-ok);
+  --rule-ok:               color-mix(in srgb, var(--brand-green) 34%, var(--surface-raised));
+
+  /* The coherence flag is the most important signal on Gate 1; it may not ship
+     sub-AA, which is why the amber is #8F4E00 and not the live site's #A85B00. */
+  --status-warn:           var(--brand-amber);
+  --surface-warn:          var(--brand-amber-pale);
+  --on-warn:               var(--status-warn);
+  --rule-warn:             var(--brand-amber-mid);
+
+  --status-danger:         var(--brand-crimson-ink);
+  --surface-danger:        color-mix(in srgb, var(--brand-crimson) 6%, var(--surface-raised));
+  --on-danger:             var(--status-danger);
+  --rule-danger:           color-mix(in srgb, var(--brand-crimson) 32%, var(--surface-raised));
+  /* The FILL form: a destructive button, not a status label. */
+  --status-destructive:    var(--brand-crimson);
+  --on-destructive:        var(--brand-cream);
+
+  /* The informational register folds into the action accent rather than inventing
+     a second blue family. */
+  --status-info:           var(--accent);
+  --surface-info:          color-mix(in srgb, var(--brand-blue) 8%, var(--surface-raised));
+  --on-info:               var(--status-info);
+  --rule-info:             color-mix(in srgb, var(--brand-blue) 30%, var(--surface-raised));
+
+  /* ── ELEVATION ──────────────────────────────────────────────────────────────
+     One elevation role for a raised surface floating on the field, plus the ramp
+     54 shadcn components read. Tints mix from the deepest navy so a rebrand
+     re-tints the shadows too. */
+  --elevation-raised: 0 2px 6px color-mix(in srgb, var(--brand-navy-deep) 14%, transparent),
+                      0 22px 48px -24px color-mix(in srgb, var(--brand-navy-deep) 55%, transparent);
+
+  /* ── DATA SERIES ────────────────────────────────────────────────────────────
+     Roles, not primitives, and they live in `:root` rather than `@theme inline`:
+     `inline` substitutes into utilities and emits NOTHING here, so a chart that
+     reads its colour in JS (recharts fills, SVG strokes, the atlas canvas) can
+     only see what is declared on the element tree. Charts live on RAISED
+     surfaces, so the teal step takes its raised form. */
+  --series-1: var(--accent-2-on-raised);
+  --series-2: var(--accent);
+  --series-3: var(--status-destructive);
+  --series-4: var(--status-ok);
+  --series-5: var(--status-warn);
+  --series-6: var(--brand-violet);
+  --series-7: var(--brand-sky-deep);
+  --series-8: var(--brand-slate);
   /* The residual mark: a field or record the pipeline did not classify. Muted on
-     purpose but still a graphical object, so it clears 3:1 (3.44:1) rather than
-     sitting at the 1.48:1 the retired #CBD5E1 measured. NOT `--faint`, which is
-     hairlines and dashed marks only. */
-  --chart-residual: color-mix(in srgb, var(--b-indigo) 55%, var(--b-paper));
+     purpose but still a graphical object, so it clears 3:1 rather than sitting at
+     the 1.48:1 a light grey measured. NOT `--on-raised-faint`, which is hairlines. */
+  --series-residual: color-mix(in srgb, var(--brand-indigo) 55%, var(--brand-cream));
+  /* One chart's model series, kept whole as a validated categorical set. */
+  --series-model-1: var(--brand-series-1);
+  --series-model-2: var(--brand-series-2);
+  --series-model-3: var(--brand-series-3);
+  --series-model-4: var(--brand-series-4);
+  --series-model-5: var(--brand-series-5);
 
-  /* A third step on the ground, below `--on-page-muted`, for pure decoration —
-     the hero's separator dots. 4.04:1: legible, deliberately recessive, and NOT
-     to be used for a meaningful glyph. */
-  --on-page-faint: rgba(255, 255, 248, .45);
-
-  /* Reproducibility-preview model series — dataviz-validated categorical. Single
-     theme now, so only the one set of steps survives. */
-  --rmv-1: #2a78d6; --rmv-2: #008300; --rmv-3: #e87ba4; --rmv-4: #eda100; --rmv-5: #1baf7a;
-
-  /* Replaces the removed `.dark` class as the signal to native chrome that this
-     is a dark UI. Paper surfaces re-declare `light` in @layer base below — cards
-     are cream, and a blanket dark scheme renders <select>, <input> internals,
-     autofill backgrounds and validation bubbles dark-on-cream inside every form. */
+  /* Replaces the removed `.dark` class as the signal to native chrome that this is
+     a dark UI. Raised/field/inset surfaces re-declare `light` in @layer base below
+     — they are cream, and a blanket dark scheme renders <select>, <input>
+     internals, autofill backgrounds and validation bubbles dark-on-cream inside
+     every form. */
   color-scheme: dark;
 }
 
-/* ══ Semantic layer — keys UNCHANGED, sources re-pointed (D-06) ═══════════════
-   Every key below already existed and is read by components across the app. The
-   raw layer under it was replaced wholesale; not one semantic key was renamed,
-   so no component outside `card.tsx` / `button.tsx` changes in this plan.
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════════════
+   TIER 3 — the utility surface.  Components reference ROLES ONLY.
+   ══════════════════════════════════════════════════════════════════════════════
+   Never a tier-1 primitive, never a raw hex, and never a palette SLOT
+   (`bg-neutral-50`, `text-ph-ink`) — a slot names a step on a ramp, which says
+   nothing about what surface the text is on, so it cannot be remapped as a pair.
+   The slot ban is enforced by
+   `tests/test_content_drift.py::test_no_palette_slot_utilities_outside_the_token_layer`,
+   which is expected to FAIL until Part 2 migrates the 22 pages.
+
+   NAMESPACE WARNING, learned the hard way. Tailwind v4's namespaces are not
+   guessable: the font-size namespace is `--text-*`, NOT `--font-size-*`, and six
+   `--font-size-*` keys here generated NOTHING while a grep gate reported success.
+   Every namespace below is verified against the BUILT stylesheet, and the observed
+   utility names are recorded in the plan summary. A role that generates no utility
+   is worse than no role: it fails silently and invisibly.
+   ══════════════════════════════════════════════════════════════════════════════ */
 
 @theme inline {
-  /* Brand colours. `ph-navy` is the ACTION register: the old #113682 navy is
-     retired and its 260 call sites now render the identity blue. The key keeps
-     its name because renaming it would touch every one of them. */
-  --color-ph-navy: var(--b-blue);
-  --color-ph-navy-dark: color-mix(in srgb, var(--b-blue) 82%, var(--b-indigo));
-  --color-ph-navy-darker: color-mix(in srgb, var(--b-blue) 64%, var(--b-indigo));
-  --color-ph-crimson: var(--b-crimson);
-  --color-ph-crimson-dark: color-mix(in srgb, var(--b-crimson) 84%, var(--b-indigo));
-  --color-ph-crimson-darker: color-mix(in srgb, var(--b-crimson) 68%, var(--b-indigo));
-  /* Teal has two forms and one token cannot serve both surfaces: #3AB3BB is
-     5.53:1 on the ground and 2.51:1 on paper. `ph-teal` is the GROUND form (its
-     call sites are the landing hero, which is ground); `ph-teal-ink` is added
-     for paper use so a paper call site has a legal token to reach for. */
-  --color-ph-teal: var(--b-teal);
-  --color-ph-teal-ink: var(--b-teal-ink);
-  --color-ph-green: var(--ok);
-  --color-ph-ink: var(--ink);
+  /* ── Surfaces and their bound foregrounds — the bg- and text- utilities ─── */
+  --color-surface-chrome: var(--surface-chrome);
+  --color-on-chrome: var(--on-chrome);
+  --color-on-chrome-muted: var(--on-chrome-muted);
+  --color-on-chrome-faint: var(--on-chrome-faint);
+  --color-rule-on-chrome: var(--rule-on-chrome);
+  --color-rule-quiet-on-chrome: var(--rule-quiet-on-chrome);
+  --color-link-on-chrome: var(--link-on-chrome);
 
-  /* Neutrals — the paper→ink ramp. Nothing flips any more, so each step is an
-     OPAQUE ink-over-paper mix; opaque matters because a step may be used as a
-     background over the navy ground, where an alpha wash would tint navy instead
-     of paper. Ratios are against --b-paper: 400 and up are text-safe (the old
-     ramp's neutral-400 was 3.1:1 — sub-AA — and is now 4.59:1). */
-  --color-neutral-0: var(--b-paper);
-  --color-neutral-50: var(--card-2);
-  --color-neutral-100: color-mix(in srgb, var(--b-indigo) 6%, var(--b-paper));
-  --color-neutral-200: color-mix(in srgb, var(--b-indigo) 12%, var(--b-paper));
-  --color-neutral-300: color-mix(in srgb, var(--b-indigo) 22%, var(--b-paper));
-  --color-neutral-400: color-mix(in srgb, var(--b-indigo) 65%, var(--b-paper)); /* 4.59:1 */
-  --color-neutral-500: color-mix(in srgb, var(--b-indigo) 70%, var(--b-paper)); /* 5.35:1 */
-  --color-neutral-600: color-mix(in srgb, var(--b-indigo) 78%, var(--b-paper)); /* 6.83:1 */
-  --color-neutral-700: color-mix(in srgb, var(--b-indigo) 86%, var(--b-paper)); /* 8.75:1 */
-  --color-neutral-900: var(--ink);                                              /* 13.27:1 */
+  --color-surface-raised: var(--surface-raised);
+  --color-on-raised: var(--on-raised);
+  --color-on-raised-muted: var(--on-raised-muted);
+  --color-on-raised-faint: var(--on-raised-faint);
+  --color-rule-on-raised: var(--rule-on-raised);
+  --color-rule-quiet-on-raised: var(--rule-quiet-on-raised);
+  --color-link-on-raised: var(--link-on-raised);
 
-  /* Status colours. Every wash below keeps its own foreground at >= 4.5:1 on
-     paper — the pairs are used as `bg-*-bg text-*` badges, so the wash cannot be
-     chosen for looks alone. `danger` is the status/text register and is darkened
-     with indigo (#CB1D56, 5.43:1 on paper, 4.93:1 on its own wash) because pure
-     #E21C52 measures 4.62:1 on paper and ANY wash under it drops below AA;
-     `ph-crimson` and `destructive` keep the pure identity crimson for fills. */
-  --color-success: var(--ok);
-  --color-success-bg: color-mix(in srgb, var(--ok) 8%, var(--b-paper));         /* 4.62:1 */
-  --color-success-border: color-mix(in srgb, var(--ok) 34%, var(--b-paper));
-  --color-warning: var(--warn);
-  --color-warning-bg: var(--warn-bg);                                          /* 5.67:1 */
-  --color-warning-border: var(--warn-line);
-  --color-danger: color-mix(in srgb, var(--b-crimson) 88%, var(--b-indigo));
-  --color-danger-bg: color-mix(in srgb, var(--b-crimson) 6%, var(--b-paper));   /* 4.93:1 */
-  --color-danger-border: color-mix(in srgb, var(--b-crimson) 32%, var(--b-paper));
-  /* The raw --info* set is deleted; the informational register folds into the
-     action blue rather than inventing a second blue family. */
-  --color-info: var(--b-blue);
-  --color-info-bg: color-mix(in srgb, var(--b-blue) 8%, var(--b-paper));        /* 5.00:1 */
-  --color-info-border: color-mix(in srgb, var(--b-blue) 30%, var(--b-paper));
+  --color-surface-field: var(--surface-field);
+  --color-on-field: var(--on-field);
+  --color-on-field-muted: var(--on-field-muted);
+  --color-on-field-faint: var(--on-field-faint);
+  --color-rule-on-field: var(--rule-on-field);
+  --color-link-on-field: var(--link-on-field);
 
-  /* shadcn/ui semantic mappings. NOTE the split that the old white-ground theme
-     did not have: `background` is the GROUND (the page field) while `card` is
-     PAPER (the working surface). A component that means "surface" must read
-     `card`/`popover`, never `background`. */
-  --color-background: var(--b-ground);
-  --color-foreground: var(--on-page);
-  /* The on-ground text steps as utilities, so chrome and the hero can reach them
-     by name instead of by literal: `text-on-page-muted` (7.23:1) for secondary
-     copy on the ground, `text-on-page-faint` (4.04:1) for decoration only. */
-  --color-on-page: var(--on-page);
-  --color-on-page-muted: var(--on-page-muted);
-  --color-on-page-faint: var(--on-page-faint);
-  --color-border: var(--line);
-  --color-input: var(--line);
-  --color-ring: var(--b-blue);
+  --color-surface-inset: var(--surface-inset);
+  --color-on-inset: var(--on-inset);
+  --color-on-inset-muted: var(--on-inset-muted);
+  --color-rule-on-inset: var(--rule-on-inset);
+  --color-link-on-inset: var(--link-on-inset);
 
-  --color-card: var(--b-paper);
-  --color-card-foreground: var(--ink);
-  --color-card-border: var(--line);
+  --color-accent-action: var(--accent);
+  --color-on-accent-action: var(--on-accent);
+  --color-accent-2-on-chrome: var(--accent-2-on-chrome);
+  --color-accent-2-on-raised: var(--accent-2-on-raised);
 
-  --color-popover: var(--b-paper);
-  --color-popover-foreground: var(--ink);
-  --color-popover-border: var(--line);
+  --color-status-ok: var(--status-ok);
+  --color-surface-ok: var(--surface-ok);
+  --color-on-ok: var(--on-ok);
+  --color-rule-ok: var(--rule-ok);
+  --color-status-warn: var(--status-warn);
+  --color-surface-warn: var(--surface-warn);
+  --color-on-warn: var(--on-warn);
+  --color-rule-warn: var(--rule-warn);
+  --color-status-danger: var(--status-danger);
+  --color-surface-danger: var(--surface-danger);
+  --color-on-danger: var(--on-danger);
+  --color-rule-danger: var(--rule-danger);
+  --color-status-destructive: var(--status-destructive);
+  --color-on-destructive: var(--on-destructive);
+  --color-status-info: var(--status-info);
+  --color-surface-info: var(--surface-info);
+  --color-on-info: var(--on-info);
+  --color-rule-info: var(--rule-info);
 
-  --color-primary: var(--b-blue);
-  --color-primary-foreground: var(--b-paper);
+  /* ── Legacy aliases — the 44 files Part 2 migrates still read these ─────────
+     Every one is now sourced from a ROLE, so a rebrand reaches them even before
+     their call sites are migrated. They are aliases, not a second tier: nothing
+     below introduces a value.
 
-  --color-secondary: var(--card-2);
-  --color-secondary-foreground: var(--ink);
+     `ph-navy` is the ACTION register — the previous brand's #113682 navy is
+     retired and its 260 call sites render the identity accent. The key keeps its
+     name only because renaming it would touch every one of them; the name is a
+     lie and that is why the slot gate bans it. */
+  --color-ph-navy: var(--accent);
+  --color-ph-navy-dark: color-mix(in srgb, var(--accent) 82%, var(--on-raised));
+  --color-ph-navy-darker: color-mix(in srgb, var(--accent) 64%, var(--on-raised));
+  --color-ph-crimson: var(--status-destructive);
+  --color-ph-crimson-dark: color-mix(in srgb, var(--status-destructive) 84%, var(--on-raised));
+  --color-ph-crimson-darker: color-mix(in srgb, var(--status-destructive) 68%, var(--on-raised));
+  --color-ph-teal: var(--accent-2-on-chrome);
+  --color-ph-teal-ink: var(--accent-2-on-raised);
+  --color-ph-green: var(--status-ok);
+  --color-ph-ink: var(--on-raised);
 
-  --color-muted: var(--card-2);
-  --color-muted-foreground: var(--muted);
+  /* The paper→ink ramp. Each step is an OPAQUE role-over-role mix; opaque matters
+     because a step may be used as a background over the chrome, where an alpha
+     wash would tint navy instead of cream. */
+  --color-neutral-0: var(--surface-raised);
+  --color-neutral-50: var(--surface-inset);
+  --color-neutral-100: color-mix(in srgb, var(--on-raised) 6%, var(--surface-raised));
+  --color-neutral-200: color-mix(in srgb, var(--on-raised) 12%, var(--surface-raised));
+  --color-neutral-300: color-mix(in srgb, var(--on-raised) 22%, var(--surface-raised));
+  --color-neutral-400: color-mix(in srgb, var(--on-raised) 65%, var(--surface-raised));
+  --color-neutral-500: color-mix(in srgb, var(--on-raised) 70%, var(--surface-raised));
+  --color-neutral-600: color-mix(in srgb, var(--on-raised) 78%, var(--surface-raised));
+  --color-neutral-700: color-mix(in srgb, var(--on-raised) 86%, var(--surface-raised));
+  --color-neutral-900: var(--on-raised);
 
-  --color-accent: var(--card-2);
-  --color-accent-foreground: var(--ink);
+  --color-success: var(--status-ok);
+  --color-success-bg: var(--surface-ok);
+  --color-success-border: var(--rule-ok);
+  --color-warning: var(--status-warn);
+  --color-warning-bg: var(--surface-warn);
+  --color-warning-border: var(--rule-warn);
+  --color-danger: var(--status-danger);
+  --color-danger-bg: var(--surface-danger);
+  --color-danger-border: var(--rule-danger);
+  --color-info: var(--status-info);
+  --color-info-bg: var(--surface-info);
+  --color-info-border: var(--rule-info);
 
-  --color-destructive: var(--b-crimson);
-  --color-destructive-foreground: var(--b-paper);
+  /* shadcn/ui semantic mappings. NOTE the split a white-ground theme does not have:
+     `background` is the FIELD, `card` is RAISED. A component that means "surface"
+     must read `card`/`popover`, never `background`. */
+  --color-background: var(--surface-chrome);
+  --color-foreground: var(--on-chrome);
+  --color-on-page: var(--on-chrome);
+  --color-on-page-muted: var(--on-chrome-muted);
+  --color-on-page-faint: var(--on-chrome-faint);
+  --color-border: var(--rule-on-raised);
+  --color-input: var(--rule-on-raised);
+  --color-ring: var(--focus-ring-on-raised);
 
-  /* Chart series. Teal appears in its PAPER form: charts live on paper cards and
-     #3AB3BB is 2.51:1 there, below even the 3:1 floor for a graphical object. */
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-chart-6: var(--chart-6);
-  --color-chart-7: var(--chart-7);
-  --color-chart-8: var(--chart-8);
-  --color-chart-residual: var(--chart-residual);
+  --color-card: var(--surface-raised);
+  --color-card-foreground: var(--on-raised);
+  --color-card-border: var(--rule-on-raised);
 
-  /* Sidebar — a paper surface, so it draws from the paper family, not the ground. */
-  --color-sidebar: var(--card-2);
-  --color-sidebar-foreground: var(--ink);
-  --color-sidebar-border: var(--line);
-  --color-sidebar-primary: var(--b-blue);
-  --color-sidebar-primary-foreground: var(--b-paper);
-  --color-sidebar-accent: color-mix(in srgb, var(--b-indigo) 6%, var(--b-paper));
-  --color-sidebar-accent-foreground: var(--ink);
-  --color-sidebar-ring: var(--b-blue);
+  --color-popover: var(--surface-raised);
+  --color-popover-foreground: var(--on-raised);
+  --color-popover-border: var(--rule-on-raised);
 
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, "SF Mono", Consolas, monospace;
-  /* Display face — Byrl first (D-07), Space Grotesk as the standing fallback until
-     the licensed files land. Geometric-modern either way. */
-  --font-display: 'Byrl', 'Space Grotesk', 'Inter', sans-serif;
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
 
-  /* ── Type scale — UI-SPEC §3.1: EXACTLY FOUR SIZES ────────────────────────
-     The namespace is `--text-*`, not `--font-size-*`. The six `--font-size-*`
-     keys this replaces generated NOTHING: Tailwind v4's font-size namespace is
-     `--text-*` (the compiled utility is
-     `.text-sm{font-size:var(--text-sm)}`), so those keys only ever produced
-     junk `font-size-*` FAMILY utilities and the app rendered Tailwind's own
-     default scale throughout. `--font-size-base: 15px` never shipped 15px;
-     `text-base` was Tailwind's 16px. Declaring the scale under the real
-     namespace is what makes the four sizes actually load-bearing.
+  --color-secondary: var(--surface-inset);
+  --color-secondary-foreground: var(--on-inset);
 
-     `--text-*: initial` clears the whole inherited namespace FIRST, so
-     `text-base`, `text-lg`, `text-2xl` and everything from `text-3xl` to
-     `text-9xl` stop existing as utilities rather than silently falling back to
-     Tailwind's defaults. Four keys are declared after the reset; there is no
-     fifth size anywhere in the theme.
+  --color-muted: var(--surface-inset);
+  --color-muted-foreground: var(--on-raised-muted);
 
-     xs/sm/xl happen to coincide with Tailwind's own values — the four-size cap
-     is what is new, not the numbers. `display` is the one new key: 30/34 in
-     `--font-display` at 600, and it carries its weight on the token so a hero
-     cannot ship at a different one. Folding 30 into 20 would make 20px the
-     largest type in the product (landing hero, /methods, /benchmarks included)
-     and would render the one dominant cost figure at pane-heading size. */
+  --color-accent: var(--surface-inset);
+  --color-accent-foreground: var(--on-inset);
+
+  --color-destructive: var(--status-destructive);
+  --color-destructive-foreground: var(--on-destructive);
+
+  --color-chart-1: var(--series-1);
+  --color-chart-2: var(--series-2);
+  --color-chart-3: var(--series-3);
+  --color-chart-4: var(--series-4);
+  --color-chart-5: var(--series-5);
+  --color-chart-6: var(--series-6);
+  --color-chart-7: var(--series-7);
+  --color-chart-8: var(--series-8);
+  --color-chart-residual: var(--series-residual);
+
+  --color-sidebar: var(--surface-inset);
+  --color-sidebar-foreground: var(--on-inset);
+  --color-sidebar-border: var(--rule-on-inset);
+  --color-sidebar-primary: var(--accent);
+  --color-sidebar-primary-foreground: var(--on-accent);
+  --color-sidebar-accent: color-mix(in srgb, var(--on-raised) 6%, var(--surface-raised));
+  --color-sidebar-accent-foreground: var(--on-inset);
+  --color-sidebar-ring: var(--focus-ring-on-raised);
+
+  /* ── Type — families, sizes, weights, tracking ─────────────────────────────
+     Namespaces, all four verified in dist: `--font-*` → `font-sans`;
+     `--text-*` → `text-sm` (NOT `--font-size-*`); `--font-weight-*` →
+     `font-semibold`; `--tracking-*` → `tracking-eyebrow`. */
+  --font-sans: var(--brand-font-body);
+  --font-mono: var(--brand-font-mono);
+  --font-display: var(--brand-font-display);
+
+  /* EXACTLY FOUR SIZES (UI-SPEC §3.1). `--text-*: initial` clears the whole
+     inherited namespace FIRST, so `text-base`, `text-lg`, `text-2xl` and
+     everything up to `text-9xl` stop EXISTING as utilities rather than silently
+     falling back to Tailwind's defaults. The cap is enforced by the token layer;
+     the greps are a second net. */
   --text-*: initial;
-  --text-xs: 12px;
-  --text-xs--line-height: 16px;
-  --text-sm: 14px;
-  --text-sm--line-height: 20px;
-  --text-xl: 20px;
-  --text-xl--line-height: 28px;
-  --text-display: 30px;
-  --text-display--line-height: 34px;
-  --text-display--font-weight: 600;
+  --text-xs: var(--brand-text-meta);
+  --text-xs--line-height: var(--brand-leading-meta);
+  --text-sm: var(--brand-text-body);
+  --text-sm--line-height: var(--brand-leading-body);
+  --text-xl: var(--brand-text-heading);
+  --text-xl--line-height: var(--brand-leading-heading);
+  --text-display: var(--brand-text-display);
+  --text-display--line-height: var(--brand-leading-display);
+  --text-display--font-weight: var(--brand-weight-strong);
 
-  /* ── Weights — UI-SPEC §3.2: EXACTLY TWO ──────────────────────────────────
-     400 and 600. 500 and 700 are banned, including on the display face, so the
-     namespace is reset and only the two survive: `font-medium` and `font-bold`
-     stop being utilities at all rather than being kept honest by a grep. The
-     eyebrow register is carried by uppercase + .10em tracking + 600 — never by
-     a third weight and never by a smaller size. */
-  /* The eyebrow's tracking, named. UI-SPEC §3.1 folds the former 10px eyebrow up
-     into 12px and compensates with 0.10em, so a tracked-uppercase band occupies
-     roughly the width it did at 10px/0.14em. It is a token because the register
-     is a treatment shared by ~45 labels, not a per-call-site guess. */
-  --tracking-eyebrow: 0.10em;
+  /* The eyebrow register is carried by uppercase + tracking + the strong weight —
+     never by a third weight and never by a smaller size. */
+  --tracking-eyebrow: var(--brand-tracking-eyebrow);
 
+  /* EXACTLY TWO WEIGHTS (UI-SPEC §3.2). Same reset: `font-medium` and `font-bold`
+     stop being utilities at all rather than being kept honest by a grep. */
   --font-weight-*: initial;
-  --font-weight-normal: 400;
-  --font-weight-semibold: 600;
+  --font-weight-normal: var(--brand-weight-regular);
+  --font-weight-semibold: var(--brand-weight-strong);
 
-  /* Shadows — re-tinted to the identity's deep navy (#00063D) rather than the
-     retired #0B152D ink. `shadow-card` is the single elevation token of the
-     identity; the xs–lg ramp stays because 54 shadcn components read it. */
-  --shadow-card: var(--shadow);
-  --shadow-xs: 0 1px 2px 0 rgba(0, 6, 61, 0.05);
-  --shadow-sm: 0 1px 3px 0 rgba(0, 6, 61, 0.07), 0 1px 2px -1px rgba(0, 6, 61, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 6, 61, 0.09), 0 2px 4px -2px rgba(0, 6, 61, 0.05);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 6, 61, 0.11), 0 4px 6px -4px rgba(0, 6, 61, 0.06);
+  /* ── Elevation ─────────────────────────────────────────────────────────────
+     `shadow-card` is the identity's single elevation; the xs–lg ramp stays
+     because 54 shadcn components read it. */
+  --shadow-card: var(--elevation-raised);
+  --shadow-xs: 0 1px 2px 0 color-mix(in srgb, var(--brand-navy-deep) 5%, transparent);
+  --shadow-sm: 0 1px 3px 0 color-mix(in srgb, var(--brand-navy-deep) 7%, transparent),
+               0 1px 2px -1px color-mix(in srgb, var(--brand-navy-deep) 5%, transparent);
+  --shadow-md: 0 4px 6px -1px color-mix(in srgb, var(--brand-navy-deep) 9%, transparent),
+               0 2px 4px -2px color-mix(in srgb, var(--brand-navy-deep) 5%, transparent);
+  --shadow-lg: 0 10px 15px -3px color-mix(in srgb, var(--brand-navy-deep) 11%, transparent),
+               0 4px 6px -4px color-mix(in srgb, var(--brand-navy-deep) 6%, transparent);
 
-  /* Border radius — Phenome §3.4 (explicit, no calc).
-     The four working radii are UNCHANGED on purpose (RESEARCH §Q6): 42 of the 54
-     shadcn components read them across 289 call sites, and 30px is a CONTAINER
-     radius, not a working-surface one. The governing principle is brand geometry
-     at container level, instrument discipline at data level — a ledger row, a
-     table cell, a badge, a checkbox and an input never take a container radius,
-     because marketing proportions would wreck a screen whose job is aligning a
-     column of numbers. So the container scale is ADDITIVE. */
-  --radius-sm: 2px;
-  --radius: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  /* ── Radius ────────────────────────────────────────────────────────────────
+     Brand geometry at container level, instrument discipline at data level: a
+     ledger row, a table cell, a badge, a checkbox and an input never take a
+     container radius, because marketing proportions wreck a screen whose job is
+     aligning a column of numbers. So the container scale is ADDITIVE, and the four
+     working radii are unchanged (42 of 54 shadcn components read them across 289
+     call sites). */
+  --radius-sm: var(--brand-radius-hairline);
+  --radius: var(--brand-radius-control);
+  --radius-md: var(--brand-radius-control-md);
+  --radius-lg: var(--brand-radius-control-lg);
   /* `rounded-xl` is not one of Tailwind's theme-controlled aliases here: without
-     this key its single call site silently keeps Tailwind's own 0.75rem instead
-     of the identity's inner radius. Declaring the key (rather than rewriting the
-     call site) keeps the fix in the token layer, which is also the file this plan
-     owns — `landing.tsx` belongs to the screen-port plan. */
-  --radius-xl: 14px;
-  --radius-card: 30px;
-  --radius-inner: 14px;
-  --radius-pill: 999px;
+     this key its single call site silently keeps Tailwind's own 0.75rem instead of
+     the identity's inner radius. */
+  --radius-xl: var(--brand-radius-inner);
+  --radius-card: var(--brand-radius-container);
+  --radius-inner: var(--brand-radius-inner);
+  --radius-pill: var(--brand-radius-pill);
 }
+
 
 @layer base {
   * {
@@ -352,12 +542,12 @@
   }
 
   html {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: var(--brand-font-body);
   }
 
   @supports (font-variation-settings: normal) {
     html {
-      font-family: 'Inter var', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: 'Inter var', var(--brand-font-body);
     }
   }
 
@@ -379,6 +569,9 @@
      call site would have to remember to add. Native controls are listed
      directly because the app has no ground-level form control today, and a
      control that inherits `dark` on cream is the exact failure this prevents. */
+  [class~="bg-surface-raised"],
+  [class~="bg-surface-field"],
+  [class~="bg-surface-inset"],
   [class~="bg-card"],
   [class~="bg-popover"],
   [class~="bg-neutral-0"],
@@ -407,7 +600,7 @@
   /* A bare `<th>` also arrives at the UA's bold 700. A column header IS the eyebrow
      register, so 600 is where it belonged anyway. */
   th {
-    font-weight: 600;
+    font-weight: var(--brand-weight-strong);
   }
 
   /* Tabular numerals for tables and numeric displays.
@@ -430,8 +623,8 @@
      The outline follows the element's own border-radius, which is how a pill
      button gets a pill focus outline and a 4px input gets a 4px one. */
   :focus-visible {
-    outline: 2px solid var(--b-blue);
-    outline-color: light-dark(var(--b-blue), var(--on-page));
+    outline: 2px solid var(--focus-ring-on-raised);
+    outline-color: light-dark(var(--focus-ring-on-raised), var(--focus-ring-on-chrome));
     outline-offset: 2px;
   }
 }

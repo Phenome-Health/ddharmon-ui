@@ -224,7 +224,7 @@ function NodeShape({ x, y, width, height, payload, state, onEnter, onLeave, onCl
         textAnchor={anchor}
         dominantBaseline="middle"
         fontSize={CHART_LABEL_SIZE}
-        fill="var(--sf-700)"
+        fill="var(--on-raised)"
         fillOpacity={dim ? 0.35 : 1}
         style={{ fontWeight: state === "on" ? 600 : 400 }}
       >
@@ -268,7 +268,7 @@ function LinkShape({
     <path
       d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
       fill="none"
-      stroke={payload.color ?? "var(--muted)"}
+      stroke={payload.color ?? "var(--on-raised-muted)"}
       strokeWidth={Math.max(1, linkWidth)}
       strokeOpacity={opacity}
       style={{ cursor: "pointer", transition: "stroke-opacity 120ms" }}
