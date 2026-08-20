@@ -4,6 +4,7 @@ import { routeUrl, TOKEN_LAYER_ROUTES } from "./routes";
 import {
   asCss,
   EXPECTED_TIER_1_ONLY_SHORTFALLS,
+  PAIRS_THAT_CANNOT_MOVE,
   PREVIOUS_BRAND_TIER_1,
   PREVIOUS_BRAND_TIER_2_REMAP,
 } from "./fixtures/previous-brand";
@@ -13,8 +14,10 @@ import {
  *
  * "A rebrand is a one-file edit" is a claim, and a claim about future work is worth nothing
  * unasserted. This file swaps tier 1 to the PREVIOUS Phenome Health brand's real measured values
- * — a brand that differed on every axis: type, dark neutral, light neutral, dominant accent,
- * radii — and then asks the questions that decide whether the insulation is real:
+ * — the JULY 2026 identity this app shipped until 08-12b, which differed on the ground, the paper,
+ * the ink, the second accent, the display face and the radii, and did NOT differ on the dominant
+ * accent, the body face or the status registers — and then asks the questions that decide whether
+ * the insulation is real:
  *
  *   1. Does every role still RESOLVE? A role that falls through to an inherited value has no
  *      insulation at all; it just fails quietly.
@@ -57,9 +60,11 @@ test("@drill 1b — the swap actually took: every role's resolved value moved", 
     const b = byLabel.get(a.label);
     return b && a.fgResolved === b.fgResolved && a.bgResolved === b.bgResolved;
   });
-  // The destructive hue is #E21C52 in BOTH brands — the previous brand's dominant accent is the
-  // current brand's destructive fill — so its pairs legitimately cannot move. Named, not hidden.
-  const unexplained = unmoved.filter((u) => !/destructive/.test(u.label));
+  // Some pairs legitimately cannot move: both ends are painted from primitives that are identical
+  // in the two generations. They are listed BY NAME in the fixture, never matched by a pattern —
+  // the regex this replaced (`!/destructive/`) exempted five pairs to cover one, and an exemption
+  // wider than its reason is where a real leak hides.
+  const unexplained = unmoved.filter((u) => !PAIRS_THAT_CANNOT_MOVE.includes(u.label));
   expect(
     unexplained.map((u) => `${u.label} — still ${u.fgResolved} on ${u.bgResolved}`),
     "these pairs did not move when tier 1 was replaced, so either the override did not apply or " +
@@ -108,27 +113,61 @@ test("@drill 2c — the prohibitions survive a brand replacement", async ({ page
 
 test("@drill 3 — the type stack moves with the brand, not just the colour", async ({ page }) => {
   await page.goto("/new");
-  const before = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
+  const before = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.className = "font-display text-display";
+    document.body.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    const out = { display: cs.fontFamily, tracking: cs.letterSpacing };
+    probe.remove();
+    return { body: getComputedStyle(document.body).fontFamily, ...out };
+  });
   await page.addStyleTag({ content: TIER_1 });
   const after = await page.evaluate(() => {
     const probe = document.createElement("div");
-    probe.className = "font-display";
+    probe.className = "font-display text-display";
     document.body.appendChild(probe);
-    const display = getComputedStyle(probe).fontFamily;
+    const cs = getComputedStyle(probe);
+    const out = { display: cs.fontFamily, tracking: cs.letterSpacing };
     probe.remove();
     const strong = document.createElement("strong");
     strong.textContent = "x";
     document.body.appendChild(strong);
     const weight = getComputedStyle(strong).fontWeight;
     strong.remove();
-    return { body: getComputedStyle(document.body).fontFamily, display, weight };
+    return { body: getComputedStyle(document.body).fontFamily, weight, ...out };
   });
-  expect(after.body, "the body face must follow the brand").not.toBe(before);
-  expect(after.body).toContain("Roboto");
-  expect(after.display, "the display face must follow the brand").toContain("proxima-nova");
-  // The previous brand's emphasis weight was 700. `<strong>` is pinned to the strong-weight
-  // PRIMITIVE rather than to a literal 600, so it follows the brand too.
-  expect(after.weight, "the strong weight is a primitive, not a literal").toBe("700");
+
+  // THE BODY FACE DOES NOT MOVE, and this asserts that rather than pretending otherwise. Both
+  // generations run Inter for UI copy. Against the two-generations-old S3 fixture this line was
+  // `expect(after.body).not.toBe(before)` and it passed trivially, because that guide ran Roboto.
+  // Rolling the fixture forward cost that assertion, and buying it back with a fixture value the
+  // brand never had would be measuring the fixture instead of the layer.
+  expect(after.body, "the body face is Inter in both generations — this axis genuinely did not move").toBe(
+    before.body,
+  );
+  expect(after.body).toContain("Inter");
+
+  // The DISPLAY stack is where type actually moved, so that is where the movement is asserted.
+  expect(before.display, "the shipped display stack is the one-typeface brand").toContain("Inter");
+  expect(before.display, "the retired display face must not survive anywhere").not.toContain("Byrl");
+  expect(after.display, "the display face must follow the brand").toContain("Byrl");
+  expect(after.display).toContain("Space Grotesk");
+
+  // Display TRACKING is a primitive too. The current brand carries its display hierarchy on
+  // -0.02em because it has no second face to carry it; the July identity had the face and no
+  // tracking token. A stack that moved while the tracking stayed put would mean the tracking was
+  // written as a literal on the `--text-display--letter-spacing` key instead of sourced.
+  expect(after.tracking, "display tracking is brand data, not a literal on a theme key").not.toBe(
+    before.tracking,
+  );
+
+  // The strong weight is pinned to the PRIMITIVE rather than to a literal 600, so it follows the
+  // brand. Both generations happen to use 600, so this asserts the WIRING (the resolved weight is
+  // the fixture's declared value) rather than a change.
+  expect(after.weight, "the strong weight is a primitive, not a literal").toBe(
+    PREVIOUS_BRAND_TIER_1["--brand-weight-strong"],
+  );
 });
 
 /**

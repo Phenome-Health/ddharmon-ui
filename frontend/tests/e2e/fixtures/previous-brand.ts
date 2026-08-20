@@ -1,116 +1,172 @@
 /**
  * The PREVIOUS Phenome Health brand, as the rebrand drill's fixture.
  *
- * Not invented values. Measured from the brand guide at
- * `phenome-health-brand-guide.s3.amazonaws.com/public/index.html` with a computed-style walk —
- * the same method used on the live site for the current identity. The two brands moved on EVERY
- * axis, which is the empirical reason the three-tier layer exists:
+ * ROLLED FORWARD 2026-08-20. This file used to hold the S3 brand guide (Roboto / proxima-nova,
+ * #0B152D navy, #EDEDED grey, #E21C52 magenta). That palette is now TWO generations behind, and a
+ * drill run against a two-generations-stale brand proves the layer against a straw man: the
+ * further apart the two palettes are, the easier it is for every role to move. The fixture must
+ * hold the generation IMMEDIATELY behind the shipped one, so the drill measures the insulation
+ * against the hardest realistic case — the one where some axes did not move at all.
  *
- *   axis            previous                       current
- *   type            Roboto + proxima-nova          Byrl + Space Grotesk (100% replaced)
- *   dark neutral    #0B152D                        #1E2A52
- *   light neutral   #EDEDED (cool grey)            #FFFFF8 (warm cream)
- *   dominant accent #E21C52 magenta                #0D59F2 bright blue
- *   other accents   #005B33 green, #3AC2CB cyan,   #222572 indigo
- *                   #113682 blue
- *   radii           20px / 40px / 5px              30px / 100px / 200px / 999px
+ * So the values below are the JULY 2026 identity: the brand `08-05` sampled and `08-07` built the
+ * three-tier layer on, and the one this app shipped until plan `08-12b` re-pointed tier 1 at the
+ * identity `phenomehealth.org` republished on 2026-08-20.
  *
- * MEASURED vs DERIVED. Every value below is labelled. A brand guide does not publish a token
- * layer, so some roles have no published source — the previous guide has no second light step,
- * no warning register and no contrast-corrected form of its cyan. Those are DERIVED here by the
- * same rule the current identity follows, and the fact that a rebrand has to derive them is
- * itself a finding: it is the work a rebrand actually costs, and it is bounded to tier 1.
+ *   axis            previous (July 2026)           current (2026-08-20)
+ *   page ground     #1E2A52 navy                   #D5E0F6 pale blue  (INVERTED)
+ *   paper           #FFFFF8 warm cream             #FFFFFF pure white
+ *   second light    #F7F6EC cream-dim              #EBEFFF palest blue (warm -> cool)
+ *   dark surface    #1E2A52 (#00063D was a tint)   #00063D             (PROMOTED to a surface)
+ *   ink             #222572 indigo                 #000000
+ *   dominant accent #0D59F2                        #0D59F2             (UNCHANGED — see below)
+ *   second accent   #3AB3BB teal / #1B7F86 ink     absent (logo-scoped only)
+ *   display face    Byrl -> Space Grotesk          Inter (one typeface)
+ *   container radii 30px / 14px                    16px / 10px
+ *
+ * THE HARD CASE THIS FIXTURE BUYS, and the reason rolling it forward matters. The accent
+ * (#0D59F2), the status registers and the categorical make-up did NOT move between these two
+ * generations. Against the S3 guide every single value moved, so "did every role move?" was a
+ * question the fixture could not fail to answer yes to. Here it can, and one pair legitimately
+ * cannot move at all (`--on-warn on --surface-warn`, painted end to end from product-owned status
+ * primitives). That pair is exempted BY NAME in the drill rather than by a regex, so the exemption
+ * cannot quietly widen.
+ *
+ * MEASURED vs DERIVED. Every value below is labelled. A brand does not publish a token layer, so
+ * some roles have no source in the generation being replayed — the July identity had no light
+ * field, because 08-07 put the page on navy, and it had no mark palette, because the mark was
+ * painted from UI roles (which is the defect 08-12b fixed). Those are DERIVED here by the same
+ * rule the current identity follows, and the fact that a rebrand has to derive them is itself a
+ * finding: it is the work a rebrand actually costs, and it is bounded to tier 1.
  */
 
 /** Tier 1 only. A drill that also rewrote tier 2 would be proving nothing. */
 export const PREVIOUS_BRAND_TIER_1: Record<string, string> = {
   // ── Colour ──────────────────────────────────────────────────────────────────
-  "--brand-navy": "#0B152D", // MEASURED — the guide's dark neutral, 7 occurrences
-  "--brand-navy-deep": "#05091A", // DERIVED — the guide publishes no second navy; shadow tint only
-  "--brand-cream": "#EDEDED", // MEASURED — the guide's light neutral, 5 occurrences
-  "--brand-cream-dim": "#DCDCDC", // DERIVED — no published second light step
-  "--brand-indigo": "#0B152D", // MEASURED — the guide's non-black text colour
-  "--brand-blue": "#113682", // MEASURED — the guide's blue, 1 occurrence
-  "--brand-teal": "#3AC2CB", // MEASURED — the guide's cyan
-  "--brand-teal-ink": "#125358", // DERIVED — #3AC2CB is 1.84:1 on #EDEDED; the light-surface form
-  //                                 is brand data the guide never supplied. 7.46:1.
-  "--brand-crimson": "#E21C52", // MEASURED — the guide's dominant accent. IDENTICAL in both brands,
-  //                                 which is why the leak scan cannot discriminate on it.
-  "--brand-crimson-ink": "color-mix(in srgb, var(--brand-crimson) 80%, var(--brand-indigo))",
-  // DERIVED — same formula as the current identity at a different ratio. At the current 88% the
-  // text form measures 4.39:1 on its own wash under this palette, below AA; 80% (#B71B4B) gives
-  // 5.48:1 on the light neutral and 5.00:1 on the wash.
-  "--brand-green": "#005B33", // MEASURED — the guide's green
-  "--brand-amber": "#6E4304", // DERIVED — the previous brand published NO warning register at all
-  "--brand-amber-pale": "#DED9D1", // DERIVED — the amber at 12% over the light neutral
-  "--brand-amber-mid": "#B9AA93", // DERIVED — the amber at 35% over the light neutral
-  "--brand-violet": "#5B2FB5", // DERIVED — categorical make-up, re-darkened for the grey ground
-  "--brand-sky-deep": "#0B4E8A", // DERIVED — ditto
-  "--brand-slate": "#4A5568", // DERIVED — ditto
-  "--brand-series-1": "#1F5FA8",
-  "--brand-series-2": "#0A6B33",
-  "--brand-series-3": "#B4507A",
-  "--brand-series-4": "#A87400",
-  "--brand-series-5": "#127C58",
+  "--brand-white": "#FFFFF8", // MEASURED — the July identity's paper. A warm off-white, never pure.
+  "--brand-pale": "#F7F6EC", // MEASURED — its second light step (`--brand-cream-dim`).
+  "--brand-mist": "#F2F1E4", // DERIVED — the July identity published no THIRD light step, because
+  //                             08-07 put the page on navy and the light field role did not exist.
+  //                             Continues the cream -> cream-dim interval by one more step.
+  "--brand-navy-deep": "#1E2A52", // MEASURED — its dominant dark neutral. Note the swap: the July
+  //                             identity ALSO had #00063D, but only as a shadow/scrim tint, never
+  //                             as a surface. This role is now a real surface, so the counterpart
+  //                             is the navy that actually painted one.
+  "--brand-blue": "#0D59F2", // MEASURED — IDENTICAL in both generations. The one axis that did not
+  //                             move, and the reason this fixture is a harder test than the S3 one.
+  "--brand-slate": "#5B667A", // MEASURED — the July categorical slate.
+  "--brand-black": "#222572", // MEASURED — the July ink (`--brand-indigo`). That identity had no
+  //                             pure black; its darkest text colour was a chromatic indigo.
+
+  // The mark's palette. DERIVED, and the derivation IS the defect 08-12b fixed: the July
+  // generation had no mark palette at all, because `phenome-mark.tsx` painted the logo from
+  // `--status-destructive`, `--on-chrome` and `--accent-2-on-chrome`. These are the values those
+  // three UI roles happened to resolve to, which is exactly why a brand asset must not be painted
+  // from semantic UI roles (T-08-65).
+  "--brand-mark-crimson": "#E21C52", // DERIVED — via `--status-destructive`
+  "--brand-mark-paper": "#FFFFF8", // DERIVED — via `--on-chrome`
+  "--brand-mark-teal": "#3AB3BB", // DERIVED — via `--accent-2-on-chrome`
+
+  // Status is PRODUCT-owned: no Phenome Health generation has published a status palette, so these
+  // did not move. MEASURED against the July token layer, which is where they were decided.
+  "--brand-green": "#0E7C63",
+  "--brand-amber": "#8F4E00",
+  "--brand-amber-pale": "#FCEFD6",
+  "--brand-amber-mid": "#E8C48A",
+  "--brand-crimson": "#E21C52",
+  "--brand-crimson-ink": "color-mix(in srgb, var(--brand-crimson) 88%, var(--brand-navy-deep))",
+
+  // Categorical make-up. Also product-owned and also unmoved; the teal step keeps the July
+  // `--brand-teal-ink` value, which is what it was carrying then.
+  "--brand-teal-deep": "#1B7F86",
+  "--brand-violet": "#7C3AED",
+  "--brand-sky-deep": "#0369A1",
+  "--brand-series-1": "#2a78d6",
+  "--brand-series-2": "#008300",
+  "--brand-series-3": "#e87ba4",
+  "--brand-series-4": "#eda100",
+  "--brand-series-5": "#1baf7a",
 
   // ── Type ────────────────────────────────────────────────────────────────────
-  // MEASURED — the guide runs Roboto for UI and proxima-nova for display. Both are 100%
-  // replaced in the current identity; type is a rebrand axis, so it is tokenized like colour.
-  "--brand-font-body": "'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  "--brand-font-mono": "'Roboto Mono', ui-monospace, 'SF Mono', Consolas, monospace",
-  "--brand-font-display": "'proxima-nova', 'Roboto', sans-serif",
+  // The BODY face is Inter in both generations — another axis that did not move, and the drill
+  // says so out loud rather than asserting a change that did not happen. The DISPLAY stack is
+  // where type moved: the July identity ran a licensed display face (Byrl) with Space Grotesk as
+  // its standing fallback; the current brand has exactly one typeface and builds hierarchy from
+  // weight and tracking instead.
+  "--brand-font-body": "'Inter', -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+  "--brand-font-mono": "'JetBrains Mono', ui-monospace, \"SF Mono\", Consolas, monospace",
+  "--brand-font-display": "'Byrl', 'Space Grotesk', 'Inter', sans-serif",
   "--brand-weight-regular": "400",
-  "--brand-weight-strong": "700", // MEASURED — the previous brand's emphasis weight was 700, not 600
+  "--brand-weight-strong": "600",
+  "--brand-tracking-display": "0em", // DERIVED — the July identity carried no display tracking; the
+  //                             token did not exist, because a separate display FACE was doing the
+  //                             work the current brand does with negative tracking.
 
   // ── Geometry ────────────────────────────────────────────────────────────────
-  "--brand-radius-container": "40px", // MEASURED — the guide's largest radius
-  "--brand-radius-inner": "20px", // MEASURED — the guide's mid radius
-  "--brand-radius-pill": "999px", // DERIVED — the guide uses 50% for circles
-  "--brand-radius-hairline": "1px", // DERIVED
-  "--brand-radius-control": "5px", // MEASURED — the guide's small radius
-  "--brand-radius-control-md": "5px", // MEASURED
-  "--brand-radius-control-lg": "5px", // MEASURED
+  "--brand-radius-container": "30px", // MEASURED — the July site was 30px-dominant
+  "--brand-radius-inner": "14px", // MEASURED
+  "--brand-radius-pill": "999px", // unchanged
+  "--brand-radius-hairline": "2px", // unchanged
+  "--brand-radius-control": "4px", // unchanged — control radii are instrument discipline, not brand
+  "--brand-radius-control-md": "6px",
+  "--brand-radius-control-lg": "8px",
 };
 
 /**
  * The ONE tier-2 remap this fixture needs, and the whole point of declaring it explicitly.
  *
- * `--status-destructive` is used both as a FILL and as a text colour, and the previous brand's
- * magenta cannot carry AA against its own light neutral in EITHER direction: #E21C52 on #EDEDED
- * measures 3.97:1, and so does #EDEDED on #E21C52. (The current brand scrapes 4.62:1 both ways
- * because its light neutral is a warm cream rather than a cool grey — a two-point-of-lightness
- * difference that decides an accessibility outcome, which is the sharpest argument in this whole
- * plan for measuring instead of eyeballing.)
+ * `--surface-field` is the page field, and it is the role the July identity genuinely could not
+ * fill. Its light neutrals top out at #FFFFF8 / #F7F6EC, and its dark neutral is #1E2A52 rather
+ * than #00063D — so the deepest ink that palette can put on a light field measures 12.25:1, just
+ * under the 13:1 AAA-body floor the two body surfaces are held to. Both field body pairings
+ * (`--on-field` and `--link-on-field`, which is the same decision re-made) land there together,
+ * because they are the same value.
  *
- * So a rebrand has to make ONE decision: use the ink form for the destructive register and give
- * up the pure magenta as a fill. That is one line in tier 2, and it fixes both directions at once.
+ * So a rebrand back to that palette has to make ONE decision: the field takes the BRIGHTEST light
+ * neutral rather than a third derived step, and the field and the paper become the same colour.
+ * That is one line in tier 2, and it fixes both pairs at once.
  *
- * The drill asserts the tier-1 swap ALONE leaves exactly these two pairs short, so the number of
- * roles a rebrand must reason about cannot silently grow.
+ * It is also the most interesting thing this fixture says. Collapsing the field onto the paper
+ * destroys the "paper on a field" separation the Gate 1 ledger rests on — which is precisely why
+ * 08-07 put that generation's page on NAVY rather than on a light ground. The drill re-derives,
+ * from contrast numbers alone, the design decision that was actually taken at the time.
  */
 export const PREVIOUS_BRAND_TIER_2_REMAP: Record<string, string> = {
-  "--status-destructive": "var(--brand-crimson-ink)",
+  "--surface-field": "var(--brand-white)",
 };
 
 /** The pairs the tier-1 swap alone leaves short — the declared, bounded cost of this rebrand. */
 export const EXPECTED_TIER_1_ONLY_SHORTFALLS = [
-  "--status-destructive on --surface-raised",
-  "--on-destructive on --status-destructive",
+  "--on-field on --surface-field",
+  "--link-on-field on --surface-field",
+];
+
+/**
+ * Pairs that legitimately CANNOT move when tier 1 is swapped, because both their surface and
+ * their foreground are painted from primitives that are identical in the two generations.
+ *
+ * Named individually rather than matched by a regex. The predecessor of this list was
+ * `!/destructive/.test(label)`, which exempted five pairs to cover one, and a pattern that
+ * exempts more than it needs to is how a real leak hides inside a legitimate exemption.
+ */
+export const PAIRS_THAT_CANNOT_MOVE = [
+  // `--surface-warn` is `--brand-amber-pale` and `--on-warn` is `--brand-amber`, both product-owned
+  // status primitives that no Phenome Health generation has ever published. Every OTHER status pair
+  // moves, because its wash is derived over `--surface-raised`, which does move.
+  "--on-warn on --surface-warn",
 ];
 
 /** Colours unique to the CURRENT brand. Anything still painting one after the swap is a leak. */
 export const CURRENT_BRAND_ONLY = [
-  "#1E2A52", // navy
-  "#00063D", // deepest navy
-  "#FFFFF8", // cream
-  "#F7F6EC", // cream-dim
-  "#222572", // indigo
-  "#0D59F2", // blue
-  "#3AB3BB", // teal
-  "#1B7F86", // teal-ink
-  "#0E7C63", // green
-  "#8F4E00", // amber
-  "#FCEFD6", // amber-pale
+  "#FFFFFF", // paper — pure white
+  "#EBEFFF", // palest blue
+  "#D5E0F6", // pale blue — the field
+  "#00063D", // deep navy — the chrome
+  "#4B4F6B", // slate
+  "#000000", // ink
+  "#3AC2CB", // the mark's teal
+  "#E11E53", // the mark's crimson
+  // NOT #0D59F2: the accent is identical in both generations, so the leak scan cannot
+  // discriminate on it. Same reason #E21C52 was exempt under the S3 fixture.
 ];
 
 export function asCss(vars: Record<string, string>): string {
