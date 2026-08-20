@@ -140,7 +140,12 @@ export function sha256Hex(text: string): string {
 
 // --- the keys -----------------------------------------------------------------------------------------
 
-const UNIT_SEPARATOR = "\x1f";
+// EXPORTED so it is spelled out exactly once. Two composite keys below and one in
+// `hooks/use-gate-decisions.ts` were built with a LITERAL NUL byte instead of this
+// escape, which made git treat the hook as a binary file and ship 10.5 KB of new code
+// with no reviewable diff at all. A shared constant is what stops that recurring.
+// Matches the backend's separator in `artifact_kinds.py`.
+export const UNIT_SEPARATOR = "\x1f";
 
 /**
  * A content key over the identifiers that were AVAILABLE, independent of their order.
@@ -234,7 +239,7 @@ export function deriveStaleness(index: DecisionIndex): ArtifactStaleRef[] {
   const currentKeys = new Map<string, string>();
   for (const [kind, byItem] of Object.entries(index)) {
     for (const [itemKey, payload] of Object.entries(byItem)) {
-      currentKeys.set(`${kind} ${itemKey}`, contentKey(payload));
+      currentKeys.set(`${kind}${UNIT_SEPARATOR}${itemKey}`, contentKey(payload));
     }
   }
   const stale: ArtifactStaleRef[] = [];
@@ -242,7 +247,7 @@ export function deriveStaleness(index: DecisionIndex): ArtifactStaleRef[] {
     for (const [itemKey, payload] of Object.entries(byItem)) {
       const upstream = payload.upstream;
       if (!upstream) continue;
-      const now = currentKeys.get(`${upstream.kind} ${upstream.itemKey}`);
+      const now = currentKeys.get(`${upstream.kind}${UNIT_SEPARATOR}${upstream.itemKey}`);
       if (now === undefined || now === upstream.contentKey) continue;
       stale.push({
         kind,
