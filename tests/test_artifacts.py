@@ -779,3 +779,108 @@ def test_the_artifacts_read_derives_staleness_on_the_wire(tmp_path, monkeypatch)
         c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_pick(chosen="CDE:2"))
         stale = c.get("/api/harmonize/jobs/j1/artifacts").json()["stale"]
     assert [(s["kind"], s["itemKey"]) for s in stale] == [(GATE3_SPEC_EDIT, "UKBB:age")]
+
+
+# --- the guest walk, and what a pinned run refuses (08-11) ------------------------------------
+
+
+def _clerk_on(monkeypatch):
+    from backend import auth
+
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
+    monkeypatch.delenv("DDHARMON_ALLOWED_EMAIL_DOMAINS", raising=False)
+    monkeypatch.setattr(auth, "_decode_claims", lambda token: {"email": token, "sub": token})
+
+
+#: Every path a guest must reach to walk the six gates on the demo. Enumerated in the TEST as well as
+#: beside the prefix list, because a path added to one and not the other is the failure this pins.
+_GUEST_GATE_READS = (
+    "/api/harmonize/result/{id}",
+    "/api/harmonize/checkpoint/{id}",
+    "/api/harmonize/jobs/{id}/artifacts",
+    "/api/harmonize/jobs/{id}/export",
+)
+
+
+def test_a_guest_walks_every_gate_read_path_on_the_demo(tmp_path, monkeypatch):
+    """R9: a guest walks every gate on the demo without an account. A path a gate screen needs that is not
+    demo-scoped breaks the walk AT that gate, which is why the set is asserted rather than sampled."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        _clerk_on(monkeypatch)  # after the run exists: a guest sends no token
+        for template in _GUEST_GATE_READS:
+            r = c.get(template.format(id="demo-1"))
+            assert r.status_code == 200, f"{template} broke the guest walk: {r.status_code} {r.text[:120]}"
+
+
+def test_a_guest_reaching_a_real_run_by_the_same_path_is_still_gated(tmp_path, monkeypatch):
+    """The prefixes are scoped by the store's own demo flag, so widening them for the demo must not expose
+    one real run through a shared route."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("real-1", owner="someone")
+        _clerk_on(monkeypatch)
+        for template in _GUEST_GATE_READS:
+            r = c.get(template.format(id="real-1"))
+            assert r.status_code == 401, f"{template} exposed a real run to a guest ({r.status_code})"
+
+
+def test_a_guest_cannot_write_a_gate_decision_even_on_the_demo(tmp_path, monkeypatch):
+    """The read widening is READ-only: the write half of the same sub-resource stays gated, and the pinned
+    check refuses it a second time behind that."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        _clerk_on(monkeypatch)
+        r = c.put(
+            "/api/harmonize/jobs/demo-1/artifacts/gate1_group_scope",
+            json={
+                "groupId": "g1",
+                "chosen": "keep",
+                "alternatives": ["keep", "drop"],
+                "optionSetKey": option_set_key(["keep", "drop"]),
+            },
+        )
+    assert r.status_code == 401
+
+
+def test_pinned_run_rejects_writes(tmp_path, monkeypatch):
+    """T-08-60. Every user sees the one canonical demo row, so a write onto it would put one person's gate
+    decisions in front of everybody else. Rejected server-side, and nothing reaches the store."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        decision = {
+            "groupId": "g1",
+            "chosen": "keep",
+            "alternatives": ["keep", "drop"],
+            "optionSetKey": option_set_key(["keep", "drop"]),
+        }
+        for kind in GATE_DECISION_KINDS:
+            payload = {**decision, "memberId": "UKBB:age", "targetId": "CDE:9", "sourceVariable": "UKBB:age",
+                       "recordId": "r1", "scoreName": "Fried", "componentName": "grip"}
+            r = c.put(f"/api/harmonize/jobs/demo-1/artifacts/{kind}", json=payload)
+            assert r.status_code == 403, f"{kind} was writable on the shared demo"
+            assert "clone" in r.json()["detail"].lower()
+        assert app_module.store.artifacts.get_all(owner=LOCAL_PRINCIPAL, job_id="demo-1") == {}
+
+
+def test_a_foreign_non_demo_run_is_404_not_403(tmp_path, monkeypatch):
+    """T-08-62: 403 would confirm the run exists. Asserted on the artifact route because that is the one
+    every gate decision rides through."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("theirs", owner="somebody_else")
+        _clerk_on(monkeypatch)
+        r = c.put(
+            "/api/harmonize/jobs/theirs/artifacts/gate1_group_scope",
+            json={
+                "groupId": "g1",
+                "chosen": "keep",
+                "alternatives": ["keep"],
+                "optionSetKey": option_set_key(["keep"]),
+            },
+            headers={"Authorization": "Bearer me@example.com"},
+        )
+    assert r.status_code == 404
