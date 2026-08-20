@@ -6,62 +6,181 @@
 <title>Gate 1 · Concept groups — ddharmon</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
-/* The 2026 identity's display face, as served on phenomehealth.org. Licensed and
-   CDN-hosted by them — fine to reference in a mockup, a licensing question before
-   it ships. Space Grotesk (which the live site also specifies on headings, and
-   which index.css already loads) is the fallback and does the real work. */
-@font-face { font-family:"Byrl"; font-weight:400; font-display:swap;
-  src:url("https://static.showit.com/file/0Wqtm3R9Q6OWVcNpYQIfvg/171983/bauhausbyrldisplay-regular.woff") format("woff"); }
-@font-face { font-family:"Byrl"; font-weight:500; font-display:swap;
-  src:url("https://static.showit.com/file/CSWGIKDtRAPs3Gt2qxw8xQ/shared/bauhausbyrldisplay-medium.woff") format("woff"); }
-@font-face { font-family:"Byrl"; font-weight:600; font-display:swap;
-  src:url("https://static.showit.com/file/nQkxhS5TxfDqqDPIAO6-wQ/shared/bauhausbyrldisplay-semibold.woff") format("woff"); }
-
 /* ══════════════════════════════════════════════════════════════════════════
-   PHENOME HEALTH 2026 IDENTITY — sampled from phenomehealth.org's computed
-   styles, not from the retired brand guide (which is still on Proxima Nova
-   and a white ground).
-     ground     #1E2A52  the navy sections sit on
-     deep       #00063D
-     paper      #FFFFF8  warm off-white — cards, NOT pure white
-     indigo     #222572  body copy on paper
-     blue       #0D59F2  primary action, pill
-     teal       #3AB3BB  secondary accent
-     radius     30px containers · 100–999px pills
-   The identity is DARK-FIRST: warm-white cards float on navy, so that is the
-   default theme here rather than an inversion of it.
+   PHENOME HEALTH IDENTITY — measured from phenomehealth.org on 2026-08-20,
+   the day the new site went live. This supersedes the July sample (navy
+   ground, warm cream, Byrl/Space Grotesk display) completely; the user has
+   confirmed the live site is now canonical and every previously logged
+   style is out of date.
+
+     white   #FFFFFF   the site's ground, and the paper here
+     pale    #EBEFFF   palest blue  — tinted field / dark-mode ink
+     mist    #D5E0F6   pale blue    — section surfaces, insets
+     blue    #0D59F2   the accent, AND a full-bleed accent surface
+     deep    #00063D   deep navy    — dark surface, and the dark theme's ground
+     slate   #4B4F6B   the quiet metadata register
+     black   #000000   body copy on white
+     radius  16px cards · 10px inner · pills
+     type    Inter ONLY. The brand has exactly one typeface; @font-face on the
+             live site loads Inter/Inter Variable and nothing else. Hierarchy
+             comes from weight, size and tight negative tracking (the site's
+             h1 computes to Inter/600/60px/-1.2px).
+
+   TWO THINGS A SCREENSHOT OF THE SITE GETS WRONG, so they are not built here:
+     · The footer's apparent blue gradient is NOT a gradient. It measures as a
+       flat #0D59F2 panel with a second #0D59F2 at 70% alpha stacked below it.
+       The whole live document declares ZERO css gradients.
+     · The brand dropped its second hue. There is no teal anywhere in the UI
+       palette (it survives only inside the logo artwork), so the informational
+       register below is carried by VALUE — slate on light, mist on dark —
+       rather than by a competing hue.
+   LIGHT = TINTED FIELD (variant A). The page is the brand's palest blue and cards
+   are pure white, so a card still reads as PAPER ON A FIELD — the metaphor the
+   whole ledger rests on. Both values are brand colours; nothing is invented.
    ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── TIER 1 · primitives. Literal values live ONLY here. ─────────────────── */
 :root {
-  --b-deep:#00063D; --b-ground:#1E2A52; --b-indigo:#222572;
-  --b-paper:#FFFFF8; --b-blue:#0D59F2; --b-teal:#3AB3BB; --b-teal-ink:#1B7F86;
-  --r-card:30px; --r-inner:14px; --r-pill:999px;
+  --b-white:#FFFFFF; --b-pale:#EBEFFF; --b-mist:#D5E0F6;
+  --b-blue:#0D59F2;  --b-deep:#00063D;
+  --b-slate:#4B4F6B; --b-black:#000000;
+  /* Status is PRODUCT-owned: the brand publishes no status palette, so these
+     carry forward from the previous generation and are re-measured per theme. */
+  --b-ok:#0E7C63;      --b-ok-lift:#3FCFA5;
+  --b-warn:#8F4E00;    --b-warn-lift:#F0C070;
+  --b-warn-bg:#FCEFD6; --b-warn-line:#E8C48A;
+  --b-crimson:#E21C52; --b-crimson-lift:#FF6E92;
+  /* Radii as measured on the live site (10 / 16, pills). The old single 30px
+     container radius matched nothing in the new system. */
+  --r-card:16px; --r-inner:10px; --r-pill:999px;
 }
-/* The single shipped theme: navy ground, warm-white working surface. There is no second
-   theme and no toggle — 08-05 removed both from the product, so offering one here would
-   promise a capability we are not building. */
+
+/* ── TIER 2 · roles. Every surface carries its own foreground, so the two can
+   never drift apart — that pairing is what stopped cream-on-cream shipping
+   under a green contrast gate. A theme redefines ONLY this block. ────────── */
 :root {
-  --page:var(--b-ground);
-  --card:var(--b-paper); --card-2:#F7F6EC;
-  --ink:var(--b-indigo); --muted:rgba(34,37,114,.70); --faint:rgba(34,37,114,.50);
-  --line:rgba(34,37,114,.13); --line-2:rgba(34,37,114,.07);
-  --on-page:var(--b-paper); --on-page-muted:rgba(255,255,248,.68);
-  --accent:var(--b-blue); --accent-ink:#FFFFF8;
-  --ok:#0E7C63; --warn:#8F4E00; --warn-bg:#FCEFD6; --warn-line:#E8C48A;
-  --shadow:0 2px 6px rgba(0,6,61,.14), 0 22px 48px -24px rgba(0,6,61,.55);
+  color-scheme:light;
+  --page:var(--b-mist);          /* THE FIELD. #D5E0F6 is the live site's ground: it
+                                    covers 11,356px of page height, where white
+                                    appears only as cards and image insets inside it.
+                                    (A first pass counted white as dominant by ELEMENT
+                                    COUNT, which is not the same as by area.) */
+  --card:var(--b-white);         /* the paper, exactly as the site insets it */
+  --card-2:var(--b-pale);        /* header bands, row hover, insets — ON the paper */
+  --ink:var(--b-black);                    /* body copy on the paper */
+  --muted:rgba(0,6,61,.64);                /* secondary copy — navy-alpha, brand-native */
+  --faint:rgba(0,6,61,.42);                /* HAIRLINES AND DASHED MARKS ONLY */
+  --line:rgba(0,6,61,.14);
+  --line-2:rgba(0,6,61,.07);
+  --on-page:var(--b-deep);                 /* text on the field */
+  --on-page-muted:rgba(0,6,61,.64);
+  /* The wash base: a wash is the PAGE'S OWN foreground at low alpha, so one
+     token serves every color-mix() in the sheet and flips correctly per theme.
+     Previously these mixed a primitive (--b-paper) directly, which would have
+     rendered white-on-white the moment the ground went light. */
+  --wash-base:var(--b-deep);
+  --accent:var(--b-blue);                  /* accent as TEXT and borders */
+  --accent-ink:var(--b-white);             /* text on an accent fill */
+  /* The blue SURFACE is a separate role from the blue accent, because they do not
+     behave the same across themes: the surface is the brand's #0D59F2 in BOTH
+     themes (the site's own pairing, pale text on blue, measures 4.88:1), while the
+     accent must lighten on a dark ground to stay legible as text. Collapsing them
+     turned the dark commit bar into a washed-out pale panel and lost the brand
+     blue entirely. */
+  --accent-surface:var(--b-blue);
+  --accent-surface-ink:var(--b-white);
+  --info:var(--b-slate);                   /* the quiet register — cohort labels, info rules */
+  --info-ink:var(--b-slate);
+  --ok:var(--b-ok); --warn:var(--b-warn);
+  --warn-bg:var(--b-warn-bg); --warn-line:var(--b-warn-line);
+  --crimson:var(--b-crimson);              /* the mockup referenced this and NEVER defined it */
+  /* THE LOCKUP gets its own tokens — never a semantic UI role, so no accent
+     decision can repaint the brand mark as a side effect. The mark's CHROMATIC
+     parts (teal, crimson) are its identity and are FIXED in both themes; only the
+     neutral structural blades and the wordmark adapt, so the glyph stays legible
+     on either ground without being restyled. */
+  --logo-word:var(--b-deep);
+  --logo-ink:var(--b-deep); --logo-ink-2:#253B7E; --logo-ink-3:#222572;
+  --logo-teal:#3AC2CB; --logo-accent:#E11E53;
+  --shadow-tint:var(--b-deep);
+  --shadow:0 1px 2px rgba(0,6,61,.06), 0 12px 28px -18px rgba(0,6,61,.26);
 }
+
+/* ── DARK. The brand has no dark mode of its own, so this is derived FROM it
+   rather than sampled: the ground is the brand's #00063D, and the raised
+   surfaces are brand pale washed over that ground — a brand colour over a
+   brand colour, which is the documented way to make depth here. ─────────── */
+[data-theme="dark"] {
+  color-scheme:dark;
+  --page:var(--b-deep);
+  --card:color-mix(in srgb, var(--b-pale) 8%, var(--b-deep));
+  --card-2:color-mix(in srgb, var(--b-pale) 14%, var(--b-deep));
+  --ink:var(--b-pale);
+  --muted:rgba(235,239,255,.66);
+  --faint:rgba(235,239,255,.42);
+  --line:rgba(235,239,255,.15);
+  --line-2:rgba(235,239,255,.08);
+  --on-page:var(--b-pale);
+  --on-page-muted:rgba(235,239,255,.66);
+  --wash-base:var(--b-pale);
+  /* NOT the brand's #0D59F2. That measures 3.44:1 on #00063D and ~3.3:1 on the
+     raised card — below AA — and --accent is used as TEXT in ~30 places here,
+     not only as a fill. Lightened to clear AA on both dark surfaces (7.8:1 on
+     the card, 8.25:1 on the ground); the fill then takes dark ink. */
+  --accent:#7FA9FF;
+  --accent-ink:var(--b-deep);
+  /* Unchanged from light on purpose — this is the brand's blue doing what the site
+     does with it, and #EBEFFF on #0D59F2 is 4.88:1. */
+  --accent-surface:var(--b-blue);
+  --accent-surface-ink:var(--b-pale);
+  --info:var(--b-mist);
+  --info-ink:var(--b-mist);
+  --ok:var(--b-ok-lift); --warn:var(--b-warn-lift);
+  --warn-bg:rgba(240,192,112,.13); --warn-line:rgba(240,192,112,.40);
+  --crimson:var(--b-crimson-lift);
+  /* Inverted: navy blades on a navy ground are invisible, so the neutrals become
+     pale and their layering is carried by alpha instead of by three hues. Teal and
+     crimson do NOT move — they are the mark itself. */
+  --logo-word:var(--b-pale);
+  --logo-ink:var(--b-pale); --logo-ink-2:rgba(235,239,255,.62); --logo-ink-3:rgba(235,239,255,.40);
+  --logo-teal:#3AC2CB; --logo-accent:#E11E53;
+  --shadow-tint:#000000;
+  --shadow:0 1px 2px rgba(0,0,0,.40), 0 18px 40px -20px rgba(0,0,0,.70);
+}
+
+
+/* ── theme toggle. 08-05 removed the product's second theme entirely; this
+   reinstates it as a USER choice, which is why the control is explicit rather
+   than implied. Three states: the two explicit ones plus System, because
+   "follow the OS" is a real preference and silently picking one is not. ──── */
+.themetoggle { display:flex; gap:2px; padding:3px; border-radius:var(--r-pill); flex:none;
+               border:1px solid color-mix(in srgb, var(--wash-base) 20%, transparent);
+               background:color-mix(in srgb, var(--wash-base) 6%, transparent); }
+.themetoggle button { width:30px; height:24px; border-radius:var(--r-pill); display:grid;
+                      place-items:center; color:var(--on-page-muted); transition:.14s; }
+.themetoggle button:hover { color:var(--on-page); }
+.themetoggle button[aria-pressed="true"] { background:var(--accent); color:var(--accent-ink); }
+.themetoggle svg { width:14px; height:14px; display:block; }
+.themetoggle .lbl { font-size:10px; font-weight:700; letter-spacing:.06em; }
+
 *, *::before, *::after { box-sizing:border-box; }
 body {
   margin:0; background:var(--page); color:var(--on-page);
   font-family:'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size:15px; line-height:22px; -webkit-font-smoothing:antialiased;
 }
-/* Type roles under the new identity:
-   Byrl/Space Grotesk = display (the brand voice)
-   Inter              = UI and running copy
-   JetBrains Mono     = what the pipeline computed                        */
-.dsp { font-family:'Byrl','Space Grotesk','Inter',sans-serif; font-weight:600; letter-spacing:-.005em; }
+/* Type roles. The brand now has ONE typeface, so the display/UI split is a
+   WEIGHT and TRACKING distinction rather than two families:
+     Inter 600, -.02em  = display (.dsp) — the brand voice
+     Inter 400/500      = UI and running copy
+     JetBrains Mono     = what the pipeline computed                      */
+/* The brand has ONE typeface. Display is Inter at 600 with the site's own
+   negative tracking (-1.2px on a 60px h1 = -.02em) doing the work a
+   separate display face used to do. */
+.dsp { font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       font-weight:600; letter-spacing:-.02em; }
 .m { font-family:'JetBrains Mono', ui-monospace, "SF Mono", Consolas, monospace; font-variant-numeric:tabular-nums; }
 button { font:inherit; color:inherit; background:none; border:none; padding:0; cursor:pointer; }
 :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
@@ -76,29 +195,33 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
    than linked so the file stays self-contained, and filled with currentColor
    so it follows the theme instead of needing a second asset. */
 .appbar { display:flex; align-items:center; gap:16px; padding-bottom:18px; margin-bottom:24px;
-          border-bottom:1px solid color-mix(in srgb, var(--b-paper) 13%, transparent); flex-wrap:wrap; }
-.phlogo { width:134px; flex:none; color:var(--on-page); display:block; text-decoration:none; }
+          border-bottom:1px solid color-mix(in srgb, var(--wash-base) 13%, transparent); flex-wrap:wrap; }
+.phlogo { width:128px; flex:none; color:var(--on-page); display:block; text-decoration:none; }
 .phlogo svg { width:100%; height:auto; display:block; }
 .phlogo:hover { opacity:.85; }
-.appdiv { width:1px; height:28px; background:color-mix(in srgb, var(--b-paper) 22%, transparent); flex:none; }
+.appdiv { width:1px; height:28px; background:color-mix(in srgb, var(--wash-base) 22%, transparent); flex:none; }
 .appname { font-size:19px; color:var(--on-page); letter-spacing:-.01em; }
 .apptag { font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--on-page-muted); font-weight:600; }
 .appspacer { flex:1 1 auto; }
-.runchip { font-size:11px; color:var(--on-page-muted); border:1px solid color-mix(in srgb, var(--b-paper) 20%, transparent);
+.runchip { font-size:11px; color:var(--on-page-muted); border:1px solid color-mix(in srgb, var(--wash-base) 20%, transparent);
            border-radius:var(--r-pill); padding:6px 13px; white-space:nowrap; }
 
 /* ── masthead — on the navy ground, in brand white ───────────────────────── */
 .mast { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:24px; }
-.eyebrow { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--on-page-muted); font-weight:600; }
+.eyebrow { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent);
+           font-weight:700; display:flex; align-items:center; gap:9px; }
+/* The site marks an eyebrow with a small filled blue square. Decorative, so it is
+   a pseudo-element and never reaches the accessibility tree. */
+.eyebrow::before { content:""; width:9px; height:9px; background:var(--accent); flex:none; border-radius:2px; }
 .mast h1 { margin:8px 0 6px; font-size:30px; line-height:34px; color:var(--on-page); }
 .mast p { margin:0; font-size:14.5px; line-height:21px; color:var(--on-page-muted); max-width:60ch; }
 
 /* ── gate rail — the active gate lights up as a paper card on navy ───────── */
 .rail { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-bottom:12px; }
 .gate .gt { hyphens:manual; }
-.gate { border-radius:var(--r-inner); padding:13px 16px 14px; border:1px solid color-mix(in srgb, var(--b-paper) 14%, transparent); }
+.gate { border-radius:var(--r-inner); padding:13px 16px 14px; border:1px solid color-mix(in srgb, var(--wash-base) 14%, transparent); }
 .gate.is-on { background:var(--card); border-color:transparent; box-shadow:var(--shadow); }
-.gate.is-off { background:color-mix(in srgb, var(--b-paper) 5%, transparent); }
+.gate.is-off { background:color-mix(in srgb, var(--wash-base) 5%, transparent); }
 .gate .gn { font-size:9.5px; letter-spacing:.15em; text-transform:uppercase; font-weight:700; color:var(--on-page-muted); }
 .gate.is-on .gn { color:var(--accent); }
 .gate .gt { font-size:14px; margin-top:5px; color:var(--on-page); }
@@ -114,9 +237,9 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
    in the order it should be taken, naming the control it refers to. It sits
    above the working surface so it reads as instruction rather than as one more
    panel competing with the data. */
-.howto { border:1px solid color-mix(in srgb, var(--b-paper) 18%, transparent); border-radius:var(--r-inner);
+.howto { border:1px solid color-mix(in srgb, var(--wash-base) 18%, transparent); border-radius:var(--r-inner);
          padding:15px 18px 16px; margin:0 0 22px; max-width:96ch;
-         background:color-mix(in srgb, var(--b-paper) 4.5%, transparent); }
+         background:color-mix(in srgb, var(--wash-base) 4.5%, transparent); }
 .howto h4 { margin:0 0 10px; font-size:9.5px; letter-spacing:.15em; text-transform:uppercase;
             color:var(--on-page-muted); font-weight:700; display:flex; align-items:center; gap:9px; }
 .howto ol { margin:0; padding-left:0; list-style:none; counter-reset:ht; }
@@ -124,29 +247,29 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
             font-size:12.5px; line-height:19px; color:var(--on-page); }
 .howto li:last-child { margin-bottom:0; }
 .howto li::before { content:counter(ht); position:absolute; left:0; top:1px; width:19px; height:19px;
-  border-radius:var(--r-pill); background:color-mix(in srgb, var(--b-paper) 12%, transparent); color:var(--on-page);
+  border-radius:var(--r-pill); background:color-mix(in srgb, var(--wash-base) 12%, transparent); color:var(--on-page);
   font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:600;
   display:flex; align-items:center; justify-content:center; }
 .howto li b { font-weight:600; }
 .howto li .free { color:var(--ok); font-weight:600; }
 .howto li .cost { color:var(--warn); font-weight:600; }
 .howto .toggle { margin-left:auto; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
-  color:var(--on-page-muted); border:1px solid color-mix(in srgb, var(--b-paper) 24%, transparent); border-radius:var(--r-pill); padding:3px 10px; font-weight:700; }
-.howto .toggle:hover { color:var(--b-paper); border-color:color-mix(in srgb, var(--b-paper) 55%, transparent); }
+  color:var(--on-page-muted); border:1px solid color-mix(in srgb, var(--wash-base) 24%, transparent); border-radius:var(--r-pill); padding:3px 10px; font-weight:700; }
+.howto .toggle:hover { color:var(--on-page); border-color:color-mix(in srgb, var(--wash-base) 55%, transparent); }
 
 /* ── grouping strip ──────────────────────────────────────────────────────── */
-.grouping { border-radius:var(--r-inner); background:color-mix(in srgb, var(--b-paper) 6%, transparent); border:1px solid color-mix(in srgb, var(--b-paper) 13%, transparent);
+.grouping { border-radius:var(--r-inner); background:color-mix(in srgb, var(--wash-base) 6%, transparent); border:1px solid color-mix(in srgb, var(--wash-base) 13%, transparent);
             padding:15px 20px; margin-bottom:26px; display:flex; flex-wrap:wrap; align-items:center; gap:14px 24px; }
 .gk { display:flex; flex-direction:column; gap:3px; }
 .gk .kl { font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--on-page-muted); font-weight:700; }
 .gk .kv { font-size:14.5px; font-weight:500; color:var(--on-page); }
 .gk .kv .unit { color:var(--on-page-muted); font-weight:400; font-size:12px; }
-.gsep { width:1px; align-self:stretch; background:color-mix(in srgb, var(--b-paper) 14%, transparent); }
+.gsep { width:1px; align-self:stretch; background:color-mix(in srgb, var(--wash-base) 14%, transparent); }
 .regroup { margin-left:auto; display:flex; align-items:center; gap:14px; }
 .regroup .conseq { font-size:11px; line-height:15px; color:var(--on-page-muted); max-width:31ch; text-align:right; }
-.rbtn { font-size:12.5px; font-weight:600; letter-spacing:.02em; border:1px solid color-mix(in srgb, var(--b-paper) 35%, transparent);
+.rbtn { font-size:12.5px; font-weight:600; letter-spacing:.02em; border:1px solid color-mix(in srgb, var(--wash-base) 35%, transparent);
         border-radius:var(--r-pill); padding:9px 18px; white-space:nowrap; color:var(--on-page); }
-.rbtn:hover { border-color:var(--b-paper); background:color-mix(in srgb, var(--b-paper) 8%, transparent); }
+.rbtn:hover { border-color:var(--on-page); background:color-mix(in srgb, var(--wash-base) 8%, transparent); }
 
 /* ── THE LEDGER — a paper document on the navy ground ────────────────────── */
 .ledger { border-radius:var(--r-card); background:var(--card); box-shadow:var(--shadow); overflow:hidden; }
@@ -180,7 +303,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .nomatch b { color:var(--warn); }
 /* the declared score, carried into gate 1 as scope */
 .sband { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:13px; padding:10px 14px;
-         border-left:3px solid var(--b-teal); background:color-mix(in srgb, var(--b-teal) 9%, transparent);
+         border-left:3px solid var(--info); background:color-mix(in srgb, var(--info) 9%, transparent);
          border-radius:0 var(--r-inner) var(--r-inner) 0; }
 .sbtxt { flex:1 1 340px; font-size:12px; line-height:18px; color:var(--muted); }
 .sbtxt b { color:var(--ink); font-weight:600; }
@@ -249,8 +372,8 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .chip:hover { border-color:var(--accent); }
 .chip.dragging { opacity:.35; }
 .chip.active { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 9%, transparent); }
-.chip .co { font-size:10px; font-weight:700; letter-spacing:.06em; color:var(--b-teal); }
-.chip .co { color:var(--b-teal-ink); }
+.chip .co { font-size:10px; font-weight:700; letter-spacing:.06em; color:var(--info); }
+.chip .co { color:var(--info-ink); }
 .chip .vn { color:var(--muted); }
 .hint { font-size:11.5px; color:var(--muted); margin:10px 0 0; }
 .hint b { color:var(--ink); font-weight:500; }
@@ -279,25 +402,34 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .sumrow.faint .lab, .sumrow.faint .vars { font-size:11.5px; font-weight:400; color:var(--muted); }
 .sumrow.faint .tot { font-size:12px; font-weight:400; color:var(--muted); }
 
+/* THE BLUE CARD. The site reserves a full blue fill for the thing it wants you
+   to act on; on this screen that is unambiguously the commit bar, which is where
+   the next charge lands. Making it blue is therefore semantic, not decorative —
+   it is the only surface here that spends money. */
 .commit { position:sticky; bottom:16px; margin-top:24px; border-radius:var(--r-card);
-          background:var(--card); padding:15px 22px; display:flex; flex-wrap:wrap; align-items:center; gap:16px;
-          box-shadow:var(--shadow); color:var(--ink); }
-.recheck { font-size:12px; color:var(--accent); display:none; align-items:center; gap:7px; }
+          background:var(--accent-surface); padding:16px 22px; display:flex; flex-wrap:wrap; align-items:center; gap:16px;
+          box-shadow:var(--shadow); color:var(--accent-surface-ink); }
+.recheck { font-size:12px; color:var(--accent-surface-ink); display:none; align-items:center; gap:7px; }
 .recheck.on { display:flex; }
-.recheck .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); }
+.recheck .dot { width:7px; height:7px; border-radius:50%; background:var(--accent-surface-ink); }
 .commit .spacer { flex:1 1 auto; }
-.commit .spent { font-size:12px; color:var(--muted); }
-.commit .spent b { color:var(--ink); font-weight:600; }
-.cta { background:var(--accent); color:var(--accent-ink); border-radius:var(--r-pill); padding:12px 24px;
+.commit .spent { font-size:12px; color:color-mix(in srgb, var(--accent-surface-ink) 78%, transparent); }
+.commit .spent b { color:var(--accent-surface-ink); font-weight:700; }
+/* Inside the blue card the primary action cannot also be blue, so it takes the
+   site's own treatment there: a translucent-white pill with a hairline edge. */
+.cta { background:color-mix(in srgb, var(--accent-surface-ink) 18%, transparent); color:var(--accent-surface-ink);
+       border:1px solid color-mix(in srgb, var(--accent-surface-ink) 36%, transparent);
+       border-radius:var(--r-pill); padding:12px 24px;
        font-size:12.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
        display:inline-flex; align-items:center; gap:11px; }
-.cta:hover { filter:brightness(1.1); }
+.cta:hover { background:color-mix(in srgb, var(--accent-surface-ink) 28%, transparent);
+             border-color:color-mix(in srgb, var(--accent-surface-ink) 54%, transparent); }
 .cta .amt { letter-spacing:0; text-transform:none; font-weight:500; opacity:.9; }
 
 .foot { margin-top:28px; font-size:12px; line-height:19px; color:var(--on-page-muted); max-width:80ch; }
 .foot b { color:var(--on-page); font-weight:500; }
 .foot .flagbox { display:block; margin-top:12px; border-left:4px solid var(--warn); padding:11px 15px;
-                 background:color-mix(in srgb, var(--b-paper) 5%, transparent); border-radius:0 var(--r-inner) var(--r-inner) 0; }
+                 background:color-mix(in srgb, var(--wash-base) 5%, transparent); border-radius:0 var(--r-inner) var(--r-inner) 0; }
 
 /* ══ GATE 2 — two-pane master–detail (CDEMapper Fig. 4 idiom, credited) ════ */
 /* minmax(0,1fr), not 1fr: a plain fr track keeps min-width:auto, so any wide
@@ -347,7 +479,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .cbadges { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:7px; }
 .bdg { font-size:9.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; padding:2px 8px; border-radius:var(--r-pill); border:1px solid transparent; }
 .bdg.score { background:var(--ink); color:var(--card); font-family:'JetBrains Mono',monospace; letter-spacing:0; }
-.bdg.coll { background:color-mix(in srgb, var(--b-teal) 18%, transparent); color:var(--b-teal-ink); border-color:color-mix(in srgb, var(--b-teal) 40%, transparent); }
+.bdg.coll { background:color-mix(in srgb, var(--info) 18%, transparent); color:var(--info-ink); border-color:color-mix(in srgb, var(--info) 40%, transparent); }
 .bdg.endorsed { background:color-mix(in srgb, var(--ok) 15%, transparent); color:var(--ok); border-color:color-mix(in srgb, var(--ok) 38%, transparent); }
 .bdg.llm { background:var(--warn-bg); color:var(--warn); border-color:var(--warn-line); }
 .bdg.sel { background:var(--accent); color:var(--accent-ink); }
@@ -383,7 +515,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 /* KRAKEN bridge */
 .kr { border:1px solid var(--line); border-radius:var(--r-inner); padding:13px 15px; display:flex; gap:13px; align-items:flex-start; }
 .kr.absent { border-style:dashed; }
-.krdot { width:9px; height:9px; border-radius:50%; margin-top:5px; flex:none; background:var(--b-teal); }
+.krdot { width:9px; height:9px; border-radius:50%; margin-top:5px; flex:none; background:var(--info); }
 .kr.absent .krdot { background:transparent; border:1.5px dashed var(--line); }
 .krb { min-width:0; flex:1; }
 .krt { font-size:13px; font-weight:600; }
@@ -398,7 +530,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .dbtn:hover { border-color:var(--accent); color:var(--accent); }
 .dbtn.on.approve { background:var(--ok); border-color:var(--ok); color:var(--card); }
 .dbtn.on.change { background:var(--warn); border-color:var(--warn); color:var(--card); }
-.dbtn.on.reject { background:var(--crimson); border-color:var(--crimson); color:var(--b-paper); }
+.dbtn.on.reject { background:var(--crimson); border-color:var(--crimson); color:var(--accent-ink); }
 .decide .dnote2 { font-size:11.5px; color:var(--muted); margin-left:auto; max-width:38ch; text-align:right; }
 
 /* ══ SETUP · GATE 3 · GATE 4 ═══════════════════════════════════════════════ */
@@ -581,8 +713,8 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .vval { color:var(--ink); word-break:break-word; min-width:0; }
 .vval.mut { color:var(--faint); }
 .rolechip { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
-            padding:1px 7px; border-radius:var(--r-pill); background:color-mix(in srgb, var(--b-teal) 18%, transparent);
-            color:var(--b-teal-ink); border:1px solid color-mix(in srgb, var(--b-teal) 40%, transparent); margin-left:6px; }
+            padding:1px 7px; border-radius:var(--r-pill); background:color-mix(in srgb, var(--info) 18%, transparent);
+            color:var(--info-ink); border:1px solid color-mix(in srgb, var(--info) 40%, transparent); margin-left:6px; }
 .rolechip.off { background:transparent; color:var(--faint); border-color:var(--line); }
 .embedbox { border:1px solid var(--accent); border-radius:var(--r-inner); padding:13px 15px;
             background:color-mix(in srgb, var(--accent) 6%, transparent); }
@@ -630,14 +762,14 @@ body.drawer-wide .wrap { margin-right:min(680px, 52vw); }
 .varbtn:hover { color:var(--accent); border-bottom-style:solid; }
 
 .drawer { position:fixed; top:0; right:0; bottom:0; width:min(420px, 38vw); background:var(--card);
-          box-shadow:-14px 0 46px -18px color-mix(in srgb, var(--b-deep) 70%, transparent); color:var(--ink);
+          box-shadow:-14px 0 46px -18px color-mix(in srgb, var(--shadow-tint) 70%, transparent); color:var(--ink);
           transform:translateX(101%); transition:transform .22s ease; overflow-y:auto; z-index:40;
           border-radius:var(--r-card) 0 0 var(--r-card); }
 body.drawer-open .drawer { transform:translateX(0); }
 .dhead { position:sticky; top:0; background:var(--card); border-bottom:1px solid var(--line); padding:22px 24px 15px; }
 .dhead .dlabel { font-size:9.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint); font-weight:700; }
 .dhead .dvar { font-size:15.5px; font-weight:600; margin-top:7px; word-break:break-all; }
-.dhead .dco { font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--b-teal-ink); margin-top:6px; display:block; }
+.dhead .dco { font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--info-ink); margin-top:6px; display:block; }
 .dclose { position:absolute; top:18px; right:18px; width:30px; height:30px; border-radius:var(--r-pill);
           display:grid; place-items:center; color:var(--muted); font-size:16px; line-height:1; }
 .dclose:hover { background:var(--card-2); color:var(--ink); }
@@ -684,17 +816,45 @@ body.drawer-open .drawer { transform:translateX(0); }
   *, *::before, *::after { animation-duration:.001ms !important; transition-duration:.001ms !important; }
 }
 </style>
+<script>
+/* Applied before first paint, so a dark-preferring visitor never sees a white
+   flash. Stored preference wins; absent one, follow the OS. */
+(function () {
+  try {
+    var p = localStorage.getItem("ddharmon-theme") || "system";
+    var m = window.matchMedia("(prefers-color-scheme: dark)");
+    var apply = function () {
+      var pref = localStorage.getItem("ddharmon-theme") || "system";
+      var dark = pref === "dark" || (pref === "system" && m.matches);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme-pref", pref);
+    };
+    window.__applyTheme = apply;
+    apply();
+    m.addEventListener("change", function () {
+      if ((localStorage.getItem("ddharmon-theme") || "system") === "system") apply();
+    });
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+})();
+</script>
 </head>
 <body>
 <div class="wrap">
 
   <header class="appbar">
     <a class="phlogo" href="https://phenomehealth.org" target="_blank" rel="noopener"
-       aria-label="Phenome Health"><svg fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320.38 297.94"> <g> <g> <g> <g opacity=".75"> <path d="M325.97,296.47l-2.94-1.85c-9.04-5.46-19.5-10.99-30.04-19.92-9.32-7.9-18.54-16.72-27.39-26.22-15.78-16.93-30.61-36.09-45.35-58.58-9.49-14.48-18.02-29.05-25.35-43.29C169.19,96.64,156.76,46.71,157.61,0h39.22c-.73,40.28,9.71,84.48,32.48,128.74,6.71,13.03,14.54,26.41,23.29,39.76,13.52,20.63,27.02,38.09,41.28,53.38,7.82,8.39,15.92,16.15,24.09,23.07,7.57,6.42,15.65,10.37,25.64,16.41l2.3,1.34-19.94,33.78Z"/> </g> <g opacity=".25"> <path d="M0,263.92l2.81-1.61c9.3-5.25,20.17-11.79,33.25-16.64,11.58-4.29,23.91-8.03,36.66-11.12,22.72-5.5,46.92-9.06,74-10.88,17.44-1.17,34.47-1.46,50.62-.85,56.65,2.15,108.03,15.94,148.57,39.87l-19.94,33.78c-34.96-20.64-79.96-32.55-130.13-34.45-14.78-.56-30.42-.3-46.49.79-24.83,1.67-46.89,4.9-67.41,9.87-11.26,2.72-22.11,6.01-32.25,9.77-9.41,3.49-17,8.03-27.28,13.83l-2.89,1.66L0,263.92Z"/> </g> <g opacity=".5"> <path d="M19.52,297.94l2.89-1.66c9.25-5.34,20.76-11.99,31.59-20.79,9.58-7.79,19.07-16.51,28.21-25.92,16.28-16.77,31.65-35.81,46.99-58.2,9.87-14.42,18.78-28.94,26.46-43.16C182.59,98.33,196.83,47.08,196.83,0h-39.22c0,40.6-12.61,85.4-36.47,129.58-7.03,13.01-15.21,26.35-24.31,39.64-14.06,20.54-28.05,37.89-42.77,53.04-8.07,8.31-16.42,15.99-24.81,22.81-7.78,6.33-16.22,11.35-26.45,17.25l-2.81,1.61,19.52,34.03Z"/> </g> </g> <path d="M410.07,0h79.86c11.48,0,20.98,1.51,28.53,4.51,7.54,3.01,13.22,7.49,17.05,13.44,3.82,5.96,5.74,13.42,5.74,22.38,0,13.77-4.24,24-12.71,30.66-8.47,6.67-21.34,10-38.61,10h-51.49v39.02h-28.37V0ZM504.36,53.7c2.84-1.25,4.98-3.04,6.4-5.33,1.42-2.3,2.13-4.92,2.13-7.87s-.71-5.55-2.13-7.79c-1.42-2.24-3.56-4.02-6.4-5.32-2.84-1.31-6.39-1.97-10.66-1.97h-55.26v30.17h55.26c4.26,0,7.81-.63,10.66-1.89Z"/> <path d="M558.14,0h26.57v39.02c0,7.44-.17,12.08-.49,13.94l.32.17c2.3-6.78,6.41-12.1,12.3-15.99,5.9-3.88,12.68-5.82,20.34-5.82s14.48,1.53,19.51,4.6c5.03,3.06,8.74,7.71,11.16,13.93,2.4,6.23,3.6,14.49,3.6,24.76v45.42h-26.57v-46.08c0-6.45-1.83-11.23-5.48-14.34-3.67-3.12-8.5-4.68-14.52-4.68-3.83,0-7.27.74-10.33,2.22-3.06,1.47-5.47,3.66-7.22,6.56-1.75,2.9-2.62,6.37-2.62,10.42v45.91h-26.57V0Z"/> <path d="M740.31,98.47c-4.59,2.36-10.27,3.53-17.05,3.53-9.62,0-16.8-2.24-21.56-6.73-3.86-3.64-6.1-8.49-6.91-14.43h82.26c.76-17.05-3.56-29.62-12.96-37.71-9.41-8.09-23.02-12.14-40.83-12.14s-31.27,3.94-40.34,11.81c-9.07,7.87-13.61,19.13-13.61,33.77s4.68,25.61,14.02,33.53c9.34,7.93,22.66,11.89,39.93,11.89,14.32,0,25.94-2.54,34.84-7.63,8.91-5.08,14.47-11.83,16.65-20.25l-24.93-6.06c-1.75,4.59-4.92,8.06-9.51,10.41ZM723.26,50.67c8.63,0,15.36,1.67,20.18,5,3.63,2.52,6.07,6.16,7.33,10.9h-54.99c1.19-4.06,3.09-7.38,5.91-9.75,4.87-4.1,12.05-6.15,21.56-6.15Z"/> <path d="M796.56,32.96h26.57c0,11.37-.17,17.93-.49,19.68l.32.17c2.3-6.56,6.23-11.72,11.81-15.5,5.58-3.77,11.86-5.76,18.86-5.98,10.72-.33,18.7,1.43,23.94,5.25,5.24,3.83,8.61,8.88,10.09,15.17,1.47,6.29,2.22,14.63,2.22,25.01v43.29h-26.57v-44.44c0-3.82-.41-7.16-1.23-10-.81-2.84-2.71-5.28-5.66-7.3-2.95-2.02-7.33-3.04-13.12-3.04s-9.83,1.21-12.78,3.61c-2.96,2.41-4.87,5-5.75,7.79-.87,2.78-1.31,5.27-1.31,7.46v45.91h-26.89V32.96Z"/> <path d="M921.18,110.68c-8.86-7.54-13.29-18.91-13.29-34.11s4.43-27,13.29-34.43c8.85-7.43,22.4-11.15,40.66-11.15s31.81,3.75,40.67,11.24c8.85,7.49,13.28,18.94,13.28,34.35s-4.46,26.84-13.37,34.27c-8.9,7.43-22.43,11.15-40.58,11.15s-31.81-3.77-40.66-11.32ZM983.49,95.19c4.82-4.32,7.22-10.69,7.22-19.1s-2.44-14.79-7.3-19.1c-4.87-4.32-12.05-6.48-21.56-6.48s-17.11,2.16-21.8,6.48c-4.7,4.32-7.06,10.68-7.06,19.1s2.42,15.19,7.22,19.35c4.82,4.15,12.02,6.23,21.64,6.23s16.84-2.16,21.64-6.47Z"/> <path d="M1055.64,32.96l.16,11.64c0,1.64-.13,3.26-.41,4.84-.27,1.59-.52,2.93-.73,4.02h.33c.32-.76.87-2.02,1.64-3.77.76-1.64,1.52-2.9,2.3-3.77,2.72-4.37,6.14-7.76,10.25-10.17,4.1-2.4,8.55-3.77,13.36-4.1,6.99-.77,13.3-.33,18.94,1.31s10.17,4.34,13.61,8.12c3.44,3.77,5.44,8.33,5.99,13.69h.32c.99-4.16,2.82-7.95,5.5-11.4,2.68-3.44,6.1-6.23,10.25-8.37,4.15-2.13,8.69-3.3,13.61-3.52,10.17-.87,18.44.11,24.85,2.95,6.39,2.85,11.14,7.57,14.26,14.18,3.11,6.62,4.67,15.28,4.67,25.99v45.42h-26.57v-46.08c0-6.23-1.72-10.9-5.16-14.02-3.44-3.12-8.39-4.68-14.84-4.68-3.83,0-7.25.71-10.25,2.14-3,1.42-5.35,3.56-7.05,6.39-1.69,2.85-2.55,6.29-2.55,10.34v45.91h-26.55v-46.08c0-6.01-1.76-10.63-5.26-13.86-3.5-3.22-8.42-4.84-14.76-4.84-3.82,0-7.23.77-10.25,2.3-3,1.53-5.35,3.82-7.05,6.89-1.69,3.06-2.54,6.67-2.54,10.82v44.76h-26.57V32.96h20.5Z"/> <path d="M1283.55,98.47c-4.59,2.36-10.27,3.53-17.05,3.53-9.62,0-16.8-2.24-21.56-6.73-3.86-3.64-6.1-8.49-6.91-14.43h82.26c.76-17.05-3.56-29.62-12.96-37.71-9.41-8.09-23.02-12.14-40.83-12.14s-31.27,3.94-40.34,11.81c-9.07,7.87-13.61,19.13-13.61,33.77s4.68,25.61,14.02,33.53c9.34,7.93,22.66,11.89,39.93,11.89,14.32,0,25.94-2.54,34.84-7.63,8.91-5.08,14.47-11.83,16.65-20.25l-24.93-6.06c-1.75,4.59-4.92,8.06-9.51,10.41ZM1266.5,50.67c8.63,0,15.36,1.67,20.18,5,3.63,2.52,6.07,6.16,7.33,10.9h-54.99c1.19-4.06,3.09-7.38,5.91-9.75,4.87-4.1,12.05-6.15,21.56-6.15Z"/> <path d="M410.07,174.54h18.51v51.29h58.51v-51.29h18.35v119.96h-18.35v-54.57h-58.51v54.57h-18.51v-119.96Z"/> <path d="M568.28,206.99c30.49,0,48.03,19.66,45.24,50.8h-72.61c.49,5.74,2.3,10.16,5.74,14.26,5.74,6.55,12.62,8.85,22.12,9.34,10.98.33,19.67-4.42,25.23-10.82l11.97,9.01c-9.02,12.12-21.47,16.71-37.36,16.71-28.84,0-45.4-17.37-45.4-44.58s17.53-44.74,45.06-44.74ZM590.41,231.25c-5.74-6.72-12.78-9.51-21.96-9.51s-17.2,3.12-22.44,9.83c-2.79,3.28-4.26,7.54-4.92,12.62h54.73c-.65-5.24-2.12-9.17-5.4-12.94Z"/> <path d="M628.48,251.73c0-26.05,18.52-44.9,45.08-44.9,12.78,0,22.78,4.92,29.98,12.46l.83-10.49h16.05v56.7c0,8.36,4.75,13.28,14.59,15.08l4.43.33v13.77s-4.59,0-8.19-.33c-12.62-1.31-20.98-6.06-25.07-13.6-7.05,9.17-18.03,15.73-32.79,15.73-26.54,0-44.9-19.01-44.9-44.74ZM703.04,252.06c0-17.69-11.96-29-28.18-29-17.21,0-29.66,10.98-29.66,28.68s12.45,28.68,29.66,28.68c15.4,0,28.18-11.31,28.18-28.36Z"/> <path d="M746.71,280.9h16.55v-92.1h-16.55v-14.26h33.76v106.36h15.4v13.6h-49.16v-13.6Z"/> <path d="M825.73,208.8v-34.25h17.21v34.25h36.22v14.26h-36.22v42.44c0,8.36,6.06,13.77,15.89,15.08,6.71.65,14.75.49,20.32.33v13.6c-6.23.33-16.07.49-23.93-.17-18.86-1.63-29.5-11.63-29.5-27.36v-43.92h-16.55v-14.26h16.55Z"/> <path d="M899.7,174.54h17.36v44.74c3.44-7.38,11.48-12.46,24.26-12.46,21.96.17,33.76,14.09,33.76,37.04v50.64h-17.21v-49.17c0-13.76-8.35-21.14-20.48-21.14-14.75,0-20.32,7.87-20.32,21.46v48.84h-17.36v-119.96Z"/> </g> </g> </svg></a>
+       aria-label="Phenome Health"><svg role="img" aria-label="Phenome Health" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 131.5 32"><g transform="translate(-0.149 0.02)"><path d="M 42.481 14.212 L 42.481 0.031 L 49.018 0.031 C 52.056 0.031 53.712 2.114 53.712 4.602 C 53.712 7.09 52.035 9.131 49.018 9.131 L 45.456 9.131 L 45.456 14.212 Z M 48.62 2.625 L 45.456 2.625 L 45.456 6.537 L 48.62 6.537 C 49.793 6.537 50.673 5.772 50.673 4.581 C 50.673 3.39 49.793 2.625 48.62 2.625 Z" fill="var(--logo-word)"></path><path d="M 62.345 14.212 L 62.345 7.961 C 62.345 6.537 61.612 6.091 60.459 6.091 C 59.433 6.091 58.616 6.686 58.155 7.302 L 58.155 14.212 L 55.494 14.212 L 55.494 0.031 L 58.155 0.031 L 58.155 5.282 C 58.804 4.495 60.061 3.687 61.716 3.687 C 63.937 3.687 65.006 4.92 65.006 6.919 L 65.006 14.212 L 62.345 14.212 Z" fill="var(--logo-word)"></path><path d="M 72.233 3.689 C 75.251 3.689 77.304 5.985 77.304 9.344 L 77.304 9.939 L 69.782 9.939 C 69.949 11.236 70.976 12.32 72.694 12.32 C 73.637 12.32 74.747 11.937 75.397 11.3 L 76.571 13.044 C 75.544 14 73.973 14.468 72.401 14.468 C 69.321 14.468 66.996 12.363 66.996 9.068 C 66.996 6.091 69.154 3.689 72.234 3.689 Z M 69.74 8.111 L 74.727 8.111 C 74.664 7.133 73.994 5.836 72.234 5.836 C 70.579 5.836 69.866 7.091 69.741 8.111 Z" fill="var(--logo-word)"></path><path d="M 86.063 14.213 L 86.063 8.005 C 86.063 6.58 85.329 6.091 84.198 6.091 C 83.15 6.091 82.333 6.687 81.893 7.303 L 81.893 14.213 L 79.232 14.213 L 79.232 3.944 L 81.893 3.944 L 81.893 5.283 C 82.542 4.496 83.778 3.689 85.433 3.689 C 87.654 3.689 88.723 4.964 88.723 6.963 L 88.723 14.213 L 86.062 14.213 Z" fill="var(--logo-word)"></path><path d="M 90.714 9.068 C 90.714 6.155 92.725 3.689 96.057 3.689 C 99.388 3.689 101.421 6.155 101.421 9.068 C 101.421 11.981 99.409 14.468 96.057 14.468 C 92.705 14.468 90.714 12.002 90.714 9.068 Z M 98.655 9.068 C 98.655 7.473 97.712 6.091 96.057 6.091 C 94.402 6.091 93.479 7.473 93.479 9.068 C 93.479 10.662 94.402 12.066 96.057 12.066 C 97.712 12.066 98.655 10.683 98.655 9.068 Z" fill="var(--logo-word)"></path><path d="M 115.939 14.213 L 115.939 7.728 C 115.939 6.771 115.52 6.091 114.431 6.091 C 113.488 6.091 112.712 6.729 112.336 7.282 L 112.336 14.213 L 109.654 14.213 L 109.654 7.728 C 109.654 6.771 109.235 6.091 108.145 6.091 C 107.224 6.091 106.449 6.729 106.051 7.303 L 106.051 14.212 L 103.389 14.212 L 103.389 3.944 L 106.051 3.944 L 106.051 5.283 C 106.47 4.667 107.81 3.689 109.361 3.689 C 110.911 3.689 111.792 4.39 112.169 5.559 C 112.755 4.624 114.097 3.689 115.647 3.689 C 117.512 3.689 118.622 4.688 118.622 6.793 L 118.622 14.213 L 115.94 14.213 Z" fill="var(--logo-word)"></path><path d="M 125.828 3.689 C 128.845 3.689 130.898 5.985 130.898 9.344 L 130.898 9.939 L 123.376 9.939 C 123.544 11.236 124.57 12.32 126.289 12.32 C 127.231 12.32 128.342 11.937 128.992 11.3 L 130.165 13.044 C 129.138 14 127.567 14.468 125.996 14.468 C 122.915 14.468 120.589 12.363 120.589 9.068 C 120.589 6.091 122.747 3.689 125.828 3.689 Z M 123.334 8.111 L 128.321 8.111 C 128.258 7.133 127.587 5.836 125.828 5.836 C 124.173 5.836 123.46 7.091 123.335 8.111 Z" fill="var(--logo-word)"></path><path d="M 52.644 31.962 L 52.644 25.456 L 44.472 25.456 L 44.472 31.962 L 42.733 31.962 L 42.733 17.78 L 44.472 17.78 L 44.472 23.882 L 52.644 23.882 L 52.644 17.78 L 54.383 17.78 L 54.383 31.962 Z" fill="var(--logo-word)"></path><path d="M 60.584 31.962 L 60.584 17.78 L 69.74 17.78 L 69.74 19.354 L 62.323 19.354 L 62.323 23.925 L 69.594 23.925 L 69.594 25.498 L 62.323 25.498 L 62.323 30.388 L 69.74 30.388 L 69.74 31.961 L 60.584 31.961 Z" fill="var(--logo-word)"></path><path d="M 85.475 31.962 L 84.239 28.815 L 77.157 28.815 L 75.921 31.962 L 73.993 31.962 L 79.608 17.78 L 81.767 17.78 L 87.403 31.962 Z M 80.698 19.354 L 77.66 27.242 L 83.716 27.242 Z" fill="var(--logo-word)"></path><path d="M 92.16 31.962 L 92.16 17.78 L 93.899 17.78 L 93.899 30.388 L 100.393 30.388 L 100.393 31.962 Z" fill="var(--logo-word)"></path><path d="M 107.14 31.962 L 107.14 19.354 L 102.719 19.354 L 102.719 17.78 L 113.32 17.78 L 113.32 19.354 L 108.879 19.354 L 108.879 31.962 Z" fill="var(--logo-word)"></path><path d="M 128.47 31.962 L 128.47 25.456 L 120.299 25.456 L 120.299 31.962 L 118.559 31.962 L 118.559 17.78 L 120.299 17.78 L 120.299 23.882 L 128.47 23.882 L 128.47 17.78 L 130.209 17.78 L 130.209 31.962 Z" fill="var(--logo-word)"></path><path d="M 36.155 27.988 C 36.164 27.993 36.174 27.998 36.182 28.003 C 36.174 27.998 36.165 27.992 36.157 27.986 Z" fill="var(--logo-ink-2)"></path><path d="M 16.644 0.322 C 16.651 0.215 16.657 0.108 16.664 0 L 16.637 0 C 16.639 0.107 16.642 0.215 16.644 0.322 Z" fill="var(--logo-ink-2)"></path><path d="M 25.388 16.084 C 22.729 11.216 21.301 5.886 21.147 0.478 C 20.977 3.301 20.503 6.104 19.724 8.861 C 19.422 9.931 19.074 10.982 18.687 12.014 C 19.417 14.173 20.337 16.273 21.446 18.302 C 22.554 20.331 23.821 22.236 25.239 24.008 C 26.306 24.222 27.368 24.48 28.424 24.786 C 31.13 25.574 33.715 26.646 36.156 27.989 L 36.157 27.987 C 31.73 24.989 28.042 20.943 25.388 16.084 Z" fill="var(--logo-ink)"></path><path d="M 21.166 0.08 L 21.137 0.08 C 21.14 0.212 21.143 0.345 21.146 0.477 C 21.154 0.345 21.16 0.212 21.166 0.08 Z" fill="var(--logo-teal)"></path><path d="M 13.052 22.143 C 15.434 19.057 17.322 15.66 18.689 12.013 C 17.768 9.287 17.152 6.468 16.849 3.578 C 16.735 2.492 16.669 1.406 16.645 0.322 C 16.487 2.759 16.071 5.197 15.392 7.6 C 12.979 16.141 7.528 23.262 0 27.739 L 0.009 27.756 C 3.708 25.778 7.636 24.442 11.723 23.771 C 12.179 23.242 12.623 22.7 13.053 22.143 Z" fill="var(--logo-ink-3)"></path><path d="M 16.848 3.578 C 17.151 6.468 17.767 9.287 18.688 12.013 C 19.074 10.982 19.422 9.931 19.724 8.861 C 20.503 6.104 20.977 3.301 21.147 0.477 C 21.143 0.344 21.14 0.212 21.138 0.079 L 16.663 0 C 16.657 0.108 16.651 0.215 16.644 0.322 C 16.668 1.406 16.734 2.492 16.848 3.578 Z" fill="var(--logo-ink-3)"></path><path d="M 33.925 31.962 C 33.896 31.942 33.867 31.923 33.838 31.903 L 33.833 31.911 C 33.864 31.928 33.894 31.945 33.925 31.962 Z" fill="var(--logo-accent)"></path><path d="M 27.182 29.184 C 29.515 29.862 31.741 30.779 33.834 31.911 L 33.839 31.903 C 32.976 31.324 32.134 30.712 31.314 30.061 C 29.06 28.269 27.03 26.245 25.24 24.008 C 21.468 23.252 17.629 23.076 13.788 23.49 C 13.095 23.565 12.407 23.659 11.722 23.771 C 8.997 26.933 5.798 29.605 2.185 31.74 L 2.195 31.757 C 9.925 27.651 18.765 26.734 27.182 29.184 Z" fill="var(--logo-teal)"></path><path d="M 25.238 24.008 C 27.028 26.244 29.058 28.269 31.312 30.061 C 32.131 30.712 32.974 31.324 33.836 31.903 L 36.154 27.989 C 33.713 26.645 31.128 25.574 28.422 24.786 C 27.367 24.479 26.305 24.221 25.238 24.008 Z" fill="var(--logo-ink)"></path><path d="M 0.01 27.756 L 2.186 31.74 C 5.799 29.605 8.997 26.933 11.723 23.771 C 7.637 24.442 3.708 25.777 0.009 27.756 Z" fill="var(--logo-teal)"></path></g></svg></a>
     <span class="appdiv"></span>
     <span class="appname dsp">ddharmon</span>
     <span class="apptag">Data dictionary harmonization</span>
     <span class="appspacer"></span>
+    <div class="themetoggle" role="group" aria-label="Colour theme">
+      <button id="th-light" aria-pressed="false" title="Light theme" aria-label="Light theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.4v2.2M12 19.4v2.2M2.4 12h2.2M19.4 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/></svg></button>
+      <button id="th-system" aria-pressed="false" title="Follow system" aria-label="Follow system theme"><span class="lbl">AUTO</span></button>
+      <button id="th-dark" aria-pressed="false" title="Dark theme" aria-label="Dark theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></svg></button>
+    </div>
     <span class="runchip m">cardiometabolic risk · 5 cohorts</span>
   </header>
 
@@ -780,7 +940,7 @@ body.drawer-open .drawer { transform:translateX(0); }
       coherence line, so the judge is currently <b>unpriced</b>. Shipping this gate means adding a stage share for it.
       On the measured 5-cohort stack the judge ran <b>885 calls over 885 groups of ≥6 members</b>.
     </span>
-    <span class="flagbox" style="border-left-color:var(--b-teal)">
+    <span class="flagbox" style="border-left-color:var(--info)">
       <b>Search should be semantic, and it can be free.</b> Group labels are machine-written, so a researcher
       searching for "cardiovascular" or "BMI" will not match them by string. Gate 1 has already embedded every
       variable — matching a query against group centroids is local, costs nothing, and is the same vector work
@@ -816,7 +976,7 @@ body.drawer-open .drawer { transform:translateX(0); }
       This gate decides <b>what each concept maps to</b>. Gate 3 then writes the recode for every source
       variable against that target — so a target you are not sure about becomes a recode you cannot trust.
       Sign-off here is the precondition for spec generation, which is why it is a gate and not a report.
-      <span class="flagbox" style="border-left-color:var(--b-teal)">
+      <span class="flagbox" style="border-left-color:var(--info)">
         <b>Layout adapted from CDEMapper</b> (Wang et al., <i>JAMIA</i> 2025;32:1130–1139,
         doi:10.1093/jamia/ocaf064) — the ranked-candidate panel with score, collection and endorsement
         badges, question text, permissible values and a select action is theirs. Their reported coverage
@@ -1658,7 +1818,7 @@ function renderG2List(){
   if (extra) extra.innerHTML = !state.score ? "" : `
     <div style="padding:11px 18px 4px;font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);font-weight:700">Composite</div>
     <button class="g2row" data-scoreopen="1" aria-current="${state.scoreOpen}">
-      <span class="vdot" style="background:var(--b-teal)"></span>
+      <span class="vdot" style="background:var(--info)"></span>
       <span class="g2meta"><span class="g2nm">${esc(SCORE.name.split(" (")[0])}</span>
         <span class="g2sub">${matchedComponents().length} of ${SCORE.components.length} components matched</span></span>
     </button>`;
@@ -2357,7 +2517,7 @@ function renderGate3(){
       ${state.score ? `
         <div style="padding:11px 18px 4px;font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);font-weight:700">Composite</div>
         <button class="g2row" data-g3score="1" aria-current="${state.scoreOpen}">
-          <span class="vdot" style="background:var(--b-teal)"></span>
+          <span class="vdot" style="background:var(--info)"></span>
           <span class="g2meta"><span class="g2nm">${esc(SCORE.name.split(" (")[0])}</span>
             <span class="g2sub">criteria_count · derivation</span></span></button>` : ""}
     </aside>
@@ -2920,6 +3080,30 @@ qbox.addEventListener("keydown", e => {
 });
 
 paint();
+</script>
+<script>
+/* Toggle wiring. Reflects the stored PREFERENCE (including System) rather than
+   the resolved theme, so "Auto" reads as selected even while it resolves dark. */
+(function () {
+  var ids = { light: "th-light", system: "th-system", dark: "th-dark" };
+  function sync() {
+    var pref = document.documentElement.getAttribute("data-theme-pref") || "system";
+    Object.keys(ids).forEach(function (k) {
+      var el = document.getElementById(ids[k]);
+      if (el) el.setAttribute("aria-pressed", String(k === pref));
+    });
+  }
+  Object.keys(ids).forEach(function (k) {
+    var el = document.getElementById(ids[k]);
+    if (!el) return;
+    el.addEventListener("click", function () {
+      try { localStorage.setItem("ddharmon-theme", k); } catch (e) {}
+      if (window.__applyTheme) window.__applyTheme();
+      sync();
+    });
+  });
+  sync();
+})();
 </script>
 </body>
 </html>
