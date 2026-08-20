@@ -682,3 +682,276 @@ def test_the_stream_frame_is_the_thin_progress_dict(monkeypatch, tmp_path):
     assert "result" not in frame
     assert "decisions" not in frame
     assert frame["resultVersion"] >= 1
+
+
+# ── D-04: reconciling paid Batch work that outlived the process that submitted it ────────────
+#
+# The hole 08-08 did not close. A pause is an exit, so the SUBMITTED-BUT-UNRETRIEVED batch is the case
+# that has no owner: ``submit_batch`` charged the account and wrote a manifest, the poll was still
+# blocking when the process died, and nothing anywhere ever retrieves that result again. The work is
+# paid for and unreachable.
+#
+# Every test below uses a REAL work dir on ``tmp_path`` (manifests and jsonl written the way core's
+# ``submit_batch`` / ``retrieve_batch`` write them) and a FAKE upstream whose call count is observable.
+# No provider client is constructed, no key is read, nothing is submitted, nothing is billed.
+
+
+def _submitted_batch(work_dir, tag: str, batch_id: str, ids: list[str]):
+    """Write what core's ``submit_batch`` leaves on disk: the prompts file and the batch manifest.
+
+    The manifest is the durable evidence that money was spent — it survives the process that wrote it,
+    which is exactly why reconciliation can be keyed on it.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    prompts = work_dir / f"prompts_{tag}.jsonl"
+    prompts.write_text(
+        "\n".join(json.dumps({"id": i, "system_prompt": "s", "user_prompt": "u"}) for i in ids) + "\n"
+    )
+    (work_dir / f"prompts_{tag}.jsonl.batch_manifest.json").write_text(
+        json.dumps(
+            {
+                "batch_id": batch_id,
+                "num_requests": len(ids),
+                "prompts_path": str(prompts),
+                "id_map": {f"req_{n}": i for n, i in enumerate(ids)},
+            }
+        )
+    )
+    return prompts
+
+
+def _wrote_responses(work_dir, tag: str, mapping: dict):
+    """What core's ``retrieve_batch`` leaves on disk for the ids that DID come back."""
+    path = work_dir / f"responses_{tag}.jsonl"
+    path.write_text("\n".join(json.dumps({"id": k, "response": v}) for k, v in mapping.items()) + "\n")
+    return path
+
+
+class FakeUpstream:
+    """A batch fetcher whose calls are counted. Never talks to a provider.
+
+    ``by_batch`` maps a batch id to the :class:`~backend.batch_reconcile.FetchResult` the upstream would
+    give. A batch id with no entry is treated as still processing, which is the safe default.
+    """
+
+    def __init__(self, by_batch: dict):
+        self.by_batch = by_batch
+        self.calls: list[str] = []
+
+    def __call__(self, batch_id, *, manifest_path=None, api_key=None):
+        from backend.batch_reconcile import FetchResult
+
+        self.calls.append(batch_id)
+        return self.by_batch.get(batch_id) or FetchResult(status="pending")
+
+
+def _paused_with_outstanding_batch(tmp_path, *, job_id="r1", tag="split", ids=("0:0", "0:1")):
+    """A run parked at Gate 1 whose ``split`` batch was submitted but never retrieved."""
+    from backend.checkpoint import write_checkpoint
+
+    store = JobStore(work_root=tmp_path)
+    wd = tmp_path / job_id
+    _submitted_batch(wd, tag, "batch_abc", list(ids))
+    write_checkpoint(
+        wd,
+        job_id=job_id,
+        gate="gate1",
+        result={"conceptGroups": [{"groupId": "0:0"}], "records": []},
+        responses={"generate": {"c0": {"ideal": "x"}}},
+        realized_cost=1.5,
+    )
+    store.create(job_id, "Paused", {})
+    store.checkpoint(job_id, gate="gate1", checkpoint_ref=f"{job_id}/checkpoint_gate1.json", realized_cost=1.5)
+    return store, wd
+
+
+def test_batch_reconcile_idempotent(tmp_path):
+    """T-08-53: the interval sweep and the on-open path CAN genuinely race on one run.
+
+    Idempotency here is not an optimization — a second reconcile that re-attached or re-submitted would
+    either duplicate a stage's recorded answers (making the next leg's replay disagree with the leg that
+    produced the result on screen) or spend money on work already paid for. It is derived from what is
+    MISSING ON DISK, not from a lock, so two racing callers converge instead of serializing.
+    """
+    from backend.batch_reconcile import FetchResult, reconcile_run
+
+    store, wd = _paused_with_outstanding_batch(tmp_path)
+    upstream = FakeUpstream(
+        {
+            "batch_abc": FetchResult(
+                status="available",
+                records=(
+                    {"id": "0:0", "response": {"groups": ["a"]}},
+                    {"id": "0:1", "response": {"groups": ["b"]}},
+                ),
+            )
+        }
+    )
+    version_before = store.get("r1").result_version
+
+    first = reconcile_run("r1", store=store, fetch=upstream)
+    assert first.status == "reconciled"
+    assert first.attached == {"split": 2}
+    assert len(upstream.calls) == 1
+    assert store.get("r1").result_version == version_before + 1
+
+    second = reconcile_run("r1", store=store, fetch=upstream)
+    assert second.status == "noop", "the second reconcile found work to do that the first should have done"
+    assert second.attached == {}
+    assert len(upstream.calls) == 1, "a second reconcile issued an additional upstream call"
+    assert store.get("r1").result_version == version_before + 1, "a no-op reconcile moved the version token"
+
+    ckpt = read_checkpoint(wd, "gate1")
+    assert set(ckpt.responses["split"]) == {"0:0", "0:1"}
+    assert ckpt.responses["generate"] == {"c0": {"ideal": "x"}}, "an earlier stage's paid answers were dropped"
+    assert ckpt.result["conceptGroups"] == [{"groupId": "0:0"}], "reconcile advanced the run instead of attaching"
+    assert ckpt.realized_cost == pytest.approx(1.5)
+
+
+def test_batch_reconcile_appends_to_the_on_disk_response_cache_without_clobbering_it(tmp_path):
+    """``retrieve_batch`` opens its output ``"w"``. Handing it the run's real responses file would ERASE
+    every response already retrieved for that stage — the exact paid work this module exists to save."""
+    from backend.batch_reconcile import FetchResult, reconcile_run
+
+    store, wd = _paused_with_outstanding_batch(tmp_path, ids=("0:0", "0:1", "0:2"))
+    _wrote_responses(wd, "split", {"0:0": {"groups": ["already"]}})
+    upstream = FakeUpstream(
+        {
+            "batch_abc": FetchResult(
+                status="available",
+                records=({"id": "0:1", "response": {"groups": ["b"]}}, {"id": "0:2", "response": {"groups": ["c"]}}),
+            )
+        }
+    )
+
+    out = reconcile_run("r1", store=store, fetch=upstream)
+
+    assert out.status == "reconciled"
+    lines = [json.loads(x) for x in (wd / "responses_split.jsonl").read_text().splitlines() if x.strip()]
+    assert {x["id"] for x in lines} == {"0:0", "0:1", "0:2"}
+    assert next(x for x in lines if x["id"] == "0:0")["response"] == {"groups": ["already"]}
+
+
+def test_batch_reconcile_is_a_noop_when_there_is_no_outstanding_submission(tmp_path):
+    """A sweep runs over every run on the host. A no-op that still wrote would move every paused run's
+    version token on every tick, and the versioned refetch would become a refetch storm (T-08-55)."""
+    from backend.batch_reconcile import reconcile_run
+
+    store, wd = _paused_with_outstanding_batch(tmp_path)
+    _wrote_responses(wd, "split", {"0:0": {"g": 1}, "0:1": {"g": 2}})
+    upstream = FakeUpstream({})
+    before = store.get("r1")
+    version_before, updated_before = before.result_version, before.updated_at
+
+    out = reconcile_run("r1", store=store, fetch=upstream)
+
+    assert out.status == "noop"
+    assert upstream.calls == [], "a fully-retrieved batch was fetched again"
+    after = store.get("r1")
+    assert after.result_version == version_before
+    assert after.updated_at == updated_before, "a no-op reconcile touched the run's updated timestamp"
+
+
+def test_batch_reconcile_reports_pending_and_leaves_the_run_untouched(tmp_path):
+    """A batch that has not ended is NOT an error. Recording it as one would tell the reviewer their work
+    was lost while it was still on its way."""
+    from backend.batch_reconcile import FetchResult, reconcile_run
+
+    store, wd = _paused_with_outstanding_batch(tmp_path)
+    upstream = FakeUpstream({"batch_abc": FetchResult(status="pending", detail="in_progress")})
+    version_before = store.get("r1").result_version
+
+    out = reconcile_run("r1", store=store, fetch=upstream)
+
+    assert out.status == "pending"
+    assert out.pending == ("split",)
+    assert out.attached == {}
+    assert store.get("r1").result_version == version_before
+    assert "split" not in read_checkpoint(wd, "gate1").responses
+    assert not (wd / "responses_split.jsonl").exists()
+
+
+def test_batch_reconcile_records_a_failure_and_keeps_completed_stage_output(tmp_path):
+    """T-08-58: a failed retrieval must never be allowed to discard output that was already completed and
+    PAID FOR. The failure is recorded against the run so an operator can see it; the earlier stage's
+    answers stay exactly where they were."""
+    from backend.batch_reconcile import FetchResult, reconcile_run
+
+    store, wd = _paused_with_outstanding_batch(tmp_path)
+    _wrote_responses(wd, "split", {"0:0": {"g": 1}})  # one of the two came back on the first leg
+    upstream = FakeUpstream({"batch_abc": FetchResult(status="failed", detail="expired")})
+
+    out = reconcile_run("r1", store=store, fetch=upstream)
+
+    assert out.status == "failed"
+    assert out.failed == ("split",)
+    body = (wd / "reconcile_failures.jsonl").read_text()
+    assert "expired" in body and "split" in body
+    lines = [json.loads(x) for x in (wd / "responses_split.jsonl").read_text().splitlines() if x.strip()]
+    assert [x["id"] for x in lines] == ["0:0"], "a failed retrieval discarded a response already paid for"
+    assert read_checkpoint(wd, "gate1").responses["generate"] == {"c0": {"ideal": "x"}}
+
+
+def test_batch_reconcile_raises_a_typed_error_naming_the_run_and_the_missing_path(tmp_path):
+    """Reporting success for a run whose work dir is gone would mark paid work reconciled when it is in
+    fact unrecoverable. The operator's next step is to look at that path, so the error names it."""
+    from backend.batch_reconcile import WorkDirMissingError, reconcile_run
+
+    store = JobStore(work_root=tmp_path)
+    store.create("ghost", "No work dir", {})
+
+    with pytest.raises(WorkDirMissingError) as exc:
+        reconcile_run("ghost", store=store, fetch=FakeUpstream({}))
+    assert "ghost" in str(exc.value)
+    assert str(tmp_path / "ghost") in str(exc.value)
+
+
+def test_batch_reconcile_never_submits_anything(tmp_path):
+    """Reconciliation RETRIEVES work already charged for; retrieval is free. Reaching for a submitting
+    entry point here would make a background sweep able to spend money with no user in the loop
+    (T-08-56), which is the opposite of this module's purpose."""
+    import inspect
+
+    from backend import batch_reconcile
+
+    src = inspect.getsource(batch_reconcile)
+    for submitter in ("submit_batch", "submit_and_wait", "resume_and_wait"):
+        assert f"{submitter}(" not in src, f"batch_reconcile calls {submitter} — a sweep must never submit"
+    assert "harmonize_leanb" not in src, "pipeline knowledge belongs in the adapter, not here"
+
+
+def test_the_tag_to_stage_map_matches_the_adapters_batch_wiring():
+    """A drift guard, not a tautology. The batch cache tag is NOT the stage kwarg (``classify`` caches to
+    ``assign``, ``distinct_kinds`` to ``kinds``), so a hand-written map is the only way this module can
+    attach a reconciled response under the name the replay path reads — and a renamed tag in the adapter
+    would otherwise silently route paid answers to a stage nobody replays.
+
+    Read out of the adapter's AST rather than by importing it, so this module stays free of the engine.
+    """
+    import ast
+    import inspect
+
+    from backend.batch_reconcile import TAG_TO_STAGE
+    from backend.engine import adapter as adapter_module
+
+    tree = ast.parse(inspect.getsource(adapter_module))
+    wired: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not (isinstance(fn, ast.Name) and fn.id == "_batch_stage"):
+            continue
+        # _batch_stage(phase, progress, work_dir, tag, ledger, ...) — the tag is the 4th positional.
+        if len(node.args) >= 4 and isinstance(node.args[3], ast.Constant):
+            wired[str(node.args[3].value)] = "?"
+    # The judge stages carry their tag in a table, which IS importable without pipeline knowledge.
+    for name, spec in adapter_module._JUDGE_STAGES.items():
+        wired[spec["tag"]] = name
+
+    assert set(wired) <= set(TAG_TO_STAGE), (
+        f"the adapter caches batch tags this module cannot map to a stage: {sorted(set(wired) - set(TAG_TO_STAGE))}"
+    )
+    for tag, stage in wired.items():
+        if stage != "?":
+            assert TAG_TO_STAGE[tag] == stage, f"tag {tag!r} maps to {TAG_TO_STAGE[tag]!r}, adapter says {stage!r}"
