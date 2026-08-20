@@ -71,7 +71,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
   return (
     <th
       className={cn(
-        "border-b border-neutral-200 px-2.5 py-1.5 text-left align-bottom font-medium uppercase tracking-wide text-neutral-500",
+        "border-b border-rule-on-raised px-2.5 py-1.5 text-left align-bottom font-semibold uppercase tracking-eyebrow text-on-raised-muted",
         className,
       )}
     >
@@ -82,9 +82,9 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
 
 // A wrapping text cell with a bounded width and a native tooltip for the full value. Empty → muted dash.
 function TextCell({ value, className }: { value?: string; className?: string }) {
-  if (!value) return <td className="px-2.5 py-1.5 align-top text-neutral-300">—</td>;
+  if (!value) return <td className="px-2.5 py-1.5 align-top text-on-raised-muted">—</td>;
   return (
-    <td className={cn("px-2.5 py-1.5 align-top text-neutral-700", className)} title={value}>
+    <td className={cn("px-2.5 py-1.5 align-top text-on-raised", className)} title={value}>
       <span className="block min-w-[12rem] max-w-[24rem] whitespace-pre-wrap break-words">{value}</span>
     </td>
   );
@@ -119,11 +119,11 @@ export function SourceRows({
 
   return (
     <div className="space-y-1.5">
-      <div className="max-h-[28rem] overflow-auto rounded-md border border-neutral-200">
+      <div className="max-h-[28rem] overflow-auto rounded-md border border-rule-on-raised">
         <table className="w-full border-collapse text-xs">
           {/* sticky on the <thead> section (with border-collapse) is the combination that actually pins in
               Chromium/Firefox/Safari 16+; sticky on <th> cells silently fails under border-collapse. */}
-          <thead className="sticky top-0 z-10 bg-neutral-50">
+          <thead className="sticky top-0 z-10 bg-surface-inset">
             <tr>
               <Th className="whitespace-nowrap">Cohort</Th>
               <Th className="whitespace-nowrap">Variable</Th>
@@ -137,7 +137,7 @@ export function SourceRows({
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.id} className="border-b border-neutral-100 last:border-0 hover:bg-neutral-50">
+              <tr key={r.id} className="border-b border-rule-quiet-on-raised last:border-0 hover:bg-surface-inset">
                 <td className="px-2.5 py-1.5 align-top">
                   <Badge variant="neutral" className="font-normal">
                     {r.cohort || "—"}
@@ -145,35 +145,35 @@ export function SourceRows({
                 </td>
                 <td className="px-2.5 py-1.5 align-top">
                   {r.synthetic ? (
-                    <span className="text-neutral-300" title={r.name}>
+                    <span className="text-on-raised-muted" title={r.name}>
                       —
                     </span>
                   ) : (
-                    <span className="whitespace-nowrap font-mono text-neutral-700">{r.name}</span>
+                    <span className="whitespace-nowrap font-mono text-on-raised">{r.name}</span>
                   )}
                 </td>
                 {showDesc && <TextCell value={r.description} />}
                 {showQ && <TextCell value={r.questionText} />}
-                {showEnc && <TextCell value={r.valueEncoding} className="font-mono text-neutral-600" />}
+                {showEnc && <TextCell value={r.valueEncoding} className="font-mono text-on-raised" />}
                 {showUnits && (
-                  <td className="whitespace-nowrap px-2.5 py-1.5 align-top text-neutral-600">{r.units || "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-1.5 align-top text-on-raised">{r.units || "—"}</td>
                 )}
                 {showType && (
-                  <td className="whitespace-nowrap px-2.5 py-1.5 align-top text-neutral-600">{r.dataType || "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-1.5 align-top text-on-raised">{r.dataType || "—"}</td>
                 )}
-                {showEmbedded && <TextCell value={r.text} className="italic text-neutral-500" />}
+                {showEmbedded && <TextCell value={r.text} className="italic text-on-raised-muted" />}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       {extra > 0 && (
-        <div className="text-xs text-neutral-400">
+        <div className="text-xs text-on-raised-muted">
           Showing the first {ROW_CAP} of {rows.length} variables — use Export for the full set.
         </div>
       )}
       {showEmbedded && (
-        <div className="text-xs text-neutral-400">
+        <div className="text-xs text-on-raised-muted">
           <span className="italic">Embedded text</span> is the cleaned signal the pipeline actually embedded, shown
           where it differs from the raw description or question.
         </div>

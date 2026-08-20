@@ -25,6 +25,14 @@ import PreviewPayoffPage from "@/pages/preview-payoff";
 import PreviewCompositePage from "@/pages/preview-composite";
 import PreviewReproducibilityPage from "@/pages/preview-reproducibility";
 import PreviewKnowledgeGraphPage from "@/pages/preview-knowledge-graph";
+// The staged review flow: one page file per gate, so no later screen plan has to touch this router.
+// The file boundaries are fixed HERE, once, and each is owned by exactly one later plan.
+import SetupPage from "@/pages/run/setup";
+import Gate0Page from "@/pages/run/gate0";
+import Gate1Page from "@/pages/run/gate1";
+import Gate2Page from "@/pages/run/gate2";
+import Gate3Page from "@/pages/run/gate3";
+import Gate4Page from "@/pages/run/gate4";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -57,13 +65,19 @@ export default function App() {
             <Route path="/preview/reproducibility" component={PreviewReproducibilityPage} />
             <Route path="/preview/knowledge-graph" component={PreviewKnowledgeGraphPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />
+            <Route path="/run/:jobId/setup" component={SetupPage} />
+            <Route path="/run/:jobId/gate0" component={Gate0Page} />
+            <Route path="/run/:jobId/gate1" component={Gate1Page} />
+            <Route path="/run/:jobId/gate2" component={Gate2Page} />
+            <Route path="/run/:jobId/gate3" component={Gate3Page} />
+            <Route path="/run/:jobId/gate4" component={Gate4Page} />
             <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
             <Route path="/job/:jobId/analysis" component={AnalysisIdeasPage} />
             <Route path="/job/:jobId/composite" component={CompositePage} />
             <Route path="/job/:jobId" component={DashboardPage} />
             <Route path="/jobs" component={JobsPage} />
             <Route>
-              <div className="p-8 text-neutral-500">404 — page not found</div>
+              <div className="p-8 text-on-field-muted">404 — page not found</div>
             </Route>
             </Switch>
           </AppShell>

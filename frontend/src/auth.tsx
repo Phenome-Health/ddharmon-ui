@@ -69,17 +69,17 @@ function TokenBridge() {
 
 function SignInWall({ onGuest }: { onGuest?: () => void }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-neutral-50 p-6">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-surface-inset p-6">
       <SignIn />
       {/* Optional collaborator hint (dev channel): sign in with an email for a one-time code. Unset on
           prod → nothing renders. */}
-      {SIGNIN_NOTE && <p className="max-w-sm text-center text-sm text-neutral-600">{SIGNIN_NOTE}</p>}
+      {SIGNIN_NOTE && <p className="max-w-sm text-center text-sm text-on-inset">{SIGNIN_NOTE}</p>}
       {/* Guest bypass — omitted on a locked (PH-only) deployment where sign-in is mandatory. */}
       {onGuest && (
         <button
           type="button"
           onClick={onGuest}
-          className="text-sm font-medium text-ph-navy underline underline-offset-4 transition-colors hover:text-ph-ink"
+          className="text-sm font-semibold text-link-on-inset underline underline-offset-4 transition-colors hover:text-on-inset"
         >
           Or explore the demo without signing in →
         </button>
@@ -94,7 +94,7 @@ function Gate({ children }: { children: ReactNode }) {
   const [guest, setGuest] = useState(false);
 
   if (!isLoaded) {
-    return <div className="flex h-screen items-center justify-center text-sm text-neutral-500">Loading…</div>;
+    return <div className="flex h-screen items-center justify-center text-sm text-on-raised-muted">Loading…</div>;
   }
   if (isSignedIn) {
     const email = user?.primaryEmailAddress?.emailAddress ?? undefined;

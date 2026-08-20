@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from backend import app as app_module
 from backend.db import JobDB
 from backend.demos import demo_job_id, seed_demos
+from backend.engine import contract as contract_module
 from backend.engine.adapter import build_ui_result, run_pipeline
 from backend.jobs import Job, JobStore
 
@@ -73,7 +74,7 @@ def test_health_ok():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["contractVersion"] == "4"
+    assert body["contractVersion"] == "5"
     assert set(body["cde"]) == {"endorsed", "full"}
     assert "frontendBuilt" in body
 
@@ -181,7 +182,7 @@ def _canned_records() -> list[LeanBRecord]:
 
 def test_contract_mapping_record_and_summary():
     result = build_ui_result(LeanBResult(records=_canned_records()), mode="batch", phases=["loading"])
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
     assert result["mode"] == "batch"
     rec0 = result["records"][0]
     assert rec0["id"] == "c1#g0"
@@ -1192,7 +1193,7 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
 
     result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
 
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
     # v3 additive: every result carries a realized-cost block. Zero here (stage_overrides bypass the priced
     # sync/batch stages); a real run populates it from captured token usage.
     assert result["cost"] == {"actualUsd": 0.0, "tokens": {"input": 0, "output": 0}, "perStage": {}}
@@ -1477,7 +1478,7 @@ def test_run_pipeline_real_clustering_smoke(tmp_path):
     # No stage_overrides -> the adapter takes the real preview branch: real cluster + retrieve, no LLM.
     result = run_pipeline(dict_specs, cde_spec, config, provider=_StructuredStubProvider())
 
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
     assert result["mode"] == "preview"
     assert result["phases"] and "clustering" in result["phases"]
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1  # 40 cohort fields projected
@@ -1541,7 +1542,7 @@ def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_
         provider=StubProvider(),
         stage_overrides=overrides,
     )
-    assert result["contractVersion"] == "4"
+    assert result["contractVersion"] == "5"
 
 
 def test_seed_demos_prepopulates_a_complete_run():
@@ -2234,3 +2235,752 @@ def test_purge_exempts_demo_but_evicts_user_runs():
     store.purge_expired()
     assert store.get("user-1") is None  # ordinary terminal run aged out
     assert store.get(jid) is not None  # demo run is pinned → survives
+
+
+# ── 08-09: the coherence judge in the PRODUCT path, the opt-ins, and Gate 1's group shape ─────
+#
+# The debt these close: before this, `harmonize_leanb()` in the product injected neither `coherence=`
+# nor `distinct_kinds=`, so the judge never executed at all and every shipped artifact had an incoherent
+# count of zero (WINDOWS id3 / STGD-02's adapter half). Twelve triage signals were dark for the same or
+# an adjacent reason. None of the tests below make a paid call: the stages are injected callables, so a
+# "real run" here means a real PIPELINE run with no provider anywhere in it.
+
+
+def _one_cluster_topic_model():
+    """A fake BERTopic that pools every non-CDE field into ONE cluster (the CDEs are the backbone)."""
+
+    def fake_topic_model(embedded, **kwargs):
+        docs, embeddings, field_refs, cohorts = collect_inputs(embedded)
+        members = [r for r in field_refs if r.dictionary_name != "NIH_CDE"]
+        cluster = FieldCluster(cluster_id=0, label="all", members=members)
+        return TopicModelResult(
+            model=None,
+            docs=docs,
+            embeddings=embeddings,
+            field_refs=field_refs,
+            clusters=[cluster],
+            outlier_cluster=None,
+            all_cohort_names=cohorts,
+        )
+
+    return fake_topic_model
+
+
+def _judge_fixture(tmp_path, monkeypatch, *, n_per_cohort: int = 5):
+    """A two-cohort run whose single concept group is big enough for the judge to be ASKED about it.
+
+    ``prepare_coherence`` builds no prompt below its member floor (a small group is left explicitly
+    unjudged), so a fixture with three variables would exercise the wiring and prove nothing about the
+    judge. ``n_per_cohort=5`` gives ten members, comfortably above the floor.
+    """
+    rows_a = "".join(f"v{i},Blood pressure reading {i} taken at the clinic,\n" for i in range(n_per_cohort))
+    rows_b = "".join(f"w{i},Blood pressure measurement {i} recorded by nurse,\n" for i in range(n_per_cohort))
+    a = tmp_path / "cohortA.csv"
+    a.write_text("var,desc,enc\n" + rows_a)
+    b = tmp_path / "cohortB.csv"
+    b.write_text("var,desc,enc\n" + rows_b)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text(
+        "designation\tdefinition\tpermissible_values\nBpCDE\tBlood pressure\tmmHg\nPulseCDE\tPulse rate\tbpm\n"
+    )
+    roles = {"variable_name": "var", "description": "desc", "value_encoding": "enc"}
+    dict_specs = [
+        {"path": str(a), "cohort_name": "CohortA", "column_roles": roles},
+        {"path": str(b), "cohort_name": "CohortB", "column_roles": roles},
+    ]
+    cde_spec = {
+        "path": str(cde),
+        "cohort_name": "NIH_CDE",
+        "column_roles": {
+            "variable_name": "designation",
+            "description": "definition",
+            "value_encoding": "permissible_values",
+        },
+    }
+    monkeypatch.setattr("ddharmon.clustering.topic_engine.topic_model_dictionaries", _one_cluster_topic_model())
+    config = {
+        "run_mode": "batch",
+        "cde_cohort": "NIH_CDE",
+        "work_dir": str(tmp_path),
+        "min_cluster_size": 2,
+        "retrieval_floor": 0.0,
+        "gen_transform_specs": True,
+    }
+    return dict_specs, cde_spec, config
+
+
+def _split_verdict(recs):
+    """A judge response that flags every group it is asked about as an over-merge (verdict `split`)."""
+    return {
+        r.id: {
+            "coherent": False,
+            "summary": "systolic, diastolic and pulse fused into one group",
+            "granularity": {"verdict": "split", "axis": "measurand", "distinct_values": ["systolic", "pulse"]},
+            "outliers": [1],
+        }
+        for r in recs
+    }
+
+
+def _spy_kwargs(monkeypatch, seen):
+    """Record every kwarg the adapter hands ``harmonize_leanb`` (functools.wraps keeps the real signature,
+    or the adapter's own inspect.signature guards would skip the very kwarg under test)."""
+    import functools
+
+    import ddharmon.harmonization as core
+
+    orig = core.harmonize_leanb
+
+    @functools.wraps(orig)
+    def spy(embedded, **kw):
+        seen.update(kw)
+        return orig(embedded, **kw)
+
+    monkeypatch.setattr(core, "harmonize_leanb", spy)
+
+
+def _no_op_batch_stages(monkeypatch, built):
+    """Replace the Batch-API stage factory with a recorder — proves which stages the PRODUCT path builds
+    without constructing a client, submitting a batch or spending anything."""
+    from backend.engine import adapter as ad
+
+    def fake_batch_stage(phase, progress, work_dir, tag, ledger, api_key=None, stopping=None, ledger_key=None):
+        built.append({"phase": phase, "tag": tag, "cost": ledger_key or phase})
+
+        def stage(prompts):
+            return {}
+
+        return stage
+
+    monkeypatch.setattr(ad, "_batch_stage", fake_batch_stage)
+
+
+def test_adapter_injects_coherence_runners(monkeypatch, tmp_path):
+    """STGD-02's adapter half. The PRODUCT path (batch mode, no injected overrides) must hand core BOTH
+    judge runners — otherwise the judge never executes and every Gate 1 row reads as coherent."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    seen, built = {}, []
+    _spy_kwargs(monkeypatch, seen)
+    _no_op_batch_stages(monkeypatch, built)
+
+    run_pipeline(dict_specs, cde_spec, config, provider=StubProvider())
+
+    assert seen.get("coherence") is not None, "the product path injected no coherence runner"
+    assert seen.get("distinct_kinds") is not None, "the product path injected no distinct-kinds runner (R2)"
+    tags = {b["tag"] for b in built}
+    assert {"coherence", "kinds"} <= tags, f"expected judge stages to be built, got {sorted(tags)}"
+
+
+def test_judge_precedes_assign(monkeypatch, tmp_path):
+    """The judge's verdict pass runs after `split` and BEFORE `classify` (08-04's reorder). Gate 1 pauses
+    at the classify boundary, so a verdict stamped after assign does not exist when the screen needs it."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    order = []
+
+    def _stage(name, payload):
+        def stage(recs):
+            order.append(name)
+            return payload(recs)
+
+        return stage
+
+    overrides = {
+        "generate": _stage("generate", lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs}),
+        "split": _stage("split", lambda recs: {}),
+        "coherence": _stage("coherence", _split_verdict),
+        "classify": _stage(
+            "classify",
+            lambda recs: {r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs},
+        ),
+        "specgen": _stage("specgen", lambda recs: {}),
+    }
+    run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert "coherence" in order, "the coherence runner was never called"
+    assert "classify" in order
+    assert order.index("coherence") < order.index("classify")
+    assert order.index("split") < order.index("coherence")
+
+
+def test_a_real_run_flags_at_least_one_group_incoherent(monkeypatch, tmp_path):
+    """The truth WINDOWS id3 records as unmet: every shipped artifact had an incoherent count of zero,
+    because the judge never ran. With the runner injected, a flagged group reaches the wire."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "coherence": _split_verdict,
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert any(r["incoherent"] for r in result["records"]), "no record reached the wire flagged incoherent"
+    assert any(r["coherence"] == "split" for r in result["records"])
+    flagged = next(r for r in result["records"] if r["incoherent"])
+    assert flagged["coherenceAxis"] == "measurand"
+    assert flagged["coherenceDistinctValues"] == ["systolic", "pulse"]
+    assert flagged["coherenceSummary"]
+    # a FLAG, not a gate: the group is surfaced, never auto-split into children
+    assert not any(r.get("readjudicatedFrom") for r in result["records"])
+
+
+def test_the_free_win_signals_reach_the_wire(monkeypatch, tmp_path):
+    """matrix_suspect / coherence_gap / adopt_demoted are computed on every run today and were merely
+    unmapped (08-RESEARCH §Item #10). Presence of the key is the assertion — an absent key is what made
+    them dark."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "coherence": _split_verdict,
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+    rec = result["records"][0]
+    for key in ("matrixSuspect", "coherenceGap", "adoptDemoted", "coherence", "incoherent", "coherenceKind"):
+        assert key in rec, f"{key} is still dark on the wire"
+
+
+def test_a_judge_error_arrives_as_not_judged_never_as_coherent(monkeypatch, tmp_path):
+    """T-08-46. A runner that raises or times out must not unwind a run whose paid stages completed, and
+    must not leave the group looking blessed. Both halves: the run finishes, and the cell says not_judged."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+
+    def exploding_judge(recs):
+        raise TimeoutError("the judge timed out")
+
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "coherence": exploding_judge,
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert result["records"], "a judge failure must not cost the run its paid records"
+    assert all(r["coherence"] == "not_judged" for r in result["records"])
+    assert not any(r["incoherent"] for r in result["records"])
+
+
+def test_an_older_core_without_the_judge_keywords_still_completes(monkeypatch, tmp_path):
+    """T-08-49. Prod pins core to a PyPI version and dev to a git ref, so the adapter must degrade on an
+    optional enhancement rather than raise. Stub a signature with none of the new keywords."""
+    import functools
+
+    import ddharmon.harmonization as core
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    orig = core.harmonize_leanb
+    seen = {}
+
+    def legacy(
+        embedded_dicts,
+        generate=None,
+        split=None,
+        classify=None,
+        gencde=None,
+        specgen=None,
+        cde_cohort="NIH_CDE",
+        min_cluster_size=15,
+        top_k=25,
+        retrieval_floor=0.0,
+        model_tag="",
+        substrate=None,
+    ):
+        seen["called"] = True
+        return orig(
+            embedded_dicts,
+            generate=generate,
+            split=split,
+            classify=classify,
+            gencde=gencde,
+            specgen=specgen,
+            cde_cohort=cde_cohort,
+            min_cluster_size=min_cluster_size,
+            top_k=top_k,
+            retrieval_floor=retrieval_floor,
+        )
+
+    monkeypatch.setattr(core, "harmonize_leanb", functools.wraps(orig)(legacy) if False else legacy)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "coherence": _split_verdict,
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+    assert seen.get("called") is True
+    assert result["records"]
+    # nothing was judged (the pinned core cannot), and that reads as not_judged — not as clean
+    assert all(r["coherence"] == "not_judged" for r in result["records"])
+
+
+# ── the opt-in concept gate (STGD-16) ────────────────────────────────────────────────────────
+
+
+def test_concept_gate_off_by_default(monkeypatch, tmp_path):
+    """T-08-54. A run must never be charged for a stage it did not ask for, so 'off' means NO runner is
+    constructed at all — not a runner that returns early."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    seen, built = {}, []
+    _spy_kwargs(monkeypatch, seen)
+    _no_op_batch_stages(monkeypatch, built)
+
+    run_pipeline(dict_specs, cde_spec, config, provider=StubProvider())
+
+    assert seen.get("concept_gate") is None, "the concept gate ran without being asked for"
+    assert "concept_gate" not in {b["tag"] for b in built}, "a provider stage was constructed for a declined gate"
+
+
+def test_concept_gate_on_emits_signal(monkeypatch, tmp_path):
+    """With the opt-in set, the concept-mismatch signal is a REAL value on the wire and leaves the
+    not-computed register."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    config["concept_gate"] = True
+    seen = {}
+    _spy_kwargs(monkeypatch, seen)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "coherence": _split_verdict,
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+        "concept_gate": lambda recs: {r.id: {"match": False, "reason": "different measurand"} for r in recs},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert seen.get("concept_gate") is not None
+    assert any(r["conceptMismatch"] for r in result["records"]), "the gate ran but its signal never landed"
+    registered = {e["signal"] for e in result["notComputed"]}
+    assert "concept_mismatch" not in registered
+
+
+def test_the_register_rides_on_the_result_and_explains_a_declined_opt_in(monkeypatch, tmp_path):
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "coherence": _split_verdict,
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+    by_signal = {e["signal"]: e for e in result["notComputed"]}
+    assert by_signal["concept_mismatch"]["kind"] == "per_run"
+    assert by_signal["readjudicated_from"]["kind"] == "per_run"
+    assert by_signal["preprocessing_rule_provenance"]["kind"] == "permanent"
+    assert all(e["reason"].strip() for e in result["notComputed"])
+
+
+# ── re-adjudication: caller-invoked, explicit group ids, never automatic ──────────────────────
+
+
+def test_readjudicate_requires_explicit_group_ids(monkeypatch, tmp_path):
+    """T-08-53 and the standing prohibition. Core's own docstring makes human triggering the contract:
+    'the pipeline never re-splits automatically'. An empty or absent id list must be REFUSED, not
+    defaulted to every record carrying the incoherent flag — that fallback IS the prohibited
+    auto-resolution, and it is one keystroke away in core (`group_ids=None` selects every flagged
+    record)."""
+    from backend.engine.adapter import readjudicate_groups
+
+    called = {"n": 0}
+
+    def _never(prompts):
+        called["n"] += 1
+        return {}
+
+    result = LeanBResult(records=_canned_records())
+    for bad in ([], None):
+        with pytest.raises(ValueError, match="group_ids"):
+            readjudicate_groups(result, [], group_ids=bad, split=_never, classify=_never)
+    assert called["n"] == 0, "a refused re-adjudication must not run (or pay for) a single stage"
+
+
+def test_readjudicate_carries_the_provenance_signal_on_its_children(monkeypatch, tmp_path):
+    """A re-split child names the parent group it was carved from, so a reviewer can see that a row is a
+    re-adjudication product rather than an original grouping."""
+    from backend.engine import adapter as ad
+
+    seen = {}
+
+    def fake_core_readjudicate(result, embedded, embeddings, field_refs, **kw):
+        seen.update(kw)
+        parent = result.records[0]
+        child = LeanBRecord(
+            cluster_id=parent.cluster_id,
+            group_id=f"{parent.group_id}#r0",
+            verdict="novel",
+            route="gencde_residual",
+            readjudicated_from=parent.group_id,
+        )
+        result.records = [child]
+        return result
+
+    monkeypatch.setattr(ad, "_core_readjudicate", lambda: fake_core_readjudicate)
+    monkeypatch.setattr(ad, "_collect_inputs", lambda embedded: ([], [], []))
+
+    result = LeanBResult(records=_canned_records())
+    gid = result.records[0].group_id or result.records[0].cluster_id
+    out = ad.readjudicate_groups(result, [], group_ids=[gid], split=lambda p: {}, classify=lambda p: {})
+
+    assert seen["group_ids"] == [gid], "the explicit id list must reach core verbatim"
+    assert [r["readjudicatedFrom"] for r in out] == [gid]
+
+
+def test_readjudicate_degrades_on_a_core_that_lacks_it(monkeypatch):
+    """An older pinned core has no `readjudicate`; the caller gets its records back unchanged rather than
+    an exception, and the register still says the provenance signal was not computed."""
+    from backend.engine import adapter as ad
+
+    def _absent():
+        raise ImportError("no readjudicate in this core")
+
+    monkeypatch.setattr(ad, "_core_readjudicate", _absent)
+    result = LeanBResult(records=_canned_records())
+    gid = result.records[0].group_id or result.records[0].cluster_id
+    out = ad.readjudicate_groups(result, [], group_ids=[gid], split=lambda p: {}, classify=lambda p: {})
+    assert len(out) == len(result.records)
+    assert not any(r.get("readjudicatedFrom") for r in out)
+
+
+# ── Gate 1's group shape: deterministic order, collapsed cap, uncapped expansion ──────────────
+
+
+def _stub_groups(*specs):
+    """A LeanBResult carrying just enough ConceptGroup shape for the mapper (order as given)."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        concept_groups=[
+            SimpleNamespace(
+                cluster_id=cid,
+                group_id=gid,
+                concept=f"concept {gid}",
+                ideal_cde="ideal",
+                top1_cos=None,
+                member_variable_names=[f"CohortA:v{i}" for i in range(n)],
+                cohorts=["CohortA"],
+                cross_cohort=False,
+                n_members=n,
+                coherent=True,
+                coherence_verdict=verdict,
+                coherence_summary="",
+                coherence_axis="",
+                coherence_distinct_values=[],
+                coherence_outliers=[],
+                coherence_kind="",
+                incoherent=verdict == "split",
+                matrix_suspect=False,
+            )
+            for cid, gid, n, verdict in specs
+        ]
+    )
+
+
+def test_concept_group_order_is_stable_and_tie_broken_by_id():
+    from backend.engine.adapter import _concept_groups_to_ui
+
+    a = _stub_groups(("c2", "c2#g0", 4, ""), ("c1", "c1#g0", 4, ""), ("c3", "c3#g0", 9, ""))
+    b = _stub_groups(("c1", "c1#g0", 4, ""), ("c3", "c3#g0", 9, ""), ("c2", "c2#g0", 4, ""))
+    order_a = [g["groupId"] for g in _concept_groups_to_ui(a)]
+    order_b = [g["groupId"] for g in _concept_groups_to_ui(b)]
+    assert order_a == order_b == ["c3#g0", "c1#g0", "c2#g0"]
+
+
+def test_an_expanded_group_row_carries_every_member():
+    """A collapsed row carries a capped SAMPLE plus the TRUE count; the expanded read carries all of it.
+    A regroup verb writes back the membership it was shown, so against a 25-of-40 sample it would silently
+    drop the 15 members it never saw."""
+    from backend.engine.adapter import _GROUP_MEMBER_CAP, build_ui_result, expand_concept_group
+
+    stub = _stub_groups(("c1", "c1#g0", 40, ""))
+    result = build_ui_result(
+        LeanBResult(records=[], concept_groups=stub.concept_groups), mode="batch", phases=["loading"]
+    )
+    group = result["conceptGroups"][0]
+    assert group["nMembers"] == 40
+    assert len(group["memberVariableNames"]) == _GROUP_MEMBER_CAP
+    assert group["membersTruncated"] is True
+    assert len(expand_concept_group(result, "c1#g0")) == 40
+
+
+def test_a_group_the_judge_skipped_is_not_judged_not_coherent():
+    from backend.engine.adapter import _concept_groups_to_ui
+
+    groups = _concept_groups_to_ui(_stub_groups(("c1", "c1#g0", 3, ""), ("c2", "c2#g0", 9, "split")))
+    by_id = {g["groupId"]: g for g in groups}
+    assert by_id["c1#g0"]["coherence"] == "not_judged"
+    assert by_id["c1#g0"]["incoherent"] is False
+    assert by_id["c2#g0"]["coherence"] == "split"
+    assert by_id["c2#g0"]["incoherent"] is True
+    assert all(g["conceptIsGenerated"] is True for g in groups)
+
+
+# ── preview run mode: a shipped $0 capability this phase does not remove ──────────────────────
+
+
+def test_preview_cluster_order_stable():
+    """Deterministic across repeated requests, INCLUDING when two clusters have equal member counts. The
+    predecessor sorted on member count alone, so equal-sized clusters kept whatever order the prompts came
+    back in — and 'the list reordered itself between two looks at the same paused run' is indistinguishable
+    from the run having changed."""
+    from types import SimpleNamespace
+
+    from backend.engine.adapter import _preview_clusters
+
+    def ctx(cid, n):
+        return SimpleNamespace(
+            context={
+                "cluster_id": cid,
+                "n_members": n,
+                "members": [],
+                "candidates": [],
+                "cohorts": [],
+                "cross_cohort": False,
+                "top1_cos": None,
+            }
+        )
+
+    a = SimpleNamespace(ideal_prompts=[ctx("c2", 5), ctx("c1", 5), ctx("c3", 9)])
+    b = SimpleNamespace(ideal_prompts=[ctx("c1", 5), ctx("c3", 9), ctx("c2", 5)])
+    ids_a = [c["clusterId"] for c in _preview_clusters(a)]
+    ids_b = [c["clusterId"] for c in _preview_clusters(b)]
+    assert ids_a == ids_b == ["c3", "c1", "c2"]
+
+
+def test_preview_returns_clusters(monkeypatch, tmp_path):
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    config["run_mode"] = "preview"
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider())
+    assert result["previewClusters"], "preview mode returned no clusters"
+    assert {"clusterId", "nMembers", "members", "candidates"} <= set(result["previewClusters"][0])
+
+
+def test_preview_mode_still_returns_preview_clusters(monkeypatch, tmp_path):
+    """Gate 1 no longer reads `previewClusters` (its rows are post-split concept groups, UI-SPEC §0.1),
+    but preview run mode is a SHIPPED $0 capability that calls no model and this phase does not remove it.
+    Deleting the field because Gate 1 stopped reading it would silently take that capability with it."""
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    config["run_mode"] = "preview"
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider())
+    assert result["previewClusters"]
+    # and a preview never reaches the Gate 1 boundary, so it has no groups — the two are not substitutes
+    assert result["conceptGroups"] == []
+
+
+# ── 08-09 Task 3: preprocessing RUNS in the product path, and its report reaches the wire ─────
+#
+# The escalation 08-RESEARCH found: Gate 0 did not merely lack a report — `preprocess_dictionary` was
+# never called in the product at all, so there was no behaviour to report on. Turning it on CHANGES THE
+# EMBEDDED TEXT, hence the clustering, hence every downstream result: runs from before and after this
+# change are NOT comparable, and the pinned demo has to be regenerated (08-21).
+
+
+def _dup_name_dictionary(tmp_path):
+    """A dictionary whose variable name repeats — `load_dictionary` keys on it, so a row VANISHES."""
+    from ddharmon.ingestion import load_dictionary
+
+    path = tmp_path / "dupes.csv"
+    path.write_text("var,desc\nage,Age in years\nage,Age at last birthday\nsex,Sex at birth\n")
+    dd = load_dictionary(str(path), cohort_name="Dup", variable_name="var", description="desc")
+    return path, dd
+
+
+def test_pipeline_preprocesses(monkeypatch, tmp_path):
+    """Preprocessing runs BETWEEN loading and embedding, for every source dictionary, and its report
+    reaches the UI through the contract."""
+    from ddharmon.ingestion import preprocessor as pre
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    seen = []
+    orig = pre.preprocess_dictionary
+
+    def spy(dd, **kw):
+        seen.append(getattr(dd, "cohort_name", None) or dd.name)
+        return orig(dd, **kw)
+
+    monkeypatch.setattr(pre, "preprocess_dictionary", spy)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert sorted(seen) == ["CohortA", "CohortB"], f"preprocessing ran on {seen}"
+    # The CDE backbone is deliberately NOT preprocessed — see the adapter's note (core owns CDE text
+    # hygiene via `clean_cde_text`, and these rules would mutate the retrieval backbone).
+    assert "NIH_CDE" not in seen
+    reports = result["preprocessing"]
+    assert {r["cohort"] for r in reports} == {"CohortA", "CohortB"}
+    assert all(r["ran"] and not r["failed"] for r in reports)
+    assert all(r["rules"] for r in reports)
+
+
+def test_preprocessing_counts_match_field_count(tmp_path):
+    """Counts are over dictionary ROWS. A rule's denominator is the number of variables it was applied
+    to, and the report's `nVariables` is the file's row count — so the arithmetic closes against a number
+    the reviewer can see on their own file."""
+    from ddharmon.ingestion import load_dictionary
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "d.csv"
+    path.write_text("var,desc\n" + "".join(f"v{i},Description number {i}\n" for i in range(7)))
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["nVariables"] == 7
+    assert report["nUniqueVariableNames"] == 7
+    assert report["nDuplicateVariableNames"] == 0
+    assert report["nUniqueVariableNames"] + report["nDuplicateVariableNames"] == report["nVariables"]
+    assert all(rule["nVariables"] == 7 for rule in report["rules"])
+    assert all(0 <= rule["nChanged"] <= rule["nVariables"] for rule in report["rules"])
+
+
+def test_preprocessing_reports_the_row_count_and_the_unique_name_count(tmp_path):
+    """The silent last-wins drop, surfaced. `load_dictionary` keys fields on the variable name, so a
+    repeated name makes a variable VANISH with no error — a known and expensive debugging cost here."""
+    from backend.engine.adapter import preprocess_for_run
+
+    path, dd = _dup_name_dictionary(tmp_path)
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["nVariables"] == 3, "the file has three data rows"
+    assert report["nUniqueVariableNames"] == 2, "one row was dropped, last-wins, on the repeated name"
+    assert report["nDuplicateVariableNames"] == 1
+
+
+def test_no_rules_fired_is_distinct(tmp_path):
+    """Three distinguishable claims, and the two that get collapsed are opposites: 'the rule ran and
+    found nothing to fix' versus 'the rule never ran'."""
+    from ddharmon.ingestion import load_dictionary
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "clean.csv"
+    path.write_text("var,desc\nalpha,A tidy description\nbeta,Another tidy description\n")
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+    report = preprocess_for_run(dd, source_path=path)
+
+    by_rule = {r["rule"]: r for r in report["rules"]}
+    # whitespace normalisation always runs; nothing here needs it
+    assert by_rule["whitespace_normalization"]["outcome"] == "no_change"
+    assert by_rule["whitespace_normalization"]["nChanged"] == 0
+    # stopword removal has nothing configured, so it genuinely did NOT run — a different claim
+    assert by_rule["stopword_removal"]["outcome"] == "not_run"
+    assert {r["outcome"] for r in report["rules"]} <= set(contract_module.RULE_OUTCOMES)
+    assert "no_change" in {r["outcome"] for r in report["rules"]}
+    assert "not_run" in {r["outcome"] for r in report["rules"]}
+
+
+def test_a_rule_that_raised_is_a_third_state(monkeypatch, tmp_path):
+    """A preprocessing failure is neither 'changed nothing' nor 'did not run' — reporting it as either
+    would claim the data was checked and found clean."""
+    from ddharmon.ingestion import load_dictionary
+    from ddharmon.ingestion import preprocessor as pre
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "d.csv"
+    path.write_text("var,desc\nv0,A description\n")
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+
+    def boom(dd, **kw):
+        raise RuntimeError("stopwords config is corrupt")
+
+    monkeypatch.setattr(pre, "preprocess_dictionary", boom)
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["failed"] is True
+    assert "corrupt" in report["error"]
+    outcomes = {r["outcome"] for r in report["rules"]}
+    assert outcomes == {"failed"}, "a failure must not be reported as zero-change or not-run"
+    assert all(r["error"] for r in report["rules"])
+    assert all(r["nChanged"] == 0 for r in report["rules"])
+
+
+def test_a_preprocessing_failure_does_not_cost_the_run_its_dictionaries(monkeypatch, tmp_path):
+    """Preprocessing is a preparation step, not a decision: it must not be able to fail a paid run."""
+    from ddharmon.ingestion import preprocessor as pre
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+
+    def boom(dd, **kw):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(pre, "preprocess_dictionary", boom)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+    assert result["records"]
+    assert all(r["failed"] for r in result["preprocessing"])
+
+
+def test_the_before_after_example_is_carried_as_data(tmp_path):
+    """T-08-48: uploaded text is echoed back to the browser here. It travels as plain strings — nothing
+    in the payload names a renderable-HTML channel, and the diff carries no rule name (the pipeline does
+    not stamp per-variable provenance, and claiming it does would be the lie)."""
+    from ddharmon.ingestion import load_dictionary
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "mojibake.csv"
+    path.write_text('var,desc\nv0,"Weight in kilogrammes â\x80\x94 measured"\nv1,"<b>Height</b> in cm"\n')
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["nChangedVariables"] >= 1, "the mojibake fixture should have changed something"
+    for entry in report["diff"]:
+        assert isinstance(entry["rawDescription"], str)
+        assert isinstance(entry["cleanedDescription"], str)
+        assert "rule" not in entry
+        assert not any("html" in k.lower() for k in entry)
+
+
+def test_preprocessing_can_be_gated_off(monkeypatch, tmp_path):
+    """A knob, because turning preprocessing on changes the embedded text and therefore every downstream
+    result — a caller reproducing a pre-08-09 run needs to be able to say so."""
+    from ddharmon.ingestion import preprocessor as pre
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    config["preprocess"] = False
+    seen = []
+    monkeypatch.setattr(pre, "preprocess_dictionary", lambda dd, **kw: seen.append(dd) or dd)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+    assert seen == []
+    # Absent, not an entry claiming it ran and changed nothing.
+    assert result.get("preprocessing", []) == []

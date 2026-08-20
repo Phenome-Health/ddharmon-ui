@@ -27,21 +27,21 @@ export function IdeaCard({
   idea: AnalysisIdea;
   linkForConcept?: (concept: string) => string | undefined;
 }) {
-  const chip = "rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-neutral-600";
+  const chip = "rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-on-raised";
   return (
     <Card>
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-start gap-2">
           <CardTitle className="text-sm">{idea.title}</CardTitle>
           {idea.category && (
-            <Badge variant="neutral" className="ml-auto shrink-0 text-[10px]">
+            <Badge variant="neutral" className="ml-auto shrink-0 text-xs">
               {idea.category}
             </Badge>
           )}
         </div>
       </CardHeader>
       <CardContent className="space-y-2.5 text-sm">
-        <p className="leading-relaxed text-neutral-600">{idea.hypothesis}</p>
+        <p className="leading-relaxed text-on-raised">{idea.hypothesis}</p>
         {idea.concepts.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {idea.concepts.map((c) => {
@@ -50,7 +50,7 @@ export function IdeaCard({
                 <Link
                   key={c}
                   href={href}
-                  className={`${chip} transition-colors hover:border-ph-navy hover:text-ph-navy`}
+                  className={`${chip} transition-colors hover:border-accent-action hover:text-accent-on-raised`}
                   title="Open this concept in the review workbench"
                 >
                   {c}
@@ -63,25 +63,25 @@ export function IdeaCard({
             })}
           </div>
         )}
-        <dl className="space-y-1 text-xs text-neutral-500">
+        <dl className="space-y-1 text-xs text-on-raised-muted">
           {idea.cohorts.length > 0 && (
             <div className="flex gap-1.5">
-              <dt className="font-medium text-neutral-500">Cohorts</dt>
-              <dd className="text-neutral-600">{idea.cohorts.join(", ")}</dd>
+              <dt className="font-semibold text-on-raised-muted">Cohorts</dt>
+              <dd className="text-on-raised">{idea.cohorts.join(", ")}</dd>
             </div>
           )}
           {idea.method && (
             <div className="flex gap-1.5">
-              <dt className="font-medium text-neutral-500">Method</dt>
-              <dd className="text-neutral-600">{idea.method}</dd>
+              <dt className="font-semibold text-on-raised-muted">Method</dt>
+              <dd className="text-on-raised">{idea.method}</dd>
             </div>
           )}
         </dl>
         {idea.whyNewlyPossible && (
-          <p className="flex items-start gap-1.5 rounded-md border border-border bg-muted px-2.5 py-1.5 text-xs text-neutral-600">
-            <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-ph-navy" />
+          <p className="flex items-start gap-1.5 rounded-md border border-border bg-muted px-2.5 py-1.5 text-xs text-on-raised">
+            <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-accent-on-raised" />
             <span>
-              <span className="font-medium text-neutral-700">Newly possible: </span>
+              <span className="font-semibold text-on-raised">Newly possible: </span>
               {idea.whyNewlyPossible}
             </span>
           </p>
@@ -148,8 +148,8 @@ export function AnalysisIdeasPanel({
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Lightbulb className="h-4 w-4 text-ph-navy" /> Analysis ideas
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Lightbulb className="h-4 w-4 text-accent-on-raised" /> Analysis ideas
           </CardTitle>
           {alreadyHasIdeas && !isDemo && (
             <Button variant="ghost" size="sm" className="ml-auto text-xs" disabled={busy} onClick={() => openDialog(true)}>
@@ -157,7 +157,7 @@ export function AnalysisIdeasPanel({
             </Button>
           )}
         </div>
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-on-raised-muted">
           What this cross-cohort harmonization unlocks — LLM-suggested analyses grounded in this run's own
           concepts. Hypotheses to explore, not validated findings; ddharmon reads only metadata and never
           runs them.
@@ -165,12 +165,12 @@ export function AnalysisIdeasPanel({
       </CardHeader>
       <CardContent>
         {noConcepts ? (
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-on-raised-muted">
             No cross-cohort concepts in this run — analysis ideas need a concept shared by ≥2 cohorts.
           </p>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-            <p className="text-sm text-neutral-600">See concrete cross-cohort analyses this run makes possible.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
+            <p className="text-sm text-on-raised">See concrete cross-cohort analyses this run makes possible.</p>
             {isDemo || alreadyHasIdeas ? (
               <Button size="sm" asChild>
                 <Link href={page}>

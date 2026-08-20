@@ -56,10 +56,10 @@ export default function PhenomeHealthPage() {
       <div>
         <h1 className="sr-only">Phenome Health</h1>
         <PhLogo className="h-11 w-auto" />
-        <p className="mt-3 text-sm text-neutral-500">
+        <p className="mt-3 text-sm text-on-field-muted">
           The internal Phenome Health ecosystem ddharmon plugs into — mapping, knowledge-graph, and review tooling
           built alongside this app.{" "}
-          <a href={PH.org} target="_blank" rel="noreferrer" className="text-ph-navy underline hover:text-ph-ink">
+          <a href={PH.org} target="_blank" rel="noreferrer" className="text-link-on-field underline hover:text-on-field">
             phenomehealth.org
           </a>
         </p>
@@ -67,8 +67,8 @@ export default function PhenomeHealthPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Tools &amp; platforms</CardTitle>
-          <p className="text-xs text-neutral-400">How ddharmon fits with the rest of the Phenome Health stack</p>
+          <CardTitle className="text-sm">Tools &amp; platforms</CardTitle>
+          <p className="text-xs text-on-raised-muted">How ddharmon fits with the rest of the Phenome Health stack</p>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
           {TOOLS.map((t) => (
@@ -84,20 +84,20 @@ function ToolCard({ tool }: { tool: Tool }) {
   const inner = (
     <>
       <div className="flex items-center gap-1.5">
-        <span className="font-medium text-neutral-700 group-hover:text-ph-navy">{tool.name}</span>
-        {tool.href && <ExternalLink className="h-3 w-3 text-neutral-400 group-hover:text-ph-navy" />}
+        <span className="font-semibold text-on-raised group-hover:text-accent-on-raised">{tool.name}</span>
+        {tool.href && <ExternalLink className="h-3 w-3 text-on-raised-muted group-hover:text-link-on-raised" />}
         {tool.tag && (
           <Badge variant="secondary" className="ml-auto font-normal">
             {tool.tag}
           </Badge>
         )}
       </div>
-      <p className="mt-1 text-xs leading-relaxed text-neutral-600">{tool.desc}</p>
+      <p className="mt-1 text-xs leading-relaxed text-on-raised">{tool.desc}</p>
     </>
   );
-  const cls = "group block rounded-md border border-neutral-200 p-3 transition-colors";
+  const cls = "group block rounded-md border border-rule-on-raised p-3 transition-colors";
   return tool.href ? (
-    <a href={tool.href} target="_blank" rel="noreferrer" className={`${cls} hover:border-ph-navy/40`}>
+    <a href={tool.href} target="_blank" rel="noreferrer" className={`${cls} hover:border-rule-info`}>
       {inner}
     </a>
   ) : (

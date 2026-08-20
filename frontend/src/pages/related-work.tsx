@@ -176,7 +176,7 @@ function RefLink({ url }: { url: string }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="break-all text-ph-navy underline decoration-ph-navy/30 underline-offset-2 hover:decoration-ph-navy"
+      className="break-all text-link-on-raised underline decoration-rule-info underline-offset-2 hover:decoration-link-on-raised"
     >
       {url.replace(/^https?:\/\//, "")}
     </a>
@@ -186,7 +186,7 @@ function RefLink({ url }: { url: string }) {
 function ReferenceLine({ r }: { r: Ref }) {
   const head = (
     <>
-      <span className="text-neutral-700">{r.authors}</span> {r.title}.{" "}
+      <span className="text-on-raised">{r.authors}</span> {r.title}.{" "}
     </>
   );
   if (r.kind === "preprint") {
@@ -215,8 +215,8 @@ function ReferencesCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Works cited</CardTitle>
-        <p className="text-xs text-neutral-400">
+        <CardTitle className="text-sm">Works cited</CardTitle>
+        <p className="text-xs text-on-raised-muted">
           Papers that shaped ddharmon's design, in Nature style and ordered by influence — the embedding → clustering →
           LLM-labeling lineage for variable/CDE harmonization, then the topic-coherence work behind its
           semantic-coherence clustering.
@@ -225,7 +225,7 @@ function ReferencesCard() {
       <CardContent>
         <ol className="space-y-2.5">
           {REFERENCES.map((r) => (
-            <li key={r.title} className="text-xs leading-relaxed text-neutral-600">
+            <li key={r.title} className="text-xs leading-relaxed text-on-raised">
               <ReferenceLine r={r} />
             </li>
           ))}
@@ -239,8 +239,8 @@ export default function RelatedWorkPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">Related work</h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">Related work</h1>
+        <p className="mt-1 text-sm text-on-field-muted">
           ddharmon builds on and complements a broad ecosystem of data-harmonization tools, standards, and
           research groups. A non-exhaustive map of the neighborhood.
         </p>
@@ -258,8 +258,8 @@ function Section({ title, subtitle, entries }: { title: string; subtitle: string
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
-        <p className="text-xs text-neutral-400">{subtitle}</p>
+        <CardTitle className="text-sm">{title}</CardTitle>
+        <p className="text-xs text-on-raised-muted">{subtitle}</p>
       </CardHeader>
       <CardContent className="grid gap-3 sm:grid-cols-2">
         {entries.map((e) => (
@@ -274,16 +274,16 @@ function EntryCard({ entry }: { entry: Entry }) {
   const inner = (
     <>
       <div className="flex items-center gap-1.5">
-        <span className="font-medium text-neutral-700 group-hover:text-ph-navy">{entry.name}</span>
-        {entry.href && <ExternalLink className="h-3 w-3 text-neutral-400 group-hover:text-ph-navy" />}
+        <span className="font-semibold text-on-raised group-hover:text-accent-on-raised">{entry.name}</span>
+        {entry.href && <ExternalLink className="h-3 w-3 text-on-raised-muted group-hover:text-link-on-raised" />}
       </div>
-      {entry.by && <div className="text-xs text-neutral-400">{entry.by}</div>}
-      <p className="mt-1 text-xs leading-relaxed text-neutral-600">{entry.desc}</p>
+      {entry.by && <div className="text-xs text-on-raised-muted">{entry.by}</div>}
+      <p className="mt-1 text-xs leading-relaxed text-on-raised">{entry.desc}</p>
     </>
   );
-  const cls = "group block rounded-md border border-neutral-200 p-3 transition-colors";
+  const cls = "group block rounded-md border border-rule-on-raised p-3 transition-colors";
   return entry.href ? (
-    <a href={entry.href} target="_blank" rel="noreferrer" className={`${cls} hover:border-ph-navy/40`}>
+    <a href={entry.href} target="_blank" rel="noreferrer" className={`${cls} hover:border-rule-info`}>
       {inner}
     </a>
   ) : (

@@ -13,7 +13,7 @@ const SOURCES = [
   { cohort: "Cohort B", v: "smoking_status", q: "Current smoking status", r: "Never · Former · Current", y: 50 },
   { cohort: "Cohort C", v: "cig_use_30d", q: "Cigarette use, last 30 days", r: "0 · 1 · 2", y: 84 },
 ];
-const LINE_X1 = 46; // right edge of the source cards (viewBox units)
+const LINE_X1 = 53; // right edge of the source cards (viewBox units)
 const RING_EDGE_X = 66; // left edge of the ring
 const RING_Y = 50;
 
@@ -45,7 +45,7 @@ function ConvergenceViz() {
               y1={s.y}
               x2={RING_EDGE_X}
               y2={RING_Y}
-              stroke="#3AC2CB"
+              stroke="var(--accent-2-on-chrome)"
               strokeWidth={0.5}
               strokeLinecap="round"
               style={{
@@ -63,7 +63,7 @@ function ConvergenceViz() {
       {SOURCES.map((s, i) => (
         <div
           key={s.cohort}
-          className="absolute left-0 w-[45%] rounded-md border border-white/12 bg-white/[0.06] px-2.5 py-1.5 backdrop-blur-sm"
+          className="absolute left-0 w-[52%] rounded-md border border-on-page/15 bg-on-page/[0.06] px-2.5 py-1.5 backdrop-blur-sm"
           style={{
             top: `${s.y}%`,
             transform: shown ? "translateY(-50%)" : "translateY(-50%) translateX(-18px)",
@@ -71,13 +71,13 @@ function ConvergenceViz() {
             transition: animate ? `opacity .55s ease ${i * 0.13}s, transform .55s cubic-bezier(.22,1,.36,1) ${i * 0.13}s` : "none",
           }}
         >
-          <div className="flex items-center gap-1 font-mono text-[8.5px] uppercase tracking-wide text-[#7f92b8]">
-            <span>{s.cohort}</span>
-            <span className="text-[#5a6b8c]">·</span>
-            <span className="normal-case text-[#7f92b8]">{s.v}</span>
+          <div className="flex min-w-0 items-center gap-1 font-mono text-xs font-semibold text-on-page-muted">
+            <span className="shrink-0">{s.cohort}</span>
+            <span className="text-on-page-faint">·</span>
+            <span className="truncate text-on-page-muted">{s.v}</span>
           </div>
-          <div className="mt-0.5 text-[11.5px] font-medium leading-snug text-white">{s.q}</div>
-          <div className="mt-1 truncate font-mono text-[9.5px] text-ph-teal">{s.r}</div>
+          <div className="mt-0.5 text-xs font-semibold leading-snug text-on-page">{s.q}</div>
+          <div className="mt-1 truncate font-mono text-xs text-accent-2-on-chrome">{s.r}</div>
         </div>
       ))}
 
@@ -85,30 +85,30 @@ function ConvergenceViz() {
       <div className="absolute right-0 top-1/2 aspect-square w-[44%] -translate-y-1/2">
         <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden="true">
           <g className="ddh-ring-spin" style={{ transformBox: "view-box", transformOrigin: "50% 50%", animation: "ddh-ring-spin 60s linear infinite" }}>
-            <circle cx="50" cy="50" r="42" fill="none" stroke="#E21C52" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="190 265" />
-            <circle cx="50" cy="50" r="33" fill="none" stroke="#FFFFFF" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="126 208" transform="rotate(80 50 50)" opacity="0.7" />
-            <circle cx="50" cy="50" r="24" fill="none" stroke="#3AC2CB" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="90 152" transform="rotate(210 50 50)" />
+            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--status-destructive)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="190 265" />
+            <circle cx="50" cy="50" r="33" fill="none" stroke="var(--on-chrome)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="126 208" transform="rotate(80 50 50)" opacity="0.7" />
+            <circle cx="50" cy="50" r="24" fill="none" stroke="var(--accent-2-on-chrome)" strokeWidth="1.3" strokeLinecap="round" strokeDasharray="90 152" transform="rotate(210 50 50)" />
           </g>
         </svg>
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           {animate && (
             <span
-              className="ddh-anchor-pulse absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ph-crimson"
+              className="ddh-anchor-pulse absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-status-destructive"
               style={{ animation: "ddh-anchor-pulse 2.4s ease-out 1.2s 2" }}
             />
           )}
           <div
-            className="relative flex h-[74px] w-[74px] flex-col items-center justify-center rounded-full border-2 border-ph-crimson shadow-lg"
+            className="relative flex h-[74px] w-[74px] flex-col items-center justify-center rounded-full border-2 border-status-destructive shadow-lg"
             style={{
-              background: "#0B152D",
+              background: "var(--surface-chrome)",
               opacity: shown ? 1 : 0,
               transform: shown ? "scale(1)" : "scale(0.6)",
               transition: animate ? "opacity .5s ease 1s, transform .5s cubic-bezier(.34,1.56,.64,1) 1s" : "none",
             }}
           >
-            <span className="font-mono text-[9px] font-medium tracking-wide text-ph-teal">CDE</span>
-            <span className="text-[12px] font-semibold leading-none text-white">Smoking</span>
-            <span className="text-[8.5px] leading-none text-white/60">status</span>
+            <span className="font-mono text-xs font-semibold tracking-wide text-accent-2-on-chrome">CDE</span>
+            <span className="text-xs font-semibold leading-none text-on-page">Smoking</span>
+            <span className="text-xs leading-none text-on-page-muted">status</span>
           </div>
         </div>
       </div>
@@ -151,34 +151,37 @@ export default function LandingPage() {
     <div className="flex flex-col gap-[clamp(1rem,8vh_-_51px,2.25rem)]">
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
       <section
-        className="relative overflow-hidden rounded-xl border border-ph-navy/30 px-7 py-6 lg:px-14 lg:py-[clamp(1rem,16vh_-_117px,3.5rem)]"
-        style={{ background: "linear-gradient(135deg, #0B152D 0%, #113682 62%, #0d2a68 100%)" }}
+        className="relative overflow-hidden rounded-xl border border-rule-on-chrome px-7 py-6 lg:px-14 lg:py-[clamp(1rem,16vh_-_117px,3.5rem)]"
+        style={{
+          background:
+            "linear-gradient(135deg, var(--surface-chrome) 0%, color-mix(in srgb, var(--surface-chrome) 94%, var(--surface-raised)) 58%, var(--surface-chrome) 100%)",
+        }}
       >
         {/* ambient glow behind the ring */}
         <div
           className="pointer-events-none absolute -right-24 top-1/2 h-[460px] w-[460px] -translate-y-1/2 rounded-full opacity-40 blur-3xl"
-          style={{ background: "radial-gradient(circle, rgba(58,194,203,0.35), transparent 70%)" }}
+          style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--accent-2-on-chrome) 35%, transparent), transparent 70%)" }}
           aria-hidden="true"
         />
         <div className="relative grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <div>
-            <p className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-ph-teal">
+            <p className="font-mono text-xs font-semibold uppercase tracking-eyebrow text-accent-2-on-chrome">
               Cross-cohort data harmonization
             </p>
-            <h1 className="mt-2 font-display text-5xl font-bold leading-[1.03] tracking-tight text-white sm:text-6xl">
+            <h1 className="mt-2 font-display text-display font-semibold leading-[1.03] tracking-tight text-on-page">
               Different words.
               <br />
-              <span className="text-ph-teal">One meaning.</span>
+              <span className="text-accent-2-on-chrome">One meaning.</span>
             </h1>
-            <p className="mt-3 max-w-2xl text-[15px] leading-[1.5] text-[#c3cfe6] lg:text-base">
-              <span className="font-semibold text-white">ddharmon</span> reads each variable's metadata (question text, 
+            <p className="mt-3 max-w-2xl text-sm leading-[1.5] text-on-page-muted">
+              <span className="font-semibold text-on-page">ddharmon</span> reads each variable's metadata (question text, 
               description, variable name) — the fields that carry meaning — along with its response options,
               groups the variables that mean the same thing across cohorts, and anchors each concept group to a shared Common
               Data Element (CDE), generating variable → CDE transformation specs along the way. NLP &amp; AI
               tooling draft every match; you make the final calls.
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <Button asChild size="lg" className="bg-ph-crimson text-white hover:bg-ph-crimson-dark">
+              <Button asChild size="lg" className="bg-status-destructive text-on-destructive hover:bg-status-destructive-hover">
                 <Link href="/new">
                   Start a run <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Link>
@@ -187,13 +190,13 @@ export default function LandingPage() {
                 asChild
                 size="lg"
                 variant="outline"
-                className="border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white"
+                className="border-on-page/35 bg-transparent text-on-page hover:bg-on-page/10 hover:text-on-page"
               >
                 <Link href="/guide">Read the guide</Link>
               </Button>
               <Link
                 href="/demo"
-                className="ml-1 text-sm text-[#c3cfe6] underline decoration-white/25 underline-offset-4 transition-colors hover:text-white"
+                className="ml-1 text-sm text-on-page-muted underline decoration-on-page/25 underline-offset-4 transition-colors hover:text-on-page"
               >
                 or explore a live demo →
               </Link>
@@ -204,17 +207,17 @@ export default function LandingPage() {
               rel="noreferrer"
               className="mt-6 inline-flex items-center gap-3 opacity-90 transition-opacity hover:opacity-100"
             >
-              <span className="font-mono text-xs uppercase tracking-[0.16em] text-white/55">A project of</span>
+              <span className="font-mono text-xs font-semibold uppercase tracking-eyebrow text-on-page-muted">A project of</span>
               <PhLogo tone="dark" className="h-7 w-auto" />
             </a>
           </div>
 
           <div>
             <ConvergenceViz />
-            <p className="mt-3 text-center font-mono text-[11px] leading-relaxed text-[#8fa1c4]">
+            <p className="mt-3 text-center font-mono text-xs leading-relaxed text-on-page-muted">
               3 cohorts · different wording, different response codes
               <br />
-              → 1 CDE · Smoking status <span className="text-ph-teal/80">(Never · Former · Current)</span>
+              → 1 CDE · Smoking status <span className="text-accent-2-on-chrome">(Never · Former · Current)</span>
             </p>
           </div>
         </div>
@@ -223,20 +226,20 @@ export default function LandingPage() {
       {/* ── How it works (a real 3-step sequence) ────────────────────────────── */}
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="font-display text-lg font-semibold text-ph-ink">How a run works</h2>
-          <Link href="/guide" className="text-sm text-ph-navy underline underline-offset-2 hover:text-ph-ink">
+          <h2 className="font-display text-xl font-semibold text-on-field">How a run works</h2>
+          <Link href="/guide" className="text-sm text-link-on-field underline underline-offset-2 hover:text-on-field">
             Full walkthrough →
           </Link>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s) => (
-            <div key={s.n} className="rounded-lg border border-neutral-200 bg-neutral-0 p-[clamp(1rem,3.2vh_-_11px,1.5rem)]">
+            <div key={s.n} className="rounded-lg border border-rule-on-raised bg-surface-raised p-[clamp(1rem,3.2vh_-_11px,1.5rem)]">
               <div className="flex items-center gap-2.5">
-                <span className="font-mono text-xs font-medium text-ph-crimson">{s.n}</span>
-                <s.icon className="h-4 w-4 text-ph-navy" />
+                <span className="font-mono text-xs font-semibold text-status-destructive">{s.n}</span>
+                <s.icon className="h-4 w-4 text-accent-on-raised" />
               </div>
-              <h3 className="mt-2 font-display text-base font-semibold text-ph-ink">{s.title}</h3>
-              <p className="mt-1.5 text-sm leading-snug text-neutral-600">{s.body}</p>
+              <h3 className="mt-2 font-display text-sm font-semibold text-on-raised">{s.title}</h3>
+              <p className="mt-1.5 text-sm leading-snug text-on-raised">{s.body}</p>
             </div>
           ))}
         </div>

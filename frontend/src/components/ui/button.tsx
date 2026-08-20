@@ -5,21 +5,22 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  // `rounded-pill` (UI-SPEC §4): the identity's actions are pills, at every size.
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-pill text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "bg-ph-navy text-white hover:bg-ph-navy-dark active:bg-ph-navy-darker",
+          "bg-accent-action text-on-accent-action hover:bg-accent-action-hover active:bg-accent-action-active",
         destructive:
-          "bg-ph-crimson text-white hover:bg-ph-crimson-dark active:bg-ph-crimson-darker",
+          "bg-status-destructive text-on-destructive hover:bg-status-destructive-hover active:bg-status-destructive-active",
         outline:
-          "bg-neutral-0 text-neutral-900 border border-neutral-300 hover:bg-neutral-50 active:bg-neutral-100",
+          "bg-surface-raised text-on-raised border border-rule-control-on-raised hover:bg-surface-inset active:bg-surface-inset-strong",
         secondary:
-          "bg-neutral-0 text-neutral-900 border border-neutral-300 hover:bg-neutral-50 active:bg-neutral-100",
+          "bg-surface-raised text-on-raised border border-rule-control-on-raised hover:bg-surface-inset active:bg-surface-inset-strong",
         ghost:
-          "bg-transparent text-neutral-700 hover:bg-neutral-100 active:bg-neutral-200",
-        link: "bg-transparent text-ph-navy hover:underline px-0 h-auto",
+          "bg-transparent text-on-raised hover:bg-surface-inset active:bg-surface-inset-strong",
+        link: "bg-transparent text-link-on-raised hover:underline px-0 h-auto",
       },
       size: {
         default: "h-9 px-4 text-sm",

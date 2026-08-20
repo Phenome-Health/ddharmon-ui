@@ -54,11 +54,11 @@ export function DemoBanner({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-      <span className="flex items-center gap-1.5 font-medium">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-xs text-warning">
+      <span className="flex items-center gap-1.5 font-semibold">
         <FlaskConical className="h-3.5 w-3.5" /> Shared demo
       </span>
-      <span className="text-amber-800 dark:text-amber-300/90">
+      <span className="text-warning">
         Try anything — verdicts and composites here are yours alone, are <strong>not saved</strong>, and go
         away when you close the tab.
         {carried > 0 && ` ${carried} unsaved change${carried === 1 ? "" : "s"}.`}
@@ -76,7 +76,7 @@ export function DemoBanner({
         </Button>
       </div>
       {AUTH_ENABLED && (
-        <span className="w-full text-[11px] text-amber-700/80 dark:text-amber-300/60">
+        <span className="w-full text-xs text-warning">
           Copying needs an account — the copy is yours, and everything you do in it is saved.
         </span>
       )}

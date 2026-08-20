@@ -45,11 +45,11 @@ function Forest({ rows, pooled }: { rows: Row[]; pooled?: Row }) {
   return (
     <svg viewBox={`0 0 800 ${height}`} className="w-full" role="img" aria-label="Forest plot of effect estimates">
       {/* null line */}
-      <line x1={scale(0)} y1={14} x2={scale(0)} y2={all.length * ROW_H + 8} stroke="currentColor" className="text-neutral-300" strokeDasharray="4 3" />
-      <text x={scale(0)} y={all.length * ROW_H + 30} textAnchor="middle" className="fill-neutral-400 text-[10px]">no effect</text>
+      <line x1={scale(0)} y1={14} x2={scale(0)} y2={all.length * ROW_H + 8} stroke="currentColor" className="text-on-raised-faint" strokeDasharray="4 3" />
+      <text x={scale(0)} y={all.length * ROW_H + 30} textAnchor="middle" className="fill-on-raised-muted text-xs">no effect</text>
       {/* axis ticks */}
       {ticks.map((t) => (
-        <text key={t} x={scale(t)} y={all.length * ROW_H + 42} textAnchor="middle" className="fill-neutral-400 text-[10px] tabular-nums">
+        <text key={t} x={scale(t)} y={all.length * ROW_H + 42} textAnchor="middle" className="fill-on-raised-muted text-xs tabular-nums">
           {t}
         </text>
       ))}
@@ -57,12 +57,12 @@ function Forest({ rows, pooled }: { rows: Row[]; pooled?: Row }) {
         const y = i * ROW_H + ROW_H / 2 + 6;
         const isPooled = pooled && i === all.length - 1;
         const significant = sig(r);
-        const cls = isPooled ? "text-ph-navy" : significant ? "text-success" : "text-neutral-400";
+        const cls = isPooled ? "text-accent-on-raised" : significant ? "text-success" : "text-on-raised-muted";
         const w = Math.max(5, Math.min(13, Math.sqrt(r.n) / 6)); // marker size ∝ √n (study weight)
         return (
           <g key={r.label} className={cls}>
-            <text x={8} y={y - 3} className="fill-neutral-600 text-[11px] font-medium">{r.label}</text>
-            <text x={8} y={y + 10} className="fill-neutral-400 text-[10px] tabular-nums">n = {r.n.toLocaleString()}</text>
+            <text x={8} y={y - 3} className="fill-on-raised text-xs font-semibold">{r.label}</text>
+            <text x={8} y={y + 10} className="fill-on-raised-muted text-xs tabular-nums">n = {r.n.toLocaleString()}</text>
             {/* CI */}
             <line x1={scale(r.lo)} y1={y} x2={scale(r.hi)} y2={y} stroke="currentColor" strokeWidth={isPooled ? 2 : 1.5} />
             <line x1={scale(r.lo)} y1={y - 3} x2={scale(r.lo)} y2={y + 3} stroke="currentColor" strokeWidth={1.5} />
@@ -77,7 +77,7 @@ function Forest({ rows, pooled }: { rows: Row[]; pooled?: Row }) {
               <rect x={scale(r.est) - w / 2} y={y - w / 2} width={w} height={w} fill="currentColor" />
             )}
             {/* value */}
-            <text x={VAL_X} y={y + 3} textAnchor="start" className="fill-neutral-600 text-[10px] tabular-nums">{fmt(r)}</text>
+            <text x={VAL_X} y={y + 3} textAnchor="start" className="fill-on-raised text-xs tabular-nums">{fmt(r)}</text>
           </g>
         );
       })}
@@ -88,10 +88,10 @@ function Forest({ rows, pooled }: { rows: Row[]; pooled?: Row }) {
 function PowerBar({ value }: { value: number }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="h-2 w-28 overflow-hidden rounded-full bg-neutral-200">
+      <div className="h-2 w-28 overflow-hidden rounded-full bg-surface-track">
         <div className={`h-full rounded-full ${value >= 0.8 ? "bg-success" : "bg-warning"}`} style={{ width: `${value * 100}%` }} />
       </div>
-      <span className="tabular-nums text-xs text-neutral-600">{Math.round(value * 100)}%</span>
+      <span className="tabular-nums text-xs text-on-raised">{Math.round(value * 100)}%</span>
     </div>
   );
 }
@@ -111,21 +111,21 @@ export default function PreviewPayoffPage() {
       {/* Illustrative hypothesis + the toggle that tells the story. */}
       <Card>
         <CardHeader className="gap-2">
-          <CardTitle className="text-base">Association of a questionnaire exposure with an outcome</CardTitle>
-          <p className="text-xs text-neutral-400">
+          <CardTitle className="text-sm">Association of a questionnaire exposure with an outcome</CardTitle>
+          <p className="text-xs text-on-raised-muted">
             Illustrative hypothesis over sample data. ddharmon produces the harmonized crosswalk (which variable
             in each cohort measures the exposure and the outcome); the regression runs outside, on your data.
           </p>
-          <div className="mt-1 inline-flex rounded-md border border-neutral-200 p-0.5 text-sm">
+          <div className="mt-1 inline-flex rounded-md border border-rule-on-raised p-0.5 text-sm">
             <button
               onClick={() => setPooled(false)}
-              className={`rounded px-3 py-1 ${!pooled ? "bg-neutral-100 font-medium text-ph-ink" : "text-neutral-500"}`}
+              className={`rounded px-3 py-1 ${!pooled ? "bg-surface-inset-strong font-semibold text-on-raised" : "text-on-raised-muted"}`}
             >
               Single cohort
             </button>
             <button
               onClick={() => setPooled(true)}
-              className={`rounded px-3 py-1 ${pooled ? "bg-ph-navy/10 font-medium text-ph-navy" : "text-neutral-500"}`}
+              className={`rounded px-3 py-1 ${pooled ? "bg-surface-info font-semibold text-accent-on-raised" : "text-on-raised-muted"}`}
             >
               Harmonized (pooled)
             </button>
@@ -133,34 +133,34 @@ export default function PreviewPayoffPage() {
         </CardHeader>
         <CardContent className="grid gap-5 lg:grid-cols-[1fr_260px]">
           {/* Forest plot */}
-          <div className="min-w-0 overflow-x-auto rounded-md border border-neutral-100 p-3">
+          <div className="min-w-0 overflow-x-auto rounded-md border border-rule-quiet-on-raised p-3">
             <Forest rows={view.rows} pooled={view.pooledRow} />
           </div>
           {/* Stat summary */}
           <div className="space-y-3">
-            <div className="rounded-md border border-neutral-200 p-3">
-              <div className="flex items-center gap-1.5 text-xs text-neutral-400">
+            <div className="rounded-md border border-rule-on-raised p-3">
+              <div className="flex items-center gap-1.5 text-xs text-on-raised-muted">
                 <Users className="h-3.5 w-3.5" /> Effective sample size
               </div>
-              <div className="mt-0.5 font-mono text-2xl font-semibold text-ph-ink tabular-nums">
+              <div className="mt-0.5 font-mono text-xl font-semibold text-on-raised tabular-nums">
                 {view.N.toLocaleString()}
               </div>
-              <div className="text-xs text-neutral-400">{view.cohorts} cohort{view.cohorts === 1 ? "" : "s"}</div>
+              <div className="text-xs text-on-raised-muted">{view.cohorts} cohort{view.cohorts === 1 ? "" : "s"}</div>
             </div>
-            <div className="rounded-md border border-neutral-200 p-3 text-sm">
-              <div className="flex items-center gap-1.5 text-xs text-neutral-400">
+            <div className="rounded-md border border-rule-on-raised p-3 text-sm">
+              <div className="flex items-center gap-1.5 text-xs text-on-raised-muted">
                 <TrendingUp className="h-3.5 w-3.5" /> Pooled effect (95% CI)
               </div>
-              <div className="mt-0.5 font-mono text-neutral-700 tabular-nums">{fmt(view.effect)}</div>
-              <div className="mt-1 text-xs text-neutral-500">{view.p}</div>
+              <div className="mt-0.5 font-mono text-on-raised tabular-nums">{fmt(view.effect)}</div>
+              <div className="mt-1 text-xs text-on-raised-muted">{view.p}</div>
             </div>
-            <div className="rounded-md border border-neutral-200 p-3">
-              <div className="mb-1 text-xs text-neutral-400">Statistical power</div>
+            <div className="rounded-md border border-rule-on-raised p-3">
+              <div className="mb-1 text-xs text-on-raised-muted">Statistical power</div>
               <PowerBar value={view.power} />
             </div>
             <div
               className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm ${
-                significant ? "bg-success-bg text-neutral-700" : "bg-warning-bg text-neutral-700"
+                significant ? "bg-success-bg text-on-raised" : "bg-warning-bg text-on-raised"
               }`}
             >
               {significant ? <Check className="h-4 w-4 text-success" /> : <X className="h-4 w-4 text-warning" />}
@@ -172,7 +172,7 @@ export default function PreviewPayoffPage() {
         </CardContent>
       </Card>
 
-      <p className="text-xs text-neutral-400">
+      <p className="text-xs text-on-field-muted">
         In the real feature, you would pick a harmonized concept from your run; ddharmon hands off a clean
         harmonized-variable spec; the pre/post regression + power calculation run on your data (securely, or on
         a synthetic testbed for a fully public version). The numbers above are illustrative, not from a real

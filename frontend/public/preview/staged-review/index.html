@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="brand">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -24,7 +24,7 @@
    styles, not from the retired brand guide (which is still on Proxima Nova
    and a white ground).
      ground     #1E2A52  the navy sections sit on
-     deep       #0D183B / #00063D
+     deep       #00063D
      paper      #FFFFF8  warm off-white — cards, NOT pure white
      indigo     #222572  body copy on paper
      blue       #0D59F2  primary action, pill
@@ -34,33 +34,23 @@
    default theme here rather than an inversion of it.
    ══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --b-deep:#00063D; --b-navy:#0D183B; --b-ground:#1E2A52; --b-indigo:#222572;
-  --b-paper:#FFFFF8; --b-blue:#0D59F2; --b-teal:#3AB3BB;
+  --b-deep:#00063D; --b-ground:#1E2A52; --b-indigo:#222572;
+  --b-paper:#FFFFF8; --b-blue:#0D59F2; --b-teal:#3AB3BB; --b-teal-ink:#1B7F86;
   --r-card:30px; --r-inner:14px; --r-pill:999px;
 }
-/* Brand (default): navy ground, warm-white working surface. */
-:root[data-theme="brand"] {
-  --page:var(--b-ground); --page-2:var(--b-navy);
+/* The single shipped theme: navy ground, warm-white working surface. There is no second
+   theme and no toggle — 08-05 removed both from the product, so offering one here would
+   promise a capability we are not building. */
+:root {
+  --page:var(--b-ground);
   --card:var(--b-paper); --card-2:#F7F6EC;
   --ink:var(--b-indigo); --muted:rgba(34,37,114,.70); --faint:rgba(34,37,114,.50);
   --line:rgba(34,37,114,.13); --line-2:rgba(34,37,114,.07);
   --on-page:var(--b-paper); --on-page-muted:rgba(255,255,248,.68);
   --accent:var(--b-blue); --accent-ink:#FFFFF8;
-  --ok:#0E7C63; --warn:#A85B00; --warn-bg:#FCEFD6; --warn-line:#E8C48A;
+  --ok:#0E7C63; --warn:#8F4E00; --warn-bg:#FCEFD6; --warn-line:#E8C48A;
   --shadow:0 2px 6px rgba(0,6,61,.14), 0 22px 48px -24px rgba(0,6,61,.55);
 }
-/* Deep: the same identity with the working surface dark too. */
-:root[data-theme="deep"] {
-  --page:#00042B; --page-2:#000320;
-  --card:var(--b-navy); --card-2:#122043;
-  --ink:var(--b-paper); --muted:rgba(255,255,248,.70); --faint:rgba(255,255,248,.48);
-  --line:rgba(255,255,248,.13); --line-2:rgba(255,255,248,.07);
-  --on-page:var(--b-paper); --on-page-muted:rgba(255,255,248,.62);
-  --accent:#4C86F7; --accent-ink:#00063D;
-  --ok:#49C9A7; --warn:#F2B544; --warn-bg:rgba(242,181,68,.13); --warn-line:rgba(242,181,68,.38);
-  --shadow:0 2px 6px rgba(0,0,0,.4), 0 22px 48px -24px rgba(0,0,0,.9);
-}
-
 *, *::before, *::after { box-sizing:border-box; }
 body {
   margin:0; background:var(--page); color:var(--on-page);
@@ -86,15 +76,15 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
    than linked so the file stays self-contained, and filled with currentColor
    so it follows the theme instead of needing a second asset. */
 .appbar { display:flex; align-items:center; gap:16px; padding-bottom:18px; margin-bottom:24px;
-          border-bottom:1px solid rgba(255,255,248,.13); flex-wrap:wrap; }
+          border-bottom:1px solid color-mix(in srgb, var(--b-paper) 13%, transparent); flex-wrap:wrap; }
 .phlogo { width:134px; flex:none; color:var(--on-page); display:block; text-decoration:none; }
 .phlogo svg { width:100%; height:auto; display:block; }
 .phlogo:hover { opacity:.85; }
-.appdiv { width:1px; height:28px; background:rgba(255,255,248,.22); flex:none; }
+.appdiv { width:1px; height:28px; background:color-mix(in srgb, var(--b-paper) 22%, transparent); flex:none; }
 .appname { font-size:19px; color:var(--on-page); letter-spacing:-.01em; }
 .apptag { font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--on-page-muted); font-weight:600; }
 .appspacer { flex:1 1 auto; }
-.runchip { font-size:11px; color:var(--on-page-muted); border:1px solid rgba(255,255,248,.2);
+.runchip { font-size:11px; color:var(--on-page-muted); border:1px solid color-mix(in srgb, var(--b-paper) 20%, transparent);
            border-radius:var(--r-pill); padding:6px 13px; white-space:nowrap; }
 
 /* ── masthead — on the navy ground, in brand white ───────────────────────── */
@@ -102,16 +92,13 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .eyebrow { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--on-page-muted); font-weight:600; }
 .mast h1 { margin:8px 0 6px; font-size:30px; line-height:34px; color:var(--on-page); }
 .mast p { margin:0; font-size:14.5px; line-height:21px; color:var(--on-page-muted); max-width:60ch; }
-.themebtn { font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--on-page-muted);
-  border:1px solid rgba(255,255,248,.28); border-radius:var(--r-pill); padding:7px 15px; white-space:nowrap; font-weight:600; }
-.themebtn:hover { color:var(--b-paper); border-color:rgba(255,255,248,.6); }
 
 /* ── gate rail — the active gate lights up as a paper card on navy ───────── */
 .rail { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-bottom:12px; }
 .gate .gt { hyphens:manual; }
-.gate { border-radius:var(--r-inner); padding:13px 16px 14px; border:1px solid rgba(255,255,248,.14); }
+.gate { border-radius:var(--r-inner); padding:13px 16px 14px; border:1px solid color-mix(in srgb, var(--b-paper) 14%, transparent); }
 .gate.is-on { background:var(--card); border-color:transparent; box-shadow:var(--shadow); }
-.gate.is-off { background:rgba(255,255,248,.05); }
+.gate.is-off { background:color-mix(in srgb, var(--b-paper) 5%, transparent); }
 .gate .gn { font-size:9.5px; letter-spacing:.15em; text-transform:uppercase; font-weight:700; color:var(--on-page-muted); }
 .gate.is-on .gn { color:var(--accent); }
 .gate .gt { font-size:14px; margin-top:5px; color:var(--on-page); }
@@ -120,16 +107,16 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .gate.is-on .gp { color:var(--muted); }
 .railnote { font-size:12px; line-height:18px; color:var(--on-page-muted); margin:0 0 18px; max-width:92ch; }
 .railnote b { color:var(--on-page); font-weight:500; }
-.railnote .warnmark { color:#F2B544; font-weight:600; }
+.railnote .warnmark { color:var(--warn); font-weight:600; }
 
 /* ── "what to do on this screen" — a numbered task list, on the navy ground ──
    Written for someone who has never used the tool: every item is an ACTION,
    in the order it should be taken, naming the control it refers to. It sits
    above the working surface so it reads as instruction rather than as one more
    panel competing with the data. */
-.howto { border:1px solid rgba(255,255,248,.18); border-radius:var(--r-inner);
+.howto { border:1px solid color-mix(in srgb, var(--b-paper) 18%, transparent); border-radius:var(--r-inner);
          padding:15px 18px 16px; margin:0 0 22px; max-width:96ch;
-         background:rgba(255,255,248,.045); }
+         background:color-mix(in srgb, var(--b-paper) 4.5%, transparent); }
 .howto h4 { margin:0 0 10px; font-size:9.5px; letter-spacing:.15em; text-transform:uppercase;
             color:var(--on-page-muted); font-weight:700; display:flex; align-items:center; gap:9px; }
 .howto ol { margin:0; padding-left:0; list-style:none; counter-reset:ht; }
@@ -137,29 +124,29 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
             font-size:12.5px; line-height:19px; color:var(--on-page); }
 .howto li:last-child { margin-bottom:0; }
 .howto li::before { content:counter(ht); position:absolute; left:0; top:1px; width:19px; height:19px;
-  border-radius:var(--r-pill); background:rgba(255,255,248,.12); color:var(--on-page);
+  border-radius:var(--r-pill); background:color-mix(in srgb, var(--b-paper) 12%, transparent); color:var(--on-page);
   font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:600;
   display:flex; align-items:center; justify-content:center; }
 .howto li b { font-weight:600; }
-.howto li .free { color:#49C9A7; font-weight:600; }
-.howto li .cost { color:#F2B544; font-weight:600; }
+.howto li .free { color:var(--ok); font-weight:600; }
+.howto li .cost { color:var(--warn); font-weight:600; }
 .howto .toggle { margin-left:auto; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
-  color:var(--on-page-muted); border:1px solid rgba(255,255,248,.24); border-radius:var(--r-pill); padding:3px 10px; font-weight:700; }
-.howto .toggle:hover { color:var(--b-paper); border-color:rgba(255,255,248,.55); }
+  color:var(--on-page-muted); border:1px solid color-mix(in srgb, var(--b-paper) 24%, transparent); border-radius:var(--r-pill); padding:3px 10px; font-weight:700; }
+.howto .toggle:hover { color:var(--b-paper); border-color:color-mix(in srgb, var(--b-paper) 55%, transparent); }
 
 /* ── grouping strip ──────────────────────────────────────────────────────── */
-.grouping { border-radius:var(--r-inner); background:rgba(255,255,248,.06); border:1px solid rgba(255,255,248,.13);
+.grouping { border-radius:var(--r-inner); background:color-mix(in srgb, var(--b-paper) 6%, transparent); border:1px solid color-mix(in srgb, var(--b-paper) 13%, transparent);
             padding:15px 20px; margin-bottom:26px; display:flex; flex-wrap:wrap; align-items:center; gap:14px 24px; }
 .gk { display:flex; flex-direction:column; gap:3px; }
 .gk .kl { font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--on-page-muted); font-weight:700; }
 .gk .kv { font-size:14.5px; font-weight:500; color:var(--on-page); }
 .gk .kv .unit { color:var(--on-page-muted); font-weight:400; font-size:12px; }
-.gsep { width:1px; align-self:stretch; background:rgba(255,255,248,.14); }
+.gsep { width:1px; align-self:stretch; background:color-mix(in srgb, var(--b-paper) 14%, transparent); }
 .regroup { margin-left:auto; display:flex; align-items:center; gap:14px; }
 .regroup .conseq { font-size:11px; line-height:15px; color:var(--on-page-muted); max-width:31ch; text-align:right; }
-.rbtn { font-size:12.5px; font-weight:600; letter-spacing:.02em; border:1px solid rgba(255,255,248,.35);
+.rbtn { font-size:12.5px; font-weight:600; letter-spacing:.02em; border:1px solid color-mix(in srgb, var(--b-paper) 35%, transparent);
         border-radius:var(--r-pill); padding:9px 18px; white-space:nowrap; color:var(--on-page); }
-.rbtn:hover { border-color:var(--b-paper); background:rgba(255,255,248,.08); }
+.rbtn:hover { border-color:var(--b-paper); background:color-mix(in srgb, var(--b-paper) 8%, transparent); }
 
 /* ── THE LEDGER — a paper document on the navy ground ────────────────────── */
 .ledger { border-radius:var(--r-card); background:var(--card); box-shadow:var(--shadow); overflow:hidden; }
@@ -263,7 +250,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .chip.dragging { opacity:.35; }
 .chip.active { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 9%, transparent); }
 .chip .co { font-size:10px; font-weight:700; letter-spacing:.06em; color:var(--b-teal); }
-:root[data-theme="brand"] .chip .co { color:#1B7F86; }
+.chip .co { color:var(--b-teal-ink); }
 .chip .vn { color:var(--muted); }
 .hint { font-size:11.5px; color:var(--muted); margin:10px 0 0; }
 .hint b { color:var(--ink); font-weight:500; }
@@ -309,8 +296,8 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 
 .foot { margin-top:28px; font-size:12px; line-height:19px; color:var(--on-page-muted); max-width:80ch; }
 .foot b { color:var(--on-page); font-weight:500; }
-.foot .flagbox { display:block; margin-top:12px; border-left:4px solid #F2B544; padding:11px 15px;
-                 background:rgba(255,255,248,.05); border-radius:0 var(--r-inner) var(--r-inner) 0; }
+.foot .flagbox { display:block; margin-top:12px; border-left:4px solid var(--warn); padding:11px 15px;
+                 background:color-mix(in srgb, var(--b-paper) 5%, transparent); border-radius:0 var(--r-inner) var(--r-inner) 0; }
 
 /* ══ GATE 2 — two-pane master–detail (CDEMapper Fig. 4 idiom, credited) ════ */
 /* minmax(0,1fr), not 1fr: a plain fr track keeps min-width:auto, so any wide
@@ -360,8 +347,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .cbadges { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:7px; }
 .bdg { font-size:9.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; padding:2px 8px; border-radius:var(--r-pill); border:1px solid transparent; }
 .bdg.score { background:var(--ink); color:var(--card); font-family:'JetBrains Mono',monospace; letter-spacing:0; }
-.bdg.coll { background:color-mix(in srgb, var(--b-teal) 18%, transparent); color:#12707A; border-color:color-mix(in srgb, var(--b-teal) 40%, transparent); }
-:root[data-theme="deep"] .bdg.coll { color:var(--b-teal); }
+.bdg.coll { background:color-mix(in srgb, var(--b-teal) 18%, transparent); color:var(--b-teal-ink); border-color:color-mix(in srgb, var(--b-teal) 40%, transparent); }
 .bdg.endorsed { background:color-mix(in srgb, var(--ok) 15%, transparent); color:var(--ok); border-color:color-mix(in srgb, var(--ok) 38%, transparent); }
 .bdg.llm { background:var(--warn-bg); color:var(--warn); border-color:var(--warn-line); }
 .bdg.sel { background:var(--accent); color:var(--accent-ink); }
@@ -412,8 +398,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .dbtn:hover { border-color:var(--accent); color:var(--accent); }
 .dbtn.on.approve { background:var(--ok); border-color:var(--ok); color:var(--card); }
 .dbtn.on.change { background:var(--warn); border-color:var(--warn); color:var(--card); }
-.dbtn.on.reject { background:var(--crimson); border-color:var(--crimson); color:#FFFFF8; }
-:root[data-theme="deep"] .dbtn.on.approve, :root[data-theme="deep"] .dbtn.on.change { color:#00063D; }
+.dbtn.on.reject { background:var(--crimson); border-color:var(--crimson); color:var(--b-paper); }
 .decide .dnote2 { font-size:11.5px; color:var(--muted); margin-left:auto; max-width:38ch; text-align:right; }
 
 /* ══ SETUP · GATE 3 · GATE 4 ═══════════════════════════════════════════════ */
@@ -597,8 +582,7 @@ body.drawer-open .wrap { margin-right:min(420px, 38vw); }
 .vval.mut { color:var(--faint); }
 .rolechip { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
             padding:1px 7px; border-radius:var(--r-pill); background:color-mix(in srgb, var(--b-teal) 18%, transparent);
-            color:#12707A; border:1px solid color-mix(in srgb, var(--b-teal) 40%, transparent); margin-left:6px; }
-:root[data-theme="deep"] .rolechip { color:var(--b-teal); }
+            color:var(--b-teal-ink); border:1px solid color-mix(in srgb, var(--b-teal) 40%, transparent); margin-left:6px; }
 .rolechip.off { background:transparent; color:var(--faint); border-color:var(--line); }
 .embedbox { border:1px solid var(--accent); border-radius:var(--r-inner); padding:13px 15px;
             background:color-mix(in srgb, var(--accent) 6%, transparent); }
@@ -646,15 +630,14 @@ body.drawer-wide .wrap { margin-right:min(680px, 52vw); }
 .varbtn:hover { color:var(--accent); border-bottom-style:solid; }
 
 .drawer { position:fixed; top:0; right:0; bottom:0; width:min(420px, 38vw); background:var(--card);
-          box-shadow:-14px 0 46px -18px rgba(0,6,61,.7); color:var(--ink);
+          box-shadow:-14px 0 46px -18px color-mix(in srgb, var(--b-deep) 70%, transparent); color:var(--ink);
           transform:translateX(101%); transition:transform .22s ease; overflow-y:auto; z-index:40;
           border-radius:var(--r-card) 0 0 var(--r-card); }
 body.drawer-open .drawer { transform:translateX(0); }
 .dhead { position:sticky; top:0; background:var(--card); border-bottom:1px solid var(--line); padding:22px 24px 15px; }
 .dhead .dlabel { font-size:9.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint); font-weight:700; }
 .dhead .dvar { font-size:15.5px; font-weight:600; margin-top:7px; word-break:break-all; }
-.dhead .dco { font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:#1B7F86; margin-top:6px; display:block; }
-:root[data-theme="deep"] .dhead .dco { color:var(--b-teal); }
+.dhead .dco { font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--b-teal-ink); margin-top:6px; display:block; }
 .dclose { position:absolute; top:18px; right:18px; width:30px; height:30px; border-radius:var(--r-pill);
           display:grid; place-items:center; color:var(--muted); font-size:16px; line-height:1; }
 .dclose:hover { background:var(--card-2); color:var(--ink); }
@@ -713,12 +696,11 @@ body.drawer-open .drawer { transform:translateX(0); }
     <span class="apptag">Data dictionary harmonization</span>
     <span class="appspacer"></span>
     <span class="runchip m">cardiometabolic risk · 5 cohorts</span>
-    <button class="themebtn" id="theme">Deep</button>
   </header>
 
   <div class="mast">
     <div>
-      <div class="eyebrow" id="mastEyebrow">Gate 1 of 4</div>
+      <div class="eyebrow" id="mastEyebrow">Gate 1 · 3 of 6 screens</div>
       <h1 class="dsp" id="mastTitle">Concept groups</h1>
       <p id="mastSub">Variables the run grouped on its own, and the judge's read on which groups fuse more than one concept. Correct what is wrong, then choose what goes to the paid stages.</p>
     </div>
@@ -726,7 +708,7 @@ body.drawer-open .drawer { transform:translateX(0); }
 
   <div class="rail">
     <button class="gate" data-gate="-1"><div class="gn">Setup</div><div class="gt dsp">Run setup</div><div class="gp">no run yet</div></button>
-    <button class="gate" data-gate="0"><div class="gn">Gate 0</div><div class="gt dsp">Load &amp; prepare</div><div class="gp">local · free</div></button>
+    <button class="gate" data-gate="0"><div class="gn">Gate 0</div><div class="gt dsp">Load &amp; prepare</div><div class="gp">local</div></button>
     <button class="gate" data-gate="1"><div class="gn">Gate 1</div><div class="gt dsp">Concept groups</div>
       <div class="gp m" id="g1">45 judge calls</div></button>
     <button class="gate" data-gate="2"><div class="gn">Gate 2</div><div class="gt dsp">Concepts → elements</div><div class="gp m" id="g2">$3.99</div></button>
@@ -744,7 +726,9 @@ body.drawer-open .drawer { transform:translateX(0); }
     <div class="gsep"></div>
     <div class="gk"><span class="kl">Left unassigned</span><span class="kv m">780</span></div>
     <div class="gsep"></div>
-    <div class="gk"><span class="kl">Judged</span><span class="kv m">1,807 <span class="unit">of 3,904</span></span></div>
+    <div class="gk"><span class="kl">Judged</span><span class="kv m">885 <span class="unit">&ge;6 members</span></span></div>
+    <div class="gsep"></div>
+    <div class="gk"><span class="kl">Flagged</span><span class="kv m">349 <span class="unit">of 885 · 39%</span></span></div>
     <div class="regroup">
       <span class="conseq">Re-clusters locally in seconds, then re-judges only the groups whose membership changed.</span>
       <button class="rbtn">Regroup at a different size</button>
@@ -796,7 +780,7 @@ body.drawer-open .drawer { transform:translateX(0); }
       coherence line, so the judge is currently <b>unpriced</b>. Shipping this gate means adding a stage share for it.
       On the measured 5-cohort stack the judge ran <b>885 calls over 885 groups of ≥6 members</b>.
     </span>
-    <span class="flagbox" style="border-left-color:#3AB3BB">
+    <span class="flagbox" style="border-left-color:var(--b-teal)">
       <b>Search should be semantic, and it can be free.</b> Group labels are machine-written, so a researcher
       searching for "cardiovascular" or "BMI" will not match them by string. Gate 1 has already embedded every
       variable — matching a query against group centroids is local, costs nothing, and is the same vector work
@@ -832,7 +816,7 @@ body.drawer-open .drawer { transform:translateX(0); }
       This gate decides <b>what each concept maps to</b>. Gate 3 then writes the recode for every source
       variable against that target — so a target you are not sure about becomes a recode you cannot trust.
       Sign-off here is the precondition for spec generation, which is why it is a gate and not a report.
-      <span class="flagbox" style="border-left-color:#3AB3BB">
+      <span class="flagbox" style="border-left-color:var(--b-teal)">
         <b>Layout adapted from CDEMapper</b> (Wang et al., <i>JAMIA</i> 2025;32:1130–1139,
         doi:10.1093/jamia/ocaf064) — the ranked-candidate panel with score, collection and endorsement
         badges, question text, permissible values and a select action is theirs. Their reported coverage
@@ -1557,13 +1541,15 @@ state.g2rel = {};      // recordId -> SKOS relation override
 const RAILNOTE = {
  "-1": `Nothing is spent on this screen. The estimate it produces is the same <span class="m">estimateRunCost</span>
         the gates below use, so the number you agree to here is the number you are held to.`,
-  0: `Parsing, cleaning, composing and embedding all happen on your machine — <b>no API call, no charge</b>. This
+  0: `Parsing, cleaning, composing and embedding all happen on your machine — <b>no API call, no charge</b>. Continuing from
+      here is the run's first charge — it pays for the grouping. This
       stage runs today and has never had a screen, which means its edits currently land unseen in the vectors that
       every later gate depends on.`,
-  1: `Grouping itself is local — embedding and clustering make no API call. <span class="warnmark">The coherence
-      judge does.</span> Every group with <b>6 or more members</b> gets one LLM call that decides whether it is one
+  1: `Embedding and clustering are local — those make no API call. <span class="warnmark">Naming and splitting
+      the groups, and judging them, do not.</span> Every group with <b>6 or more members</b> gets one LLM call that decides whether it is one
       concept, one concept with a qualifier, or a fusion that needs splitting. That is what produces the flags below,
-      so this gate is <b>cheap, but not free</b>.`,
+      so this gate is <b>not free</b> — reaching it has already paid for
+      concept generation, splitting and the judge.`,
   2: `Each approved concept was re-retrieved against the element catalogue and ranked by a model that sees the
       candidates side by side. <b>Retrieval quality is the ceiling here</b> — a target that was never retrieved cannot
       be chosen, which is why every concept also carries the element we independently described before searching.`,
@@ -1584,14 +1570,14 @@ const HOWTO = {
         "Confirm the row count matches the unique-name count (the amber note says whether it does). If a variable name repeats, the later row silently overwrites the earlier one and that variable disappears for the rest of the run.",
         "<b>Optional.</b> If you are working toward a published score — a frailty index, a metabolic-syndrome flag — paste its DOI and press <b>Read the definition</b>. Its components then become your search scope at Gate 1, which is more precise than terms typed from memory.",
         "On the right, choose an <b>element catalogue</b>, a <b>run mode</b> (start with Guided), and paste your API key. Batch dispatch costs about half of synchronous.",
-        "Press <b>Start run</b>. <span class=\"free\">Nothing is charged yet</span> — Gate 0 and Gate 1's grouping run on your machine."],
+        "Press <b>Start run</b>. <span class=\"free\">Nothing is charged yet</span> — Gate 0's preparation runs on your machine. The first charge is <b>Continue</b> at Gate 0, which pays for the grouping."],
 
   0: ["Pick a cohort tab to see what was done to that file. Each dictionary is cleaned on its own, so a prefix or placeholder found in one is not applied to another.",
       "Read down the <b>pipeline</b> list. Every row is a rule that ran, with the number of variables it changed. A rule that changed nothing is still shown, so you can tell \"did not apply\" from \"did not run\".",
       "Open a rule with <b>Show examples</b> and read a few before/after pairs. This is the fastest way to catch a rule that stripped something meaningful.",
       "Read the <b>From a row to a vector</b> panel. The highlighted line is the <i>only</i> text the grouping stage will see for that variable — everything else on the row is either routed elsewhere or deliberately dropped.",
       "Check the <b>nothing to embed</b> count. Those variables carry no usable text and will land together in a no-information group rather than being matched on their names.",
-      "If something looks wrong, go back to <b>Setup</b>, fix the column mapping, and run again. <span class=\"free\">This gate is free and repeatable</span> — it is the cheapest place to catch a mistake, and the last place it is still cheap.",
+      "If something looks wrong, go back to <b>Setup</b>, fix the column mapping, and run again. <span class=\"free\">Getting this far is free and repeatable</span> — it is the cheapest place to catch a mistake, and the last place it is still cheap.",
       "When it looks right, continue to Gate 1."],
 
   1: ["Narrow the run first. Type the concepts you care about into the search box — one term per line, or paste a list. If you declared a score at Setup, press <b>Use as scope</b> to fill this in from its components.",
@@ -1599,7 +1585,7 @@ const HOWTO = {
       "Scan the <b>coherence</b> column. <b>split</b> means the judge thinks the group fuses more than one concept; <b>qualify</b> means one concept with a modifier; <b>not judged</b> means the group was too small to be checked — silence from a judge that was never asked is not a pass.",
       "Click a group to open it and see its member variables. If a variable does not belong, drag it into the group where it does. This edits the grouping the rest of the run is built on.",
       "Tick the groups you want to send forward. The running total at the bottom updates as you tick — that total is what you will be charged.",
-      "Press <b>Continue</b>. <span class=\"cost\">This is where spending begins</span>; everything before it was local."],
+      "Press <b>Continue</b>. <span class=\"cost\">This is where the next charge lands</span>; reaching this screen already paid for the grouping."],
 
   2: ["Work down the list on the left. Each row is one concept from Gate 1 and the element it was matched to. The coloured dot is the verdict: <b>adopt</b> (use as-is), <b>refine</b> (use it, with a value transform), <b>novel</b> (nothing fit, so a new element is proposed).",
       "For each concept, read the model's chosen element against the alternatives beneath it. The similarity score is shown, but a lower-scoring candidate is often the better fit — check the permissible values, not just the number.",
@@ -2056,9 +2042,9 @@ const STUBS = {
      ["Dictionaries", ["Upload or pick from the bundled example set", "Per-file column mapping: which column is the variable name, the description, the question text, the value encoding", "Row count vs unique-name count — a repeated variable name is a SILENT last-wins drop, so it is checked here, not discovered later"]],
      ["Element catalogue", ["Which CDE collections to match against, and whether to restrict to NIH-endorsed", "Catalogue version is pinned to the run so a re-run is reproducible"]],
      ["Run mode", ["Guided — stop at every gate (default)", "Auto with gates — run through, pause only when a stage flags more than N", "Full auto — terminal result; what the shipped demo requires"]],
-     ["Cost", ["Batch or synchronous, and the estimate that follows from it", "Gate 0 and gate 1's grouping are free either way"]],
+     ["Cost", ["Batch or synchronous, and the estimate that follows from it", "Gate 0 is local either way; the grouping is charged either way, batch at about half"]],
    ]},
-  3: { note:"Not built in this mockup yet. The shipped workbench already does most of it — inline code maps with labels, unit factor/offset, arithmetic formula, coverage %, and a per-variable approve/refine/reject.",
+  3: { note:"Not drawn in this mockup — but it IS being built (08-16), and the shipped workbench already does most of it: inline code maps with labels, unit factor/offset, arithmetic formula, coverage %, and a per-variable approve/refine/reject. Gate 3 needs no core stop point (UI-SPEC §0.1) — the pipeline has finished and the backend holds the run awaiting review; the hard requirement is that a spec edit survives a CONCEPT SWITCH, not merely a reload.",
    blocks:[["What would change here", ["Regenerate becomes a first-class step transition, not an edge case — anything re-picked at gate 2 arrives flagged as stale","Arithmetic specs always route to review, surfaced as a standing filter rather than a per-row chip"]]] },
   4: { note:"Not built in this mockup yet.",
    blocks:[["What would change here", ["Per-spec export selection, rather than all-or-nothing per format","Composite recipes, revisited with their feasibility verdict","The decision log promoted to a visible deliverable rather than a by-product"]]] },
@@ -2198,12 +2184,13 @@ function renderSetup(){
           <div><span>Rate</span><span class="m">$0.0026 / variable</span></div>
           <div><span>Cohort factor</span><span class="m">×${(1 + 0.08*(DICTS.length-1)).toFixed(2)}</span></div>
           ${state.sync ? `<div><span>Synchronous</span><span class="m">×2</span></div>` : ""}
-          <div class="free"><span>Gate 0 + grouping</span><span class="m">$0.00</span></div>
+          <div class="free"><span>Gate 0 · local</span><span class="m">$0.00</span></div>
+          <div><span>Grouping, charged on Continue</span><span class="m">included above</span></div>
         </div>
         <div class="fhelp" style="margin-top:12px">Gate 1 is where this comes down. The figure above assumes you
           keep all ${totalVars.toLocaleString()} variables, which almost nobody does.</div>
         <button class="cta" style="width:100%;justify-content:center;margin-top:16px" data-gonext="0">Start run</button>
-        <div class="fhelp" style="text-align:center;margin-top:9px">Starting costs nothing — gates 0 and 1 are local.</div>
+        <div class="fhelp" style="text-align:center;margin-top:9px">Starting costs nothing — the first charge is Continue at Gate 0.</div>
       </div>
     </aside>
   </div>`;
@@ -2856,7 +2843,7 @@ function renderGate0(){
         same thing, never because they came from the same file.</p>
       <div class="decide">
         <button class="dbtn approve" data-gonext="1">Continue to Gate 1</button>
-        <span class="dnote2">Still nothing spent. Gate 1's grouping is local too — only its coherence judge costs money.</span>
+        <span class="dnote2">Nothing has been spent yet — this button is the first charge. It pays for concept generation, splitting and the judge.</span>
       </div>
     </div>
   </div>`;
@@ -2898,8 +2885,8 @@ function paint(){
   const [title, sub] = GATE_META[state.gate];
   document.getElementById("mastEyebrow").textContent =
     state.gate === -1 ? "Before the run"
-    : state.gate === 0 ? "Gate 0 — free, local"
-    : `Gate ${state.gate} of 4`;
+    : state.gate === 0 ? "Gate 0 · local · 2 of 6 screens"
+    : `Gate ${state.gate} · ${state.gate + 2} of 6 screens`;
   document.getElementById("mastTitle").textContent = title;
   document.getElementById("mastSub").textContent = sub;
   document.querySelectorAll("[data-gate]").forEach(b => {
@@ -2932,11 +2919,6 @@ qbox.addEventListener("keydown", e => {
   }
 });
 
-document.getElementById("theme").onclick = e => {
-  const deep = document.documentElement.dataset.theme === "deep";
-  document.documentElement.dataset.theme = deep ? "brand" : "deep";
-  e.target.textContent = deep ? "Deep" : "Brand";
-};
 paint();
 </script>
 </body>

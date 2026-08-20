@@ -1,0 +1,247 @@
+{
+  "$schema-note": [
+    "The machine-readable register of every semantic (surface, foreground) pair in the tier-2",
+    "role layer, and the contrast each pair is required to hold. It is DATA, consumed by three",
+    "gates, and it is the reason a new surface cannot ship without its contrast assertion:",
+    "",
+    "  frontend/tests/e2e/contrast.spec.ts    iterates `surfaces` + `prohibited` and measures",
+    "                                         every pair in the BUILT app, and also proves each",
+    "                                         role generates a real Tailwind utility.",
+    "  frontend/tests/e2e/rebrand-drill.spec.ts  re-measures every pair with tier 1 swapped to",
+    "                                         the PREVIOUS brand's values.",
+    "  tests/test_content_drift.py            asserts index.css declares exactly the roles listed",
+    "                                         here — no undeclared surface, no orphan manifest row.",
+    "",
+    "Why pairs and not a flat colour list: a foreground is only legible RELATIVE to a surface, so",
+    "'muted text' has no meaning on its own. Binding them here is what stops a component choosing",
+    "its text colour independently of its background — the defect that made a field change cost a",
+    "22-page hunt."
+  ],
+  "version": 1,
+  "tokenFile": "frontend/src/index.css",
+  "levels": {
+    "AAA-body": {
+      "min": 13,
+      "why": "The two running-copy pairings. This is a reading tool and both surfaces carry body text, so they clear AAA with room. These two thresholds are carried over verbatim from the UI-SPEC 5.5 anchor table."
+    },
+    "AAA": { "min": 7, "why": "WCAG AAA for normal-size text." },
+    "AA": { "min": 4.5, "why": "WCAG AA for normal-size text." },
+    "graphical": { "min": 3, "why": "WCAG non-text contrast: a mark that carries meaning but is not read." },
+    "non-text": {
+      "max": 4.5,
+      "min": 2.5,
+      "why": "Hairlines and dashed marks ONLY. The upper bound is the assertion: raise a hairline colour to text contrast and the hairlines it draws stop reading as hairlines. The lower bound keeps it visible."
+    }
+  },
+  "surfaces": [
+    {
+      "role": "--surface-chrome",
+      "utility": "bg-surface-chrome",
+      "what": "The top bar and the left rail — the app's own furniture.",
+      "foregrounds": [
+        { "role": "--on-chrome", "utility": "text-on-chrome", "level": "AAA-body", "what": "Body and label copy on the chrome." },
+        { "role": "--on-chrome-muted", "utility": "text-on-chrome-muted", "level": "AA", "what": "Secondary copy on the chrome — inactive nav, footnotes." },
+        { "role": "--on-chrome-faint", "utility": "text-on-chrome-faint", "level": "non-text", "what": "Decoration only: separator glyphs." },
+        { "role": "--link-on-chrome", "utility": "text-link-on-chrome", "level": "AAA-body", "what": "A link on the chrome is the foreground colour: the accent is PROHIBITED here." },
+        { "role": "--accent-2-on-chrome", "utility": "text-accent-2-on-chrome", "level": "AA", "what": "The secondary accent, dark-surface form." }
+      ],
+      "rules": [
+        { "role": "--rule-on-chrome", "utility": "border-rule-on-chrome" },
+        { "role": "--rule-quiet-on-chrome", "utility": "border-rule-quiet-on-chrome" }
+      ]
+    },
+    {
+      "role": "--surface-raised",
+      "utility": "bg-surface-raised",
+      "what": "Cards, panes, popovers, the ledger — the working surface, where the reviewer's eyes live.",
+      "foregrounds": [
+        { "role": "--on-raised", "utility": "text-on-raised", "level": "AAA-body", "what": "Body copy on a card." },
+        { "role": "--on-raised-muted", "utility": "text-on-raised-muted", "level": "AA", "what": "Secondary copy, column headers, the not-judged label." },
+        { "role": "--on-raised-faint", "utility": "text-on-raised-faint", "level": "non-text", "what": "Hairlines and dashed marks only." },
+        { "role": "--link-on-raised", "utility": "text-link-on-raised", "level": "AA", "what": "CDE identifiers, DOIs, outbound references." },
+        { "role": "--accent-2-on-raised", "utility": "text-accent-2-on-raised", "level": "AA", "what": "The secondary accent, light-surface form." },
+        { "role": "--status-ok", "utility": "text-status-ok", "level": "AA", "what": "adopt / approved / judged coherent." },
+        { "role": "--status-warn", "utility": "text-status-warn", "level": "AA", "what": "refine / split / qualify — the coherence flag, the most important signal on Gate 1." },
+        { "role": "--status-danger", "utility": "text-status-danger", "level": "AA", "what": "The destructive TEXT register." },
+        { "role": "--status-destructive", "utility": "text-status-destructive", "level": "AA", "what": "The destructive FILL hue, also used as a text colour. Thin margin by construction — never tint it further." },
+        { "role": "--status-info", "utility": "text-status-info", "level": "AA", "what": "The informational register, folded into the action accent." },
+        { "role": "--accent-on-raised", "utility": "text-accent-on-raised", "level": "AA", "what": "The accent as a GLYPH or emphasised figure on paper — a card-title icon, an active label. Same value as --link-on-raised and a different statement: a title icon is not a link, and calling it one is the lie `ph-navy` was." }
+      ],
+      "rules": [
+        { "role": "--rule-on-raised", "utility": "border-rule-on-raised" },
+        { "role": "--rule-quiet-on-raised", "utility": "border-rule-quiet-on-raised" },
+        { "role": "--rule-control-on-raised", "utility": "border-rule-control-on-raised" },
+        { "role": "--rule-accent-2-on-raised", "utility": "border-rule-accent-2-on-raised" }
+      ]
+    },
+    {
+      "role": "--surface-field",
+      "utility": "bg-surface-field",
+      "what": "The page field the raised surfaces sit on — the navy GROUND (UI-SPEC 5.1: dark page, cream cards). Its foregrounds were the gap that motivated this whole layer: no anchor covered text-on-field, so the field inherited the CHROME's foreground and bare copy rendered cream-on-cream while the contrast gate stayed green. Now the pair moves together or not at all.",
+      "foregrounds": [
+        { "role": "--on-field", "utility": "text-on-field", "level": "AAA-body", "what": "Bare copy directly on the field. AAA-body, not AAA: the field carries running copy (page headers, section leads, standing notes) exactly as the chrome does, so it is held to the same 13:1 the other body surface is. 13.86:1." },
+        { "role": "--on-field-muted", "utility": "text-on-field-muted", "level": "AA", "what": "Secondary copy on the field — a page subtitle, a standing caveat. 7.23:1." },
+        { "role": "--on-field-faint", "utility": "text-on-field-faint", "level": "non-text", "what": "Hairlines and separator glyphs on the field. 4.04:1, deliberately inside the non-text band." },
+        { "role": "--link-on-field", "utility": "text-link-on-field", "level": "AA", "what": "A link on the field IS the foreground colour. The accent measures 2.47:1 on the ground and is prohibited (5.2), so this is the one field role that is not a mechanical copy of the chrome pair — it is the same DECISION the chrome made, re-made." }
+      ],
+      "rules": [{ "role": "--rule-on-field", "utility": "border-rule-on-field" }]
+    },
+    {
+      "role": "--surface-inset",
+      "utility": "bg-surface-inset",
+      "what": "Header bands, row hover, inset panels INSIDE a raised surface. Same value as the field today and a different role on purpose — an inset sits inside a card, a field sits under one.",
+      "foregrounds": [
+        { "role": "--on-inset", "utility": "text-on-inset", "level": "AAA", "what": "Copy in a table header band or a hovered row." },
+        { "role": "--on-inset-muted", "utility": "text-on-inset-muted", "level": "AA", "what": "Secondary copy in an inset panel." },
+        { "role": "--link-on-inset", "utility": "text-link-on-inset", "level": "AA", "what": "A link in an inset panel." }
+      ],
+      "rules": [{ "role": "--rule-on-inset", "utility": "border-rule-on-inset" }]
+    },
+    {
+      "role": "--surface-inset-strong",
+      "utility": "bg-surface-inset-strong",
+      "what": "The SECOND inset step: pressed, selected, a badge fill. An interaction has two states — hover is a hint, pressed is a commitment — and one step cannot say both. Collapsing the two is how a button stops acknowledging the click.",
+      "foregrounds": [
+        { "role": "--on-inset-strong", "utility": "text-on-inset-strong", "level": "AAA", "what": "Copy on a pressed control or a badge fill." },
+        { "role": "--on-inset-strong-muted", "utility": "text-on-inset-strong-muted", "level": "AA", "what": "Secondary copy on that fill — a toast's description line." },
+        { "role": "--accent-on-inset-strong", "utility": "text-accent-on-inset-strong", "level": "AA", "what": "The accent as a label on the fill. It measures 5.03:1 and it is ONLY legal because the step stayed at 6% — at 10% it is 4.65:1 and at 12% it is sub-AA. This row is the assertion that keeps the step light enough to carry it." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--surface-track",
+      "utility": "bg-surface-track",
+      "what": "The well a coverage/verdict bar is drawn in. A bar and its track are a (surface, foreground) pair like any other, and asserting it is what forced --series-residual from 55% to 62%: 55% clears the graphical floor against PAPER (3.16:1) but only 2.97:1 against the track it is actually drawn in, and the tighter of two constraints is the one that decides the value.",
+      "foregrounds": [
+        { "role": "--on-track", "utility": "text-on-track", "level": "graphical", "what": "Probed as `text-` because the gate reads a foreground as `color`; the bar itself is painted with `bg-on-track`, which is the SAME `--color-on-track` key, so proving one proves the other. The achromatic bar itself — the residual mark, aliased so the two are one value rather than two neutrals half a step apart." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--accent",
+      "utility": "bg-accent-action",
+      "what": "The single primary action per screen. It is a SURFACE when filled, so it carries a bound foreground like any other.",
+      "foregrounds": [
+        { "role": "--on-accent", "utility": "text-on-accent-action", "level": "AA", "what": "The label inside a filled primary action." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--accent-hover",
+      "utility": "bg-accent-action-hover",
+      "what": "The primary action under the pointer. A hover is a SURFACE with its own bound label, not an opacity trick — dropping the button's alpha would show the field through it.",
+      "foregrounds": [
+        { "role": "--on-accent", "utility": "text-on-accent-action", "level": "AA", "what": "The same label, on the hovered fill. It can only improve on the base (5.61 -> 6.55) because the fill darkens toward the paper ink." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--accent-active",
+      "utility": "bg-accent-action-active",
+      "what": "The primary action pressed.",
+      "foregrounds": [
+        { "role": "--on-accent", "utility": "text-on-accent-action", "level": "AA", "what": "The label on the pressed fill (7.73:1)." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--status-destructive",
+      "utility": "bg-status-destructive",
+      "what": "A filled destructive action.",
+      "foregrounds": [
+        { "role": "--on-destructive", "utility": "text-on-destructive", "level": "AA", "what": "The label inside a filled destructive action." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--destructive-hover",
+      "utility": "bg-status-destructive-hover",
+      "what": "A destructive action under the pointer.",
+      "foregrounds": [
+        { "role": "--on-destructive", "utility": "text-on-destructive", "level": "AA", "what": "The label on the hovered destructive fill (5.75:1). The base is the thinnest margin in the system at 4.62:1, so the hover state is where it gets room." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--destructive-active",
+      "utility": "bg-status-destructive-active",
+      "what": "A destructive action pressed.",
+      "foregrounds": [
+        { "role": "--on-destructive", "utility": "text-on-destructive", "level": "AA", "what": "The label on the pressed destructive fill (7.09:1)." }
+      ],
+      "rules": []
+    },
+    {
+      "role": "--surface-ok",
+      "utility": "bg-surface-ok",
+      "what": "The wash a success badge sits on.",
+      "foregrounds": [{ "role": "--on-ok", "utility": "text-on-ok", "level": "AA", "what": "The badge's own label." }],
+      "rules": [{ "role": "--rule-ok", "utility": "border-rule-ok" }]
+    },
+    {
+      "role": "--surface-warn",
+      "utility": "bg-surface-warn",
+      "what": "The wash the coherence flag and the site-wide caveat band sit on.",
+      "foregrounds": [{ "role": "--on-warn", "utility": "text-on-warn", "level": "AA", "what": "The flag's own label." }],
+      "rules": [{ "role": "--rule-warn", "utility": "border-rule-warn" }]
+    },
+    {
+      "role": "--surface-danger",
+      "utility": "bg-surface-danger",
+      "what": "The wash a destructive status label sits on.",
+      "foregrounds": [{ "role": "--on-danger", "utility": "text-on-danger", "level": "AA", "what": "The label's own text." }],
+      "rules": [{ "role": "--rule-danger", "utility": "border-rule-danger" }]
+    },
+    {
+      "role": "--surface-info",
+      "utility": "bg-surface-info",
+      "what": "The wash an informational callout sits on.",
+      "foregrounds": [{ "role": "--on-info", "utility": "text-on-info", "level": "AA", "what": "The callout's own text." }],
+      "rules": [{ "role": "--rule-info", "utility": "border-rule-info" }]
+    }
+  ],
+  "graphicalMarks": {
+    "surface": "--surface-raised",
+    "note": "Charts live on raised surfaces. Each step is a graphical object, so 3:1 is the floor, not 4.5:1.",
+    "roles": [
+      "--series-1", "--series-2", "--series-3", "--series-4",
+      "--series-5", "--series-6", "--series-7", "--series-8", "--series-residual"
+    ]
+  },
+  "focus": [
+    { "ring": "--focus-ring-on-raised", "surface": "--surface-raised", "level": "graphical" },
+    { "ring": "--focus-ring-on-chrome", "surface": "--surface-chrome", "level": "graphical" }
+  ],
+  "prohibited": [
+    {
+      "fg": "--accent",
+      "bg": "--surface-chrome",
+      "max": 3,
+      "why": "UI-SPEC 5.2, the hard rule: the accent never touches the chrome. It measures 2.47:1. On the chrome an action is outlined in a paper-alpha rule with the chrome's own foreground."
+    },
+    {
+      "fg": "--accent-2-on-chrome",
+      "bg": "--surface-raised",
+      "max": 3,
+      "why": "UI-SPEC 5.4: the dark-surface form of the secondary accent never touches a raised surface (2.51:1). Use --accent-2-on-raised."
+    },
+    {
+      "fg": "--accent",
+      "bg": "--surface-field",
+      "max": 3,
+      "why": "UI-SPEC 5.2, THE hard rule, now binding on the field too: blue never touches the ground, and the field IS the ground. 2.47:1. This row is what makes the flip a checkable act rather than a claim — before it, the accent on the field was legal (5.70:1 on cream-dim) and nothing would have objected to a blue link surviving the flip into illegibility."
+    },
+    {
+      "fg": "--accent-2-on-raised",
+      "bg": "--surface-field",
+      "max": 3,
+      "why": "The MIRROR of the pre-flip row this replaces. While the field was light, the prohibited pairing was the dark-surface teal on it; now the field is dark, it is the light-surface teal that is prohibited (2.93:1). The prohibition encodes a RELATIONSHIP — the wrong form of the accent for the surface — and the relationship is what survives a surface change."
+    },
+    {
+      "fg": "--on-raised",
+      "bg": "--surface-field",
+      "max": 3,
+      "why": "The paper ink on the navy field: 1.04:1, and the exact mirror of the cream-on-cream defect this plan was written for. An unmigrated component that kept `text-on-raised` while the field moved lands here, so the prohibition names the failure mode rather than trusting the migration to have been complete."
+    }
+  ]
+}

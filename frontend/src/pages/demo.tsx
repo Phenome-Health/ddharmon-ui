@@ -91,45 +91,45 @@ export default function DemoPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
-          <Sparkles className="h-5 w-5 text-ph-navy" /> Demo
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Sparkles className="h-5 w-5 text-on-field" /> Demo
         </h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <p className="mt-1 text-sm text-on-field-muted">
           Watch a real cross-cohort harmonization run — mapping verdicts, transform specs, and the
           visualizations — over curated public cohorts. No uploads, no API credits.
         </p>
       </div>
 
-      <Card className="border-ph-navy/20 bg-ph-navy/[0.03]">
+      <Card className="border-rule-info bg-surface-info">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-          <CardTitle className="text-base">{combo?.label ?? "Cross-cohort demo"}</CardTitle>
+          <CardTitle className="text-sm">{combo?.label ?? "Cross-cohort demo"}</CardTitle>
           <Badge variant="secondary" className="font-normal">
             no API credits
           </Badge>
         </CardHeader>
         <CardContent className="space-y-4">
           {isLoading ? (
-            <div className="flex items-center gap-2 py-6 text-sm text-neutral-500">
+            <div className="flex items-center gap-2 py-6 text-sm text-on-raised-muted">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading demo…
             </div>
           ) : !combo ? (
-            <p className="py-6 text-sm text-neutral-500">Demo snapshot is being prepared — check back soon.</p>
+            <p className="py-6 text-sm text-on-raised-muted">Demo snapshot is being prepared — check back soon.</p>
           ) : (
             <>
               <div className="grid gap-2 sm:grid-cols-3">
                 {cohorts.map((d) => (
                   <div
                     key={d.id}
-                    className="flex flex-col gap-1 rounded-md border border-neutral-200 bg-neutral-0 p-3 text-sm"
+                    className="flex flex-col gap-1 rounded-md border border-rule-on-raised bg-surface-raised p-3 text-sm"
                   >
-                    <span className="font-medium text-neutral-700">{d.label}</span>
-                    <span className="text-xs text-neutral-400">{d.nFields} variables</span>
-                    {d.description && <span className="text-xs text-neutral-400">{d.description}</span>}
+                    <span className="font-semibold text-on-raised">{d.label}</span>
+                    <span className="text-xs text-on-raised-muted">{d.nFields} variables</span>
+                    {d.description && <span className="text-xs text-on-raised-muted">{d.description}</span>}
                   </div>
                 ))}
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-neutral-400">
+                <p className="text-xs text-on-raised-muted">
                   {cohorts.length} cohorts · {totalFields} variables · live mapping to NIH CDEs
                   {data?.coreVersion && (
                     <>
@@ -148,7 +148,7 @@ export default function DemoPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-ph-navy hover:text-ph-navy"
+                      className="text-accent-on-raised hover:text-accent-on-raised"
                       onClick={() => navigate(`/job/${demoJobId}?results=1`)}
                     >
                       Skip to results →
@@ -166,11 +166,11 @@ export default function DemoPage() {
       </Card>
 
       {/* Reproduce-it-yourself: download the curated inputs + scripts, and point at the source repos. */}
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
+      <div className="rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-medium text-neutral-700">Run it yourself</div>
-            <p className="mt-0.5 text-xs text-neutral-500">
+            <div className="text-sm font-semibold text-on-raised">Run it yourself</div>
+            <p className="mt-0.5 text-xs text-on-raised-muted">
               Download the curated cohort CSVs and the build scripts, then reproduce this run locally.
             </p>
           </div>
@@ -180,44 +180,44 @@ export default function DemoPage() {
             </a>
           </Button>
         </div>
-        <p className="mt-2 text-xs text-neutral-400">
+        <p className="mt-2 text-xs text-on-raised-muted">
           Curated 200-variable subsets of public All of Us / CLSA / UK Biobank / MESA / AI-READI data. Each cohort's
           public source dictionary and the exact script that builds it are documented in the zip's README and in the{" "}
-          <a href={PH.ddharmonProvenance} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
+          <a href={PH.ddharmonProvenance} target="_blank" rel="noreferrer" className="text-link-on-raised hover:underline">
             provenance table
           </a>
           {" · "}this app:{" "}
-          <a href={PH.ddharmonUi} target="_blank" rel="noreferrer" className="text-ph-navy hover:underline">
+          <a href={PH.ddharmonUi} target="_blank" rel="noreferrer" className="text-link-on-raised hover:underline">
             ddharmon-ui
           </a>
         </p>
       </div>
 
       {/* Data provenance — public source dictionaries + how the ~200-variable subset was curated. */}
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <div className="text-sm font-medium text-neutral-700">Where the demo data comes from</div>
-        <p className="mt-0.5 text-xs text-neutral-500">
-          Every demo cohort is built from a <span className="font-medium">public data dictionary</span> —
+      <div className="rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
+        <div className="text-sm font-semibold text-on-raised">Where the demo data comes from</div>
+        <p className="mt-0.5 text-xs text-on-raised-muted">
+          Every demo cohort is built from a <span className="font-semibold">public data dictionary</span> —
           metadata only (variable names, descriptions, value codings), never participant-level data. Each links
           to its public source and the script that reproduces our copy.
         </p>
         <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
           {DEMO_SOURCES.map((s) => (
-            <li key={s.name} className="text-xs text-neutral-500">
+            <li key={s.name} className="text-xs text-on-raised-muted">
               <a
                 href={s.href}
                 target="_blank"
                 rel="noreferrer"
-                className="font-medium text-ph-navy hover:underline"
+                className="font-semibold text-link-on-raised hover:underline"
               >
                 {s.name}
               </a>{" "}
-              — {s.src} <span className="text-neutral-400">({s.script})</span>
+              — {s.src} <span className="text-on-raised-muted">({s.script})</span>
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-neutral-500">
-          <span className="font-medium text-neutral-600">How the ~200 variables per cohort were chosen:</span>{" "}
+        <p className="mt-3 text-xs text-on-raised-muted">
+          <span className="font-semibold text-on-raised">How the ~200 variables per cohort were chosen:</span>{" "}
           each cohort&apos;s full public dictionary is filtered to variables touching a shared set of common
           health &amp; demographic domains (sex, age, race, education, smoking, blood pressure, diabetes, …),
           grouped by domain and taken round-robin so the subset spans domains rather than piling into one
@@ -229,7 +229,7 @@ export default function DemoPage() {
             href={`${PH.ddharmonUi}/blob/main/scripts/build_demo_data.py`}
             target="_blank"
             rel="noreferrer"
-            className="text-ph-navy hover:underline"
+            className="text-link-on-raised hover:underline"
           >
             build_demo_data.py
           </a>

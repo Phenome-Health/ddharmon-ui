@@ -68,7 +68,7 @@ export function ActiveRunsIndicator() {
     <Link
       href="/jobs"
       title={`${active.length} run${active.length === 1 ? "" : "s"} in progress — view Runs`}
-      className="mr-1 flex items-center gap-1.5 rounded bg-ph-navy/10 px-2 py-0.5 text-[11px] font-medium text-ph-navy transition-colors hover:bg-ph-navy/20"
+      className="mr-1 flex items-center gap-1.5 rounded bg-surface-info px-2 py-0.5 text-xs font-semibold text-accent-on-raised transition-colors hover:bg-rule-info"
     >
       <Loader2 className="h-3 w-3 animate-spin" />
       {active.length} running

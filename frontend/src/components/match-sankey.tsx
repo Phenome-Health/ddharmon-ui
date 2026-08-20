@@ -8,7 +8,7 @@
 // tooltip reads out the exact counts (share of total). All hover state is local; colors come from lib/chart.
 import { useMemo, useState } from "react";
 import { ResponsiveContainer, Sankey, Tooltip } from "recharts";
-import { CHART_TOOLTIP_CLASS, COHORT_PALETTE, VERDICT_COLOR, type Focus } from "@/lib/chart";
+import { CHART_LABEL_SIZE, CHART_TOOLTIP_CLASS, COHORT_PALETTE, VERDICT_COLOR, type Focus } from "@/lib/chart";
 import type { UIRecord } from "@/types";
 
 const VERDICT_NODE: Record<string, string> = {
@@ -223,8 +223,8 @@ function NodeShape({ x, y, width, height, payload, state, onEnter, onLeave, onCl
         y={ty}
         textAnchor={anchor}
         dominantBaseline="middle"
-        fontSize={11}
-        fill="var(--sf-700)"
+        fontSize={CHART_LABEL_SIZE}
+        fill="var(--on-raised)"
         fillOpacity={dim ? 0.35 : 1}
         style={{ fontWeight: state === "on" ? 600 : 400 }}
       >
@@ -268,7 +268,7 @@ function LinkShape({
     <path
       d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
       fill="none"
-      stroke={payload.color ?? "#9CA3AF"}
+      stroke={payload.color ?? "var(--on-raised-muted)"}
       strokeWidth={Math.max(1, linkWidth)}
       strokeOpacity={opacity}
       style={{ cursor: "pointer", transition: "stroke-opacity 120ms" }}
@@ -354,7 +354,7 @@ export function MatchSankey({
   };
 
   if (!data.links.length) {
-    return <p className="py-8 text-center text-sm text-neutral-400">No flows to display.</p>;
+    return <p className="py-8 text-center text-sm text-on-raised-muted">No flows to display.</p>;
   }
   const height = Math.max(280, data.nodes.length * 30);
   // recharts mutates the data it receives (resolves link source/target indices into node objects and writes
@@ -440,13 +440,13 @@ export function MatchSankey({
                     : "translate(-50%, -100%)",
             }}
           >
-            <div className="font-medium text-neutral-700">{tip.title}</div>
-            <div className="tabular-nums text-neutral-500">{tip.sub}</div>
+            <div className="font-semibold text-on-raised">{tip.title}</div>
+            <div className="tabular-nums text-on-raised-muted">{tip.sub}</div>
           </div>
         )}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
-        <span className="text-neutral-400">Cohort &rarr; verdict &rarr; destination &middot; width = variable count</span>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-raised-muted">
+        <span className="text-on-raised-muted">Cohort &rarr; verdict &rarr; destination &middot; width = variable count</span>
         {LEGEND.map((l) => (
           <span key={l.label} className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: l.color }} />

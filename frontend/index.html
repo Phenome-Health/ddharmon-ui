@@ -7,15 +7,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <script>
-      // Apply saved/system theme before first paint to avoid a flash.
-      (function () {
-        try {
-          var t = localStorage.getItem("theme");
-          if (t !== "light" && t !== "dark")
-            t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-          if (t === "dark") document.documentElement.classList.add("dark");
-        } catch (e) {}
-      })();
+      // Single theme (D-05): there is no class to set before first paint any more, so the FOUC script
+      // that used to read the OS preference is gone. All that remains is clearing the key the retired
+      // toggle persisted, so a returning visitor is not carrying a "light"/"dark" nothing reads.
+      try { localStorage.removeItem("theme"); } catch (e) {}
     </script>
   </head>
   <body>

@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import {
   CHART_AXIS,
+  CHART_LABEL_SIZE,
   CHART_GRID,
   CHART_TOOLTIP_CLASS,
   COHORT_PALETTE,
@@ -38,9 +39,9 @@ type Agreement = "agree" | "disagree" | "unassigned";
 const K_NEIGHBORS = 10; // atlas is capped at 2500 pts server-side, so an O(n²) k-NN pass here is cheap.
 const RESPONSE_CAP = 12; // max code=label options shown inline in the detail panel before "+N more".
 const AGREEMENT_COLOR: Record<Agreement, string> = {
-  agree: "#16A34A", // green — concept-mates cluster nearby (geometry respected)
-  disagree: "#F59E0B", // amber — concept-mates are scattered elsewhere (a QA signal)
-  unassigned: "#CBD5E1", // = UNASSIGNED_COLOR — no concept
+  agree: "var(--status-ok)", // concept-mates cluster nearby (geometry respected)
+  disagree: "var(--status-warn)", // concept-mates are scattered elsewhere (a QA signal)
+  unassigned: "var(--series-residual)", // = UNASSIGNED_COLOR — no concept
 };
 const AGREEMENT_LABEL: Record<Agreement, string> = {
   agree: "Agree — concept shared with neighbors",
@@ -53,7 +54,7 @@ const AGREEMENT_LABEL: Record<Agreement, string> = {
 // made these points show as a verdict the review queue has none of. Its own muted color + non-filterable
 // legend entry keeps the distinction honest.
 const UNASSIGNED = "unassigned";
-const UNASSIGNED_COLOR = "#CBD5E1"; // slate-300 — clearly muted vs the verdict palette
+const UNASSIGNED_COLOR = "var(--series-residual)"; // muted vs the verdict palette, still >= 3:1
 const catLabel = (v: string): string => (v === UNASSIGNED ? "Unassigned (no concept)" : (VERDICT_LABEL[v] ?? v));
 const catColor = (v: string): string => (v === UNASSIGNED ? UNASSIGNED_COLOR : verdictColor(v));
 
@@ -71,13 +72,13 @@ function AtlasTooltip({ active, payload }: { active?: boolean; payload?: Tooltip
   if (!p) return null;
   return (
     <div className={CHART_TOOLTIP_CLASS}>
-      <div className="font-mono text-neutral-700">{p.variable}</div>
-      <div className="flex items-center gap-1.5 text-neutral-500">
+      <div className="font-mono text-on-raised">{p.variable}</div>
+      <div className="flex items-center gap-1.5 text-on-raised-muted">
         <span>{p.cohort}</span>
         <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: catColor(p.verdict) }} />
         <span>{catLabel(p.verdict)}</span>
       </div>
-      <div className="mt-0.5 text-[10px] text-neutral-400">click for details</div>
+      <div className="mt-0.5 text-xs text-on-raised-muted">click for details</div>
     </div>
   );
 }
@@ -87,8 +88,8 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
   return (
     <div className="mt-0.5">
-      <span className="text-neutral-400">{label}: </span>
-      <span className="break-words text-neutral-600">{value}</span>
+      <span className="text-on-raised-muted">{label}: </span>
+      <span className="break-words text-on-raised">{value}</span>
     </div>
   );
 }
@@ -206,7 +207,7 @@ export function EmbeddingAtlas({
   }, [selectedIdx, pts]);
 
   if (!points.length) {
-    return <p className="py-8 text-center text-sm text-neutral-400">No embedding coordinates.</p>;
+    return <p className="py-8 text-center text-sm text-on-raised-muted">No embedding coordinates.</p>;
   }
 
   const colorOf = (p: EnrichedPoint, i: number) =>
@@ -257,12 +258,12 @@ export function EmbeddingAtlas({
   return (
     <div className="select-none">
       <div className="mb-2 flex items-center justify-between">
-        <div className="inline-flex overflow-hidden rounded-md border border-neutral-200 text-xs">
+        <div className="inline-flex overflow-hidden rounded-md border border-rule-on-raised text-xs">
           {(["cohort", "verdict", "agreement"] as ColorBy[]).map((c) => (
             <button
               key={c}
               onClick={() => setColorBy(c)}
-              className={`px-2.5 py-1 capitalize ${colorBy === c ? "bg-ph-navy text-white" : "text-neutral-500 hover:bg-neutral-50"}`}
+              className={`px-2.5 py-1 capitalize ${colorBy === c ? "bg-accent-action text-on-page" : "text-on-raised-muted hover:bg-surface-inset"}`}
             >
               {c}
             </button>
@@ -271,7 +272,7 @@ export function EmbeddingAtlas({
         {zoom && (
           <button
             onClick={() => setZoom(null)}
-            className="rounded px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-ph-navy"
+            className="rounded px-2 py-0.5 text-xs text-on-raised-muted hover:bg-surface-inset-strong hover:text-accent-on-raised"
           >
             Reset zoom
           </button>
@@ -300,7 +301,7 @@ export function EmbeddingAtlas({
             axisLine={false}
             allowDataOverflow
             domain={zoom ? zoom.x : ["auto", "auto"]}
-            label={{ value: "PC1", position: "insideBottom", fontSize: 11, fill: CHART_AXIS }}
+            label={{ value: "PC1", position: "insideBottom", fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }}
           />
           <YAxis
             type="number"
@@ -311,7 +312,7 @@ export function EmbeddingAtlas({
             width={20}
             allowDataOverflow
             domain={zoom ? zoom.y : ["auto", "auto"]}
-            label={{ value: "PC2", angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_AXIS }}
+            label={{ value: "PC2", angle: -90, position: "insideLeft", fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }}
           />
           <ZAxis range={[18, 18]} />
           <RTooltip content={<AtlasTooltip />} cursor={{ strokeDasharray: "3 3" }} />
@@ -344,15 +345,15 @@ export function EmbeddingAtlas({
               y1={drag.y1}
               y2={drag.y2}
               strokeOpacity={0.3}
-              stroke="var(--navy)"
-              fill="var(--navy)"
+              stroke="var(--on-raised)"
+              fill="var(--on-raised)"
               fillOpacity={0.08}
             />
           )}
         </ScatterChart>
       </ResponsiveContainer>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-raised-muted">
         {legend.map((l) => {
           const on = !focus || sameFocus(focus, l.focus);
           return (
@@ -367,14 +368,14 @@ export function EmbeddingAtlas({
             </button>
           );
         })}
-        <span className="ml-auto text-right text-neutral-400">
+        <span className="ml-auto text-right text-on-raised-muted">
           {colorBy === "agreement" && "agreement = shares its concept with 2-D atlas neighbors · "}
           drag to zoom · click a point for details
         </span>
       </div>
 
       {colorBy === "agreement" && (
-        <p className="mt-1.5 rounded-md border border-warning-border bg-warning-bg px-2.5 py-1.5 text-[11px] leading-relaxed text-neutral-700">
+        <p className="mt-1.5 rounded-md border border-warning-border bg-warning-bg px-2.5 py-1.5 text-xs leading-relaxed text-on-raised">
           <b className="text-warning">Reading this view:</b> the agree/disagree color is a{" "}
           <b>2-D geometry check only</b> — it asks whether a variable&apos;s concept-mates fall among its {K_NEIGHBORS}{" "}
           nearest neighbors on this PCA plot. Concept assignment itself is <b>not</b> pure atlas proximity: the split
@@ -385,14 +386,14 @@ export function EmbeddingAtlas({
       )}
 
       {selected && (
-        <div className="mt-2 flex items-start gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-xs">
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-rule-on-raised bg-surface-inset px-2.5 py-2 text-xs">
           <span
             className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
             style={{ backgroundColor: selectedIdx != null ? colorOf(selected, selectedIdx) : UNASSIGNED_COLOR }}
           />
           <div className="min-w-0 flex-1">
-            <div className="truncate font-mono text-neutral-700">{selected.variable}</div>
-            <div className="text-neutral-500">{selected.cohort}</div>
+            <div className="truncate font-mono text-on-raised">{selected.variable}</div>
+            <div className="text-on-raised-muted">{selected.cohort}</div>
 
             {/* Full read-in detail from fieldIndex["cohort:variable"] — missing keys drop out cleanly. */}
             <DetailRow label="Text" value={selectedDetail?.text} />
@@ -403,18 +404,18 @@ export function EmbeddingAtlas({
             <DetailRow label="Type" value={selectedDetail?.dataType} />
             {selectedDetail?.responseOptions && selectedDetail.responseOptions.length > 0 && (
               <div className="mt-0.5">
-                <span className="text-neutral-400">Responses: </span>
-                <span className="text-neutral-600">
+                <span className="text-on-raised-muted">Responses: </span>
+                <span className="text-on-raised">
                   {selectedDetail.responseOptions.slice(0, RESPONSE_CAP).map((o, i) => (
                     <span key={i}>
-                      {i > 0 && <span className="text-neutral-300"> · </span>}
-                      <span className="font-mono text-neutral-500">{o.code}</span>
+                      {i > 0 && <span className="text-on-raised-faint"> · </span>}
+                      <span className="font-mono text-on-raised-muted">{o.code}</span>
                       {"="}
                       {o.label}
                     </span>
                   ))}
                   {selectedDetail.responseOptions.length > RESPONSE_CAP && (
-                    <span className="text-neutral-400">
+                    <span className="text-on-raised-muted">
                       {" · "}+{selectedDetail.responseOptions.length - RESPONSE_CAP} more
                     </span>
                   )}
@@ -424,26 +425,26 @@ export function EmbeddingAtlas({
 
             {/* Concept group + "→ open concept" link when clustered; else the unclustered reason. */}
             {selectedRec ? (
-              <div className="mt-1.5 border-t border-neutral-200 pt-1.5">
+              <div className="mt-1.5 border-t border-rule-on-raised pt-1.5">
                 <div className="flex items-center gap-1.5">
                   <span
                     className="inline-block h-2 w-2 shrink-0 rounded-full"
                     style={{ backgroundColor: catColor(selectedRec.verdict) }}
                   />
-                  <span className="min-w-0 truncate text-neutral-600">{conceptLabel(selectedRec)}</span>
-                  <span className="shrink-0 text-neutral-400">· {catLabel(selectedRec.verdict)}</span>
+                  <span className="min-w-0 truncate text-on-raised">{conceptLabel(selectedRec)}</span>
+                  <span className="shrink-0 text-on-raised-muted">· {catLabel(selectedRec.verdict)}</span>
                 </div>
                 {onOpenConcept && (
                   <button
                     onClick={() => onOpenConcept(selectedRec.id)}
-                    className="mt-1 font-medium text-ph-navy hover:underline"
+                    className="mt-1 font-semibold text-link-on-raised hover:underline"
                   >
                     → open concept
                   </button>
                 )}
               </div>
             ) : (
-              <div className="mt-1 text-neutral-400">
+              <div className="mt-1 text-on-raised-muted">
                 {catLabel(UNASSIGNED)} — this variable didn&apos;t cluster into any concept.
               </div>
             )}
@@ -451,29 +452,29 @@ export function EmbeddingAtlas({
             {/* Agreement-mode evidence: WHY an atlas-near point can land in a different concept — the pipeline's
                 non-geometric signals (concept + rationale + values) plus the point's own kNN neighbor split. */}
             {colorBy === "agreement" && selectedIdx != null && (
-              <div className="mt-1.5 border-t border-neutral-200 pt-1.5">
+              <div className="mt-1.5 border-t border-rule-on-raised pt-1.5">
                 <div className="flex items-center gap-1.5">
                   <span
                     className="inline-block h-2 w-2 shrink-0 rounded-full"
                     style={{ backgroundColor: AGREEMENT_COLOR[agreement[selectedIdx]] }}
                   />
-                  <span className="text-neutral-600">{AGREEMENT_LABEL[agreement[selectedIdx]]}</span>
+                  <span className="text-on-raised">{AGREEMENT_LABEL[agreement[selectedIdx]]}</span>
                 </div>
                 {selectedRec && agreement[selectedIdx] === "disagree" && selectedNeighbors && (
-                  <div className="mt-1 text-neutral-500">
+                  <div className="mt-1 text-on-raised-muted">
                     {selectedNeighbors.diff} of its {selectedNeighbors.k} nearest atlas neighbors sit in a different
                     concept. Geometry alone would group these, but the pipeline separated them using signals this 2-D
                     view can&apos;t show — the variable name, its response values/units, and an LLM concept judgment.
                   </div>
                 )}
                 {selectedRec?.rationale && (
-                  <div className="mt-1 text-neutral-500">
-                    <span className="text-neutral-400">Assign rationale: </span>
+                  <div className="mt-1 text-on-raised-muted">
+                    <span className="text-on-raised-muted">Assign rationale: </span>
                     {selectedRec.rationale}
                   </div>
                 )}
                 {!selectedRec && (
-                  <div className="mt-1 text-neutral-400">The agreement check applies only to assigned variables.</div>
+                  <div className="mt-1 text-on-raised-muted">The agreement check applies only to assigned variables.</div>
                 )}
               </div>
             )}
@@ -481,7 +482,7 @@ export function EmbeddingAtlas({
           <button
             onClick={() => setSelectedKey(null)}
             aria-label="Dismiss"
-            className="shrink-0 rounded px-1 leading-none text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+            className="shrink-0 rounded px-1 leading-none text-on-raised-muted hover:bg-surface-inset-strong hover:text-on-raised"
           >
             ×
           </button>
