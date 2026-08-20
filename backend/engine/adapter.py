@@ -27,6 +27,7 @@ The pipeline **requires a CDE backbone** (assignment to the given CDE catalog is
 
 from __future__ import annotations
 
+import csv
 import inspect
 import json
 import logging
@@ -51,6 +52,9 @@ from backend.engine.contract import (
     UICost,
     UIGenCDE,
     UIMember,
+    UIPreprocessDiff,
+    UIPreprocessReport,
+    UIPreprocessRule,
     UIRecord,
     UIResult,
     UISummary,
@@ -573,6 +577,7 @@ def build_ui_result(
     gate_position: str | None = None,
     result_version: int | None = None,
     concept_gate: bool = False,
+    preprocessing: list[UIPreprocessReport] | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
 
@@ -618,6 +623,10 @@ def build_ui_result(
         # Signals with no value on THIS run, each with a reason and an entry kind. Computed per result
         # rather than hard-coded, so an enabled opt-in drops out of it instead of contradicting the wire.
         "notComputed": _not_computed(concept_gate=concept_gate, readjudicated=readjudicated),
+        # One entry per source dictionary. An EMPTY list means preprocessing did not run at all (gated
+        # off, or a payload that predates it) — which is a different statement from an entry reporting
+        # that it ran and changed nothing, and the two must not render alike.
+        "preprocessing": preprocessing or [],
     }
     if gate_position is not None:
         result["gatePosition"] = cast(Any, gate_position)
@@ -667,6 +676,255 @@ def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list
         }
         for i in range(len(meta))
     ]
+
+
+# ── preparation: rule-based preprocessing, IN THE PRODUCT PATH ───────────────────────────────
+#
+# `preprocess_dictionary` shipped in core a long time ago and the product NEVER CALLED IT, so Gate 0 was
+# not merely missing a report — the behaviour it reports on had never run. This is where it runs, between
+# `load_dictionary` and `embed_dictionary`, because the whole point of the step is to fix the text BEFORE
+# it becomes a vector.
+#
+# ⚠ THIS CHANGES EVERY DOWNSTREAM RESULT. Cleaned text embeds differently, so the clustering differs, so
+# the splits, assignments, specs and costs differ. Runs produced before and after this change are NOT
+# comparable, and the pinned demo artifact must be regenerated (08-21) rather than reasoned about.
+#
+# THE CDE BACKBONE IS DELIBERATELY NOT PREPROCESSED. These rules are written for a cohort's own
+# dictionary: placeholder-description replacement fires on any description repeated >= 10 times (a CDE
+# catalog has thousands of legitimately repeated definitions) and common-prefix stripping would rewrite
+# catalog designations. Core already owns CDE text hygiene through its own `clean_cde_text` knob, applied
+# at retrieval time where it can be ablated. Mutating the retrieval backbone from the UI adapter would
+# silently move every benchmark this project gates on.
+
+#: One preprocessing rule: (stable id, plain-words label, the report attribute holding its count).
+#: Mirrors the step order in ``preprocess_dictionary``'s docstring, so the screen reads in the order the
+#: work happened.
+_PREPROCESS_RULES: tuple[tuple[str, str, str], ...] = (
+    ("unicode_normalization", "Fixed mojibake and encoding artifacts", "unicode_fixed"),
+    ("administrative_text_stripping", "Stripped instrument-administration wrappers and markup", "admin_text_stripped"),
+    ("option_echo_clearing", "Cleared descriptions that only echoed a response option", "option_echo_cleared"),
+    ("placeholder_description_replacement", "Replaced boilerplate descriptions", "placeholders_replaced"),
+    ("common_prefix_stripping", "Stripped a shared variable-name prefix", "prefix_stripped"),
+    ("stopword_removal", "Removed configured stopwords from variable names", "stopwords_applied"),
+    ("name_in_description_dedup", "Suppressed a variable name that echoed its description", "name_deduped"),
+    ("whitespace_normalization", "Collapsed whitespace runs", "whitespace_fixed"),
+)
+#: Per-variable before/after rows carried on the wire. The TRUE changed count travels beside it
+#: (``nChangedVariables``), so a cap never understates what happened.
+_PREPROCESS_DIFF_CAP = 50
+
+
+def _count_data_rows(path: Path | str) -> int:
+    """Data rows in a source dictionary file — the reviewer's own row count.
+
+    Read from the FILE rather than from the loaded dictionary on purpose: ``load_dictionary`` keys fields
+    on the variable name, so a repeated name overwrites the earlier row and the variable VANISHES with no
+    error. Comparing the file's row count against the loaded unique-name count is the only way that drop
+    becomes visible instead of being swallowed (it is a named, expensive debugging cost in this project).
+    Returns ``-1`` when the file cannot be counted, so the caller can fall back rather than invent a number.
+    """
+    try:
+        with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+            sample = fh.readline()
+            delimiter = "\t" if "\t" in sample else ","
+            reader = csv.reader(fh, delimiter=delimiter)
+            return sum(1 for row in reader if any((cell or "").strip() for cell in row))
+    except OSError as exc:
+        logger.warning("could not count rows in %s (%s)", path, exc)
+        return -1
+
+
+def _stopwords_configured() -> bool:
+    """Whether core's stopword resolution yields anything for this run.
+
+    Needed to tell ``not_run`` from ``no_change``: core applies the rule only when the merged stopword
+    list is non-empty, and its report cannot distinguish "applied to 0 variables" from "never applied".
+    Reads core's own resolver so the answer matches what actually happened; on a core that does not
+    expose it, the honest answer is "we cannot claim it ran".
+    """
+    try:
+        from ddharmon.ingestion.preprocessor import _load_stopwords
+
+        return bool(_load_stopwords(None, None))
+    except (ImportError, AttributeError, OSError, ValueError):
+        return False
+
+
+def _preprocess_diff(dd: Any) -> tuple[list[UIPreprocessDiff], int]:
+    """Per-variable before/after for the variables preprocessing changed (capped sample + true count)."""
+    try:
+        from ddharmon.ingestion.preprocessor import preprocessing_diff
+    except ImportError:
+        return [], 0
+    rows = preprocessing_diff(dd)
+    out: list[UIPreprocessDiff] = [
+        {
+            "variableName": str(r.get("variable_name", "")),
+            "rawVariableName": str(r.get("raw_variable_name", "")),
+            "rawDescription": str(r.get("raw_description", "")),
+            "cleanedDescription": str(r.get("cleaned_description", "")),
+            "nameChanged": bool(r.get("name_changed")),
+            "descChanged": bool(r.get("desc_changed")),
+            "embedNameSuppressed": bool(r.get("embed_name_suppressed")),
+        }
+        for r in rows[:_PREPROCESS_DIFF_CAP]
+    ]
+    return out, len(rows)
+
+
+def _nothing_to_embed(dd: Any) -> int:
+    """Variables whose embedding text came out EMPTY — they embed nothing and cluster nowhere.
+
+    Counted because it is otherwise a silent loss: the field is present in every listing and contributes
+    to no concept.
+    """
+    n = 0
+    for f in dd.fields.values():
+        try:
+            if not (f.to_embedding_text() or "").strip():
+                n += 1
+        except Exception:  # noqa: BLE001 - a text-composition failure must not fail the report
+            n += 1
+    return n
+
+
+def _failed_report(dd: Any, n_rows: int, n_applied: int, error: str) -> UIPreprocessReport:
+    """A report for a dictionary whose preprocessing RAISED.
+
+    Every rule is reported ``failed``, not ``0``. Core preprocesses a dictionary atomically — one call,
+    all rules — so the honest granularity of a failure is the dictionary, and each rule carries the same
+    message rather than a zero that would read as "checked, nothing to fix".
+    """
+    return {
+        "cohort": getattr(dd, "cohort_name", None) or dd.name,
+        "nVariables": n_rows,
+        "nUniqueVariableNames": n_applied,
+        "nDuplicateVariableNames": max(0, n_rows - n_applied),
+        "nNothingToEmbed": _nothing_to_embed(dd),
+        "namesChanged": 0,
+        "descriptionsChanged": 0,
+        "ran": True,
+        "failed": True,
+        "error": error,
+        "rules": [
+            {
+                "rule": rule,
+                "label": label,
+                "outcome": "failed",
+                "nChanged": 0,
+                "nVariables": n_applied,
+                "detail": "",
+                "error": error,
+            }
+            for rule, label, _attr in _PREPROCESS_RULES
+        ],
+        "diff": [],
+        "nChangedVariables": 0,
+        "diffTruncated": False,
+    }
+
+
+def preprocess_for_run(dd: Any, *, source_path: Path | str | None = None) -> UIPreprocessReport:
+    """Preprocess ONE dictionary in place and return the contract-shaped report of what it did.
+
+    Guarded on the core signature: an older pinned core that cannot preprocess yields a ``ran: False``
+    report rather than raising, because a run must not die on a preparation step.
+
+    The arithmetic is ASSERTED, not assumed: a report whose counts do not close against the dictionary's
+    row count is worse than no report, because it is a number a reviewer would act on. A mismatch logs
+    loudly and the offending rule is reported ``failed`` instead of shipping a figure nobody can trust.
+    """
+    n_applied_before = len(dd.fields)
+    n_rows = _count_data_rows(source_path) if source_path else -1
+    if n_rows < n_applied_before:
+        # Either we could not read the file, or the loader created MORE fields than there are rows
+        # (hierarchy detection synthesises parents). Neither is a drop, so fall back to what the rules
+        # were actually applied to rather than reporting a negative duplicate count.
+        n_rows = n_applied_before
+    try:
+        from ddharmon.ingestion.preprocessor import preprocess_dictionary
+    except ImportError as exc:
+        logger.warning("this core cannot preprocess (%s) — reporting the step as not run", exc)
+        return {
+            "cohort": getattr(dd, "cohort_name", None) or dd.name,
+            "nVariables": n_rows,
+            "nUniqueVariableNames": n_applied_before,
+            "nDuplicateVariableNames": max(0, n_rows - n_applied_before),
+            "nNothingToEmbed": _nothing_to_embed(dd),
+            "namesChanged": 0,
+            "descriptionsChanged": 0,
+            "ran": False,
+            "failed": False,
+            "error": "",
+            "rules": [
+                {
+                    "rule": rule,
+                    "label": label,
+                    "outcome": "not_run",
+                    "nChanged": 0,
+                    "nVariables": n_applied_before,
+                    "detail": "",
+                    "error": "",
+                }
+                for rule, label, _attr in _PREPROCESS_RULES
+            ],
+            "diff": [],
+            "nChangedVariables": 0,
+            "diffTruncated": False,
+        }
+    try:
+        preprocess_dictionary(dd)
+    except Exception as exc:  # noqa: BLE001 - a preparation step must not be able to fail a paid run
+        logger.warning("preprocessing %s failed: %s", getattr(dd, "cohort_name", None) or dd.name, exc)
+        return _failed_report(dd, n_rows, n_applied_before, f"{type(exc).__name__}: {exc}")
+
+    core_report = getattr(dd, "preprocessing_report", None)
+    n_applied = int(getattr(core_report, "total_fields", 0) or n_applied_before)
+    stopwords_ran = _stopwords_configured()
+    rules: list[UIPreprocessRule] = []
+    for rule, label, attr in _PREPROCESS_RULES:
+        n_changed = int(getattr(core_report, attr, 0) or 0)
+        ran = stopwords_ran if rule == "stopword_removal" else True
+        detail = ""
+        if rule == "common_prefix_stripping":
+            detail = str(getattr(core_report, "prefix_value", "") or "")
+        elif rule == "placeholder_description_replacement":
+            detail = "; ".join(str(v) for v in (getattr(core_report, "placeholder_values", None) or []))
+        error = ""
+        if n_changed > n_applied:
+            # The arithmetic does not close. Say so rather than shipping the number.
+            error = f"reported {n_changed} changed variables out of {n_applied} — counts do not reconcile"
+            logger.error("preprocessing report for rule %s does not reconcile: %s", rule, error)
+        outcome = "failed" if error else ("changed" if n_changed else "no_change") if ran else "not_run"
+        rules.append(
+            {
+                "rule": rule,
+                "label": label,
+                "outcome": cast(Any, outcome),
+                "nChanged": 0 if error or not ran else n_changed,
+                "nVariables": n_applied,
+                "detail": detail,
+                "error": error,
+            }
+        )
+    diff, n_changed_vars = _preprocess_diff(dd)
+    n_unique = len(dd.fields)
+    return {
+        "cohort": getattr(dd, "cohort_name", None) or dd.name,
+        "nVariables": n_rows,
+        "nUniqueVariableNames": n_unique,
+        "nDuplicateVariableNames": max(0, n_rows - n_unique),
+        "nNothingToEmbed": _nothing_to_embed(dd),
+        "namesChanged": int(getattr(core_report, "names_changed", 0) or 0),
+        "descriptionsChanged": int(getattr(core_report, "descriptions_changed", 0) or 0),
+        "ran": True,
+        "failed": False,
+        "error": "",
+        "rules": rules,
+        "diff": diff,
+        "nChangedVariables": n_changed_vars,
+        "diffTruncated": n_changed_vars > len(diff),
+    }
 
 
 # ── stage execution strategies (sync inline / Batch API) ──────────────────────────────────
@@ -1063,6 +1321,15 @@ def run_pipeline(
     specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
     dictionaries = [load_dictionary(s["path"], cohort_name=s["cohort_name"], **s["column_roles"]) for s in specs]
 
+    # --- prepare: rule-based preprocessing, between loading and embedding ---
+    # See the section header above `preprocess_for_run`: this had never run in the product, and turning it
+    # on changes the embedded text and therefore every downstream result. Source dictionaries only — the
+    # CDE backbone is excluded on purpose, with the reasoning recorded there.
+    preprocess_reports: list[UIPreprocessReport] = []
+    if config.get("preprocess", True):
+        for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
+            preprocess_reports.append(preprocess_for_run(dd, source_path=spec["path"]))
+
     # --- embed ---
     total = len(dictionaries)
     progress("embedding", 0, total)
@@ -1147,6 +1414,7 @@ def run_pipeline(
             field_index=field_index,
             cost=cast(UICost, ledger.to_dict()),
             preview_clusters=_preview_clusters(result),
+            preprocessing=preprocess_reports,
         )
 
     # --- which ADVISORY stages this run wants, decided BEFORE any stage is constructed ---
@@ -1308,6 +1576,7 @@ def run_pipeline(
         cost=cast(UICost, ledger.to_dict()),
         gate_position=stop_at_gate,
         concept_gate=concept_gate_on,
+        preprocessing=preprocess_reports,
     )
 
 

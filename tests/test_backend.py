@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from backend import app as app_module
 from backend.db import JobDB
 from backend.demos import demo_job_id, seed_demos
+from backend.engine import contract as contract_module
 from backend.engine.adapter import build_ui_result, run_pipeline
 from backend.jobs import Job, JobStore
 
@@ -2781,3 +2782,205 @@ def test_preview_mode_still_returns_preview_clusters(monkeypatch, tmp_path):
     assert result["previewClusters"]
     # and a preview never reaches the Gate 1 boundary, so it has no groups — the two are not substitutes
     assert result["conceptGroups"] == []
+
+
+# ── 08-09 Task 3: preprocessing RUNS in the product path, and its report reaches the wire ─────
+#
+# The escalation 08-RESEARCH found: Gate 0 did not merely lack a report — `preprocess_dictionary` was
+# never called in the product at all, so there was no behaviour to report on. Turning it on CHANGES THE
+# EMBEDDED TEXT, hence the clustering, hence every downstream result: runs from before and after this
+# change are NOT comparable, and the pinned demo has to be regenerated (08-21).
+
+
+def _dup_name_dictionary(tmp_path):
+    """A dictionary whose variable name repeats — `load_dictionary` keys on it, so a row VANISHES."""
+    from ddharmon.ingestion import load_dictionary
+
+    path = tmp_path / "dupes.csv"
+    path.write_text("var,desc\nage,Age in years\nage,Age at last birthday\nsex,Sex at birth\n")
+    dd = load_dictionary(str(path), cohort_name="Dup", variable_name="var", description="desc")
+    return path, dd
+
+
+def test_pipeline_preprocesses(monkeypatch, tmp_path):
+    """Preprocessing runs BETWEEN loading and embedding, for every source dictionary, and its report
+    reaches the UI through the contract."""
+    from ddharmon.ingestion import preprocessor as pre
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    seen = []
+    orig = pre.preprocess_dictionary
+
+    def spy(dd, **kw):
+        seen.append(getattr(dd, "cohort_name", None) or dd.name)
+        return orig(dd, **kw)
+
+    monkeypatch.setattr(pre, "preprocess_dictionary", spy)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert sorted(seen) == ["CohortA", "CohortB"], f"preprocessing ran on {seen}"
+    # The CDE backbone is deliberately NOT preprocessed — see the adapter's note (core owns CDE text
+    # hygiene via `clean_cde_text`, and these rules would mutate the retrieval backbone).
+    assert "NIH_CDE" not in seen
+    reports = result["preprocessing"]
+    assert {r["cohort"] for r in reports} == {"CohortA", "CohortB"}
+    assert all(r["ran"] and not r["failed"] for r in reports)
+    assert all(r["rules"] for r in reports)
+
+
+def test_preprocessing_counts_match_field_count(tmp_path):
+    """Counts are over dictionary ROWS. A rule's denominator is the number of variables it was applied
+    to, and the report's `nVariables` is the file's row count — so the arithmetic closes against a number
+    the reviewer can see on their own file."""
+    from ddharmon.ingestion import load_dictionary
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "d.csv"
+    path.write_text("var,desc\n" + "".join(f"v{i},Description number {i}\n" for i in range(7)))
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["nVariables"] == 7
+    assert report["nUniqueVariableNames"] == 7
+    assert report["nDuplicateVariableNames"] == 0
+    assert report["nUniqueVariableNames"] + report["nDuplicateVariableNames"] == report["nVariables"]
+    assert all(rule["nVariables"] == 7 for rule in report["rules"])
+    assert all(0 <= rule["nChanged"] <= rule["nVariables"] for rule in report["rules"])
+
+
+def test_preprocessing_reports_the_row_count_and_the_unique_name_count(tmp_path):
+    """The silent last-wins drop, surfaced. `load_dictionary` keys fields on the variable name, so a
+    repeated name makes a variable VANISH with no error — a known and expensive debugging cost here."""
+    from backend.engine.adapter import preprocess_for_run
+
+    path, dd = _dup_name_dictionary(tmp_path)
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["nVariables"] == 3, "the file has three data rows"
+    assert report["nUniqueVariableNames"] == 2, "one row was dropped, last-wins, on the repeated name"
+    assert report["nDuplicateVariableNames"] == 1
+
+
+def test_no_rules_fired_is_distinct(tmp_path):
+    """Three distinguishable claims, and the two that get collapsed are opposites: 'the rule ran and
+    found nothing to fix' versus 'the rule never ran'."""
+    from ddharmon.ingestion import load_dictionary
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "clean.csv"
+    path.write_text("var,desc\nalpha,A tidy description\nbeta,Another tidy description\n")
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+    report = preprocess_for_run(dd, source_path=path)
+
+    by_rule = {r["rule"]: r for r in report["rules"]}
+    # whitespace normalisation always runs; nothing here needs it
+    assert by_rule["whitespace_normalization"]["outcome"] == "no_change"
+    assert by_rule["whitespace_normalization"]["nChanged"] == 0
+    # stopword removal has nothing configured, so it genuinely did NOT run — a different claim
+    assert by_rule["stopword_removal"]["outcome"] == "not_run"
+    assert {r["outcome"] for r in report["rules"]} <= set(contract_module.RULE_OUTCOMES)
+    assert "no_change" in {r["outcome"] for r in report["rules"]}
+    assert "not_run" in {r["outcome"] for r in report["rules"]}
+
+
+def test_a_rule_that_raised_is_a_third_state(monkeypatch, tmp_path):
+    """A preprocessing failure is neither 'changed nothing' nor 'did not run' — reporting it as either
+    would claim the data was checked and found clean."""
+    from ddharmon.ingestion import load_dictionary
+    from ddharmon.ingestion import preprocessor as pre
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "d.csv"
+    path.write_text("var,desc\nv0,A description\n")
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+
+    def boom(dd, **kw):
+        raise RuntimeError("stopwords config is corrupt")
+
+    monkeypatch.setattr(pre, "preprocess_dictionary", boom)
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["failed"] is True
+    assert "corrupt" in report["error"]
+    outcomes = {r["outcome"] for r in report["rules"]}
+    assert outcomes == {"failed"}, "a failure must not be reported as zero-change or not-run"
+    assert all(r["error"] for r in report["rules"])
+    assert all(r["nChanged"] == 0 for r in report["rules"])
+
+
+def test_a_preprocessing_failure_does_not_cost_the_run_its_dictionaries(monkeypatch, tmp_path):
+    """Preprocessing is a preparation step, not a decision: it must not be able to fail a paid run."""
+    from ddharmon.ingestion import preprocessor as pre
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+
+    def boom(dd, **kw):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(pre, "preprocess_dictionary", boom)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+    assert result["records"]
+    assert all(r["failed"] for r in result["preprocessing"])
+
+
+def test_the_before_after_example_is_carried_as_data(tmp_path):
+    """T-08-48: uploaded text is echoed back to the browser here. It travels as plain strings — nothing
+    in the payload names a renderable-HTML channel, and the diff carries no rule name (the pipeline does
+    not stamp per-variable provenance, and claiming it does would be the lie)."""
+    from ddharmon.ingestion import load_dictionary
+
+    from backend.engine.adapter import preprocess_for_run
+
+    path = tmp_path / "mojibake.csv"
+    path.write_text('var,desc\nv0,"Weight in kilogrammes â\x80\x94 measured"\nv1,"<b>Height</b> in cm"\n')
+    dd = load_dictionary(str(path), cohort_name="C", variable_name="var", description="desc")
+    report = preprocess_for_run(dd, source_path=path)
+
+    assert report["nChangedVariables"] >= 1, "the mojibake fixture should have changed something"
+    for entry in report["diff"]:
+        assert isinstance(entry["rawDescription"], str)
+        assert isinstance(entry["cleanedDescription"], str)
+        assert "rule" not in entry
+        assert not any("html" in k.lower() for k in entry)
+
+
+def test_preprocessing_can_be_gated_off(monkeypatch, tmp_path):
+    """A knob, because turning preprocessing on changes the embedded text and therefore every downstream
+    result — a caller reproducing a pre-08-09 run needs to be able to say so."""
+    from ddharmon.ingestion import preprocessor as pre
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    config["preprocess"] = False
+    seen = []
+    monkeypatch.setattr(pre, "preprocess_dictionary", lambda dd, **kw: seen.append(dd) or dd)
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+    assert seen == []
+    # Absent, not an entry claiming it ran and changed nothing.
+    assert result.get("preprocessing", []) == []
