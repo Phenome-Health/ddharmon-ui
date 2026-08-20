@@ -362,8 +362,12 @@ def _attach_to_checkpoint(work_dir: Path, job: Any, by_stage: dict[str, dict[str
             counts[stage] = added
     if not counts:
         return {}
+    # Write back to the directory the checkpoint was READ from, not to ``work_dir``. They are the same for
+    # every pointer this backend writes (relative to the work root), but a legacy absolute pointer would
+    # make them differ — and reading one file while writing another produces two half-checkpoints, the
+    # exact split state 08-08's atomic write exists to prevent.
     write_checkpoint(
-        work_dir,
+        (ckpt.path.parent if ckpt.path is not None else work_dir),
         job_id=ckpt.job_id,
         gate=ckpt.gate,
         result=ckpt.result,
