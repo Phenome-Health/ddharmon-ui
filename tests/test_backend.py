@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import time
 
 import numpy as np
@@ -2984,3 +2985,451 @@ def test_preprocessing_can_be_gated_off(monkeypatch, tmp_path):
     assert seen == []
     # Absent, not an entry claiming it ran and changed nothing.
     assert result.get("preprocessing", []) == []
+
+
+# ── 08-11: Setup's job-independent extraction, the opt-in re-adjudication endpoint, and the upload refusal ──
+
+
+def _clerk_on(monkeypatch):
+    """Turn the SSO gate on with the JWT seam faked, so a "guest" here is a caller with no token."""
+    from backend import auth
+
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
+    monkeypatch.delenv("DDHARMON_ALLOWED_EMAIL_DOMAINS", raising=False)
+    monkeypatch.setattr(auth, "_decode_claims", lambda token: {"email": token, "sub": token})
+
+
+def _no_llm(monkeypatch):
+    """Explode if any provider client is constructed. Asserting a cost of zero would pass for a stub that
+    called out and was billed later; asserting no client exists is the property R13 actually needs."""
+    import backend.engine.llm as llm_mod
+
+    def boom(*_a, **_k):
+        raise AssertionError("a provider client was constructed on a path that must not spend")
+
+    monkeypatch.setattr(llm_mod, "build_llm_client", boom)
+
+
+class _Source:
+    text = "Fried frailty phenotype: five components, each scored 0 or 1."
+    provenance = "uploaded document"
+    sha256 = "abc123"
+
+
+def test_score_extract_needs_no_run(monkeypatch):
+    """Setup has to price and scope a score BEFORE a run exists, so this cannot be job-scoped: the
+    job-scoped sibling requires a run id, and at Setup there is nothing to pass."""
+    import backend.composite as composite_mod
+
+    monkeypatch.setattr(composite_mod, "resolve_source", lambda **_k: _Source())
+    _no_llm(monkeypatch)
+    resp = client.post(
+        "/api/harmonize/score/extract",
+        files=[("file", ("score.pdf", b"%PDF-1.4 fake", "application/pdf"))],
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["text"].startswith("Fried frailty phenotype")
+    assert body["nChars"] == len(_Source.text)
+
+
+def test_score_extract_is_auth_required_not_a_generic_error(monkeypatch):
+    """A guest gets a signal the UI renders as "sign in to do this" — extraction reads an uploaded
+    document, which is not a demo surface."""
+    _clerk_on(monkeypatch)
+    resp = client.post(
+        "/api/harmonize/score/extract",
+        files=[("file", ("score.pdf", b"%PDF-1.4 fake", "application/pdf"))],
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"]
+
+
+_PARTICIPANT_CSV = b"participant_id,age,bmi,sbp\n" b"P0001,54,26.1,131\n" b"P0002,61,23.8,118\n" b"P0003,47,31.2,142\n"
+
+
+def _batch_config(filename="cohortA.csv"):
+    return {
+        "dictionaries": [
+            {
+                "filename": filename,
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "participant_id", "description": "age"},
+            }
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+
+
+def test_rejects_row_level_upload(monkeypatch, tmp_path):
+    """A data dictionary is one row per VARIABLE. A file shaped like participant records is refused before
+    anything is stored or transmitted — a standing product prohibition, not a Phase 8 nicety."""
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    started = []
+    monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: started.append(a))
+
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", _PARTICIPANT_CSV, "text/csv"))],
+        data={"config": json.dumps(_batch_config())},
+    )
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert "one row per variable" in detail.lower()
+    assert "participant_id" in detail, "the response has to name what it found"
+    assert started == [], "no run may start from a rejected upload"
+    assert app_module.store.get(resp.json().get("jobId", "")) is None
+
+
+def test_a_real_dictionary_is_not_mistaken_for_participant_data(monkeypatch, tmp_path):
+    """The refusal must be precise: dictionaries legitimately DESCRIBE participant identifiers, and a rule
+    that keyed on the word alone would reject the very files this product exists to harmonize."""
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: None)
+
+    dictionary = b"var,desc\nparticipant_id,Unique participant identifier\nage,Age in years\n"
+    cfg = {
+        "dictionaries": [
+            {
+                "filename": "cohortA.csv",
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "var", "description": "desc"},
+            }
+        ],
+        "cdeSet": "endorsed",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", dictionary, "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+# --- the re-adjudication endpoint: three refusals, each a prohibition made mechanical -----------
+
+
+def _readjudicable_run(job_id="j-re", *, opt_in=False, config=None):
+    cfg = {"readjudication": opt_in, **(config or {})}
+    app_module.store.create(job_id, "A run", cfg, owner_subject=None)
+    app_module.store.update(job_id, status="complete", result={"records": [{"id": "r1"}]})
+    return job_id
+
+
+def _spy_readjudicate(monkeypatch):
+    calls = []
+    import backend.engine.adapter as ad
+
+    def spy(leanb_result, embedded, *, group_ids, **kw):
+        calls.append({"group_ids": list(group_ids), "kwargs": sorted(kw)})
+        return [{"id": "r1", "groupId": "g1"}]
+
+    monkeypatch.setattr(ad, "readjudicate_groups", spy)
+    return calls
+
+
+def test_readjudicate_endpoint_refuses_when_opt_in_off(monkeypatch):
+    """Default off. No run pays for a stage it did not ask for, and the reason has to be renderable as the
+    honest "not enabled for this run" tile rather than a generic error."""
+    calls = _spy_readjudicate(monkeypatch)
+    _no_llm(monkeypatch)
+    job_id = _readjudicable_run("j-optout", opt_in=False)
+    resp = client.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json={"groupIds": ["g1"]})
+    assert resp.status_code == 409
+    assert "not enabled" in resp.json()["detail"].lower()
+    assert calls == [], "no paid work may start on the refused path"
+
+
+def test_readjudicate_endpoint_refuses_empty_group_ids(monkeypatch):
+    """Never fall back to "every group carrying the incoherent flag": that is auto-resolving an over-merge
+    without human review, which core's own readjudicate docstring forbids the pipeline from doing."""
+    calls = _spy_readjudicate(monkeypatch)
+    _no_llm(monkeypatch)
+    job_id = _readjudicable_run("j-noids", opt_in=True)
+    for body in ({"groupIds": []}, {}):
+        resp = client.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json=body)
+        assert resp.status_code == 400, resp.text
+        assert "group" in resp.json()["detail"].lower()
+    assert calls == []
+
+
+def test_readjudicate_is_rejected_on_a_pinned_demo_run(monkeypatch):
+    """A guest walk cannot spend money. Rejected for being pinned BEFORE the opt-in is even consulted, so
+    a demo that happened to carry the flag is still refused."""
+    calls = _spy_readjudicate(monkeypatch)
+    _no_llm(monkeypatch)
+    job_id = _readjudicable_run("j-demo-re", opt_in=True, config={"demo": True})
+    resp = client.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json={"groupIds": ["g1"]})
+    assert resp.status_code == 403
+    assert calls == []
+
+
+def test_readjudicate_on_a_foreign_run_is_404_not_403(monkeypatch):
+    """404 so the API never confirms that someone else's run exists."""
+    _clerk_on(monkeypatch)
+    app_module.store.create("j-theirs", "Theirs", {"readjudication": True}, owner_subject="somebody_else")
+    app_module.store.update("j-theirs", status="complete", result={"records": []})
+    resp = client.post(
+        "/api/harmonize/jobs/j-theirs/readjudicate",
+        json={"groupIds": ["g1"]},
+        headers={"Authorization": "Bearer me@example.com"},
+    )
+    assert resp.status_code == 404
+
+
+def test_readjudicate_forwards_exactly_the_named_groups(monkeypatch, tmp_path):
+    """The opt-in run's happy path: the endpoint hands core's seam the ids the human named and nothing else,
+    and the run's records are updated in place. The provider client is a stub whose calls are counted, so
+    "the split and assign for those groups is the ONLY new spend" is asserted rather than assumed."""
+    calls = _spy_readjudicate(monkeypatch)
+    import backend.engine.adapter as ad
+    import backend.engine.llm as llm_mod
+
+    completions = []
+    monkeypatch.setattr(ad, "replay_leanb_result", lambda *a, **k: (object(), []))
+    monkeypatch.setattr(ad, "build_member_index", lambda embedded: {})
+    monkeypatch.setattr(
+        llm_mod,
+        "build_llm_client",
+        lambda *a, **k: type("C", (), {"complete": lambda *_a, **_k: completions.append(1)})(),
+    )
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    job_id = _readjudicable_run("j-ok", opt_in=True, config={"work_dir": str(tmp_path / "j-ok")})
+    app_module.store.update(
+        job_id,
+        dict_specs=[{"path": str(cde), "cohort_name": "CohortA", "column_roles": {"variable_name": "designation"}}],
+    )
+    resp = client.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json={"groupIds": ["g1", "g2"]})
+    assert resp.status_code == 200, resp.text
+    assert calls and calls[0]["group_ids"] == ["g1", "g2"]
+    assert app_module.store.get(job_id).result["records"] == [{"id": "r1", "groupId": "g1"}]
+    assert app_module.store.get(job_id).status == "complete", "re-deciding must not un-finish the run"
+    assert completions == [], "the seam is stubbed here, so nothing should have reached a provider at all"
+
+
+# --- the $0 front-half replay that rebuilds core's inputs (WINDOWS id22) ------------------------
+
+
+def test_replay_rebuilds_core_inputs_without_calling_a_single_stage(monkeypatch, tmp_path):
+    """08-09 left `readjudicate_groups` needing a LeanBResult + embedded dictionaries, which the backend
+    does not persist — the checkpoint holds the CONTRACT shape. This rebuilds both by replaying the
+    deterministic front half against the frozen substrate and the recorded stage answers, and it is $0 by
+    CONSTRUCTION: the stages it installs cannot call out, they can only look an answer up."""
+    from backend.engine.adapter import replay_leanb_result
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    config = {**config, "stop_at_gate": None, "coherence": False}
+    recorded: dict = {}
+    overrides = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "ideal"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {
+            r.id: {"verdict": "adopt", "cde_id": "1", "ranking": [1], "rationale": "m"} for r in recs
+        },
+        "specgen": lambda recs: {},
+    }
+    first = run_pipeline(
+        dict_specs,
+        cde_spec,
+        config,
+        provider=StubProvider(),
+        stage_overrides=overrides,
+        stage_responses=recorded,
+        substrate_path=tmp_path / "substrate.joblib",
+    )
+    assert recorded, "the fixture run recorded no stage answers, so there is nothing to replay"
+
+    calls = []
+    result, embedded = replay_leanb_result(
+        dict_specs,
+        cde_spec,
+        config,
+        replay_responses=recorded,
+        provider=StubProvider(),
+        substrate_path=tmp_path / "substrate.joblib",
+        on_missing=lambda stage, ids: calls.append((stage, ids)),
+    )
+    assert calls == [], f"the replay had to buy new work: {calls}"
+    assert embedded, "the replay returned no embedded dictionaries for core to re-derive inputs from"
+    assert [(r.group_id or r.cluster_id) for r in result.records] == [r["id"] for r in first["records"]]
+    assert [r.verdict for r in result.records] == [r["verdict"] for r in first["records"]], (
+        "the replayed run must reproduce the ORIGINAL verdicts - a rebuild that decided differently would "
+        "re-adjudicate against groups the reviewer never saw"
+    )
+
+
+def test_replay_refuses_without_recorded_answers(monkeypatch, tmp_path):
+    """A run that was never staged has no recorded answers, so there is nothing to replay and the honest
+    outcome is a refusal — not a silent re-run that charges for the whole front half again."""
+    from backend.engine.adapter import ReplayUnavailableError, replay_leanb_result
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    with pytest.raises(ReplayUnavailableError, match="recorded"):
+        replay_leanb_result(dict_specs, cde_spec, config, replay_responses={}, provider=StubProvider())
+
+
+# --- Task 3: R13 - a re-pick among already-retrieved candidates costs nothing (08-11) ----------
+
+
+def _pick_payload(chosen="CDE:1", alternatives=("CDE:1", "CDE:2")):
+    from backend.artifact_kinds import option_set_key
+
+    return {
+        "groupId": "g1",
+        "chosen": chosen,
+        "alternatives": list(alternatives),
+        "optionSetKey": option_set_key(alternatives),
+    }
+
+
+def _finished_run(job_id="j-fin"):
+    app_module.store.create(job_id, "A finished run", {}, owner_subject=None)
+    app_module.store.update(
+        job_id, status="complete", phase="complete", result={"records": [{"id": "g1", "concept": "Grip"}]}
+    )
+    return job_id
+
+
+def test_repick_makes_no_llm_call(monkeypatch, tmp_path):
+    """R13. The candidates were already retrieved and are already on the wire with rank / chosen / suggested
+    markers - only the WRITE was missing, so re-selecting among them must not reach a provider.
+
+    Asserted by making client CONSTRUCTION fail, not by checking a cost of zero: a stub that called out and
+    was billed asynchronously reports zero too, and the property R13 needs is that there is no client at all.
+    """
+    import backend.engine.adapter as ad
+    import backend.engine.llm as llm_mod
+
+    def boom(*_a, **_k):
+        raise AssertionError("a provider client was constructed while re-picking a retrieved candidate")
+
+    monkeypatch.setattr(llm_mod, "build_llm_client", boom)
+    monkeypatch.setattr(ad, "_batch_stage", boom)
+    monkeypatch.setattr(ad, "run_pipeline", boom)
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+
+    with TestClient(app_module.app) as c:
+        job_id = _finished_run("j-repick")
+        resp = c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
+        assert resp.status_code == 200, resp.text
+        again = c.put(
+            f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick",
+            json=_pick_payload(chosen="CDE:2"),
+            params={"base": resp.json()["updatedAt"]},
+        )
+        assert again.status_code == 200
+        stored = c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["artifacts"]["gate2_candidate_pick"]
+    assert [d["chosen"] for d in stored] == ["CDE:2"]
+
+
+def test_a_repick_on_a_finished_run_leaves_it_finished_and_derives_stale_specs(monkeypatch, tmp_path):
+    """R13 is the CHEAP half of the return pass: re-deciding must not transition the run out of finished, and
+    buying more work is Phase 9 and must not become reachable here."""
+    from backend.artifact_kinds import content_key, option_set_key
+
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        job_id = _finished_run("j-fin-stale")
+        upstream = _pick_payload()
+        c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=upstream)
+        c.put(
+            f"/api/harmonize/jobs/{job_id}/artifacts/gate3_spec_edit",
+            json={
+                "sourceVariable": "UKBB:age",
+                "chosen": "spec-a",
+                "alternatives": ["spec-a"],
+                "optionSetKey": option_set_key(["spec-a"]),
+                "upstream": {
+                    "kind": "gate2_candidate_pick",
+                    "itemKey": "g1",
+                    "contentKey": content_key(upstream),
+                },
+            },
+        )
+        assert c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["stale"] == []
+
+        c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2"))
+        body = c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
+        status = app_module.store.get(job_id).status
+    assert [entry["kind"] for entry in body["stale"]] == ["gate3_spec_edit"]
+    assert status == "complete"
+
+
+def test_a_finished_run_with_no_downstream_specs_re_decides_with_no_regeneration(monkeypatch, tmp_path):
+    """The other edge: nothing downstream means nothing to regenerate, and no regeneration path may be
+    invoked to discover that. A re-pick is a write, not a pipeline call."""
+    import backend.engine.adapter as ad
+
+    def boom(*_a, **_k):
+        raise AssertionError("a regeneration path was invoked for a run with nothing downstream")
+
+    monkeypatch.setattr(ad, "regenerate_gencde_specs", boom)
+    monkeypatch.setattr(ad, "readjudicate_groups", boom)
+    monkeypatch.setattr(ad, "run_pipeline", boom)
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+
+    with TestClient(app_module.app) as c:
+        job_id = _finished_run("j-fin-bare")
+        c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
+        resp = c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2"))
+        assert resp.status_code == 200
+        body = c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
+        status = app_module.store.get(job_id).status
+    assert body["stale"] == []
+    assert status == "complete"
+
+
+# --- the estimate must not omit a paid stage (R8) ------------------------------------------------------
+
+
+def test_estimate_covers_every_paid_stage() -> None:
+    """Every cost-ledger key a run can report is attributed to a gate by the frontend estimator.
+
+    R8 is one-directional: over-quoting is permitted, under-quoting is prohibited. A paid stage MISSING
+    from the estimator's attribution table is the silent form of that failure — the money is spent, the
+    ledger records it, and no gate's figure ever accounts for it. So the two sides are pinned together
+    here: the keys the adapter can hand a `CostLedger`, against the keys `lib/estimate.ts` distributes
+    across the six gates.
+
+    Ledger keys, not progress phases: an advisory stage reports progress under an EXISTING phase (the
+    judge under `splitting`, the concept gate under `specs`) because adding a phase to `PHASES_RUN` would
+    invalidate the shipped demo artifact and the Methods manifest. Cost attribution rides `ledger_key`.
+    """
+    from pathlib import Path
+
+    from backend.engine.adapter import _JUDGE_STAGES
+
+    repo = Path(__file__).resolve().parents[1]
+    adapter_src = (repo / "backend" / "engine" / "adapter.py").read_text()
+    estimate_src = (repo / "frontend" / "src" / "lib" / "estimate.ts").read_text()
+
+    # A plain stage's ledger key defaults to the progress phase it reports under; a judge stage carries its
+    # own. Both forms are collected from the source that actually constructs them.
+    plain = set(re.findall(r'_(?:sync|batch)_stage\(\s*\n?\s*"([a-z_]+)"', adapter_src))
+    judged = {spec["cost"] for spec in _JUDGE_STAGES.values()}
+    reportable = plain | judged
+    assert "judging" in reportable and "kinds" in reportable, (
+        "the judge's own ledger keys are no longer discoverable from the adapter — this test would then "
+        "pass vacuously, which is worse than failing"
+    )
+
+    m = re.search(r"GATE_LEDGER_KEYS[^=]*=\s*\{(.*?)\n\};", estimate_src, re.S)
+    assert m, "could not find GATE_LEDGER_KEYS in the frontend estimator"
+    attributed = set(re.findall(r'"([a-z_]+)"', m.group(1)))
+
+    missing = sorted(reportable - attributed)
+    assert not missing, (
+        f"the estimator attributes no gate to the cost-ledger key(s) {missing}, so spend reported under "
+        f"them would appear in no gate's figure — add them to GATE_LEDGER_KEYS in "
+        f"frontend/src/lib/estimate.ts"
+    )

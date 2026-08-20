@@ -41,9 +41,15 @@ from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
 from backend import batch_reconcile
+from backend.artifact_kinds import (
+    ACCEPTED_GENCDE,
+    GATE_DECISION_KINDS,
+    accept_gencde,
+    derive_staleness,
+)
 from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
-from backend.checkpoint import Checkpoint, CheckpointMissingError, load_checkpoint, next_gate
+from backend.checkpoint import Checkpoint, CheckpointMissingError, load_checkpoint, next_gate, write_checkpoint
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
@@ -194,15 +200,38 @@ _DEMO_SCOPED_PREFIXES = (
     "/api/harmonize/result/",
     "/api/harmonize/checkpoint/",
 )
+_JOBS_PREFIX = "/api/harmonize/jobs/"
+# Sub-resources under a job that a guest walking the six gates must READ, enumerated rather than opened by
+# prefix. The whole set a guest needs is: `/result/` (the records every gate renders), `/checkpoint/` (which
+# gate the run is parked at), `/stream/` (a live demo replay) and `artifacts` (the gate decisions plus the
+# derived staleness Gate N+1 shows). A path a gate screen needs that is NOT here breaks R9 AT that gate; a
+# path added here without cause is a new unauthenticated surface. Nothing else under `/jobs/` is public, and
+# only GET is ever considered — the WRITE half of `artifacts` stays gated, and is refused a second time
+# behind that by the pinned-run check.
+#
+# `export` is deliberately NOT here. Gate 4 renders the export SET, which is the records plus the decisions,
+# and both already arrive on `/result/` and `artifacts`. The export route performs no owner check of its own
+# (it takes no request and never resolves a subject), so putting it on the unauthenticated surface would
+# rest the entire cross-user boundary on this one prefix check. Downloading the artifact is the single Gate 4
+# action a guest signs in for.
+_DEMO_SCOPED_JOB_READS = ("artifacts",)
 
 
-def _is_public_path(path: str) -> bool:
+def _is_demo_job(job_id: str) -> bool:
+    job = store.get(job_id)
+    return bool(job and job.config.get("demo"))
+
+
+def _is_public_path(path: str, method: str = "GET") -> bool:
     if path in _PUBLIC_EXACT:
         return True
     for prefix in _DEMO_SCOPED_PREFIXES:
         if path.startswith(prefix):
-            job = store.get(path[len(prefix) :])
-            return bool(job and job.config.get("demo"))
+            return _is_demo_job(path[len(prefix) :].split("/", 1)[0])
+    if method == "GET" and path.startswith(_JOBS_PREFIX):
+        rest = path[len(_JOBS_PREFIX) :].split("/")
+        if len(rest) == 2 and rest[1] in _DEMO_SCOPED_JOB_READS:
+            return _is_demo_job(rest[0])
     return False
 
 
@@ -250,7 +279,7 @@ async def _auth_gate(request: Request, call_next: Any) -> Any:
     because ``EventSource`` can't set an Authorization header.
     """
     path = request.url.path
-    if request.method != "OPTIONS" and path.startswith("/api/harmonize/") and not _is_public_path(path):
+    if request.method != "OPTIONS" and path.startswith("/api/harmonize/") and not _is_public_path(path, request.method):
         try:
             request.state.principal = authenticate(
                 request.headers.get("authorization"),
@@ -285,6 +314,84 @@ def detect(body: DetectBody) -> dict[str, Any]:
             best[kwarg] = (match.confidence, column)
     column_roles = {kwarg: col for kwarg, (_conf, col) in best.items()}
     return {"columnRoles": column_roles, "confidence": mapping.overall_confidence}
+
+
+#: Header names that identify a PARTICIPANT rather than a variable. Matched on a normalized header, and
+#: only ever consulted alongside per-row uniqueness — the word alone is not evidence, because a data
+#: dictionary legitimately DESCRIBES a participant identifier (a row whose variable name is
+#: ``participant_id``), and refusing those would reject the very files this product exists to harmonize.
+_PARTICIPANT_ID_HEADERS = frozenset(
+    {
+        "eid",
+        "usubjid",
+        "subjid",
+        "person_id",
+        "patient_id",
+        "sample_id",
+        "subject_id",
+        "record_id",
+        "participant_id",
+        "respondent_id",
+    }
+)
+
+
+def _normalized_header(name: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in str(name).strip().lower()).strip("_")
+
+
+def _participant_level_column(path: Path, sample: int = 40) -> str | None:
+    """The column that makes this file look like participant records, or None.
+
+    A data dictionary is one row per VARIABLE; participant-level data is one row per PERSON. Two conditions
+    must BOTH hold before a file is refused, because either alone has a real false positive:
+
+    1. a column whose header names a participant identifier, and
+    2. that column's values are unique across the sampled rows.
+
+    Condition 1 alone would reject a dictionary that DESCRIBES a participant id - a row whose variable name
+    is ``participant_id`` - which is most real dictionaries. Condition 2 alone would reject every dictionary,
+    since a variable-name column is unique by construction.
+
+    The uploader's own column mapping is deliberately NOT trusted as an exemption: someone uploading
+    participant rows by mistake maps the identifier column as the variable name, because that is what the
+    naive mapping does, so exempting declared columns would open the hole exactly where the mistake lives.
+    Bare ``id`` is excluded from the header set for the reverse reason - it is the one name a dictionary
+    plausibly uses for its own key.
+
+    Only delimited text is inspected. A spreadsheet is not parsed here — stating that limit is better than a
+    check that silently covers less than it appears to (the honest gap: an .xlsx of participant rows, and a
+    participant-level file carrying no identifier column at all, are not caught by shape alone).
+    """
+    if path.suffix.lower() not in (".csv", ".tsv", ".txt"):
+        return None
+    delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
+    try:
+        with open(path, newline="", encoding="utf-8-sig", errors="replace") as fh:
+            reader = csv.reader(fh, delimiter=delimiter)
+            header = next(reader, None)
+            if not header:
+                return None
+            suspect = {i: name for i, name in enumerate(header) if _normalized_header(name) in _PARTICIPANT_ID_HEADERS}
+            if not suspect:
+                return None
+            seen: dict[int, list[str]] = {i: [] for i in suspect}
+            rows = 0
+            for row in reader:
+                rows += 1
+                for i in suspect:
+                    seen[i].append(row[i].strip() if i < len(row) else "")
+                if rows >= sample:
+                    break
+    except OSError:
+        return None
+    if rows < 2:
+        return None
+    for i, name in suspect.items():
+        values = [v for v in seen[i] if v]
+        if len(values) == rows and len(set(values)) == rows:
+            return name
+    return None
 
 
 # --- /batch ----------------------------------------------------------------------------------
@@ -333,6 +440,19 @@ async def start_batch(
             raise HTTPException(
                 status_code=400, detail=f"{fname!r} needs at least variable_name/description/question_text"
             )
+        # Refused BEFORE anything is harmonized, embedded or sent anywhere: this is a standing product
+        # prohibition (we accept metadata, never participant-level data), so the check belongs at the door.
+        offender = _participant_level_column(saved[fname])
+        if offender is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{fname!r} looks like participant-level data: the column {offender!r} holds a unique "
+                    "value on every row. Upload a data DICTIONARY — one row per variable, describing the "
+                    "fields — not the participant records themselves. ddharmon harmonizes metadata and "
+                    "never accepts participant data."
+                ),
+            )
         dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
     # The pipeline REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
@@ -369,6 +489,12 @@ async def start_batch(
         # view's Stop dialog can show a committed-vs-avoided cost estimate (run_config keeps no dictionaries).
         "est_fields": int(cfg["estFields"]) if cfg.get("estFields") is not None else None,
         "est_cohorts": int(cfg["estCohorts"]) if cfg.get("estCohorts") is not None else None,
+        # STGD-16's two opt-ins, recorded at CREATION and never flipped afterwards: a run resumed with a
+        # different answer would stop matching the cost it was quoted (T-08-69). Both default off, so a run
+        # can only pay for a stage it asked for. `concept_gate` is the M7 advisory stage; `readjudication`
+        # is permission for the re-adjudication endpoint to spend on a re-split the reviewer names.
+        "concept_gate": bool(cfg.get("conceptGate", False)),
+        "readjudication": bool(cfg.get("allowReadjudication", False)),
     }
     # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
     # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from
@@ -747,6 +873,130 @@ class CloneBody(BaseModel):
     recordPatches: list[dict[str, Any]] | None = None  # whole records, matched by id
 
 
+class ReadjudicateBody(BaseModel):
+    """Re-split and re-assign EXACTLY the concept groups a human named.
+
+    ``groupIds`` is required and must be non-empty. There is deliberately no "all flagged groups" mode: the
+    coherence judge FLAGS, and re-splitting every flagged group because it was flagged is an auto-resolution
+    of an over-merge with no human decision behind it, which is a standing prohibition and which core's own
+    ``readjudicate`` docstring forbids the pipeline from doing.
+    """
+
+    groupIds: list[str] = []
+
+
+@app.post("/api/harmonize/jobs/{job_id}/readjudicate")
+def readjudicate(
+    job_id: str,
+    body: ReadjudicateBody,
+    request: Request,
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+    x_provider_key: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """Re-adjudicate the named groups (STGD-16). The one gate action that STARTS PAID WORK.
+
+    Every other gate decision rides the generic artifact route, because recording a decision is storage. This
+    one buys a re-split and a re-assign from a provider, so it carries three refusals rather than one, each a
+    prohibition made mechanical:
+
+    1. **A pinned demo is rejected outright** — checked first, so a demo that happens to carry the opt-in is
+       still refused and a guest walk can never spend money.
+    2. **The run must have opted in at creation** (``readjudication``, default false). No run pays for a
+       stage it did not ask for, and the refusal names itself so the UI can render the honest "not enabled
+       for this run" state rather than a generic error.
+    3. **The caller must name explicit group ids.** An empty or absent list is refused, never widened to
+       "everything flagged".
+
+    Rebuilding core's inputs is FREE: ``replay_leanb_result`` replays the deterministic front half against
+    the frozen substrate and the checkpoint's recorded stage answers (WINDOWS id22). The only new spend is
+    the split + assign for the groups the human named.
+
+    BYOK: the key is in-memory for this request only — never written to ``run_config``, the row, or a log.
+    """
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        # 404, not 403: a 403 would confirm that someone else's run exists.
+        raise HTTPException(status_code=404, detail="Job not found")
+    with _writable_run():
+        if _is_pinned(job):
+            raise ReadOnlyRunError(
+                f"{job_id} is the shared demo and cannot be re-adjudicated — clone it into a run of your own"
+            )
+    if not job.config.get("readjudication"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Re-adjudication is not enabled for this run. It is opt-in at run creation because it buys a "
+                "new split and assign pass; start a new run with it enabled to re-split a group."
+            ),
+        )
+    group_ids = [g.strip() for g in (body.groupIds or []) if g and g.strip()]
+    if not group_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Name the concept groups to re-adjudicate. This endpoint never re-splits every flagged "
+                "group: the coherence flag is a suggestion, and acting on it without a named human decision "
+                "would be an auto-resolution of an over-merge."
+            ),
+        )
+    if not job.dict_specs or not job.config.get("work_dir"):
+        raise HTTPException(
+            status_code=409, detail="This run predates re-adjudication (no retained source dictionaries)"
+        )
+    cde_set = job.config.get("cde_set", "endorsed")
+    cde_path = CDE_FILES.get(cde_set)
+    if cde_path is None or not cde_path.exists():
+        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
+    cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+
+    from backend.engine import adapter as engine_adapter
+    from backend.engine.llm import build_llm_client
+
+    ckpt = _checkpoint_for(job)
+    responses = ckpt.responses if ckpt is not None else {}
+    try:
+        leanb_result, embedded = engine_adapter.replay_leanb_result(
+            job.dict_specs, cde_spec, job.config, replay_responses=responses
+        )
+    except engine_adapter.ReplayUnavailableError as exc:
+        # 409, and the reason is stated: re-deriving core's objects without the recording would re-buy the
+        # whole front half, which is not what a request to re-split two groups agreed to pay for.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    client = build_llm_client(job.config.get("model_tag"), x_provider_key or x_anthropic_key)
+    stage = engine_adapter.specgen_stage_fn(client)
+    try:
+        updated = engine_adapter.readjudicate_groups(
+            leanb_result,
+            embedded,
+            group_ids=group_ids,
+            split=stage,
+            classify=stage,
+            cde_cohort=job.config.get("cde_cohort", CDE_COHORT),
+            member_index=engine_adapter.build_member_index(embedded),
+        )
+    except ValueError as exc:  # the seam's own refusal, kept as a 400 rather than a 500
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # In place, on whichever surface holds this run's records: the row for a finished run, the checkpoint for
+    # a paused one (D-02 keeps a paused run's payload off the row, which is rewritten whole on every write).
+    records = cast("list[dict[str, Any]]", list(updated))
+    if ckpt is not None:
+        write_checkpoint(
+            ckpt.path.parent if ckpt.path is not None else Path(job.config["work_dir"]),
+            job_id=ckpt.job_id,
+            gate=ckpt.gate,
+            result={**ckpt.result, "records": records},
+            responses=ckpt.responses,
+            realized_cost=ckpt.realized_cost,
+        )
+    else:
+        store.update(job_id, result={**(job.result or {}), "records": records})
+    return {"jobId": job_id, "groupIds": group_ids, "nRecords": len(records)}
+
+
 @app.post("/api/harmonize/jobs/{job_id}/clone")
 def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
     """Copy a run into one the caller owns, optionally carrying their sandbox edits.
@@ -811,21 +1061,96 @@ def _artifact_target(job_id: str, request: Request) -> tuple[Job, str]:
 
 @app.get("/api/harmonize/jobs/{job_id}/artifacts")
 def list_artifacts(job_id: str, request: Request) -> dict[str, Any]:
-    """Everything the CALLER has stored against this run, grouped by kind."""
+    """Everything the CALLER has stored against this run, grouped by kind, plus which of it is stale.
+
+    ``stale`` is DERIVED here on every read by comparing each decision's persisted upstream content key
+    against that upstream's current one (see ``artifact_kinds.derive_staleness``). It is deliberately not a
+    stored field: a flag would have to be written onto a row that may not exist yet, from a write to a
+    DIFFERENT row - which is the cross-row read-modify-write this table exists to eliminate.
+    """
     job, owner = _artifact_target(job_id, request)
-    return {"kinds": registry.names(), "artifacts": store.artifacts_for(job, owner)}
+    grouped = store.artifacts_for(job, owner)
+    return {
+        "kinds": registry.names(),
+        "artifacts": grouped,
+        "stale": derive_staleness(grouped or {}),
+    }
+
+
+#: The two-tab notice (UI-SPEC 8.4), returned so a client can render it verbatim rather than invent one.
+_CONFLICT_MESSAGE = (
+    "Another tab changed this run. Your last change was kept and theirs was applied on top. "
+    "Reload to see the current state."
+)
+
+
+def _conflict_for(
+    artifacts: Any, *, owner: str, job_id: str, kind: str, payload: dict[str, Any], base: float | None
+) -> dict[str, Any] | None:
+    """Whether this write is about to replace a value the caller has not seen. None means it is not.
+
+    Last-write-wins is the resolution; the NOTICE is the requirement, because a silent overwrite of another
+    session's decision is prohibited. The store already returns the stored row rather than a boolean —
+    deliberately, since the bug it replaced was a setter reporting success for a write it had dropped — and
+    this extends that honesty one step, to replacement.
+
+    Three cases stay quiet, or the notice becomes noise a reviewer learns to dismiss:
+
+    - **A first write.** There was nothing to replace.
+    - **A re-save the caller itself made**, i.e. it supplied the version currently stored.
+    - **A kind that carries no version.** The shipped writers (verdicts, composites) were never asked for
+      one, so every re-save of theirs would report a conflict that is really just a second save.
+
+    A gate decision written with NO base over an existing row IS reported: a client that cannot say what it
+    replaced has in fact replaced something blind, and reporting it is what makes the client send a version.
+    """
+    if kind not in GATE_DECISION_KINDS:
+        return None
+    try:
+        item_key = artifacts.item_key_for(kind=kind, payload=payload)
+    except ValueError:
+        return None  # an invalid payload is about to be rejected by validation anyway
+    prior = artifacts.get_one(owner=owner, job_id=job_id, kind=kind, item_key=item_key)
+    if prior is None or (base is not None and prior.updated_at == base):
+        return None
+    return {"replacedUpdatedAt": prior.updated_at, "message": _CONFLICT_MESSAGE}
 
 
 @app.put("/api/harmonize/jobs/{job_id}/artifacts/{kind}")
-def put_artifact(job_id: str, kind: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    """Upsert one artifact. Its identity (and so what it replaces) is derived by its kind."""
+def put_artifact(
+    job_id: str, kind: str, payload: dict[str, Any], request: Request, base: float | None = None
+) -> dict[str, Any]:
+    """Upsert one artifact. Its identity (and so what it replaces) is derived by its kind.
+
+    ``base`` is the ``updatedAt`` the caller last saw for this identity. Supplying it is what lets the
+    response distinguish "your write created this" from "your write replaced a value written by another
+    session" — see :func:`_conflict_for`. Omitting it is legal, and over an existing gate decision it is
+    itself reported as a conflict.
+    """
     job, owner = _artifact_target(job_id, request)
     artifacts = store.artifacts
     if artifacts is None:
         raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    # An accepted generated element's two keys are minted HERE, server-side: a client-supplied digest is not
+    # a digest, a client-supplied identifier is not an identity, and `published` must not be settable by
+    # including a field on an acceptance (publishing is a separate, explicit, later opt-in).
+    if kind == ACCEPTED_GENCDE:
+        with _writable_run():
+            try:
+                payload = accept_gencde(payload, owner_subject=owner)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
     with _writable_run():
+        # Read what is there BEFORE replacing it: after the upsert the prior value is gone, and with it any
+        # way to tell the reviewer that theirs was not the version they were looking at.
+        conflict = _conflict_for(artifacts, owner=owner, job_id=job_id, kind=kind, payload=payload, base=base)
         stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload, pinned=_is_pinned(job))
-    return {"kind": stored.kind, "itemKey": stored.item_key, "updatedAt": stored.updated_at}
+    return {
+        "kind": stored.kind,
+        "itemKey": stored.item_key,
+        "updatedAt": stored.updated_at,
+        "conflict": conflict,
+    }
 
 
 @app.delete("/api/harmonize/jobs/{job_id}/artifacts/{kind}/{item_key:path}", status_code=204)
@@ -874,6 +1199,31 @@ async def composite_extract(job_id: str, request: Request, file: Annotated[Uploa
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
 
+    from backend.composite import resolve_source
+
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Document too large (20 MB cap)")
+    try:
+        source = resolve_source(upload=data, filename=file.filename or "uploaded document")
+    except (ValueError, ImportError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"text": source.text, "provenance": source.provenance, "sha256": source.sha256, "nChars": len(source.text)}
+
+
+@app.post("/api/harmonize/score/extract")
+async def score_extract(file: Annotated[UploadFile, File()]) -> dict[str, Any]:
+    """Extract a score's definition text from an uploaded PDF or Word document — with NO run required.
+
+    Deliberately job-INDEPENDENT, unlike its sibling above. Setup needs this BEFORE a run exists: the whole
+    point of the extraction step is the zero-cost review-before-you-spend path (a publisher PDF may be an
+    access-check interstitial, and its component table may not survive extraction at all), and at Setup
+    there is no run id to scope it to. Requiring one would force a user to start a run in order to find out
+    whether the document they have can define the score they want to scope it by.
+
+    $0: no LLM call, no provider client. Authenticated — it reads a document the caller uploaded, which is
+    not a demo surface, so a guest gets the auth-required signal rather than a generic error.
+    """
     from backend.composite import resolve_source
 
     data = await file.read()

@@ -185,12 +185,18 @@ class ArtifactStore:
             schema_version=spec.version,
         )
 
-    def get_all(self, *, owner: str | None, job_id: str) -> dict[str, Any]:
+    def get_all(self, *, owner: str | None, job_id: str, include_private: bool = False) -> dict[str, Any]:
         """Every artifact this owner holds for this run, grouped by kind, in one query.
 
         Singleton kinds map to their payload (or absent); keyed kinds map to a list. Unknown kinds found in
         the table are skipped rather than raising — a row written by a newer version of the app must not
         break an older reader.
+
+        ``include_private`` is the OPT-IN for fields a stored row holds but no reader is served by default:
+        today, an accepted GenCDE's concept digest while ``published`` is false. Redaction lives here, at the
+        one read path every caller goes through, because "remember to redact at each new read site" is
+        precisely the class of rule this module was built to stop relying on. A future publish path passes
+        ``include_private=True`` deliberately; nothing else has to know the rule exists.
         """
         grouped: dict[str, Any] = {}
         if not owner:
@@ -204,7 +210,24 @@ class ArtifactStore:
                 grouped[row.kind] = payload
             else:
                 grouped.setdefault(row.kind, []).append(payload)
+        if not include_private:
+            from backend.artifact_kinds import redact_unpublished
+
+            grouped = redact_unpublished(grouped)
         return grouped
+
+    def item_key_for(self, *, kind: str, payload: dict[str, Any]) -> str:
+        """The identity this payload would be stored under. Lets a write path look up what it will replace."""
+        return self._registry.get(kind).key_for(payload)
+
+    def get_one(self, *, owner: str, job_id: str, kind: str, item_key: str) -> Artifact | None:
+        """The stored artifact at one identity, unmigrated and unredacted — for a WRITE path, not a reader.
+
+        Deliberately returns the row rather than a payload: the caller needs ``updated_at``, which is what
+        makes "did I just replace something I had not seen" answerable at all.
+        """
+        self._registry.get(kind)  # reject unknown kinds here too, so a typo surfaces on the write path
+        return self._db.get_artifact(owner_subject=owner, job_id=job_id, kind=kind, item_key=item_key)
 
     def delete(self, *, owner: str, job_id: str, kind: str, item_key: str = _SINGLETON_KEY) -> bool:
         self._registry.get(kind)  # reject unknown kinds even on delete, so typos surface

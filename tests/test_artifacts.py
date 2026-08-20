@@ -13,7 +13,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.app as app_module
-from backend.artifact_kinds import ANALYSIS_IDEAS, COMPOSITE, VERDICT
+from backend.artifact_kinds import (
+    ANALYSIS_IDEAS,
+    COMPOSITE,
+    COMPOSITE_SWAP,
+    GATE1_GROUP_SCOPE,
+    GATE1_REGROUP,
+    GATE2_CANDIDATE_PICK,
+    GATE2_RELATION,
+    GATE3_SPEC_EDIT,
+    GATE4_EXPORT_SELECTION,
+    GATE_DECISION_KINDS,
+    VERDICT,
+    content_key,
+    derive_staleness,
+    option_set_key,
+)
 from backend.artifacts import ArtifactKind, ArtifactRegistry, ArtifactStore, ReadOnlyRunError, UnknownArtifactKindError
 from backend.db import JobDB, _verdicts_from_legacy, _verdicts_to_legacy
 from backend.jobs import LOCAL_PRINCIPAL, JobStore
@@ -544,3 +559,434 @@ def test_the_result_endpoint_does_not_hand_one_user_anothers_verdicts(tmp_path, 
         assert app_module.store.get("j1").decisions["r1"]["decision"] == "reject"  # mirror is polluted
         decisions = c.get("/api/harmonize/result/j1").json()["decisions"]  # read as the local principal
     assert decisions == {}, "the result endpoint leaked another user's verdict"
+
+
+# --- gate decisions: identity, the option space, and derived staleness (08-11) -----------------
+#
+# Seven gates multiply the surface the artifact table was built to fix, so the granularity rule is
+# load-bearing here rather than stylistic: a decision keys on the THING DECIDED, never on the gate, or two
+# tabs interleave a read-modify-write of one gate blob and lose one another's work.
+
+
+def _pick(group_id="g1", chosen="CDE:1", alternatives=("CDE:1", "CDE:2"), **extra):
+    return {
+        "groupId": group_id,
+        "chosen": chosen,
+        "alternatives": list(alternatives),
+        "optionSetKey": option_set_key(alternatives),
+        **extra,
+    }
+
+
+def test_a_regroup_keys_on_the_variable_moved_not_on_the_gate(artifacts):
+    """Two variables moved in two tabs must be two INDEPENDENT rows. Keyed per gate they would be one
+    blob, and the second tab's write would drop the first tab's move."""
+    for var in ("UKBB:age", "AoU:age_at_visit"):
+        artifacts.put(
+            owner=USER_A,
+            job_id="run-1",
+            kind=GATE1_REGROUP,
+            payload={
+                "memberId": var,
+                "chosen": "g2",
+                "alternatives": ["g1", "g2"],
+                "optionSetKey": option_set_key(["g1", "g2"]),
+            },
+        )
+    stored = artifacts.get_all(owner=USER_A, job_id="run-1")[GATE1_REGROUP]
+    assert sorted(d["memberId"] for d in stored) == ["AoU:age_at_visit", "UKBB:age"]
+
+
+def test_a_candidate_pick_carries_its_option_space(artifacts):
+    """R13 is only checkable if the alternatives are addressable from the decision record itself."""
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick())
+    stored = artifacts.get_all(owner=USER_A, job_id="run-1")[GATE2_CANDIDATE_PICK][0]
+    assert stored["chosen"] == "CDE:1"
+    assert stored["alternatives"] == ["CDE:1", "CDE:2"]
+    assert stored["optionSetKey"] == option_set_key(["CDE:2", "CDE:1"])  # order-independent
+
+
+def test_a_decision_payload_with_no_option_set_key_is_refused_and_the_field_is_named(artifacts):
+    """A record whose staleness can never be derived is worse than a rejected write."""
+    bad = {"groupId": "g1", "chosen": "CDE:1", "alternatives": ["CDE:1"]}
+    with pytest.raises(ValueError, match="optionSetKey"):
+        artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=bad)
+    assert artifacts.get_all(owner=USER_A, job_id="run-1") == {}
+
+
+def _write_pair(artifacts, *, chosen="CDE:1", alternatives=("CDE:1", "CDE:2")):
+    """An upstream Gate 2 pick plus a Gate 3 spec edit that records the upstream content key it saw."""
+    upstream = _pick(chosen=chosen, alternatives=alternatives)
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=upstream)
+    downstream = {
+        "sourceVariable": "UKBB:age",
+        "chosen": "spec-a",
+        "alternatives": ["spec-a", "spec-b"],
+        "optionSetKey": option_set_key(["spec-a", "spec-b"]),
+        "upstream": {
+            "kind": GATE2_CANDIDATE_PICK,
+            "itemKey": "g1",
+            "contentKey": content_key(upstream),
+        },
+    }
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE3_SPEC_EDIT, payload=downstream)
+
+
+def test_a_downstream_decision_reads_stale_when_its_upstream_changed(artifacts):
+    _write_pair(artifacts)
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+    # The reviewer corrects the upstream pick: same option set, different chosen candidate.
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick(chosen="CDE:2"))
+    stale = derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1"))
+    assert [(s["kind"], s["itemKey"]) for s in stale] == [(GATE3_SPEC_EDIT, "UKBB:age")]
+
+
+def test_a_downstream_decision_reads_stale_when_the_option_set_itself_changed(artifacts):
+    """The other half of "one field serves both": the alternatives moved, not just the choice."""
+    _write_pair(artifacts)
+    artifacts.put(
+        owner=USER_A,
+        job_id="run-1",
+        kind=GATE2_CANDIDATE_PICK,
+        payload=_pick(chosen="CDE:1", alternatives=("CDE:1", "CDE:2", "CDE:3")),
+    )
+    stale = derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1"))
+    assert [s["itemKey"] for s in stale] == ["UKBB:age"]
+
+
+def test_a_no_op_re_save_of_an_identical_upstream_marks_nothing_stale(artifacts):
+    """A timestamp rule would fail here: `upsert_artifact` moves `updated_at` on EVERY write, including a
+    re-save of the same candidate, so specs would go stale because the reviewer clicked save twice."""
+    _write_pair(artifacts)
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick())
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+
+def test_a_correction_is_reported_once_however_often_it_is_read(artifacts):
+    """A content key is a comparison, not a counter — two reads cannot double-apply one correction."""
+    _write_pair(artifacts)
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick(chosen="CDE:2"))
+    grouped = artifacts.get_all(owner=USER_A, job_id="run-1")
+    first, second = derive_staleness(grouped), derive_staleness(grouped)
+    assert len(first) == 1 and first == second
+
+
+def test_a_run_with_no_downstream_decisions_derives_no_staleness(artifacts):
+    """R13's cheap case: a finished run with nothing downstream re-decides with no regeneration step."""
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick())
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick(chosen="CDE:2"))
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+
+def test_the_first_gate_and_the_last_gate_behave_like_any_other(artifacts):
+    """A correction at an edge is not a special case: the first gate has no upstream to compare against,
+    and the last gate is compared exactly like the middle one."""
+    scope = {
+        "groupId": "g1",
+        "chosen": "keep",
+        "alternatives": ["keep", "drop"],
+        "optionSetKey": option_set_key(["keep", "drop"]),
+    }
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE1_GROUP_SCOPE, payload=scope)
+    export = {
+        "recordId": "r1",
+        "chosen": "include",
+        "alternatives": ["include", "exclude"],
+        "optionSetKey": option_set_key(["include", "exclude"]),
+        "upstream": {"kind": GATE1_GROUP_SCOPE, "itemKey": "g1", "contentKey": content_key(scope)},
+    }
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE4_EXPORT_SELECTION, payload=export)
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE1_GROUP_SCOPE, payload={**scope, "chosen": "drop"})
+    stale = derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1"))
+    assert [(s["kind"], s["itemKey"]) for s in stale] == [(GATE4_EXPORT_SELECTION, "r1")]
+
+
+def test_a_missing_upstream_row_is_not_reported_as_stale(artifacts):
+    """Absence is not evidence of change: the upstream decision may simply have been cleared, and claiming
+    staleness we cannot see would train the reviewer to ignore the notice."""
+    _write_pair(artifacts)
+    artifacts.delete(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, item_key="g1")
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+
+def test_every_gate_decision_kind_is_registered_with_an_identity(artifacts):
+    """Seven gates, seven kinds, no singleton among them: a singleton IS the per-gate blob."""
+    from backend.artifacts import registry as global_registry
+
+    assert len(GATE_DECISION_KINDS) == 7
+    for name in GATE_DECISION_KINDS:
+        assert not global_registry.get(name).singleton, f"{name} must key on the thing decided"
+
+
+def test_the_relation_and_swap_kinds_key_on_the_edge_they_decide(artifacts):
+    """A relation is per (group, target) and a component swap is per (score, component) — keyed per gate,
+    a second relation on the same group would silently replace the first."""
+    for target in ("CDE:9", "CDE:10"):
+        artifacts.put(
+            owner=USER_A,
+            job_id="run-1",
+            kind=GATE2_RELATION,
+            payload={
+                "groupId": "g1",
+                "targetId": target,
+                "chosen": "narrower",
+                "alternatives": ["exact", "narrower", "broader"],
+                "optionSetKey": option_set_key(["exact", "narrower", "broader"]),
+            },
+        )
+    artifacts.put(
+        owner=USER_A,
+        job_id="run-1",
+        kind=COMPOSITE_SWAP,
+        payload={
+            "scoreName": "Fried",
+            "componentName": "grip strength",
+            "chosen": "c-7",
+            "alternatives": ["c-7", "c-8"],
+            "optionSetKey": option_set_key(["c-7", "c-8"]),
+        },
+    )
+    grouped = artifacts.get_all(owner=USER_A, job_id="run-1")
+    assert len(grouped[GATE2_RELATION]) == 2
+    assert len(grouped[COMPOSITE_SWAP]) == 1
+
+
+def test_the_artifacts_read_derives_staleness_on_the_wire(tmp_path, monkeypatch):
+    """The screen plans read this: a correction at gate N has to be VISIBLE at gate N+1 after a reload,
+    which is the half the shipped workbench got wrong (its flag lived in component state)."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        upstream = _pick()
+        assert c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=upstream).status_code == 200
+        downstream = {
+            "sourceVariable": "UKBB:age",
+            "chosen": "spec-a",
+            "alternatives": ["spec-a"],
+            "optionSetKey": option_set_key(["spec-a"]),
+            "upstream": {
+                "kind": GATE2_CANDIDATE_PICK,
+                "itemKey": "g1",
+                "contentKey": content_key(upstream),
+            },
+        }
+        assert c.put("/api/harmonize/jobs/j1/artifacts/gate3_spec_edit", json=downstream).status_code == 200
+        assert c.get("/api/harmonize/jobs/j1/artifacts").json()["stale"] == []
+
+        # The reviewer goes back to Gate 2 and picks differently.
+        c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_pick(chosen="CDE:2"))
+        stale = c.get("/api/harmonize/jobs/j1/artifacts").json()["stale"]
+    assert [(s["kind"], s["itemKey"]) for s in stale] == [(GATE3_SPEC_EDIT, "UKBB:age")]
+
+
+# --- the guest walk, and what a pinned run refuses (08-11) ------------------------------------
+
+
+def _clerk_on(monkeypatch):
+    from backend import auth
+
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.dev")
+    monkeypatch.delenv("DDHARMON_ALLOWED_EMAIL_DOMAINS", raising=False)
+    monkeypatch.setattr(auth, "_decode_claims", lambda token: {"email": token, "sub": token})
+
+
+#: Every path a guest must reach to walk the six gates on the demo. Enumerated in the TEST as well as
+#: beside the prefix list, because a path added to one and not the other is the failure this pins.
+_GUEST_GATE_READS = (
+    "/api/harmonize/result/{id}",
+    "/api/harmonize/checkpoint/{id}",
+    "/api/harmonize/jobs/{id}/artifacts",
+)
+
+
+def test_a_guest_walks_every_gate_read_path_on_the_demo(tmp_path, monkeypatch):
+    """R9: a guest walks every gate on the demo without an account. A path a gate screen needs that is not
+    demo-scoped breaks the walk AT that gate, which is why the set is asserted rather than sampled."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        _clerk_on(monkeypatch)  # after the run exists: a guest sends no token
+        for template in _GUEST_GATE_READS:
+            r = c.get(template.format(id="demo-1"))
+            assert r.status_code == 200, f"{template} broke the guest walk: {r.status_code} {r.text[:120]}"
+
+
+def test_a_guest_reaching_a_real_run_by_the_same_path_is_still_gated(tmp_path, monkeypatch):
+    """The prefixes are scoped by the store's own demo flag, so widening them for the demo must not expose
+    one real run through a shared route."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("real-1", owner="someone")
+        _clerk_on(monkeypatch)
+        for template in _GUEST_GATE_READS:
+            r = c.get(template.format(id="real-1"))
+            assert r.status_code == 401, f"{template} exposed a real run to a guest ({r.status_code})"
+
+
+def test_a_guest_cannot_write_a_gate_decision_even_on_the_demo(tmp_path, monkeypatch):
+    """The read widening is READ-only: the write half of the same sub-resource stays gated, and the pinned
+    check refuses it a second time behind that."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        _clerk_on(monkeypatch)
+        r = c.put(
+            "/api/harmonize/jobs/demo-1/artifacts/gate1_group_scope",
+            json={
+                "groupId": "g1",
+                "chosen": "keep",
+                "alternatives": ["keep", "drop"],
+                "optionSetKey": option_set_key(["keep", "drop"]),
+            },
+        )
+    assert r.status_code == 401
+
+
+def test_pinned_run_rejects_writes(tmp_path, monkeypatch):
+    """T-08-60. Every user sees the one canonical demo row, so a write onto it would put one person's gate
+    decisions in front of everybody else. Rejected server-side, and nothing reaches the store."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        decision = {
+            "groupId": "g1",
+            "chosen": "keep",
+            "alternatives": ["keep", "drop"],
+            "optionSetKey": option_set_key(["keep", "drop"]),
+        }
+        for kind in GATE_DECISION_KINDS:
+            payload = {
+                **decision,
+                "memberId": "UKBB:age",
+                "targetId": "CDE:9",
+                "sourceVariable": "UKBB:age",
+                "recordId": "r1",
+                "scoreName": "Fried",
+                "componentName": "grip",
+            }
+            r = c.put(f"/api/harmonize/jobs/demo-1/artifacts/{kind}", json=payload)
+            assert r.status_code == 403, f"{kind} was writable on the shared demo"
+            assert "clone" in r.json()["detail"].lower()
+        assert app_module.store.artifacts.get_all(owner=LOCAL_PRINCIPAL, job_id="demo-1") == {}
+
+
+def test_a_foreign_non_demo_run_is_404_not_403(tmp_path, monkeypatch):
+    """T-08-62: 403 would confirm the run exists. Asserted on the artifact route because that is the one
+    every gate decision rides through."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("theirs", owner="somebody_else")
+        _clerk_on(monkeypatch)
+        r = c.put(
+            "/api/harmonize/jobs/theirs/artifacts/gate1_group_scope",
+            json={
+                "groupId": "g1",
+                "chosen": "keep",
+                "alternatives": ["keep"],
+                "optionSetKey": option_set_key(["keep"]),
+            },
+            headers={"Authorization": "Bearer me@example.com"},
+        )
+    assert r.status_code == 404
+
+
+def test_the_export_route_is_not_on_the_guest_surface(tmp_path, monkeypatch):
+    """Gate 4 renders the export SET from the records plus the decisions, both of which a guest already
+    reads. The export route resolves no subject of its own, so making it public would rest the whole
+    cross-user boundary on one prefix check - downloading the artifact is what a guest signs in for."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        _clerk_on(monkeypatch)
+        assert c.get("/api/harmonize/jobs/demo-1/export").status_code == 401
+
+
+# --- Task 3: last-write-wins WITH a notice, and a re-pick that spends nothing (08-11) ----------
+
+
+def _decision_payload(chosen="CDE:1", alternatives=("CDE:1", "CDE:2")):
+    return {
+        "groupId": "g1",
+        "chosen": chosen,
+        "alternatives": list(alternatives),
+        "optionSetKey": option_set_key(alternatives),
+    }
+
+
+def test_concurrent_gate_writes(tmp_path, monkeypatch):
+    """T-08-63's residual race. Per-thing identity removes the read-modify-write, but two sessions writing
+    the SAME decision still collide - and last-write-wins is only acceptable if the loser is TOLD. A silent
+    overwrite is prohibited, so the response has to carry enough for the client to say so."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        # Tab A writes first and learns the version it now holds.
+        first = c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        assert first.status_code == 200, first.text
+        base_a = first.json()["updatedAt"]
+        assert first.json()["conflict"] is None, "a first write must be quiet"
+
+        # Tab B, which loaded the page earlier, writes against a version it never saw.
+        second = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(chosen="CDE:2"),
+            params={"base": base_a},
+        )
+        assert second.status_code == 200
+        assert second.json()["conflict"] is None, "tab B held the current version, so this is not a conflict"
+        stale_base = base_a
+
+        # Tab A now writes again, still holding its ORIGINAL version - it never saw tab B's change.
+        third = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(chosen="CDE:1"),
+            params={"base": stale_base},
+        )
+        assert third.status_code == 200
+        conflict = third.json()["conflict"]
+        assert conflict is not None, "tab A silently replaced a value written by another session"
+        assert conflict["replacedUpdatedAt"] == second.json()["updatedAt"]
+        assert "reload" in conflict["message"].lower()
+
+        stored = c.get("/api/harmonize/jobs/j1/artifacts").json()["artifacts"][GATE2_CANDIDATE_PICK]
+    assert [d["chosen"] for d in stored] == ["CDE:1"], "last write wins - the resolution, not the notice"
+
+
+def test_a_re_save_the_caller_itself_made_is_quiet(tmp_path, monkeypatch):
+    """The notice must not become noise: a reviewer saving the same decision twice has replaced nothing they
+    had not seen, and a notice they learn to dismiss is worse than none."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        first = c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        again = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(),
+            params={"base": first.json()["updatedAt"]},
+        )
+    assert again.json()["conflict"] is None
+
+
+def test_a_blind_write_over_an_existing_decision_is_reported(tmp_path, monkeypatch):
+    """A client that sends no base cannot know what it replaced, and that IS the conflict - reporting it is
+    what makes the client send one."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        blind = c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload(chosen="CDE:2"))
+    assert blind.json()["conflict"] is not None
+
+
+def test_a_non_decision_kind_is_never_given_a_conflict_notice(tmp_path, monkeypatch):
+    """The shipped writers (verdicts, composites) do not carry a version and were never asked to. Reporting
+    a conflict on every one of their re-saves would be pure noise."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        body = {"definition": {"name": "Fried"}, "verdict": "full"}
+        c.put("/api/harmonize/jobs/j1/artifacts/composite", json=body)
+        again = c.put("/api/harmonize/jobs/j1/artifacts/composite", json=body)
+    assert again.json()["conflict"] is None

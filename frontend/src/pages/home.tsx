@@ -614,7 +614,9 @@ function CostCard({ breakdown, time, meta }: { breakdown: CostBreakdown; time: T
         {breakdown.lines.length > 0 && (
           <div className="space-y-1 border-t border-rule-on-raised pt-2 text-xs">
             {breakdown.lines.map((l) => (
-              <div key={l.label} className="flex items-center justify-between">
+              // `data-cost-line` carries the line's stable id so a test can assert THE COHERENCE LINE
+              // rather than a row position. The label is free to be rewritten; the id is not.
+              <div key={l.id} data-cost-line={l.id} className="flex items-center justify-between">
                 <span className="text-on-raised">
                   {l.label}
                   {l.note && <span className="ml-1 text-on-raised-muted">· {l.note}</span>}

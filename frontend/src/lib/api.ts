@@ -2,6 +2,8 @@
 // With VITE_STATIC=1 the client reads bundled fixtures under <base>/static-data instead of /api,
 // so the SPA runs fully static (sample runs + exports, no backend, no key) for a preview deploy.
 import type {
+  ArtifactListResponse,
+  ArtifactWriteResponse,
   CheckpointState,
   CompositeSpec,
   DemosResponse,
@@ -283,6 +285,64 @@ export async function listJobs(): Promise<JobSummary[]> {
 export async function deleteJob(jobId: string): Promise<void> {
   if (IS_STATIC) return;
   await fetch(`${BASE}/jobs/${jobId}`, { method: "DELETE", headers: await authed() });
+}
+
+// --- user artifacts (the generic registered-kind route) -----------------------------------------------
+// One surface for every kind of user-generated work attached to a run, mirroring the backend: a new
+// persisted feature registers its kind in `backend/artifact_kinds.py` and is reachable here immediately.
+// The gate-decision layer (`hooks/use-gate-decisions.ts`) is the only caller today, and it deliberately
+// does NOT get an endpoint of its own per gate — six bespoke write paths would be six new unauthenticated
+// surfaces to police instead of one.
+
+/**
+ * Everything the caller has stored against this run, grouped by kind, plus which of it is stale.
+ *
+ * `stale` is DERIVED server-side on every read, never a stored field. A pinned demo resolves to `{}` by
+ * design — a shared row holds nobody's work — so a demo's decisions are read from the browser sandbox.
+ */
+export async function listArtifacts(jobId: string): Promise<ArtifactListResponse> {
+  if (IS_STATIC) return { kinds: [], artifacts: {}, stale: [] };
+  return json(await fetch(`${BASE}/jobs/${jobId}/artifacts`, { headers: await authed() }));
+}
+
+/**
+ * Upsert one artifact. Its identity — and so what it replaces — is derived server-side from its kind.
+ *
+ * `base` is the `updatedAt` this client last saw for that identity. Supplying it is what lets the response
+ * distinguish "your write created this" from "your write replaced a value written by another session";
+ * omitting it over an existing gate decision is itself reported as a conflict, because a client that
+ * cannot say what it replaced has replaced something blind.
+ */
+export async function putArtifact(
+  jobId: string,
+  kind: string,
+  payload: Record<string, unknown>,
+  base?: number,
+): Promise<ArtifactWriteResponse> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to save decisions.");
+  const query = base === undefined ? "" : `?base=${encodeURIComponent(base)}`;
+  return json(
+    await fetch(`${BASE}/jobs/${jobId}/artifacts/${encodeURIComponent(kind)}${query}`, {
+      method: "PUT",
+      headers: await authed({ "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+/** Remove one artifact — the "I have no decision here" state, distinct from a decision of "none of these". */
+export async function deleteArtifact(jobId: string, kind: string, itemKey: string): Promise<void> {
+  if (IS_STATIC) return;
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to save decisions.");
+  const res = await fetch(
+    `${BASE}/jobs/${jobId}/artifacts/${encodeURIComponent(kind)}/${encodeURIComponent(itemKey)}`,
+    { method: "DELETE", headers: await authed() },
+  );
+  if (!res.ok && res.status !== 204) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error((detail as { detail?: string }).detail || `${res.status} ${res.statusText}`);
+  }
 }
 
 export async function submitVerdict(

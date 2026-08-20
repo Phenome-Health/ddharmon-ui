@@ -804,3 +804,58 @@ def test_every_standalone_route_is_one_of_the_pages_gated_here() -> None:
         f"{FRONTEND_PUBLIC.relative_to(REPO)} backs them — so they are exempt from those three and "
         f"gated by nothing here either:\n  " + "\n  ".join(missing)
     )
+
+
+# --- the gate-decision layer: two tables and two keys that must agree ACROSS languages -----------------
+# The client computes an item key and a content key itself: the item key decides which row a write
+# REPLACES, and the content key is what the server compares to derive staleness. If either drifts, nothing
+# errors — a write silently creates a second row for one decision, or every downstream decision reports
+# stale forever. Neither failure is visible from either side alone, which is why the agreement is pinned
+# here rather than trusted to two matching comments.
+
+GATE_DECISIONS_TS = REPO / "frontend" / "src" / "lib" / "gate-decisions.ts"
+
+
+def _ts_identity_table() -> dict[str, list[str]]:
+    """`DECISION_IDENTITY_FIELDS` as the frontend declares it."""
+    src = GATE_DECISIONS_TS.read_text()
+    m = re.search(r"DECISION_IDENTITY_FIELDS:[^=]*=\s*\{(.*?)\n\};", src, re.S)
+    assert m, "could not find DECISION_IDENTITY_FIELDS in the frontend's gate-decision module"
+    return {
+        kind: re.findall(r'"([A-Za-z]+)"', fields) for kind, fields in re.findall(r"(\w+):\s*\[([^\]]*)\]", m.group(1))
+    }
+
+
+def test_the_gate_decision_identity_table_matches_the_frontend() -> None:
+    """Both sides key a decision on the SAME fields, in the same order."""
+    from backend.artifact_kinds import _DECISION_IDENTITY_FIELDS
+
+    if not GATE_DECISIONS_TS.exists():  # pragma: no cover
+        pytest.skip(f"frontend gate-decision module not found at {GATE_DECISIONS_TS}")
+    backend_table = {kind: list(fields) for kind, fields in _DECISION_IDENTITY_FIELDS.items()}
+    assert _ts_identity_table() == backend_table, (
+        "the frontend's DECISION_IDENTITY_FIELDS and the backend's _DECISION_IDENTITY_FIELDS disagree — "
+        "a client computing a different item key writes a SECOND row for one decision instead of "
+        "replacing it, and two tabs then lose each other's work with no error anywhere"
+    )
+
+
+def test_the_gate_decision_content_keys_are_pinned_on_both_sides() -> None:
+    """The two literals the frontend spec asserts are the values these functions actually produce.
+
+    The frontend hand-writes sha256 (the platform's digest is async, and staleness must be synchronous to
+    stay derived rather than stored), so "the same algorithm" is a claim, not a guarantee. These two
+    literals are asserted in `frontend/tests/e2e/gate-decisions.spec.ts` against the TypeScript
+    implementation and here against the Python one, so a change to either canonicalization fails on the
+    other side.
+    """
+    from backend.artifact_kinds import content_key, option_set_key
+
+    assert option_set_key(["CDE:2", "CDE:1"]) == "a9727a7585616812"
+    assert content_key({"chosen": "CDE:1", "alternatives": ["CDE:1", "CDE:2"]}) == "c5bb88b56d7e6094"
+    spec = (REPO / "frontend" / "tests" / "e2e" / "gate-decisions.spec.ts").read_text()
+    for literal in ("a9727a7585616812", "c5bb88b56d7e6094"):
+        assert literal in spec, (
+            f"{literal} is no longer pinned in the frontend spec — the cross-language check is only a "
+            f"check while BOTH sides assert the same literal"
+        )

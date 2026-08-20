@@ -409,6 +409,40 @@ export interface HarmonizationResult {
 }
 
 /**
+ * One stale decision, as `GET /jobs/{id}/artifacts` derives it — a COMPARISON on read, never a stored flag.
+ *
+ * A downstream decision records the content key of the upstream option space it was decided against;
+ * staleness is that key differing from the upstream's key now. An absent upstream row is never reported:
+ * the reviewer may simply have cleared it, and absence is not evidence of change.
+ */
+export interface ArtifactStaleRef {
+  kind: string;
+  itemKey: string;
+  upstreamKind: string;
+  upstreamItemKey: string;
+  reason: string;
+}
+
+/** What `GET /jobs/{id}/artifacts` returns: the registered kinds, this caller's rows, and what is stale. */
+export interface ArtifactListResponse {
+  kinds: string[];
+  artifacts: Record<string, unknown> | null;
+  stale: ArtifactStaleRef[];
+}
+
+/**
+ * What one artifact upsert returns. `conflict` is the two-tab notice (UI-SPEC 8.4) and is non-null only
+ * when the write REPLACED a value this client had not seen — last-write-wins is the resolution, the notice
+ * is the requirement, and a silent overwrite of another session's decision is prohibited.
+ */
+export interface ArtifactWriteResponse {
+  kind: string;
+  itemKey: string;
+  updatedAt: number;
+  conflict: { replacedUpdatedAt: number; message: string } | null;
+}
+
+/**
  * The caller's OWN verdicts on a run, nested by record — the wire shape the backend rebuilds from the
  * per-axis artifact rows (`_verdicts_to_legacy`). Three axes share one entry: the concept→CDE match verdict
  * sits at the top level, per-source-variable transform verdicts hang off `transforms`, and the GenCDE
@@ -739,125 +773,32 @@ export const ROLE_HELP: Record<ColumnRole, string> = {
     "An existing ontology/standard code for the variable, if already annotated (e.g. LOINC, SNOMED, a CDE tinyId).",
 };
 
-// PRE-run cost ESTIMATE (the one number that can't be exact — tokens aren't known until the run). Its price
-// basis is real: the same Claude Sonnet rates ddharmon's cost accounting prices against (LiteLLM model→price
-// map — $3/1M input, $15/1M output), calibrated to an observed run (~$1.45 batch over ~7,451 fields ⇒
-// ~$0.0002/field). Cost is ~linear in fields; split+assign (≈77%) grow with cohort count, so a small
-// cross-cohort multiplier is applied. Batch ≈ 50% of sync; preview uses no LLM. The POST-run ACTUAL cost
-// (result.cost, from captured tokens) supersedes this — it's the real spend, not an estimate.
-// Calibrated to an observed FULL run (all stages: ideal+split+assign+gencde+specs): 769 vars × 5 cohorts,
-// sync = $5.38 realized (Sonnet $3/$15; ~1013 in + 264 out tokens/field across stages). Back out the ×2 sync
-// and ×1.32 cohort factors → ~$0.0026/field for a full BATCH run. (Was 0.0002 — ~13× too low: it counted
-// only a small assign prompt and missed split/gencde/specs + the large CDE-candidate prompt context.)
-// Rough: the LLM stages really scale with clusters/records/novels, not linearly with fields, and the `full`
-// CDE set costs more than the `endorsed` set this was calibrated on. The POST-run result.cost is truth.
-const PER_FIELD_BATCH_USD = 0.0026;
-export interface CostEstimate {
-  low: number;
-  mid: number;
-  high: number;
-  free: boolean;
-}
-export function estimateRunCost(totalFields: number, nCohorts: number, mode: RunMode): CostEstimate {
-  if (mode === "preview" || totalFields <= 0) return { low: 0, mid: 0, high: 0, free: true };
-  const modeFactor = mode === "sync" ? 2 : 1; // batch is ~half of sync
-  const cohortFactor = 1 + 0.08 * Math.max(0, nCohorts - 1); // cross-cohort assign work grows with cohorts
-  const mid = totalFields * PER_FIELD_BATCH_USD * modeFactor * cohortFactor;
-  return { low: mid * 0.6, mid, high: mid * 1.6, free: false };
-}
-export function formatUsd(x: number): string {
-  if (x === 0) return "$0";
-  if (x < 0.01) return "<$0.01";
-  if (x < 1) return `$${x.toFixed(2)}`;
-  return `$${x.toFixed(x < 10 ? 2 : 0)}`;
-}
-
-// Per-stage shares of the full LLM total, from the observed run above (fractions of $5.38): gen-ideal ≈6%,
-// split+assign ≈44%, GenCDE synthesis of novel concepts ≈28%, transform spec-gen ≈22% (embedding/clustering
-// are local → $0). Sum ≈ 1.0 with all stages on. Used for the itemized estimate.
-const STAGE_SHARES = { ideal: 0.06, splitAssign: 0.44, gencde: 0.28, specgen: 0.22 };
-// "Analysis ideas" is ONE LLM pass over the concept digest (not per-field), so it's a small flat add on top
-// of the run — independent of corpus size and of batch/sync (it always runs synchronously).
-const ANALYSIS_IDEAS_USD = 0.05;
-export interface CostLine {
-  label: string;
-  cost: number;
-  note?: string;
-}
-export interface CostBreakdown {
-  free: boolean;
-  lines: CostLine[];
-  total: CostEstimate;
-  batchSavings: number; // vs running the same in sync mode (0 unless mode is batch)
-}
-export function estimateRunCostBreakdown(
-  totalFields: number,
-  nCohorts: number,
-  mode: RunMode,
-  genSpecs: boolean,
-  suggestIdeas = false,
-): CostBreakdown {
-  if (mode === "preview" || totalFields <= 0) {
-    return { free: true, lines: [], total: { low: 0, mid: 0, high: 0, free: true }, batchSavings: 0 };
-  }
-  const cohortFactor = 1 + 0.08 * Math.max(0, nCohorts - 1);
-  const baseBatch = totalFields * PER_FIELD_BATCH_USD * cohortFactor; // full batch run, all stages
-  const modeFactor = mode === "sync" ? 2 : 1; // batch ≈ ½ sync
-  const line = (share: number) => baseBatch * share * modeFactor;
-  const lines: CostLine[] = [
-    { label: "Embedding & clustering", cost: 0, note: "local — no API" },
-    { label: "Generate ideal CDEs", cost: line(STAGE_SHARES.ideal) },
-    { label: "Split + assign to CDEs", cost: line(STAGE_SHARES.splitAssign) },
-    { label: "Generate CDEs for novel concepts", cost: line(STAGE_SHARES.gencde) },
-  ];
-  if (genSpecs) lines.push({ label: "Transform spec-gen", cost: line(STAGE_SHARES.specgen) });
-  if (suggestIdeas) lines.push({ label: "Analysis ideas", cost: ANALYSIS_IDEAS_USD, note: "one LLM pass" });
-  const mid = lines.reduce((s, l) => s + l.cost, 0);
-  return {
-    free: false,
-    lines,
-    total: { low: mid * 0.6, mid, high: mid * 1.6, free: false },
-    batchSavings: mode === "batch" ? mid : 0, // sync would cost ~2×, so batch saves ≈ mid
-  };
-}
-
-// Fraction of a run's total LLM cost already committed by the time it is IN a given phase — i.e. what a
-// "keep" stop (finish the current stage, skip the rest) would still be billed. Local stages (loading/
-// embedding/clustering) are free; the LLM stages accrue in order. Cumulative through each stage, from the
-// observed run's per-stage shares (ideal 6% → split 22% → assign 22% → gencde 28% → specs 22%). Anything
-// past the current stage is avoided. Keys mirror the backend phase labels.
-const STOP_COMMITTED_BY_PHASE: Record<string, number> = {
-  loading: 0,
-  embedding: 0,
-  clustering: 0,
-  generating: 0.06, // gen-ideal done
-  splitting: 0.28, // + splitting
-  assigning: 0.5, // + assigning (split+assign done)
-  gencde: 0.78, // + GenCDE synthesis (novels)
-  specs: 1, // + transform spec-gen (last paid stage)
-  complete: 1,
-};
-
-export interface StopCostSplit {
-  committed: number; // ≈ USD already committed this run (billed even on a "keep" stop)
-  avoided: number; // ≈ USD a stop-now avoids (the skipped downstream stages)
-  total: number; // ≈ USD the full run would cost
-  hasEstimate: boolean; // false when the run carries no corpus size (older run / API caller) → show qualitative copy
-}
-
-// Price a mid-run stop for the Stop dialog: how much is already committed vs. avoided by stopping in `phase`.
-// Reads the corpus size the New-Run form persisted onto the run's config (est_fields/est_cohorts, snake_case)
-// and the run_mode. A preview run (or a run with no stored counts) yields total 0 / hasEstimate=false, so the
-// dialog falls back to qualitative wording rather than a bogus "$0".
-export function stopCostSplit(config: Record<string, unknown>, phase: string): StopCostSplit {
-  const estFields = typeof config.est_fields === "number" ? config.est_fields : 0;
-  const estCohorts = typeof config.est_cohorts === "number" ? config.est_cohorts : 0;
-  const runMode = (typeof config.run_mode === "string" ? config.run_mode : "batch") as RunMode;
-  const total = estFields > 0 ? estimateRunCost(estFields, estCohorts, runMode).mid : 0;
-  const frac = STOP_COMMITTED_BY_PHASE[phase] ?? 0.5; // unknown mid-run phase: assume ~half committed
-  const committed = total * frac;
-  return { committed, avoided: Math.max(0, total - committed), total, hasEstimate: estFields > 0 && total > 0 };
-}
+// The run COST estimator lives in `lib/estimate.ts` and is re-exported here so every existing import
+// keeps working. It moved out for one reason: R8 — "never quote a cost lower than what will be charged" —
+// is arithmetic, and arithmetic should be assertable without rendering a page. See that module for the
+// price basis, the per-gate spans (UI-SPEC 0.1) and why the coherence line is added rather than carved out
+// of the existing shares. The POST-run `result.cost` supersedes every number it produces.
+export {
+  ANALYSIS_IDEAS_USD,
+  COHERENCE_MIN_MEMBERS,
+  GATE_LEDGER_KEYS,
+  PER_FIELD_BATCH_USD,
+  STAGE_SHARES,
+  estimateRunCost,
+  estimateRunCostBreakdown,
+  formatUsd,
+  judgeEligibleGroups,
+  realizedSpendByGate,
+  stopCostSplit,
+} from "@/lib/estimate";
+export type {
+  CostBreakdown,
+  CostEstimate,
+  CostLine,
+  GateForecast,
+  RealizedSpend,
+  StopCostSplit,
+} from "@/lib/estimate";
 
 // Rough WALL-CLOCK estimate for a run — the time analog of estimateRunCost, and the SAME model used for
 // both the pre-run estimate (New Run form) and the live ETA (run view). Much rougher than cost: embedding
