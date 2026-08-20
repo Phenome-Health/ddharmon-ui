@@ -658,12 +658,57 @@ _TOKEN_BLOCK = re.compile(r"(?m)^\s*:root(?:\[[^\]]+\])?\s*\{[^}]*\}", re.S)
 _DEFAULT_THEME_BLOCK = re.compile(r'(?m)^\s*:root(?:\[data-theme="brand"\])?\s*\{([^}]*)\}', re.S)
 _DECL = re.compile(r"(--[a-zA-Z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})")
 
-# Empty, and the emptiness is the point. This recorded #0D183B — a mid-navy the mockup
-# proposed that no --brand-* primitive holds. It has since been REMOVED from the page
-# (WINDOWS id13) rather than blessed, so nothing is exempt any more. An entry here must
-# name a real, still-present divergence with its reason; the assertion below enforces that,
-# so a stale entry cannot linger and quietly widen into cover for the next one.
-PROPOSED_COLOURS: dict[str, str] = {}
+# An entry here must name a real, still-present divergence with its reason. TWO assertions
+# below keep the register honest in both directions: one drops an entry whose value has left
+# the page, the other drops an entry the brand has since ADOPTED. Neither can be satisfied by
+# leaving a stale line in place, which is what stops this dict widening into blanket cover.
+#
+# It was empty until 2026-08-20, and that emptiness was the point (the previous occupant,
+# #0D183B, was removed from the page rather than blessed — WINDOWS id13). It is populated now
+# for a specific, dated reason: phenomehealth.org republished its identity that morning and
+# the mockup was re-measured against the live site, while `index.css` still holds the July
+# sample. The page is deliberately ONE GENERATION AHEAD of the SPA — it is the design proposal
+# the SPA retheme (plan 08-12b) is judged from, so the divergence IS the artifact.
+#
+# The TEMPORARY entries below die when 08-12b re-points `--brand-*`; the second assertion
+# forces that, so they cannot survive their own reason. The `--logo-*` entries are PERMANENT
+# by design and say so.
+PROPOSED_COLOURS: dict[str, str] = {
+    # ── TEMPORARY: measured from the live site 2026-08-20; index.css adopts these in 08-12b ──
+    "#FFFFFF": "brand paper/ground. Pure white, replacing the July sample's warm #FFFFF8.",
+    "#EBEFFF": "brand palest blue — card bands and insets on light, the ink on dark.",
+    "#D5E0F6": (
+        "brand FIELD. The live site's ground by AREA (11,356px of page height); white appears "
+        "only as cards and insets inside it. An element-count reading of the same page gets "
+        "this backwards, which is how the first pass concluded the ground was white."
+    ),
+    "#000000": "brand body copy on white, replacing the July sample's #222572 indigo.",
+    "#4B4F6B": (
+        "brand slate — the quiet metadata register. Carries what the retired teal accent used "
+        "to (cohort labels, informational rules) now that the brand is one hue family, so the "
+        "distinction is by VALUE rather than by a competing hue."
+    ),
+    # ── TEMPORARY: product-owned status lifts for the dark theme ────────────────────────────
+    # The brand publishes no status palette and no dark mode, so these are derived, not
+    # sampled. They stay listed rather than being hidden in the dark block, because the page
+    # declares them among its tier-1 primitives where the default-theme walk can see them.
+    "#3FCFA5": "dark-theme `ok`. #0E7C63 is unreadable on the navy ground.",
+    "#F0C070": "dark-theme `warn` — the coherence flag, the load-bearing signal on Gate 1.",
+    "#FF6E92": "dark-theme destructive. #E21C52 does not clear AA on the navy ground.",
+    # ── PERMANENT: the brand MARK's own colours ─────────────────────────────────────────────
+    # These will never have a `--brand-*` counterpart, and that is the point. A brand mark
+    # painted from semantic UI roles gets silently restyled by an unrelated accent decision —
+    # exactly the live defect in `components/phenome-mark.tsx`, which draws the Phenome Health
+    # logo from `--accent-2-on-chrome`. The lockup owns its palette instead.
+    "#3AC2CB": "the mark's teal. PERMANENT — logo-scoped, never a UI role.",
+    "#E11E53": "the mark's crimson accent. PERMANENT — logo-scoped, never a UI role.",
+    "#253B7E": "the mark's mid-navy blade. PERMANENT — logo-scoped, never a UI role.",
+}
+
+# Values that are logo-scoped by design and must NOT be reported as brand drift even after the
+# SPA adopts the new identity. Kept separate from the reason strings so the adoption assertion
+# can tell "still pending" from "never applicable".
+PERMANENT_PROPOSED: frozenset[str] = frozenset({"#3AC2CB", "#E11E53", "#253B7E"})
 
 
 def _decomment(src: str) -> str:
@@ -752,6 +797,22 @@ def test_standalone_page_default_theme_matches_the_brand(page: Path) -> None:
             f"{page.name} declares it any more — drop the entry rather than leaving it to "
             f"cover the next divergence. Recorded reason: {reason}"
         )
+
+    # The other direction: an entry the brand has since ADOPTED is no longer a divergence, and
+    # leaving it is how this register rots into blanket cover. Without this, the eleven entries
+    # added for the 2026-08-20 rebrand would sit here forever once 08-12b re-points `--brand-*`,
+    # silently exempting those values from every future drift check. The logo-scoped values are
+    # excluded because they are never meant to become brand primitives.
+    adopted = sorted(
+        v for v in PROPOSED_COLOURS if v.upper() in brand and v.upper() not in {p.upper() for p in PERMANENT_PROPOSED}
+    )
+    assert not adopted, (
+        f"{len(adopted)} PROPOSED_COLOURS "
+        f"{'entry now matches' if len(adopted) == 1 else 'entries now match'} a `--brand-*` "
+        f"primitive in {TOKEN_DEFINITIONS.name}, so the divergence they recorded is over — "
+        f"delete them. An exemption that outlives its reason exempts the next drift too:\n  "
+        + "\n  ".join(f"{v} — {PROPOSED_COLOURS[v]}" for v in adopted)
+    )
 
     proposed = {v.upper() for v in PROPOSED_COLOURS}
     offenders = [

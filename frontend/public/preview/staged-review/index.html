@@ -112,7 +112,12 @@
    rather than sampled: the ground is the brand's #00063D, and the raised
    surfaces are brand pale washed over that ground — a brand colour over a
    brand colour, which is the documented way to make depth here. ─────────── */
-[data-theme="dark"] {
+/* Selector is `:root[data-theme="dark"]`, not a bare `[data-theme="dark"]`. The
+   content-drift gate defines a TOKEN BLOCK as a rule whose selector is exactly
+   `:root` or `:root[...]`, and a colour may be spelled out only inside one. A theme
+   block is a token block, so it must say so in its selector rather than ask the gate
+   to be loosened. Identical in effect — the attribute is set on <html>. */
+:root[data-theme="dark"] {
   color-scheme:dark;
   --page:var(--b-deep);
   --card:color-mix(in srgb, var(--b-pale) 8%, var(--b-deep));
