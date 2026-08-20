@@ -3275,3 +3275,110 @@ def test_replay_refuses_without_recorded_answers(monkeypatch, tmp_path):
     dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
     with pytest.raises(ReplayUnavailableError, match="recorded"):
         replay_leanb_result(dict_specs, cde_spec, config, replay_responses={}, provider=StubProvider())
+
+
+# --- Task 3: R13 - a re-pick among already-retrieved candidates costs nothing (08-11) ----------
+
+
+def _pick_payload(chosen="CDE:1", alternatives=("CDE:1", "CDE:2")):
+    from backend.artifact_kinds import option_set_key
+
+    return {
+        "groupId": "g1",
+        "chosen": chosen,
+        "alternatives": list(alternatives),
+        "optionSetKey": option_set_key(alternatives),
+    }
+
+
+def _finished_run(job_id="j-fin"):
+    app_module.store.create(job_id, "A finished run", {}, owner_subject=None)
+    app_module.store.update(
+        job_id, status="complete", phase="complete", result={"records": [{"id": "g1", "concept": "Grip"}]}
+    )
+    return job_id
+
+
+def test_repick_makes_no_llm_call(monkeypatch):
+    """R13. The candidates were already retrieved and are already on the wire with rank / chosen / suggested
+    markers - only the WRITE was missing, so re-selecting among them must not reach a provider.
+
+    Asserted by making client CONSTRUCTION fail, not by checking a cost of zero: a stub that called out and
+    was billed asynchronously reports zero too, and the property R13 needs is that there is no client at all.
+    """
+    import backend.engine.adapter as ad
+    import backend.engine.llm as llm_mod
+
+    def boom(*_a, **_k):
+        raise AssertionError("a provider client was constructed while re-picking a retrieved candidate")
+
+    monkeypatch.setattr(llm_mod, "build_llm_client", boom)
+    monkeypatch.setattr(ad, "_batch_stage", boom)
+    monkeypatch.setattr(ad, "run_pipeline", boom)
+
+    job_id = _finished_run("j-repick")
+    resp = client.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
+    assert resp.status_code == 200, resp.text
+    again = client.put(
+        f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick",
+        json=_pick_payload(chosen="CDE:2"),
+        params={"base": resp.json()["updatedAt"]},
+    )
+    assert again.status_code == 200
+    stored = client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["artifacts"]["gate2_candidate_pick"]
+    assert [d["chosen"] for d in stored] == ["CDE:2"]
+
+
+def test_a_repick_on_a_finished_run_leaves_it_finished_and_derives_stale_specs(monkeypatch):
+    """R13 is the CHEAP half of the return pass: re-deciding must not transition the run out of finished, and
+    buying more work is Phase 9 and must not become reachable here."""
+    from backend.artifact_kinds import content_key, option_set_key
+
+    job_id = _finished_run("j-fin-stale")
+    upstream = _pick_payload()
+    client.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=upstream)
+    client.put(
+        f"/api/harmonize/jobs/{job_id}/artifacts/gate3_spec_edit",
+        json={
+            "sourceVariable": "UKBB:age",
+            "chosen": "spec-a",
+            "alternatives": ["spec-a"],
+            "optionSetKey": option_set_key(["spec-a"]),
+            "upstream": {
+                "kind": "gate2_candidate_pick",
+                "itemKey": "g1",
+                "contentKey": content_key(upstream),
+            },
+        },
+    )
+    assert client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["stale"] == []
+
+    client.put(
+        f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2")
+    )
+    body = client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
+    assert [s["kind"] for s in body["stale"]] == ["gate3_spec_edit"]
+    assert app_module.store.get(job_id).status == "complete"
+
+
+def test_a_finished_run_with_no_downstream_specs_re_decides_with_no_regeneration(monkeypatch):
+    """The other edge: nothing downstream means nothing to regenerate, and no regeneration path may be
+    invoked to discover that. A re-pick is a write, not a pipeline call."""
+    import backend.engine.adapter as ad
+
+    def boom(*_a, **_k):
+        raise AssertionError("a regeneration path was invoked for a run with nothing downstream")
+
+    monkeypatch.setattr(ad, "regenerate_gencde_specs", boom)
+    monkeypatch.setattr(ad, "readjudicate_groups", boom)
+    monkeypatch.setattr(ad, "run_pipeline", boom)
+
+    job_id = _finished_run("j-fin-bare")
+    client.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
+    resp = client.put(
+        f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2")
+    )
+    assert resp.status_code == 200
+    body = client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
+    assert body["stale"] == []
+    assert app_module.store.get(job_id).status == "complete"

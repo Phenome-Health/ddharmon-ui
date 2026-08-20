@@ -901,3 +901,94 @@ def test_the_export_route_is_not_on_the_guest_surface(tmp_path, monkeypatch):
         _completed_job("demo-1", config={"demo": True})
         _clerk_on(monkeypatch)
         assert c.get("/api/harmonize/jobs/demo-1/export").status_code == 401
+
+
+# --- Task 3: last-write-wins WITH a notice, and a re-pick that spends nothing (08-11) ----------
+
+
+def _decision_payload(chosen="CDE:1", alternatives=("CDE:1", "CDE:2")):
+    return {
+        "groupId": "g1",
+        "chosen": chosen,
+        "alternatives": list(alternatives),
+        "optionSetKey": option_set_key(alternatives),
+    }
+
+
+def test_concurrent_gate_writes(tmp_path, monkeypatch):
+    """T-08-63's residual race. Per-thing identity removes the read-modify-write, but two sessions writing
+    the SAME decision still collide - and last-write-wins is only acceptable if the loser is TOLD. A silent
+    overwrite is prohibited, so the response has to carry enough for the client to say so."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        # Tab A writes first and learns the version it now holds.
+        first = c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        assert first.status_code == 200, first.text
+        base_a = first.json()["updatedAt"]
+        assert first.json()["conflict"] is None, "a first write must be quiet"
+
+        # Tab B, which loaded the page earlier, writes against a version it never saw.
+        second = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(chosen="CDE:2"),
+            params={"base": base_a},
+        )
+        assert second.status_code == 200
+        assert second.json()["conflict"] is None, "tab B held the current version, so this is not a conflict"
+        stale_base = base_a
+
+        # Tab A now writes again, still holding its ORIGINAL version - it never saw tab B's change.
+        third = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(chosen="CDE:1"),
+            params={"base": stale_base},
+        )
+        assert third.status_code == 200
+        conflict = third.json()["conflict"]
+        assert conflict is not None, "tab A silently replaced a value written by another session"
+        assert conflict["replacedUpdatedAt"] == second.json()["updatedAt"]
+        assert "reload" in conflict["message"].lower()
+
+        stored = c.get("/api/harmonize/jobs/j1/artifacts").json()["artifacts"][GATE2_CANDIDATE_PICK]
+    assert [d["chosen"] for d in stored] == ["CDE:1"], "last write wins - the resolution, not the notice"
+
+
+def test_a_re_save_the_caller_itself_made_is_quiet(tmp_path, monkeypatch):
+    """The notice must not become noise: a reviewer saving the same decision twice has replaced nothing they
+    had not seen, and a notice they learn to dismiss is worse than none."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        first = c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        again = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(),
+            params={"base": first.json()["updatedAt"]},
+        )
+    assert again.json()["conflict"] is None
+
+
+def test_a_blind_write_over_an_existing_decision_is_reported(tmp_path, monkeypatch):
+    """A client that sends no base cannot know what it replaced, and that IS the conflict - reporting it is
+    what makes the client send one."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        blind = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload(chosen="CDE:2")
+        )
+    assert blind.json()["conflict"] is not None
+
+
+def test_a_non_decision_kind_is_never_given_a_conflict_notice(tmp_path, monkeypatch):
+    """The shipped writers (verdicts, composites) do not carry a version and were never asked to. Reporting
+    a conflict on every one of their re-saves would be pure noise."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        body = {"definition": {"name": "Fried"}, "verdict": "full"}
+        c.put("/api/harmonize/jobs/j1/artifacts/composite", json=body)
+        again = c.put("/api/harmonize/jobs/j1/artifacts/composite", json=body)
+    assert again.json()["conflict"] is None
