@@ -419,6 +419,21 @@ class JobDB:
             ).fetchone()
         return self._row_to_artifact(row)
 
+    def get_artifact(self, *, owner_subject: str, job_id: str, kind: str, item_key: str) -> Artifact | None:
+        """One artifact by its full identity, or None. The read a write path needs BEFORE it replaces.
+
+        Targeted rather than a filter over :meth:`list_artifacts`, because the caller is a write path: it
+        needs to know what it is about to replace, and scanning every artifact on the run to find out would
+        make the cost of one gate decision grow with the size of the reviewer's accumulated work.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT * FROM user_artifacts
+                   WHERE owner_subject=? AND job_id=? AND kind=? AND item_key=?""",
+                (owner_subject, job_id, kind, item_key),
+            ).fetchone()
+        return self._row_to_artifact(row) if row is not None else None
+
     def list_artifacts(self, *, owner_subject: str, job_id: str) -> list[Artifact]:
         """Every artifact one owner holds for one run. Scoped by owner by construction."""
         with self._lock:

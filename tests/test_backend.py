@@ -3299,7 +3299,7 @@ def _finished_run(job_id="j-fin"):
     return job_id
 
 
-def test_repick_makes_no_llm_call(monkeypatch):
+def test_repick_makes_no_llm_call(monkeypatch, tmp_path):
     """R13. The candidates were already retrieved and are already on the wire with rank / chosen / suggested
     markers - only the WRITE was missing, so re-selecting among them must not reach a provider.
 
@@ -3315,53 +3315,56 @@ def test_repick_makes_no_llm_call(monkeypatch):
     monkeypatch.setattr(llm_mod, "build_llm_client", boom)
     monkeypatch.setattr(ad, "_batch_stage", boom)
     monkeypatch.setattr(ad, "run_pipeline", boom)
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
 
-    job_id = _finished_run("j-repick")
-    resp = client.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
-    assert resp.status_code == 200, resp.text
-    again = client.put(
-        f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick",
-        json=_pick_payload(chosen="CDE:2"),
-        params={"base": resp.json()["updatedAt"]},
-    )
-    assert again.status_code == 200
-    stored = client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["artifacts"]["gate2_candidate_pick"]
+    with TestClient(app_module.app) as c:
+        job_id = _finished_run("j-repick")
+        resp = c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
+        assert resp.status_code == 200, resp.text
+        again = c.put(
+            f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick",
+            json=_pick_payload(chosen="CDE:2"),
+            params={"base": resp.json()["updatedAt"]},
+        )
+        assert again.status_code == 200
+        stored = c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["artifacts"]["gate2_candidate_pick"]
     assert [d["chosen"] for d in stored] == ["CDE:2"]
 
 
-def test_a_repick_on_a_finished_run_leaves_it_finished_and_derives_stale_specs(monkeypatch):
+def test_a_repick_on_a_finished_run_leaves_it_finished_and_derives_stale_specs(monkeypatch, tmp_path):
     """R13 is the CHEAP half of the return pass: re-deciding must not transition the run out of finished, and
     buying more work is Phase 9 and must not become reachable here."""
     from backend.artifact_kinds import content_key, option_set_key
 
-    job_id = _finished_run("j-fin-stale")
-    upstream = _pick_payload()
-    client.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=upstream)
-    client.put(
-        f"/api/harmonize/jobs/{job_id}/artifacts/gate3_spec_edit",
-        json={
-            "sourceVariable": "UKBB:age",
-            "chosen": "spec-a",
-            "alternatives": ["spec-a"],
-            "optionSetKey": option_set_key(["spec-a"]),
-            "upstream": {
-                "kind": "gate2_candidate_pick",
-                "itemKey": "g1",
-                "contentKey": content_key(upstream),
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        job_id = _finished_run("j-fin-stale")
+        upstream = _pick_payload()
+        c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=upstream)
+        c.put(
+            f"/api/harmonize/jobs/{job_id}/artifacts/gate3_spec_edit",
+            json={
+                "sourceVariable": "UKBB:age",
+                "chosen": "spec-a",
+                "alternatives": ["spec-a"],
+                "optionSetKey": option_set_key(["spec-a"]),
+                "upstream": {
+                    "kind": "gate2_candidate_pick",
+                    "itemKey": "g1",
+                    "contentKey": content_key(upstream),
+                },
             },
-        },
-    )
-    assert client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["stale"] == []
+        )
+        assert c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()["stale"] == []
 
-    client.put(
-        f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2")
-    )
-    body = client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
-    assert [s["kind"] for s in body["stale"]] == ["gate3_spec_edit"]
-    assert app_module.store.get(job_id).status == "complete"
+        c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2"))
+        body = c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
+        status = app_module.store.get(job_id).status
+    assert [entry["kind"] for entry in body["stale"]] == ["gate3_spec_edit"]
+    assert status == "complete"
 
 
-def test_a_finished_run_with_no_downstream_specs_re_decides_with_no_regeneration(monkeypatch):
+def test_a_finished_run_with_no_downstream_specs_re_decides_with_no_regeneration(monkeypatch, tmp_path):
     """The other edge: nothing downstream means nothing to regenerate, and no regeneration path may be
     invoked to discover that. A re-pick is a write, not a pipeline call."""
     import backend.engine.adapter as ad
@@ -3372,13 +3375,14 @@ def test_a_finished_run_with_no_downstream_specs_re_decides_with_no_regeneration
     monkeypatch.setattr(ad, "regenerate_gencde_specs", boom)
     monkeypatch.setattr(ad, "readjudicate_groups", boom)
     monkeypatch.setattr(ad, "run_pipeline", boom)
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
 
-    job_id = _finished_run("j-fin-bare")
-    client.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
-    resp = client.put(
-        f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2")
-    )
-    assert resp.status_code == 200
-    body = client.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
+    with TestClient(app_module.app) as c:
+        job_id = _finished_run("j-fin-bare")
+        c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload())
+        resp = c.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate2_candidate_pick", json=_pick_payload(chosen="CDE:2"))
+        assert resp.status_code == 200
+        body = c.get(f"/api/harmonize/jobs/{job_id}/artifacts").json()
+        status = app_module.store.get(job_id).status
     assert body["stale"] == []
-    assert app_module.store.get(job_id).status == "complete"
+    assert status == "complete"

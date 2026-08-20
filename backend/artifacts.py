@@ -216,6 +216,19 @@ class ArtifactStore:
             grouped = redact_unpublished(grouped)
         return grouped
 
+    def item_key_for(self, *, kind: str, payload: dict[str, Any]) -> str:
+        """The identity this payload would be stored under. Lets a write path look up what it will replace."""
+        return self._registry.get(kind).key_for(payload)
+
+    def get_one(self, *, owner: str, job_id: str, kind: str, item_key: str) -> Artifact | None:
+        """The stored artifact at one identity, unmigrated and unredacted — for a WRITE path, not a reader.
+
+        Deliberately returns the row rather than a payload: the caller needs ``updated_at``, which is what
+        makes "did I just replace something I had not seen" answerable at all.
+        """
+        self._registry.get(kind)  # reject unknown kinds here too, so a typo surfaces on the write path
+        return self._db.get_artifact(owner_subject=owner, job_id=job_id, kind=kind, item_key=item_key)
+
     def delete(self, *, owner: str, job_id: str, kind: str, item_key: str = _SINGLETON_KEY) -> bool:
         self._registry.get(kind)  # reject unknown kinds even on delete, so typos surface
         return self._db.delete_artifact(owner_subject=owner, job_id=job_id, kind=kind, item_key=item_key)

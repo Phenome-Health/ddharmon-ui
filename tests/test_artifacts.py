@@ -976,9 +976,7 @@ def test_a_blind_write_over_an_existing_decision_is_reported(tmp_path, monkeypat
     with TestClient(app_module.app) as c:
         _completed_job("j1")
         c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
-        blind = c.put(
-            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload(chosen="CDE:2")
-        )
+        blind = c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload(chosen="CDE:2"))
     assert blind.json()["conflict"] is not None
 
 

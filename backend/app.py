@@ -41,7 +41,12 @@ from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
 from backend import batch_reconcile
-from backend.artifact_kinds import ACCEPTED_GENCDE, accept_gencde, derive_staleness
+from backend.artifact_kinds import (
+    ACCEPTED_GENCDE,
+    GATE_DECISION_KINDS,
+    accept_gencde,
+    derive_staleness,
+)
 from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
 from backend.checkpoint import Checkpoint, CheckpointMissingError, load_checkpoint, next_gate, write_checkpoint
@@ -1072,9 +1077,56 @@ def list_artifacts(job_id: str, request: Request) -> dict[str, Any]:
     }
 
 
+#: The two-tab notice (UI-SPEC 8.4), returned so a client can render it verbatim rather than invent one.
+_CONFLICT_MESSAGE = (
+    "Another tab changed this run. Your last change was kept and theirs was applied on top. "
+    "Reload to see the current state."
+)
+
+
+def _conflict_for(
+    artifacts: Any, *, owner: str, job_id: str, kind: str, payload: dict[str, Any], base: float | None
+) -> dict[str, Any] | None:
+    """Whether this write is about to replace a value the caller has not seen. None means it is not.
+
+    Last-write-wins is the resolution; the NOTICE is the requirement, because a silent overwrite of another
+    session's decision is prohibited. The store already returns the stored row rather than a boolean —
+    deliberately, since the bug it replaced was a setter reporting success for a write it had dropped — and
+    this extends that honesty one step, to replacement.
+
+    Three cases stay quiet, or the notice becomes noise a reviewer learns to dismiss:
+
+    - **A first write.** There was nothing to replace.
+    - **A re-save the caller itself made**, i.e. it supplied the version currently stored.
+    - **A kind that carries no version.** The shipped writers (verdicts, composites) were never asked for
+      one, so every re-save of theirs would report a conflict that is really just a second save.
+
+    A gate decision written with NO base over an existing row IS reported: a client that cannot say what it
+    replaced has in fact replaced something blind, and reporting it is what makes the client send a version.
+    """
+    if kind not in GATE_DECISION_KINDS:
+        return None
+    try:
+        item_key = artifacts.item_key_for(kind=kind, payload=payload)
+    except ValueError:
+        return None  # an invalid payload is about to be rejected by validation anyway
+    prior = artifacts.get_one(owner=owner, job_id=job_id, kind=kind, item_key=item_key)
+    if prior is None or (base is not None and prior.updated_at == base):
+        return None
+    return {"replacedUpdatedAt": prior.updated_at, "message": _CONFLICT_MESSAGE}
+
+
 @app.put("/api/harmonize/jobs/{job_id}/artifacts/{kind}")
-def put_artifact(job_id: str, kind: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    """Upsert one artifact. Its identity (and so what it replaces) is derived by its kind."""
+def put_artifact(
+    job_id: str, kind: str, payload: dict[str, Any], request: Request, base: float | None = None
+) -> dict[str, Any]:
+    """Upsert one artifact. Its identity (and so what it replaces) is derived by its kind.
+
+    ``base`` is the ``updatedAt`` the caller last saw for this identity. Supplying it is what lets the
+    response distinguish "your write created this" from "your write replaced a value written by another
+    session" — see :func:`_conflict_for`. Omitting it is legal, and over an existing gate decision it is
+    itself reported as a conflict.
+    """
     job, owner = _artifact_target(job_id, request)
     artifacts = store.artifacts
     if artifacts is None:
@@ -1089,8 +1141,16 @@ def put_artifact(job_id: str, kind: str, payload: dict[str, Any], request: Reque
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
     with _writable_run():
+        # Read what is there BEFORE replacing it: after the upsert the prior value is gone, and with it any
+        # way to tell the reviewer that theirs was not the version they were looking at.
+        conflict = _conflict_for(artifacts, owner=owner, job_id=job_id, kind=kind, payload=payload, base=base)
         stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload, pinned=_is_pinned(job))
-    return {"kind": stored.kind, "itemKey": stored.item_key, "updatedAt": stored.updated_at}
+    return {
+        "kind": stored.kind,
+        "itemKey": stored.item_key,
+        "updatedAt": stored.updated_at,
+        "conflict": conflict,
+    }
 
 
 @app.delete("/api/harmonize/jobs/{job_id}/artifacts/{kind}/{item_key:path}", status_code=204)
