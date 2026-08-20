@@ -185,12 +185,18 @@ class ArtifactStore:
             schema_version=spec.version,
         )
 
-    def get_all(self, *, owner: str | None, job_id: str) -> dict[str, Any]:
+    def get_all(self, *, owner: str | None, job_id: str, include_private: bool = False) -> dict[str, Any]:
         """Every artifact this owner holds for this run, grouped by kind, in one query.
 
         Singleton kinds map to their payload (or absent); keyed kinds map to a list. Unknown kinds found in
         the table are skipped rather than raising — a row written by a newer version of the app must not
         break an older reader.
+
+        ``include_private`` is the OPT-IN for fields a stored row holds but no reader is served by default:
+        today, an accepted GenCDE's concept digest while ``published`` is false. Redaction lives here, at the
+        one read path every caller goes through, because "remember to redact at each new read site" is
+        precisely the class of rule this module was built to stop relying on. A future publish path passes
+        ``include_private=True`` deliberately; nothing else has to know the rule exists.
         """
         grouped: dict[str, Any] = {}
         if not owner:
@@ -204,6 +210,10 @@ class ArtifactStore:
                 grouped[row.kind] = payload
             else:
                 grouped.setdefault(row.kind, []).append(payload)
+        if not include_private:
+            from backend.artifact_kinds import redact_unpublished
+
+            grouped = redact_unpublished(grouped)
         return grouped
 
     def delete(self, *, owner: str, job_id: str, kind: str, item_key: str = _SINGLETON_KEY) -> bool:

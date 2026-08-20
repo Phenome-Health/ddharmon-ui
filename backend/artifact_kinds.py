@@ -11,6 +11,8 @@ across the store.
 from __future__ import annotations
 
 import hashlib
+import os
+import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -315,5 +317,178 @@ registry.register(
         name=COMPOSITE_SWAP,
         identity=_decision_identity(COMPOSITE_SWAP),
         validate=_decision_validate,
+    )
+)
+
+
+# -- accepted GenCDEs: the dual-key identity of a reusable element -----------------------------
+#
+# An accepted generated element is the artifact a LATER run reuses as an anchor (run A-B-C, then run D-E-F
+# carrying the accepted elements forward). It therefore needs an identity that survives the hop, and the
+# shape of that identity is a recorded decision, not an implementation detail:
+#
+#   id           DDHARMON:u<user>/<ulid>   PRIVATE. Gate decisions and the personal catalog reference THIS.
+#   digest       sha256 over a canonical concept form, computed at acceptance, NEVER served before publish
+#   digestAlgo   "v1", so a better canonical form is an additive v2, not a migration
+#   tinyId       "" always - the refusal in core's export/cde_json.py, preserved
+#   refines      CDE:<tinyId> | DDHARMON:... - the provenance edge, which survives the reuse hop
+#   published    false until the user opts in; nothing compares digests across users while it is false
+#
+# Why the digest is NOT the primary key, given that content-addressing is the obvious choice for a reusable
+# element: a digest ENCODES THE CONCEPT. Using it as the identifier would mean every gate decision, and every
+# shared surface that ever carries a reference, leaks what the user harmonized - putting a privacy decision
+# inside the primary key of the very table this layer exists to keep private. The digest's job is to answer
+# "are two users' elements the same concept" for a LATER promotion path, and that question is only asked
+# about published rows.
+#
+# Why the algorithm version is load-bearing: content-addressing looks like it forces the canonicalization
+# question now. It does not, because `published` gates all cross-user comparison and publishing is opt-in, so
+# a v2 recompute only ever has to touch published rows. v1 is therefore allowed to be an honest first
+# attempt - measurand term, data type, canonicalized unit, sorted permissible-value codes - and to be
+# revised on evidence rather than perfected up front.
+
+#: A human verdict on one generated element, keyed on the record whose element was judged.
+ACCEPTED_GENCDE = "accepted_gencde"
+
+#: The canonical-form version this build computes digests under. An additive v2 recomputes PUBLISHED rows
+#: only; unpublished rows keep their v1 digest, which nothing outside the owner has ever seen.
+DIGEST_ALGO = "v1"
+
+#: The namespaces a provenance edge may point into: an existing NIH element, or another accepted element of
+#: our own (the reuse hop). Anything else would assert a mapping into a vocabulary we did not resolve.
+_REFINES_PREFIXES = ("CDE:", "DDHARMON:")
+
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def _ulid() -> str:
+    """A 26-character Crockford base32 ULID: 48 bits of millisecond timestamp, 80 bits of randomness.
+
+    Hand-rolled rather than added as a dependency: this is fifteen lines, and a package install is a supply
+    chain decision (T-08-67 - no installs in this plan).
+    """
+    value = (int(time.time() * 1000) << 80) | int.from_bytes(os.urandom(10), "big")
+    return "".join(_CROCKFORD[(value >> shift) & 0x1F] for shift in range(125, -1, -5))
+
+
+def _user_segment(owner_subject: str) -> str:
+    """The ``u<...>`` segment of a private identifier: a stable, non-reversible digest of the principal.
+
+    The principal itself is never carried. An identifier can end up on a shared surface (a published row, a
+    support ticket, an export), and an identity provider's subject is a user handle - so the segment is
+    stable enough to group one user's elements and tells a reader nothing about who they are.
+    """
+    return "u" + hashlib.sha256(f"ddharmon-owner:{owner_subject}".encode()).hexdigest()[:12]
+
+
+def canonical_concept_form(concept: dict[str, Any]) -> str:
+    """The v1 canonical form a digest is taken over.
+
+    Measurand term (the title, case- and whitespace-normalized), data type, canonicalized unit, and the
+    SORTED permissible-value codes. Deliberately excludes prose - definition, question wording, rationale -
+    because two reviewers describing the same measurement differently have the same concept, and a digest
+    that moved on an editorial change would report a new element every time someone fixed a typo.
+    """
+    title = " ".join(str(concept.get("title") or "").lower().split())
+    data_type = " ".join(str(concept.get("dataType") or "").lower().split())
+    units = " ".join(str(concept.get("units") or "").lower().split())
+    codes = sorted(
+        {
+            str((option or {}).get("code") or "").strip()
+            for option in (concept.get("permissibleValues") or [])
+            if isinstance(option, dict)
+        }
+        - {""}
+    )
+    return "\x1f".join([title, data_type, units, ",".join(codes)])
+
+
+def concept_digest(concept: dict[str, Any], algo: str = DIGEST_ALGO) -> str:
+    """The content digest of one concept under a named algorithm version."""
+    if algo != DIGEST_ALGO:
+        raise ValueError(f"unknown digest algorithm {algo!r} (this build computes {DIGEST_ALGO})")
+    return hashlib.sha256(f"{algo}\x1f{canonical_concept_form(concept)}".encode()).hexdigest()
+
+
+def accept_gencde(payload: dict[str, Any], *, owner_subject: str) -> dict[str, Any]:
+    """Build the stored form of an acceptance verdict: the SERVER mints both keys.
+
+    A client-supplied digest is not a digest and a client-supplied identifier is not an identity, so both
+    are computed here and any inbound value for them is discarded. ``published`` is likewise forced false:
+    publishing is a separate, explicit, later opt-in, and accepting an element must not be a way to publish
+    one by including a field.
+    """
+    concept = payload.get("concept")
+    if not isinstance(concept, dict) or not str(concept.get("title") or "").strip():
+        raise ValueError("an accepted GenCDE needs a concept carrying at least a title")
+    stored = {
+        key: value for key, value in payload.items() if key not in ("id", "digest", "digestAlgo", "tinyId", "published")
+    }
+    stored["id"] = f"DDHARMON:{_user_segment(owner_subject)}/{_ulid()}"
+    stored["digest"] = concept_digest(concept)
+    stored["digestAlgo"] = DIGEST_ALGO
+    stored["tinyId"] = ""  # NIH assigns on acceptance; an invented id would collide with a real one
+    stored["published"] = False
+    return stored
+
+
+def _gencde_identity(payload: dict[str, Any]) -> str:
+    record_id = str(payload.get("recordId") or "").strip()
+    if not record_id:
+        raise ValueError("an accepted GenCDE needs a recordId (the record whose element was judged)")
+    return record_id
+
+
+def _gencde_validate(payload: dict[str, Any]) -> None:
+    if str(payload.get("verdict") or "") not in ("accept", "reject"):
+        raise ValueError("an accepted GenCDE needs a recorded human verdict: accept|reject")
+    if str(payload.get("tinyId") or ""):
+        raise ValueError(
+            "tinyId must stay empty: NIH assigns it on acceptance, an invented one would collide with a "
+            "real element, and KRAKEN keys NIH CDEs as CDE:<tinyId> 1:1"
+        )
+    if not str(payload.get("id") or "").startswith("DDHARMON:u"):
+        raise ValueError("an accepted GenCDE needs a server-minted DDHARMON:u<user>/<ulid> identifier")
+    refines = str(payload.get("refines") or "")
+    if refines and not refines.startswith(_REFINES_PREFIXES):
+        raise ValueError(
+            f"refines must point at {' or '.join(_REFINES_PREFIXES)} - {refines!r} asserts a mapping into a "
+            "vocabulary this element was never resolved against"
+        )
+
+
+def redact_unpublished(grouped: dict[str, Any]) -> dict[str, Any]:
+    """Strip the digest from every accepted element the user has not opted to publish.
+
+    Applied at the store's single read path rather than at each caller, because "remember to redact at every
+    new read site" is the shape of rule this codebase has already been burned by. The algorithm version is
+    NOT stripped: it says how the concept would be hashed, not what the concept is.
+    """
+    entries = grouped.get(ACCEPTED_GENCDE)
+    if not entries:
+        return grouped
+    return {
+        **grouped,
+        ACCEPTED_GENCDE: [
+            entry if entry.get("published") else {k: v for k, v in entry.items() if k != "digest"} for entry in entries
+        ],
+    }
+
+
+def personal_catalog(grouped: dict[str, Any]) -> list[dict[str, Any]]:
+    """The elements this user may reuse as anchors in a later run - accepted ones only.
+
+    Gated on the recorded verdict rather than on existence, because a generated element that was WRONG in
+    run 1 becomes an anchor in run 2, where the mistake stops surfacing as a reviewable novel and starts
+    being reinforced as a match. "It was generated" is not a decision anyone made.
+    """
+    return [entry for entry in (grouped.get(ACCEPTED_GENCDE) or []) if entry.get("verdict") == "accept"]
+
+
+registry.register(
+    ArtifactKind(
+        name=ACCEPTED_GENCDE,
+        identity=_gencde_identity,
+        validate=_gencde_validate,
     )
 )

@@ -751,3 +751,31 @@ def test_the_relation_and_swap_kinds_key_on_the_edge_they_decide(artifacts):
     grouped = artifacts.get_all(owner=USER_A, job_id="run-1")
     assert len(grouped[GATE2_RELATION]) == 2
     assert len(grouped[COMPOSITE_SWAP]) == 1
+
+
+def test_the_artifacts_read_derives_staleness_on_the_wire(tmp_path, monkeypatch):
+    """The screen plans read this: a correction at gate N has to be VISIBLE at gate N+1 after a reload,
+    which is the half the shipped workbench got wrong (its flag lived in component state)."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        upstream = _pick()
+        assert c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=upstream).status_code == 200
+        downstream = {
+            "sourceVariable": "UKBB:age",
+            "chosen": "spec-a",
+            "alternatives": ["spec-a"],
+            "optionSetKey": option_set_key(["spec-a"]),
+            "upstream": {
+                "kind": GATE2_CANDIDATE_PICK,
+                "itemKey": "g1",
+                "contentKey": content_key(upstream),
+            },
+        }
+        assert c.put("/api/harmonize/jobs/j1/artifacts/gate3_spec_edit", json=downstream).status_code == 200
+        assert c.get("/api/harmonize/jobs/j1/artifacts").json()["stale"] == []
+
+        # The reviewer goes back to Gate 2 and picks differently.
+        c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_pick(chosen="CDE:2"))
+        stale = c.get("/api/harmonize/jobs/j1/artifacts").json()["stale"]
+    assert [(s["kind"], s["itemKey"]) for s in stale] == [(GATE3_SPEC_EDIT, "UKBB:age")]

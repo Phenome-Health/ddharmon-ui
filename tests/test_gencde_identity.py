@@ -180,9 +180,9 @@ def test_the_server_mints_the_identity_and_a_client_cannot_supply_one(tmp_path, 
                 "published": True,
             },
         )
-        stored = app_module.store.artifacts.get_all(
-            owner="local", job_id="j1", include_private=True
-        )[ACCEPTED_GENCDE][0]
+        stored = app_module.store.artifacts.get_all(owner="local", job_id="j1", include_private=True)[ACCEPTED_GENCDE][
+            0
+        ]
     assert stored["id"] != "DDHARMON:uattacker/forged"
     assert stored["digest"] == concept_digest(_concept())
     assert stored["published"] is False, "publishing is an explicit later opt-in, not a field on acceptance"
@@ -208,12 +208,14 @@ def test_a_supplied_tiny_id_is_refused_rather_than_stored(artifacts):
     assert artifacts.get_all(owner=USER_A, job_id="run-1") == {}
 
 
-def test_no_code_path_synthesizes_a_tiny_id():
-    """Asserted over the module rather than over one function: the refusal has to survive a later edit."""
-    from pathlib import Path
-
-    source = Path("backend/artifact_kinds.py").read_text()
-    assert 'tinyId": ""' in source or '"tinyId": ""' in source
+def test_an_inbound_tiny_id_is_discarded_by_acceptance_not_carried_through():
+    """The acceptance path is the only minting path, and it does not pass a supplied tinyId along - so the
+    validation refusal above is a second line of defence rather than the only one."""
+    minted = accept_gencde(
+        {"recordId": "r1", "verdict": "accept", "concept": _concept(), "tinyId": "1234567"},
+        owner_subject=USER_A,
+    )
+    assert minted["tinyId"] == ""
 
 
 # --- the catalog is gated on a human verdict ----------------------------------------------------
@@ -223,9 +225,7 @@ def test_only_an_accepted_element_enters_the_personal_catalog(artifacts):
     """A GenCDE that was wrong in run 1 becomes an ANCHOR in run 2, where the error stops surfacing as a
     reviewable novel and starts being reinforced as a match. "It was generated" is not a verdict."""
     artifacts.put(owner=USER_A, job_id="run-1", kind=ACCEPTED_GENCDE, payload=_accepted("r1"))
-    artifacts.put(
-        owner=USER_A, job_id="run-1", kind=ACCEPTED_GENCDE, payload=_accepted("r2", verdict="reject")
-    )
+    artifacts.put(owner=USER_A, job_id="run-1", kind=ACCEPTED_GENCDE, payload=_accepted("r2", verdict="reject"))
     catalog = personal_catalog(artifacts.get_all(owner=USER_A, job_id="run-1"))
     assert [e["recordId"] for e in catalog] == ["r1"]
 

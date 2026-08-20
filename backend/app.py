@@ -41,6 +41,7 @@ from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
 from backend import batch_reconcile
+from backend.artifact_kinds import ACCEPTED_GENCDE, accept_gencde, derive_staleness
 from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
 from backend.checkpoint import Checkpoint, CheckpointMissingError, load_checkpoint, next_gate
@@ -811,9 +812,20 @@ def _artifact_target(job_id: str, request: Request) -> tuple[Job, str]:
 
 @app.get("/api/harmonize/jobs/{job_id}/artifacts")
 def list_artifacts(job_id: str, request: Request) -> dict[str, Any]:
-    """Everything the CALLER has stored against this run, grouped by kind."""
+    """Everything the CALLER has stored against this run, grouped by kind, plus which of it is stale.
+
+    ``stale`` is DERIVED here on every read by comparing each decision's persisted upstream content key
+    against that upstream's current one (see ``artifact_kinds.derive_staleness``). It is deliberately not a
+    stored field: a flag would have to be written onto a row that may not exist yet, from a write to a
+    DIFFERENT row - which is the cross-row read-modify-write this table exists to eliminate.
+    """
     job, owner = _artifact_target(job_id, request)
-    return {"kinds": registry.names(), "artifacts": store.artifacts_for(job, owner)}
+    grouped = store.artifacts_for(job, owner)
+    return {
+        "kinds": registry.names(),
+        "artifacts": grouped,
+        "stale": derive_staleness(grouped or {}),
+    }
 
 
 @app.put("/api/harmonize/jobs/{job_id}/artifacts/{kind}")
@@ -823,6 +835,15 @@ def put_artifact(job_id: str, kind: str, payload: dict[str, Any], request: Reque
     artifacts = store.artifacts
     if artifacts is None:
         raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    # An accepted generated element's two keys are minted HERE, server-side: a client-supplied digest is not
+    # a digest, a client-supplied identifier is not an identity, and `published` must not be settable by
+    # including a field on an acceptance (publishing is a separate, explicit, later opt-in).
+    if kind == ACCEPTED_GENCDE:
+        with _writable_run():
+            try:
+                payload = accept_gencde(payload, owner_subject=owner)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
     with _writable_run():
         stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload, pinned=_is_pinned(job))
     return {"kind": stored.kind, "itemKey": stored.item_key, "updatedAt": stored.updated_at}
