@@ -32,7 +32,7 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -43,6 +43,7 @@ from backend.engine.contract import (
     AtlasPoint,
     CoherenceState,
     FieldDetail,
+    NotComputedEntry,
     PreviewCluster,
     ResponseOptionUI,
     UICandidate,
@@ -58,6 +59,7 @@ from backend.engine.contract import (
     coherence_state,
     empty_cost,
     empty_summary,
+    not_computed_register,
 )
 
 logger = logging.getLogger(__name__)
@@ -323,9 +325,15 @@ def _gencde_to_ui(g: Any) -> UIGenCDE | None:
     return ui
 
 
-def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
-    """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
-    return {
+def _record_to_ui(r: Any, member_index: dict[str, UIMember], *, concept_gate: bool = False) -> UIRecord:
+    """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names.
+
+    ``concept_gate`` says whether the opt-in M7 stage RAN on this run. When it did not, the
+    ``conceptMismatch`` key is omitted entirely rather than emitted as ``False``: a false-valued flag on a
+    check nobody performed is the "empty reads as a clean pass" failure, and the not-computed register
+    carries the honest statement instead.
+    """
+    ui: UIRecord = {
         "id": r.group_id or r.cluster_id,
         "clusterId": r.cluster_id,
         "groupId": r.group_id,
@@ -347,7 +355,33 @@ def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
         "candidates": [_candidate_to_ui(c) for c in r.candidates],
         "rationale": r.rationale,
         "decidedBy": r.decided_by,
+        # ── the triage signals (v5) ──
+        # Every one of these was computed by a stage that ran, and none of them reached the wire before
+        # v5. `getattr` throughout: prod pins core to a PyPI version and dev to a git ref, so a record
+        # from an older core must yield the field's zero value rather than an AttributeError mid-run.
+        #
+        # The coherence cell is DERIVED from the verdict, never from core's `coherent` boolean — that
+        # boolean defaults True and cannot express "not judged", so reading it is the defect (T-08-46).
+        "coherence": _coherence_cell(r),
+        "coherenceSummary": str(getattr(r, "coherence_summary", "") or ""),
+        "coherenceAxis": str(getattr(r, "coherence_axis", "") or ""),
+        "coherenceDistinctValues": list(getattr(r, "coherence_distinct_values", []) or []),
+        "coherenceOutliers": list(getattr(r, "coherence_outliers", []) or []),
+        "coherenceKind": str(getattr(r, "coherence_kind", "") or ""),
+        "incoherent": bool(getattr(r, "incoherent", False)),
+        # The three RESEARCH.md called free wins: computed on every run today, mapped nowhere until now.
+        "matrixSuspect": bool(getattr(r, "matrix_suspect", False)),
+        "coherenceGap": bool(getattr(r, "coherence_gap", False)),
+        "adoptDemoted": bool(getattr(r, "adopt_demoted", False)),
     }
+    if concept_gate:
+        ui["conceptMismatch"] = bool(getattr(r, "concept_mismatch", False))
+    readjudicated_from = str(getattr(r, "readjudicated_from", "") or "")
+    if readjudicated_from:
+        # Only ever set on a re-adjudication CHILD. Absent means this row is an original grouping, which
+        # the register states positively rather than leaving to inference.
+        ui["readjudicatedFrom"] = readjudicated_from
+    return ui
 
 
 def _summarize(records: list[UIRecord]) -> UISummary:
@@ -410,7 +444,12 @@ def _preview_clusters(leanb_result: Any, cap: int = _PREVIEW_MEMBER_CAP) -> list
             ],
         }
         out.append(cluster)
-    out.sort(key=lambda pc: pc["nMembers"], reverse=True)
+    # Size first (the biggest clusters are the ones a full run is most likely to restructure, so they are
+    # the ones worth eyeballing), then cluster id. The id term is what makes the order STABLE: a pure
+    # descending size sort leaves equal-sized clusters in whatever order the prompts came back in, and a
+    # list that reorders itself between two looks at the same frozen substrate is indistinguishable from
+    # the run having changed underneath the reviewer.
+    out.sort(key=lambda pc: (-pc["nMembers"], pc["clusterId"]))
     return out
 
 
@@ -516,6 +555,11 @@ def expand_concept_group(result: UIResult, group_id: str) -> list[str]:
     return []
 
 
+def _not_computed(*, concept_gate: bool, readjudicated: bool) -> list[NotComputedEntry]:
+    """This run's not-computed register — see :func:`backend.engine.contract.not_computed_register`."""
+    return not_computed_register(concept_gate=concept_gate, readjudicated=readjudicated)
+
+
 def build_ui_result(
     leanb_result: Any,
     *,
@@ -528,6 +572,7 @@ def build_ui_result(
     preview_clusters: list[PreviewCluster] | None = None,
     gate_position: str | None = None,
     result_version: int | None = None,
+    concept_gate: bool = False,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
 
@@ -541,7 +586,11 @@ def build_ui_result(
     idx = member_index or {}
     fidx = field_index or {}
     atlas_pts = atlas or []
-    records = [_record_to_ui(r, idx) for r in leanb_result.records]
+    records = [_record_to_ui(r, idx, concept_gate=concept_gate) for r in leanb_result.records]
+    groups = _concept_groups_to_ui(leanb_result)
+    # Derived, not declared: a run has re-adjudication provenance iff some row actually carries it. Asking
+    # the caller to tell us would let the register disagree with the payload it describes.
+    readjudicated = any(r.get("readjudicatedFrom") for r in records)
     result: UIResult = {
         "contractVersion": CONTRACT_VERSION,
         "mode": mode,
@@ -563,9 +612,12 @@ def build_ui_result(
         # v5 additive. Read off the LeanBResult unconditionally rather than only on a staged run: a
         # one-shot run passed THROUGH the Gate 1 boundary, so its groups are a real artifact of it and
         # withholding them would make the same run answer differently depending on how it was launched.
-        "conceptGroups": _concept_groups_to_ui(leanb_result),
+        "conceptGroups": groups,
         # The uncapped membership behind the collapsed rows above (the expanded row's source).
         "conceptGroupMembers": _concept_group_members(leanb_result),
+        # Signals with no value on THIS run, each with a reason and an entry kind. Computed per result
+        # rather than hard-coded, so an enabled opt-in drops out of it instead of contradicting the wire.
+        "notComputed": _not_computed(concept_gate=concept_gate, readjudicated=readjudicated),
     }
     if gate_position is not None:
         result["gatePosition"] = cast(Any, gate_position)
@@ -621,7 +673,12 @@ def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list
 
 
 def _sync_stage(
-    phase: str, progress: ProgressFn, client: Any, ledger: Any, stopping: StoppingFn | None = None
+    phase: str,
+    progress: ProgressFn,
+    client: Any,
+    ledger: Any,
+    stopping: StoppingFn | None = None,
+    ledger_key: str | None = None,
 ) -> StageFn:
     """A stage callback that runs its prompts inline via the LLM client — concurrently, across a bounded
     thread pool — reporting per-item progress. After the stage finishes it drains the client's realized token
@@ -661,7 +718,9 @@ def _sync_stage(
                     f.cancel()
                 raise
         # Attribute this stage's realized spend (sync = full price) + surface the running total for the live UI.
-        ledger.add(phase, client.drain_usage(), batch=False)
+        # Cost is keyed on `ledger_key` (defaulting to the phase) so an advisory stage that REPORTS under an
+        # existing progress phase still gets its own line in the cost breakdown — see _JUDGE_STAGES.
+        ledger.add(ledger_key or phase, client.drain_usage(), batch=False)
         progress(phase, n, n, ledger.total_usd)
         return out
 
@@ -694,6 +753,7 @@ def _batch_stage(
     ledger: Any,
     api_key: str | None = None,
     stopping: StoppingFn | None = None,
+    ledger_key: str | None = None,
 ) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
@@ -761,7 +821,8 @@ def _batch_stage(
                             output_tokens=int(u.get("output_tokens", 0) or 0),
                         )
                     )
-        ledger.add(phase, usages, batch=True)  # Batch bills at 50% — the discount is applied in price_usage.
+        # Keyed on `ledger_key` (default: the phase) — see _sync_stage.
+        ledger.add(ledger_key or phase, usages, batch=True)  # Batch bills at 50% (applied in price_usage).
         progress(phase, n, n, ledger.total_usd)
         return out
 
@@ -809,6 +870,53 @@ def _save_substrate_if_new(substrate_path: Path | None, result: Any) -> None:
 # Gates 0, 3 and 4 need no core boundary at all (Gate 0 is adapter-side and free; Gate 3 is the finished
 # pipeline held by the UI backend; Gate 4 is a pure read), so they are not stop targets here.
 _GATE_STOP_MECHANISM = {"gate1": "withhold_classify", "gate2": "stop_after_gencde"}
+
+
+#: The three ADVISORY stages: they FLAG, they never decide. Two consequences follow, and both are
+#: deliberate.
+#:
+#: 1. They are wrapped in :func:`_resilient_stage`, so a runner that raises or times out costs the run its
+#:    flag and nothing else. The alternative — let it propagate — throws away `generate` and `split`
+#:    output the caller already PAID for, because an advisory second opinion was unavailable. A judge
+#:    failure then arrives on the wire as ``not_judged``, which is the honest reading of "we could not
+#:    tell" and is structurally distinct from "it is fine" (T-08-46).
+#: 2. They report progress under an EXISTING phase and carry their own COST key. Adding a phase to
+#:    ``PHASES_RUN`` would invalidate the shipped demo artifact (``test_content_drift`` asserts the demo's
+#:    phase list equals the contract's) and the Methods-page stage manifest — a paid re-run, to rename a
+#:    progress label. The cost breakdown is a free-form map, so spend attribution loses nothing.
+#:
+#: Decision stages are NOT in here on purpose: swallowing a `classify` failure would silently produce a
+#: run with no assignments and call it a success.
+_JUDGE_STAGES: dict[str, dict[str, str]] = {
+    # stage kwarg -> {progress phase it reports under, batch cache tag, cost-ledger key}
+    "coherence": {"phase": "splitting", "tag": "coherence", "cost": "judging"},
+    "distinct_kinds": {"phase": "specs", "tag": "kinds", "cost": "kinds"},
+    "concept_gate": {"phase": "specs", "tag": "concept_gate", "cost": "concept_gate"},
+}
+
+
+def _resilient_stage(name: str, fn: StageFn) -> StageFn:
+    """Wrap an ADVISORY stage so a failure degrades the flag instead of unwinding the run.
+
+    Returns ``{}`` on any exception, which leaves core's verdict fields untouched — so the group stays
+    explicitly unjudged rather than defaulting to the clean state.
+
+    A cancellation is re-raised: the runner signals a "discard" Stop by making ``progress`` raise from
+    inside the stage, and swallowing that would keep the run spending after the user asked it to stop.
+    Matched on the exception's TYPE NAME rather than by importing it, because ``backend.runner`` imports
+    this module and the dependency only runs one way.
+    """
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        try:
+            return fn(prompts) or {}
+        except Exception as exc:  # noqa: BLE001 - an advisory stage must not be able to fail a paid run
+            if type(exc).__name__ == "RunCancelledError":
+                raise
+            logger.warning("advisory stage %s failed (%s: %s) — leaving it NOT JUDGED", name, type(exc).__name__, exc)
+            return {}
+
+    return stage
 
 
 #: Recorded against a prompt id the stage was ASKED about but returned nothing for. JSON-serialisable
@@ -1041,6 +1149,17 @@ def run_pipeline(
             preview_clusters=_preview_clusters(result),
         )
 
+    # --- which ADVISORY stages this run wants, decided BEFORE any stage is constructed ---
+    # "Off" has to mean nothing is built, not "built and then not passed". A constructed batch stage is
+    # only a closure, but the guarantee T-08-54 needs is that a declined stage has no path to a provider
+    # at all — and the cheapest way to guarantee that is for the callable not to exist (see also the
+    # cost-transparency screen: a stage nobody asked for must not be able to appear in the breakdown).
+    run_coherence = bool(config.get("coherence", True))  # the judge: ON by default — Gate 1 renders it
+    want_concept_gate = bool(config.get("concept_gate", False))  # M7: OPT-IN, so a run pays only if it asks
+    judge_specs = {
+        name: w for name, w in _JUDGE_STAGES.items() if (want_concept_gate if name == "concept_gate" else run_coherence)
+    }
+
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
     if overrides:
         stages: dict[str, StageFn] = overrides
@@ -1059,6 +1178,12 @@ def run_pipeline(
             "gencde": _sync_stage("gencde", progress, client, ledger, stopping),
             "specgen": _sync_stage("specs", progress, client, ledger, stopping),
             "refine": _sync_stage("refine", progress, client, ledger, stopping),
+            # The judge and its R2 second read. One line each, same shape as every stage above (see
+            # _JUDGE_STAGES for why they borrow an existing progress phase and carry their own cost key).
+            **{
+                name: _sync_stage(w["phase"], progress, client, ledger, stopping, ledger_key=w["cost"])
+                for name, w in judge_specs.items()
+            },
         }
     else:  # batch (default)
         stages = {
@@ -1072,10 +1197,26 @@ def run_pipeline(
             "gencde": _batch_stage("gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping),
             "specgen": _batch_stage("specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping),
             "refine": _batch_stage("refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping),
+            **{
+                name: _batch_stage(
+                    w["phase"],
+                    progress,
+                    work_dir,
+                    w["tag"],
+                    ledger,
+                    api_key=api_key,
+                    stopping=stopping,
+                    ledger_key=w["cost"],
+                )
+                for name, w in judge_specs.items()
+            },
         }
 
     # --- wrap every stage so its answers are captured, and replayed when the checkpoint has them ---
     # Applied to whichever strategy was chosen above (overrides included, so the guarantee is testable).
+    # An advisory stage is made failure-tolerant BEFORE it is made recordable, so what the checkpoint
+    # captures is what core actually received (``{}`` on a failure), not an exception that never got there.
+    stages = {name: (_resilient_stage(name, fn) if name in _JUDGE_STAGES else fn) for name, fn in stages.items()}
     stages = {
         name: (_replaying_stage(name, fn, replay, recorded) if name in replay else _recording_stage(name, fn, recorded))
         for name, fn in stages.items()
@@ -1102,6 +1243,31 @@ def run_pipeline(
     refine_cdes = config.get("refine_cdes", True) and "refine_cdes" in inspect.signature(harmonize_leanb).parameters
     if refine_cdes:
         kwargs["refine_cdes"] = True
+    # ── the coherence judge, IN THE PRODUCT (STGD-02's adapter half) ──
+    # Until this landed, `harmonize_leanb` here was passed neither `coherence=` nor `distinct_kinds=`, so
+    # the judge never executed and every shipped artifact carried an incoherent count of zero — while the
+    # core half had shipped in 08-04. Gate 1 renders coherence, so this is the phase's load-bearing wire.
+    #
+    # R2 (`distinct_kinds`) is nested inside the judge on purpose: core only runs the discriminator when a
+    # `coherence` runner is set, and the calibrated flag rule is R2 = split OR (qualify AND distinct_kinds).
+    # ON by default (gate off with coherence=false), because a Gate 1 with no coherence column is the
+    # screen this phase exists to replace.
+    #
+    # The opt-in M7 concept gate is the mirror image: OFF unless the run asks (STGD-16). Off means NO
+    # runner is constructed, so nothing is charged for a stage the caller declined (T-08-54).
+    core_params = inspect.signature(harmonize_leanb).parameters
+    judge_kwargs: dict[str, Any] = {}
+    if run_coherence and stages.get("coherence") is not None and "coherence" in core_params:
+        judge_kwargs["coherence"] = stages["coherence"]
+        if stages.get("distinct_kinds") is not None and "distinct_kinds" in core_params:
+            judge_kwargs["distinct_kinds"] = stages["distinct_kinds"]
+    concept_gate_on = want_concept_gate
+    if concept_gate_on and stages.get("concept_gate") is not None and "concept_gate" in core_params:
+        judge_kwargs["concept_gate"] = stages["concept_gate"]
+    else:
+        # An older pinned core, or a declined opt-in: either way the signal has no value this run, and
+        # the not-computed register says which — never a silent False.
+        concept_gate_on = False
     # --- the staged boundary, expressed in CORE's vocabulary (see _GATE_STOP_MECHANISM) ---
     classify_stage = stages.get("classify")
     if stop_at_gate == "gate1":
@@ -1128,6 +1294,7 @@ def run_pipeline(
         gencde=stages.get("gencde") if gen_gencde else None,
         specgen=stages.get("specgen") if gen_specs else None,
         **({"refine": stages.get("refine")} if refine_cdes else {}),
+        **judge_kwargs,
         **kwargs,
     )
     _save_substrate_if_new(substrate_path, result)
@@ -1140,7 +1307,95 @@ def run_pipeline(
         field_index=field_index,
         cost=cast(UICost, ledger.to_dict()),
         gate_position=stop_at_gate,
+        concept_gate=concept_gate_on,
     )
+
+
+# ── re-adjudication: caller-invoked, explicit group ids, NEVER automatic ─────────────────────
+#
+# The coherence flag is a SUGGESTION. Core's own docstring is the contract — "The pipeline never
+# re-splits automatically ... this pass runs only when a caller invokes it" — and the product simply
+# never called it, which is why `readjudicated_from` was a dead field.
+#
+# The dangerous default is one keystroke away and lives in core: `readjudicate(group_ids=None)` selects
+# EVERY record carrying `incoherent` and re-splits all of them. That is a paid, unreviewed re-partition
+# of the reviewer's data triggered by a flag rather than by a decision, which is exactly the prohibited
+# auto-resolution of an over-merge (T-08-53). So this entry point never forwards `None`: an empty or
+# absent id list is REFUSED before any stage runs.
+
+
+def _core_readjudicate() -> Callable[..., Any]:
+    """Fetch core's ``readjudicate``. A seam, so a test can stand in for it without an LLM anywhere."""
+    from ddharmon.harmonization import readjudicate
+
+    return readjudicate
+
+
+def _collect_inputs(embedded: list[Any]) -> tuple[list[str], Any, list[Any]]:
+    """``(docs, embeddings, field_refs)`` for the run's embedded dictionaries.
+
+    ``readjudicate`` needs the frozen embedding matrix and the field-reference list that
+    ``harmonize_leanb`` builds internally, and ``LeanBResult`` does not carry either. Re-deriving them is
+    free (a stack of vectors already in memory) and deterministic — no model call, no re-embedding.
+    """
+    from ddharmon.clustering.topic_engine import collect_inputs
+
+    docs, embeddings, field_refs, _cohorts = collect_inputs(embedded)
+    return docs, embeddings, field_refs
+
+
+def readjudicate_groups(
+    leanb_result: Any,
+    embedded: list[Any],
+    *,
+    group_ids: Sequence[str] | None,
+    split: StageFn,
+    classify: StageFn,
+    cde_cohort: str = "NIH_CDE",
+    member_index: dict[str, UIMember] | None = None,
+    concept_gate: bool = False,
+    **knobs: Any,
+) -> list[UIRecord]:
+    """Re-split and re-assign EXACTLY the groups a human named, and return the updated record set.
+
+    ``group_ids`` is required and must be non-empty. Nothing here scans the ``incoherent`` flag to build
+    that list — a re-split without a named human decision is the prohibited behaviour, and defaulting to
+    "every flagged group" would spend money on a re-partition nobody asked for.
+
+    The flow itself is core's: this calls ``readjudicate()``, which reuses ``prepare_readjudicate`` →
+    ``prepare_group_assign`` → ``assemble_leanb``. The adapter supplies the two stage callables and maps
+    the result. It does not re-implement a single step of the pipeline.
+
+    Degrades on an older pinned core: if this core has no ``readjudicate``, the caller's records come back
+    unchanged and nothing raises — and because no child then carries the provenance signal, the
+    not-computed register keeps reporting it as a per-run absence rather than claiming a re-adjudication
+    happened.
+    """
+    if not group_ids:
+        raise ValueError(
+            "readjudicate_groups requires an explicit non-empty group_ids list. Re-adjudication is a human "
+            "decision: the coherence flag is a suggestion, and re-splitting every flagged group because it "
+            "was flagged is an auto-resolution of an over-merge, which is prohibited."
+        )
+    idx = member_index or {}
+    try:
+        core_readjudicate = _core_readjudicate()
+    except (ImportError, AttributeError) as exc:
+        logger.warning("this core has no readjudicate (%s) — returning the records unchanged", exc)
+        return [_record_to_ui(r, idx, concept_gate=concept_gate) for r in leanb_result.records]
+    _docs, embeddings, field_refs = _collect_inputs(embedded)
+    updated = core_readjudicate(
+        leanb_result,
+        embedded,
+        embeddings,
+        field_refs,
+        split=split,
+        classify=classify,
+        group_ids=list(group_ids),
+        cde_cohort=cde_cohort,
+        **knobs,
+    )
+    return [_record_to_ui(r, idx, concept_gate=concept_gate) for r in updated.records]
 
 
 # ── targeted GenCDE recode regeneration (refine → regen, Part 3) ─────────────────────────────

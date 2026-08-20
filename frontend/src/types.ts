@@ -186,6 +186,25 @@ export interface UIRecord {
   candidates: UICandidate[]; // ranked CDE candidates the assign stage saw (best-first)
   rationale: string;
   decidedBy: string;
+  // ── v5 triage signals. Additive/optional so a pre-v5 payload still types; the backend emits every one
+  //    of them on every record, so an ABSENT key means "older payload", never "clean".
+  /** The closed four-state coherence cell. `not_judged` is a value, not an absence. */
+  coherence?: CoherenceState;
+  coherenceSummary?: string;
+  coherenceAxis?: string;
+  coherenceDistinctValues?: string[];
+  coherenceOutliers?: string[];
+  coherenceKind?: string;
+  /** A FLAG: the group is surfaced for a human, never auto-split. */
+  incoherent?: boolean;
+  matrixSuspect?: boolean;
+  /** M3's unmappable-values diagnostic — NOT `coverageGap`, which is the novel-below-tau one. */
+  coherenceGap?: boolean;
+  adoptDemoted?: boolean;
+  /** Present ONLY when the opt-in concept gate ran. Absent means not asked, not "no mismatch". */
+  conceptMismatch?: boolean;
+  /** Present only on a re-adjudication child: the parent group id it was carved from. */
+  readjudicatedFrom?: string;
 }
 
 export interface PromptCounts {
@@ -299,6 +318,57 @@ export interface ConceptGroup {
   matrixSuspect: boolean;
 }
 
+export interface NotComputedEntry {
+  signal: string;
+  kind: "permanent" | "per_run";
+  reason: string;
+}
+
+/** One preprocessing rule's outcome. Four values: a rule that RAN and changed nothing is a different
+ *  claim from a rule that never ran, and both differ from one that threw. */
+export type RuleOutcome = "changed" | "no_change" | "not_run" | "failed";
+
+export interface PreprocessRule {
+  rule: string;
+  label: string;
+  outcome: RuleOutcome;
+  nChanged: number;
+  /** The denominator, and it is a ROW count (variables), never a count of metadata attributes. */
+  nVariables: number;
+  detail: string;
+  error: string;
+}
+
+/** One variable's before/after. Plain data — never rendered as HTML. Carries no rule name: the pipeline
+ *  does not stamp which rule changed a variable, and a `rule` key here would assert that it does. */
+export interface PreprocessDiff {
+  variableName: string;
+  rawVariableName: string;
+  rawDescription: string;
+  cleanedDescription: string;
+  nameChanged: boolean;
+  descChanged: boolean;
+  embedNameSuppressed: boolean;
+}
+
+export interface PreprocessReport {
+  cohort: string;
+  nVariables: number;
+  /** Lower than `nVariables` means variable names collided and rows were dropped SILENTLY, last-wins. */
+  nUniqueVariableNames: number;
+  nDuplicateVariableNames: number;
+  nNothingToEmbed: number;
+  namesChanged: number;
+  descriptionsChanged: number;
+  ran: boolean;
+  failed: boolean;
+  error: string;
+  rules: PreprocessRule[];
+  diff: PreprocessDiff[];
+  nChangedVariables: number;
+  diffTruncated: boolean;
+}
+
 export interface HarmonizationResult {
   contractVersion: string;
   mode: string;
@@ -321,6 +391,16 @@ export interface HarmonizationResult {
   // STAGED REVIEW (contract v5+): the post-split concept groups Gate 1 renders. Optional so pre-v5
   // fixtures and preview runs (which never reach the Gate 1 boundary) still parse.
   conceptGroups?: ConceptGroup[];
+  /** The UNCAPPED membership per group id — the expanded row's source. Read this, not the collapsed
+   *  row's `memberVariableNames`, before writing membership back: a regroup over a capped sample would
+   *  silently drop the members it never showed. */
+  conceptGroupMembers?: Record<string, string[]>;
+  /** Signals that carry no value on this run, each with a reason and an entry KIND. `per_run` means an
+   *  opt-in stage exists and this run did not enable it (actionable); `permanent` means no stage
+   *  produces it at all. Rendering them alike either understates the product or misleads about it. */
+  notComputed?: NotComputedEntry[];
+  /** What preprocessing did to each source dictionary, between loading and embedding. */
+  preprocessing?: PreprocessReport[];
   // Present when this result is a PAUSED run's state rather than a finished one.
   gatePosition?: GatePosition;
   // Mirrors the progress frame's token, so a client that refetched because the token moved can tell it got
