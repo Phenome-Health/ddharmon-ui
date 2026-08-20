@@ -470,6 +470,39 @@ class JobStore:
         self._persist(job)
         return True
 
+    def mark_reconciled(self, job_id: str) -> bool:
+        """Record that late batch work was attached to a run: one version bump, nothing else.
+
+        Called by :mod:`backend.batch_reconcile` and by nothing else. The token moves EXACTLY once per
+        reconcile that changed something and not at all for a no-op, which is what stops the versioned
+        refetch 08-08 introduced from becoming a refetch storm driven by a timer (T-08-55).
+
+        Unlike :meth:`update`, this works on a run that is NOT IN MEMORY. That is the whole point: a paused
+        run is evicted from memory precisely because a human review takes days (T-08-39), so the run whose
+        batch results arrive late is the run most likely to exist only as a database row. ``update``
+        returning silently for that case would make the guarantee hold only for runs nobody waited on.
+
+        Returns False for a run this store cannot see at all.
+        """
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is not None:
+                live.result_version += 1
+                live.updated_at = time.time()
+        if live is not None:
+            self._persist(live)
+            return True
+        if self.db is None:
+            return False
+        row = self.db.get(job_id)
+        if row is None:
+            return False
+        hydrated = Job.from_db_row(row)
+        hydrated.result_version += 1
+        hydrated.updated_at = time.time()
+        self._persist(hydrated)
+        return True
+
     def request_cancel(self, job_id: str, mode: str = "discard") -> bool:
         """Flag a live, in-flight run to stop. ``mode`` is "keep" (finish the current stage, keep its partial
         result, skip the rest) or "discard" (abort ASAP, no result); an unknown mode falls back to "discard".

@@ -704,9 +704,7 @@ def _submitted_batch(work_dir, tag: str, batch_id: str, ids: list[str]):
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     prompts = work_dir / f"prompts_{tag}.jsonl"
-    prompts.write_text(
-        "\n".join(json.dumps({"id": i, "system_prompt": "s", "user_prompt": "u"}) for i in ids) + "\n"
-    )
+    prompts.write_text("\n".join(json.dumps({"id": i, "system_prompt": "s", "user_prompt": "u"}) for i in ids) + "\n")
     (work_dir / f"prompts_{tag}.jsonl.batch_manifest.json").write_text(
         json.dumps(
             {
@@ -949,9 +947,9 @@ def test_the_tag_to_stage_map_matches_the_adapters_batch_wiring():
     for name, spec in adapter_module._JUDGE_STAGES.items():
         wired[spec["tag"]] = name
 
-    assert set(wired) <= set(TAG_TO_STAGE), (
-        f"the adapter caches batch tags this module cannot map to a stage: {sorted(set(wired) - set(TAG_TO_STAGE))}"
-    )
+    assert set(wired) <= set(
+        TAG_TO_STAGE
+    ), f"the adapter caches batch tags this module cannot map to a stage: {sorted(set(wired) - set(TAG_TO_STAGE))}"
     for tag, stage in wired.items():
         if stage != "?":
             assert TAG_TO_STAGE[tag] == stage, f"tag {tag!r} maps to {TAG_TO_STAGE[tag]!r}, adapter says {stage!r}"
