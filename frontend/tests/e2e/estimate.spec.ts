@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   COHERENCE_MIN_MEMBERS,
   GATE_LEDGER_KEYS,
+  SPLIT_ASSIGN_DIVISION,
   STAGE_SHARES,
   estimateRunCostBreakdown,
   realizedSpendByGate,
@@ -108,20 +109,48 @@ test.describe("run estimate", () => {
     expect(GATE_LEDGER_KEYS.gate4).toEqual([]);
   });
 
-  test("@estimate an unmeasured split/assign division quotes the FULL combined share", () => {
+  test("@estimate the split/assign division follows measured call volume, not an even split", () => {
     const b = estimateRunCostBreakdown(1000, 5, "batch", true);
     const base = 1000 * 0.0026 * 1.32;
-    expect(b.byGate.gate1.divisionUnmeasured).toBe(true);
-    expect(b.byGate.gate2.divisionUnmeasured).toBe(true);
-    // Gate 1's figure carries the WHOLE combined share, not a guessed fraction of it. An assumed even
-    // split landing under the true split cost would under-quote the first charge the user ever sees.
-    const idealPlusCombined = (STAGE_SHARES.ideal + STAGE_SHARES.splitAssign) * base;
-    expect(b.byGate.gate1.forecast).toBeGreaterThanOrEqual(idealPlusCombined);
-    expect(b.byGate.gate2.forecast).toBeGreaterThanOrEqual(STAGE_SHARES.splitAssign * base);
-    // Which means the per-gate figures OVERLAP by exactly that share, and say so rather than hiding it.
-    const perGate = Object.values(b.byGate).reduce((s, g) => s + g.forecast, 0);
-    expect(perGate).toBeGreaterThan(b.total.mid);
-    expect(b.byGate.gate1.note).toMatch(/unmeasured/i);
+
+    // The division is measured, so neither gate carries an unmeasured-division warning any more.
+    expect(b.byGate.gate1.divisionUnmeasured).toBe(false);
+    expect(b.byGate.gate2.divisionUnmeasured).toBe(false);
+    expect(b.byGate.gate1.note).toMatch(/measured call volume/i);
+
+    // The two halves sum back to the fused share — dividing must not invent or lose money.
+    expect(SPLIT_ASSIGN_DIVISION.split + SPLIT_ASSIGN_DIVISION.assign).toBeCloseTo(1, 9);
+
+    // Assign is the LARGER half, which is the whole point: it runs once per post-split group, so it is
+    // 2.28 calls per split call. The old even-split assumption had this backwards, and the reasoning that
+    // justified fusing (an even split would under-quote SPLIT) pointed the wrong way as a result.
+    expect(SPLIT_ASSIGN_DIVISION.assign).toBeGreaterThan(SPLIT_ASSIGN_DIVISION.split);
+
+    const splitShare = STAGE_SHARES.splitAssign * SPLIT_ASSIGN_DIVISION.split * base;
+    const assignShare = STAGE_SHARES.splitAssign * SPLIT_ASSIGN_DIVISION.assign * base;
+    expect(b.byGate.gate1.forecast).toBeGreaterThanOrEqual(STAGE_SHARES.ideal * base + splitShare);
+    expect(b.byGate.gate2.forecast).toBeCloseTo(assignShare + STAGE_SHARES.gencde * base, 9);
+
+    // R8 still holds where it matters: the first charge covers everything reaching Gate 1 buys.
+    expect(b.firstCharge).toBe(b.byGate.gate1.forecast);
+  });
+
+  test("@estimate the per-gate forecasts sum to the run total — nothing double-counted", () => {
+    for (const fields of [200, 1000, 7451]) {
+      for (const mode of ["batch", "sync"] as const) {
+        for (const { genSpecs, suggestIdeas, conceptGate } of FLAG_COMBINATIONS) {
+          const b = estimateRunCostBreakdown(fields, 5, mode, genSpecs, suggestIdeas, { conceptGate });
+          const perGate = Object.values(b.byGate).reduce((s, g) => s + g.forecast, 0);
+          // `analysisIdeas` is the ONE line deliberately not attributed to a gate: it is an opt-in pass
+          // over the finished concept digest, not work any gate's Continue buys. Derived from `lines`
+          // rather than hardcoded, so a future unattributed line has to be named HERE instead of
+          // silently widening the gap between the gates and the total.
+          const unattributed = b.lines.filter((l) => l.id === "analysisIdeas").reduce((s, l) => s + l.cost, 0);
+          const label = `${fields}/${mode}/${JSON.stringify({ genSpecs, suggestIdeas, conceptGate })}`;
+          expect(perGate, label).toBeCloseTo(b.total.mid - unattributed, 6);
+        }
+      }
+    }
   });
 
   test("@estimate realized spend and a forecast cannot be read for each other", () => {

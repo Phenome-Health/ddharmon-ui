@@ -56,19 +56,44 @@ const USD_PER_OUTPUT_TOKEN = 15 / 1_000_000;
  *
  * FOUR shares, not the three the SPEC quotes — a generated-element line was added before this phase.
  *
- * `splitAssign` IS STILL FUSED, and that is a measurement fact, not an oversight. The observed run
- * reported the two together, so the division between them is UNMEASURED. It is deliberately not divided
- * here: an assumed even split that landed under the true cost of `split` would under-quote the first
- * charge the user ever sees, which is exactly the failure R8 exists to prevent. Where a per-gate figure
- * needs it (Gate 1 pays `split`, Gate 2 pays `assign`), the FULL combined share is quoted at both and the
- * division is flagged `divisionUnmeasured` — over-quoting is permitted, guessing downward is not.
- *
- * (`STOP_COMMITTED_BY_PHASE` below does carry a split/assign division. It is an ASSUMED even split,
- * authored for the mid-run stop dialog before this phase, and it must not be reused as evidence that the
- * division is known. Deriving it for real is $0 — the pipeline already exposes both stages' prepared
- * prompt collections — and is recorded as an open item rather than guessed at here.)
+ * `splitAssign` remains ONE share because the calibration run reported the two stages together. The
+ * division between them is now MEASURED rather than assumed — see `SPLIT_ASSIGN_DIVISION`.
  */
 export const STAGE_SHARES = { ideal: 0.06, splitAssign: 0.44, gencde: 0.28, specgen: 0.22 };
+
+/**
+ * How the fused `splitAssign` share divides between the two stages that actually pay it — Gate 1's
+ * Continue buys `split`, Gate 2's buys `assign`.
+ *
+ * MEASURED, not assumed, and the measurement matters because the obvious guess is wrong. Counted off the
+ * frozen prompt/response artifacts of the full-5 stack run (`harmonization_artifacts_full5_stack/`):
+ *
+ *     stage    calls   input tok   output tok
+ *     split      926   2,652,860      233,695
+ *     assign   2,109   3,506,350      252,239
+ *
+ * 2.28 assign calls per split call, because `assign` runs once per POST-SPLIT GROUP and splitting
+ * multiplies the work. Cost share is stable under output weighting (43.1/56.9 on input alone, 44.5/55.5
+ * with output priced 5x), so rounding to 43/57 is safe in either direction.
+ *
+ * This corrects the reasoning it replaces. Fusing was justified by the fear that an assumed EVEN split
+ * "landing under the true cost of split would under-quote the first charge the user ever sees" — but split
+ * measures BELOW half, so an even split would have OVER-quoted it. The under-quote risk was always at
+ * Gate 2, not Gate 1. Quoting the full combined share at both gates avoided that, at the price of the two
+ * figures overlapping by 44% of the run, which no consumer could sum.
+ *
+ * TWO CAVEATS, both real:
+ *   1. This is a different corpus from the $5.38 run `STAGE_SHARES` came from. It is a ratio, not a
+ *      re-measurement of the shares themselves.
+ *   2. The ratio moves with how aggressively clusters split — recursive split (M2) raises the group count
+ *      and therefore assign's share. Re-derive it when split behaviour changes.
+ *
+ * Both are cheap to revisit: deriving this costs $0, since it only counts artifacts a completed run has
+ * already written. Note what is NOT free — PREDICTING it per-run. `prepare_group_assign` takes
+ * `split_responses`, so the number of assign calls is unknowable until split has run and been answered.
+ * Hence a historical ratio for the forecast, and the run's own ledger once it passes Gate 1.
+ */
+export const SPLIT_ASSIGN_DIVISION = { split: 0.43, assign: 0.57 };
 
 /**
  * "Analysis ideas" is ONE LLM pass over the concept digest (not per-variable), so it is a small flat add
@@ -317,14 +342,17 @@ export function estimateRunCostBreakdown(
 
   const mid = lines.reduce((s, l) => s + l.cost, 0);
 
-  // --- per gate. Both Gate 1 and Gate 2 quote the FULL combined split-and-assign share, because the
-  // division between `split` and `assign` is unmeasured and a guessed fraction could land under the true
-  // cost of either. The two figures therefore overlap by that share; `divisionUnmeasured` says so.
-  const unmeasuredNote =
-    "includes the whole split-and-assign share: the division between them is unmeasured, so this figure " +
-    "is quoted high rather than guessed low";
-  const gate1 = line(STAGE_SHARES.ideal) + line(STAGE_SHARES.splitAssign) + coherenceCost;
-  const gate2 = line(STAGE_SHARES.splitAssign) + line(STAGE_SHARES.gencde);
+  // --- per gate. Gate 1's Continue buys `split`, Gate 2's buys `assign`, so the fused share is divided
+  // between them by the measured ratio in `SPLIT_ASSIGN_DIVISION`. The two figures no longer overlap,
+  // which is what lets a consumer sum them: the per-gate forecasts add up to the run total (less the one
+  // line no gate buys), asserted by test.
+  const splitShare = line(STAGE_SHARES.splitAssign * SPLIT_ASSIGN_DIVISION.split);
+  const assignShare = line(STAGE_SHARES.splitAssign * SPLIT_ASSIGN_DIVISION.assign);
+  const divisionNote =
+    "the split-and-assign share is divided between this gate and the next by measured call volume, " +
+    "not split evenly";
+  const gate1 = line(STAGE_SHARES.ideal) + splitShare + coherenceCost;
+  const gate2 = assignShare + line(STAGE_SHARES.gencde);
   const gate3 = (genSpecs ? line(STAGE_SHARES.specgen) : 0) + conceptGateCost;
   const byGate: Record<GatePosition, GateForecast> = {
     setup: { gate: "setup", forecast: 0, divisionUnmeasured: false },
@@ -336,8 +364,8 @@ export function estimateRunCostBreakdown(
       divisionUnmeasured: false,
       note: "no model call happens here — the first charge is Continue at Gate 0, which buys what Gate 1 shows",
     },
-    gate1: { gate: "gate1", forecast: gate1, divisionUnmeasured: true, note: unmeasuredNote },
-    gate2: { gate: "gate2", forecast: gate2, divisionUnmeasured: true, note: unmeasuredNote },
+    gate1: { gate: "gate1", forecast: gate1, divisionUnmeasured: false, note: divisionNote },
+    gate2: { gate: "gate2", forecast: gate2, divisionUnmeasured: false, note: divisionNote },
     gate3: { gate: "gate3", forecast: gate3, divisionUnmeasured: false },
     gate4: { gate: "gate4", forecast: 0, divisionUnmeasured: false },
   };
@@ -383,17 +411,17 @@ export function realizedSpendByGate(cost?: RunCost | null, costSoFar?: number): 
  * LLM stages accrue in order. Keys mirror the backend phase labels.
  *
  * NOTE ON `splitting` / `assigning`: this table divides the combined split+assign share EVENLY (0.22 each),
- * which is an ASSUMPTION made for the stop dialog before the division was known to be unmeasured. It is
- * kept because the stop dialog already ships against it, and it must NOT be read as evidence that the
- * division is measured — see `STAGE_SHARES`.
+ * The split/assign boundary here now follows the MEASURED ratio in `SPLIT_ASSIGN_DIVISION` rather than
+ * the even split it was authored with. Only the `splitting` figure moves (0.28 -> 0.25); every cumulative
+ * endpoint after it is unchanged, because the two stages still sum to the same fused share.
  */
 const STOP_COMMITTED_BY_PHASE: Record<string, number> = {
   loading: 0,
   embedding: 0,
   clustering: 0,
   generating: 0.06, // gen-ideal done
-  splitting: 0.28, // + splitting
-  assigning: 0.5, // + assigning (split+assign done)
+  splitting: 0.25, // + splitting (0.06 + 0.44*0.43)
+  assigning: 0.5, // + assigning (split+assign done; 0.06 + 0.44)
   gencde: 0.78, // + GenCDE synthesis (novels)
   specs: 1, // + transform spec-gen (last paid stage)
   complete: 1,
