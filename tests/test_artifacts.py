@@ -13,7 +13,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.app as app_module
-from backend.artifact_kinds import ANALYSIS_IDEAS, COMPOSITE, VERDICT
+from backend.artifact_kinds import (
+    ANALYSIS_IDEAS,
+    COMPOSITE,
+    COMPOSITE_SWAP,
+    GATE1_GROUP_SCOPE,
+    GATE1_REGROUP,
+    GATE2_CANDIDATE_PICK,
+    GATE2_RELATION,
+    GATE3_SPEC_EDIT,
+    GATE4_EXPORT_SELECTION,
+    GATE_DECISION_KINDS,
+    VERDICT,
+    content_key,
+    derive_staleness,
+    option_set_key,
+)
 from backend.artifacts import ArtifactKind, ArtifactRegistry, ArtifactStore, ReadOnlyRunError, UnknownArtifactKindError
 from backend.db import JobDB, _verdicts_from_legacy, _verdicts_to_legacy
 from backend.jobs import LOCAL_PRINCIPAL, JobStore
@@ -544,3 +559,195 @@ def test_the_result_endpoint_does_not_hand_one_user_anothers_verdicts(tmp_path, 
         assert app_module.store.get("j1").decisions["r1"]["decision"] == "reject"  # mirror is polluted
         decisions = c.get("/api/harmonize/result/j1").json()["decisions"]  # read as the local principal
     assert decisions == {}, "the result endpoint leaked another user's verdict"
+
+
+# --- gate decisions: identity, the option space, and derived staleness (08-11) -----------------
+#
+# Seven gates multiply the surface the artifact table was built to fix, so the granularity rule is
+# load-bearing here rather than stylistic: a decision keys on the THING DECIDED, never on the gate, or two
+# tabs interleave a read-modify-write of one gate blob and lose one another's work.
+
+
+def _pick(group_id="g1", chosen="CDE:1", alternatives=("CDE:1", "CDE:2"), **extra):
+    return {
+        "groupId": group_id,
+        "chosen": chosen,
+        "alternatives": list(alternatives),
+        "optionSetKey": option_set_key(alternatives),
+        **extra,
+    }
+
+
+def test_a_regroup_keys_on_the_variable_moved_not_on_the_gate(artifacts):
+    """Two variables moved in two tabs must be two INDEPENDENT rows. Keyed per gate they would be one
+    blob, and the second tab's write would drop the first tab's move."""
+    for var in ("UKBB:age", "AoU:age_at_visit"):
+        artifacts.put(
+            owner=USER_A,
+            job_id="run-1",
+            kind=GATE1_REGROUP,
+            payload={
+                "memberId": var,
+                "chosen": "g2",
+                "alternatives": ["g1", "g2"],
+                "optionSetKey": option_set_key(["g1", "g2"]),
+            },
+        )
+    stored = artifacts.get_all(owner=USER_A, job_id="run-1")[GATE1_REGROUP]
+    assert sorted(d["memberId"] for d in stored) == ["AoU:age_at_visit", "UKBB:age"]
+
+
+def test_a_candidate_pick_carries_its_option_space(artifacts):
+    """R13 is only checkable if the alternatives are addressable from the decision record itself."""
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick())
+    stored = artifacts.get_all(owner=USER_A, job_id="run-1")[GATE2_CANDIDATE_PICK][0]
+    assert stored["chosen"] == "CDE:1"
+    assert stored["alternatives"] == ["CDE:1", "CDE:2"]
+    assert stored["optionSetKey"] == option_set_key(["CDE:2", "CDE:1"])  # order-independent
+
+
+def test_a_decision_payload_with_no_option_set_key_is_refused_and_the_field_is_named(artifacts):
+    """A record whose staleness can never be derived is worse than a rejected write."""
+    bad = {"groupId": "g1", "chosen": "CDE:1", "alternatives": ["CDE:1"]}
+    with pytest.raises(ValueError, match="optionSetKey"):
+        artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=bad)
+    assert artifacts.get_all(owner=USER_A, job_id="run-1") == {}
+
+
+def _write_pair(artifacts, *, chosen="CDE:1", alternatives=("CDE:1", "CDE:2")):
+    """An upstream Gate 2 pick plus a Gate 3 spec edit that records the upstream content key it saw."""
+    upstream = _pick(chosen=chosen, alternatives=alternatives)
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=upstream)
+    downstream = {
+        "sourceVariable": "UKBB:age",
+        "chosen": "spec-a",
+        "alternatives": ["spec-a", "spec-b"],
+        "optionSetKey": option_set_key(["spec-a", "spec-b"]),
+        "upstream": {
+            "kind": GATE2_CANDIDATE_PICK,
+            "itemKey": "g1",
+            "contentKey": content_key(upstream),
+        },
+    }
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE3_SPEC_EDIT, payload=downstream)
+
+
+def test_a_downstream_decision_reads_stale_when_its_upstream_changed(artifacts):
+    _write_pair(artifacts)
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+    # The reviewer corrects the upstream pick: same option set, different chosen candidate.
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick(chosen="CDE:2"))
+    stale = derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1"))
+    assert [(s["kind"], s["itemKey"]) for s in stale] == [(GATE3_SPEC_EDIT, "UKBB:age")]
+
+
+def test_a_downstream_decision_reads_stale_when_the_option_set_itself_changed(artifacts):
+    """The other half of "one field serves both": the alternatives moved, not just the choice."""
+    _write_pair(artifacts)
+    artifacts.put(
+        owner=USER_A,
+        job_id="run-1",
+        kind=GATE2_CANDIDATE_PICK,
+        payload=_pick(chosen="CDE:1", alternatives=("CDE:1", "CDE:2", "CDE:3")),
+    )
+    stale = derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1"))
+    assert [s["itemKey"] for s in stale] == ["UKBB:age"]
+
+
+def test_a_no_op_re_save_of_an_identical_upstream_marks_nothing_stale(artifacts):
+    """A timestamp rule would fail here: `upsert_artifact` moves `updated_at` on EVERY write, including a
+    re-save of the same candidate, so specs would go stale because the reviewer clicked save twice."""
+    _write_pair(artifacts)
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick())
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+
+def test_a_correction_is_reported_once_however_often_it_is_read(artifacts):
+    """A content key is a comparison, not a counter — two reads cannot double-apply one correction."""
+    _write_pair(artifacts)
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick(chosen="CDE:2"))
+    grouped = artifacts.get_all(owner=USER_A, job_id="run-1")
+    first, second = derive_staleness(grouped), derive_staleness(grouped)
+    assert len(first) == 1 and first == second
+
+
+def test_a_run_with_no_downstream_decisions_derives_no_staleness(artifacts):
+    """R13's cheap case: a finished run with nothing downstream re-decides with no regeneration step."""
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick())
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_pick(chosen="CDE:2"))
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+
+def test_the_first_gate_and_the_last_gate_behave_like_any_other(artifacts):
+    """A correction at an edge is not a special case: the first gate has no upstream to compare against,
+    and the last gate is compared exactly like the middle one."""
+    scope = {
+        "groupId": "g1",
+        "chosen": "keep",
+        "alternatives": ["keep", "drop"],
+        "optionSetKey": option_set_key(["keep", "drop"]),
+    }
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE1_GROUP_SCOPE, payload=scope)
+    export = {
+        "recordId": "r1",
+        "chosen": "include",
+        "alternatives": ["include", "exclude"],
+        "optionSetKey": option_set_key(["include", "exclude"]),
+        "upstream": {"kind": GATE1_GROUP_SCOPE, "itemKey": "g1", "contentKey": content_key(scope)},
+    }
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE4_EXPORT_SELECTION, payload=export)
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE1_GROUP_SCOPE, payload={**scope, "chosen": "drop"})
+    stale = derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1"))
+    assert [(s["kind"], s["itemKey"]) for s in stale] == [(GATE4_EXPORT_SELECTION, "r1")]
+
+
+def test_a_missing_upstream_row_is_not_reported_as_stale(artifacts):
+    """Absence is not evidence of change: the upstream decision may simply have been cleared, and claiming
+    staleness we cannot see would train the reviewer to ignore the notice."""
+    _write_pair(artifacts)
+    artifacts.delete(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, item_key="g1")
+    assert derive_staleness(artifacts.get_all(owner=USER_A, job_id="run-1")) == []
+
+
+def test_every_gate_decision_kind_is_registered_with_an_identity(artifacts):
+    """Seven gates, seven kinds, no singleton among them: a singleton IS the per-gate blob."""
+    from backend.artifacts import registry as global_registry
+
+    assert len(GATE_DECISION_KINDS) == 7
+    for name in GATE_DECISION_KINDS:
+        assert not global_registry.get(name).singleton, f"{name} must key on the thing decided"
+
+
+def test_the_relation_and_swap_kinds_key_on_the_edge_they_decide(artifacts):
+    """A relation is per (group, target) and a component swap is per (score, component) — keyed per gate,
+    a second relation on the same group would silently replace the first."""
+    for target in ("CDE:9", "CDE:10"):
+        artifacts.put(
+            owner=USER_A,
+            job_id="run-1",
+            kind=GATE2_RELATION,
+            payload={
+                "groupId": "g1",
+                "targetId": target,
+                "chosen": "narrower",
+                "alternatives": ["exact", "narrower", "broader"],
+                "optionSetKey": option_set_key(["exact", "narrower", "broader"]),
+            },
+        )
+    artifacts.put(
+        owner=USER_A,
+        job_id="run-1",
+        kind=COMPOSITE_SWAP,
+        payload={
+            "scoreName": "Fried",
+            "componentName": "grip strength",
+            "chosen": "c-7",
+            "alternatives": ["c-7", "c-8"],
+            "optionSetKey": option_set_key(["c-7", "c-8"]),
+        },
+    )
+    grouped = artifacts.get_all(owner=USER_A, job_id="run-1")
+    assert len(grouped[GATE2_RELATION]) == 2
+    assert len(grouped[COMPOSITE_SWAP]) == 1
