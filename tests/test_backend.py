@@ -3044,12 +3044,7 @@ def test_score_extract_is_auth_required_not_a_generic_error(monkeypatch):
     assert resp.json()["detail"]
 
 
-_PARTICIPANT_CSV = (
-    b"participant_id,age,bmi,sbp\n"
-    b"P0001,54,26.1,131\n"
-    b"P0002,61,23.8,118\n"
-    b"P0003,47,31.2,142\n"
-)
+_PARTICIPANT_CSV = b"participant_id,age,bmi,sbp\n" b"P0001,54,26.1,131\n" b"P0002,61,23.8,118\n" b"P0003,47,31.2,142\n"
 
 
 def _batch_config(filename="cohortA.csv"):
@@ -3190,18 +3185,35 @@ def test_readjudicate_on_a_foreign_run_is_404_not_403(monkeypatch):
 
 def test_readjudicate_forwards_exactly_the_named_groups(monkeypatch, tmp_path):
     """The opt-in run's happy path: the endpoint hands core's seam the ids the human named and nothing else,
-    and the run's records are updated in place."""
+    and the run's records are updated in place. The provider client is a stub whose calls are counted, so
+    "the split and assign for those groups is the ONLY new spend" is asserted rather than assumed."""
     calls = _spy_readjudicate(monkeypatch)
     import backend.engine.adapter as ad
+    import backend.engine.llm as llm_mod
 
+    completions = []
     monkeypatch.setattr(ad, "replay_leanb_result", lambda *a, **k: (object(), []))
+    monkeypatch.setattr(ad, "build_member_index", lambda embedded: {})
+    monkeypatch.setattr(
+        llm_mod,
+        "build_llm_client",
+        lambda *a, **k: type("C", (), {"complete": lambda *_a, **_k: completions.append(1)})(),
+    )
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
     job_id = _readjudicable_run("j-ok", opt_in=True, config={"work_dir": str(tmp_path / "j-ok")})
+    app_module.store.update(
+        job_id,
+        dict_specs=[{"path": str(cde), "cohort_name": "CohortA", "column_roles": {"variable_name": "designation"}}],
+    )
     resp = client.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json={"groupIds": ["g1", "g2"]})
     assert resp.status_code == 200, resp.text
     assert calls and calls[0]["group_ids"] == ["g1", "g2"]
     assert app_module.store.get(job_id).result["records"] == [{"id": "r1", "groupId": "g1"}]
     assert app_module.store.get(job_id).status == "complete", "re-deciding must not un-finish the run"
+    assert completions == [], "the seam is stubbed here, so nothing should have reached a provider at all"
 
 
 # --- the $0 front-half replay that rebuilds core's inputs (WINDOWS id22) ------------------------
@@ -3248,7 +3260,11 @@ def test_replay_rebuilds_core_inputs_without_calling_a_single_stage(monkeypatch,
     )
     assert calls == [], f"the replay had to buy new work: {calls}"
     assert embedded, "the replay returned no embedded dictionaries for core to re-derive inputs from"
-    assert [r.id for r in result.records] == [r["id"] for r in first["records"]]
+    assert [(r.group_id or r.cluster_id) for r in result.records] == [r["id"] for r in first["records"]]
+    assert [r.verdict for r in result.records] == [r["verdict"] for r in first["records"]], (
+        "the replayed run must reproduce the ORIGINAL verdicts - a rebuild that decided differently would "
+        "re-adjudicate against groups the reviewer never saw"
+    )
 
 
 def test_replay_refuses_without_recorded_answers(monkeypatch, tmp_path):

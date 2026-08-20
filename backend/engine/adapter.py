@@ -1667,6 +1667,151 @@ def readjudicate_groups(
     return [_record_to_ui(r, idx, concept_gate=concept_gate) for r in updated.records]
 
 
+# -- the $0 front-half replay: rebuilding core's inputs without buying anything ----------------
+#
+# 08-09 built `readjudicate_groups`, which needs a core `LeanBResult` PLUS the embedded dictionaries. The
+# backend persists neither: a checkpoint holds the CONTRACT shape, deliberately, because a paused run has to
+# survive a process restart and core objects do not. So an HTTP request against a paused or finished run has
+# to rebuild both before it can call that seam - which is WINDOWS id22, and this is its answer.
+#
+# The rebuild is free because the front half is deterministic and every expensive part of it is already on
+# disk:
+#
+#   load + preprocess  rule-based, no model
+#   embed              local encoder; no provider, no network, no charge
+#   cluster            NOT reproducible on its own, so the FROZEN SUBSTRATE is mandatory here rather than
+#                      optional: re-clustering would hand core a different partition than the one the
+#                      reviewer's group ids name, and their decision would land on other people's groups
+#   LLM stages         answered from the recorded stage responses
+#
+# It is $0 by CONSTRUCTION, not by intention: the only stage callables installed are lookups over the
+# recorded answers. There is no client to build and no branch that could reach a provider, which is why the
+# test asserts "no stage bought anything" rather than asserting a cost of zero - a cost of zero is also what
+# a stub that called out and was billed asynchronously would report.
+
+
+class ReplayUnavailableError(RuntimeError):
+    """The inputs for a $0 replay are not on disk, so re-deriving core's objects would cost money.
+
+    Raised rather than silently re-running: a re-run of the front half re-buys every LLM stage in it, and a
+    caller asking to re-adjudicate two groups has not agreed to pay for the whole pipeline again.
+    """
+
+
+def _lookup_stage(
+    name: str, replay: dict[str, dict[str, Any]], on_missing: Callable[[str, list[str]], None]
+) -> StageFn:
+    """A stage that can ONLY look an answer up. No client, no network, no path to a provider.
+
+    A prompt id ABSENT from the recording is genuinely new work and is reported through ``on_missing``.
+    An id recorded as :data:`_NO_ANSWER` is not: the original leg ASKED about it and got nothing back, so
+    replaying it as nothing reproduces exactly what core received the first time. Conflating the two would
+    report the replay as incomplete every time a stage legitimately answered for only some of its prompts -
+    which is the normal case for ``split``, whose empty answer means "this cluster is one concept".
+    """
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        cached = replay.get(name) or {}
+        answers = {}
+        missing = []
+        for prompt in prompts:
+            pid = str(prompt.id)
+            if pid not in cached:
+                missing.append(pid)
+                continue
+            value = cached[pid]
+            if value != _NO_ANSWER:
+                answers[pid] = value
+        if missing:
+            on_missing(name, missing)
+        return answers
+
+    return stage
+
+
+def replay_leanb_result(
+    dict_specs: list[dict[str, Any]],
+    cde_spec: dict[str, Any] | None,
+    config: dict[str, Any],
+    *,
+    replay_responses: dict[str, dict[str, Any]],
+    provider: Any | None = None,
+    substrate_path: str | Path | None = None,
+    on_missing: Callable[[str, list[str]], None] | None = None,
+) -> tuple[Any, list[Any]]:
+    """Rebuild ``(LeanBResult, embedded_dicts)`` for a run, at zero LLM cost. See the section header.
+
+    ``replay_responses`` is a checkpoint's recorded stage answers. It must be non-empty: a run that was never
+    staged recorded none, and there is no honest way to rebuild its objects without paying for the front half
+    a second time.
+
+    The frozen substrate is REQUIRED. Its absence is not a degraded replay, it is a different partition -
+    and a group id from the reviewer's screen means nothing against a partition they never saw.
+    """
+    from ddharmon.embedding.service import embed_dictionary
+    from ddharmon.harmonization import harmonize_leanb
+    from ddharmon.ingestion import load_dictionary
+
+    if not replay_responses:
+        raise ReplayUnavailableError(
+            "this run has no recorded stage answers to replay, so its pipeline objects cannot be rebuilt for "
+            "free; only a staged run records them"
+        )
+    work_dir = Path(config.get("work_dir", "."))
+    path = Path(substrate_path) if substrate_path else work_dir / "substrate.joblib"
+    if not path.exists():
+        raise ReplayUnavailableError(
+            f"the frozen clustering substrate is missing ({path}), so the exact partition this run's group "
+            "ids refer to cannot be reproduced"
+        )
+    from ddharmon.harmonization.substrate import load_substrate
+
+    cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
+    specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
+    dictionaries = [load_dictionary(s["path"], cohort_name=s["cohort_name"], **s["column_roles"]) for s in specs]
+    # Preprocessing is part of the deterministic front half and it CHANGES the embedded text, so replaying
+    # with it configured differently than the original leg would embed different text and cluster differently.
+    # The run's own config is the record of what it did.
+    if config.get("preprocess", True):
+        for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
+            preprocess_for_run(dd, source_path=spec["path"])
+    if provider is None:
+        from ddharmon.embedding.provider import SentenceTransformerProvider
+
+        provider = SentenceTransformerProvider()
+    embedded = [embed_dictionary(dd, provider=provider) for dd in dictionaries]
+    embedded = [ed for ed in embedded if len(list(ed.get_variable_names())) > 0]
+
+    kwargs: dict[str, Any] = {"cde_cohort": cde_cohort, "substrate": load_substrate(path)}
+    for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
+        if config.get(key) is not None:
+            kwargs[key] = config[key]
+    if "min_cluster_size" not in kwargs:
+        n_fields = sum(len(dd.fields) for dd in dictionaries if getattr(dd, "cohort_name", None) != cde_cohort)
+        kwargs["min_cluster_size"] = _auto_min_cluster_size(n_fields)
+
+    report = on_missing or (
+        lambda stage, ids: logger.warning("replay: %s has no recorded answer for %d prompt(s)", stage, len(ids))
+    )
+    core_params = inspect.signature(harmonize_leanb).parameters
+    stages = {name: _lookup_stage(name, replay_responses, report) for name in replay_responses}
+    optional = {
+        name: stages[name]
+        for name in ("gencde", "refine", "coherence", "distinct_kinds", "concept_gate")
+        if name in stages and name in core_params
+    }
+    result = harmonize_leanb(
+        embedded,
+        generate=stages.get("generate"),
+        split=stages.get("split"),
+        classify=stages.get("classify"),
+        specgen=stages.get("specgen"),
+        **optional,
+        **kwargs,
+    )
+    return result, embedded
+
+
 # ── targeted GenCDE recode regeneration (refine → regen, Part 3) ─────────────────────────────
 #
 # When a reviewer refines a novel record's GenCDE and changes its value domain, the member->GenCDE recodes

@@ -1116,4 +1116,7 @@ def test_no_reconcile_http_route_was_added():
     paths = [getattr(r, "path", "") for r in app_module.app.routes]
     assert not [p for p in paths if "reconcile" in p.lower()], f"a reconcile route exists: {paths}"
     posts = len([1 for r in app_module.app.routes if "POST" in (getattr(r, "methods", None) or set())])
-    assert posts == 12, f"the POST surface changed ({posts} != 12)"
+    # 12 at 08-10; 14 after 08-11 added `/score/extract` (Setup, job-independent) and
+    # `/jobs/{id}/readjudicate` (the one gate action that starts paid work). Bumped deliberately: this
+    # assertion exists so a POST appears only when a plan says so, not so the number never moves.
+    assert posts == 14, f"the POST surface changed ({posts} != 14)"

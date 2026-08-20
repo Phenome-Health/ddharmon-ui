@@ -798,7 +798,6 @@ _GUEST_GATE_READS = (
     "/api/harmonize/result/{id}",
     "/api/harmonize/checkpoint/{id}",
     "/api/harmonize/jobs/{id}/artifacts",
-    "/api/harmonize/jobs/{id}/export",
 )
 
 
@@ -858,8 +857,15 @@ def test_pinned_run_rejects_writes(tmp_path, monkeypatch):
             "optionSetKey": option_set_key(["keep", "drop"]),
         }
         for kind in GATE_DECISION_KINDS:
-            payload = {**decision, "memberId": "UKBB:age", "targetId": "CDE:9", "sourceVariable": "UKBB:age",
-                       "recordId": "r1", "scoreName": "Fried", "componentName": "grip"}
+            payload = {
+                **decision,
+                "memberId": "UKBB:age",
+                "targetId": "CDE:9",
+                "sourceVariable": "UKBB:age",
+                "recordId": "r1",
+                "scoreName": "Fried",
+                "componentName": "grip",
+            }
             r = c.put(f"/api/harmonize/jobs/demo-1/artifacts/{kind}", json=payload)
             assert r.status_code == 403, f"{kind} was writable on the shared demo"
             assert "clone" in r.json()["detail"].lower()
@@ -884,3 +890,14 @@ def test_a_foreign_non_demo_run_is_404_not_403(tmp_path, monkeypatch):
             headers={"Authorization": "Bearer me@example.com"},
         )
     assert r.status_code == 404
+
+
+def test_the_export_route_is_not_on_the_guest_surface(tmp_path, monkeypatch):
+    """Gate 4 renders the export SET from the records plus the decisions, both of which a guest already
+    reads. The export route resolves no subject of its own, so making it public would rest the whole
+    cross-user boundary on one prefix check - downloading the artifact is what a guest signs in for."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        _clerk_on(monkeypatch)
+        assert c.get("/api/harmonize/jobs/demo-1/export").status_code == 401
