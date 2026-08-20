@@ -409,6 +409,40 @@ export interface HarmonizationResult {
 }
 
 /**
+ * One stale decision, as `GET /jobs/{id}/artifacts` derives it — a COMPARISON on read, never a stored flag.
+ *
+ * A downstream decision records the content key of the upstream option space it was decided against;
+ * staleness is that key differing from the upstream's key now. An absent upstream row is never reported:
+ * the reviewer may simply have cleared it, and absence is not evidence of change.
+ */
+export interface ArtifactStaleRef {
+  kind: string;
+  itemKey: string;
+  upstreamKind: string;
+  upstreamItemKey: string;
+  reason: string;
+}
+
+/** What `GET /jobs/{id}/artifacts` returns: the registered kinds, this caller's rows, and what is stale. */
+export interface ArtifactListResponse {
+  kinds: string[];
+  artifacts: Record<string, unknown> | null;
+  stale: ArtifactStaleRef[];
+}
+
+/**
+ * What one artifact upsert returns. `conflict` is the two-tab notice (UI-SPEC 8.4) and is non-null only
+ * when the write REPLACED a value this client had not seen — last-write-wins is the resolution, the notice
+ * is the requirement, and a silent overwrite of another session's decision is prohibited.
+ */
+export interface ArtifactWriteResponse {
+  kind: string;
+  itemKey: string;
+  updatedAt: number;
+  conflict: { replacedUpdatedAt: number; message: string } | null;
+}
+
+/**
  * The caller's OWN verdicts on a run, nested by record — the wire shape the backend rebuilds from the
  * per-axis artifact rows (`_verdicts_to_legacy`). Three axes share one entry: the concept→CDE match verdict
  * sits at the top level, per-source-variable transform verdicts hang off `transforms`, and the GenCDE

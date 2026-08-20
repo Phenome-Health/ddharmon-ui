@@ -15,8 +15,9 @@ import {
   staleItemKeys,
   touchedItemKeys,
   writesGoToSandbox,
+  type DecisionIndex,
   type GateDecision,
-} from "@/hooks/use-gate-decisions";
+} from "@/lib/gate-decisions";
 import { SANDBOX_PREFIX, gateDecisionsOf, withGateDecision, type SandboxState } from "@/lib/sandbox";
 import { PAUSED_RUN_FIXTURE } from "./routes";
 
@@ -206,7 +207,7 @@ test.describe("gate decisions", () => {
 
     const raw = await page.evaluate((key) => sessionStorage.getItem(key), `${SANDBOX_PREFIX}${PAUSED_RUN_FIXTURE}`);
     expect(raw).toBeTruthy();
-    const survived = gateDecisionsOf(JSON.parse(raw!) as SandboxState);
+    const survived = gateDecisionsOf(JSON.parse(raw!) as SandboxState) as unknown as DecisionIndex;
     expect(survived.gate1_group_scope["c8331409f61e1#g0"].chosen).toBe("in");
     // And the touched/stale derivation reads THAT — not component state, which is the shipped defect.
     expect(touchedItemKeys(survived, "gate1_group_scope")).toEqual(["c8331409f61e1#g0"]);
