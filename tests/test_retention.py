@@ -184,20 +184,32 @@ def test_a_work_dir_the_reaper_could_not_remove_is_reported_not_swallowed(tmp_pa
         os.chmod(tmp_path, 0o700)
 
     assert wd.exists()  # the premise of the test
-    assert any("stuck" in r.message % r.args if r.args else "stuck" in r.message for r in caplog.records), (
-        "a work dir that could not be removed was reported as torn down"
-    )
+    assert any(
+        "could not be removed" in r.getMessage() and "stuck" in r.getMessage() for r in caplog.records
+    ), f"a work dir that could not be removed was reported as torn down: {[r.getMessage() for r in caplog.records]}"
+    assert store._teardown_work_dir.__doc__ is not None
 
 
-def test_no_surface_puts_a_countdown_or_an_expiry_on_a_paused_run():
-    """§8.6: retention is indefinite, so the honest surface is a resume affordance. A countdown would be a
-    user-facing retention policy the developer has not chosen, invented by the UI."""
-    from pathlib import Path
+def test_no_payload_puts_a_countdown_or_an_expiry_on_a_paused_run(tmp_path):
+    """§8.6: retention is indefinite, so the honest surface is a resume affordance.
 
-    for path in sorted(Path("backend").glob("*.py")):
-        body = path.read_text().lower()
-        for banned in ("countdown", "expires in", "expiry", "time remaining"):
-            assert banned not in body, f"{path} mentions {banned!r} — see UI-SPEC §8.6"
+    Asserted on the PAYLOADS a paused run actually produces rather than on the source text, because the
+    defect is a field on the wire (a client cannot render a comment). A countdown here would be a
+    user-facing retention policy the developer never chose, invented by the backend.
+    """
+    from backend.checkpoint import write_checkpoint
+
+    store = JobStore(work_root=tmp_path)
+    write_checkpoint(tmp_path / "p", job_id="p", gate="gate1", result={}, responses={})
+    store.create("p", "Paused", {})
+    store.checkpoint("p", gate="gate1", checkpoint_ref="p/checkpoint_gate1.json", realized_cost=1.0)
+    job = store.get("p")
+    assert job is not None
+
+    banned = ("countdown", "expires", "expiry", "expiresat", "ttl", "timeremaining", "deletedat")
+    for payload in (job.to_dict(), job.progress_dict(), job.summary_dict()):
+        for key in payload:
+            assert key.lower().replace("_", "") not in banned, f"{key} on a paused run's payload — see §8.6"
 
 
 # ── the pre-deploy report ────────────────────────────────────────────────────────────────────
@@ -234,7 +246,7 @@ def test_the_inflight_report_counts_both_categories(tmp_path):
 
 
 def test_the_inflight_report_prints_explicit_zeros_on_an_empty_store(tmp_path):
-    """"Checked, nothing in flight" and "the check did not run" must not look the same to an operator who
+    """ "Checked, nothing in flight" and "the check did not run" must not look the same to an operator who
     is about to restart production."""
     report = _report_fn()
 

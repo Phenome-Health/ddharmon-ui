@@ -10,6 +10,7 @@ GUI; swap in SQLite later if persistence is needed).
 
 from __future__ import annotations
 
+import logging
 import shutil
 import threading
 import time
@@ -21,6 +22,8 @@ from typing import Any
 # terminal state distinct from ``error`` (a user stopped the run) and ``complete`` — a cancelled run is
 # re-runnable from its retained uploads, exactly like an errored one.
 TERMINAL_STATES = {"complete", "error", "cancelled"}
+
+logger = logging.getLogger(__name__)
 
 #: A run parked at a review gate. NON-terminal — the run is not finished and will continue when the
 #: reviewer presses Continue — but it has NO WORKER THREAD: 08 D-01 makes a gate pause an *exit*, not a
@@ -336,11 +339,26 @@ class JobStore:
             return {}
         return store_.get_all(owner=principal_of(subject, job), job_id=job.job_id)
 
-    def _teardown_work_dir(self, job_id: str) -> None:
-        """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone."""
+    def _teardown_work_dir(self, job_id: str) -> bool:
+        """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone.
+
+        Returns whether the directory is gone AFTERWARDS, and warns when it is not.
+        ``shutil.rmtree(..., ignore_errors=True)`` reports success for a teardown it did not achieve — a
+        permission on the host, a file another process still holds — and under the checkpoint model that
+        silence IS the unbounded-growth failure (T-08-54): the run disappears from the UI, its stage output
+        stays on the disk forever, and nothing anywhere says so. This is the only automatic teardown in the
+        backend, so if it lies there is no second chance and no signal.
+        """
         if self.work_root is None:
-            return
-        shutil.rmtree(self.work_root / job_id, ignore_errors=True)
+            return True
+        target = self.work_root / job_id
+        shutil.rmtree(target, ignore_errors=True)
+        if target.exists():
+            logger.warning(
+                "work dir for run %s could not be removed (%s still on disk) — it will not be retried", job_id, target
+            )
+            return False
+        return True
 
     def _persist(self, job: Job) -> None:
         """Write a job through to the durable store — unless it's pinned (demos/samples aren't persisted)."""
@@ -408,6 +426,10 @@ class JobStore:
                 store_.delete_for_run(job_id)
             existed = existed or durable
         # rmtree outside the lock — filesystem I/O shouldn't block the registry. Idempotent either way.
+        #
+        # THIS is the work-dir reaper (T-08-54). It runs unconditionally, including for a run that exists
+        # only as a database row: a paused run is evicted from memory by design, so the runs whose dirs are
+        # largest are exactly the ones not in ``self._jobs``. It must stay outside any "was it live?" branch.
         self._teardown_work_dir(job_id)
         return existed
 
@@ -755,6 +777,15 @@ class JobStore:
         the user's history (served from the DB) and can be re-run until they explicitly delete it. Without a
         ``db`` (legacy single-process), eviction also tears the scratch dir down so uploads never outlive the
         run (the original WS-3 guarantee).
+
+        **RETENTION FOR A PAUSED RUN IS INDEFINITE, until the reviewer deletes it.** Not an oversight and
+        not inherited by accident: a run parked at a gate holds work the user has ALREADY BEEN CHARGED FOR,
+        which under R14 makes it MORE valuable than a completed run, not less. So no TTL reaches it — not
+        its row, not its uploads, and above all not its work dir, because under D-02 the work dir IS the
+        checkpoint and deleting it would turn "resume any time" into "your paid output is gone". That is
+        also why §8.6's copy is a resume affordance with no countdown: a timer in the UI would be a
+        retention policy the developer never chose. The bound on disk growth is
+        :meth:`delete` — the reaper is keyed on DELETION, never on age.
         """
         cutoff = time.time() - self._ttl
         # A run parked at a gate is evicted from MEMORY too (T-08-39: otherwise it holds its embeddings in

@@ -18,6 +18,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -341,6 +342,26 @@ class JobDB:
             cur = self._conn.execute(
                 f"SELECT {_SUMMARY_COLS} FROM jobs WHERE owner_subject IS ? ORDER BY created_at DESC LIMIT 200",
                 (owner_subject,),
+            )
+            rows = cur.fetchall()
+        return [self._row_to_dict(r, full=False) for r in rows]
+
+    def list_by_status(self, statuses: Sequence[str]) -> list[dict[str, Any]]:
+        """Summary rows for every run in ``statuses``, ACROSS ALL OWNERS, newest first.
+
+        Owner-agnostic on purpose, and the only query here that is. Its caller is
+        ``scripts/inflight_report.py`` — the operator's pre-deploy check — and an operator asking "is
+        anything running before I restart the unit" needs the answer for the whole host. Scoping it to one
+        owner would under-report, which is the exact failure the warn gate exists to prevent. Not reachable
+        from any HTTP path, so it adds no surface.
+        """
+        if not statuses:
+            return []
+        placeholders = ",".join("?" for _ in statuses)
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT {_SUMMARY_COLS} FROM jobs WHERE status IN ({placeholders}) ORDER BY updated_at DESC",
+                tuple(statuses),
             )
             rows = cur.fetchall()
         return [self._row_to_dict(r, full=False) for r in rows]
