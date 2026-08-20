@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -953,3 +954,166 @@ def test_the_tag_to_stage_map_matches_the_adapters_batch_wiring():
     for tag, stage in wired.items():
         if stage != "?":
             assert TAG_TO_STAGE[tag] == stage, f"tag {tag!r} maps to {TAG_TO_STAGE[tag]!r}, adapter says {stage!r}"
+
+
+# ── D-04 wired BOTH ways: startup, interval, and on-open ─────────────────────────────────────
+
+
+def test_the_startup_hook_sweeps_exactly_once(monkeypatch, tmp_path):
+    """A restart is one of the two events that strands a submitted batch (the other is a reviewer who never
+    returns). If the sweep only ran on a timer, every redeploy would leave paid work unreachable for a full
+    interval; if it ran per request, a busy server would poll the provider once per page view."""
+    from backend import batch_reconcile
+
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    calls: list[str] = []
+    monkeypatch.setattr(batch_reconcile, "sweep", lambda **kw: calls.append("swept") or [])
+
+    with TestClient(app_module.app):
+        pass
+
+    assert calls == ["swept"], f"the startup sweep ran {len(calls)} time(s)"
+
+
+def test_the_interval_is_a_documented_constant_not_a_magic_number():
+    """T-08-56: the sweep polls an external API on a timer, so the number that decides how often has to be
+    stateable and reviewable rather than buried in a call."""
+    from backend import batch_reconcile
+
+    assert isinstance(batch_reconcile.RECONCILE_INTERVAL_SECONDS, int)
+    assert 60 <= batch_reconcile.RECONCILE_INTERVAL_SECONDS <= 900
+
+
+def test_reopening_a_paused_run_reconciles_it_before_returning_its_payload(monkeypatch, tmp_path):
+    """The fast path. Without it a returning reviewer sees a run short of the work they paid for until the
+    next interval tick — up to five minutes of a screen that is quietly wrong."""
+    from backend import batch_reconcile
+    from backend.batch_reconcile import FetchResult
+
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
+    upstream = FakeUpstream(
+        {"batch_open": FetchResult(status="available", records=({"id": "0:0", "response": {"groups": ["a"]}},))}
+    )
+    monkeypatch.setattr(batch_reconcile, "_retrieve_via_core", upstream)
+
+    with TestClient(app_module.app) as c:
+        wd = tmp_path / "work" / "reopen"
+        _submitted_batch(wd, "split", "batch_open", ["0:0"])
+        write_checkpoint(wd, job_id="reopen", gate="gate1", result={"conceptGroups": []}, responses={})
+        app_module.store.create("reopen", "Paused", {}, owner_subject=None)
+        app_module.store.checkpoint("reopen", gate="gate1", checkpoint_ref="reopen/checkpoint_gate1.json")
+        version_before = app_module.store.get("reopen").result_version
+
+        body = c.get("/api/harmonize/checkpoint/reopen").json()
+
+    assert upstream.calls == ["batch_open"], "reopening a paused run did not reconcile it"
+    # The payload SERVED must already reflect the reconcile — a version bump the reviewer only learns about
+    # on their next poll means the screen they are looking at is the pre-reconcile one.
+    assert body["resultVersion"] == version_before + 1
+    assert read_checkpoint(tmp_path / "work" / "reopen", "gate1").responses["split"] == {"0:0": {"groups": ["a"]}}
+
+
+def test_a_result_for_a_gate_the_run_has_already_advanced_past_is_still_attached(tmp_path):
+    """D-04's late-arrival case. The reviewer walked away mid-batch, came back, continued past that gate,
+    and the result then landed. Dropping it discards work they were charged for on the grounds that they
+    were slow — so it is attached to the checkpoint the run is parked at NOW, which is the file the next
+    leg replays from."""
+    from backend.batch_reconcile import FetchResult, reconcile_run
+
+    store = JobStore(work_root=tmp_path)
+    wd = tmp_path / "adv"
+    _submitted_batch(wd, "split", "batch_late", ["0:0"])  # a Gate 1 stage
+    write_checkpoint(
+        wd,
+        job_id="adv",
+        gate="gate2",  # the run has advanced PAST the gate that batch belongs to
+        result={"records": [{"id": "r1"}]},
+        responses={"classify": {"g0": {"verdict": "adopt"}}},
+        realized_cost=4.0,
+    )
+    store.create("adv", "Advanced", {})
+    store.checkpoint("adv", gate="gate2", checkpoint_ref="adv/checkpoint_gate2.json", realized_cost=4.0)
+    upstream = FakeUpstream(
+        {"batch_late": FetchResult(status="available", records=({"id": "0:0", "response": {"groups": ["z"]}},))}
+    )
+
+    out = reconcile_run("adv", store=store, fetch=upstream)
+
+    assert out.status == "reconciled"
+    ckpt = read_checkpoint(wd, "gate2")
+    assert ckpt.responses["split"] == {"0:0": {"groups": ["z"]}}
+    assert ckpt.responses["classify"] == {"g0": {"verdict": "adopt"}}, "the current gate's own answers were lost"
+    assert ckpt.gate == "gate2", "attaching a late result moved the run's gate position"
+
+
+def test_two_racing_reconciles_have_the_combined_effect_of_one(tmp_path):
+    """T-08-53 as a GENUINE race, not an interleaving. The interval sweep and a reviewer's reopen can land
+    on the same run at the same instant; the effect count must still be one, or the version token moves
+    twice and every connected client refetches twice for one arrival."""
+    from backend.batch_reconcile import FetchResult, reconcile_run
+
+    store, wd = _paused_with_outstanding_batch(tmp_path, job_id="race")
+    upstream = FakeUpstream(
+        {
+            "batch_abc": FetchResult(
+                status="available",
+                records=({"id": "0:0", "response": {"g": 1}}, {"id": "0:1", "response": {"g": 2}}),
+            )
+        }
+    )
+    version_before = store.get("race").result_version
+    barrier = threading.Barrier(2)
+    outcomes: list[object] = []
+    # A real fetch is network I/O and RELEASES the GIL, so the window both callers can be inside is wide.
+    # Reproduce that here: without it this test passes on scheduling luck and would flip in production —
+    # the exact class of "green for the wrong reason" this phase keeps catching.
+    slow = upstream
+
+    def fetch(batch_id, **kw):
+        time.sleep(0.05)
+        return slow(batch_id, **kw)
+
+    def go() -> None:
+        barrier.wait()
+        outcomes.append(reconcile_run("race", store=store, fetch=fetch))
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(upstream.calls) == 1, f"a genuine race issued {len(upstream.calls)} upstream calls"
+    assert store.get("race").result_version == version_before + 1, "the version token moved more than once"
+    assert sum(1 for o in outcomes if o.status == "reconciled") == 1
+    lines = [json.loads(x) for x in (wd / "responses_split.jsonl").read_text().splitlines() if x.strip()]
+    assert len(lines) == 2, "a racing reconcile duplicated records in the response cache"
+
+
+def test_a_pinned_demo_run_is_never_reconciled(tmp_path):
+    """The gate READ path is demo-scoped, so it is the one reconcile trigger an unauthenticated caller can
+    reach. A guest must not be able to make the server talk to a provider, and the shared demo is immutable
+    anyway (it holds nobody's paid work)."""
+    from backend.batch_reconcile import reconcile_run
+
+    store = JobStore(work_root=tmp_path)
+    wd = tmp_path / "demo-x"
+    _submitted_batch(wd, "split", "batch_demo", ["0:0"])
+    store.create("demo-x", "Demo", {"demo": True})
+    upstream = FakeUpstream({})
+
+    out = reconcile_run("demo-x", store=store, fetch=upstream)
+
+    assert out.status == "skipped"
+    assert upstream.calls == []
+
+
+def test_no_reconcile_http_route_was_added():
+    """D-04's sweep is internal and the on-open path already has a request. A route would be a surface with
+    no caller, one more thing to auth-scope, and (being reachable) a way to make the server poll on demand."""
+    paths = [getattr(r, "path", "") for r in app_module.app.routes]
+    assert not [p for p in paths if "reconcile" in p.lower()], f"a reconcile route exists: {paths}"
+    posts = len([1 for r in app_module.app.routes if "POST" in (getattr(r, "methods", None) or set())])
+    assert posts == 12, f"the POST surface changed ({posts} != 12)"

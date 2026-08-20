@@ -22,6 +22,12 @@ mechanism the adapter's batch stages already rely on ("only missing ids are (re)
 over a frozen work dir is a byte-identical zero-cost replay"), which is why the interval sweep and the
 on-open path can genuinely race and still produce exactly one effect.
 
+**A per-run lock is politeness, NOT the correctness mechanism.** Two callers in one process are
+serialized by :func:`_lock_for` so the second one re-reads the gap and finds it closed — which is what
+makes "the version token moves exactly once per arrival" (T-08-55) structural rather than a scheduling
+accident that would flip the moment the fetch does real network I/O. Correctness does not rest on it: a
+second PROCESS holds no such lock, and the disk-derived gap is what makes that case converge too.
+
 **What "attach" means, and what it deliberately does not mean.** A reconciled response is attached to the
 run's checkpointed *stage output* — the replay fuel the next leg answers its prompts from — and nothing
 else. It does not re-render the gate payload, re-assign records or advance the run: doing any of that
@@ -50,6 +56,7 @@ import contextlib
 import json
 import logging
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -382,6 +389,19 @@ def work_dir_for(job: Any, store: Any) -> Path:
     raise WorkDirMissingError(f"run {job.job_id!r} has no work dir: no work root configured and no recorded path")
 
 
+#: One lock per run, created on demand. See the module docstring: this serializes two IN-PROCESS callers
+#: so the redundant work and the second version bump do not happen; it is not what makes the operation
+#: idempotent, because a second process cannot see it. One small lock object per run that has ever had an
+#: outstanding batch in this process — bounded by the runs on disk.
+_run_locks: dict[str, threading.Lock] = {}
+_run_locks_guard = threading.Lock()
+
+
+def _lock_for(job_id: str) -> threading.Lock:
+    with _run_locks_guard:
+        return _run_locks.setdefault(job_id, threading.Lock())
+
+
 def reconcile_run(
     job_id: str,
     *,
@@ -397,6 +417,18 @@ def reconcile_run(
     Raises :class:`WorkDirMissingError` when the run's work dir is absent, because reporting success there
     would mark unreachable paid work as recovered.
     """
+    with _lock_for(job_id):
+        return _reconcile_one(job_id, store=store, fetch=fetch, api_key=api_key)
+
+
+def _reconcile_one(
+    job_id: str,
+    *,
+    store: Any,
+    fetch: FetchFn | None = None,
+    api_key: str | None = None,
+) -> ReconcileOutcome:
+    """The body of :func:`reconcile_run`, run under that run's lock. Never call this directly."""
     from backend.jobs import _is_pinned
 
     fetch = fetch or _retrieve_via_core

@@ -23,12 +23,13 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import os
 import shutil
 import threading
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -39,6 +40,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
+from backend import batch_reconcile
 from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
 from backend.checkpoint import Checkpoint, CheckpointMissingError, load_checkpoint, next_gate
@@ -48,6 +50,8 @@ from backend.engine import CONTRACT_VERSION
 from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
 from backend.runner import run_harmonization
+
+logger = logging.getLogger(__name__)
 
 # --- CDE catalog (server-side; not uploaded) -------------------------------------------------
 # Repo root is the parent of backend/ (this file is backend/app.py). The CDE catalog is NOT
@@ -108,6 +112,34 @@ def _provider_for_model(model_id: str) -> str:
     return "other"
 
 
+def _reconcile_sweep(trigger: str) -> None:
+    """Run the batch-reconciliation sweep once. Logs and swallows — never breaks the caller.
+
+    Both callers are on paths that must not be able to fail: startup (a raise here would stop the server
+    booting, over work that is recoverable on the next tick) and a background timer (a raise would kill
+    the loop silently and end reconciliation for the process's lifetime).
+    """
+    try:
+        outcomes = batch_reconcile.sweep(store=store)
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        logger.warning("%s reconcile sweep failed (%s: %s)", trigger, type(exc).__name__, exc)
+        return
+    attached = [o for o in outcomes if o.changed]
+    if attached:
+        logger.info("%s reconcile sweep attached late batch results to %d run(s)", trigger, len(attached))
+
+
+async def _reconcile_loop() -> None:
+    """The interval half of D-04: the guarantee for a reviewer who never comes back.
+
+    Sleeps FIRST, because the startup sweep has just run. Off-thread: the sweep is blocking disk plus
+    provider I/O and must not stall the event loop that is serving progress streams.
+    """
+    while True:
+        await asyncio.sleep(batch_reconcile.RECONCILE_INTERVAL_SECONDS)
+        await asyncio.to_thread(_reconcile_sweep, "interval")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Attach the durable store, reconcile any run interrupted by a prior restart, then prepopulate the
@@ -116,8 +148,17 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     store.db = JobDB(_DB_PATH)
     store.db.recover_stale()  # any non-terminal row = a worker that died on the last restart -> error
     seed_demos(store)
-    yield
-    store.db.close()
+    # D-04 runs BOTH ways. This is the restart half: a batch submitted by the process that just died is
+    # paid for and still retrievable, and nothing else in the system would ever go back for it.
+    _reconcile_sweep("startup")
+    reconciler = asyncio.create_task(_reconcile_loop())
+    try:
+        yield
+    finally:
+        reconciler.cancel()
+        with suppress(asyncio.CancelledError):
+            await reconciler
+        store.db.close()
 
 
 app = FastAPI(title="ddharmon Harmonization API", version="1.1.0", lifespan=_lifespan)
@@ -462,6 +503,23 @@ def _checkpoint_for(job: Job) -> Checkpoint | None:
         raise HTTPException(status_code=409, detail=f"This run's saved state could not be read: {exc}") from exc
 
 
+def _reconcile_on_open(job: Job, *, api_key: str | None = None) -> None:
+    """The fast half of D-04: reconcile THIS run before its gate state is served.
+
+    Without it a returning reviewer sees a run short of work they were already charged for until the next
+    interval tick. Same function as the sweep calls — there is exactly one reconcile implementation.
+
+    Swallows everything. This runs on the reviewer's only route back to their paid work, so a provider
+    hiccup or a missing work dir must degrade to "no new results attached", never to a screen they cannot
+    open. A pinned demo is skipped inside ``reconcile_run``, which is what keeps the demo-scoped (and
+    therefore unauthenticated) read from being able to make this server talk to a provider.
+    """
+    try:
+        batch_reconcile.reconcile_run(job.job_id, store=store, api_key=api_key)
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        logger.warning("on-open reconcile of %s failed (%s: %s)", job.job_id, type(exc).__name__, exc)
+
+
 @app.get("/api/harmonize/result/{job_id}")
 def result(job_id: str, request: Request) -> dict[str, Any]:
     subject = _subject(request)
@@ -479,17 +537,27 @@ def result(job_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/harmonize/checkpoint/{job_id}")
-def checkpoint_state(job_id: str, request: Request) -> dict[str, Any]:
+def checkpoint_state(
+    job_id: str, request: Request, x_anthropic_key: Annotated[str | None, Header()] = None
+) -> dict[str, Any]:
     """Where a run is parked and what it is parked with — the gate screens' entry read.
 
     Separate from /result because it answers a different question ("which screen, and what did reaching it
     cost?") and a returning reviewer's router needs the answer BEFORE deciding which gate to render. It
     never carries raw stage responses: those are resume fuel, not review data.
+
+    This is also where a reopen reconciles (D-04). The key is optional and never stored: retrieving an
+    already-submitted batch is free, but the provider still wants a credential, and on a bring-your-own-key
+    deployment the reviewer's own request is the only place one exists.
     """
     subject = _subject(request)
     job = store.get(job_id)
     if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
+    # Reconcile BEFORE reading the run back: serving the pre-reconcile payload would hand the reviewer a
+    # version token that is already stale, so the screen they are looking at is the one without their work.
+    _reconcile_on_open(job, api_key=x_anthropic_key)
+    job = store.get(job_id) or job
     ckpt = _checkpoint_for(job)
     return {
         "jobId": job.job_id,
@@ -528,6 +596,10 @@ def resume_run(
     target = next_gate(job.gate_position)
     if target is None:
         raise HTTPException(status_code=409, detail="This run is at the final gate; there is nothing to resume")
+    # Reconcile before the replay fuel is read, not after: a late batch result that is attached now is a
+    # stage this leg replays for $0, and one attached a minute later is a stage it pays for twice.
+    _reconcile_on_open(job, api_key=x_anthropic_key)
+    job = store.get(job_id) or job
     ckpt = _checkpoint_for(job)
     if ckpt is None:
         raise HTTPException(status_code=409, detail="This run has no saved state to resume from")
