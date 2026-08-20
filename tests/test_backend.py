@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import time
 
 import numpy as np
@@ -3386,3 +3387,49 @@ def test_a_finished_run_with_no_downstream_specs_re_decides_with_no_regeneration
         status = app_module.store.get(job_id).status
     assert body["stale"] == []
     assert status == "complete"
+
+
+# --- the estimate must not omit a paid stage (R8) ------------------------------------------------------
+
+
+def test_estimate_covers_every_paid_stage() -> None:
+    """Every cost-ledger key a run can report is attributed to a gate by the frontend estimator.
+
+    R8 is one-directional: over-quoting is permitted, under-quoting is prohibited. A paid stage MISSING
+    from the estimator's attribution table is the silent form of that failure — the money is spent, the
+    ledger records it, and no gate's figure ever accounts for it. So the two sides are pinned together
+    here: the keys the adapter can hand a `CostLedger`, against the keys `lib/estimate.ts` distributes
+    across the six gates.
+
+    Ledger keys, not progress phases: an advisory stage reports progress under an EXISTING phase (the
+    judge under `splitting`, the concept gate under `specs`) because adding a phase to `PHASES_RUN` would
+    invalidate the shipped demo artifact and the Methods manifest. Cost attribution rides `ledger_key`.
+    """
+    from pathlib import Path
+
+    from backend.engine.adapter import _JUDGE_STAGES
+
+    repo = Path(__file__).resolve().parents[1]
+    adapter_src = (repo / "backend" / "engine" / "adapter.py").read_text()
+    estimate_src = (repo / "frontend" / "src" / "lib" / "estimate.ts").read_text()
+
+    # A plain stage's ledger key defaults to the progress phase it reports under; a judge stage carries its
+    # own. Both forms are collected from the source that actually constructs them.
+    plain = set(re.findall(r'_(?:sync|batch)_stage\(\s*\n?\s*"([a-z_]+)"', adapter_src))
+    judged = {spec["cost"] for spec in _JUDGE_STAGES.values()}
+    reportable = plain | judged
+    assert "judging" in reportable and "kinds" in reportable, (
+        "the judge's own ledger keys are no longer discoverable from the adapter — this test would then "
+        "pass vacuously, which is worse than failing"
+    )
+
+    m = re.search(r"GATE_LEDGER_KEYS[^=]*=\s*\{(.*?)\n\};", estimate_src, re.S)
+    assert m, "could not find GATE_LEDGER_KEYS in the frontend estimator"
+    attributed = set(re.findall(r'"([a-z_]+)"', m.group(1)))
+
+    missing = sorted(reportable - attributed)
+    assert not missing, (
+        f"the estimator attributes no gate to the cost-ledger key(s) {missing}, so spend reported under "
+        f"them would appear in no gate's figure — add them to GATE_LEDGER_KEYS in "
+        f"frontend/src/lib/estimate.ts"
+    )
