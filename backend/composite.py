@@ -15,6 +15,7 @@ participant data, and a cutoff the source does not state is never invented.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from ddharmon.harmonization.composite import derive_composite, records_from_payload, spec_to_dict
@@ -61,6 +62,43 @@ def resolve_source(
     raise ValueError("provide the score's definition as pasted text, a URL/DOI/repo, or a PDF / Word (.docx) upload")
 
 
+# --- the feasibility verdict the USER is shown ---------------------------------------------------
+
+#: Core's vocabulary, plus the fourth value the product needs. See :func:`presentation_verdict`.
+_CORE_VERDICTS = frozenset({"full", "partial", "infeasible"})
+
+
+def presentation_verdict(feasibility: Mapping[str, Any]) -> str:
+    """The verdict to SHOW: ``full`` | ``partial`` | ``infeasible`` | ``indeterminate``.
+
+    A standing prohibition: **never emit a negative verdict when only positive-or-indeterminate is
+    determinable.** "This score cannot be built from this run" and "we could not tell" are different
+    claims, and only one of them is ever true when there was nothing to check.
+
+    Core reaches ``infeasible`` two structurally different ways. With required components that were looked
+    for and not found, it is a real finding. With ``n_required == 0`` — a definition whose item table did
+    not survive text extraction, which core's own ``_match_prompt`` docstring records as having produced "a
+    clean 0/N -> infeasible with nothing raised" — it is a negative claim assembled from no evidence.
+
+    Two normalizations, both one-directional:
+
+      * ``infeasible`` with nothing required -> ``indeterminate``
+      * an unrecognized or missing verdict -> ``indeterminate``, never the negative. A ``?? "infeasible"``
+        style fallback is the same defect in the other language, and the frontend had exactly that.
+
+    Kept at the web layer deliberately. Core is a released dependency (``ddharmon>=1.1.0``), so a fix there
+    could not reach this deploy; and this IS where the claim to the user is made. Core's own value is
+    preserved by the caller as ``coreVerdict``, so the normalization is inspectable rather than a silent
+    rewrite of somebody else's judgement.
+    """
+    verdict = str(feasibility.get("verdict") or "")
+    if verdict not in _CORE_VERDICTS:
+        return "indeterminate"
+    if verdict == "infeasible" and not int(feasibility.get("nRequired") or 0):
+        return "indeterminate"
+    return verdict
+
+
 def derive(
     records: list[dict[str, Any]],
     source: ScoreSource | Any,
@@ -87,6 +125,12 @@ def derive(
         overrides=overrides or None,
     )
     payload = spec_to_dict(result.spec)
+    # The verdict the user is shown, which is not always the verdict core computed. See
+    # `presentation_verdict` — core's own value is kept as `coreVerdict` so nothing is hidden.
+    feasibility = payload.get("feasibility")
+    if isinstance(feasibility, dict):
+        feasibility["coreVerdict"] = feasibility.get("verdict")
+        feasibility["verdict"] = presentation_verdict(feasibility)
     payload["nConceptsIndexed"] = result.n_concepts_indexed
     payload["callsMade"] = result.calls_made
     # NOT getattr(source, "kind"): a ScoreDefinition also has a `.kind` (the CompositeKind), which would

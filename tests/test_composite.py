@@ -409,3 +409,97 @@ def test_another_users_run_is_not_derivable(monkeypatch, tmp_path, stub_llm):
             c.post("/api/harmonize/jobs/owned/composite", json={"sourceText": "x"}, headers=_hdr("A")).status_code
             == 200
         )
+
+
+# --- the three-value feasibility vocabulary (08-13) ---------------------------------------------
+
+
+def test_never_negative():
+    """A composite must not claim NEGATIVE when only positive-or-indeterminate is determinable.
+
+    THE PROHIBITION, and why it needs a test rather than care. Core's ``assess_feasibility`` reaches its
+    ``infeasible`` branch two structurally different ways::
+
+        required = [...]  matched_required = []   ->  infeasible   # checked N, matched none: DETERMINATE
+        required = []     matched_required = []   ->  infeasible   # nothing was checkable at all
+
+    The second is the prohibited emission. With no required components there is nothing to match against,
+    so "infeasible" asserts the score cannot be built when what is actually known is that we cannot tell —
+    and that case is not exotic: it is what a document whose item table did not survive text extraction
+    produces, which core's own ``_match_prompt`` docstring records as having happened ("a clean 0/N ->
+    infeasible with nothing raised").
+
+    Core is a released dependency here, so the honest verdict is established at the web layer — which is
+    also where the product's claim to the user is actually made. ``presentation_verdict`` adds the fourth
+    value and never discards core's own, so nothing is hidden.
+
+    A DETERMINATE negative is still allowed. Weakening this to "never negative under any circumstances"
+    would make the test vacuous and would also be wrong: a score whose every required component was looked
+    for and not found IS infeasible for this run, and saying so is the useful answer.
+    """
+    from backend.composite import presentation_verdict
+
+    # Nothing determinable -> indeterminate, NEVER negative.
+    assert presentation_verdict({"verdict": "infeasible", "nRequired": 0, "nRequiredMatched": 0}) == "indeterminate"
+    # An unrecognized verdict is also not knowledge. It must not default to the negative claim, which is
+    # what a `?? infeasible` style fallback does.
+    assert presentation_verdict({"verdict": "", "nRequired": 3, "nRequiredMatched": 0}) == "indeterminate"
+    assert presentation_verdict({"verdict": "who-knows", "nRequired": 3}) == "indeterminate"
+    assert presentation_verdict({}) == "indeterminate"
+
+    # A DETERMINATE negative survives: three required components were looked for, none matched.
+    assert presentation_verdict({"verdict": "infeasible", "nRequired": 3, "nRequiredMatched": 0}) == "infeasible"
+    # And the positive verdicts pass through untouched.
+    assert presentation_verdict({"verdict": "full", "nRequired": 2, "nRequiredMatched": 2}) == "full"
+    assert presentation_verdict({"verdict": "partial", "nRequired": 2, "nRequiredMatched": 1}) == "partial"
+
+
+def test_core_really_does_emit_the_prohibited_verdict_for_an_unmatchable_score(stub_llm):
+    """The guard is not hypothetical: core reaches ``infeasible`` with nothing determinable.
+
+    Asserted against core directly rather than through ``/composite``, because that route cannot currently
+    reach the state — ``required_components`` treats "nothing flagged required" as "everything required", and
+    a definition with no components at all is refused with a 400 before core is called. So the reachable
+    paths are core's own API (which this project also uses from notebooks and the CLI) and any future
+    caller that feeds it a definition whose item table did not survive extraction.
+
+    Pinning it here rather than trusting the route's current shape: the 400 that closes the hole is a
+    validation detail one plan away from being relaxed, and the prohibition is meant to hold either way.
+    """
+    from ddharmon.harmonization.composite import ScoreComponent, ScoreDefinition, assess_feasibility
+
+    from backend.composite import presentation_verdict
+
+    definition = ScoreDefinition(name="A score whose items did not survive extraction", components=[])
+    report = assess_feasibility(definition, [])
+    # Core's own answer: a negative claim built from no evidence at all.
+    assert report.verdict == "infeasible"
+    assert report.n_required == 0
+
+    # The web layer's answer to the same report.
+    assert presentation_verdict({"verdict": report.verdict, "nRequired": report.n_required}) == "indeterminate"
+
+    # A definition WITH components still gets a determinate answer, so the guard has not swallowed the
+    # negative verdict wholesale.
+    real = ScoreDefinition(
+        name="Fried",
+        components=[ScoreComponent(name="Weak grip strength"), ScoreComponent(name="Weight loss")],
+    )
+    unmatched = assess_feasibility(real, [])
+    # No matches at all -> still nothing was checkable, so still indeterminate rather than negative.
+    assert unmatched.n_required == 0
+    assert presentation_verdict({"verdict": unmatched.verdict, "nRequired": unmatched.n_required}) == "indeterminate"
+
+
+def test_a_normal_derivation_still_carries_a_determinate_verdict(stub_llm):
+    """The normalization must not touch a run that genuinely answered the question."""
+    with TestClient(app_module.app) as c:
+        _completed_job(app_module)
+        r = c.post("/api/harmonize/jobs/j1/composite", json={"sourceText": "Fried"}, headers=_hdr())
+    assert r.status_code == 200, r.text
+    feasibility = r.json()["feasibility"]
+    assert feasibility["nRequired"] == 2
+    assert feasibility["verdict"] == "full"
+    # Core's own value is kept alongside rather than overwritten in silence — the normalization is
+    # inspectable, which is what stops it becoming a place where verdicts quietly change.
+    assert feasibility["coreVerdict"] == "full"
