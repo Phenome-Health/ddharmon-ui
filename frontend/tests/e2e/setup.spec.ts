@@ -315,8 +315,10 @@ test.describe("Setup — the screen", () => {
     const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_a"]') });
     await expect(row).toHaveCount(1);
     await row.getByTestId("role-select").selectOption("description");
-    // The blocker that named this file is gone; the mapping is what cleared it.
-    await expect(page.getByTestId("start-blocked")).not.toContainText("mapme.csv");
+    // The blocker that named this file is gone; the mapping is what cleared it. Asserted against the
+    // blocker ITEMS rather than the container, which disappears entirely once nothing is blocking —
+    // `not.toContainText` on an absent element proves nothing.
+    await expect(page.getByTestId("blocker").filter({ hasText: "mapme.csv" })).toHaveCount(0);
   });
 
   test("@setup the mapping table scrolls inside its card and the page never scrolls sideways", async ({
