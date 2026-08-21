@@ -383,3 +383,201 @@ test.describe("Setup — the screen", () => {
     expect(await colEl.evaluate((el) => getComputedStyle(el).textOverflow)).toBe("ellipsis");
   });
 });
+
+// --- the score definition, the run configuration and the estimate (Task 2) -----------------------------
+
+test.describe("Setup — the honest estimate", () => {
+  test("@setup the estimate is itemised and always carries a coherence line", async ({ page }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const panel = page.getByTestId("estimate-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute("data-pending", "false");
+
+    // The five cohorts are 200 variables each, so a group clears the judge's six-member floor and the
+    // judge is priced for real work.
+    const coherence = page.locator("[data-cost-line='coherence']");
+    await expect(coherence).toBeVisible();
+    await expect(coherence).not.toHaveText(/\$0$/);
+    await expect(coherence).toContainText("judge");
+
+    // Itemised, not one number: every stage that will run is NAMED.
+    const lines = await page.locator("[data-cost-line]").evaluateAll((els) =>
+      els.map((e) => e.getAttribute("data-cost-line")),
+    );
+    expect(lines).toContain("ideal");
+    expect(lines).toContain("splitAssign");
+    expect(lines).toContain("coherence");
+    expect(lines).toContain("gencde");
+  });
+
+  test("@setup the coherence line renders $0 rather than vanishing when no group can qualify", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    // Four variables cannot make a single group of the judge's six-member minimum.
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "tiny.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(4)),
+    });
+    const coherence = page.locator("[data-cost-line='coherence']");
+    await expect(coherence).toBeVisible();
+    await expect(coherence).toContainText("$0");
+    // And it says WHY it is zero. A $0 with no reason is indistinguishable from a stage that was forgotten.
+    await expect(coherence).toContainText(/not asked|reaches/i);
+    // Never rendered as "coherent": the judge was not asked, which is not a pass.
+    await expect(coherence).not.toContainText(/coherent\b/i);
+  });
+
+  test("@setup while the corpus size is still unknown the estimate is pending, not a low figure", async ({
+    page,
+  }) => {
+    // The demo catalogue carries the run's per-dictionary variable counts. Hold it in flight and the
+    // corpus size is genuinely unknown — at which point a total computed from what has arrived so far
+    // would be an UNDER-QUOTE, which is the one direction R8 forbids. So: no figure at all.
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/static-data/demos.json", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.goto(SETUP);
+
+    const panel = page.getByTestId("estimate-panel");
+    await expect(panel).toHaveAttribute("data-pending", "true");
+    await expect(page.getByTestId("estimate-pending")).toBeVisible();
+    // THE INVARIANT: no figure is on screen while the inputs are unresolved. Not a stale one, not a zero.
+    await expect(page.getByTestId("estimate-total")).toHaveCount(0);
+
+    release!();
+    await expect(panel).toHaveAttribute("data-pending", "false");
+    await expect(page.getByTestId("estimate-total")).toBeVisible();
+    await expect(page.getByTestId("estimate-pending")).toHaveCount(0);
+  });
+
+  test("@setup the primary action carries the nothing-is-charged-yet statement", async ({ page }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const statement = page.getByTestId("nothing-charged-yet");
+    await expect(statement).toBeVisible();
+    await expect(statement).toContainText("Nothing is charged yet");
+    await expect(page.getByTestId("start-run")).toBeVisible();
+  });
+
+  test("@setup the per-gate breakdown names Gate 0's Continue as the first charge, and what it buys", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const first = page.getByTestId("first-charge");
+    await expect(first).toBeVisible();
+    // UI-SPEC §0.1 after the plan-review reversal: the first charge is Gate 0's Continue, NOT Gate 1's.
+    await expect(first).toContainText(/Continue at Gate 0|Gate 0's Continue/);
+    // And what that press pays for, named: concept generation, splitting and the judge.
+    await expect(first).toContainText(/generat/i);
+    await expect(first).toContainText(/split/i);
+    await expect(first).toContainText(/coherence|judge/i);
+
+    // The per-gate rows are present, and the two free gates say so rather than forecasting a figure.
+    const gates = page.locator("[data-gate-forecast]");
+    await expect(gates).toHaveCount(6);
+    await expect(page.locator("[data-gate-forecast='gate0']")).toContainText(/local|no model/i);
+    await expect(page.locator("[data-gate-forecast='gate4']")).toContainText(/no charge|nothing/i);
+  });
+
+  test("@setup nothing on this screen claims the flow stays free until you pick what to buy", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const text = ((await page.locator("main").textContent()) ?? "").replace(/\s+/g, " ");
+    // The reversal killed this claim: spending now begins at Gate 0's Continue, BEFORE the reviewer has
+    // chosen any concept. Copy implying otherwise would be the exact misstatement R8 exists to prevent.
+    expect(text).not.toMatch(/free until/i);
+    expect(text).not.toMatch(/no charge until you (choose|pick|select)/i);
+    expect(text).not.toMatch(/nothing is charged until Gate 1/i);
+    expect(text).not.toMatch(/scope before you spend/i);
+  });
+
+  test("@setup the concept-gate opt-in is visible, defaults off, and turning it on raises the total", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const toggle = page.getByTestId("concept-gate-toggle");
+    await expect(toggle).toBeVisible(); // not buried: an opt-in nobody sees is an unavailable feature
+    await expect(toggle).not.toBeChecked();
+    await expect(page.locator("[data-cost-line='conceptGate']")).toHaveCount(0);
+
+    const before = await page.getByTestId("estimate-total").getAttribute("data-mid");
+    await toggle.check();
+    const line = page.locator("[data-cost-line='conceptGate']");
+    await expect(line).toBeVisible();
+    await expect(page.getByTestId("estimate-panel")).toHaveAttribute("data-pending", "false");
+    const after = await page.getByTestId("estimate-total").getAttribute("data-mid");
+    expect(Number(after)).toBeGreaterThan(Number(before));
+  });
+
+  test("@setup the run mode is selectable and changes what the run is quoted at", async ({ page }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const before = Number(await page.getByTestId("estimate-total").getAttribute("data-mid"));
+    // Synchronous is roughly twice batch. The figure must MOVE — a control that does not reach the quote
+    // is a control that misleads about what is being bought.
+    await page.getByTestId("run-mode").selectOption("sync");
+    await expect(page.getByTestId("estimate-panel")).toHaveAttribute("data-pending", "false");
+    const after = Number(await page.getByTestId("estimate-total").getAttribute("data-mid"));
+    expect(after).toBeGreaterThan(before);
+
+    // Preview calls no model at all, so the run is free and says so.
+    await page.getByTestId("run-mode").selectOption("preview");
+    await expect(page.getByTestId("estimate-free")).toBeVisible();
+  });
+});
+
+test.describe("Setup — the declared score", () => {
+  test("@setup a declared score's components become the scope offered at Gate 1", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page
+      .getByTestId("score-components")
+      .fill("Weak grip strength\nUnintentional weight loss\nSlow walking speed\n\n");
+    const band = page.getByTestId("score-scope-band");
+    await expect(band).toBeVisible();
+    await expect(band).toHaveAttribute("data-components", "3");
+    await expect(band).toContainText("Weak grip strength");
+    await expect(band).toContainText("Slow walking speed");
+    // Blank lines are not components.
+    await expect(page.getByTestId("score-component")).toHaveCount(3);
+    await expect(band).toContainText(/Gate 1/);
+  });
+
+  test("@setup a declared score's feasibility is indeterminate before a run, never negative", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("score-components").fill("Weak grip strength\nUnintentional weight loss");
+    const verdict = page.getByTestId("score-verdict");
+    await expect(verdict).toBeVisible();
+    // No run has produced concepts yet, so whether the score can be computed is UNKNOWABLE here. Saying
+    // "not computable" would assert something we cannot know — the standing prohibition.
+    await expect(verdict).toHaveAttribute("data-verdict", "indeterminate");
+    await expect(verdict).not.toContainText(/not computable|infeasible/i);
+    await expect(verdict).toContainText(/cannot be determined|not yet/i);
+  });
+
+  test("@setup reading a score document costs nothing, and says so before you upload one", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const panel = page.getByTestId("score-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText(/costs nothing|\$0|free/i);
+    // The document field exists and needs no run — that is the whole point of the job-independent route.
+    await expect(page.getByTestId("score-upload")).toHaveCount(1);
+  });
+});
