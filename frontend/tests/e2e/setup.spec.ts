@@ -134,6 +134,17 @@ test.describe("Setup — the file decisions, as functions", () => {
     expect(normalizeHeader("  USUBJID  ")).toBe("usubjid");
     const rows = Array.from({ length: 10 }, (_, i) => ({ "Participant ID": `P${i}` }));
     expect(participantLevelColumn(["Participant ID"], rows)).toBe("Participant ID");
+
+    // THE CARVE-OUT AS BEHAVIOUR, not as a comment. A dictionary keyed by its own `id` column — unique on
+    // every row, exactly as a variable-name column always is — must not be refused. This is the browser
+    // mirror of `tests/test_content_drift.py::test_the_bare_id_carve_out_still_earns_its_place`; the two
+    // together mean the exemption cannot silently die on one side while holding on the other.
+    const idKeyed = Array.from({ length: 20 }, (_, i) => ({
+      id: String(i + 1),
+      variable_name: `var_${i}`,
+      description: "a description",
+    }));
+    expect(participantLevelColumn(["id", "variable_name", "description"], idKeyed)).toBeNull();
   });
 
   test("@setup a role is single-valued per file: assigning it moves it off the column that held it", () => {

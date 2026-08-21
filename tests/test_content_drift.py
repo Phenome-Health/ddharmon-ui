@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -922,3 +923,70 @@ def test_the_gate_decision_content_keys_are_pinned_on_both_sides() -> None:
             f"{literal} is no longer pinned in the frontend spec — the cross-language check is only a "
             f"check while BOTH sides assert the same literal"
         )
+
+
+# --- the participant-level refusal, mirrored in two languages (08-13) ---------------------------
+
+PARTICIPANT_HEADERS_TS = FRONTEND_SRC / "lib" / "dictionary.ts"
+
+
+def _ts_participant_headers() -> set[str]:
+    """The header set the BROWSER refuses on, read out of the TypeScript source."""
+    src = PARTICIPANT_HEADERS_TS.read_text()
+    m = re.search(r"PARTICIPANT_ID_HEADERS[^=]*=\s*new Set\(\[(.*?)\]\)", src, re.S)
+    assert m, f"could not find the PARTICIPANT_ID_HEADERS set literal in {_rel(PARTICIPANT_HEADERS_TS)}"
+    return set(re.findall(r'"([^"]+)"', m.group(1)))
+
+
+def test_participant_id_headers_agree() -> None:
+    """The client refusal and the server refusal must key on the SAME headers.
+
+    Setup refuses a participant-level upload in the browser so the user does not wait on a round trip to
+    learn their file is the wrong kind. That second lock is only worth having if it is the same lock: a
+    client list that has quietly grown WEAKER than the server's is worse than no client check at all,
+    because it looks like coverage while passing the file straight through to a 400 the UI then has to
+    explain. A client list that has grown STRONGER is its own defect — it refuses files the product accepts.
+
+    So this compares the two sets both ways and fails naming the difference. It is a static gate on purpose:
+    the divergence it catches is invisible at runtime, since each side is individually self-consistent.
+    """
+    from backend.app import _PARTICIPANT_ID_HEADERS
+
+    server = set(_PARTICIPANT_ID_HEADERS)
+    client = _ts_participant_headers()
+    assert client == server, (
+        "the browser-side and server-side participant-id header sets have diverged — "
+        f"client-only: {sorted(client - server)}; server-only: {sorted(server - client)}. "
+        f"Keep {_rel(PARTICIPANT_HEADERS_TS)} and backend/app.py::_PARTICIPANT_ID_HEADERS identical."
+    )
+
+
+def test_the_bare_id_carve_out_still_earns_its_place() -> None:
+    """`id` is deliberately NOT a participant-id header. Asserted as BEHAVIOUR, not as a comment.
+
+    The reason for the carve-out: `id` is the one name a data dictionary plausibly uses for its own key, so
+    treating it as a participant identifier would refuse real dictionaries. That reason is only worth
+    anything if it is still true, and a comment saying so would survive the day someone adds `id` to either
+    list. This fails that day instead.
+
+    The mirror of this assertion for the browser lives in `frontend/tests/e2e/setup.spec.ts` — the two
+    together mean the carve-out cannot silently die on one side while holding on the other.
+    """
+    from backend.app import _PARTICIPANT_ID_HEADERS, _participant_level_column
+
+    assert "id" not in _PARTICIPANT_ID_HEADERS
+    assert "id" not in _ts_participant_headers()
+
+    # And the behaviour the carve-out exists for: a dictionary keyed by its own `id` column, unique on
+    # every row exactly as a variable-name column always is, must NOT be refused.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "dictionary.csv"
+        rows = "\n".join(f"{i},var_{i},a description" for i in range(1, 21))
+        path.write_text(f"id,variable_name,description\n{rows}\n")
+        assert _participant_level_column(path) is None
+
+        # The negative control, so this test cannot pass by the refusal being broken outright.
+        participants = Path(tmp) / "participants.csv"
+        prows = "\n".join(f"P{i},{40 + i},24.1" for i in range(1, 21))
+        participants.write_text(f"participant_id,age,bmi\n{prows}\n")
+        assert _participant_level_column(participants) == "participant_id"

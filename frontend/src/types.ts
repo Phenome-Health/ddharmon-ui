@@ -611,7 +611,15 @@ export interface CohortCoverage {
 }
 
 export interface CompositeFeasibility {
-  verdict: "full" | "partial" | "infeasible";
+  /**
+   * The verdict to SHOW. `indeterminate` is the web layer's fourth value (see
+   * `backend/composite.py::presentation_verdict`): core returns `infeasible` both when required components
+   * were looked for and not found AND when there was nothing to check at all, and only the first of those
+   * is a finding. Anything unrecognized resolves here too — never to the negative claim.
+   */
+  verdict: "full" | "partial" | "infeasible" | "indeterminate";
+  /** Core's own verdict, kept so the normalization above is inspectable rather than silent. */
+  coreVerdict?: string;
   nRequired: number;
   nRequiredMatched: number;
   matched: string[];

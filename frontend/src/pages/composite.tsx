@@ -19,6 +19,7 @@ import {
   Link2,
   Loader2,
   Pin,
+  CircleDashed,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -37,6 +38,15 @@ const VERDICT_STYLE: Record<string, { label: string; className: string; Icon: ty
   full: { label: "Computable", className: "text-on-ok border-rule-ok bg-surface-ok", Icon: CheckCircle2 },
   partial: { label: "Partially computable", className: "text-on-warn border-rule-warn bg-surface-warn", Icon: AlertTriangle },
   infeasible: { label: "Not computable", className: "text-on-danger border-rule-danger bg-surface-danger", Icon: XCircle },
+  // The fourth value: "we could not tell", which is NOT "no". Rendered by FORM — a dashed ring on the
+  // neutral surface — for the same reason the coherence cell renders `not judged` that way: a status
+  // colour would file it as an outcome, and it is the absence of one. No destructive colour, because
+  // "undeterminable" and "cannot be built" are different claims and must not look alike.
+  indeterminate: {
+    label: "Cannot be determined",
+    className: "text-on-raised-muted border-rule-on-raised",
+    Icon: CircleDashed,
+  },
 };
 
 export default function CompositePage() {
@@ -259,7 +269,11 @@ function SpecView({
   jobId: string;
 }) {
   const { definition, feasibility, derivation } = spec;
-  const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.infeasible;
+  // An unrecognized verdict falls back to INDETERMINATE, never to the negative one. The previous
+  // `?? VERDICT_STYLE.infeasible` turned any verdict this build did not know about — a newer core's
+  // vocabulary, a truncated field on an old run — into an on-screen claim that the score cannot be
+  // built. That is the prohibited emission, arrived at by a default rather than by a judgement.
+  const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.indeterminate;
   const codingFor = (name: string): ScoreComponent | undefined =>
     definition.components.find((c) => c.name === name);
 
