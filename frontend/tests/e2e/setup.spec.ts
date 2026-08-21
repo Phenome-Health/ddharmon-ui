@@ -1,0 +1,372 @@
+import { expect, test } from "@playwright/test";
+import {
+  PARTICIPANT_ID_HEADERS,
+  assignRole,
+  nameCheck,
+  normalizeHeader,
+  participantLevelColumn,
+} from "@/lib/dictionary";
+import { PAUSED_RUN_FIXTURE } from "./routes";
+
+/**
+ * Setup — the first of the six staged-review screens (08-13).
+ *
+ * Setup's whole job is INFORMED CONSENT TO SPEND, so the assertions here are weighted towards the two
+ * things a reviewer is asked to believe: that nothing has been charged yet, and that the quoted figure is
+ * the one they will be billed. Everything else on the screen exists to stop a variable disappearing
+ * silently before either claim is made.
+ *
+ *   run: npm run test:e2e -- --grep "@setup"
+ *
+ * THE PURE HALF FIRST, deliberately. The duplicate-name check and the participant-level refusal are both
+ * decisions about a file, and both are the kind of thing that gets weakened by accident — so they live in
+ * `@/lib/dictionary` as plain functions and are asserted here without a browser. A rule that can only be
+ * checked by driving a page is a rule that stops being checked.
+ */
+
+const SETUP = `/run/${PAUSED_RUN_FIXTURE}/setup`;
+/** A jobId no fixture answers for — Setup's COMPOSE mode, which is the normal pre-run case. */
+const DRAFT = "/run/draft-08-13/setup";
+
+function csv(rows: string[][]): string {
+  return rows.map((r) => r.join(",")).join("\n");
+}
+
+/** A dictionary: one row per VARIABLE. */
+function dictionaryCsv(n: number, { repeat = false }: { repeat?: boolean } = {}): string {
+  const header = ["variable_name", "description", "units"];
+  const body = Array.from({ length: n }, (_, i) => [
+    repeat && i % 2 === 1 ? `var_${i - 1}` : `var_${i}`,
+    `a description of variable ${i}`,
+    "kg",
+  ]);
+  return csv([header, ...body]);
+}
+
+/** Participant records: one row per PERSON, with a per-row-unique identifier. */
+function participantCsv(n: number): string {
+  const header = ["participant_id", "age", "bmi"];
+  const body = Array.from({ length: n }, (_, i) => [`P${1000 + i}`, String(40 + (i % 30)), "24.1"]);
+  return csv([header, ...body]);
+}
+
+// --- the pure half -------------------------------------------------------------------------------------
+
+test.describe("Setup — the file decisions, as functions", () => {
+  test("@setup a repeated variable name is reported as rows versus unique names, and the repeats are named", () => {
+    const rows = [
+      { variable_name: "bmi", description: "body mass index" },
+      { variable_name: "bmi", description: "BMI, second definition" },
+      { variable_name: "age", description: "age at visit" },
+    ];
+    const report = nameCheck(rows, "variable_name");
+    expect(report.rowCount).toBe(3);
+    expect(report.uniqueNameCount).toBe(2);
+    expect(report.dropped).toBe(1);
+    expect(report.fired).toBe(true);
+    expect(report.repeated).toEqual(["bmi"]);
+
+    // The clean case still REPORTS both figures. A check that only renders when it fires is
+    // indistinguishable from a check that was never run.
+    const clean = nameCheck(rows.slice(1), "variable_name");
+    expect(clean.rowCount).toBe(2);
+    expect(clean.uniqueNameCount).toBe(2);
+    expect(clean.fired).toBe(false);
+    expect(clean.dropped).toBe(0);
+  });
+
+  test("@setup with no variable-name column mapped there is nothing to check, and that is not a pass", () => {
+    const rows = [{ description: "a" }, { description: "a" }];
+    const report = nameCheck(rows, undefined);
+    expect(report.checkable).toBe(false);
+    expect(report.fired).toBe(false);
+    // The row count is still knowable; the unique-name count is not, and is not invented as equal to it.
+    expect(report.rowCount).toBe(2);
+    expect(report.uniqueNameCount).toBeNull();
+  });
+
+  test("@setup an empty value is not a name, so blanks are not counted as one repeated variable", () => {
+    const rows = [
+      { variable_name: "", description: "a" },
+      { variable_name: "", description: "b" },
+      { variable_name: "bmi", description: "c" },
+    ];
+    const report = nameCheck(rows, "variable_name");
+    // Two blanks are two rows the loader cannot key at all — reported as unnamed, never folded into a
+    // single "repeated" name, which would understate the loss.
+    expect(report.unnamed).toBe(2);
+    expect(report.uniqueNameCount).toBe(1);
+    expect(report.repeated).toEqual([]);
+  });
+
+  test("@setup a participant-level file is refused only when BOTH conditions hold", () => {
+    const participantRows = Array.from({ length: 20 }, (_, i) => ({
+      participant_id: `P${i}`,
+      age: "50",
+      bmi: "24",
+    }));
+    expect(participantLevelColumn(["participant_id", "age", "bmi"], participantRows)).toBe("participant_id");
+
+    // Condition 1 alone: a real dictionary that DESCRIBES a participant id. Its `participant_id` appears
+    // as a VALUE of the variable-name column, not as a header — so nothing is refused.
+    const realDictionary = [
+      { variable_name: "participant_id", description: "the participant's study identifier" },
+      { variable_name: "age", description: "age at visit" },
+    ];
+    expect(participantLevelColumn(["variable_name", "description"], realDictionary)).toBeNull();
+
+    // Condition 2 alone: a participant-id HEADER whose values repeat — a long-format dictionary keyed by
+    // something else. Not per-row-unique, so not participant records.
+    const repeating = Array.from({ length: 20 }, (_, i) => ({ subject_id: "S1", visit: String(i) }));
+    expect(participantLevelColumn(["subject_id", "visit"], repeating)).toBeNull();
+
+    // Fewer than two rows proves nothing about uniqueness either way.
+    expect(participantLevelColumn(["participant_id"], [{ participant_id: "P1" }])).toBeNull();
+  });
+
+  test("@setup bare `id` is not a participant-id header, and the header set is normalized", () => {
+    // `id` is the one name a dictionary plausibly uses for its OWN key, so it is deliberately absent —
+    // the same carve-out the server-side refusal makes.
+    expect(PARTICIPANT_ID_HEADERS.has("id")).toBe(false);
+    expect(PARTICIPANT_ID_HEADERS.has("participant_id")).toBe(true);
+    // Punctuation and case are folded before the lookup, so `Participant ID` is caught too.
+    expect(normalizeHeader("Participant ID")).toBe("participant_id");
+    expect(normalizeHeader("  USUBJID  ")).toBe("usubjid");
+    const rows = Array.from({ length: 10 }, (_, i) => ({ "Participant ID": `P${i}` }));
+    expect(participantLevelColumn(["Participant ID"], rows)).toBe("Participant ID");
+  });
+
+  test("@setup a role is single-valued per file: assigning it moves it off the column that held it", () => {
+    const before = { variable_name: "name", description: "comment" };
+    const after = assignRole(before, "label", "description");
+    expect(after).toEqual({ variable_name: "name", description: "label" });
+    // Two columns cannot both be `description` — that mapping is not expressible, so it cannot be made.
+    expect(Object.values(after).filter((c) => c === "label")).toHaveLength(1);
+    // Clearing a column's role removes the entry rather than storing a sentinel.
+    expect(assignRole(after, "label", "")).toEqual({ variable_name: "name" });
+  });
+});
+
+// --- the rendered screen -------------------------------------------------------------------------------
+
+test.describe("Setup — the screen", () => {
+  test("@setup it renders inside the shared gate chrome as Set up, not as a numbered gate", async ({ page }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("not-built-yet")).toHaveCount(0);
+    await expect(page.locator("h1")).toContainText("Set up");
+    // The rail is present and Setup's own column states a cost of nothing rather than forecasting $0.
+    await expect(page.getByTestId("gate-rail")).toBeVisible();
+  });
+
+  test("@setup the run's dictionaries render with their own parse state each", async ({ page }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const cards = page.getByTestId("dict-card");
+    await expect(cards).toHaveCount(5);
+    // EVERY card carries a state of its own — not one banner covering the set.
+    for (let i = 0; i < 5; i++) {
+      await expect(cards.nth(i).getByTestId("dict-parse-state")).toBeVisible();
+    }
+  });
+
+  test("@setup a run-seeded dictionary says the unique-name count is unknown rather than assuming it", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    // The source file is not part of the run record, so the unique-name count cannot be computed. That is
+    // stated, with the reason — never rendered as "all names unique", which would be a claim we cannot make.
+    const unavailable = page.getByTestId("name-check-unavailable").first();
+    await expect(unavailable).toBeVisible();
+    await expect(unavailable).toContainText(/not available/i);
+  });
+
+  test("@setup a repeated variable name is surfaced on screen with both counts", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "repeats.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(10, { repeat: true })),
+    });
+    const check = page.getByTestId("name-check");
+    await expect(check).toBeVisible();
+    await expect(check).toHaveAttribute("data-fired", "true");
+    await expect(check).toHaveAttribute("data-rows", "10");
+    await expect(check).toHaveAttribute("data-unique", "5");
+    // BOTH figures on screen, not merely in an attribute, and named as the silent drop it is.
+    await expect(check).toContainText("10");
+    await expect(check).toContainText("5");
+    await expect(check).toContainText(/silently/i);
+  });
+
+  test("@setup a clean file still shows the row count against the unique-name count", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "clean.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(8)),
+    });
+    const check = page.getByTestId("name-check");
+    await expect(check).toHaveAttribute("data-fired", "false");
+    await expect(check).toHaveAttribute("data-rows", "8");
+    await expect(check).toHaveAttribute("data-unique", "8");
+  });
+
+  test("@setup a participant-shaped file is refused in the browser and issues no upload", async ({ page }) => {
+    const posts: string[] = [];
+    await page.route("**/api/**", async (route) => {
+      if (route.request().method() !== "GET") posts.push(route.request().url());
+      await route.continue();
+    });
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "participants.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(participantCsv(30)),
+    });
+    const refusal = page.getByTestId("participant-refusal");
+    await expect(refusal).toBeVisible();
+    // UI-SPEC §8.4, verbatim in substance: what was expected, and that nothing was uploaded.
+    await expect(refusal).toContainText("looks like participant data");
+    await expect(refusal).toContainText("one row per variable");
+    await expect(refusal).toContainText("Nothing was uploaded");
+    // The refused file never becomes a dictionary, and no request carried it anywhere.
+    await expect(page.getByTestId("dict-card")).toHaveCount(0);
+    expect(posts).toEqual([]);
+  });
+
+  test("@setup an unparseable file renders the problem and the next step", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "not-a-table.csv",
+      mimeType: "text/csv",
+      // No delimiter, no header row worth the name: nothing a dictionary loader can key on.
+      buffer: Buffer.from("\n\n\n"),
+    });
+    const problem = page.getByTestId("dict-unparseable");
+    await expect(problem).toBeVisible();
+    await expect(problem).toContainText(/could not be read/i);
+    await expect(problem).toContainText(/comma|tab|delimit/i);
+  });
+
+  test("@setup zero, one and many dictionaries render distinctly", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    // ZERO — an empty state with a next step, never a blank pane.
+    await expect(page.getByTestId("gate-empty-state")).toBeVisible();
+    await expect(page.getByTestId("single-dictionary-notice")).toHaveCount(0);
+
+    // ONE — CDE-mapping, not harmonization, and the copy says so.
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "one.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(6)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    const notice = page.getByTestId("single-dictionary-notice");
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText(/CDE.mapping/i);
+    await expect(notice).toContainText(/not harmoni/i);
+
+    // MANY — the notice is gone, because two dictionaries genuinely is harmonization.
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "two.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(7)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(2);
+    await expect(page.getByTestId("single-dictionary-notice")).toHaveCount(0);
+  });
+
+  test("@setup an incomplete form disables Start WITH the reason named", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const start = page.getByTestId("start-run");
+    const reason = page.getByTestId("start-blocked");
+    // Zero dictionaries: disabled, and the reason is on screen rather than implied by the greying.
+    await expect(start).toBeDisabled();
+    await expect(reason).toBeVisible();
+    await expect(reason).toContainText(/dictionary/i);
+
+    // A file with NO meaning-bearing column mapped: still blocked, and the reason now names the file.
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "unmapped.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a", "col_b"], ["1", "2"], ["3", "4"]])),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    await expect(start).toBeDisabled();
+    await expect(reason).toContainText("unmapped.csv");
+  });
+
+  test("@setup mapping a meaning-bearing column clears the blocker it was named for", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "mapme.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a", "col_b"], ["1", "2"], ["3", "4"]])),
+    });
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_a"]') });
+    await expect(row).toHaveCount(1);
+    await row.getByTestId("role-select").selectOption("description");
+    // The blocker that named this file is gone; the mapping is what cleared it.
+    await expect(page.getByTestId("start-blocked")).not.toContainText("mapme.csv");
+  });
+
+  test("@setup the mapping table scrolls inside its card and the page never scrolls sideways", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    // A wide dictionary: 40 source columns, each of which becomes a mapping row.
+    const wide = Array.from({ length: 40 }, (_, i) => `a_very_long_source_column_name_number_${i}`);
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "wide.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([wide, wide.map((_, i) => `v${i}`), wide.map((_, i) => `w${i}`)])),
+    });
+    await expect(page.getByTestId("mapping-row")).toHaveCount(40);
+
+    // The table owns its overflow.
+    const scroller = page.getByTestId("mapping-scroll");
+    const own = await scroller.evaluate((el) => ({
+      scrolls: el.scrollHeight > el.clientHeight,
+      overflow: getComputedStyle(el).overflowY,
+    }));
+    expect(own.overflow).not.toBe("visible");
+    expect(own.scrolls).toBe(true);
+
+    // And the PAGE does not scroll horizontally at the design canvas width.
+    const page_ = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(page_.scrollWidth).toBeLessThanOrEqual(page_.clientWidth);
+  });
+
+  test("@setup a long filename and a long column name are clamped with the full value available", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const longCol = "a_source_column_name_so_long_it_would_reflow_the_table_if_it_were_not_clamped_at_all";
+    const longName = "a_dictionary_filename_so_long_that_it_would_push_the_card_header_wider_than_the_page.csv";
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: longName,
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([[longCol, "b"], ["1", "2"], ["3", "4"]])),
+    });
+    const nameEl = page.getByTestId("dict-filename").first();
+    await expect(nameEl).toHaveAttribute("title", longName);
+    const colEl = page.locator(`[data-column="${longCol}"]`).first();
+    await expect(colEl).toHaveAttribute("title", longCol);
+    // Clamped means truncated in the box, not wrapped into a taller one.
+    expect(await colEl.evaluate((el) => getComputedStyle(el).textOverflow)).toBe("ellipsis");
+  });
+});
