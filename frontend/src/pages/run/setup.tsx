@@ -931,10 +931,10 @@ export default function SetupPage() {
               <span className="font-semibold">
                 The first charge is Continue at Gate 0 — about {formatUsd(estimate.firstCharge)}.
               </span>{" "}
-              Setting up, loading, preparing and grouping your dictionaries all run on the server for
-              nothing, and Gate 0's review is free to read. Pressing Continue there is what buys the next
-              step: generating a candidate element per group, splitting groups that fuse more than one
-              concept, and the coherence judge. Everything up to that press can be abandoned at no cost.
+              Everything before that first charge can be abandoned at no cost: setting up, loading,
+              preparing and grouping your dictionaries, and reading Gate 0's review. Pressing Continue is
+              what buys the next step — generating a candidate element per group, splitting groups that fuse
+              more than one concept, and the coherence judge.
             </p>
 
             <ul className="flex flex-col gap-1">
