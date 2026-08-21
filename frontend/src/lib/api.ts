@@ -233,6 +233,29 @@ export async function extractCompositeDocument(
   );
 }
 
+/**
+ * Extract a score's definition text from a document with NO RUN REQUIRED ($0, no LLM call).
+ *
+ * The job-independent sibling of `extractCompositeDocument`, added by 08-11 and consumed at Setup. Setup
+ * needs it precisely because there is no run yet: the whole value of the extraction step is finding out
+ * for free whether the document you have can define the score you want, and a publisher PDF is often an
+ * access-check interstitial whose component table does not survive extraction at all. Requiring a run id
+ * would mean starting a run to discover that.
+ *
+ * Returns the document's TEXT, not its components: transcribing text into components is one model call
+ * (core's `extract_score_definition`), which is not free and therefore does not belong on the screen whose
+ * promise is that nothing has been charged yet.
+ */
+export async function extractScoreDocument(
+  file: File,
+): Promise<{ text: string; provenance: string; sha256: string; nChars: number }> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to read a document.");
+  const form = new FormData();
+  form.append("file", file);
+  return json(await fetch(`${BASE}/score/extract`, { method: "POST", headers: await authed(), body: form }));
+}
+
 export async function getResult(jobId: string): Promise<JobResult> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/result-${jobId}.json`));
   return json(await fetch(`${BASE}/result/${jobId}`, { headers: await authed() }));

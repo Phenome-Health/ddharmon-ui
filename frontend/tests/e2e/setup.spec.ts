@@ -411,6 +411,30 @@ test.describe("Setup — the honest estimate", () => {
     expect(lines).toContain("gencde");
   });
 
+  test("@setup the variable count on screen is the same one the estimate is priced from", async ({ page }) => {
+    // A REGRESSION GATE FOR A BUG THIS SCREEN ACTUALLY HAD. The dictionaries header summed a stored
+    // per-file row count while the estimate summed a derived one, so the header read "5 dictionaries · 0
+    // variables" beside a correctly-priced $2.20-$5.86 quote. Two readings of one number, silently
+    // disagreeing — and the cheaper-looking one was the one a reviewer would have believed.
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const header = (await page.getByTestId("dictionary-count").textContent()) ?? "";
+    const shown = Number((header.match(/([\d,]+) variables/)?.[1] ?? "").replace(/,/g, ""));
+    expect(shown).toBeGreaterThan(0);
+    const priced = ((await page.getByTestId("estimate-panel").textContent()) ?? "").match(
+      /([\d,]+) variables/,
+    );
+    expect(Number((priced?.[1] ?? "").replace(/,/g, ""))).toBe(shown);
+    // And the per-card row counts add up to it, so no dictionary is silently contributing nothing.
+    const perCard = await page.getByTestId("dict-card").evaluateAll((cards) =>
+      cards.map((c) => {
+        const m = (c.textContent ?? "").match(/·\s*([\d,]+) rows/);
+        return m ? Number(m[1].replace(/,/g, "")) : 0;
+      }),
+    );
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(shown);
+  });
+
   test("@setup the coherence line renders $0 rather than vanishing when no group can qualify", async ({
     page,
   }) => {

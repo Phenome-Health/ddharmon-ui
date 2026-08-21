@@ -9,12 +9,15 @@ import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { listDemos } from "@/lib/api";
+import { extractScoreDocument, listDemos } from "@/lib/api";
+import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
+import { SCOPE_VERDICT_COPY, declaredComponents, setupScopeVerdict } from "@/lib/score-scope";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { lookupPrefill } from "@/lib/column-prefill";
 import { COLUMN_ROLES } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
-import type { JobResult } from "@/types";
+import { GATE_LABELS } from "@/components/gate/GateRail";
+import type { CdeSet, GatePosition, JobResult, RunMode } from "@/types";
 
 /**
  * Set up — the first of the six staged-review screens (08-13).
@@ -56,8 +59,14 @@ interface SetupDict {
   headers: string[];
   /** Parsed rows — present only for a file read in this browser. Null for a run-seeded dictionary. */
   rows: DictRow[] | null;
-  /** Rows in the source file, when knowable. Null when the run record does not carry it. */
+  /** Rows in the source file, for a file read in this browser. Null for a run-seeded dictionary. */
   rowCount: number | null;
+  /**
+   * The demo dataset this dictionary came from, when it did. Its variable count is DERIVED from the demo
+   * catalogue at render rather than stored here: the catalogue is fetched, so storing the count would bake
+   * in whatever was known at seed time and a later edit would freeze it as unknown forever.
+   */
+  datasetId?: string;
   /** role -> source column. */
   roles: Record<string, string>;
   state: ParseState;
@@ -105,7 +114,7 @@ function headersFromManifest(entry: DemoEntry): string[] {
  * ids, so its dictionaries are recovered from the manifest that produced them plus the demo catalogue's
  * own field counts — both shipped provenance, neither invented here.
  */
-function dictionariesFromRun(job: JobResult | null, fieldsByDataset: Record<string, number>): SetupDict[] {
+function dictionariesFromRun(job: JobResult | null): SetupDict[] {
   const config = (job?.config ?? {}) as Record<string, unknown>;
   const declared = config.dictionaries;
   if (Array.isArray(declared) && declared.length) {
@@ -140,7 +149,8 @@ function dictionariesFromRun(job: JobResult | null, fieldsByDataset: Record<stri
         cohortName,
         headers: headersFromManifest(entry),
         rows: null,
-        rowCount: fieldsByDataset[id] ?? null,
+        rowCount: null,
+        datasetId: id,
         roles: { ...entry.roles },
         state: "ready" as ParseState,
         origin: "run" as const,
@@ -188,6 +198,20 @@ export default function SetupPage() {
 
   const [dicts, setDicts] = useState<SetupDict[]>([]);
   const [problems, setProblems] = useState<FileProblem[]>([]);
+
+  // --- run configuration. Same vocabulary as the shipped New Run form, so a run described here and a run
+  // described there are the same object. `conceptGate` is the one addition (STGD-16) and defaults OFF.
+  const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
+  const [runMode, setRunMode] = useState<RunMode>("batch");
+  const [genSpecs, setGenSpecs] = useState(true);
+  const [suggestIdeas, setSuggestIdeas] = useState(true);
+  const [conceptGate, setConceptGate] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  // BYOK: component memory only. Never persisted, never echoed back, cleared on reload.
+  const [apiKey, setApiKey] = useState("");
+  const [scoreText, setScoreText] = useState("");
+  const [scoreDoc, setScoreDoc] = useState<{ provenance: string; nChars: number } | null>(null);
+  const [scoreDocError, setScoreDocError] = useState("");
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
   const composed = useRef(false);
 
@@ -205,11 +229,75 @@ export default function SetupPage() {
    */
   useEffect(() => {
     if (composed.current) return;
-    const seeded = dictionariesFromRun(jobState, fieldsByDataset);
+    const seeded = dictionariesFromRun(jobState);
     if (seeded.length) setDicts(seeded);
-  }, [jobState, fieldsByDataset]);
+  }, [jobState]);
 
-  /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
+  /**
+   * One dictionary's variable count, or null when it is not knowable YET or not knowable at all.
+   *
+   * An uploaded file knows its own row count. A demo dictionary's count comes from the demo catalogue,
+   * which is fetched — so it reads null until that lands. Deriving it here rather than storing it is what
+   * keeps a late arrival from being frozen out by an earlier edit.
+   */
+  const variableCount = useCallback(
+    (d: SetupDict): number | null =>
+      d.origin === "upload" ? d.rowCount : d.datasetId ? (fieldsByDataset[d.datasetId] ?? null) : null,
+    [fieldsByDataset],
+  );
+
+  /**
+   * The corpus the quote is for, and whether it is knowable yet.
+   *
+   * R8 IS THE WHOLE DESIGN OF THIS BLOCK: never quote lower than what will be charged. A total summed over
+   * the dictionaries whose size happens to have arrived is not a smaller estimate — it is an UNDER-QUOTE,
+   * and it looks exactly like a finished one. So a corpus with any unknown member yields null, and the
+   * panel renders a pending state rather than a figure. `config.est_fields` is the fallback for a real run,
+   * which persists the total it was quoted at even though it keeps no per-dictionary counts.
+   */
+  const { totalFields, sizePending } = useMemo(() => {
+    if (!dicts.length) return { totalFields: 0, sizePending: false };
+    const counts = dicts.map(variableCount);
+    if (counts.every((n) => n !== null)) {
+      return { totalFields: counts.reduce((a, b) => a + (b ?? 0), 0), sizePending: false };
+    }
+    const config = (jobState?.config ?? {}) as Record<string, unknown>;
+    const persisted = typeof config.est_fields === "number" ? config.est_fields : null;
+    if (persisted !== null) return { totalFields: persisted, sizePending: false };
+    return { totalFields: null as number | null, sizePending: true };
+  }, [dicts, variableCount, jobState]);
+
+  /**
+   * The judge's real workload, when the run already knows it.
+   *
+   * Post-split group sizes make the coherence line EXACT instead of modelled — `judgeEligibleGroups`
+   * counts the groups of at least six members rather than applying a per-variable rate. Absent (a run that
+   * has not split yet, or no run at all) the estimator falls back to its measured rate and says so.
+   */
+  const groupSizes = useMemo(() => {
+    const groups = jobState?.result?.conceptGroups ?? [];
+    return groups.length ? groups.map((g) => g.nMembers) : undefined;
+  }, [jobState]);
+
+  const estimate = useMemo(
+    () =>
+      totalFields === null
+        ? null
+        : estimateRunCostBreakdown(totalFields, dicts.length, runMode, genSpecs, suggestIdeas, {
+            conceptGate,
+            groupSizes,
+          }),
+    [totalFields, dicts.length, runMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
+  );
+
+  /** True while a figure would be premature: a file still parsing, or a corpus size still resolving. */
+  const estimatePending = sizePending || dicts.some((d) => d.state === "parsing");
+
+  const scoreComponents = useMemo(() => declaredComponents(scoreText), [scoreText]);
+  // No run has produced concepts at Setup, so feasibility is not answerable here. See `score-scope.ts`.
+  const scopeVerdict = setupScopeVerdict(0);
+
+    /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
   const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
 
   const onDrop = useCallback(async (accepted: File[]) => {
@@ -361,9 +449,11 @@ export default function SetupPage() {
           >
             {dicts.length === 0
               ? "One file per cohort, each describing its variables — one row per variable."
-              : `${dicts.length} ${dicts.length === 1 ? "dictionary" : "dictionaries"} · ${dicts
-                  .reduce((n, d) => n + (d.rowCount ?? 0), 0)
-                  .toLocaleString()} variables where the count is known.`}
+              : totalFields === null
+                ? `${dicts.length} ${dicts.length === 1 ? "dictionary" : "dictionaries"} · counting variables…`
+                : `${dicts.length} ${
+                    dicts.length === 1 ? "dictionary" : "dictionaries"
+                  } · ${totalFields.toLocaleString()} variables`}
           </p>
         </div>
 
@@ -457,7 +547,10 @@ export default function SetupPage() {
                   <p className="text-xs text-on-raised-muted">
                     cohort <span className="font-mono text-on-raised">{d.cohortName}</span> ·{" "}
                     {d.headers.length} {d.headers.length === 1 ? "column" : "columns"}
-                    {d.rowCount === null ? "" : ` · ${d.rowCount.toLocaleString()} rows`}
+                    {(() => {
+                      const n = variableCount(d);
+                      return n === null ? "" : ` · ${n.toLocaleString()} rows`;
+                    })()}
                     {d.origin === "run" ? " · from this run's record" : ""}
                   </p>
                 </div>
@@ -495,6 +588,394 @@ export default function SetupPage() {
               )}
             </article>
           ))
+        )}
+      </section>
+
+      {/* --- the declared score ------------------------------------------------------------------ */}
+      <section data-testid="score-panel" className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-semibold text-on-raised">Score definition (optional)</h2>
+          <p className="max-w-[68ch] text-xs text-on-raised-muted">
+            If you came for a published score, name its components here and Gate 1 will offer them as the
+            scope to work through first. Reading a document costs nothing — transcribing one into components
+            is a model call, so it happens with the run rather than on this screen.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="score-doc" className="text-xs font-semibold text-on-raised">
+            Read a paper or supplement ($0)
+          </label>
+          <input
+            id="score-doc"
+            data-testid="score-upload"
+            type="file"
+            accept=".pdf,.docx"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              setScoreDocError("");
+              setScoreDoc(null);
+              try {
+                const read = await extractScoreDocument(file);
+                setScoreDoc({ provenance: read.provenance, nChars: read.nChars });
+              } catch (err) {
+                // Problem, then next step — never a bare failure. A publisher PDF is often an access-check
+                // interstitial, so "no text came back" is a likely and unalarming outcome.
+                setScoreDocError(
+                  err instanceof Error
+                    ? `${err.message} You can still name the components yourself below.`
+                    : "The document could not be read. You can still name the components yourself below.",
+                );
+              }
+            }}
+            className="w-full text-xs text-on-raised file:mr-3 file:rounded file:border file:border-rule-control-on-raised file:bg-surface-raised file:px-2 file:py-1 file:text-xs file:font-semibold file:text-on-raised"
+          />
+          {scoreDoc && (
+            <p data-testid="score-doc-read" className="text-xs text-on-raised-muted">
+              Read {scoreDoc.nChars.toLocaleString()} characters from{" "}
+              <span className="font-mono text-on-raised">{scoreDoc.provenance}</span>. Nothing was charged.
+              Check the components below against the document — if its item table did not survive
+              extraction, name the items yourself.
+            </p>
+          )}
+          {scoreDocError && (
+            <p data-testid="score-doc-error" className="max-w-[68ch] text-xs text-on-raised">
+              {scoreDocError}
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="score-components" className="text-xs font-semibold text-on-raised">
+            Components, one per line
+          </label>
+          <textarea
+            id="score-components"
+            data-testid="score-components"
+            rows={4}
+            value={scoreText}
+            onChange={(e) => setScoreText(e.target.value)}
+            placeholder={"Weak grip strength\nUnintentional weight loss\nSlow walking speed"}
+            className="w-full rounded border border-rule-control-on-raised bg-surface-raised px-3 py-2 text-sm text-on-raised placeholder:text-on-raised-muted"
+          />
+        </div>
+
+        {scoreComponents.length > 0 && (
+          /* THE DECLARED-SCORE SCOPE BAND. Its left rule is one of the four places the secondary-accent
+             register is allowed (UI-SPEC §5.4), in the contrast-corrected on-paper form — the raw dark-
+             surface form measures 2.39:1 here and would be the wrong one. */
+          <div
+            data-testid="score-scope-band"
+            data-components={String(scoreComponents.length)}
+            className="flex flex-col gap-2 border-l-2 border-rule-accent-2-on-raised bg-surface-inset px-4 py-3"
+          >
+            <p className="text-xs font-semibold text-on-inset">
+              {scoreComponents.length} declared {scoreComponents.length === 1 ? "component" : "components"} —
+              offered as the first scope at Gate 1
+            </p>
+            <ul className="flex flex-wrap gap-1.5">
+              {scoreComponents.map((c) => (
+                <li
+                  key={c}
+                  data-testid="score-component"
+                  title={c}
+                  className="max-w-[24rem] truncate rounded-pill border border-rule-on-inset px-2 py-0.5 text-xs text-on-inset"
+                >
+                  {c}
+                </li>
+              ))}
+            </ul>
+            {/* Rendered by FORM, not by a status colour: this is the absence of an outcome, not an outcome. */}
+            <p
+              data-testid="score-verdict"
+              data-verdict={scopeVerdict}
+              className="flex max-w-[68ch] items-start gap-2 text-xs text-on-inset-muted"
+            >
+              <span
+                aria-hidden="true"
+                className="mt-1 h-2 w-2 shrink-0 rounded-full border border-dashed border-rule-control-on-raised"
+              />
+              <span>
+                <span className="font-semibold text-on-inset">Feasibility: cannot be determined yet.</span>{" "}
+                {SCOPE_VERDICT_COPY[scopeVerdict]}
+              </span>
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* --- run configuration ------------------------------------------------------------------- */}
+      <section className="flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card">
+        <h2 className="text-sm font-semibold text-on-raised">How this run should work</h2>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="cde-set" className="text-xs font-semibold text-on-raised">
+              Element catalogue
+            </label>
+            <select
+              id="cde-set"
+              data-testid="cde-set"
+              value={cdeSet}
+              onChange={(e) => setCdeSet(e.target.value as CdeSet)}
+              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised"
+            >
+              <option value="endorsed">NIH-endorsed — a curated, high-signal set</option>
+              <option value="full">Full repository — broader, more candidates to weigh</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="run-mode" className="text-xs font-semibold text-on-raised">
+              Run mode
+            </label>
+            <select
+              id="run-mode"
+              data-testid="run-mode"
+              value={runMode}
+              onChange={(e) => setRunMode(e.target.value as RunMode)}
+              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised"
+            >
+              <option value="batch">Batch — about half the cost, can take hours</option>
+              <option value="sync">Synchronous — minutes, about twice the cost</option>
+              <option value="preview">Preview — no model call at all, free</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="run-name" className="text-xs font-semibold text-on-raised">
+              Run name (optional)
+            </label>
+            {/* User-typed prose, so the SANS face — unlike a filename or an identifier, which are mono. */}
+            <input
+              id="run-name"
+              data-testid="run-name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-sm text-on-raised"
+            />
+          </div>
+          {runMode !== "preview" && (
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="api-key" className="text-xs font-semibold text-on-raised">
+                Provider API key
+              </label>
+              <input
+                id="api-key"
+                data-testid="api-key"
+                type="password"
+                value={apiKey}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 font-mono text-xs text-on-raised"
+              />
+              <p className="text-xs text-on-raised-muted">
+                Used for this run only, over HTTPS. Never stored, logged, or saved with the run.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {[
+            {
+              id: "gen-specs",
+              testid: "gen-specs-toggle",
+              checked: genSpecs,
+              set: setGenSpecs,
+              label: "Generate transform specs",
+              detail: "The recipe to convert your values into each element's expected form.",
+            },
+            {
+              id: "suggest-ideas",
+              testid: "suggest-ideas-toggle",
+              checked: suggestIdeas,
+              set: setSuggestIdeas,
+              label: "Suggest analysis ideas",
+              detail: "One pass over the finished concepts. A small flat add, independent of corpus size.",
+            },
+            {
+              // STGD-16. Default OFF, and deliberately NOT buried: an opt-in the reviewer never sees is an
+              // unavailable feature with extra code behind it.
+              id: "concept-gate",
+              testid: "concept-gate-toggle",
+              checked: conceptGate,
+              set: setConceptGate,
+              label: "Also check that matches measure the same concept",
+              detail:
+                "A second model pass per group, asking whether an assigned element measures the same " +
+                "CONCEPT and not merely the same values. Buys a per-spec flag at Gate 3; costs an extra " +
+                "model call per group, which appears as its own line in the estimate.",
+            },
+          ].map((opt) => (
+            <label
+              key={opt.id}
+              htmlFor={opt.id}
+              className="flex items-start gap-3 rounded-inner border border-rule-on-raised px-3 py-2"
+            >
+              <input
+                id={opt.id}
+                data-testid={opt.testid}
+                type="checkbox"
+                checked={opt.checked}
+                disabled={runMode === "preview"}
+                onChange={(e) => opt.set(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-xs font-semibold text-on-raised">{opt.label}</span>
+                <span className="max-w-[68ch] text-xs text-on-raised-muted">{opt.detail}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      {/* --- the estimate ------------------------------------------------------------------------ */}
+      <section
+        data-testid="estimate-panel"
+        data-pending={String(estimatePending)}
+        className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card"
+      >
+        <div className="flex items-start justify-between gap-6">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-sm font-semibold text-on-raised">What this run will cost</h2>
+            <p className="text-xs text-on-raised-muted">
+              {totalFields === null
+                ? "Working out how many variables this run covers."
+                : `${totalFields.toLocaleString()} variables · ${dicts.length} ${
+                    dicts.length === 1 ? "dictionary" : "dictionaries"
+                  } · ${runMode}`}
+            </p>
+          </div>
+          {/* PENDING RATHER THAN STALE. While an input is unresolved there is NO figure on screen — not the
+              previous one, and not a zero. A total summed over the dictionaries whose size happened to
+              arrive is not a smaller estimate, it is an under-quote that looks finished (R8). */}
+          {estimatePending || !estimate ? (
+            <p data-testid="estimate-pending" className="text-sm font-semibold text-on-raised-muted">
+              working it out…
+            </p>
+          ) : estimate.free ? (
+            <p data-testid="estimate-free" className="text-sm font-semibold text-on-raised">
+              Free — preview calls no model
+            </p>
+          ) : (
+            <p
+              data-testid="estimate-total"
+              data-mid={String(estimate.total.mid)}
+              className="text-sm font-semibold tabular-nums text-on-raised"
+            >
+              {formatUsd(estimate.total.low)}–{formatUsd(estimate.total.high)}
+            </p>
+          )}
+        </div>
+
+        {!estimatePending && estimate && !estimate.free && (
+          <>
+            {/* Itemised. `data-cost-line` carries the line's STABLE id, so a test can assert the coherence
+                line by identity rather than by row position. */}
+            <ul className="flex flex-col gap-1 border-t border-rule-on-raised pt-2">
+              {estimate.lines.map((l) => (
+                <li
+                  key={l.id}
+                  data-cost-line={l.id}
+                  className="flex items-baseline justify-between gap-4 text-xs"
+                >
+                  <span className="text-on-raised">
+                    {l.label}
+                    {l.note && <span className="ml-1 text-on-raised-muted">· {l.note}</span>}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-on-raised">
+                    {l.cost === 0 ? "$0" : `~${formatUsd(l.cost)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+
+            {/* THE COHERENCE STAGE'S WORKLOAD, in variables rather than dollars — the money above is only
+                meaningful next to how many groups the judge is actually asked about. Groups under the
+                six-member minimum are left explicitly UNJUDGED, which is not the same as coherent. */}
+            <p data-testid="coherence-workload" className="max-w-[68ch] text-xs text-on-raised-muted">
+              {estimate.judgeCalls > 0 ? (
+                <>
+                  The coherence judge is priced for{" "}
+                  <span className="font-semibold text-on-raised">
+                    {estimate.judgeCalls.toLocaleString()}{" "}
+                    {estimate.judgeCalls === 1 ? "group" : "groups"}
+                  </span>{" "}
+                  of at least six variables
+                  {estimate.judgeCallsEstimated
+                    ? " — estimated from corpus size, since the groups do not exist yet."
+                    : " — counted from this run's own groups."}{" "}
+                  Smaller groups are left unjudged and marked as such; a judge that was never asked has not
+                  approved anything.
+                </>
+              ) : (
+                <>
+                  No group here can reach six variables, so the judge is not asked and the coherence line is{" "}
+                  <span className="font-semibold text-on-raised">$0</span>. The line stays on the bill
+                  anyway: a line that disappears is indistinguishable from a stage nobody costed. Those
+                  groups will be marked <span className="font-semibold text-on-raised">not judged</span>,
+                  which is not the same as coherent.
+                </>
+              )}
+            </p>
+
+            {/* WHERE THE FIRST CHARGE FALLS. UI-SPEC §0.1 as reversed at plan review: Gate 0's Continue,
+                not Gate 1's. Getting this wrong on the one screen whose whole job is informed consent to
+                spend is the exact failure R8 exists to prevent. */}
+            <p
+              data-testid="first-charge"
+              className="max-w-[68ch] border-t border-rule-on-raised pt-2 text-xs text-on-raised"
+            >
+              <span className="font-semibold">
+                The first charge is Continue at Gate 0 — about {formatUsd(estimate.firstCharge)}.
+              </span>{" "}
+              Setting up, loading, preparing and grouping your dictionaries all run on the server for
+              nothing, and Gate 0's review is free to read. Pressing Continue there is what buys the next
+              step: generating a candidate element per group, splitting groups that fuse more than one
+              concept, and the coherence judge. Everything up to that press can be abandoned at no cost.
+            </p>
+
+            <ul className="flex flex-col gap-1">
+              {(Object.keys(estimate.byGate) as GatePosition[]).map((gate) => {
+                const g = estimate.byGate[gate];
+                return (
+                  <li
+                    key={gate}
+                    data-gate-forecast={gate}
+                    className="flex items-baseline justify-between gap-4 text-xs"
+                  >
+                    <span className="text-on-raised-muted">
+                      {GATE_LABELS[gate]}
+                      {gate === "gate0" && " · no model call happens here, but its Continue is the first charge"}
+                      {gate === "setup" && " · local"}
+                      {gate === "gate4" && " · a terminal read"}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-on-raised-muted">
+                      {gate === "setup" || gate === "gate0"
+                        ? "local — no charge"
+                        : gate === "gate4"
+                          ? "no charge"
+                          : `est. ${formatUsd(g.forecast)}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <p className="text-xs text-on-raised-muted">
+              A rough estimate, from observed runs. The stages scale with groups rather than linearly with
+              variables, so treat the range as a range.
+            </p>
+          </>
+        )}
+
+        {!estimatePending && estimate && estimate.free && (
+          <p className="max-w-[68ch] border-t border-rule-on-raised pt-2 text-xs text-on-raised-muted">
+            Preview groups your variables and retrieves candidate elements without calling a model, so
+            nothing is charged at any gate. Switch to batch or synchronous when you want the assignment.
+          </p>
         )}
       </section>
 
