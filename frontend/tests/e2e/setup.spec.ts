@@ -315,6 +315,31 @@ test.describe("Setup — the screen", () => {
     await expect(reason).toContainText("unmapped.csv");
   });
 
+  test("@setup Start is a live control, not a dead one: it is enabled only when it will do something", async ({
+    page,
+  }) => {
+    // An ENABLED button that does nothing is the same defect as a disabled one with no reason, arrived at
+    // from the other side. Static builds cannot start a run at all, so the control stays disabled and the
+    // key blocker names the remaining step — which is what a reviewer on the deployed app would see next.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "ready.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(12)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    // The remaining blocker is the provider key, and it says so rather than leaving the control mute.
+    const blockers = page.getByTestId("blocker");
+    await expect(blockers.filter({ hasText: /API key/i })).toHaveCount(1);
+
+    // Switching to Preview removes the need for a key, so that blocker clears — the control's state
+    // tracks a real precondition rather than a hardcoded gate.
+    await page.getByTestId("run-mode").selectOption("preview");
+    await expect(blockers.filter({ hasText: /API key/i })).toHaveCount(0);
+    await expect(page.getByTestId("start-blocked")).toHaveCount(0);
+  });
+
   test("@setup mapping a meaning-bearing column clears the blocker it was named for", async ({ page }) => {
     await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");

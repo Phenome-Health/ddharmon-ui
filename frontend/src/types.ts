@@ -675,6 +675,14 @@ export interface RunConfig {
   genTransformSpecs: boolean;
   // Generate "analysis ideas" during the run (one extra LLM pass, same model/provider/key). No-op in preview.
   suggestAnalysisIdeas: boolean;
+  /**
+   * The opt-in concept-match gate and re-adjudication (STGD-16), default off.
+   *
+   * The backend has read this since 08-11 (`backend/app.py`: `"concept_gate": bool(cfg.get("conceptGate",
+   * False))`) — the field was simply missing from this type, so a caller setting it had to cast. Declared
+   * here so Setup's opt-in reaches the run as a typed field rather than through an `as RunConfig`.
+   */
+  conceptGate?: boolean;
   displayName?: string;
   // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
   // omitted, and falls back to harmonize_leanb's own defaults for the rest)

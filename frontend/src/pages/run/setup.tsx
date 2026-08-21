@@ -3,13 +3,15 @@ import { useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
-import { Upload, X } from "lucide-react";
+import { Loader2, Upload, X } from "lucide-react";
+import { toast } from "sonner";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { extractScoreDocument, listDemos } from "@/lib/api";
+import { IS_STATIC, extractScoreDocument, listDemos, startHarmonize } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { SCOPE_VERDICT_COPY, declaredComponents, setupScopeVerdict } from "@/lib/score-scope";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
@@ -59,6 +61,8 @@ interface SetupDict {
   headers: string[];
   /** Parsed rows — present only for a file read in this browser. Null for a run-seeded dictionary. */
   rows: DictRow[] | null;
+  /** The file itself, for an upload — this is what `startHarmonize` posts. Absent for a run-seeded entry. */
+  file?: File;
   /** Rows in the source file, for a file read in this browser. Null for a run-seeded dictionary. */
   rowCount: number | null;
   /**
@@ -193,6 +197,7 @@ const hasMeaning = (roles: Record<string, string>): boolean => MEANING_ROLES.som
 
 export default function SetupPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
+  const [, navigate] = useLocation();
   const { jobState } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
@@ -212,6 +217,7 @@ export default function SetupPage() {
   const [scoreText, setScoreText] = useState("");
   const [scoreDoc, setScoreDoc] = useState<{ provenance: string; nChars: number } | null>(null);
   const [scoreDocError, setScoreDocError] = useState("");
+  const [starting, setStarting] = useState(false);
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
   const composed = useRef(false);
 
@@ -312,6 +318,7 @@ export default function SetupPage() {
           key,
           filename: file.name,
           cohortName: file.name.replace(/\.(csv|tsv|txt)$/i, ""),
+          file,
           headers: [],
           rows: null,
           rowCount: null,
@@ -410,7 +417,9 @@ export default function SetupPage() {
   const blockers = useMemo(() => {
     const out: string[] = [];
     if (runStarted) {
-      out.push("This run has already started, so its setup cannot be changed. Rejoin it at its own gate.");
+      // The ONLY blocker in this case. Every other one asks for a change that cannot be made, and a list
+      // of things to fix that cannot be fixed is worse than the single true sentence.
+      return ["This run has already started, so its setup cannot be changed. Rejoin it at its own gate."];
     }
     if (!dicts.length) {
       out.push("Add at least one data dictionary — one file per cohort.");
@@ -427,8 +436,55 @@ export default function SetupPage() {
         );
       }
     }
+    // Batch and synchronous both call a provider; preview calls nothing. A missing key is a blocker rather
+    // than a failure at submit time, because the reason belongs beside the disabled control.
+    if (runMode !== "preview" && !apiKey.trim()) {
+      out.push("Enter your Anthropic API key, or switch the run mode to Preview, which calls no model.");
+    }
     return out;
-  }, [dicts, runStarted]);
+  }, [dicts, runStarted, runMode, apiKey]);
+
+  /**
+   * Start the run and hand off to Gate 0.
+   *
+   * The button is only reachable with an empty blocker list, so this does not re-validate — it submits. It
+   * posts the FILES, which is why each upload keeps its `File` rather than only its parsed rows: a run
+   * cannot be started from a table that was parsed in the browser.
+   */
+  async function onStart() {
+    setStarting(true);
+    try {
+      const files = dicts.map((d) => d.file).filter((f): f is File => Boolean(f));
+      const { jobId: started } = await startHarmonize(
+        files,
+        {
+          dictionaries: dicts.map((d) => ({
+            filename: d.filename,
+            cohortName: d.cohortName,
+            columnRoles: d.roles,
+          })),
+          cdeSet,
+          runMode,
+          genTransformSpecs: genSpecs,
+          suggestAnalysisIdeas: suggestIdeas,
+          conceptGate,
+          displayName: displayName || undefined,
+          provider: "anthropic",
+          // Echoed onto the run so a later screen can price a partial stop without re-counting dictionaries
+          // it no longer has. The same fields the New Run form persists.
+          estFields: totalFields ?? 0,
+          estCohorts: dicts.length,
+        },
+        "anthropic",
+        runMode === "preview" ? undefined : apiKey.trim(),
+      );
+      navigate(`/run/${started}/gate0`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not start this run");
+    } finally {
+      setStarting(false);
+    }
+  }
 
   return (
     <GateShell
@@ -1003,7 +1059,13 @@ export default function SetupPage() {
           )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <Button type="button" data-testid="start-run" disabled={blockers.length > 0}>
+          <Button
+            type="button"
+            data-testid="start-run"
+            onClick={onStart}
+            disabled={blockers.length > 0 || starting || IS_STATIC}
+          >
+            {starting && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
             Start run
           </Button>
           <p data-testid="nothing-charged-yet" className="text-xs text-on-raised-muted">
