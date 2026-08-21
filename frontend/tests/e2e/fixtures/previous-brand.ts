@@ -169,6 +169,45 @@ export const CURRENT_BRAND_ONLY = [
   // discriminate on it. Same reason #E21C52 was exempt under the S3 fixture.
 ];
 
+/**
+ * THE LEAK SCAN NEEDS A DIFFERENT INSTRUMENT, and this is it.
+ *
+ * `@drill 4` asks "is this painted colour reachable from the token layer?", and it answers by
+ * swapping tier 1 and looking for values that did not move. That question does not care what the
+ * previous brand WAS — it only needs every primitive to move. Using a real previous brand for it
+ * is actively wrong, because two consecutive generations of one identity share values: the accent
+ * (#0D59F2), all five status hues and the whole categorical make-up are byte-identical across
+ * these two. Every element painting one of them looks exactly like a leak, and the scan reported
+ * 215 of them the first time it ran against the rolled-forward fixture — not one a real defect.
+ *
+ * The predecessor's answer was an exemption (`if (/226, 28, 82/.test(was)) continue;` — the one
+ * hue the S3 guide shared with the current brand). Scaling that up means exempting fourteen
+ * primitives, and an exemption list that long stops being a list of known-unmeasurable values and
+ * starts being cover for real leaks. It also cannot be written correctly: a colour reached through
+ * an opacity modifier serialises as `oklab(… / 0.3)`, not as an rgb triple, so a value-matching
+ * exemption misses it.
+ *
+ * So the leak scan gets a PERTURBATION instead of a brand: every colour primitive is replaced by
+ * a distinct, evenly-spaced hue. Nothing can then coincide with its own current value, no
+ * exemption is needed, and the scan becomes strictly stronger than it was — it now interrogates
+ * the fourteen primitives the old exemption was blind to. Non-colour primitives (families,
+ * weights, radii) pass through unchanged: this swap answers one question and should not perturb
+ * anything that question does not concern.
+ */
+const COLOUR_PRIMITIVES = Object.keys(PREVIOUS_BRAND_TIER_1).filter((k) =>
+  PREVIOUS_BRAND_TIER_1[k].startsWith("#"),
+);
+
+export const LEAK_SCAN_TIER_1: Record<string, string> = Object.fromEntries(
+  Object.entries(PREVIOUS_BRAND_TIER_1).map(([key, value]) => {
+    if (!value.startsWith("#")) return [key, value];
+    const hue = Math.round((COLOUR_PRIMITIVES.indexOf(key) * 360) / COLOUR_PRIMITIVES.length);
+    // Mid lightness and high saturation on purpose: nothing lands on black, on white, or close
+    // enough to a neighbour that a derived wash of one could serialise as a wash of another.
+    return [key, `hsl(${hue} 72% 46%)`];
+  }),
+);
+
 export function asCss(vars: Record<string, string>): string {
   const body = Object.entries(vars)
     .map(([k, v]) => `  ${k}: ${v};`)

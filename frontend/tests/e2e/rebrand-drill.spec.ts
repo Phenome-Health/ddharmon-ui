@@ -4,6 +4,7 @@ import { routeUrl, TOKEN_LAYER_ROUTES } from "./routes";
 import {
   asCss,
   EXPECTED_TIER_1_ONLY_SHORTFALLS,
+  LEAK_SCAN_TIER_1,
   PAIRS_THAT_CANNOT_MOVE,
   PREVIOUS_BRAND_TIER_1,
   PREVIOUS_BRAND_TIER_2_REMAP,
@@ -38,6 +39,9 @@ const manifest = loadManifest();
 const pairs = requiredPairs(manifest);
 const TIER_1 = asCss(PREVIOUS_BRAND_TIER_1);
 const TIER_1_AND_2 = `${TIER_1}\n${asCss(PREVIOUS_BRAND_TIER_2_REMAP)}`;
+// @drill 4 alone uses a PERTURBATION rather than the previous brand — see the fixture for why a
+// real brand is the wrong instrument for a reachability question.
+const TIER_1_PERTURBED = asCss(LEAK_SCAN_TIER_1);
 
 test("@drill 1 — with tier 1 swapped to the previous brand, every role still resolves", async ({ page }) => {
   await page.goto("/new");
@@ -186,8 +190,9 @@ test("@drill 3 — the type stack moves with the brand, not just the colour", as
  *    `tests/test_content_drift.py::test_no_default_palette_utilities`.
  *  - **A colour that moves WRONGLY.** "It moved" is not "it moved to the right thing"; that is
  *    what @drill 2/2b measure.
- *  - **Colours identical in both brands.** #E21C52 is the previous brand's dominant accent and
- *    the current brand's destructive fill, so its pairs cannot move and are exempted by name.
+ *  - **Nothing, on the colour-identity axis, any more.** This scan used to be blind to every hue
+ *    the two brands shared. It now swaps in a PERTURBATION rather than the previous brand — every
+ *    primitive moves — so there is no such blind spot and no exemption for one.
  */
 test("@drill 4 — no component-level colour survives the swap", async ({ page, baseURL }) => {
   const leaks: string[] = [];
@@ -249,10 +254,13 @@ test("@drill 4 — no component-level colour survives the swap", async ({ page, 
         for (let j = 0; j < PROPS.length; j++) {
           const was = before[i].vals[j];
           if (inert(was) || was !== after[i].vals[j]) continue;
-          // Two documented exemptions, both about colours that CANNOT move rather than colours
-          // that failed to: the destructive hue #E21C52 is identical in both brands, and pure
-          // black / white are UA defaults on elements that declare no colour of their own.
-          if (/226, 28, 82/.test(was)) continue;
+          // ONE exemption, and it is about the UA rather than about the brand: pure black and
+          // pure white are user-agent defaults on elements that declare no colour of their own.
+          // The colour-identity exemption that used to sit here (`/226, 28, 82/`, the one hue the
+          // S3 guide shared with the shipped brand) is GONE — the perturbed swap moves every
+          // primitive, so a value that does not move is unreachable, full stop. That is the
+          // exemption being deleted rather than widened to the fourteen primitives two
+          // consecutive generations of one identity actually share.
           if (was === "rgb(0, 0, 0)" || was === "rgb(255, 255, 255)") continue;
           const line = `${PROPS[j]}=${was}  ${before[i].desc}`;
           const sig = `${PROPS[j]}=${was}`;
@@ -262,7 +270,7 @@ test("@drill 4 — no component-level colour survives the swap", async ({ page, 
         }
       }
       return out;
-    }, TIER_1);
+    }, TIER_1_PERTURBED);
     leaks.push(...found.map((l) => `${route.path.padEnd(28)} ${l}`));
     if (process.env.DDH_DRILL_TRACE) {
       const n = await page.evaluate(() => document.body.querySelectorAll("*").length);

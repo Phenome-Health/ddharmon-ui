@@ -1,4 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap');
+/* NO WEBFONT IMPORT, and its absence is deliberate.
+   Inter is named first in `--brand-font-body` / `--brand-font-display` with a real
+   system fallback stack behind it, so the type renders with no network fetch and no
+   licensed asset in the tree. That is what closes the display-face asset debt rather
+   than trading it for a third-party dependency.
+   A remote `@import` was tried and REVERTED: a pending stylesheet keeps the document's
+   `load` event from firing, which took the Playwright gate from 44s to 17.2m (every
+   heavy route burning its full 90s timeout) and made the app unable to render its own
+   type offline, in CI, or on the air-gapped review box. */
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
@@ -28,83 +36,118 @@
 @source inline("text-on-field-muted text-on-info text-on-inset text-on-inset-muted text-on-inset-strong");
 @source inline("text-on-inset-strong-muted text-on-ok text-on-raised text-on-raised-faint");
 @source inline("text-on-raised-muted text-on-track text-on-warn text-status-danger text-status-destructive");
-@source inline("text-status-info text-status-ok text-status-warn");
+@source inline("text-status-info text-status-ok text-status-warn bg-surface-accent");
+@source inline("text-on-accent-surface text-accent-on-field text-mark-outer text-mark-middle");
+@source inline("text-mark-inner");
 
-/* ══ Display face — Byrl (D-07) ═══════════════════════════════════════════════
-   Byrl is the 2026 identity's display face. The licensed web files are still
-   owed, so these rules point at `public/fonts/` and 404 until the files land;
-   the stack in `--font-display` falls through to Space Grotesk in the meantime
-   and picks Byrl up the moment the files are dropped in — one commit, no visual
-   rework, nothing else to change.
+/* ══ Display face — retired (D-1, 2026-08-20) ═════════════════════════════════
+   There is no `@font-face` block here any more, and its absence is the change.
 
-   The mockup hot-links the face from the marketing site's own CDN. That is
-   deliberately NOT done here (T-08-22): serving a licensed face from a
-   third-party host is a
-   licensing and supply-chain question, not a technical one. `local()` is also
-   deliberately absent — a locally-installed copy would make the rendering (and
-   therefore the visual baseline) differ per machine.
-   ═══════════════════════════════════════════════════════════════════════════ */
-@font-face {
-  font-family: 'Byrl';
-  src: url('/fonts/byrl-regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Byrl';
-  src: url('/fonts/byrl-semibold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
+   The July identity had a licensed display face (Byrl) with Space Grotesk as its
+   standing fallback, and two `@font-face` rules pointing at `/fonts/byrl-*.woff2`
+   files that were never delivered — a vite warning on every build and an
+   operator-owed asset (WINDOWS #5).
+
+   The current brand has EXACTLY ONE TYPEFACE. A `@font-face` enumeration of the
+   live site loads only Inter and Inter Variable, and its h1 computes to
+   Inter / 600 / 60px / -1.2px. Hierarchy comes from weight, size and tight
+   negative tracking (-1.2px at 60px = -0.02em), which is why
+   `--brand-tracking-display` is a primitive below: the tracking now carries the
+   work a second family used to carry, so it is brand data, not a theme literal.
+
+   So the debt is CLOSED rather than carried. There is no font to license, no
+   file to drop in, and nothing to fall back to.
+   ══════════════════════════════════════════════════════════════════════════ */
 
 /* ══════════════════════════════════════════════════════════════════════════════
    TIER 1 — PRIMITIVES.  Named for the VALUE, never for the use.
    ══════════════════════════════════════════════════════════════════════════════
    This is the ONLY block a rebrand replaces, and it is replaced WHOLESALE. Nothing
-   here says what a colour is for; `--brand-navy` is a navy, not "the page field".
-   The moment a primitive is named for its use ("--b-ground") the two tiers fuse and
-   a rebrand has to be reasoned about at every call site again.
+   here says what a colour is for; `--brand-mist` is a pale blue, not "the page
+   field". The moment a primitive is named for its use ("--b-ground") the two tiers
+   fuse and a rebrand has to be reasoned about at every call site again.
 
-   Values sampled from phenomehealth.org computed styles (2026 identity). The S3
-   brand guide (Roboto / proxima-nova, #0B152D navy, #EDEDED grey, #E21C52 magenta)
-   is the PREVIOUS brand — it is not stale trivia, it is the fixture the rebrand
-   drill swaps in (`tests/e2e/rebrand-drill.spec.ts`). Both brands moved on every
-   axis: type, dark neutral, light neutral, dominant accent, radii. That is why this
-   tier exists.
+   RE-POINTED 2026-08-20 (plan 08-12b). Values sampled from phenomehealth.org
+   computed styles on the day the new build went live, which the user has confirmed
+   is now canonical. This block previously held the JULY 2026 sample — navy ground,
+   warm cream paper, indigo ink, a Byrl/Space Grotesk display stack, 30px containers
+   — and that generation is not stale trivia: it is the fixture the rebrand drill
+   swaps in (`tests/e2e/fixtures/previous-brand.ts`). The names moved with the
+   values, because a primitive called `--brand-cream` holding #FFFFFF is the same
+   class of lie as `ph-navy` for a colour that is no longer navy.
 
-   Two forms per accent, both primitive. An accent that must read as TEXT on a light
-   surface needs a contrast-corrected form, and that form is brand data, not a role
-   decision: #3AB3BB is 5.53:1 on navy and 2.51:1 on cream, so `--brand-teal-ink`
-   is declared beside it. Same for crimson, whose pure form is 4.62:1 on cream —
-   legal for a fill, too thin for a text register that also sits on its own wash.
+   WHAT MOVED, and what did not. Seven of eight axes moved: ground (INVERTED, dark
+   to light), paper, second light step (warm to cool), dark neutral (and it was
+   PROMOTED from a shadow tint to a real surface), ink, second accent (dropped from
+   the UI entirely), display face, container radii. The dominant accent #0D59F2 did
+   NOT move. Neither did the body face. That is why the drill's fixture is a harder
+   test than its predecessor, and why two of its assertions now name the axes that
+   stayed put instead of asserting a change that did not happen.
+
+   TWO FORMS PER ACCENT is gone with the teal, but the principle it encoded is not:
+   a colour that must read as TEXT on a surface needs a contrast-corrected form, and
+   that form is brand data rather than a role decision. It survives as
+   `--brand-crimson-ink` (the pure crimson is 4.64:1 on paper — legal for a fill,
+   too thin for a text register that also sits on its own wash) and as
+   `--brand-teal-deep` in the categorical make-up.
    ══════════════════════════════════════════════════════════════════════════════ */
 :root {
-  /* ── Colour ─────────────────────────────────────────────────────────────── */
-  --brand-navy:        #1E2A52;   /* the dominant dark neutral */
-  --brand-navy-deep:   #00063D;   /* deepest navy — shadow/scrim tint only */
-  --brand-cream:       #FFFFF8;   /* the light neutral — warm off-white, NOT pure white */
-  --brand-cream-dim:   #F7F6EC;   /* one step down from cream */
-  --brand-indigo:      #222572;   /* the dark chromatic — reads as ink on cream */
-  --brand-blue:        #0D59F2;   /* the dominant accent */
-  --brand-teal:        #3AB3BB;   /* secondary accent — dark-surface form */
-  --brand-teal-ink:    #1B7F86;   /* secondary accent — light-surface form (4.72:1 on cream) */
-  --brand-crimson:     #E21C52;   /* the destructive hue — fill form */
-  /* Text form of crimson. Pure #E21C52 is 4.62:1 on cream and drops below AA over
-     any wash of itself, so the register that has to READ gets its own primitive. */
-  --brand-crimson-ink: color-mix(in srgb, var(--brand-crimson) 88%, var(--brand-indigo));
+  /* ── Colour — the 2026-08-20 identity ─────────────────────────────────────
+     One hue family, three light steps, one dark, one accent. The whole palette. */
+  --brand-white:       #FFFFFF;   /* the paper. PURE white — the July sample's #FFFFF8 was warm */
+  --brand-pale:        #EBEFFF;   /* palest blue — bands and insets ON the paper */
+  --brand-mist:        #D5E0F6;   /* pale blue — the live site's ground BY AREA (11,356px of page
+                                     height; white appears only as cards and insets inside it. An
+                                     element-COUNT reading of the same page concludes the opposite,
+                                     which is how the first measurement of this brand got it wrong) */
+  --brand-navy-deep:   #00063D;   /* the dark neutral. PROMOTED: it was a shadow/scrim tint in the
+                                     July sample and UI-SPEC deviation #1 forbade it as a surface;
+                                     the current brand fills whole sections with it */
+  --brand-blue:        #0D59F2;   /* the dominant accent — the ONE axis that did not move */
+  --brand-slate:       #4B4F6B;   /* the quiet metadata register. Carries what the retired teal
+                                     used to carry (cohort codes, informational rules), so the
+                                     distinction is now by VALUE rather than by a competing hue */
+  --brand-black:       #000000;   /* body copy on the paper */
+
+  /* ── The brand MARK's own palette ──────────────────────────────────────────
+     Logo-scoped, and that is the whole point (T-08-65). Until this plan the
+     Phenome Health mark was drawn from `--accent-2-on-chrome`, `--on-chrome` and
+     `--status-destructive` — three general-purpose UI roles — so retiring the
+     secondary accent would have silently restyled the organisation's logo, and any
+     future accent re-tone would repaint the brand mark as a side effect. These are
+     sourced from the logo artwork and are reachable ONLY from the `--mark-*` roles.
+     Teal survives here and nowhere else: it is IN THE MARK, which is why a CSS
+     colour tally of the live site could not see it. */
+  --brand-mark-teal:    #3AC2CB;
+  --brand-mark-crimson: #E11E53;
+  --brand-mark-paper:   #FFFFFF;  /* the same value as --brand-white TODAY, and deliberately its
+                                     own token: the mark's white must not move because the UI's
+                                     paper moved */
+
+  /* ── Status — PRODUCT-owned, not brand ─────────────────────────────────────
+     No Phenome Health generation has published a status palette, so these are ours
+     and they did not move in this rebrand. Re-measured against the new paper. */
   --brand-green:       #0E7C63;
-  --brand-amber:       #8F4E00;
+  --brand-amber:       #8F4E00;   /* the coherence flag is the most important signal on Gate 1 and
+                                     may not ship sub-AA, which is why this is not the site's
+                                     #A85B00 */
   --brand-amber-pale:  #FCEFD6;
   --brand-amber-mid:   #E8C48A;
-  /* Extra categorical hues. A categorical scale needs distinguishable steps and the
-     identity supplies five; these three are the make-up, declared here so every
-     colour in the product is reachable from one block. Both were raised above the
-     3:1 graphical-object floor on cream (sky was 2.76:1, slate 3.13:1). */
+  --brand-crimson:     #E21C52;   /* the destructive hue — fill form */
+  /* Text form of crimson. Pure #E21C52 is 4.64:1 on the paper and drops below AA over
+     any wash of itself, so the register that has to READ gets its own primitive. */
+  --brand-crimson-ink: color-mix(in srgb, var(--brand-crimson) 88%, var(--brand-navy-deep));
+
+  /* ── Categorical make-up ───────────────────────────────────────────────────
+     A categorical scale needs distinguishable steps. The identity used to supply a
+     second hue and now supplies none, so the make-up grew by one: `--brand-teal-deep`
+     is the value the retired `--brand-teal-ink` was carrying, kept as a CHART step.
+     It is a data encoding, never a UI accent — nothing but `--series-1` can reach it,
+     and no semantic role sources it. Every step clears the 3:1 graphical floor on the
+     paper (teal 4.74, violet 5.70, sky 5.93, slate 7.99). */
+  --brand-teal-deep:   #1B7F86;
   --brand-violet:      #7C3AED;
   --brand-sky-deep:    #0369A1;
-  --brand-slate:       #5B667A;
   /* A five-step categorical set used for one chart's model series (dataviz-validated
      as a set, so it is kept whole rather than folded into the eight above). */
   --brand-series-1: #2a78d6;
@@ -113,14 +156,17 @@
   --brand-series-4: #eda100;
   --brand-series-5: #1baf7a;
 
-  /* ── Type ───────────────────────────────────────────────────────────────── */
+  /* ── Type ───────────────────────────────────────────────────────────────────
+     ONE typeface (D-1). `--brand-font-display` is Inter, the same family as the
+     body, because the brand has no second face: the live site's @font-face table
+     loads Inter and Inter Variable and nothing else. The display/UI split is
+     therefore a WEIGHT and TRACKING distinction, which is why the tracking below is
+     a primitive — it is brand data now, not a theme literal. The families stay
+     tokenized because type is a rebrand axis: the July identity ran Byrl over Space
+     Grotesk here and the drill swaps it back in to prove it. */
   --brand-font-body:    'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --brand-font-mono:    'JetBrains Mono', ui-monospace, "SF Mono", Consolas, monospace;
-  /* Byrl first (D-07), Space Grotesk as the standing fallback until the licensed
-     files land. Both are the CURRENT identity; the previous brand's display face
-     was proxima-nova, which is 100% replaced — type is a rebrand axis too, which is
-     why the families are primitives and not literals in a `@theme` key. */
-  --brand-font-display: 'Byrl', 'Space Grotesk', 'Inter', sans-serif;
+  --brand-font-display: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --brand-weight-regular: 400;
   --brand-weight-strong:  600;
   --brand-text-meta:      12px;
@@ -132,15 +178,21 @@
   --brand-text-display:   30px;
   --brand-leading-display: 34px;
   --brand-tracking-eyebrow: 0.10em;
+  /* -1.2px at the site's 60px h1 = -0.02em. The four-size / two-weight scale from
+     08-07 Part 1 is untouched; only the family and this tracking moved. */
+  --brand-tracking-display: -0.02em;
 
   /* ── Geometry ───────────────────────────────────────────────────────────────
-     Container radii are brand geometry (the live site is 30px-dominant, with 100px
-     and 200px on marketing shapes); control radii are instrument discipline and
+     Container radii are brand geometry; control radii are instrument discipline and
      deliberately small. A rebrand moves both, which is why both are primitives.
-     Recorded divergence, NOT fixed here: `--brand-radius-inner` is 14px where the
-     live brand's smallest container radius is 30px (see WINDOWS.md). */
-  --brand-radius-container:  30px;
-  --brand-radius-inner:      14px;
+     The live site's radii, by frequency: 10px (31 uses), 16px (23), 80px (7 — the
+     pill buttons), then 12/14/40/20. The single 30px container radius this replaces
+     matched NOTHING in the new system, so the recorded 30-vs-14 divergence in
+     WINDOWS is resolved by the brand rather than by a decision: 16px containers,
+     10px inner. The pill stays at 999px — the site's 80px on a ~40px control is
+     fully rounded, and 999px says that without depending on the control's height. */
+  --brand-radius-container:  16px;
+  --brand-radius-inner:      10px;
   --brand-radius-pill:       999px;
   --brand-radius-hairline:   2px;
   --brand-radius-control:    4px;
@@ -156,101 +208,165 @@
    independently of its background, which is how a surface change turns into a
    22-page hunt. `--surface-field` and `--on-field` move together or not at all.
 
+   THE 2026-08-20 REASSIGNMENT. The ground INVERTED, so this block did real work
+   rather than inheriting a value change:
+
+     · The FIELD flipped from navy to the brand's pale blue, and its four bound
+       foregrounds flipped with it in the same six lines. This reverses 08-07's
+       option B — which was right for the brand that existed when it was chosen.
+     · The PAPER separation was re-earned INSIDE the palette. On a literally-white
+       field a white card is invisible and the Gate 1 ledger stops reading as a
+       document lying on something. So the field takes #D5E0F6 and the paper takes
+       #FFFFFF: both brand colours, nothing invented, and the mechanism is a real
+       SURFACE rather than a shadow — a shadow does not survive print or a
+       high-contrast mode, so shadow alone would not have been an answer.
+     · BLUE BECAME A SURFACE. The live site fills whole sections with #0D59F2
+       carrying near-white text, which the previous role set could not express:
+       the accent existed only as a foreground and an action fill. `--surface-accent`
+       is DECLARED here with its bound foreground and a manifest row, so it arrives
+       with a contrast assertion rather than implicitly (T-08-63).
+     · The SECOND ACCENT lost its brand backing and was REDECLARED, not deleted.
+       `--accent-2-*` has ten call sites; deleting the roles would mean editing ten
+       component files, which is exactly what this layer exists to make unnecessary.
+       What the brand actually did was replace a second HUE with a second VALUE, so
+       the roles keep their call sites and change what they are made of: slate on
+       the paper, a lightened brand blue on the chrome. The now-inaccurate NAME is
+       recorded as debt — renaming is a refactor, not a rebrand.
+
    Three consequences worth stating, because they are easy to undo by accident:
 
    1. Every alpha step is mixed FROM a primitive (`color-mix(… 68%, transparent)`),
-      never written as `rgba(255,255,248,.68)`. A literal rgba is a hardcoded cream
+      never written as `rgba(0, 6, 61, .68)`. A literal rgba is a hardcoded navy
       that survives a rebrand — the exact leak the drill hunts for.
    2. "Muted" is declared PER SURFACE. Muted text is only meaningful relative to
-      what it sits on, so there is no global `--muted`.
+      what it sits on, so there is no global `--muted`. They happen to share one
+      alpha today (68% of the deep navy); they are still four declarations, because
+      the next brand may not let them.
    3. Every (surface, foreground) pair here has a row in `tokens/role-manifest.json`
       with a required contrast level, and the gates iterate that manifest. Adding a
       role without its contrast assertion fails
       `tests/test_content_drift.py::test_every_role_pair_is_declared_in_the_manifest`.
+      Every level in that file was RE-MEASURED for this rebrand. A ratio computed
+      against a navy ground is not evidence about a light one (T-08-61).
    ══════════════════════════════════════════════════════════════════════════════ */
 :root {
-  /* ── CHROME — the top bar and the left rail ─────────────────────────────── */
-  --surface-chrome:        var(--brand-navy);
-  --on-chrome:             var(--brand-cream);
-  --on-chrome-muted:       color-mix(in srgb, var(--brand-cream) 68%, transparent);
+  /* ── CHROME — the top bar and the left rail ───────────────────────────────
+     The app's furniture stays DARK, and it is now the brand's real dark surface
+     (#00063D) rather than the July mid-navy. This is not the ground: the ground
+     inverted, the chrome did not. The live site uses #00063D exactly this way, as
+     an occasional dark section, and its own observed pairing is #00063D -> #FFFFFF
+     (19.21:1), which is what `--on-chrome` takes. */
+  --surface-chrome:        var(--brand-navy-deep);
+  --on-chrome:             var(--brand-white);
+  --on-chrome-muted:       color-mix(in srgb, var(--brand-white) 68%, transparent);
   /* Decoration only (the hero's separator dots). Legible, deliberately recessive,
      and NOT for a meaningful glyph — asserted BELOW text contrast, which is what
-     documents the distinction. */
-  --on-chrome-faint:       color-mix(in srgb, var(--brand-cream) 45%, transparent);
-  --rule-on-chrome:        color-mix(in srgb, var(--brand-cream) 15%, transparent);
-  --rule-quiet-on-chrome:  color-mix(in srgb, var(--brand-cream) 8%, transparent);
-  /* The accent is PROHIBITED on chrome (2.47:1). A link on the chrome is the
+     documents the distinction. 42% rather than the light surfaces' 45% because
+     pure white is a brighter ink than the deep navy: at 45% it measures 4.34:1,
+     which is inside the non-text band but with almost no margin under it. */
+  --on-chrome-faint:       color-mix(in srgb, var(--brand-white) 42%, transparent);
+  --rule-on-chrome:        color-mix(in srgb, var(--brand-white) 15%, transparent);
+  --rule-quiet-on-chrome:  color-mix(in srgb, var(--brand-white) 8%, transparent);
+  /* The accent is not a TEXT colour on the chrome. A link on the chrome is the
      foreground colour, and an action on the chrome is outlined in paper-alpha. */
   --link-on-chrome:        var(--on-chrome);
+  /* THE BRAND MARK, painted from the mark's own primitives and from nothing else.
+     Three concentric arcs, mirroring the lockup's blades. These are the only roles
+     in this file whose job is identity rather than meaning, and they sit here — in
+     tier 2, with manifest rows at `graphical` level — rather than being read as
+     primitives by the component, because a component that reads tier 1 has bypassed
+     the layer. */
+  --mark-outer:            var(--brand-mark-crimson);
+  --mark-middle:           var(--brand-mark-paper);
+  --mark-inner:            var(--brand-mark-teal);
 
   /* ── RAISED — cards, panes, popovers: the working surface ───────────────── */
-  --surface-raised:        var(--brand-cream);
-  --on-raised:             var(--brand-indigo);
-  --on-raised-muted:       color-mix(in srgb, var(--brand-indigo) 70%, transparent);
+  --surface-raised:        var(--brand-white);
+  --on-raised:             var(--brand-black);
+  /* The muted/faint/rule steps are mixed from the DEEP NAVY, not from `--on-raised`.
+     `--on-raised` is pure black now, and black at 68% over white is a neutral grey
+     in a palette that has exactly one hue family — the brand's own secondary copy
+     is a navy-alpha. Mixing from the ink would have been mechanically simpler and
+     visibly off-brand. */
+  --on-raised-muted:       color-mix(in srgb, var(--brand-navy-deep) 68%, transparent);
   /* HAIRLINES AND DASHED MARKS ONLY — never text, never a meaningful glyph. */
-  --on-raised-faint:       color-mix(in srgb, var(--brand-indigo) 50%, transparent);
-  --rule-on-raised:        color-mix(in srgb, var(--brand-indigo) 13%, transparent);
-  --rule-quiet-on-raised:  color-mix(in srgb, var(--brand-indigo) 7%, transparent);
+  --on-raised-faint:       color-mix(in srgb, var(--brand-navy-deep) 45%, transparent);
+  --rule-on-raised:        color-mix(in srgb, var(--brand-navy-deep) 14%, transparent);
+  --rule-quiet-on-raised:  color-mix(in srgb, var(--brand-navy-deep) 7%, transparent);
   /* The AFFORDANCE-strength hairline. A divider says "these are separate"; the
      border of an input, a select or an outline button says "you can act here", and
      it has to read as an edge rather than as a rule. That is a different role, not
      a darker divider — which is why `border-neutral-300` sat on 16 controls and no
      divider. */
-  --rule-control-on-raised: color-mix(in srgb, var(--brand-indigo) 22%, transparent);
+  --rule-control-on-raised: color-mix(in srgb, var(--brand-navy-deep) 22%, transparent);
   --link-on-raised:        var(--brand-blue);
 
   /* ── FIELD — the page field the raised surfaces sit on ──────────────────────
-     FLIPPED TO THE GROUND (UI-SPEC 5.1: "dark page, cream cards" — a light field
-     under cream cards was a dark-MODE app, not this identity). This is the block
-     Part 1 was built to make cheap, and it is six lines: the surface and its four
-     bound foregrounds move together, which is the entire point of binding them.
+     FLIPPED BACK TO A LIGHT GROUND (D-3), following the brand. 08-07 flipped this
+     to navy with the cost visible and was right to; the identity has since moved
+     the default page onto a light ground, so the field follows it. This is the
+     block Part 1 was built to make cheap, and it is seven lines: the surface and
+     its bound foregrounds move together, which is the entire point of binding them.
      Nothing outside this block chose a colour relative to the field, so nothing
-     outside this block had to change.
+     outside this block had to change — twice now, in opposite directions.
 
-     `--link-on-field` is the one that is NOT a mechanical copy of the chrome pair:
-     the accent on the ground measures 2.47:1 and is PROHIBITED (5.2), so a link on
-     the field is the foreground colour, exactly as it is on the chrome. Asserted,
-     not remembered — the prohibition has a manifest row. */
-  --surface-field:         var(--brand-navy);
-  --on-field:              var(--brand-cream);
-  --on-field-muted:        color-mix(in srgb, var(--brand-cream) 68%, transparent);
-  --on-field-faint:        color-mix(in srgb, var(--brand-cream) 45%, transparent);
-  --rule-on-field:         color-mix(in srgb, var(--brand-cream) 15%, transparent);
+     `--link-on-field` is again NOT a mechanical copy: the accent on the field
+     measures 4.24:1, which is a legal graphical mark and below AA as body text, so
+     a link on the field is the foreground colour exactly as it is on the chrome.
+     Same decision as before the flip, re-made for a completely different reason —
+     it used to be 2.47:1 and outright invisible. The old PROHIBITION that encoded
+     it is therefore void and has been redeclared as a positive `graphical` role
+     below, rather than left asserting a number the brand no longer produces. */
+  --surface-field:         var(--brand-mist);
+  --on-field:              var(--brand-navy-deep);
+  --on-field-muted:        color-mix(in srgb, var(--brand-navy-deep) 68%, transparent);
+  --on-field-faint:        color-mix(in srgb, var(--brand-navy-deep) 45%, transparent);
+  --rule-on-field:         color-mix(in srgb, var(--brand-navy-deep) 14%, transparent);
   --link-on-field:         var(--on-field);
+  /* The accent on the field as a GRAPHICAL object only — the eyebrow's filled
+     square, a rule, a marker. 4.24:1: above the 3:1 non-text floor, below AA. */
+  --accent-on-field:       var(--accent);
 
   /* ── INSET — header bands, row hover, inset panels ON a raised surface ──────
-     Same value as the field TODAY and a different role: an inset sits inside a
-     card, a field sits under one. Keeping them separate is what lets Part 2 move
-     the field without dragging every table header band with it. */
-  --surface-inset:         var(--brand-cream-dim);
-  --on-inset:              var(--brand-indigo);
-  --on-inset-muted:        color-mix(in srgb, var(--brand-indigo) 70%, transparent);
-  --rule-on-inset:         color-mix(in srgb, var(--brand-indigo) 13%, transparent);
+     The brand's palest blue. An inset sits INSIDE a card; the field sits under one.
+     Keeping them separate is what let the field move twice without dragging every
+     table header band with it. */
+  --surface-inset:         var(--brand-pale);
+  --on-inset:              var(--on-raised);
+  --on-inset-muted:        color-mix(in srgb, var(--brand-navy-deep) 68%, transparent);
+  --rule-on-inset:         color-mix(in srgb, var(--brand-navy-deep) 14%, transparent);
   --link-on-inset:         var(--brand-blue);
 
   /* ── INSET-STRONG — the second inset step: pressed, selected, a badge fill ───
      An inset has TWO steps because an interaction has two states: hover is a hint,
      pressed/selected is a commitment. One step cannot say both, and collapsing them
-     is how a button stops acknowledging the click. Derived from the raised surface
-     at the same 6% the ramp it replaces used, so it moves with a rebrand.
-     The accent gets its own bound form here because a blue label on this grey is
-     5.03:1 — legal, but only just, and only because the step stayed at 6%. */
-  --surface-inset-strong:      color-mix(in srgb, var(--on-raised) 6%, var(--surface-raised));
+     is how a button stops acknowledging the click.
+
+     It used to be DERIVED (the raised ink at 6%). It is now the brand's third light
+     step outright, because the brand supplies two light steps above the paper and
+     using them says the same thing with brand colours instead of an arithmetic one.
+     That has one consequence, and it is a good example of a role the new brand does
+     not support in its old form: the accent as a LABEL on this step measures 4.24:1
+     here, where the 6% derivation gave 5.03:1. So `--accent-on-inset-strong` is
+     REDECLARED — a darkened accent rather than the accent itself (5.20:1). The row
+     survives with its assertion; only what backs it changed. */
+  --surface-inset-strong:      var(--brand-mist);
   --on-inset-strong:           var(--on-raised);
-  --on-inset-strong-muted:     color-mix(in srgb, var(--on-raised) 70%, var(--surface-inset-strong));
-  --accent-on-inset-strong:    var(--accent);
+  --on-inset-strong-muted:     color-mix(in srgb, var(--brand-navy-deep) 68%, transparent);
+  --accent-on-inset-strong:    color-mix(in srgb, var(--brand-blue) 85%, var(--brand-navy-deep));
 
   /* ── TRACK — the well a coverage/verdict bar is drawn in ─────────────────────
      A bar and its track are a (surface, foreground) pair like any other, and this
-     is the pair that forced `--series-residual` from 55% to 62%: the achromatic
-     bar has to clear the GRAPHICAL floor against its own track, which is a much
-     tighter constraint than clearing it against paper. At 55% it measured 2.97:1
-     on this track — a bar you cannot see is not a bar. */
-  --surface-track:         color-mix(in srgb, var(--on-raised) 8%, var(--surface-raised));
+     is the pair that pins `--series-residual`: the achromatic bar has to clear the
+     GRAPHICAL floor against its own track, which is a much tighter constraint than
+     clearing it against paper (5.67:1 on the paper, 4.56:1 in the track). Mixed
+     from the deep navy rather than from `--on-raised` for the same reason the muted
+     steps are: 10% of pure black over white is a grey. */
+  --surface-track:         color-mix(in srgb, var(--brand-navy-deep) 10%, var(--surface-raised));
 
   /* ── ACCENT — the single primary action per screen, selection, "you changed it" ── */
   --accent:                var(--brand-blue);
-  --on-accent:             var(--brand-cream);
+  --on-accent:             var(--brand-white);
   /* The accent as a FOREGROUND on paper — a glyph, an active label, an emphasised
      figure. Deliberately NOT `--link-on-raised`, which is the same value and a
      different statement: a card-title icon is not a link, and naming it one is the
@@ -260,29 +376,49 @@
   /* A filled action has to acknowledge the pointer, so hover and pressed are
      SURFACES with their own bound label — not an opacity trick, which would show
      the field through the button. Both mix toward the paper ink rather than toward
-     black, so a rebrand re-darkens them from its own primitives; both are darker
-     than the base, so the label's contrast can only improve (5.61 → 6.55 → 7.73). */
+     a literal black, so a rebrand re-darkens them from its own primitives; both are
+     darker than the base, so the label's contrast can only improve (5.63 -> 7.54 ->
+     10.16). */
   --accent-hover:          color-mix(in srgb, var(--accent) 82%, var(--on-raised));
   --accent-active:         color-mix(in srgb, var(--accent) 64%, var(--on-raised));
-  /* The secondary accent has two forms because one token cannot serve both
-     surfaces. Reserved for four things (cohort code, declared-score scope band,
-     the attribution callout rule, a collection badge) — never a coverage bar. */
-  --accent-2-on-chrome:    var(--brand-teal);
-  --accent-2-on-raised:    var(--brand-teal-ink);
-  /* The secondary accent as a RULE on paper (the attribution callout's left rule,
-     a collection badge's edge) — half strength, because a full-strength teal edge
+  /* THE ACCENT AS A SURFACE — new in this rebrand, and a genuinely new role rather
+     than a rename. The live site fills whole sections with #0D59F2 and puts
+     near-white copy on them; that is a surface with a bound foreground, and the
+     previous role set had no way to say it. Deliberately the same VALUE as
+     `--accent` and a separate role, because they will not stay the same: a fill
+     that carries running copy and an action tint diverge the moment either has to
+     move. NO GRADIENT: the site's apparent blue gradient measures as a flat
+     #0D59F2 panel with a second #0D59F2 at 70% alpha stacked below it, and a scan
+     of the whole live document finds zero CSS gradients and zero SVG gradient defs. */
+  --surface-accent:        var(--brand-blue);
+  --on-accent-surface:     var(--brand-white);
+  /* The secondary register. NOT a second accent any more — the brand has one hue —
+     but the same four things it was reserved for (cohort code, declared-score scope
+     band, the attribution callout rule, a collection badge) still need to sit one
+     step back from the primary register without competing with a verdict. The brand
+     answers that with VALUE rather than with a hue: slate on the paper, and on the
+     chrome a lightened brand blue, because #0D59F2 itself is 3.41:1 on the deep
+     navy — a legal mark, below AA as text, and this register carries text. */
+  --accent-2-on-chrome:    color-mix(in srgb, var(--brand-blue) 53%, var(--brand-white));
+  --accent-2-on-raised:    var(--brand-slate);
+  /* The secondary register as a RULE on paper (the attribution callout's left rule,
+     a collection badge's edge) — half strength, because a full-strength edge
      out-shouts the verdict it sits beside. */
-  --rule-accent-2-on-raised: color-mix(in srgb, var(--brand-teal-ink) 50%, var(--surface-raised));
+  --rule-accent-2-on-raised: color-mix(in srgb, var(--brand-slate) 50%, var(--surface-raised));
 
-  /* ── FOCUS — the colour flips with the surface, because blue on navy is 2.47:1 ── */
+  /* ── FOCUS — the colour flips with the surface ───────────────────────────────
+     Blue is 5.63:1 on the paper and 3.41:1 on the chrome; the chrome's own
+     foreground is 19.21:1 there. The flip is the same decision as before the ground
+     inverted, with different numbers under it. */
   --focus-ring-on-raised:  var(--accent);
   --focus-ring-on-chrome:  var(--on-chrome);
 
   /* ── STATUS — data encoding, not decoration ─────────────────────────────────
      Each register is a text colour, a wash to sit on, a rule, and the foreground
      that wash carries. The wash is DERIVED from the primitive over the raised
-     surface, so a rebrand moves the wash with the hue instead of leaving last
-     year's tint behind. */
+     surface, so a rebrand moves the wash with the paper instead of leaving last
+     year's tint behind — which is exactly what happened here: the paper went from
+     warm cream to pure white and every wash followed without being touched. */
   --status-ok:             var(--brand-green);
   --surface-ok:            color-mix(in srgb, var(--brand-green) 8%, var(--surface-raised));
   --on-ok:                 var(--status-ok);
@@ -301,7 +437,7 @@
   --rule-danger:           color-mix(in srgb, var(--brand-crimson) 32%, var(--surface-raised));
   /* The FILL form: a destructive button, not a status label. */
   --status-destructive:    var(--brand-crimson);
-  --on-destructive:        var(--brand-cream);
+  --on-destructive:        var(--brand-white);
   --destructive-hover:     color-mix(in srgb, var(--status-destructive) 84%, var(--on-raised));
   --destructive-active:    color-mix(in srgb, var(--status-destructive) 68%, var(--on-raised));
 
@@ -314,18 +450,27 @@
 
   /* ── ELEVATION ──────────────────────────────────────────────────────────────
      One elevation role for a raised surface floating on the field, plus the ramp
-     54 shadcn components read. Tints mix from the deepest navy so a rebrand
-     re-tints the shadows too. */
-  --elevation-raised: 0 2px 6px color-mix(in srgb, var(--brand-navy-deep) 14%, transparent),
-                      0 22px 48px -24px color-mix(in srgb, var(--brand-navy-deep) 55%, transparent);
+     54 shadcn components read. Tints mix from the deep navy so a rebrand re-tints
+     the shadows too. Re-tuned for a light ground: the July values were built to
+     lift cream off navy, and the same shadow on white-over-pale-blue reads as
+     grime. These are the live site's own card shadow, expressed as token mixes.
+     The shadow is a REINFORCEMENT of the paper/field separation here, never the
+     mechanism — the two surfaces are two brand colours, so the ledger still reads
+     as paper in print and in forced-colours mode, where a shadow is not drawn. */
+  --elevation-raised: 0 1px 2px color-mix(in srgb, var(--brand-navy-deep) 6%, transparent),
+                      0 12px 28px -18px color-mix(in srgb, var(--brand-navy-deep) 26%, transparent);
 
   /* ── DATA SERIES ────────────────────────────────────────────────────────────
      Roles, not primitives, and they live in `:root` rather than `@theme inline`:
      `inline` substitutes into utilities and emits NOTHING here, so a chart that
      reads its colour in JS (recharts fills, SVG strokes, the atlas canvas) can
-     only see what is declared on the element tree. Charts live on RAISED
-     surfaces, so the teal step takes its raised form. */
-  --series-1: var(--accent-2-on-raised);
+     only see what is declared on the element tree. Charts live on RAISED surfaces.
+
+     `--series-1` used to alias `--accent-2-on-raised`. It cannot any more: that
+     role is now slate, and `--series-8` is slate, so the alias would have collapsed
+     two categorical steps onto one value. It takes the categorical make-up's teal
+     step instead, which keeps its rendered value exactly what it was. */
+  --series-1: var(--brand-teal-deep);
   --series-2: var(--accent);
   --series-3: var(--status-destructive);
   --series-4: var(--status-ok);
@@ -336,10 +481,10 @@
   /* The residual mark: a field or record the pipeline did not classify. Muted on
      purpose but still a graphical object, so it clears 3:1 rather than sitting at
      the 1.48:1 a light grey measured. NOT `--on-raised-faint`, which is hairlines.
-     RAISED from 55% to 62% by the track pair below: 55% cleared 3:1 against PAPER
-     (3.16:1) but only 2.97:1 against the track it is actually drawn in, and the
+     Held at 62% by the track pair below: it clears the floor against PAPER at
+     5.67:1 but only 4.56:1 against the track it is actually drawn in, and the
      tighter of two constraints is the one that decides a value. */
-  --series-residual: color-mix(in srgb, var(--brand-indigo) 62%, var(--brand-cream));
+  --series-residual: color-mix(in srgb, var(--brand-navy-deep) 62%, var(--brand-white));
   /* The bar drawn in `--surface-track` IS the residual mark, so the track's bound
      foreground is that one value rather than a second neutral half a step away. */
   --on-track: var(--series-residual);
@@ -350,12 +495,14 @@
   --series-model-4: var(--brand-series-4);
   --series-model-5: var(--brand-series-5);
 
-  /* Replaces the removed `.dark` class as the signal to native chrome that this is
-     a dark UI. Raised/field/inset surfaces re-declare `light` in @layer base below
-     — they are cream, and a blanket dark scheme renders <select>, <input>
-     internals, autofill backgrounds and validation bubbles dark-on-cream inside
-     every form. */
-  color-scheme: dark;
+  /* THE SCHEME FLIPPED WITH THE GROUND (D-3). `:root` was `dark`, signalling to
+     native chrome that this is a dark UI, and every paper surface had to re-declare
+     `light` underneath it. The default page is light now, so the default is `light`
+     and it is the two remaining DARK surfaces — the chrome and the accent surface —
+     that re-declare, in @layer base below. Getting this backwards renders <select>
+     popups, autofill fills, spinners and validation bubbles dark-on-pale-blue inside
+     every form on the app. */
+  color-scheme: light;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -402,6 +549,7 @@
   --color-on-field-faint: var(--on-field-faint);
   --color-rule-on-field: var(--rule-on-field);
   --color-link-on-field: var(--link-on-field);
+  --color-accent-on-field: var(--accent-on-field);
 
   --color-surface-inset: var(--surface-inset);
   --color-on-inset: var(--on-inset);
@@ -421,9 +569,17 @@
   --color-accent-action-hover: var(--accent-hover);
   --color-accent-action-active: var(--accent-active);
   --color-on-accent-action: var(--on-accent);
+  --color-surface-accent: var(--surface-accent);
+  --color-on-accent-surface: var(--on-accent-surface);
   --color-accent-2-on-chrome: var(--accent-2-on-chrome);
   --color-accent-2-on-raised: var(--accent-2-on-raised);
   --color-rule-accent-2-on-raised: var(--rule-accent-2-on-raised);
+  /* The brand mark's three arcs. They get colour utilities like every other role so
+     the contrast gate can prove each one paints its own token — a mark that silently
+     stopped resolving would still draw three rings, in whatever it inherited. */
+  --color-mark-outer: var(--mark-outer);
+  --color-mark-middle: var(--mark-middle);
+  --color-mark-inner: var(--mark-inner);
   /* The focus rings get colour utilities too: a control's focus BORDER and focus
      RING are set by a class, and `ring-ring` would route them through a legacy
      shadcn alias instead of naming the role. */
@@ -479,9 +635,11 @@
   --color-info-bg: var(--surface-info);
   --color-info-border: var(--rule-info);
 
-  /* shadcn/ui semantic mappings. NOTE the split a white-ground theme does not have:
-     `background` is the FIELD, `card` is RAISED. A component that means "surface"
-     must read `card`/`popover`, never `background`. */
+  /* shadcn/ui semantic mappings. NOTE the split a single-surface theme does not
+     have: `background` is the app's own CHROME, `card` is RAISED. A component that
+     means "surface" must read `card`/`popover`, never `background` — a default
+     shadcn theme collapses the two, which is how a card ends up the same colour as
+     the page it is supposed to be lying on. */
   --color-background: var(--surface-chrome);
   --color-foreground: var(--on-chrome);
   --color-on-page: var(--on-chrome);
@@ -530,7 +688,9 @@
   --color-sidebar-border: var(--rule-on-inset);
   --color-sidebar-primary: var(--accent);
   --color-sidebar-primary-foreground: var(--on-accent);
-  --color-sidebar-accent: color-mix(in srgb, var(--on-raised) 6%, var(--surface-raised));
+  /* Was a hand-copy of the old 6% inset-strong derivation. Pointed at the role, so
+     the two cannot drift — the derivation it copied does not exist any more. */
+  --color-sidebar-accent: var(--surface-inset-strong);
   --color-sidebar-accent-foreground: var(--on-inset);
   --color-sidebar-ring: var(--focus-ring-on-raised);
 
@@ -557,6 +717,10 @@
   --text-display: var(--brand-text-display);
   --text-display--line-height: var(--brand-leading-display);
   --text-display--font-weight: var(--brand-weight-strong);
+  /* The brand has one typeface, so the display register is carried by weight and by
+     TRACKING. Sourced from the primitive, not written here: type is a rebrand axis
+     and the drill asserts this value moves with the brand. */
+  --text-display--letter-spacing: var(--brand-tracking-display);
 
   /* The eyebrow register is carried by uppercase + tracking + the strong weight —
      never by a third weight and never by a smaller size. */
@@ -586,7 +750,9 @@
      container radius, because marketing proportions wreck a screen whose job is
      aligning a column of numbers. So the container scale is ADDITIVE, and the four
      working radii are unchanged (42 of 54 shadcn components read them across 289
-     call sites). */
+     call sites) — the 2026-08-20 rebrand moved the two CONTAINER radii (30 -> 16,
+     14 -> 10) and left the control radii exactly where they were, which is the
+     split working correctly rather than an oversight. */
   --radius-sm: var(--brand-radius-hairline);
   --radius: var(--brand-radius-control);
   --radius-md: var(--brand-radius-control-md);
@@ -623,22 +789,27 @@
     font-feature-settings: "cv11", "ss01", "ss03";
   }
 
-  /* ── The `color-scheme` trap (UI-SPEC §1.3) ──
-     `:root` is `dark`, but the working surface is cream. Any element that IS a
-     paper surface re-declares `light` so the native chrome it contains — select
-     popups, date pickers, spinners, autofill fills, validation bubbles,
-     scrollbars — is drawn light-on-cream rather than dark-on-cream. Matching on
-     the surface utilities themselves (`~=` matches a whole class token, so
-     `hover:bg-surface-inset` deliberately does NOT match) keeps this working for
-     any component that paints a paper surface, without a marker class every
-     call site would have to remember to add. Native controls are listed
-     directly because the app has no ground-level form control today, and a
-     control that inherits `dark` on cream is the exact failure this prevents. */
+  /* ── The `color-scheme` trap (UI-SPEC §1.3), INVERTED ──
+     `:root` is `light` now that the ground is (D-3), and it is the two surfaces
+     that are still DARK which re-declare — otherwise every native control the
+     chrome contains (select popups, date pickers, spinners, autofill fills,
+     validation bubbles, scrollbars) is drawn light-on-navy.
+
+     The LIGHT list below is not redundant with the root default, and deleting it
+     would be the bug arrived at from the other direction: `<main>` is a light field
+     nested INSIDE the chrome's dark subtree, so without an explicit re-declaration
+     every form in the app inherits `dark` from its ancestor and draws its native
+     chrome dark-on-pale-blue. Matching on the surface utilities themselves (`~=`
+     matches a whole class token, so `hover:bg-surface-inset` deliberately does NOT
+     match) keeps this working for any component that paints one of these surfaces,
+     without a marker class every call site would have to remember to add. */
+  [class~="bg-surface-chrome"],
+  [class~="bg-surface-accent"] {
+    color-scheme: dark;
+  }
+
+  [class~="bg-surface-field"],
   [class~="bg-surface-raised"],
-  /* `bg-surface-field` is deliberately ABSENT: the field is the navy ground now, so
-     re-declaring `light` on it would draw every native control it contains as light
-     chrome on navy — the exact failure this split exists to prevent, arrived at from
-     the other direction. */
   [class~="bg-surface-inset"],
   [class~="bg-surface-inset-strong"],
   [class~="bg-surface-track"],
@@ -681,12 +852,12 @@
 
   /* Global focus treatment — UI-SPEC §4.
      A real 2px outline at 2px offset, not a ring + ring-offset pair: the offset
-     colour would have to be painted, and the two surfaces this app has want
-     different paint. The COLOUR flips by surface, because blue on the ground
-     measures 2.47:1 and is prohibited (§5.2) — `light-dark()` reads the same
-     `color-scheme` split declared above, so a control on a cream card focuses
-     blue and one on the navy ground focuses cream, with no marker class. The
-     plain declaration first is the fallback for an engine without `light-dark()`.
+     colour would have to be painted, and the two kinds of surface this app has want
+     different paint. The COLOUR flips by surface, because blue measures 3.41:1 on
+     the chrome against 5.63:1 on the paper — `light-dark()` reads the same
+     `color-scheme` split declared above, so a control on a white card focuses blue
+     and one on the navy chrome focuses white, with no marker class. The plain
+     declaration first is the fallback for an engine without `light-dark()`.
      The outline follows the element's own border-radius, which is how a pill
      button gets a pill focus outline and a 4px input gets a 4px one. */
   :focus-visible {

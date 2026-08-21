@@ -474,6 +474,12 @@ ROLE_PREFIXES = (
     "--series-",
     "--focus-ring-",
     "--elevation-",
+    # The brand lockup's own namespace. `--mark-*` are tier-2 roles like every other entry here —
+    # they resolve from `--brand-mark-*` primitives and carry `graphical`-level manifest rows — and
+    # they exist so the Phenome Health mark is painted from ITS OWN palette rather than from
+    # semantic UI roles. Before 08-12b the mark read `--accent-2-on-chrome`, so a rebrand that
+    # dropped the brand's second hue would have silently restyled the organisation's logo (T-08-65).
+    "--mark-",
 )
 # Names that are NOT ours: Radix and shadcn set these on the element themselves.
 FOREIGN_VAR_PREFIXES = ("--radix-", "--sidebar-", "--skeleton-", "--spacing-", "--radius", "--tw-")
@@ -663,52 +669,48 @@ _DECL = re.compile(r"(--[a-zA-Z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})")
 # the page, the other drops an entry the brand has since ADOPTED. Neither can be satisfied by
 # leaving a stale line in place, which is what stops this dict widening into blanket cover.
 #
-# It was empty until 2026-08-20, and that emptiness was the point (the previous occupant,
-# #0D183B, was removed from the page rather than blessed — WINDOWS id13). It is populated now
-# for a specific, dated reason: phenomehealth.org republished its identity that morning and
-# the mockup was re-measured against the live site, while `index.css` still holds the July
-# sample. The page is deliberately ONE GENERATION AHEAD of the SPA — it is the design proposal
-# the SPA retheme (plan 08-12b) is judged from, so the divergence IS the artifact.
+# THE ADOPTION ASSERTION DID ITS JOB. This dict was populated on 2026-08-20 with eleven entries,
+# because phenomehealth.org republished its identity that morning and the mockup was re-measured
+# against the live site while `index.css` still held the July sample. Five of those were labelled
+# TEMPORARY and the second assertion below was written specifically to kill them when 08-12b
+# re-pointed `--brand-*`. 08-12b re-pointed `--brand-*`, the assertion fired, and they are gone:
+# #FFFFFF, #EBEFFF, #D5E0F6, #000000 and #4B4F6B are `--brand-white` / `--brand-pale` /
+# `--brand-mist` / `--brand-black` / `--brand-slate` in the SPA now, so the mockup and the product
+# no longer diverge on them and nothing is exempt that need not be. The mark's teal (#3AC2CB) and
+# crimson (#E11E53) also left, for a different reason: the SPA now declares them as `--brand-mark-*`
+# primitives, so they are brand values rather than divergences.
 #
-# The TEMPORARY entries below die when 08-12b re-points `--brand-*`; the second assertion
-# forces that, so they cannot survive their own reason. The `--logo-*` entries are PERMANENT
-# by design and say so.
+# What remains is genuinely still divergent, in two groups.
 PROPOSED_COLOURS: dict[str, str] = {
-    # ── TEMPORARY: measured from the live site 2026-08-20; index.css adopts these in 08-12b ──
-    "#FFFFFF": "brand paper/ground. Pure white, replacing the July sample's warm #FFFFF8.",
-    "#EBEFFF": "brand palest blue — card bands and insets on light, the ink on dark.",
-    "#D5E0F6": (
-        "brand FIELD. The live site's ground by AREA (11,356px of page height); white appears "
-        "only as cards and insets inside it. An element-count reading of the same page gets "
-        "this backwards, which is how the first pass concluded the ground was white."
-    ),
-    "#000000": "brand body copy on white, replacing the July sample's #222572 indigo.",
-    "#4B4F6B": (
-        "brand slate — the quiet metadata register. Carries what the retired teal accent used "
-        "to (cohort labels, informational rules) now that the brand is one hue family, so the "
-        "distinction is by VALUE rather than by a competing hue."
-    ),
-    # ── TEMPORARY: product-owned status lifts for the dark theme ────────────────────────────
-    # The brand publishes no status palette and no dark mode, so these are derived, not
-    # sampled. They stay listed rather than being hidden in the dark block, because the page
-    # declares them among its tier-1 primitives where the default-theme walk can see them.
+    # ── The DARK THEME the product does not have ───────────────────────────────────────────
+    # The brand publishes no status palette and no dark mode, so these are derived, not sampled,
+    # and they have no `--brand-*` counterpart because the SPA ships ONE theme (08-05 removed the
+    # second one). They stay listed rather than being hidden inside the dark block, because the
+    # page declares them among its tier-1 primitives where the default-theme walk can see them.
+    # They become adoptable the day the product grows a dark theme, and not before.
     "#3FCFA5": "dark-theme `ok`. #0E7C63 is unreadable on the navy ground.",
     "#F0C070": "dark-theme `warn` — the coherence flag, the load-bearing signal on Gate 1.",
     "#FF6E92": "dark-theme destructive. #E21C52 does not clear AA on the navy ground.",
-    # ── PERMANENT: the brand MARK's own colours ─────────────────────────────────────────────
-    # These will never have a `--brand-*` counterpart, and that is the point. A brand mark
-    # painted from semantic UI roles gets silently restyled by an unrelated accent decision —
-    # exactly the live defect in `components/phenome-mark.tsx`, which draws the Phenome Health
-    # logo from `--accent-2-on-chrome`. The lockup owns its palette instead.
-    "#3AC2CB": "the mark's teal. PERMANENT — logo-scoped, never a UI role.",
-    "#E11E53": "the mark's crimson accent. PERMANENT — logo-scoped, never a UI role.",
-    "#253B7E": "the mark's mid-navy blade. PERMANENT — logo-scoped, never a UI role.",
+    # ── PERMANENT: lockup blades the SPA's glyph does not draw ──────────────────────────────
+    # The full horizontal lockup on the mockup has more blades than the SPA's three-arc glyph.
+    # These two paint blades the product never renders, so they will never have a `--brand-*`
+    # counterpart — and that is the point rather than an omission. A brand mark painted from
+    # semantic UI roles gets silently restyled by an unrelated accent decision, which was the live
+    # defect in `components/phenome-mark.tsx` (it drew the Phenome Health logo from
+    # `--accent-2-on-chrome`). 08-12b fixed that by giving the mark `--brand-mark-*` primitives of
+    # its own; the two blades below are the part of the lockup that stayed on the page.
+    "#253B7E": "the lockup's mid-navy blade. PERMANENT — logo-scoped, not drawn by the SPA's glyph.",
+    "#222572": (
+        "the lockup's third blade. PERMANENT — logo-scoped. It used to satisfy the brand check by "
+        "accident, because it was also `--brand-indigo`, the July identity's ink; that primitive is "
+        "gone (the brand's ink is #000000 now) so it is recorded explicitly for what it is."
+    ),
 }
 
 # Values that are logo-scoped by design and must NOT be reported as brand drift even after the
 # SPA adopts the new identity. Kept separate from the reason strings so the adoption assertion
 # can tell "still pending" from "never applicable".
-PERMANENT_PROPOSED: frozenset[str] = frozenset({"#3AC2CB", "#E11E53", "#253B7E"})
+PERMANENT_PROPOSED: frozenset[str] = frozenset({"#253B7E", "#222572"})
 
 
 def _decomment(src: str) -> str:

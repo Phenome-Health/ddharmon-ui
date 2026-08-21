@@ -634,7 +634,7 @@ export default function DashboardPage() {
                         {c.nMembers} variable{c.nMembers === 1 ? "" : "s"}
                       </span>
                       {c.crossCohort && (
-                        <Badge variant="outline" className="border-rule-accent-2-on-raised text-accent-on-raised">
+                        <Badge variant="outline" className="border-rule-accent-2-on-raised text-accent-on-inset-strong">
                           cross-cohort
                         </Badge>
                       )}
@@ -716,7 +716,7 @@ export default function DashboardPage() {
               <span className="text-on-raised-muted">Focused on</span>
               <Badge
                 variant="outline"
-                className={focus.kind === "verdict" ? (VERDICT_STYLES[focus.value] ?? "") : "border-rule-accent-2-on-raised text-accent-on-raised"}
+                className={focus.kind === "verdict" ? (VERDICT_STYLES[focus.value] ?? "") : "border-rule-accent-2-on-raised text-accent-on-inset-strong"}
               >
                 {focus.kind === "cohort" ? "cohort · " : ""}
                 {focusLabel(focus)}

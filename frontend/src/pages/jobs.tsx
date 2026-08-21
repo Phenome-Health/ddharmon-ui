@@ -146,7 +146,7 @@ export default function JobsPage() {
                         {j.displayName}
                       </Link>
                       {(j.config as { demo?: boolean })?.demo && (
-                        <Badge variant="outline" className="border-rule-info text-accent-on-raised">
+                        <Badge variant="outline" className="border-rule-info text-accent-on-inset-strong">
                           Demo
                         </Badge>
                       )}

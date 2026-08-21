@@ -126,12 +126,26 @@ test("every manifest role generates a real Tailwind utility, verified on the ren
   ).toEqual([]);
 });
 
-test("the color-scheme split holds: dark root, light raised surfaces", async ({ page }) => {
+test("the color-scheme split holds: light root, dark chrome, light surfaces inside it", async ({ page }) => {
+  // INVERTED on 2026-08-20 with the ground (08-12b D-3). `:root` used to be `dark`, and every
+  // paper surface re-declared `light` underneath it; the default page is light now, so the root
+  // is light and it is the surfaces that are still DARK which re-declare.
   const rootScheme = await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
-  expect(rootScheme, ":root carries the dark scheme the removed .dark class used to signal").toContain("dark");
+  expect(rootScheme, ":root follows the ground, which the brand moved to light").toContain("light");
 
-  // A raised surface must re-declare `light`, or the native chrome inside it (select popups,
-  // autofill fills, validation bubbles) renders dark-on-cream. `/new` is the route with controls.
+  // The chrome is the brand's deep navy. A native control inside it must draw its chrome
+  // light-on-navy, which only happens if the chrome re-declares.
+  const chromeScheme = await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>(".bg-surface-chrome");
+    return el ? getComputedStyle(el).colorScheme : null;
+  });
+  expect(chromeScheme, "/new should render the app chrome").not.toBeNull();
+  expect(chromeScheme, "a dark surface must re-declare the dark scheme").toContain("dark");
+
+  // And the light re-declaration is NOT redundant with the root default: `<main>` is a light
+  // field nested INSIDE the chrome's dark subtree, so without it every form in the app inherits
+  // `dark` from an ancestor and draws its native chrome dark-on-pale-blue. This is the same bug
+  // as before the inversion, arrived at from the other direction.
   const paperScheme = await page.evaluate(() => {
     const el = document.querySelector<HTMLElement>(
       ".bg-surface-raised, .bg-surface-inset, .bg-surface-inset-strong, .bg-card",
@@ -146,7 +160,7 @@ test("the color-scheme split holds: dark root, light raised surfaces", async ({ 
     return el ? getComputedStyle(el).colorScheme : null;
   });
   expect(controlScheme, "/new should render at least one native form control").not.toBeNull();
-  expect(controlScheme, "a native form control must draw its chrome light-on-cream").toContain("light");
+  expect(controlScheme, "a native form control must draw its chrome light-on-paper").toContain("light");
 });
 
 test("the focus outline colour flips with the surface, not with a marker class", async ({ page }) => {

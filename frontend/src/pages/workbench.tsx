@@ -792,7 +792,7 @@ export function WorkbenchBody({
                             <span className="text-on-raised-faint">→</span>
                             <span className="text-on-raised">{transformSummary(t)}</span>
                             {toGenCDE && (
-                              <Badge variant="outline" className="gap-1 border-rule-info text-accent-on-raised">
+                              <Badge variant="outline" className="gap-1 border-rule-info text-accent-on-inset-strong">
                                 {selected.gencde?.parentCdeId ? (
                                   <>
                                     <GitBranch className="h-3 w-3" /> → Refined CDE
