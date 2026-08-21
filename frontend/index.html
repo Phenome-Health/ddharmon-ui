@@ -4,8 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
     <title>ddharmon — Harmonization</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- The two Google Fonts `preconnect` hints that sat here are removed: Inter is now
+         self-hosted and same-origin (see the @font-face block in src/index.css), so a
+         preconnect to a host the app never contacts is a DNS + TLS handshake spent on
+         nothing. They were the last CDN reference in the built output. -->
     <script>
       // Single theme (D-05): there is no class to set before first paint any more, so the FOUC script
       // that used to read the OS preference is gone. All that remains is clearing the key the retired

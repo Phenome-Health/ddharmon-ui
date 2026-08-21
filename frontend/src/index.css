@@ -1,12 +1,65 @@
-/* NO WEBFONT IMPORT, and its absence is deliberate.
-   Inter is named first in `--brand-font-body` / `--brand-font-display` with a real
-   system fallback stack behind it, so the type renders with no network fetch and no
-   licensed asset in the tree. That is what closes the display-face asset debt rather
-   than trading it for a third-party dependency.
-   A remote `@import` was tried and REVERTED: a pending stylesheet keeps the document's
-   `load` event from firing, which took the Playwright gate from 44s to 17.2m (every
-   heavy route burning its full 90s timeout) and made the app unable to render its own
-   type offline, in CI, or on the air-gapped review box. */
+/* ══ Inter, SELF-HOSTED ════════════════════════════════════════════════════════
+   The brand has exactly one typeface (D-1), and the app now ships it rather than
+   fetching it. Three decisions are recorded here because each was made the hard way:
+
+   NOT a remote `@import`. The previous `fonts.googleapis.com` import was inherited,
+   not introduced by the retheme — it is present at 1ab9ab8, complete with the retired
+   Space Grotesk. It is a NETWORK-DEPENDENT FLAKE in a gate: the same import ran the
+   Playwright suite green in 44s and, on a slow fetch, took the three token gates to
+   17.2m, because a pending stylesheet keeps the document's `load` event from firing
+   and every heavy route burns its full 90s timeout. A gate whose runtime depends on a
+   CDN is not a gate. It also made the app unable to render its own type offline, in
+   CI, or on the air-gapped review box.
+
+   NOT the system fallback alone. Removing the import and leaning on
+   `-apple-system` was tried and is ALSO wrong: Inter is not installed on the build
+   machine (`fc-list` finds no such family), so the app silently rendered SF Pro and
+   the display-face decision became nominal — declared in the token layer, absent from
+   the render. Worse, screenshot baselines then encode a machine-local font.
+
+   SELF-HOSTED is what actually satisfies both. Inter is SIL OFL, so there is no
+   licensed-asset debt — which is precisely why the brand could retire Byrl (WINDOWS
+   #5) rather than pay for it. Files are the Google-Fonts variable subsets, so the app
+   and the public mockup (which still links the CDN) render identical metrics.
+
+   Variable, one file per unicode-range, `font-weight: 400 700` covering the whole
+   scale — the four-size / two-weight ramp needs no separate faces.
+
+   Ranges shipped: latin, latin-ext, greek. Greek is NOT decorative: biomedical units
+   carry `μ` (U+03BC), so `μmol/L` renders in-face instead of falling back mid-string.
+   Cyrillic and Vietnamese are deliberately omitted — no cohort dictionary or CDE text
+   in this corpus uses them; add the subset if one ever does.
+
+   `font-display: swap` is intentional. A self-hosted file is same-origin and fast, and
+   swap keeps first paint honest rather than blocking on the face. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-var-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-var-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-var-greek.woff2') format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
@@ -776,11 +829,13 @@
     font-family: var(--brand-font-body);
   }
 
-  @supports (font-variation-settings: normal) {
-    html {
-      font-family: 'Inter var', var(--brand-font-body);
-    }
-  }
+  /* The `@supports (font-variation-settings: normal)` block that used to sit here named
+     `'Inter var'` — a family this app never registered under that name. It was inherited
+     (present at 1ab9ab8) and it was always dead: the declaration fell straight through to
+     `--brand-font-body`, so it had no effect beyond the line above. The self-hosted face is
+     registered as family `Inter` at `font-weight: 400 700`, so variable weights arrive
+     through the normal stack and no capability query is needed. Removed rather than
+     renamed, because a correct-looking rule that does nothing is worse than no rule. */
 
   body {
     /* `text-sm` is the body size (UI-SPEC §3.1): the 14/20 body tier is the app's
