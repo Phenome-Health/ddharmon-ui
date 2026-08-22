@@ -4,7 +4,7 @@ import { Link, useLocation } from "wouter";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Eye, EyeOff, Info, Loader2, Upload, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { InfoTip, RoleInfo } from "@/components/ui/info-tip";
 import { IS_STATIC, listModels, startHarmonize } from "@/lib/api";
 import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
 import { useAuthState } from "@/auth";
@@ -21,7 +21,6 @@ import {
   SEMANTIC_ROLES,
   VALUE_ROLES,
   ROLE_FORMAT,
-  ROLE_HELP,
   ROLE_REQUIREMENT,
   estimateRunCostBreakdown,
   estimateRunTime,
@@ -684,24 +683,8 @@ function RoleField({
 }
 
 /** Small ⓘ button with a hover/focus tooltip. Reused for column roles and run options. */
-function InfoTip({ text, label }: { text: string; label: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button type="button" className="text-on-raised-muted transition-colors hover:text-accent-on-raised" aria-label={label}>
-          <Info className="h-3 w-3" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-xs whitespace-normal text-left font-normal normal-case leading-relaxed">
-        {text}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function RoleInfo({ role }: { role: ColumnRole }) {
-  return <InfoTip text={ROLE_HELP[role]} label={`What is ${role}?`} />;
-}
+// InfoTip / RoleInfo moved to `components/ui/info-tip.tsx` so the staged-review screens share this
+// affordance and the role copy has one home (08-13 review). Imported above; not re-implemented here.
 
 // Help text for the run-option controls (mirrors the Guide's "Choosing run options" section).
 const OPTION_HELP: Record<string, string> = {

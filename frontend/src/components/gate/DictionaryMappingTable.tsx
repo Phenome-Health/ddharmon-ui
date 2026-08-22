@@ -1,4 +1,13 @@
-import { COLUMN_ROLES, ROLE_REQUIREMENT } from "@/types";
+import { InfoTip, RoleInfo } from "@/components/ui/info-tip";
+import {
+  ADVANCED_ROLES,
+  COLUMN_ROLES,
+  ROLE_HELP,
+  ROLE_REQUIREMENT,
+  SEMANTIC_ROLES,
+  VALUE_ROLES,
+  type ColumnRole,
+} from "@/types";
 import { assignRole, nameCheck, roleOf, type DictRow, type NameCheck } from "@/lib/dictionary";
 
 /**
@@ -23,10 +32,29 @@ import { assignRole, nameCheck, roleOf, type DictRow, type NameCheck } from "@/l
  * and the page does not scroll sideways at the 1440px design canvas.
  */
 
-/** Options the select offers: the mappable vocabulary, plus any role THIS file already uses. */
-function roleOptions(roles: Record<string, string>): string[] {
-  const extra = Object.keys(roles).filter((r) => !(COLUMN_ROLES as readonly string[]).includes(r));
-  return [...COLUMN_ROLES, ...extra];
+/**
+ * The select's options, GROUPED the way the shipped New Run form groups its controls: the QUESTION
+ * (semantic) side — what the variable asks — against the RESPONSE (value) side — the values and how they
+ * are coded — with organizational/external ids last.
+ *
+ * The split lives on the OPTIONS, not on the rows. Rows are source columns, and a column's group is only
+ * decided by the role you give it, so grouping rows would mean re-sorting the table on every change — and
+ * this table is contractually forbidden from reflowing. Grouping the options puts the same distinction at
+ * the point where the decision is actually made, and the table stays stable under the cursor.
+ *
+ * Any role already present on this file but outside the known vocabulary is kept, under "other", so a
+ * run-seeded dictionary never silently loses a mapping this build does not recognise.
+ */
+const ROLE_GROUPS: { label: string; roles: readonly string[] }[] = [
+  { label: "Question — what the variable asks", roles: SEMANTIC_ROLES },
+  { label: "Response — the values & how they're coded", roles: VALUE_ROLES },
+  { label: "Advanced — organizational & external ids", roles: ADVANCED_ROLES },
+];
+
+function extraRoles(roles: Record<string, string>): string[] {
+  return Object.keys(roles).filter(
+    (r) => r && roles[r] && !(COLUMN_ROLES as readonly string[]).includes(r),
+  );
 }
 
 /** The requirement hint shown beside a role, or "" — read from the pipeline's real contract, not a star. */
@@ -56,11 +84,13 @@ export function DictionaryMappingTable({
   rows,
   disabled = false,
 }: DictionaryMappingTableProps) {
-  const options = roleOptions(roles);
+  const extras = extraRoles(roles);
   const check: NameCheck | null = rows ? nameCheck(rows, roles.variable_name) : null;
   /** First non-empty value for a column — what this column looks like, from the file itself. */
   const sample = (column: string): string =>
     (rows ?? []).map((r) => (r[column] ?? "").trim()).find(Boolean) ?? "";
+  /** The pipeline's real floor: at least one of the semantic roles must point at a column. */
+  const meaningMapped = SEMANTIC_ROLES.some((r) => Boolean(roles[r]));
 
   return (
     <div className="flex flex-col gap-3">
@@ -129,6 +159,46 @@ export function DictionaryMappingTable({
         </p>
       )}
 
+      {/* COVERAGE, by role group. The table is column-major, so which roles are still unfilled is not
+          answerable by reading it — you would have to scan every row's select. The shipped New Run form
+          gets this for free because it is role-major: an empty control IS a visible gap. This strip buys
+          back that one advantage without giving up the source-column-first reading, and it carries the
+          "at least one meaning-bearing field" requirement, which is a real contract (ROLE_REQUIREMENT)
+          rather than decoration. */}
+      <div
+        data-testid="role-coverage"
+        data-meaning-mapped={String(meaningMapped)}
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-raised-muted"
+      >
+        {ROLE_GROUPS.slice(0, 2).map((group) => {
+          const filled = group.roles.filter((r) => roles[r]).length;
+          return (
+            <span key={group.label} className="inline-flex items-center gap-1.5">
+              <span className="font-semibold uppercase tracking-eyebrow">{group.label.split(" — ")[0]}</span>
+              <span>{group.label.split(" — ")[1]}</span>
+              <span data-testid="group-count" className="tabular-nums text-on-raised">
+                {filled} of {group.roles.length}
+              </span>
+            </span>
+          );
+        })}
+        <span
+          data-testid="meaning-requirement"
+          className={
+            meaningMapped
+              ? "inline-flex items-center gap-1 text-on-raised-muted"
+              : "inline-flex items-center gap-1 font-semibold text-status-destructive"
+          }
+        >
+          <span aria-hidden>{meaningMapped ? "✓" : "★"}</span>
+          {meaningMapped ? "meaning-bearing field mapped" : "map at least one meaning-bearing field"}
+          <InfoTip
+            text="Map at least one meaning-bearing field so the pipeline can match your variables to CDEs. description and question_text are the primary semantic signals; variable_name alone works but carries the least meaning (and is auto-generated if you skip it)."
+            label="About the required fields"
+          />
+        </span>
+      </div>
+
       <div
         data-testid="mapping-scroll"
         className="max-h-[19rem] overflow-auto rounded-inner border border-rule-on-raised"
@@ -190,12 +260,28 @@ export function DictionaryMappingTable({
                       className="h-7 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
                     >
                       <option value="">— not used —</option>
-                      {options.map((role) => (
-                        <option key={role} value={role}>
-                          {role}
-                          {hintFor(role)}
-                        </option>
+                      {ROLE_GROUPS.map((group) => (
+                        <optgroup key={group.label} label={group.label}>
+                          {group.roles.map((role) => (
+                            // `title` carries ROLE_HELP: an <option> cannot host a React tooltip, and the
+                            // native hint is the only explanation available at the moment of choosing. The
+                            // same copy is on the ⓘ in the strip above, from the same register.
+                            <option key={role} value={role} title={ROLE_HELP[role as ColumnRole]}>
+                              {role}
+                              {hintFor(role)}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
+                      {extras.length > 0 && (
+                        <optgroup label="Other — already on this dictionary">
+                          {extras.map((role) => (
+                            <option key={role} value={role}>
+                              {role}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                   </td>
                 </tr>

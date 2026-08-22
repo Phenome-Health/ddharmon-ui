@@ -494,6 +494,15 @@ export default function SetupPage() {
       runName={jobState?.displayName}
       costSoFar={costSoFar}
     >
+      {/* TWO COLUMNS, following the shipped New Run form (08-13 review).
+          The single-column stack put the price and the start control ~3,000px below the fold, behind five
+          mapping tables — so the number the user is consenting to was never on screen at the same time as
+          the choices that change it. Left: what the run IS (dictionaries, the declared score). Right,
+          sticky: how it RUNS, what it COSTS, and the control that starts it — the three that belong
+          together and must stay visible while the left column is scrolled. */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+        {/* ── left: what the run is ── */}
+        <div className="flex min-w-0 flex-col gap-8">
       {/* --- dictionaries ------------------------------------------------------------------------- */}
       <section data-testid="setup-dictionaries" className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
@@ -761,11 +770,15 @@ export default function SetupPage() {
         )}
       </section>
 
+        </div>
+
+        {/* ── right: how it runs, what it costs, and starting it (sticky) ── */}
+        <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-8">
       {/* --- run configuration ------------------------------------------------------------------- */}
       <section className="flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card">
         <h2 className="text-sm font-semibold text-on-raised">How this run should work</h2>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <div className="flex flex-col gap-1.5">
             <label htmlFor="cde-set" className="text-xs font-semibold text-on-raised">
               Element catalogue
@@ -893,8 +906,8 @@ export default function SetupPage() {
         data-pending={String(estimatePending)}
         className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card"
       >
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
             <h2 className="text-sm font-semibold text-on-raised">What this run will cost</h2>
             <p className="text-xs text-on-raised-muted">
               {totalFields === null
@@ -1036,7 +1049,7 @@ export default function SetupPage() {
       </section>
 
       {/* --- start ------------------------------------------------------------------------------- */}
-      <div className="flex items-start justify-between gap-6 rounded-card bg-surface-raised px-6 py-4 shadow-card">
+      <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
         <div className="flex min-w-0 flex-col gap-1">
           {blockers.length > 0 ? (
             <div data-testid="start-blocked" className="flex flex-col gap-1">
@@ -1058,7 +1071,7 @@ export default function SetupPage() {
             </p>
           )}
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
+        <div className="flex flex-col items-start gap-1">
           <Button
             type="button"
             data-testid="start-run"
@@ -1071,6 +1084,8 @@ export default function SetupPage() {
           <p data-testid="nothing-charged-yet" className="text-xs text-on-raised-muted">
             Nothing is charged yet.
           </p>
+        </div>
+      </div>
         </div>
       </div>
     </GateShell>
