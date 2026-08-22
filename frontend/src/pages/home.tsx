@@ -22,6 +22,7 @@ import {
   VALUE_ROLES,
   ROLE_FORMAT,
   ROLE_REQUIREMENT,
+  PROVIDER_LABELS,
   estimateRunCostBreakdown,
   estimateRunTime,
   formatUsd,
@@ -37,13 +38,7 @@ const NONE = "__none__";
 
 // Human-facing provider labels + per-provider key hints for the picker. Providers not listed here
 // (e.g. "other") fall back to the raw id and a generic key field.
-const PROVIDER_LABELS: Record<string, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  gemini: "Google Gemini",
-  local: "Local / on-prem",
-  other: "Other",
-};
+// PROVIDER_LABELS moved to types.ts — Setup renders a provider picker too (08-13 review).
 const PROVIDER_KEY_INFO: Record<string, { placeholder: string; link?: string }> = {
   anthropic: { placeholder: "sk-ant-…", link: "https://console.anthropic.com/settings/keys" },
   openai: { placeholder: "sk-…", link: "https://platform.openai.com/api-keys" },

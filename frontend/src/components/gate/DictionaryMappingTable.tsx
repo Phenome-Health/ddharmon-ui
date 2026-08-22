@@ -1,9 +1,7 @@
-import { InfoTip, RoleInfo } from "@/components/ui/info-tip";
 import {
   ADVANCED_ROLES,
   COLUMN_ROLES,
   ROLE_HELP,
-  ROLE_REQUIREMENT,
   SEMANTIC_ROLES,
   VALUE_ROLES,
   type ColumnRole,
@@ -55,15 +53,6 @@ function extraRoles(roles: Record<string, string>): string[] {
   return Object.keys(roles).filter(
     (r) => r && roles[r] && !(COLUMN_ROLES as readonly string[]).includes(r),
   );
-}
-
-/** The requirement hint shown beside a role, or "" — read from the pipeline's real contract, not a star. */
-function hintFor(role: string): string {
-  const tier = ROLE_REQUIREMENT[role as (typeof COLUMN_ROLES)[number]];
-  if (tier === "meaning") return " · meaning";
-  if (tier === "conditional") return " · for specs";
-  if (tier === "recommended") return " · recommended";
-  return "";
 }
 
 export interface DictionaryMappingTableProps {
@@ -159,45 +148,22 @@ export function DictionaryMappingTable({
         </p>
       )}
 
-      {/* COVERAGE, by role group. The table is column-major, so which roles are still unfilled is not
-          answerable by reading it — you would have to scan every row's select. The shipped New Run form
-          gets this for free because it is role-major: an empty control IS a visible gap. This strip buys
-          back that one advantage without giving up the source-column-first reading, and it carries the
-          "at least one meaning-bearing field" requirement, which is a real contract (ROLE_REQUIREMENT)
-          rather than decoration. */}
-      <div
-        data-testid="role-coverage"
-        data-meaning-mapped={String(meaningMapped)}
-        className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-raised-muted"
-      >
-        {ROLE_GROUPS.slice(0, 2).map((group) => {
-          const filled = group.roles.filter((r) => roles[r]).length;
-          return (
-            <span key={group.label} className="inline-flex items-center gap-1.5">
-              <span className="font-semibold uppercase tracking-eyebrow">{group.label.split(" — ")[0]}</span>
-              <span>{group.label.split(" — ")[1]}</span>
-              <span data-testid="group-count" className="tabular-nums text-on-raised">
-                {filled} of {group.roles.length}
-              </span>
-            </span>
-          );
-        })}
-        <span
+      {/* The mapping requirement, FLAGGED ONLY WHEN UNMET (08-13 review). An always-on coverage readout
+          was tried and removed: with the roles grouped in the dropdown and each one carrying its own help,
+          a permanent "2 of 3 / 3 of 3" line restated what the selects already show and competed with the
+          name-check for the same attention. A requirement the user is meeting needs no banner; one they
+          are not does. */}
+      {!meaningMapped && (
+        <p
           data-testid="meaning-requirement"
-          className={
-            meaningMapped
-              ? "inline-flex items-center gap-1 text-on-raised-muted"
-              : "inline-flex items-center gap-1 font-semibold text-status-destructive"
-          }
+          className="rounded-inner border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
         >
-          <span aria-hidden>{meaningMapped ? "✓" : "★"}</span>
-          {meaningMapped ? "meaning-bearing field mapped" : "map at least one meaning-bearing field"}
-          <InfoTip
-            text="Map at least one meaning-bearing field so the pipeline can match your variables to CDEs. description and question_text are the primary semantic signals; variable_name alone works but carries the least meaning (and is auto-generated if you skip it)."
-            label="About the required fields"
-          />
-        </span>
-      </div>
+          <span className="font-semibold">No meaning-bearing column is mapped.</span> Point one column at
+          description or question_text — without one the pipeline has nothing to match against, so this
+          dictionary cannot reach a common data element. variable_name alone will not do it: it is an
+          identifier, not a meaning.
+        </p>
+      )}
 
       <div
         data-testid="mapping-scroll"
@@ -268,7 +234,6 @@ export function DictionaryMappingTable({
                             // same copy is on the ⓘ in the strip above, from the same register.
                             <option key={role} value={role} title={ROLE_HELP[role as ColumnRole]}>
                               {role}
-                              {hintFor(role)}
                             </option>
                           ))}
                         </optgroup>

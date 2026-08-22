@@ -767,6 +767,17 @@ export const ROLE_REQUIREMENT: Partial<Record<ColumnRole, "meaning" | "condition
   units: "recommended",
 };
 
+// Display names for the providers the model catalogue can return. Shared because two screens now render a
+// provider picker (the New Run form and Setup), and a provider spelled "anthropic" in one place and
+// "Anthropic" in the other reads as two different things.
+export const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  gemini: "Google Gemini",
+  local: "Local / on-prem",
+  other: "Other",
+};
+
 // Hover-help for each mappable role — what to point this column at, and why it matters.
 export const ROLE_HELP: Record<ColumnRole, string> = {
   variable_name:

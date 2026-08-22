@@ -630,3 +630,95 @@ test.describe("Setup — the declared score", () => {
     await expect(page.getByTestId("score-upload")).toHaveCount(1);
   });
 });
+
+test.describe("Setup — the review pass: layout melded with the New Run form", () => {
+
+  // ── review pass (08-13): the layout meld with the shipped New Run form ─────────────────────────
+  //
+  // Everything below covers a control the review ADDED or CHANGED. Each is a thing that fails silently:
+  // a requirement flag that stops appearing, a disabled option that becomes selectable, an unvalidated
+  // model that becomes choosable.
+
+  test("@setup the meaning-requirement is flagged only while it is unmet", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "needsmeaning.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a", "col_b"], ["1", "2"], ["3", "4"]])),
+    });
+    // Unmapped: the flag is up and says which roles would satisfy it.
+    const flag = page.getByTestId("meaning-requirement");
+    await expect(flag).toBeVisible();
+    await expect(flag).toContainText(/description|question_text/);
+    // Mapped: it goes away. A permanent readout was tried and removed at review — the dropdown groups and
+    // per-option help already carry the distinction, so a standing "2 of 3" line only competed with the
+    // name-check for attention.
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_a"]') });
+    await row.getByTestId("role-select").selectOption("description");
+    await expect(page.getByTestId("meaning-requirement")).toHaveCount(0);
+  });
+
+  test("@setup role options are grouped, carry help, and carry no requirement suffix", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "groups.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a"], ["1"], ["2"]])),
+    });
+    const shape = await page.getByTestId("role-select").first().evaluate((el) => {
+      const sel = el as HTMLSelectElement;
+      return {
+        groups: Array.from(sel.querySelectorAll("optgroup")).map((g) => (g as HTMLOptGroupElement).label),
+        withHelp: Array.from(sel.querySelectorAll("optgroup option")).filter(
+          (o) => (o as HTMLOptionElement).title.length > 20,
+        ).length,
+        total: sel.querySelectorAll("optgroup option").length,
+        labels: Array.from(sel.querySelectorAll("option")).map((o) => o.textContent ?? ""),
+      };
+    });
+    // The question/response split the New Run form makes, applied to the OPTIONS — grouping the rows would
+    // re-sort the table on every change, and this table may not reflow.
+    expect(shape.groups.some((g) => /^Question/.test(g))).toBe(true);
+    expect(shape.groups.some((g) => /^Response/.test(g))).toBe(true);
+    // Every grouped role explains itself, from the single ROLE_HELP register.
+    expect(shape.withHelp).toBe(shape.total);
+    // The " · meaning" / " · for specs" / " · recommended" suffixes were dropped at review as noise.
+    expect(shape.labels.filter((l) => /·\s*(meaning|for specs|recommended)/.test(l))).toEqual([]);
+  });
+
+  test("@setup the CDE catalogue names counts, and bring-your-own is visible but unselectable", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const sel = page.getByTestId("cde-set");
+    await expect(sel).toContainText("174");
+    await expect(sel).toContainText("22.7k");
+    // Offered so the gap is visible, disabled so it cannot promise what the backend cannot do.
+    const upload = sel.locator('option[value="upload"]');
+    await expect(upload).toHaveCount(1);
+    await expect(upload).toBeDisabled();
+  });
+
+  test("@setup provider and model are choosable, and untested options are disabled", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    // Present outside preview mode...
+    await expect(page.getByTestId("provider")).toBeVisible();
+    await expect(page.getByTestId("model")).toBeVisible();
+    // ...and every model the picker leaves ENABLED is one the pipeline was validated against.
+    const enabled = await page.getByTestId("model").evaluate((el) =>
+      Array.from((el as HTMLSelectElement).options)
+        .filter((o) => !o.disabled && o.value)
+        .map((o) => o.value),
+    );
+    expect(enabled.length).toBeGreaterThan(0);
+    for (const id of enabled) expect(id).toMatch(/sonnet.*4[.-]6/i);
+    // Preview calls no provider, so neither control is shown.
+    await page.getByTestId("run-mode").selectOption("preview");
+    await expect(page.getByTestId("provider")).toHaveCount(0);
+    await expect(page.getByTestId("model")).toHaveCount(0);
+  });
+});

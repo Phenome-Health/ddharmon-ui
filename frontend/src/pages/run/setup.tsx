@@ -11,15 +11,23 @@ import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { IS_STATIC, extractScoreDocument, listDemos, startHarmonize } from "@/lib/api";
+import { InfoTip } from "@/components/ui/info-tip";
+import { IS_STATIC, extractScoreDocument, listDemos, listModels, startHarmonize } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { SCOPE_VERDICT_COPY, declaredComponents, setupScopeVerdict } from "@/lib/score-scope";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { lookupPrefill } from "@/lib/column-prefill";
-import { COLUMN_ROLES } from "@/types";
+import { COLUMN_ROLES, PROVIDER_LABELS } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import type { CdeSet, GatePosition, JobResult, RunMode } from "@/types";
+
+/**
+ * Only Sonnet 4.6 has been validated end to end against this pipeline. Untested choices are OFFERED but
+ * DISABLED, the same treatment the shipped New Run form gives them — visible so the picker does not
+ * misrepresent what exists, unselectable so a run cannot be pointed at an unvalidated model.
+ */
+const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
 
 /**
  * Set up — the first of the six staged-review screens (08-13).
@@ -214,6 +222,8 @@ export default function SetupPage() {
   const [displayName, setDisplayName] = useState("");
   // BYOK: component memory only. Never persisted, never echoed back, cleared on reload.
   const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] = useState("anthropic");
+  const [model, setModel] = useState("");
   const [scoreText, setScoreText] = useState("");
   const [scoreDoc, setScoreDoc] = useState<{ provenance: string; nChars: number } | null>(null);
   const [scoreDocError, setScoreDocError] = useState("");
@@ -223,6 +233,19 @@ export default function SetupPage() {
 
   // The demo catalogue's own field counts, used only to size a run-seeded demo dictionary. Static-safe.
   const { data: demos } = useQuery({ queryKey: ["demos"], queryFn: listDemos, staleTime: Infinity });
+  const { data: modelCatalog } = useQuery({ queryKey: ["models"], queryFn: listModels });
+  const models = useMemo(() => modelCatalog?.models ?? [], [modelCatalog]);
+  const modelsForProvider = useMemo(() => models.filter((m) => m.provider === provider), [models, provider]);
+  const providers = useMemo(() => [...new Set(models.map((m) => m.provider))], [models]);
+  const isProviderTested = (pr: string): boolean =>
+    models.some((m) => m.provider === pr && isModelTested(m.id));
+  // Land on the first TESTED model for the provider, so Anthropic defaults to Sonnet 4.6 rather than to
+  // whatever the catalogue happens to list first.
+  useEffect(() => {
+    if (!modelsForProvider.length) return;
+    const ok = model && modelsForProvider.some((m) => m.id === model && isModelTested(m.id));
+    if (!ok) setModel((modelsForProvider.find((m) => isModelTested(m.id)) ?? modelsForProvider[0]).id);
+  }, [modelsForProvider, model]);
   const fieldsByDataset = useMemo(
     () => Object.fromEntries((demos?.datasets ?? []).map((d) => [d.id, d.nFields])),
     [demos],
@@ -469,7 +492,8 @@ export default function SetupPage() {
           suggestAnalysisIdeas: suggestIdeas,
           conceptGate,
           displayName: displayName || undefined,
-          provider: "anthropic",
+          provider,
+          modelTag: model || undefined,
           // Echoed onto the run so a later screen can price a partial stop without re-counting dictionaries
           // it no longer has. The same fields the New Run form persists.
           estFields: totalFields ?? 0,
@@ -780,8 +804,12 @@ export default function SetupPage() {
 
         <div className="grid grid-cols-1 gap-4">
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="cde-set" className="text-xs font-semibold text-on-raised">
-              Element catalogue
+            <label htmlFor="cde-set" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
+              CDE catalogue
+              <InfoTip
+                text="Which Common Data Element catalogue your variables are matched against. NIH-endorsed is a small curated high-signal set; the full repository is the whole catalogue — broader coverage, but many more candidates to weigh per concept."
+                label="About the CDE catalogue options"
+              />
             </label>
             <select
               id="cde-set"
@@ -790,13 +818,22 @@ export default function SetupPage() {
               onChange={(e) => setCdeSet(e.target.value as CdeSet)}
               className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised"
             >
-              <option value="endorsed">NIH-endorsed — a curated, high-signal set</option>
-              <option value="full">Full repository — broader, more candidates to weigh</option>
+              <option value="endorsed">NIH-endorsed (~174)</option>
+              <option value="full">Full repository (~22.7k)</option>
+              {/* Offered and DISABLED: bringing your own catalogue is not built. Hiding it would leave no
+                  trace of the gap; a live control would promise something the backend cannot do. */}
+              <option value="upload" disabled>
+                Upload your own — not yet available
+              </option>
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="run-mode" className="text-xs font-semibold text-on-raised">
+            <label htmlFor="run-mode" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
               Run mode
+              <InfoTip
+                text="How the run executes. Batch: the model stages are submitted to Anthropic's Batch API and collected when they finish — about half the cost, but the wait is not under our control and can reach hours. Synchronous: the same pipeline with immediate calls — finishes in minutes with predictable wall-clock, at roughly twice the batch cost. Preview: no model call at all — clustering and candidate retrieval only, so you can inspect the groupings for free before committing to a paid run. Batch and Synchronous both need your API key."
+                label="About the run mode options"
+              />
             </label>
             <select
               id="run-mode"
@@ -823,6 +860,71 @@ export default function SetupPage() {
               className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-sm text-on-raised"
             />
           </div>
+          {/* PROVIDER + MODEL, drawn from the shipped New Run form (08-13 review). Setup originally fixed
+              these to Anthropic on the grounds that a picker would offer untested choices — but the New Run
+              form already solved that by OFFERING every option and DISABLING the ones not validated, which
+              is more honest than hiding them: the gap stays visible and stays unselectable. Both are hidden
+              in preview mode, which calls no provider at all. */}
+          {runMode !== "preview" && (
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="provider" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
+                Provider
+                <InfoTip
+                  text="Which API the model stages call. Anthropic is the only provider validated end to end against this pipeline; anything else is listed so you can see it exists, and disabled so a run cannot be pointed at it."
+                  label="About the provider options"
+                />
+              </label>
+              <select
+                id="provider"
+                data-testid="provider"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                disabled={!providers.length}
+                className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
+              >
+                {providers.length === 0 && <option value="anthropic">Anthropic</option>}
+                {providers.map((pr) => {
+                  const tested = isProviderTested(pr);
+                  return (
+                    <option key={pr} value={pr} disabled={!tested}>
+                      {PROVIDER_LABELS[pr] ?? pr}
+                      {tested ? "" : " — not yet tested"}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
+          {runMode !== "preview" && (
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="model" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
+                Model
+                <InfoTip
+                  text="The model the paid stages run on. Claude Sonnet 4.6 is the only one this pipeline's prompts and benchmarks were validated against, so it is the default and the others are disabled. Model choice changes both cost and the quality of concept grouping and assignment."
+                  label="About the model options"
+                />
+              </label>
+              <select
+                id="model"
+                data-testid="model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                disabled={!modelsForProvider.length}
+                className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
+              >
+                {modelsForProvider.length === 0 && <option value="">No models available</option>}
+                {modelsForProvider.map((m) => {
+                  const tested = isModelTested(m.id);
+                  return (
+                    <option key={m.id} value={m.id} disabled={!tested}>
+                      {m.label}
+                      {tested ? "" : " — not yet tested"}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
           {runMode !== "preview" && (
             <div className="flex flex-col gap-1.5">
               <label htmlFor="api-key" className="text-xs font-semibold text-on-raised">
@@ -870,11 +972,19 @@ export default function SetupPage() {
               testid: "concept-gate-toggle",
               checked: conceptGate,
               set: setConceptGate,
-              label: "Also check that matches measure the same concept",
+              label: "Double-check that a match means the same thing",
+              // Rewritten at review: the original said "a second model pass ... the same CONCEPT and not
+              // merely the same values", which names the mechanism and never says what goes wrong. Lead
+              // with the failure it catches, and make it concrete — this is the one option on the screen
+              // whose value is invisible until you have seen the mistake it prevents.
               detail:
-                "A second model pass per group, asking whether an assigned element measures the same " +
-                "CONCEPT and not merely the same values. Buys a per-spec flag at Gate 3; costs an extra " +
-                "model call per group, which appears as its own line in the estimate.",
+                "Catches a match that lines up on values but not on meaning — your column and the matched " +
+                "element are both mmHg and both numeric, but yours is systolic and the element is " +
+                "diastolic. The values are interchangeable; the concept is not. Ordinary matching cannot " +
+                "see this, and neither can the coherence check, which asks whether a group is one concept " +
+                "rather than whether the element it was matched to is the right one. Flags the suspect " +
+                "ones at Gate 3 for you to decide. Costs one extra model call per concept group, shown as " +
+                "its own line in the estimate.",
             },
           ].map((opt) => (
             <label
