@@ -831,7 +831,7 @@ export default function SetupPage() {
             <label htmlFor="run-mode" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
               Run mode
               <InfoTip
-                text="How the run executes. Batch: the model stages are submitted to Anthropic's Batch API and collected when they finish — about half the cost, but the wait is not under our control and can reach hours. Synchronous: the same pipeline with immediate calls — finishes in minutes with predictable wall-clock, at roughly twice the batch cost. Preview: no model call at all — clustering and candidate retrieval only, so you can inspect the groupings for free before committing to a paid run. Batch and Synchronous both need your API key."
+                text="How the run executes. Batch: the model stages are submitted to Anthropic's Batch API and collected when they finish — about half the cost, but the wait is not under our control and can reach hours. Synchronous: the same pipeline with immediate calls — finishes in minutes with predictable wall-clock, at roughly twice the batch cost. Preview: no LLM call at all — clustering and candidate retrieval only. Retrieval needs no language model: it is BM25 keyword search fused with dense vector similarity, and the encoder that produces those vectors runs locally, so it costs nothing and needs no key. You see the groups and the candidate elements each one retrieved, but nothing is named, split, assigned or verdicted — those are the LLM stages. Batch and Synchronous both need your API key."
                 label="About the run mode options"
               />
             </label>
@@ -844,7 +844,7 @@ export default function SetupPage() {
             >
               <option value="batch">Batch — about half the cost, can take hours</option>
               <option value="sync">Synchronous — minutes, about twice the cost</option>
-              <option value="preview">Preview — no model call at all, free</option>
+              <option value="preview">Preview — no LLM call, free</option>
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
