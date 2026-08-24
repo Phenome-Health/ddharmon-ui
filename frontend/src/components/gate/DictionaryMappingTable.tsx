@@ -6,6 +6,7 @@ import {
   VALUE_ROLES,
   type ColumnRole,
 } from "@/types";
+import { InfoTip } from "@/components/ui/info-tip";
 import { assignRole, nameCheck, roleOf, type DictRow, type NameCheck } from "@/lib/dictionary";
 
 /**
@@ -179,7 +180,15 @@ export function DictionaryMappingTable({
                 First value
               </th>
               <th className="w-[32%] px-3 py-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-                Reads as
+                <span className="inline-flex items-center gap-1">
+                  Reads as
+                  {/* The per-role explanations live on the <option> `title`s, which nothing advertises —
+                      a native select gives no hint that its options carry help. This says where to look. */}
+                  <InfoTip
+                    text="What this column becomes for the pipeline. Open a dropdown and hover any option to see what that role means and when to use it — every role explains itself. Roles are grouped by whether they describe the QUESTION the variable asks or the RESPONSE values it records."
+                    label="About the Reads as column"
+                  />
+                </span>
               </th>
             </tr>
           </thead>

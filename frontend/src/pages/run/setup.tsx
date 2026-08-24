@@ -822,10 +822,65 @@ export default function SetupPage() {
               <option value="full">Full repository (~22.7k)</option>
               {/* Offered and DISABLED: bringing your own catalogue is not built. Hiding it would leave no
                   trace of the gap; a live control would promise something the backend cannot do. */}
+              {/* NOT-YET-AVAILABLE catalogues, offered and disabled. Listing them is the point: the choice of
+                  catalogue is the single biggest lever on what a run can match to, and a dropdown with two
+                  entries implies two exist. Disabled because no retrieval index is built for them. */}
+              <option value="rop" disabled>
+                DataTecnica Registry of Phenotypes (~1.33M) — not yet available
+              </option>
               <option value="upload" disabled>
                 Upload your own — not yet available
               </option>
             </select>
+            {/* A native <option> renders TEXT ONLY — no markup, no anchors — so the references cannot go
+                inside the dropdown. They sit under it, where they can be clicked. */}
+            <p className="text-xs leading-relaxed text-on-raised-muted">
+              Catalogues:{" "}
+              <a
+                href="https://cde.nlm.nih.gov/"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-accent-on-raised"
+              >
+                NIH CDE Repository
+              </a>
+              {" · "}
+              <a
+                href="https://huggingface.co/datasets/DataTecnica/RoP_biomedical"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-accent-on-raised"
+              >
+                DataTecnica RoP
+              </a>
+              {" · "}
+              <a
+                href="https://www.phenxtoolkit.org/"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-accent-on-raised"
+              >
+                PhenX
+              </a>
+              {" · "}
+              <a
+                href="https://www.commondataelements.ninds.nih.gov/"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-accent-on-raised"
+              >
+                NINDS
+              </a>
+              {" · "}
+              <a
+                href="https://cadsr.cancer.gov/"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-accent-on-raised"
+              >
+                caDSR
+              </a>
+            </p>
           </div>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="run-mode" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
@@ -846,6 +901,18 @@ export default function SetupPage() {
               <option value="sync">Synchronous — minutes, about twice the cost</option>
               <option value="preview">Preview — no LLM call, free</option>
             </select>
+            <p className="text-xs leading-relaxed text-on-raised-muted">
+              Batch pricing and turnaround are Anthropic's, not ours —{" "}
+              <a
+                href="https://docs.anthropic.com/en/docs/build-with-claude/batch-processing"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-accent-on-raised"
+              >
+                Batch API docs
+              </a>
+              .
+            </p>
           </div>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="run-name" className="text-xs font-semibold text-on-raised">
