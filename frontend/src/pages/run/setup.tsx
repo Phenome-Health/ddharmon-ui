@@ -826,7 +826,7 @@ export default function SetupPage() {
                   catalogue is the single biggest lever on what a run can match to, and a dropdown with two
                   entries implies two exist. Disabled because no retrieval index is built for them. */}
               <option value="rop" disabled>
-                DataTecnica Registry of Phenotypes (~1.33M) — not yet available
+                DataTecnica RoP — Biomedical Reference of Parameters (~1.33M) — not yet available
               </option>
               <option value="upload" disabled>
                 Upload your own — not yet available
@@ -1021,6 +1021,8 @@ export default function SetupPage() {
               testid: "gen-specs-toggle",
               checked: genSpecs,
               set: setGenSpecs,
+              decidedAt: "Gate 3, once you can see the assignments",
+              priced: "in the estimate",
               label: "Generate transform specs",
               detail: "The recipe to convert your values into each element's expected form.",
             },
@@ -1029,6 +1031,8 @@ export default function SetupPage() {
               testid: "suggest-ideas-toggle",
               checked: suggestIdeas,
               set: setSuggestIdeas,
+              decidedAt: "the results page, after the run",
+              priced: "~$0.05 flat",
               label: "Suggest analysis ideas",
               detail: "One pass over the finished concepts. A small flat add, independent of corpus size.",
             },
@@ -1039,41 +1043,51 @@ export default function SetupPage() {
               testid: "concept-gate-toggle",
               checked: conceptGate,
               set: setConceptGate,
-              label: "Double-check that a match means the same thing",
-              // Rewritten at review: the original said "a second model pass ... the same CONCEPT and not
-              // merely the same values", which names the mechanism and never says what goes wrong. Lead
-              // with the failure it catches, and make it concrete — this is the one option on the screen
-              // whose value is invisible until you have seen the mistake it prevents.
+              decidedAt: "Gate 2, before specs are generated",
+              priced: "one call per matched concept",
+              label: "Double-check a match before trusting its recode",
+              // Third rewrite. v1 named the mechanism ("a second model pass ... the same CONCEPT"). v2 led
+              // with a units example I invented, which is the wrong shape — the real failure is a shared
+              // ANSWER FORMAT, and the documented case is far sharper. This one leads with the transform
+              // spec, which is what the check actually protects: a recode whose coverage reads 100% and is
+              // still wrong. Source: transform.py's M7 comment + the 2026-07-04 full-5 audit.
               detail:
-                "Catches a match that lines up on values but not on meaning — your column and the matched " +
-                "element are both mmHg and both numeric, but yours is systolic and the element is " +
-                "diastolic. The values are interchangeable; the concept is not. Ordinary matching cannot " +
-                "see this, and neither can the coherence check, which asks whether a group is one concept " +
-                "rather than whether the element it was matched to is the right one. Flags the suspect " +
-                "ones at Gate 3 for you to decide. Costs one extra model call per concept group, shown as " +
-                "its own line in the estimate.",
+                "A value recode can read as perfect and still be wrong. Two 1-5 Likert items map cleanly " +
+                "onto each other, so coverage comes back 100% and nothing flags — even when one asks " +
+                "\u201chow confident are you filling out medical forms\u201d and the other asks whether you " +
+                "felt happy. This checks that the matched element measures the same thing, and flags the " +
+                "suspect recodes at Gate 3. One extra call per matched concept.",
             },
           ].map((opt) => (
-            <label
+            <div
               key={opt.id}
-              htmlFor={opt.id}
-              className="flex items-start gap-3 rounded-inner border border-rule-on-raised px-3 py-2"
+              data-testid={opt.testid}
+              data-default={String(opt.checked)}
+              className="flex flex-col gap-0.5 rounded-inner border border-rule-on-raised px-3 py-2"
             >
-              <input
-                id={opt.id}
-                data-testid={opt.testid}
-                type="checkbox"
-                checked={opt.checked}
-                disabled={runMode === "preview"}
-                onChange={(e) => opt.set(e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0"
-              />
-              <span className="flex flex-col gap-0.5">
+              <span className="flex items-baseline justify-between gap-3">
                 <span className="text-xs font-semibold text-on-raised">{opt.label}</span>
-                <span className="max-w-[68ch] text-xs text-on-raised-muted">{opt.detail}</span>
+                <span className="shrink-0 text-xs tabular-nums text-on-raised-muted">{opt.priced}</span>
               </span>
-            </label>
+              <span className="text-xs text-on-raised-muted">{opt.detail}</span>
+              <span className="text-xs text-on-raised-muted">
+                <span className="font-semibold text-on-raised">
+                  {opt.checked ? "On by default." : "Off by default."}
+                </span>{" "}
+                You choose at {opt.decidedAt} — not here.
+              </span>
+            </div>
           ))}
+          {/* NOT CONTROLS, on purpose (08-13 review). Each of these is a decision you make better once you
+              can see what it would apply to: whether specs are worth generating depends on the assignments
+              at Gate 2, and analysis ideas are a post-run add. Asking at Setup is asking at the moment of
+              least information, which is the opposite of what the staged gates are for. They are shown here
+              PRICED so the estimate is honest about what the defaults cost, and the decision moves to the
+              gate that owns it. */}
+          <p className="text-xs text-on-raised-muted">
+            The estimate below assumes these defaults. Changing them at their gate changes what you pay from
+            that gate onward — nothing already spent.
+          </p>
         </div>
       </section>
 

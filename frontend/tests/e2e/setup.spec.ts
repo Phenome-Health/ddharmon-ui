@@ -550,23 +550,28 @@ test.describe("Setup — the honest estimate", () => {
     expect(text).not.toMatch(/scope before you spend/i);
   });
 
-  test("@setup the concept-gate opt-in is visible, defaults off, and turning it on raises the total", async ({
+  test("@setup the three run options are shown, priced and defaulted — but decided at their gate", async ({
     page,
   }) => {
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
-    const toggle = page.getByTestId("concept-gate-toggle");
-    await expect(toggle).toBeVisible(); // not buried: an opt-in nobody sees is an unavailable feature
-    await expect(toggle).not.toBeChecked();
+    // Still VISIBLE — an option nobody sees is an unavailable feature, which was the original point of
+    // this assertion and survives the move. What changed at review is that Setup no longer DECIDES them:
+    // each is a call you make better once you can see what it applies to.
+    const gate = page.getByTestId("concept-gate-toggle");
+    await expect(gate).toBeVisible();
+    await expect(gate).toHaveAttribute("data-default", "false"); // STGD-16 still defaults OFF
+    await expect(gate).toContainText(/Gate 2/); // and names where the decision now lives
+    // Defaults-off means the run is not quoted for it.
     await expect(page.locator("[data-cost-line='conceptGate']")).toHaveCount(0);
 
-    const before = await page.getByTestId("estimate-total").getAttribute("data-mid");
-    await toggle.check();
-    const line = page.locator("[data-cost-line='conceptGate']");
-    await expect(line).toBeVisible();
-    await expect(page.getByTestId("estimate-panel")).toHaveAttribute("data-pending", "false");
-    const after = await page.getByTestId("estimate-total").getAttribute("data-mid");
-    expect(Number(after)).toBeGreaterThan(Number(before));
+    // The other two are shown the same way, with their own gate named.
+    await expect(page.getByTestId("gen-specs-toggle")).toHaveAttribute("data-default", "true");
+    await expect(page.getByTestId("suggest-ideas-toggle")).toHaveAttribute("data-default", "true");
+
+    // NOT A CONTROL any more: no checkbox survives in this panel. Asserted directly, because "the
+    // decision moved to the gate" is only true if Setup stopped offering it.
+    await expect(page.getByTestId("concept-gate-toggle").locator("input[type=checkbox]")).toHaveCount(0);
   });
 
   test("@setup the run mode is selectable and changes what the run is quoted at", async ({ page }) => {
