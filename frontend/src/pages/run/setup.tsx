@@ -329,6 +329,39 @@ export default function SetupPage() {
     /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
   const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
 
+  /**
+   * Dictionaries that look like the SAME source added twice — matched on filename, or on an identical
+   * (size, row count) pair when the names differ.
+   *
+   * Not cosmetic. A duplicated dictionary enters clustering as two cohorts, so every concept it touches
+   * reads as CROSS-COHORT agreement that does not exist — and cross-cohort breadth is the signal Gate 1
+   * partitions its ledger on. The run would look like it pooled where it only counted the same variables
+   * twice.
+   *
+   * FLAGGED, NOT BLOCKED, following this screen's standing discipline: two genuinely different cohorts can
+   * legitimately ship files of the same name, and refusing them outright would be wrong more often than the
+   * duplicate is right. The reviewer is told what it costs and can remove one.
+   */
+  const duplicateDicts = useMemo(() => {
+    const byName = new Map<string, number>();
+    const bySize = new Map<string, number>();
+    for (const d of dicts) {
+      const n = d.filename.trim().toLowerCase();
+      byName.set(n, (byName.get(n) ?? 0) + 1);
+      if (d.file && d.rowCount !== null) {
+        const k = `${d.file.size}:${d.rowCount}`;
+        bySize.set(k, (bySize.get(k) ?? 0) + 1);
+      }
+    }
+    const names = new Set<string>();
+    for (const d of dicts) {
+      const n = d.filename.trim().toLowerCase();
+      const k = d.file && d.rowCount !== null ? `${d.file.size}:${d.rowCount}` : "";
+      if ((byName.get(n) ?? 0) > 1 || (k && (bySize.get(k) ?? 0) > 1)) names.add(d.filename);
+    }
+    return [...names];
+  }, [dicts]);
+
   const onDrop = useCallback(async (accepted: File[]) => {
     composed.current = true;
     for (const file of accepted) {
@@ -544,6 +577,20 @@ export default function SetupPage() {
                     dicts.length === 1 ? "dictionary" : "dictionaries"
                   } · ${totalFields.toLocaleString()} variables`}
           </p>
+          {duplicateDicts.length > 0 && (
+            <p
+              data-testid="duplicate-dictionaries"
+              data-count={String(duplicateDicts.length)}
+              className="max-w-[68ch] rounded-inner border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
+            >
+              <span className="font-semibold">
+                The same dictionary looks like it was added more than once: {duplicateDicts.join(", ")}.
+              </span>{" "}
+              A duplicate enters clustering as a second cohort, so concepts it touches will read as
+              cross-cohort agreement that is not real — and cross-cohort breadth is what Gate 1 sorts and
+              filters on. Remove one, or rename it if these really are different cohorts.
+            </p>
+          )}
         </div>
 
         {/* ONE dictionary is a different job from harmonization, and the copy says which. */}
@@ -832,6 +879,9 @@ export default function SetupPage() {
               <option value="rop" disabled>
                 DataTecnica RoP (~1.33M) — non-commercial licence, not cleared
               </option>
+              <option value="monarch" disabled>
+                Monarch CDE harmonization — early, no released catalogue
+              </option>
               <option value="upload" disabled>
                 Upload your own — not yet available
               </option>
@@ -857,15 +907,15 @@ export default function SetupPage() {
               {" · "}
               <a href="https://fitbir.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">FITBIR</a>
             </p>
+            {/* Only CDE CATALOGUES belong here. LOINC, OMOP and CDISC were listed and removed: they are
+                VOCABULARIES — they define terms and codes, not catalogues of data-collection elements —
+                and both projects below aggregate them anyway, so naming them separately implied choices
+                that do not exist at this level. */}
             <p className="text-xs leading-relaxed text-on-raised-muted">
-              Tracked, not yet offered — RoP aggregates the other three, plus NINDS and PhenX above:{" "}
+              Tracked, not yet offered:{" "}
               <a href="https://huggingface.co/datasets/DataTecnica/RoP_biomedical" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">DataTecnica RoP</a>
               {" · "}
-              <a href="https://www.cdisc.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">CDISC</a>
-              {" · "}
-              <a href="https://loinc.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">LOINC</a>
-              {" · "}
-              <a href="https://ohdsi.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">OHDSI / OMOP</a>
+              <a href="https://monarch-initiative.github.io/cde-harmonization/roadmap.html" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">Monarch CDE harmonization</a>
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -1007,19 +1057,27 @@ export default function SetupPage() {
               testid: "gen-specs-toggle",
               checked: genSpecs,
               set: setGenSpecs,
-              decidedAt: "Gate 3, once you can see the assignments",
+              decidedAt: "Gate 3",
               priced: "in the estimate",
               label: "Generate transform specs",
-              detail: "The recipe to convert your values into each element's expected form.",
+              help:
+                "The recipe that converts your values into the form the matched element expects — value " +
+                "recodes for categoricals, unit and arithmetic conversions for numerics. Without it you get " +
+                "matches but no instructions for actually transforming your data.",
+              detail: "Turns each match into instructions for converting your values.",
             },
             {
               id: "suggest-ideas",
               testid: "suggest-ideas-toggle",
               checked: suggestIdeas,
               set: setSuggestIdeas,
-              decidedAt: "the results page, after the run",
+              decidedAt: "the results page",
               priced: "~$0.05 flat",
               label: "Suggest analysis ideas",
+              help:
+                "One pass over the finished concepts, proposing cross-cohort analyses this harmonization " +
+                "makes possible. A small flat add, independent of corpus size. It suggests; it never runs " +
+                "anything.",
               detail: "One pass over the finished concepts. A small flat add, independent of corpus size.",
             },
             {
@@ -1029,20 +1087,23 @@ export default function SetupPage() {
               testid: "concept-gate-toggle",
               checked: conceptGate,
               set: setConceptGate,
-              decidedAt: "Gate 2, before specs are generated",
+              decidedAt: "Gate 2",
               priced: "one call per matched concept",
               label: "Double-check a match before trusting its recode",
+              help:
+                "One call per concept group that got matched to an element — the same granularity as the " +
+                "coherence check, not per variable and not pairwise. Where coherence asks whether a group's " +
+                "members are one concept, this asks whether the element the group was matched TO is the " +
+                "right one. It exists because value coverage is not evidence of meaning: two 1-5 Likert " +
+                "items map cleanly onto each other, so a recode reads 100% covered even when one asks how " +
+                "confident you are filling out medical forms and the other asks whether you felt happy. " +
+                "Flags the suspect recodes at Gate 3; never changes a verdict on its own.",
               // Third rewrite. v1 named the mechanism ("a second model pass ... the same CONCEPT"). v2 led
               // with a units example I invented, which is the wrong shape — the real failure is a shared
               // ANSWER FORMAT, and the documented case is far sharper. This one leads with the transform
               // spec, which is what the check actually protects: a recode whose coverage reads 100% and is
               // still wrong. Source: transform.py's M7 comment + the 2026-07-04 full-5 audit.
-              detail:
-                "A value recode can read as perfect and still be wrong. Two 1-5 Likert items map cleanly " +
-                "onto each other, so coverage comes back 100% and nothing flags — even when one asks " +
-                "\u201chow confident are you filling out medical forms\u201d and the other asks whether you " +
-                "felt happy. This checks that the matched element measures the same thing, and flags the " +
-                "suspect recodes at Gate 3. One extra call per matched concept.",
+              detail: "A recode can read 100% covered and still mean the wrong thing.",
             },
           ].map((opt) => (
             <div
@@ -1052,15 +1113,15 @@ export default function SetupPage() {
               className="flex flex-col gap-0.5 rounded-inner border border-rule-on-raised px-3 py-2"
             >
               <span className="flex items-baseline justify-between gap-3">
-                <span className="text-xs font-semibold text-on-raised">{opt.label}</span>
+                <span className="inline-flex items-baseline gap-1 text-xs font-semibold text-on-raised">
+                  {opt.label}
+                  <InfoTip text={opt.help} label={`About ${opt.label}`} />
+                </span>
                 <span className="shrink-0 text-xs tabular-nums text-on-raised-muted">{opt.priced}</span>
               </span>
-              <span className="text-xs text-on-raised-muted">{opt.detail}</span>
               <span className="text-xs text-on-raised-muted">
-                <span className="font-semibold text-on-raised">
-                  {opt.checked ? "On by default." : "Off by default."}
-                </span>{" "}
-                You choose at {opt.decidedAt} — not here.
+                {opt.detail} <span className="text-on-raised">{opt.checked ? "On" : "Off"}</span> by default;
+                you choose at {opt.decidedAt}.
               </span>
             </div>
           ))}

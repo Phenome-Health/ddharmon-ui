@@ -726,4 +726,20 @@ test.describe("Setup — the review pass: layout melded with the New Run form", 
     await expect(page.getByTestId("provider")).toHaveCount(0);
     await expect(page.getByTestId("model")).toHaveCount(0);
   });
+
+  test("@setup the same dictionary added twice is flagged, and named", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const body = Buffer.from(csv([["variable_name", "description"], ["a", "Alpha"], ["b", "Beta"]]));
+    await page.getByTestId("dict-upload").setInputFiles({ name: "same.csv", mimeType: "text/csv", buffer: body });
+    await expect(page.getByTestId("duplicate-dictionaries")).toHaveCount(0);
+    // Same file again — the failure this catches is silent: it would read as a second cohort agreeing.
+    await page.getByTestId("dict-upload").setInputFiles({ name: "same.csv", mimeType: "text/csv", buffer: body });
+    const warn = page.getByTestId("duplicate-dictionaries");
+    await expect(warn).toBeVisible();
+    await expect(warn).toContainText("same.csv");
+    await expect(warn).toContainText(/cross-cohort/i);
+    // FLAGGED, not blocked — a legitimate same-name pair from two cohorts must still be startable.
+    await expect(page.getByTestId("blocker").filter({ hasText: /added more than once/i })).toHaveCount(0);
+  });
 });
