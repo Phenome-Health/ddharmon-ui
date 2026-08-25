@@ -834,52 +834,34 @@ export default function SetupPage() {
             </select>
             {/* A native <option> renders TEXT ONLY — no markup, no anchors — so the references cannot go
                 inside the dropdown. They sit under it, where they can be clicked. */}
+            {/* A native <option> renders TEXT ONLY — no markup, no anchors — so the references cannot live
+                inside the dropdown. They sit under it, where they can be clicked.
+
+                SPLIT INTO TWO LINES on purpose. The first five are not alternatives to the NIH repository —
+                they are SOURCES INSIDE it (Kush et al. 2020, J Biomed Inform 107:103421, §2). Listing them
+                flat would imply five catalogues we do not offer, when picking "Full repository" already
+                reaches all five. NINDS alone contributed 18,021 of its CDEs; caDSR holds over 67,000. */}
             <p className="text-xs leading-relaxed text-on-raised-muted">
-              Catalogues:{" "}
-              <a
-                href="https://cde.nlm.nih.gov/"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2 hover:text-accent-on-raised"
-              >
-                NIH CDE Repository
-              </a>
+              Inside the NIH repository:{" "}
+              <a href="https://cadsr.cancer.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">caDSR</a>
               {" · "}
-              <a
-                href="https://huggingface.co/datasets/DataTecnica/RoP_biomedical"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2 hover:text-accent-on-raised"
-              >
-                DataTecnica RoP
-              </a>
+              <a href="https://www.commondataelements.ninds.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">NINDS</a>
               {" · "}
-              <a
-                href="https://www.phenxtoolkit.org/"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2 hover:text-accent-on-raised"
-              >
-                PhenX
-              </a>
+              <a href="https://www.healthmeasures.net/explore-measurement-systems/promis" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">PROMIS</a>
               {" · "}
-              <a
-                href="https://www.commondataelements.ninds.nih.gov/"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2 hover:text-accent-on-raised"
-              >
-                NINDS
-              </a>
+              <a href="https://www.phenxtoolkit.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">PhenX</a>
               {" · "}
-              <a
-                href="https://cadsr.cancer.gov/"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2 hover:text-accent-on-raised"
-              >
-                caDSR
-              </a>
+              <a href="https://fitbir.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">FITBIR</a>
+            </p>
+            <p className="text-xs leading-relaxed text-on-raised-muted">
+              Tracked, not yet offered:{" "}
+              <a href="https://huggingface.co/datasets/DataTecnica/RoP_biomedical" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">DataTecnica RoP</a>
+              {" · "}
+              <a href="https://www.cdisc.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">CDISC</a>
+              {" · "}
+              <a href="https://loinc.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">LOINC</a>
+              {" · "}
+              <a href="https://ohdsi.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">OHDSI / OMOP</a>
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
