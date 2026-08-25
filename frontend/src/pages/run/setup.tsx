@@ -825,8 +825,12 @@ export default function SetupPage() {
               {/* NOT-YET-AVAILABLE catalogues, offered and disabled. Listing them is the point: the choice of
                   catalogue is the single biggest lever on what a run can match to, and a dropdown with two
                   entries implies two exist. Disabled because no retrieval index is built for them. */}
+              {/* RoP is disabled for a LICENCE reason, not an engineering one, and the label says which:
+                  CC-BY-NC-4.0 (data) + AGPLv3 (code). ddharmon is MIT, so shipping RoP content or an index
+                  built from it needs a commercial licence from DataTecnica first. Saying only "not yet
+                  available" would imply this is queued work. */}
               <option value="rop" disabled>
-                DataTecnica RoP — Biomedical Reference of Parameters (~1.33M) — not yet available
+                DataTecnica RoP (~1.33M) — non-commercial licence, not cleared
               </option>
               <option value="upload" disabled>
                 Upload your own — not yet available
@@ -854,7 +858,7 @@ export default function SetupPage() {
               <a href="https://fitbir.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">FITBIR</a>
             </p>
             <p className="text-xs leading-relaxed text-on-raised-muted">
-              Tracked, not yet offered:{" "}
+              Tracked, not yet offered — RoP aggregates the other three, plus NINDS and PhenX above:{" "}
               <a href="https://huggingface.co/datasets/DataTecnica/RoP_biomedical" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">DataTecnica RoP</a>
               {" · "}
               <a href="https://www.cdisc.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">CDISC</a>
