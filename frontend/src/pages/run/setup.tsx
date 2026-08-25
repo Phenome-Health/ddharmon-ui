@@ -886,31 +886,21 @@ export default function SetupPage() {
                 Upload your own — not yet available
               </option>
             </select>
-            {/* A native <option> renders TEXT ONLY — no markup, no anchors — so the references cannot go
-                inside the dropdown. They sit under it, where they can be clicked. */}
-            {/* A native <option> renders TEXT ONLY — no markup, no anchors — so the references cannot live
+            {/* A native <option> renders TEXT ONLY — no markup, no anchors — so references cannot live
                 inside the dropdown. They sit under it, where they can be clicked.
 
-                SPLIT INTO TWO LINES on purpose. The first five are not alternatives to the NIH repository —
-                they are SOURCES INSIDE it (Kush et al. 2020, J Biomed Inform 107:103421, §2). Listing them
-                flat would imply five catalogues we do not offer, when picking "Full repository" already
-                reaches all five. NINDS alone contributed 18,021 of its CDEs; caDSR holds over 67,000. */}
+                THE STEWARD LIST IS MEASURED, not cited. An earlier version listed caDSR/NINDS/PROMIS/
+                PhenX/FITBIR from Kush et al. 2020 — and our own catalogue contradicts it. Counting
+                `steward_org` across the 22,743 shipped CDEs: NINDS 13,545, LOINC 3,731, NHLBI 1,818,
+                PROMIS/Neuro-QOL 1,678, NLM 605, NICHD 577, and twelve smaller stewards including RADx-UP
+                and ScHARe that postdate the paper. PhenX and FITBIR appear as stewards of NOTHING here,
+                and NCI (caDSR) holds just 119 — so the repository is emphatically not a superset of
+                caDSR's ~67k. Cite the data we ship, not a five-year-old survey of it. */}
             <p className="text-xs leading-relaxed text-on-raised-muted">
-              Inside the NIH repository:{" "}
-              <a href="https://cadsr.cancer.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">caDSR</a>
-              {" · "}
-              <a href="https://www.commondataelements.ninds.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">NINDS</a>
-              {" · "}
-              <a href="https://www.healthmeasures.net/explore-measurement-systems/promis" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">PROMIS</a>
-              {" · "}
-              <a href="https://www.phenxtoolkit.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">PhenX</a>
-              {" · "}
-              <a href="https://fitbir.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">FITBIR</a>
+              Stewards in this catalogue:{" "}
+              <a href="https://cde.nlm.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">NIH CDE Repository</a>
+              {" — NINDS 13,545 · LOINC 3,731 · NHLBI 1,818 · PROMIS/Neuro-QOL 1,678 · NLM 605 · NICHD 577, and 12 more."}
             </p>
-            {/* Only CDE CATALOGUES belong here. LOINC, OMOP and CDISC were listed and removed: they are
-                VOCABULARIES — they define terms and codes, not catalogues of data-collection elements —
-                and both projects below aggregate them anyway, so naming them separately implied choices
-                that do not exist at this level. */}
             <p className="text-xs leading-relaxed text-on-raised-muted">
               Tracked, not yet offered:{" "}
               <a href="https://huggingface.co/datasets/DataTecnica/RoP_biomedical" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">DataTecnica RoP</a>
