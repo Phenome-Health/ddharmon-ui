@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "wouter";
+import { Link, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
@@ -865,8 +865,8 @@ export default function SetupPage() {
               onChange={(e) => setCdeSet(e.target.value as CdeSet)}
               className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised"
             >
-              <option value="endorsed">NIH-endorsed (~174)</option>
-              <option value="full">Full repository (~22.7k)</option>
+              <option value="endorsed">NIH-Endorsed CDEs (~174)</option>
+              <option value="full">Full NIH CDE Repository (~22.7k)</option>
               {/* Offered and DISABLED: bringing your own catalogue is not built. Hiding it would leave no
                   trace of the gap; a live control would promise something the backend cannot do. */}
               {/* NOT-YET-AVAILABLE catalogues, offered and disabled. Listing them is the point: the choice of
@@ -886,26 +886,16 @@ export default function SetupPage() {
                 Upload your own — not yet available
               </option>
             </select>
-            {/* A native <option> renders TEXT ONLY — no markup, no anchors — so references cannot live
-                inside the dropdown. They sit under it, where they can be clicked.
-
-                THE STEWARD LIST IS MEASURED, not cited. An earlier version listed caDSR/NINDS/PROMIS/
-                PhenX/FITBIR from Kush et al. 2020 — and our own catalogue contradicts it. Counting
-                `steward_org` across the 22,743 shipped CDEs: NINDS 13,545, LOINC 3,731, NHLBI 1,818,
-                PROMIS/Neuro-QOL 1,678, NLM 605, NICHD 577, and twelve smaller stewards including RADx-UP
-                and ScHARe that postdate the paper. PhenX and FITBIR appear as stewards of NOTHING here,
-                and NCI (caDSR) holds just 119 — so the repository is emphatically not a superset of
-                caDSR's ~67k. Cite the data we ship, not a five-year-old survey of it. */}
+            {/* TWO LINES, deliberately. The steward roll-call that used to sit here (NINDS 13,545, LOINC
+                3,731, …) was measured and correct and still wrong for this screen: nobody choosing a
+                catalogue needs a per-organization census mid-form. It belongs on a content page that can
+                give it room. Link out; do not inline. */}
             <p className="text-xs leading-relaxed text-on-raised-muted">
-              Stewards in this catalogue:{" "}
+              Both draw from the{" "}
               <a href="https://cde.nlm.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">NIH CDE Repository</a>
-              {" — NINDS 13,545 · LOINC 3,731 · NHLBI 1,818 · PROMIS/Neuro-QOL 1,678 · NLM 605 · NICHD 577, and 12 more."}
-            </p>
-            <p className="text-xs leading-relaxed text-on-raised-muted">
-              Tracked, not yet offered:{" "}
-              <a href="https://huggingface.co/datasets/DataTecnica/RoP_biomedical" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">DataTecnica RoP</a>
+              . <Link href="/methods" className="underline underline-offset-2 hover:text-accent-on-raised">How matching works</Link>
               {" · "}
-              <a href="https://monarch-initiative.github.io/cde-harmonization/roadmap.html" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">Monarch CDE harmonization</a>
+              <Link href="/related" className="underline underline-offset-2 hover:text-accent-on-raised">Other catalogues</Link>
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -1078,8 +1068,8 @@ export default function SetupPage() {
               checked: conceptGate,
               set: setConceptGate,
               decidedAt: "Gate 2",
-              priced: "one call per matched concept",
-              label: "Double-check a match before trusting its recode",
+              priced: "1 call / match",
+              label: "Double-check matches",
               help:
                 "One call per concept group that got matched to an element — the same granularity as the " +
                 "coherence check, not per variable and not pairwise. Where coherence asks whether a group's " +
@@ -1102,16 +1092,17 @@ export default function SetupPage() {
               data-default={String(opt.checked)}
               className="flex flex-col gap-0.5 rounded-inner border border-rule-on-raised px-3 py-2"
             >
-              <span className="flex items-baseline justify-between gap-3">
+              <span className="flex items-baseline justify-between gap-2">
                 <span className="inline-flex items-baseline gap-1 text-xs font-semibold text-on-raised">
                   {opt.label}
                   <InfoTip text={opt.help} label={`About ${opt.label}`} />
                 </span>
                 <span className="shrink-0 text-xs tabular-nums text-on-raised-muted">{opt.priced}</span>
               </span>
+              <span className="text-xs text-on-raised-muted">{opt.detail}</span>
               <span className="text-xs text-on-raised-muted">
-                {opt.detail} <span className="text-on-raised">{opt.checked ? "On" : "Off"}</span> by default;
-                you choose at {opt.decidedAt}.
+                <span className="text-on-raised">{opt.checked ? "On" : "Off"}</span> by default · you choose
+                at {opt.decidedAt}
               </span>
             </div>
           ))}
@@ -1189,31 +1180,41 @@ export default function SetupPage() {
               ))}
             </ul>
 
-            {/* THE COHERENCE STAGE'S WORKLOAD, in variables rather than dollars — the money above is only
-                meaningful next to how many groups the judge is actually asked about. Groups under the
-                six-member minimum are left explicitly UNJUDGED, which is not the same as coherent. */}
-            <p data-testid="coherence-workload" className="max-w-[68ch] text-xs text-on-raised-muted">
+            {/* The judge's workload in GROUPS, not dollars — the money above means little without it. The
+                caveat that under-six groups are left explicitly unjudged (not "coherent") is real and
+                load-bearing, but it is a footnote, so it is a tooltip rather than a paragraph. */}
+            <p data-testid="coherence-workload" className="text-xs text-on-raised-muted">
               {estimate.judgeCalls > 0 ? (
                 <>
-                  The coherence judge is priced for{" "}
+                  Coherence judge priced for{" "}
                   <span className="font-semibold text-on-raised">
-                    {estimate.judgeCalls.toLocaleString()}{" "}
-                    {estimate.judgeCalls === 1 ? "group" : "groups"}
+                    {estimate.judgeCalls.toLocaleString()} {estimate.judgeCalls === 1 ? "group" : "groups"}
                   </span>{" "}
-                  of at least six variables
-                  {estimate.judgeCallsEstimated
-                    ? " — estimated from corpus size, since the groups do not exist yet."
-                    : " — counted from this run's own groups."}{" "}
-                  Smaller groups are left unjudged and marked as such; a judge that was never asked has not
-                  approved anything.
+                  {estimate.judgeCallsEstimated ? "(estimated)" : "(counted)"}
+                  <InfoTip
+                    label="How the coherence judge is priced"
+                    text={
+                      `Only groups of at least six variables are judged — below that the judge cannot form a ` +
+                      `disjoint sample to verify against. ${estimate.judgeCallsEstimated
+                        ? "This run's groups do not exist yet, so the count is estimated from corpus size."
+                        : "Counted from this run's own groups."} ` +
+                      `Smaller groups are left explicitly UNJUDGED and marked as such — which is not the ` +
+                      `same as coherent. A judge that was never asked has not approved anything.`
+                    }
+                  />
                 </>
               ) : (
                 <>
-                  No group here can reach six variables, so the judge is not asked and the coherence line is{" "}
-                  <span className="font-semibold text-on-raised">$0</span>. The line stays on the bill
-                  anyway: a line that disappears is indistinguishable from a stage nobody costed. Those
-                  groups will be marked <span className="font-semibold text-on-raised">not judged</span>,
-                  which is not the same as coherent.
+                  No group can reach six variables, so the judge is not asked:{" "}
+                  <span className="font-semibold text-on-raised">$0</span>
+                  <InfoTip
+                    label="Why the line still shows"
+                    text={
+                      "The line stays on the bill at zero rather than disappearing, because a line that " +
+                      "vanishes is indistinguishable from a stage nobody costed. Those groups will be " +
+                      "marked NOT JUDGED, which is not the same as coherent."
+                    }
+                  />
                 </>
               )}
             </p>
@@ -1226,12 +1227,20 @@ export default function SetupPage() {
               className="max-w-[68ch] border-t border-rule-on-raised pt-2 text-xs text-on-raised"
             >
               <span className="font-semibold">
-                The first charge is Continue at Gate 0 — about {formatUsd(estimate.firstCharge)}.
+                You pay gate by gate. First charge: Continue at Gate 0, about{" "}
+                {formatUsd(estimate.firstCharge)}.
               </span>{" "}
-              Everything before that first charge can be abandoned at no cost: setting up, loading,
-              preparing and grouping your dictionaries, and reading Gate 0's review. Pressing Continue is
-              what buys the next step — generating a candidate element per group, splitting groups that fuse
-              more than one concept, and the coherence judge.
+              Each gate quotes its own cost from the real run before you commit to it.
+              <InfoTip
+                label="What the first charge buys, and what is free"
+                text={
+                  "Everything up to that point can be abandoned at no cost: setting up, loading, preparing " +
+                  "and grouping your dictionaries, and reading Gate 0's review. Pressing Continue at Gate 0 " +
+                  "is what buys the next step — a candidate element generated per group, groups that fuse " +
+                  "more than one concept split apart, and the coherence judge. From there every gate is its " +
+                  "own decision: you can stop after any of them and keep what you have already paid for."
+                }
+              />
             </p>
 
             <ul className="flex flex-col gap-1">
@@ -1262,8 +1271,17 @@ export default function SetupPage() {
             </ul>
 
             <p className="text-xs text-on-raised-muted">
-              A rough estimate, from observed runs. The stages scale with groups rather than linearly with
-              variables, so treat the range as a range.
+              These are estimates, not quotes.
+              <InfoTip
+                label="Why this is a range"
+                text={
+                  "Derived from observed runs on other corpora. The paid stages scale with the number of " +
+                  "concept GROUPS, which do not exist until clustering has run, rather than linearly with " +
+                  "variable count — so the figure can only be a range until the groups are real. Each gate " +
+                  "re-quotes from this run's actual groups before you commit, and those numbers are the " +
+                  "ones that bind."
+                }
+              />
             </p>
           </>
         )}

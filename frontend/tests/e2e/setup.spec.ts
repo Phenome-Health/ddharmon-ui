@@ -524,10 +524,18 @@ test.describe("Setup — the honest estimate", () => {
     await expect(first).toBeVisible();
     // UI-SPEC §0.1 after the plan-review reversal: the first charge is Gate 0's Continue, NOT Gate 1's.
     await expect(first).toContainText(/Continue at Gate 0|Gate 0's Continue/);
-    // And what that press pays for, named: concept generation, splitting and the judge.
-    await expect(first).toContainText(/generat/i);
-    await expect(first).toContainText(/split/i);
-    await expect(first).toContainText(/coherence|judge/i);
+    // Pay-as-you-go is the headline now, and the per-gate re-quote promise sits beside it.
+    await expect(first).toContainText(/pay gate by gate/i);
+    await expect(first).toContainText(/quotes its own cost/i);
+    // What the press pays for is still stated — it moved into the tooltip at review, because the panel was
+    // too dense to read. Asserted on the tooltip's TEXT, so moving it cannot silently delete it.
+    const tip = first.getByRole("button", { name: /what the first charge buys/i });
+    await expect(tip).toHaveCount(1);
+    await tip.hover();
+    const tipText = page.getByRole("tooltip");
+    await expect(tipText).toContainText(/generat/i);
+    await expect(tipText).toContainText(/split/i);
+    await expect(tipText).toContainText(/coherence|judge/i);
 
     // The per-gate rows are present, and the two free gates say so rather than forecasting a figure.
     const gates = page.locator("[data-gate-forecast]");
