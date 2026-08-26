@@ -12,9 +12,8 @@ import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { InfoTip } from "@/components/ui/info-tip";
-import { IS_STATIC, extractScoreDocument, listDemos, listModels, startHarmonize } from "@/lib/api";
+import { IS_STATIC, listDemos, listModels, startHarmonize } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
-import { SCOPE_VERDICT_COPY, declaredComponents, setupScopeVerdict } from "@/lib/score-scope";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { lookupPrefill } from "@/lib/column-prefill";
 import { COLUMN_ROLES, PROVIDER_LABELS } from "@/types";
@@ -224,9 +223,6 @@ export default function SetupPage() {
   const [apiKey, setApiKey] = useState("");
   const [provider, setProvider] = useState("anthropic");
   const [model, setModel] = useState("");
-  const [scoreText, setScoreText] = useState("");
-  const [scoreDoc, setScoreDoc] = useState<{ provenance: string; nChars: number } | null>(null);
-  const [scoreDocError, setScoreDocError] = useState("");
   const [starting, setStarting] = useState(false);
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
   const composed = useRef(false);
@@ -321,10 +317,6 @@ export default function SetupPage() {
 
   /** True while a figure would be premature: a file still parsing, or a corpus size still resolving. */
   const estimatePending = sizePending || dicts.some((d) => d.state === "parsing");
-
-  const scoreComponents = useMemo(() => declaredComponents(scoreText), [scoreText]);
-  // No run has produced concepts at Setup, so feasibility is not answerable here. See `score-scope.ts`.
-  const scopeVerdict = setupScopeVerdict(0);
 
     /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
   const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
@@ -554,7 +546,7 @@ export default function SetupPage() {
       {/* TWO COLUMNS, following the shipped New Run form (08-13 review).
           The single-column stack put the price and the start control ~3,000px below the fold, behind five
           mapping tables — so the number the user is consenting to was never on screen at the same time as
-          the choices that change it. Left: what the run IS (dictionaries, the declared score). Right,
+          the choices that change it. Left: what the run IS (the dictionaries, and how each one's columns map). Right,
           sticky: how it RUNS, what it COSTS, and the control that starts it — the three that belong
           together and must stay visible while the left column is scrolled. */}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
@@ -724,120 +716,6 @@ export default function SetupPage() {
               )}
             </article>
           ))
-        )}
-      </section>
-
-      {/* --- the declared score ------------------------------------------------------------------ */}
-      <section data-testid="score-panel" className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-semibold text-on-raised">Score definition (optional)</h2>
-          <p className="max-w-[68ch] text-xs text-on-raised-muted">
-            If you came for a published score, name its components here and Gate 1 will offer them as the
-            scope to work through first. Reading a document costs nothing — transcribing one into components
-            is a model call, so it happens with the run rather than on this screen.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="score-doc" className="text-xs font-semibold text-on-raised">
-            Read a paper or supplement ($0)
-          </label>
-          <input
-            id="score-doc"
-            data-testid="score-upload"
-            type="file"
-            accept=".pdf,.docx"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              setScoreDocError("");
-              setScoreDoc(null);
-              try {
-                const read = await extractScoreDocument(file);
-                setScoreDoc({ provenance: read.provenance, nChars: read.nChars });
-              } catch (err) {
-                // Problem, then next step — never a bare failure. A publisher PDF is often an access-check
-                // interstitial, so "no text came back" is a likely and unalarming outcome.
-                setScoreDocError(
-                  err instanceof Error
-                    ? `${err.message} You can still name the components yourself below.`
-                    : "The document could not be read. You can still name the components yourself below.",
-                );
-              }
-            }}
-            className="w-full text-xs text-on-raised file:mr-3 file:rounded file:border file:border-rule-control-on-raised file:bg-surface-raised file:px-2 file:py-1 file:text-xs file:font-semibold file:text-on-raised"
-          />
-          {scoreDoc && (
-            <p data-testid="score-doc-read" className="text-xs text-on-raised-muted">
-              Read {scoreDoc.nChars.toLocaleString()} characters from{" "}
-              <span className="font-mono text-on-raised">{scoreDoc.provenance}</span>. Nothing was charged.
-              Check the components below against the document — if its item table did not survive
-              extraction, name the items yourself.
-            </p>
-          )}
-          {scoreDocError && (
-            <p data-testid="score-doc-error" className="max-w-[68ch] text-xs text-on-raised">
-              {scoreDocError}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="score-components" className="text-xs font-semibold text-on-raised">
-            Components, one per line
-          </label>
-          <textarea
-            id="score-components"
-            data-testid="score-components"
-            rows={4}
-            value={scoreText}
-            onChange={(e) => setScoreText(e.target.value)}
-            placeholder={"Weak grip strength\nUnintentional weight loss\nSlow walking speed"}
-            className="w-full rounded border border-rule-control-on-raised bg-surface-raised px-3 py-2 text-sm text-on-raised placeholder:text-on-raised-muted"
-          />
-        </div>
-
-        {scoreComponents.length > 0 && (
-          /* THE DECLARED-SCORE SCOPE BAND. Its left rule is one of the four places the secondary-accent
-             register is allowed (UI-SPEC §5.4), in the contrast-corrected on-paper form — the raw dark-
-             surface form measures 2.39:1 here and would be the wrong one. */
-          <div
-            data-testid="score-scope-band"
-            data-components={String(scoreComponents.length)}
-            className="flex flex-col gap-2 border-l-2 border-rule-accent-2-on-raised bg-surface-inset px-4 py-3"
-          >
-            <p className="text-xs font-semibold text-on-inset">
-              {scoreComponents.length} declared {scoreComponents.length === 1 ? "component" : "components"} —
-              offered as the first scope at Gate 1
-            </p>
-            <ul className="flex flex-wrap gap-1.5">
-              {scoreComponents.map((c) => (
-                <li
-                  key={c}
-                  data-testid="score-component"
-                  title={c}
-                  className="max-w-[24rem] truncate rounded-pill border border-rule-on-inset px-2 py-0.5 text-xs text-on-inset"
-                >
-                  {c}
-                </li>
-              ))}
-            </ul>
-            {/* Rendered by FORM, not by a status colour: this is the absence of an outcome, not an outcome. */}
-            <p
-              data-testid="score-verdict"
-              data-verdict={scopeVerdict}
-              className="flex max-w-[68ch] items-start gap-2 text-xs text-on-inset-muted"
-            >
-              <span
-                aria-hidden="true"
-                className="mt-1 h-2 w-2 shrink-0 rounded-full border border-dashed border-rule-control-on-raised"
-              />
-              <span>
-                <span className="font-semibold text-on-inset">Feasibility: cannot be determined yet.</span>{" "}
-                {SCOPE_VERDICT_COPY[scopeVerdict]}
-              </span>
-            </p>
-          </div>
         )}
       </section>
 

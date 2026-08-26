@@ -6,6 +6,7 @@ import {
   normalizeHeader,
   participantLevelColumn,
 } from "@/lib/dictionary";
+import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
 import { PAUSED_RUN_FIXTURE } from "./routes";
 
 /**
@@ -599,48 +600,84 @@ test.describe("Setup — the honest estimate", () => {
   });
 });
 
-test.describe("Setup — the declared score", () => {
-  test("@setup a declared score's components become the scope offered at Gate 1", async ({ page }) => {
-    await page.goto(DRAFT);
-    await page.waitForLoadState("networkidle");
-    await page
-      .getByTestId("score-components")
-      .fill("Weak grip strength\nUnintentional weight loss\nSlow walking speed\n\n");
-    const band = page.getByTestId("score-scope-band");
-    await expect(band).toBeVisible();
-    await expect(band).toHaveAttribute("data-components", "3");
-    await expect(band).toContainText("Weak grip strength");
-    await expect(band).toContainText("Slow walking speed");
-    // Blank lines are not components.
-    await expect(page.getByTestId("score-component")).toHaveCount(3);
-    await expect(band).toContainText(/Gate 1/);
-  });
+test.describe("Setup — the declared score, now ABSENT", () => {
+  // ── the cut (08-13b Task 1) ────────────────────────────────────────────────────────────────────
+  //
+  // The declared-score panel MOVED to Gate 1 (08-15 AMENDMENT 2026-08-25): the run has happened
+  // there, so feasibility becomes computable instead of hard-coded `indeterminate`, and a paid
+  // `match_components` call is unsurprising on a screen that is already a spend decision.
+  //
+  // These three tests replace the three that asserted the panel's BEHAVIOUR. They are rewritten
+  // rather than deleted on purpose — a deleted test proves nothing, and the load-bearing claim here
+  // is the same one the 08-16 amendment made when the concept gate moved off Setup: "the decision
+  // moved to the gate" is only true if Setup actually STOPPED OFFERING IT. So the assertion is
+  // ABSENCE, not inertness: not a disabled control, not a collapsed stub, not a pointer to Gate 1
+  // dressed up as an affordance.
 
-  test("@setup a declared score's feasibility is indeterminate before a run, never negative", async ({
+  test("@setup Setup offers no score panel at all — every part of it is gone, not merely inert", async ({
     page,
   }) => {
     await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");
-    await page.getByTestId("score-components").fill("Weak grip strength\nUnintentional weight loss");
-    const verdict = page.getByTestId("score-verdict");
-    await expect(verdict).toBeVisible();
-    // No run has produced concepts yet, so whether the score can be computed is UNKNOWABLE here. Saying
-    // "not computable" would assert something we cannot know — the standing prohibition.
-    await expect(verdict).toHaveAttribute("data-verdict", "indeterminate");
-    await expect(verdict).not.toContainText(/not computable|infeasible/i);
-    await expect(verdict).toContainText(/cannot be determined|not yet/i);
+    // The section itself.
+    await expect(page.getByTestId("score-panel")).toHaveCount(0);
+    // And each part of it independently, so a partial removal that left the band or the verdict
+    // behind cannot pass on the section's testid alone.
+    await expect(page.getByTestId("score-components")).toHaveCount(0);
+    await expect(page.getByTestId("score-upload")).toHaveCount(0);
+    await expect(page.getByTestId("score-scope-band")).toHaveCount(0);
+    await expect(page.getByTestId("score-verdict")).toHaveCount(0);
+    await expect(page.getByTestId("score-component")).toHaveCount(0);
+    await expect(page.getByTestId("score-doc-read")).toHaveCount(0);
+    await expect(page.getByTestId("score-doc-error")).toHaveCount(0);
+    // The heading copy is gone too — a heading with no control under it is the collapsed stub this
+    // cut is meant to avoid.
+    await expect(page.locator("body")).not.toContainText(/score definition/i);
   });
 
-  test("@setup reading a score document costs nothing, and says so before you upload one", async ({
+  test("@setup Setup leaves behind no score control, disabled or otherwise, and does not advertise the move", async ({
     page,
   }) => {
     await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");
-    const panel = page.getByTestId("score-panel");
-    await expect(panel).toBeVisible();
-    await expect(panel).toContainText(/costs nothing|\$0|free/i);
-    // The document field exists and needs no run — that is the whole point of the job-independent route.
-    await expect(page.getByTestId("score-upload")).toHaveCount(1);
+    // The two controls the panel owned, addressed by SHAPE rather than by testid — so stripping the
+    // testid off a leftover control (or disabling it) cannot make this pass. The components box was
+    // Setup's ONLY textarea and the document field was its ONLY document-accepting file input; the
+    // dictionary dropzone's own input accepts csv/tsv/xlsx, never pdf.
+    await expect(page.locator("textarea")).toHaveCount(0);
+    await expect(page.locator('input[type="file"][accept*="pdf"]')).toHaveCount(0);
+    // And by accessible name, which is what a `disabled` leftover would still answer to: a disabled
+    // input stays in the accessibility tree.
+    await expect(page.getByRole("textbox", { name: /components/i })).toHaveCount(0);
+    await expect(page.getByLabel(/components, one per line/i)).toHaveCount(0);
+    // No signpost either. Telling the reviewer at Setup that the score decision lives at Gate 1 would
+    // re-introduce the ask-at-minimum-information pattern in prose form: Setup's job is dictionaries,
+    // mapping, run configuration and the estimate — nothing about a score.
+    await expect(page.locator("body")).not.toContainText(/declared score/i);
+    await expect(page.locator("body")).not.toContainText(/name its components|components, one per line/i);
+    await expect(page.locator("body")).not.toContainText(/read a paper or supplement/i);
+  });
+
+  test("@setup the score CAPABILITY survives the cut — Gate 1 is the consumer now", () => {
+    // T-08b-1: the failure mode this cut could have had is deleting `lib/score-scope.ts` alongside
+    // its Setup consumer, which would break 08-15 Task 4 silently and surface much later as a
+    // missing module on Gate 1. This plan removed a CONSUMER, not the capability — asserted here as
+    // a plain function test so the claim is checked without driving a page.
+    expect(typeof declaredComponents).toBe("function");
+    expect(declaredComponents("Weak grip strength\n\nSlow walking speed\nWeak grip strength")).toEqual([
+      "Weak grip strength",
+      "Slow walking speed",
+    ]);
+    expect(typeof SCOPE_VERDICT_COPY).toBe("object");
+    // All four states still named, and the indeterminate copy still refuses the negative claim.
+    expect(Object.keys(SCOPE_VERDICT_COPY).sort()).toEqual([
+      "full",
+      "indeterminate",
+      "infeasible",
+      "partial",
+    ]);
+    expect(SCOPE_VERDICT_COPY.indeterminate).toMatch(/cannot be determined/i);
+    expect(SCOPE_VERDICT_COPY.indeterminate).not.toMatch(/not computable/i);
   });
 });
 
