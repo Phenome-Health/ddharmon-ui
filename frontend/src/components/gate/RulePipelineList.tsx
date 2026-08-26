@@ -198,8 +198,16 @@ export function RulePipelineList({ report }: { report: PreprocessReport }) {
         </p>
       )}
 
-      {/* Scrolls inside the card. Many rules across many cohorts must not grow the page. */}
-      <div data-testid="rule-pipeline-scroll" className="max-h-[32rem] overflow-y-auto">
+      {/* SCROLLS INSIDE THE CARD, but sized so the WHOLE pipeline fits without scrolling.
+          The cap started at 32rem, which hid the eighth rule ("Collapsed whitespace runs") below the
+          fold of the card — found on the regenerated visual baseline. A rule hidden by a scroll cap is
+          indistinguishable from a rule that is not in the pipeline, which is the exact confusion this
+          list exists to prevent, and it defeated the no-hidden-rows rule from the other direction: the
+          zero-count rows were all visible and the LAST row was not.
+          The pipeline is a fixed eight rules and one cohort shows at a time (that is what the tabs are
+          for), so the overflow here is a backstop for a longer future pipeline rather than the normal
+          case — which is what keeps the page from growing without hiding anything today. */}
+      <div data-testid="rule-pipeline-scroll" className="max-h-[48rem] overflow-y-auto">
         <Accordion type="multiple" className="flex flex-col">
           {report.rules.map((rule) => (
             <AccordionItem

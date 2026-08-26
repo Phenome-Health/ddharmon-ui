@@ -792,3 +792,192 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
     expect(raw).toContain("descriptionsChanged");
   });
 });
+
+test.describe("Gate 0 — stopping an in-flight run from the gate chrome", () => {
+  /** Put the fixture into a genuinely in-flight state: a worker is running and money is accruing. */
+  async function inFlight(page: Page, over: Record<string, unknown> = {}) {
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: "splitting", phase: "splitting", stopping: false }, over);
+      // A priced run, so the confirmation can state the committed-versus-avoided split.
+      const config = p.config as Record<string, unknown>;
+      config.est_fields = 1000;
+      config.est_cohorts = 5;
+      config.run_mode = "batch";
+      delete config.demo;
+    });
+  }
+
+  test("@gate0 an in-flight run can be stopped from the gate chrome, with BOTH modes reachable", async ({ page }) => {
+    await inFlight(page);
+    await page.goto(GATE0);
+
+    const stop = page.getByRole("button", { name: /stop/i }).first();
+    await expect(stop).toBeVisible();
+    await stop.click();
+
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    // Both ways out, behind ONE confirmation — keeping the production wording.
+    await expect(dialog.getByRole("button", { name: /stop & keep results/i })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /discard now/i })).toBeVisible();
+    // ...and a way to not stop at all.
+    await expect(dialog.getByRole("button", { name: /keep running/i })).toBeVisible();
+  });
+
+  test("@gate0 the confirmation names the committed-versus-avoided cost split when the run is priced", async ({ page }) => {
+    await inFlight(page);
+    await page.goto(GATE0);
+    await page.getByRole("button", { name: /stop/i }).first().click();
+
+    const words = (await page.getByRole("alertdialog").innerText()).replace(/\s+/g, " ");
+    // Stopping is a decision made against money, not in the dark.
+    expect(words).toMatch(/already committed/i);
+    expect(words).toMatch(/avoids/i);
+    expect(words).toMatch(/\$\d/);
+  });
+
+  test("@gate0 no stop action renders for a finished, cancelled or PAUSED run, and that is not an error", async ({ page }) => {
+    // A run parked at a gate is non-terminal but has NO worker — a pause is an exit, so nothing is
+    // spending and a stop control there would claim to save money that is not being spent.
+    for (const status of ["complete", "cancelled", "awaiting_review"]) {
+      await page.unrouteAll();
+      await withPayload(page, (p) => {
+        Object.assign(p, { status, phase: status });
+        delete (p.config as Record<string, unknown>).demo;
+      });
+      await page.goto(GATE0);
+      await expect(page.getByTestId("cohort-panel")).toBeVisible();
+      expect(await page.getByRole("button", { name: /^stop/i }).count(), `status ${status}`).toBe(0);
+      // Absence, not a disabled control and not an error notice.
+      expect(await page.getByTestId("stop-unavailable").count(), `status ${status}`).toBe(0);
+    }
+  });
+
+  test("@gate0 the demo path degrades to an honest not-available, never a dead control", async ({ page }) => {
+    await inFlight(page, {});
+    // ...and then mark it the shared demo, whose replay has no backend to cancel.
+    await page.unrouteAll();
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: "splitting", phase: "splitting" });
+      (p.config as Record<string, unknown>).demo = true;
+    });
+    await page.goto(GATE0);
+
+    const tile = page.getByTestId("stop-unavailable");
+    await expect(tile).toBeVisible();
+    const words = (await tile.innerText()).replace(/\s+/g, " ");
+    expect(words.length).toBeGreaterThan(30);
+    // A control that looks live and does nothing is worse than a stated absence.
+    expect(await page.getByRole("button", { name: /^stop/i }).count()).toBe(0);
+  });
+
+  test("@gate0 stopping leaves the reviewer on the gate they were on", async ({ page }) => {
+    await inFlight(page);
+    await page.goto(GATE0);
+    await page.getByRole("button", { name: /stop/i }).first().click();
+    await page.getByRole("button", { name: /stop & keep results/i }).click();
+
+    // The run's state reflects the stop; the reviewer is not navigated away.
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe(GATE0);
+    await expect(page.getByTestId("cohort-panel")).toBeVisible();
+  });
+
+  test("@gate0 the stop action is wired ONCE, in the shell, so all six gates inherit it", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    const dirs = [resolve(here, "../../src/components/gate"), resolve(here, "../../src/pages/run")];
+    const hits: string[] = [];
+    for (const dir of dirs) {
+      for (const f of readdirSync(dir).filter((x) => x.endsWith(".tsx"))) {
+        const src = readFileSync(resolve(dir, f), "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, " ")
+          .replace(/^\s*\/\/.*$/gm, " ");
+        // Count JSX usages, not the import line — an import is not a placement.
+        for (const _ of src.matchAll(/<StopRunAction\b/g)) hits.push(f);
+      }
+    }
+    // ONE placement across the whole staged-review surface. The next five gates inherit it rather than
+    // each re-adding it, which is how two implementations of the same control end up in the tree.
+    expect(hits).toEqual(["GateShell.tsx"]);
+  });
+
+  test("@gate0 stop-run-action.tsx was CONSUMED, not rewritten", async () => {
+    const { execSync } = await import("node:child_process");
+    // It is already in production use on the dashboard and the runs list. A second implementation of a
+    // control that spends or saves real money is the thing this lift exists to avoid.
+    execSync("git diff --exit-code -- src/components/stop-run-action.tsx", {
+      cwd: (await import("node:path")).resolve(
+        (await import("node:path")).dirname((await import("node:url")).fileURLToPath(import.meta.url)),
+        "../..",
+      ),
+    });
+  });
+});
+
+test.describe("Gate 0 — the card holds the whole pipeline without hiding a rule", () => {
+  test("@gate0 every rule row is inside the scroller's visible box, not below its fold", async ({ page }) => {
+    await page.goto(GATE0);
+    const scroller = page.getByTestId("rule-pipeline-scroll");
+    await expect(scroller).toBeVisible();
+
+    // The regression this catches: a scroll cap that hides the LAST rule. Every zero-count row was
+    // visible and the eighth row was not, which is the same misinformation as hiding a zero — a rule
+    // below the fold cannot be told from a rule not in the pipeline.
+    const box = await scroller.evaluate((el) => ({
+      client: el.clientHeight,
+      scroll: el.scrollHeight,
+      overflow: getComputedStyle(el).overflowY,
+    }));
+    expect(box.overflow).toBe("auto");
+    expect(box.scroll, "the pipeline must fit — no rule below the fold").toBeLessThanOrEqual(box.client);
+
+    // All eight rules of the fixed pipeline are rendered, each with a real box, and every one of them
+    // inside the scroller's own content box. NOT `toBeInViewport`: the PAGE scrolls at 1440x900 and that
+    // is fine — the defect is a row clipped away by the CARD, which is what this measures.
+    const rows = page.getByTestId("rule-row");
+    await expect(rows).toHaveCount(8);
+    const clipped = await scroller.evaluate((el) => {
+      const top = el.scrollTop;
+      const bottom = top + el.clientHeight;
+      return Array.from(el.querySelectorAll<HTMLElement>('[data-testid="rule-row"]'))
+        .filter((r) => {
+          const rTop = r.offsetTop - (el as HTMLElement).offsetTop;
+          return r.offsetHeight === 0 || rTop < top || rTop + r.offsetHeight > bottom + 1;
+        })
+        .map((r) => r.getAttribute("data-rule"));
+    });
+    expect(clipped, "no rule may be clipped away by the card").toEqual([]);
+  });
+
+  test("@gate0 the card still scrolls rather than growing the page when the pipeline is long", async ({ page }) => {
+    await withPayload(page, (p) => {
+      const r = reportsOf(p)[0];
+      // A hypothetical longer pipeline. The backstop must engage rather than the page growing.
+      r.rules = Array.from({ length: 40 }, (_, i) => ({
+        ...r.rules[0],
+        rule: `synthetic_rule_${i}`,
+        label: `A synthetic preparation rule number ${i}`,
+        outcome: "no_change" as const,
+        nChanged: 0,
+        detail: "",
+        error: "",
+      }));
+      r.nChangedVariables = 0;
+      r.diff = [];
+    });
+    await page.goto(GATE0);
+    const box = await page.getByTestId("rule-pipeline-scroll").evaluate((el) => ({
+      client: el.clientHeight,
+      scroll: el.scrollHeight,
+      overflow: getComputedStyle(el).overflowY,
+    }));
+    expect(box.overflow).toBe("auto");
+    expect(box.scroll).toBeGreaterThan(box.client);
+    // ...and no row is DROPPED to achieve it. Scrolled-past is not hidden; unrendered is.
+    await expect(page.getByTestId("rule-row")).toHaveCount(40);
+  });
+});

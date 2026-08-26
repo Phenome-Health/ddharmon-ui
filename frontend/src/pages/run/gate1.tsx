@@ -63,7 +63,7 @@ function ConceptGroupRow({ group }: { group: ConceptGroup }) {
 
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting } = useHarmonizeStream(jobId, true, true);
+  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
   const [resuming, setResuming] = useState(false);
 
   const groups: ConceptGroup[] = jobState?.result?.conceptGroups ?? [];
@@ -93,6 +93,10 @@ export default function Gate1Page() {
       rail={railFor("gate1", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
+      // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
+      // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
+      job={jobState}
+      onStop={cancel}
       resumed={resumed}
     >
       {reconnecting && (

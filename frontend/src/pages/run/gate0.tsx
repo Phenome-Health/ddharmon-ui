@@ -155,7 +155,7 @@ function RowToVector({ report }: { report: PreprocessReport }) {
 
 export default function Gate0Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting } = useHarmonizeStream(jobId, true, true);
+  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
   const [resuming, setResuming] = useState(false);
 
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
@@ -218,6 +218,11 @@ export default function Gate0Page() {
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       resumed={jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate0"}
+      // The stop control lives in the shell, so this is the whole of Gate 0's part in it: hand over the
+      // run and the same `cancel(mode)` path the dashboard and the runs list already use. The other five
+      // gates pass the same two props and inherit the control.
+      job={jobState}
+      onStop={cancel}
     >
       {reconnecting && (
         <p role="status" data-testid="stream-reconnecting" className="text-sm font-semibold text-status-warn">

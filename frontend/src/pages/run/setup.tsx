@@ -288,7 +288,7 @@ const hasMeaning = (roles: Record<string, string>): boolean => MEANING_ROLES.som
 export default function SetupPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const [, navigate] = useLocation();
-  const { jobState } = useHarmonizeStream(jobId, true, true);
+  const { jobState, cancel } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const [dicts, setDicts] = useState<SetupDict[]>([]);
@@ -667,6 +667,10 @@ export default function SetupPage() {
       rail={railFor("setup", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
+      // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
+      // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
+      job={jobState}
+      onStop={cancel}
     >
       {/* TWO COLUMNS, following the shipped New Run form (08-13 review).
           The single-column stack put the price and the start control ~3,000px below the fold, behind five

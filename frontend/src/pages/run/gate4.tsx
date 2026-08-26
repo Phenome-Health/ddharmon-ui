@@ -15,7 +15,7 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
  */
 export default function Gate4Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState } = useHarmonizeStream(jobId, true, true);
+  const { jobState, cancel } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   return (
@@ -25,6 +25,10 @@ export default function Gate4Page() {
       rail={railFor("gate4", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
+      // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
+      // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
+      job={jobState}
+      onStop={cancel}
       resumed={jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate4"}
     >
       {/* An honest "not available" tile, not an empty state: the difference between "this screen has

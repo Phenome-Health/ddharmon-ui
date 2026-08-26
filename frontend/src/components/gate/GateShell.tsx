@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatUsd, type GatePosition } from "@/types";
+import { formatUsd, type GatePosition, type JobResult } from "@/types";
 import { PhMark } from "@/components/ph-logo";
+import { StopRunAction } from "@/components/stop-run-action";
 import { GATE_LABELS, GATE_SEQUENCE, GateRail, type GateRailItem } from "@/components/gate/GateRail";
 import { HowToPanel } from "@/components/gate/HowToPanel";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
+import { stopCostSplit } from "@/lib/estimate";
 
 /**
  * The universal chrome every gate screen renders inside (UI-SPEC §7.1). One file, so no later screen plan
@@ -22,6 +25,19 @@ import { ResumeBanner } from "@/components/gate/ResumeBanner";
  *  4. **How-to panel** — on the ground, above the working surface. See `HowToPanel`.
  *  5. **Banner slots** — the sandbox banner (passed in by the page, since only it knows whether the run is
  *     the shared demo) and the resume banner (rendered here from `resumed`).
+ *
+ * PLUS THE STOP CONTROL, and it is HERE rather than on a page on purpose (08-14 Task 4). Before this,
+ * no screen under `pages/run/` or `components/gate/` offered a cancel: with a run in flight the only way
+ * out of a gate was closing the tab while paid stages kept spending. Gate 0 is the first screen where a
+ * reviewer sees a run going wrong, which is why the gap surfaced there — but the fix belongs one level up,
+ * so ONE placement serves all six gates and the next five inherit it rather than each re-adding it. A gate
+ * test asserts that single call site, because two implementations of a control that spends or saves real
+ * money is the outcome this lift exists to avoid.
+ *
+ * `StopRunAction` is CONSUMED, NOT REBUILT. It is already in production on the dashboard and the runs
+ * list, and it already offers both modes behind one confirmation with the committed-versus-avoided cost
+ * split — which is exactly the framing the staged gates need. `AppShell` placing `ActiveRunsIndicator`
+ * globally is the precedent for shell-level run chrome.
  *
  * NOTHING INTERNAL MAY REACH THIS SURFACE. The guest demo walk makes every gate screen unauthenticated, so
  * no internal research number, no internal cohort specific and no source path may appear in the chrome or
@@ -53,7 +69,35 @@ export interface GateShellProps {
   resumed?: boolean;
   /** The sandbox/demo banner, when the page's run is the shared demo (R9). */
   sandboxBanner?: ReactNode;
+  /**
+   * The run this gate is showing, or null/undefined when there is none. Read ONLY to decide whether a
+   * stop is offered and how it is priced — the shell does not subscribe to the stream itself, because a
+   * second subscription beside the page's own is two sources for one run's state.
+   */
+  job?: JobResult | null;
+  /**
+   * Perform the stop. Pages pass the stream hook's `cancel`, which is the same path the dashboard and the
+   * runs list already use. Omit it and no stop is offered — a control with nothing behind it is worse
+   * than a stated absence.
+   */
+  onStop?: (mode: "keep" | "discard") => Promise<void> | void;
   children: ReactNode;
+}
+
+/**
+ * Whether this run has a worker burning money right now.
+ *
+ * `awaiting_review` IS EXCLUDED, and that is the subtle one: it is non-terminal, so a naive
+ * "not finished => stoppable" test would offer a stop there. But a pause is an EXIT (08 D-01) — the
+ * worker is gone and nothing is accruing — so a stop control on a parked run would offer to save money
+ * that is not being spent, which is a false claim about the run rather than a harmless extra button.
+ *
+ * `pending` IS included: the worker has not started, so stopping avoids the whole cost.
+ */
+const NOT_IN_FLIGHT = new Set(["complete", "error", "cancelled", "awaiting_review"]);
+
+function isInFlight(job: JobResult | null | undefined): boolean {
+  return !!job && !NOT_IN_FLIGHT.has(job.status);
 }
 
 export function GateShell({
@@ -65,8 +109,14 @@ export function GateShell({
   costSoFar = 0,
   resumed = false,
   sandboxBanner,
+  job,
+  onStop,
   children,
 }: GateShellProps) {
+  const inFlight = isInFlight(job);
+  // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
+  // would do nothing. Say so instead.
+  const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
   return (
     <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-8">
       {/* (1) The gate app bar: the tagline and the run chip. The lockup and wordmark come from AppShell. */}
@@ -77,6 +127,7 @@ export function GateShell({
             Harmonize data dictionaries against common data elements
           </span>
         </div>
+        <div className="flex min-w-0 shrink items-center gap-2">
         {/* No run in progress -> no chip. An empty chip is worse than none: it reads as a run with no name. */}
         {runName && (
           <span
@@ -90,6 +141,36 @@ export function GateShell({
             </span>
           </span>
         )}
+
+        {/* THE STOP CONTROL. Offered only while a worker is actually running: absent — not disabled, not
+            an error — when there is nothing to stop, because a dead control implies the run is in a state
+            it is not in. Once a stop is acknowledged the run reports `stopping` until it reaches its
+            checkpoint, so the control is swapped for an indicator and cannot be re-fired. */}
+        {inFlight && isDemo && (
+          <span
+            data-testid="stop-unavailable"
+            className="shrink-0 rounded-pill border border-dashed border-rule-on-field px-3 py-1 text-xs text-on-field-muted"
+          >
+            Stopping is not available on the shared sample — it replays in your browser and spends nothing,
+            so there is nothing to stop. Start your own run to get the control.
+          </span>
+        )}
+        {inFlight && !isDemo && onStop && job && (
+          job.stopping ? (
+            <span className="flex shrink-0 items-center gap-1.5 text-xs text-on-field-muted">
+              <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> Stopping&hellip;
+            </span>
+          ) : (
+            <StopRunAction
+              labeled
+              displayName={job.displayName}
+              costNote={stopCostSplit(job.config, job.phase)}
+              onKeep={() => onStop("keep")}
+              onDiscard={() => onStop("discard")}
+            />
+          )
+        )}
+        </div>
       </div>
 
       {sandboxBanner}
