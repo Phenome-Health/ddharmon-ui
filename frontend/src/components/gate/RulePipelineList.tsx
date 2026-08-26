@@ -57,14 +57,31 @@ const CLAIM: Record<PreprocessRule["outcome"], string> = {
 /**
  * One before/after pair.
  *
- * CLAMPED WITH THE FULL VALUE AVAILABLE. A dictionary description can run to paragraphs, and an
- * unclamped one reflows the whole list; the complete string stays on `title`, so nothing is lost. Both
- * halves are labelled, because an "after" with no "before" is not a worked example.
+ * SHOWN IN FULL (review 2026-08-26). This used to be `line-clamp-3` with the complete string only on
+ * `title`. Two things were wrong with that. The visible cut landed mid-word — "…at recruitment, but in
+ * som" — which reads as a broken string rather than an abbreviated one; and the real cause was not the
+ * clamp at all but a hard `[:80]` in core's `preprocessing_diff`, so the full value was never on `title`
+ * either. A worked example that cannot be read is not a worked example, and the row count is already
+ * capped (`EXAMPLE_CAP`), which is what bounds the page. Both halves stay labelled: an "after" with no
+ * "before" is not a worked example.
  */
 function Example({ row }: { row: PreprocessDiff }) {
   const nameMoved = row.nameChanged || row.embedNameSuppressed;
   const before = nameMoved && !row.descChanged ? row.rawVariableName : row.rawDescription;
   const after = nameMoved && !row.descChanged ? row.variableName : row.cleanedDescription;
+  // THE STRING THE GROUPING STAGE ACTUALLY CONSUMES (review 2026-08-26).
+  //
+  // The pair above is the description (or the name). For the rules whose whole effect is on the EMBEDDING
+  // text that pair cannot show the change: name suppression leaves the description byte-identical, so the
+  // screen reported a change while displaying none. This second pair is the embedding text, before and
+  // after, composed by core on the raw strings — the only honest view of those rules.
+  //
+  // Shown when it differs from the description pair OR when the rule is embedding-affecting, so the
+  // reviewer is never left comparing two identical strings with no explanation. When the two embedding
+  // strings are themselves equal that is rendered as a FINDING — for a field with a description the name
+  // was never in the embedding text, so suppressing it genuinely changes nothing.
+  const embedChanged = row.rawEmbedText !== row.embedText;
+  const showEmbedPair = embedChanged || row.embedNameSuppressed;
   return (
     <li data-testid="rule-example" className="flex flex-col gap-1 border-t border-rule-quiet-on-raised pt-3 first:border-t-0 first:pt-0">
       <p className="font-mono text-xs text-on-raised-muted">{row.variableName}</p>
@@ -72,22 +89,55 @@ function Example({ row }: { row: PreprocessDiff }) {
         <div className="flex min-w-0 flex-col gap-1">
           <p className="text-xs font-semibold text-on-raised-muted">Before</p>
           {/* Escaped text child. The clamp is a display bound, not a truncation of the data. */}
-          <p data-testid="example-before" title={before} className="line-clamp-3 text-xs text-on-raised">
+          <p data-testid="example-before" className="whitespace-pre-wrap break-words text-xs text-on-raised">
             {before || "(empty)"}
           </p>
         </div>
         <div className="flex min-w-0 flex-col gap-1">
           <p className="text-xs font-semibold text-on-raised-muted">After</p>
-          <p data-testid="example-after" title={after} className="line-clamp-3 text-xs text-on-raised">
+          <p data-testid="example-after" className="whitespace-pre-wrap break-words text-xs text-on-raised">
             {after || "(cleared)"}
           </p>
         </div>
       </div>
-      {row.embedNameSuppressed && (
-        <p className="text-xs text-on-raised-muted">
-          The variable name was dropped from the embedding text because the description already contained
-          it — neither string changed.
-        </p>
+      {showEmbedPair && (
+        <div
+          data-testid="example-embed-pair"
+          data-embed-changed={String(embedChanged)}
+          className="mt-1 flex flex-col gap-1 border-l-2 border-rule-quiet-on-raised pl-3"
+        >
+          <p className="text-xs font-semibold text-on-raised-muted">
+            What the grouping stage reads
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="text-xs text-on-raised-muted">Before</p>
+              <p
+                data-testid="example-embed-before"
+                className="whitespace-pre-wrap break-words text-xs text-on-raised"
+              >
+                {row.rawEmbedText || "(nothing)"}
+              </p>
+            </div>
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="text-xs text-on-raised-muted">After</p>
+              <p
+                data-testid="example-embed-after"
+                className="whitespace-pre-wrap break-words text-xs text-on-raised"
+              >
+                {row.embedText || "(nothing)"}
+              </p>
+            </div>
+          </div>
+          {!embedChanged && (
+            <p className="text-xs text-on-raised-muted">
+              Unchanged. The variable name was dropped from the embedding text, but this variable has a
+              description — and a description is read on its own, so the name was never in this string to
+              begin with. The suppression only changes what is read when a variable has no description or
+              question left.
+            </p>
+          )}
+        </div>
       )}
     </li>
   );

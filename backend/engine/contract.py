@@ -630,6 +630,15 @@ class UIPreprocessDiff(TypedDict):
     #: Empty string means the variable embeds NOTHING and reaches no concept group (see
     #: ``nNothingToEmbed``) — an honest empty, not a missing value.
     embedText: str
+    #: The embedding text this variable WOULD have produced BEFORE preprocessing touched it — core's own
+    #: composition on the raw strings (``preprocessing_diff``'s ``raw_embed_text``), never re-derived here.
+    #:
+    #: Carried because the description pair cannot show what the embedding-affecting rules did. For the
+    #: name-suppression rule the description is byte-identical on both sides, so a description-only
+    #: before/after reports a change while showing none. Pairing this with ``embedText`` shows the string
+    #: the grouping stage actually consumes, and when the two are equal that is a TRUE finding about the
+    #: rule rather than a rendering artifact.
+    rawEmbedText: str
     nameChanged: bool
     descChanged: bool
     embedNameSuppressed: bool  # the variable name was dropped from the embedding text (it echoed the description)

@@ -358,6 +358,15 @@ export interface PreprocessDiff {
    * `""` means this variable embeds nothing and reaches no concept group. An honest empty, not a gap.
    */
   embedText: string;
+  /**
+   * The embedding text this variable WOULD have produced before preprocessing touched it.
+   *
+   * Composed by core on the raw strings and carried on the wire — never re-derived here. Paired with
+   * `embedText` this is the only honest before/after for the rules whose whole effect is on the embedding
+   * text: the description pair is byte-identical for name suppression, so showing it reports a change
+   * while displaying none. Equal values are a TRUE finding about the rule, not a rendering bug.
+   */
+  rawEmbedText: string;
   nameChanged: boolean;
   descChanged: boolean;
   embedNameSuppressed: boolean;

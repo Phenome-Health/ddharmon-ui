@@ -783,6 +783,10 @@ def _preprocess_diff(dd: Any) -> tuple[list[UIPreprocessDiff], int]:
             "rawDescription": str(r.get("raw_description", "")),
             "cleanedDescription": str(r.get("cleaned_description", "")),
             "embedText": _embed_text(dd, str(r.get("variable_name", ""))),
+            # From core's own diff — the raw-value composition. Not re-derived here for the same reason
+            # `embedText` is not: a plausible-looking wrong string on the screen that explains grouping is
+            # worse than showing nothing.
+            "rawEmbedText": str(r.get("raw_embed_text", "")),
             "nameChanged": bool(r.get("name_changed")),
             "descChanged": bool(r.get("desc_changed")),
             "embedNameSuppressed": bool(r.get("embed_name_suppressed")),

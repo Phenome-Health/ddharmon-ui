@@ -405,7 +405,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
   });
 
-  test("@gate0 a long example is clamped, the full value is reachable, and the list does not reflow", async ({ page }) => {
+  test("@gate0 a long example is shown IN FULL — the clamp and the 80-char cap are both gone", async ({ page }) => {
     const LONG = `The participant was asked the following at the study visit: ${"a very long clause about the instrument ".repeat(30)}`;
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
@@ -432,16 +432,20 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     const before = fired.getByTestId("example-before").first();
     await expect(before).toBeVisible();
 
-    // Clamped: the rendered box is far shorter than the text would be unclamped.
-    const clamped = await before.evaluate((el) => ({
+    // SHOWN IN FULL (review 2026-08-26). This used to assert the opposite — that the box was clamped and
+    // the whole string lived on `title`. The reviewer's verdict was that the user must see the whole text,
+    // and the clamp was only half the problem: core also truncated at 80 characters, so `title` never held
+    // the full value either. Now the element renders its entire content and nothing is hidden.
+    const box = await before.evaluate((el) => ({
       shown: el.clientHeight,
       full: el.scrollHeight,
       clamp: getComputedStyle(el).webkitLineClamp,
     }));
-    expect(clamped.clamp).not.toBe("none");
-    expect(clamped.full).toBeGreaterThan(clamped.shown);
-    // The full value is available rather than lost.
-    await expect(before).toHaveAttribute("title", LONG);
+    expect(box.clamp).toBe("none");
+    // Nothing is scrolled out of view inside the element.
+    expect(box.full).toBeLessThanOrEqual(box.shown + 1);
+    // And the rendered text IS the whole string, not a prefix of it.
+    await expect(before).toHaveText(LONG);
 
     // The card scrolls; the page does not grow past the design canvas because of it.
     const scroller = page.getByTestId("rule-pipeline-scroll");
@@ -564,15 +568,43 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
 
   test("@gate0 the row-to-vector panel shows the exact grouping input, not the cleaned description", async ({ page }) => {
     await page.goto(GATE0);
-    const panel = page.getByTestId("row-to-vector");
-    await expect(panel).toBeVisible();
 
     // Read the payload the screen is rendering, and assert the panel shows THAT string.
     const payload = await fixturePayload(page);
-    const report = reportsOf(payload)[0];
-    const row = report.diff.find((d) => d.embedText && d.embedText !== d.cleanedDescription);
+    // SEARCH EVERY COHORT, not just the first.
+    //
+    // This used to read `reportsOf(payload)[0]` and pass — but for the wrong reason. Until 2026-08-26
+    // core's `preprocessing_diff` truncated `cleanedDescription` at 80 characters while `embedText` was
+    // carried whole, so the two differed for almost every long-description row, artificially. With the
+    // truncation removed they legitimately COINCIDE wherever the embedding text simply IS the
+    // description — which is most rows, and correct. The genuine divergence is a variable with a real
+    // question_text (the embedding text prefers it) or an opaque name; in this fixture that is CLSA, e.g.
+    // `CR2_GNDR_TRM` whose description is "CR2 GNDR TRM" while the model reads "Is the person who
+    // provided the most assistance male or female?". That is the near-miss the panel exists for.
+    const reports = reportsOf(payload);
+    let row: (typeof reports)[number]["diff"][number] | undefined;
+    let report: (typeof reports)[number] | undefined;
+    for (const r of reports) {
+      const hit = r.diff.find((d) => d.embedText && d.embedText !== d.cleanedDescription);
+      if (hit) {
+        row = hit;
+        report = r;
+        break;
+      }
+    }
     expect(row, "the fixture must carry a variable whose embedding text differs from its description").toBeTruthy();
+    expect(report).toBeTruthy();
 
+    // THE COHORTS ARE TABS, so only the active one's content is mounted. Two mistakes to avoid, both made
+    // while writing this: a global `getByTestId("row-to-vector")` resolves to whichever cohort happens to
+    // be active and then waits forever for a variable belonging to another; and the tab TRIGGERS live in
+    // the tab list, not inside `cohort-panel`, so scoping the trigger lookup to the panel finds nothing.
+    // Activate the owning cohort first, then scope the panel by `data-cohort`.
+    await page.getByRole("tab", { name: report!.cohort, exact: false }).first().click();
+    const panel = page
+      .locator(`[data-testid="cohort-panel"][data-cohort="${report!.cohort}"]`)
+      .getByTestId("row-to-vector");
+    await expect(panel).toBeVisible();
     await panel.getByRole("combobox").selectOption(row!.variableName);
     const shown = panel.getByTestId("embed-text");
     await expect(shown).toHaveText(row!.embedText);
@@ -981,3 +1013,72 @@ test.describe("Gate 0 — the card holds the whole pipeline without hiding a rul
     await expect(page.getByTestId("rule-row")).toHaveCount(40);
   });
 });
+
+// ── the review fixes of 2026-08-26 ────────────────────────────────────────────────────────────────
+//
+// Two findings from Bhargav's hands-on review, both about the worked examples:
+//   1. the before/after text was cut mid-word — "…at recruitment, but in som"
+//   2. for the rules whose whole effect is on the EMBEDDING text, the pair on screen was the
+//      DESCRIPTION, which for name suppression is byte-identical on both sides
+//
+// (1) was NOT the CSS clamp it looked like: core's `preprocessing_diff` carried a hard `[:80]`, so the
+// full string never reached the browser at all. (2) needed a new `rawEmbedText` on the wire, composed by
+// core on the raw strings — deriving it in the UI is forbidden, because a plausible-looking wrong string
+// on the one screen that explains grouping is worse than showing nothing.
+test.describe("Gate 0 — the worked examples show the whole string, and the right pair", () => {
+  test("@gate0 a before/after example is never cut mid-word at 80 characters", async ({ page }) => {
+    await page.goto(GATE0);
+    await page.waitForLoadState("networkidle");
+    const fired = page.locator('[data-testid="rule-row"][data-outcome="changed"]').first();
+    await fired.click();
+
+    // The old cap produced strings of EXACTLY 80 characters. Assert none of the rendered halves sits on
+    // that boundary — a survivor of the cap would.
+    const lens = await page.getByTestId("example-before").evaluateAll((els) =>
+      els.map((e) => (e.textContent ?? "").trim().length),
+    );
+    expect(lens.length).toBeGreaterThan(0);
+    expect(lens).not.toContain(80);
+
+    // And no half is clamped by CSS either — the fix has to hold at both layers or the data is still
+    // unreadable on screen.
+    const clamped = await page.getByTestId("example-before").evaluateAll((els) =>
+      els.filter((e) => getComputedStyle(e).webkitLineClamp !== "none").length,
+    );
+    expect(clamped).toBe(0);
+  });
+
+  test("@gate0 an embedding-affecting rule shows the string the grouping stage reads, before and after", async ({
+    page,
+  }) => {
+    await page.goto(GATE0);
+    await page.waitForLoadState("networkidle");
+
+    // Expand every fired rule so whichever one carries the embedding-affecting rows is open.
+    const fired = page.locator('[data-testid="rule-row"][data-outcome="changed"]');
+    for (let i = 0; i < (await fired.count()); i++) await fired.nth(i).click();
+
+    const pairs = page.getByTestId("example-embed-pair");
+    expect(await pairs.count()).toBeGreaterThan(0);
+
+    const first = pairs.first();
+    await expect(first).toContainText(/grouping stage reads/i);
+    await expect(first.getByTestId("example-embed-before")).toBeVisible();
+    await expect(first.getByTestId("example-embed-after")).toBeVisible();
+
+    // THE HONEST-EQUALITY CASE. Where the two are equal the panel must SAY so and say why, rather than
+    // showing two identical strings under "Before"/"After" and leaving the reviewer to wonder. This is
+    // the true behaviour of name suppression on a variable that has a description: the name was never in
+    // the embedding text, so dropping it changes nothing.
+    const unchanged = page.locator('[data-testid="example-embed-pair"][data-embed-changed="false"]');
+    if ((await unchanged.count()) > 0) {
+      await expect(unchanged.first()).toContainText(/unchanged/i);
+      await expect(unchanged.first()).toContainText(/never in this string|read on its own/i);
+    }
+    // And at least one row in this fixture DOES change, or the pair would be pointless to render.
+    await expect(
+      page.locator('[data-testid="example-embed-pair"][data-embed-changed="true"]').first(),
+    ).toBeVisible();
+  });
+});
+
