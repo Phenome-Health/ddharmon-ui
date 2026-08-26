@@ -23,7 +23,10 @@ history, and adding it would change the ``/jobs`` visual baseline for no reason.
 
 from __future__ import annotations
 
+import csv
 import json
+import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -81,6 +84,85 @@ def _group_from_record(rec: dict) -> dict:
     }
 
 
+#: Column roles for the per-cohort CSV reconstructed from the demo's ``fieldIndex``. Named here so the
+#: reconstruction and the load agree in one place.
+_RECONSTRUCTED_COLUMNS = ("variable_name", "description", "question_text", "value_encoding", "data_type")
+
+
+def _preprocessing(result: dict) -> list[dict]:
+    """A REAL, MEASURED preparation report per cohort — Gate 0's data source.
+
+    WHY IT IS COMPUTED RATHER THAN WRITTEN. Gate 0 (08-14) renders ``result.preprocessing``, and the demo
+    this fixture derives from predates preprocessing entirely (it is the run 08-09 invalidated), so the
+    source carries no report at all. Hand-writing one would put invented per-rule counts and invented
+    before/after examples in a committed file with nothing tying them to a real dictionary — the exact
+    defect the module docstring above rejects for concept groups.
+
+    So the report is MEASURED instead: the demo's ``fieldIndex`` carries every embedded source field's real
+    variable name, description, question text and value encoding, which is enough to reconstruct each
+    cohort's dictionary and run core's own ``preprocess_dictionary`` over it through the adapter's
+    ``preprocess_for_run``. Every number the screen shows is therefore something the rules actually did to
+    real cohort text. It costs $0 and calls no model — preprocessing is local work, which is the whole
+    reason Gate 0's own column reads "local".
+
+    WHAT IT IS A REPORT ABOUT, precisely: the demo run's own corpus, which is a per-cohort sample rather
+    than each cohort's full published dictionary. That is the corpus every other figure in this fixture
+    describes, so the counts are consistent with the rest of the file; they are NOT a claim about the full
+    cohort.
+
+    Returns ``[]`` when core is not importable, so building the fixture never hard-fails on an environment
+    that cannot preprocess — the screen's own "not run" state then tells the truth about the file.
+    """
+    field_index: dict = result.get("fieldIndex") or {}
+    if not field_index:
+        return []
+    try:
+        sys.path.insert(0, str(REPO))
+        from ddharmon.ingestion import load_dictionary  # noqa: PLC0415
+
+        from backend.engine.adapter import preprocess_for_run  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"  ! no preparation report: {exc}")
+        return []
+
+    by_cohort: dict[str, list[tuple[str, dict]]] = {}
+    for key, detail in field_index.items():
+        cohort, _, variable = str(key).partition(":")
+        by_cohort.setdefault(cohort, []).append((variable or str(key), detail))
+
+    reports: list[dict] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for cohort, rows in sorted(by_cohort.items()):
+            path = Path(tmp) / f"{cohort}.csv"
+            with open(path, "w", newline="", encoding="utf-8") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(_RECONSTRUCTED_COLUMNS)
+                for variable, detail in rows:
+                    writer.writerow(
+                        [
+                            variable,
+                            detail.get("text") or "",
+                            detail.get("questionText") or "",
+                            detail.get("valueEncoding") or "",
+                            detail.get("dataType") or "",
+                        ]
+                    )
+            dd = load_dictionary(
+                path,
+                cohort_name=cohort,
+                variable_name="variable_name",
+                description="description",
+                question_text="question_text",
+                value_encoding="value_encoding",
+                data_type="data_type",
+            )
+            report = preprocess_for_run(dd, source_path=path)
+            reports.append(dict(report))
+            fired = sum(1 for r in report["rules"] if r["outcome"] == "changed")
+            print(f"  {cohort}: {report['nVariables']} variables, {fired} rules fired")
+    return reports
+
+
 def main() -> int:
     source = json.loads(SOURCE.read_text())
     result = source["result"]
@@ -127,12 +209,18 @@ def main() -> int:
             "unassignedFields": [],
             "cost": result.get("cost"),
             "conceptGroups": groups,
+            # Gate 0's data source. Measured, not written — see `_preprocessing`.
+            "preprocessing": _preprocessing(result),
             "gatePosition": "gate1",
             "resultVersion": 1,
         },
     }
     OUT.write_text(json.dumps(fixture))
-    print(f"wrote {OUT.relative_to(REPO)} ({len(groups)} concept groups, realized {cost})")
+    n_reports = len(fixture["result"]["preprocessing"])
+    print(
+        f"wrote {OUT.relative_to(REPO)} ({len(groups)} concept groups, "
+        f"{n_reports} preparation reports, realized {cost})"
+    )
     return 0
 
 
