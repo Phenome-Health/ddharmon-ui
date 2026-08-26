@@ -943,6 +943,11 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
     const high = Number(await dur.getAttribute("data-high"));
     expect(low).toBeGreaterThan(0);
     expect(high).toBeGreaterThan(low);
+    // The single blended range is the SYNC/PREVIEW rendering. Batch no longer shows one, because its
+    // queue and its work have wildly different uncertainties and blending them hid which half was
+    // uncertain — batch itemises instead (see the recalibration describe block below).
+    await page.getByTestId("run-mode").selectOption("sync");
+    await expect(dur).toHaveAttribute("data-mode", "sync");
     const shown = (await page.getByTestId("estimate-duration-range").innerText()).trim();
     // Two duration tokens either side of a dash, e.g. "about 3 min–21 min". A single token would be a
     // bare figure dressed as a span, which is the thing the plan's prohibition forbids.
@@ -981,12 +986,13 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
       high: Number(await dur.getAttribute("data-high")),
     };
 
-    // MEASURED, NOT ASSUMED. 08-13b's plan expected batch to quote a materially LONGER duration than
-    // sync; against the shipped `estimateRunTime` at this fixture's size (1,000 variables, 5
-    // dictionaries) it does not — batch is roughly 411s mid against sync's 705s, because sync pays a
-    // per-variable LLM call while batch pays a mostly size-independent queue floor. What IS true at
-    // every size, and is the property the copy has to carry, is that batch's span is far WIDER
-    // (high/low = 6x against sync's 3x) and that its width comes from the queue.
+    // Batch's span is far WIDER than sync's, and its width comes from the queue.
+    //
+    // HISTORY, so nobody re-derives the old numbers. Until 2026-08-26 `BATCH_QUEUE_SECS` was 300 with
+    // high = mid x 3, which capped batch at ~17 min at this fixture size and made it read FASTER than
+    // sync (411s mid against sync's 705s) for every corpus above roughly 500 variables. That inverted
+    // the real tradeoff — batch buys cost with latency — and it contradicted the run-mode label's own
+    // "can take hours". The queue is now modelled on the provider's documented behaviour instead.
     expect(batch.high - batch.low).toBeGreaterThan(sync.high - sync.low);
     expect(batch.high / batch.low).toBeGreaterThan(sync.high / sync.low);
     // Only batch carries the queue caveat — sync has no queue to wait in.
@@ -1263,5 +1269,136 @@ test.describe("Setup — the key field and the disclosure polish (08-13b)", () =
     // Everything else on the screen is a role select in a mapping table, never a knob.
     const unexpected = ids.filter((id) => !expected.includes(id) && id !== "role-select");
     expect(unexpected).toEqual([]);
+  });
+});
+
+// ── the batch-duration recalibration + itemisation (2026-08-26) ────────────────────────────────
+//
+// WHY THIS EXISTS. 08-13b lifted the duration estimate onto Setup and, in doing so, exposed a
+// contradiction between two pieces of already-shipped code:
+//
+//   `setup.tsx` run-mode label  ->  "Batch — about half the cost, CAN TAKE HOURS"
+//   `types.ts`  estimateRunTime ->  BATCH_QUEUE_SECS = 300, high = mid x 3  ->  ~17 min at 1k vars
+//
+// The estimator structurally could not quote what the picker promised: to reach even two hours it
+// needed ~40,000 variables, more than three times our largest bundled cohort. Worse, above roughly
+// 500 variables it showed batch as FASTER than sync, inverting the actual tradeoff.
+//
+// The label was right and the model was wrong. Under-quoting a DURATION is the same class of error as
+// under-quoting a COST, which this phase already prohibits ("MUST NOT quote a cost lower than what
+// will be charged"), so the model was recalibrated to the provider's documented behaviour: most
+// batches inside an hour, up to 24 hours permitted.
+//
+// And because a 5-minute-to-24-hour span is nearly useless as one blended figure, batch now ITEMISES
+// — processing and queue wait as two labelled lines — so the reader can see which half is uncertain.
+test.describe("Setup — the batch duration is modelled on the queue, and itemised", () => {
+  test("@setup batch's high end reaches HOURS, so the estimator can quote what the label promises", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const dur = page.getByTestId("estimate-duration");
+    await expect(dur).toHaveAttribute("data-mode", "batch");
+
+    const high = Number(await dur.getAttribute("data-high"));
+    // "Can take hours" has to be reachable at a REALISTIC corpus size, not only at a hypothetical one.
+    expect(high).toBeGreaterThanOrEqual(2 * 3600);
+    // And the run-mode label that makes the promise is still on the page making it.
+    await expect(page.getByTestId("run-mode")).toContainText(/hours/i);
+  });
+
+  test("@setup batch's WORST case always exceeds sync's, so it never reads as the quicker option", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const dur = page.getByTestId("estimate-duration");
+
+    await expect(dur).toHaveAttribute("data-mode", "batch");
+    const bMid = Number(await dur.getAttribute("data-mid"));
+    const bHigh = Number(await dur.getAttribute("data-high"));
+
+    await page.getByTestId("run-mode").selectOption("sync");
+    await expect(dur).toHaveAttribute("data-mode", "sync");
+    const sMid = Number(await dur.getAttribute("data-mid"));
+    const sHigh = Number(await dur.getAttribute("data-high"));
+
+    // THE UNIVERSAL PROPERTY, and the one that matters: batch's CEILING always exceeds sync's, at
+    // every bundled cohort size (it holds until ~107,000 variables, where sync's per-variable term
+    // finally outgrows the 24h queue — our largest bundled cohort is UKBB at 11,800). So a reviewer
+    // choosing batch to save money is never told the worst case is also shorter.
+    expect(bHigh).toBeGreaterThan(sHigh);
+
+    // The MID comparison is size-dependent and deliberately asserted only here, at this fixture's
+    // 1,000 variables. Batch genuinely parallelises, so above roughly 4,000 variables its typical
+    // case really IS shorter than sequential sync's — that is true, not a modelling artefact, and it
+    // must not be "fixed". What the old 300s floor got wrong was different: it made batch look faster
+    // at EVERY size including small ones, and capped its ceiling below sync's, so the latency cost of
+    // batch disappeared from the quote entirely.
+    expect(bMid).toBeGreaterThan(sMid);
+  });
+
+  test("@setup batch itemises processing and queue wait, and shows no single blended figure", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("estimate-duration")).toHaveAttribute("data-mode", "batch");
+
+    const proc = page.getByTestId("estimate-duration-processing");
+    const queue = page.getByTestId("estimate-duration-queue");
+    await expect(proc).toBeVisible();
+    await expect(queue).toBeVisible();
+
+    // The whole point of splitting: NO blended span for batch. One figure spanning 5 min to 24 hours
+    // hides that the work is minutes and the wait is the unknown.
+    await expect(page.getByTestId("estimate-duration-range")).toHaveCount(0);
+
+    // Each line says which thing it is timing.
+    await expect(proc).toContainText(/processing|work/i);
+    await expect(queue).toContainText(/queue/i);
+    // The queue line carries a TYPICAL case as well as a span, or a 24-hour ceiling reads as the
+    // expected outcome rather than the worst one.
+    await expect(queue).toContainText(/typical/i);
+  });
+
+  test("@setup the queue is shown as the uncertain half — its span is wider than the work's", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const proc = page.getByTestId("estimate-duration-processing");
+    const queue = page.getByTestId("estimate-duration-queue");
+
+    const pLow = Number(await proc.getAttribute("data-low"));
+    const pHigh = Number(await proc.getAttribute("data-high"));
+    const qLow = Number(await queue.getAttribute("data-low"));
+    const qHigh = Number(await queue.getAttribute("data-high"));
+
+    expect(pHigh).toBeGreaterThan(pLow);
+    expect(qHigh).toBeGreaterThan(qLow);
+    // This asymmetry is the justification for itemising at all. If it ever stops holding, the split
+    // has stopped earning its place and this test should fail rather than be deleted.
+    expect(qHigh - qLow).toBeGreaterThan(pHigh - pLow);
+    // The queue dominates the total, which is why the copy tells the reviewer to expect quiet.
+    expect(qHigh).toBeGreaterThan(pHigh);
+  });
+
+  test("@setup sync and preview carry no queue line — they have no queue to wait in", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const dur = page.getByTestId("estimate-duration");
+
+    for (const mode of ["sync", "preview"] as const) {
+      await page.getByTestId("run-mode").selectOption(mode);
+      await expect(dur).toHaveAttribute("data-mode", mode);
+      await expect(page.getByTestId("estimate-duration-queue")).toHaveCount(0);
+      await expect(page.getByTestId("estimate-duration-processing")).toHaveCount(0);
+      // And they keep the single blended range, which is honest when there is only one term.
+      await expect(page.getByTestId("estimate-duration-range")).toHaveCount(1);
+      await expect(dur).not.toContainText(/queue/i);
+    }
   });
 });

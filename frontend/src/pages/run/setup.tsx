@@ -17,7 +17,7 @@ import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { lookupPrefill, rememberAssignment } from "@/lib/column-prefill";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
-import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDurationRange } from "@/types";
+import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatDurationRange } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import type { CdeSet, GatePosition, JobResult, RunMode } from "@/types";
@@ -1130,15 +1130,62 @@ export default function SetupPage() {
             data-mode={runMode}
             className="flex flex-col gap-1 border-t border-rule-on-raised pt-2"
           >
-            <div className="flex items-baseline justify-between gap-4 text-xs">
-              <span className="text-on-raised">Estimated time</span>
-              <span
-                data-testid="estimate-duration-range"
-                className="shrink-0 tabular-nums text-on-raised"
-              >
-                about {formatDurationRange(time)}
-              </span>
-            </div>
+            {/* ITEMISED FOR BATCH, single span otherwise (2026-08-26).
+
+                A batch estimate is two terms with nothing in common: the WORK, which is minutes and
+                predictable from the corpus, and the QUEUE, which is hours and not ours to predict.
+                Blending them produced a span like "6 min–24 h" whose width told the reviewer nothing
+                about which half was uncertain. Sync and preview have one term, so one span is honest
+                there and an itemisation would be false precision. */}
+            {time.parts ? (
+              <>
+                <div className="flex items-baseline justify-between gap-4 text-xs">
+                  <span className="text-on-raised">Estimated time</span>
+                </div>
+                <div
+                  data-testid="estimate-duration-processing"
+                  data-low={String(Math.round(time.parts.processing.low))}
+                  data-mid={String(Math.round(time.parts.processing.mid))}
+                  data-high={String(Math.round(time.parts.processing.high))}
+                  className="flex items-baseline justify-between gap-4 pl-3 text-xs"
+                >
+                  <span className="text-on-raised-muted">Processing this corpus</span>
+                  <span className="shrink-0 tabular-nums text-on-raised">
+                    about {formatDurationRange(time.parts.processing)}
+                  </span>
+                </div>
+                <div
+                  data-testid="estimate-duration-queue"
+                  data-low={String(Math.round(time.parts.queue.low))}
+                  data-mid={String(Math.round(time.parts.queue.mid))}
+                  data-high={String(Math.round(time.parts.queue.high))}
+                  className="flex flex-col gap-0.5 pl-3 text-xs"
+                >
+                  <div className="flex items-baseline justify-between gap-4">
+                    <span className="text-on-raised-muted">Waiting in the provider&rsquo;s queue</span>
+                    <span className="shrink-0 tabular-nums text-on-raised">
+                      {formatDurationRange(time.parts.queue)}
+                    </span>
+                  </div>
+                  {/* The TYPICAL case, stated. Without it the 24-hour ceiling reads as the expected
+                      outcome rather than the permitted worst one. */}
+                  <span className="text-on-raised-muted">
+                    typically about {formatDuration(time.parts.queue.mid)} &mdash; this is the
+                    uncertain half, and it does not depend on how big your corpus is
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-baseline justify-between gap-4 text-xs">
+                <span className="text-on-raised">Estimated time</span>
+                <span
+                  data-testid="estimate-duration-range"
+                  className="shrink-0 tabular-nums text-on-raised"
+                >
+                  about {formatDurationRange(time)}
+                </span>
+              </div>
+            )}
             {/* A RANGE, hedged. Never one figure and never a promise: the estimate covers the work, and
                 for batch the provider's queue sits in front of the work and is not ours to predict. */}
             <p className="max-w-[68ch] text-xs text-on-raised-muted">

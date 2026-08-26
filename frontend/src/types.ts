@@ -836,13 +836,39 @@ export type {
 const LOCAL_BASE_SECS = 15; // fixed model-load + setup before any per-field work
 const LOCAL_PER_FIELD_SECS = 0.03; // embedding + UMAP/HDBSCAN, per field
 const SYNC_PER_FIELD_SECS = 0.5; // sequential LLM calls (ideal + split + assign + specs), per field
-const BATCH_QUEUE_SECS = 300; // typical Batch API turnaround floor — highly variable (see `note`)
+// BATCH QUEUE, modelled on the provider's DOCUMENTED behaviour rather than on a guessed floor.
+// Most batches complete within an hour; the provider permits up to 24. Recalibrated 2026-08-26 — the
+// previous model was a single 300s floor with high = mid x 3, which capped a batch estimate at ~17 min
+// at 1,000 variables and needed ~40,000 variables (more than 3x our largest bundled cohort) to reach
+// even two hours. Two things were wrong with that. It contradicted the run-mode label's own "can take
+// hours", and above roughly 500 variables it quoted batch as FASTER than sync — inverting the real
+// tradeoff, which is that batch buys cost with latency. Under-quoting a duration is the same class of
+// error as under-quoting a cost, and this phase already forbids the latter.
+const BATCH_QUEUE_LOW_SECS = 300; // a quiet queue
+const BATCH_QUEUE_MID_SECS = 3600; // "most batches complete within an hour"
+const BATCH_QUEUE_HIGH_SECS = 86400; // the documented ceiling — a real bound, not a pessimistic guess
+
+/** One estimated span, in seconds. */
+export interface TimeSpan {
+  low: number;
+  mid: number;
+  high: number;
+}
 
 export interface TimeEstimate {
   low: number; // seconds
   mid: number;
   high: number;
   note?: string; // caveat to show alongside (e.g. batch queue variance)
+  /**
+   * Present only when a provider queue sits in front of the work — i.e. batch.
+   *
+   * The two terms have wildly different uncertainties: the work is minutes and predictable from the
+   * corpus, the queue is hours and not ours to predict at all. Blending them into one span hides which
+   * half is uncertain, so a surface that has room should render these two rather than `low`-`high`.
+   * `low`/`mid`/`high` remain the sum, for callers with no room to itemise.
+   */
+  parts?: { processing: TimeSpan; queue: TimeSpan };
 }
 export function estimateRunTime(totalFields: number, nCohorts: number, mode: RunMode): TimeEstimate {
   if (totalFields <= 0) return { low: 0, mid: 0, high: 0 };
@@ -853,9 +879,26 @@ export function estimateRunTime(totalFields: number, nCohorts: number, mode: Run
     const mid = local + totalFields * SYNC_PER_FIELD_SECS * cohortFactor;
     return { low: mid * 0.6, mid, high: mid * 1.8 };
   }
-  // batch: local work + Batch API queue turnaround (the queue dominates and varies widely).
-  const mid = local + BATCH_QUEUE_SECS + totalFields * 0.05 * cohortFactor;
-  return { low: mid * 0.5, mid, high: mid * 3, note: "Batch API queue time varies widely" };
+  // batch: local work + Batch API queue turnaround. The queue dominates and varies widely, so it is
+  // returned as its OWN span rather than folded into one blended figure.
+  const processingMid = local + totalFields * 0.05 * cohortFactor;
+  const processing: TimeSpan = {
+    low: processingMid * 0.6,
+    mid: processingMid,
+    high: processingMid * 1.8,
+  };
+  const queue: TimeSpan = {
+    low: BATCH_QUEUE_LOW_SECS,
+    mid: BATCH_QUEUE_MID_SECS,
+    high: BATCH_QUEUE_HIGH_SECS,
+  };
+  return {
+    low: processing.low + queue.low,
+    mid: processing.mid + queue.mid,
+    high: processing.high + queue.high,
+    note: "the queue, not the work, is what makes a batch run long",
+    parts: { processing, queue },
+  };
 }
 
 /** Compact human duration: "45s", "6 min", "1h 20m". */
