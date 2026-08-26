@@ -435,7 +435,12 @@ test.describe("Setup — the honest estimate", () => {
       els.map((e) => e.getAttribute("data-cost-line")),
     );
     expect(lines).toContain("ideal");
-    expect(lines).toContain("splitAssign");
+    // UNFUSED at review 2026-08-26. `splitAssign` was one line spanning two gates, so it was the only
+    // item that could not be filed under the gate that pays for it. `byGate` had always divided the share
+    // by SPLIT_ASSIGN_DIVISION; the rendered line now does too.
+    expect(lines).toContain("split");
+    expect(lines).toContain("assign");
+    expect(lines).not.toContain("splitAssign");
     expect(lines).toContain("coherence");
     expect(lines).toContain("gencde");
   });
@@ -527,25 +532,41 @@ test.describe("Setup — the honest estimate", () => {
     const first = page.getByTestId("first-charge");
     await expect(first).toBeVisible();
     // UI-SPEC §0.1 after the plan-review reversal: the first charge is Gate 0's Continue, NOT Gate 1's.
-    await expect(first).toContainText(/Continue at Gate 0|Gate 0's Continue/);
-    // Pay-as-you-go is the headline now, and the per-gate re-quote promise sits beside it.
+    await expect(first).toContainText(/Gate 0/);
+    // Pay-as-you-go is the headline. The per-gate re-quote promise moved into the tooltip at the
+    // 2026-08-26 review — long prose does not earn main-display space — so it is asserted there.
     await expect(first).toContainText(/pay gate by gate/i);
-    await expect(first).toContainText(/quotes its own cost/i);
-    // What the press pays for is still stated — it moved into the tooltip at review, because the panel was
-    // too dense to read. Asserted on the tooltip's TEXT, so moving it cannot silently delete it.
     const tip = first.getByRole("button", { name: /what the first charge buys/i });
     await expect(tip).toHaveCount(1);
     await tip.hover();
     const tipText = page.getByRole("tooltip");
-    await expect(tipText).toContainText(/generat/i);
-    await expect(tipText).toContainText(/split/i);
-    await expect(tipText).toContainText(/coherence|judge/i);
+    await expect(tipText).toContainText(/re-quotes|quotes/i);
+    await expect(tipText).toContainText(/abandon/i);
 
-    // The per-gate rows are present, and the two free gates say so rather than forecasting a figure.
-    const gates = page.locator("[data-gate-forecast]");
-    await expect(gates).toHaveCount(6);
-    await expect(page.locator("[data-gate-forecast='gate0']")).toContainText(/local|no model/i);
+    // The per-gate rows are present, and the free gates say so rather than forecasting a figure.
+    await expect(page.locator("[data-gate-forecast='gate0']")).toContainText(/local|no charge/i);
     await expect(page.locator("[data-gate-forecast='gate4']")).toContainText(/no charge|nothing/i);
+
+    // THE POINT OF THE CONSOLIDATION (review 2026-08-26): every cost line sits INSIDE the gate whose
+    // Continue buys it. Previously the stage costs and the per-gate forecasts were two disconnected
+    // lists, so a reviewer could read what the judge costs and what Gate 1 costs without being told the
+    // first is part of the second. This asserts the containment, which is the thing that was missing.
+    const gate1 = page.locator("[data-gate-forecast='gate1']");
+    for (const id of ["ideal", "split", "coherence"]) {
+      await expect(gate1.locator(`[data-cost-line='${id}']`)).toHaveCount(1);
+    }
+    const gate2 = page.locator("[data-gate-forecast='gate2']");
+    for (const id of ["assign", "gencde"]) {
+      await expect(gate2.locator(`[data-cost-line='${id}']`)).toHaveCount(1);
+    }
+    await expect(page.locator("[data-gate-forecast='gate3']").locator("[data-cost-line='specgen']")).toHaveCount(1);
+    // And no line is orphaned outside a gate group — an unfiled cost is the old bug in miniature.
+    const orphans = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("[data-cost-line]"))
+        .filter((el) => !el.closest("[data-gate-forecast]"))
+        .map((el) => el.getAttribute("data-cost-line")),
+    );
+    expect(orphans).toEqual([]);
   });
 
   test("@setup nothing on this screen claims the flow stays free until you pick what to buy", async ({
@@ -562,28 +583,54 @@ test.describe("Setup — the honest estimate", () => {
     expect(text).not.toMatch(/scope before you spend/i);
   });
 
-  test("@setup the three run options are shown, priced and defaulted — but decided at their gate", async ({
+  test("@setup the three run options are shown priced under their gate, with no control here", async ({
     page,
   }) => {
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
-    // Still VISIBLE — an option nobody sees is an unavailable feature, which was the original point of
-    // this assertion and survives the move. What changed at review is that Setup no longer DECIDES them:
-    // each is a call you make better once you can see what it applies to.
-    const gate = page.getByTestId("concept-gate-toggle");
-    await expect(gate).toBeVisible();
-    await expect(gate).toHaveAttribute("data-default", "false"); // STGD-16 still defaults OFF
-    await expect(gate).toContainText(/Gate 2/); // and names where the decision now lives
-    // Defaults-off means the run is not quoted for it.
-    await expect(page.locator("[data-cost-line='conceptGate']")).toHaveCount(0);
 
-    // The other two are shown the same way, with their own gate named.
-    await expect(page.getByTestId("gen-specs-toggle")).toHaveAttribute("data-default", "true");
-    await expect(page.getByTestId("suggest-ideas-toggle")).toHaveAttribute("data-default", "true");
+    // HISTORY OF THIS ASSERTION, because its location has moved twice and its INTENT has not.
+    // 08-13 made these three real checkboxes at Setup. The 08-16 amendment removed the controls and left
+    // informational cards — shown, priced, naming the gate that decides. The 2026-08-26 review then found
+    // the cards redundant with the estimate directly beneath them, so they collapsed INTO the bill: each
+    // option is now a cost line under its own gate, carrying its default, its owning gate and its help.
+    // What must stay true throughout: the option is VISIBLE (an option nobody sees is an unavailable
+    // feature with extra code behind it), it is PRICED, it names WHERE it is decided, and Setup does not
+    // decide it.
 
-    // NOT A CONTROL any more: no checkbox survives in this panel. Asserted directly, because "the
-    // decision moved to the gate" is only true if Setup stopped offering it.
-    await expect(page.getByTestId("concept-gate-toggle").locator("input[type=checkbox]")).toHaveCount(0);
+    // Transform specs: on by default, so it is quoted, and it sits under Gate 3.
+    const specs = page.locator("[data-cost-line='specgen']");
+    await expect(specs).toBeVisible();
+    await expect(specs).toContainText(/on/i);
+    await expect(specs).toContainText(/Gate 3/);
+    await expect(page.locator("[data-gate-forecast='gate3']").locator("[data-cost-line='specgen']")).toHaveCount(1);
+
+    // Analysis ideas: on by default, but NO gate buys it — it is a post-run add, filed after the run.
+    const ideas = page.locator("[data-cost-line='analysisIdeas']");
+    await expect(ideas).toBeVisible();
+    await expect(ideas).toContainText(/results page/i);
+    await expect(page.locator("[data-gate-forecast='after']").locator("[data-cost-line='analysisIdeas']")).toHaveCount(1);
+
+    // Concept-match check: OFF by default (STGD-16). It is still shown — as an OFFER carrying no figure,
+    // because an opt-in that produces no cost line would otherwise vanish from the very bill that is
+    // telling the reviewer they can turn it on.
+    const conceptGate = page.locator("[data-cost-line='conceptGate']");
+    await expect(conceptGate).toBeVisible();
+    await expect(conceptGate).toHaveAttribute("data-offered", "true");
+    await expect(conceptGate).toContainText(/off/i);
+    await expect(conceptGate).toContainText(/Gate 2/);
+    await expect(conceptGate).toContainText(/not included/i);
+    await expect(page.locator("[data-gate-forecast='gate3']").locator("[data-cost-line='conceptGate']")).toHaveCount(1);
+
+    // NOT A CONTROL. No checkbox, radio or switch anywhere in the estimate panel — "the decision moved to
+    // the gate" is only true if Setup stopped offering it.
+    const panel = page.getByTestId("estimate-panel");
+    await expect(panel.locator("input[type=checkbox], input[type=radio], [role=switch]")).toHaveCount(0);
+
+    // The retired cards are gone, not merely hidden.
+    for (const id of ["concept-gate-toggle", "gen-specs-toggle", "suggest-ideas-toggle", "transform-specs-toggle"]) {
+      await expect(page.getByTestId(id)).toHaveCount(0);
+    }
   });
 
   test("@setup the run mode is selectable and changes what the run is quoted at", async ({ page }) => {
@@ -1164,7 +1211,7 @@ test.describe("Setup — the key field and the disclosure polish (08-13b)", () =
     expect(persisted).toEqual({ local: false, session: false });
   });
 
-  test("@setup the advanced column roles are held behind a trigger that names how many", async ({
+  test("@setup every column role is offered in the dropdown by default, with no disclosure to open", async ({
     page,
   }) => {
     await page.goto(DRAFT);
@@ -1175,42 +1222,27 @@ test.describe("Setup — the key field and the disclosure polish (08-13b)", () =
       buffer: Buffer.from(dictionaryCsv(4)),
     });
 
-    const toggle = page.getByTestId("advanced-roles-toggle");
-    await expect(toggle).toBeVisible();
-    // THE COUNT IS ON THE TRIGGER. A disclosure that does not say how much it holds is one you must open
-    // to find out whether opening it was worth it.
-    await expect(toggle).toHaveAttribute("data-count", "3");
-    await expect(toggle).toContainText("(3)");
-    await expect(toggle).toContainText(/advanced/i);
-    await expect(toggle).toHaveAttribute("data-open", "false");
-
-    // CLOSED means the roles are genuinely not offered — not merely visually de-emphasised. The advanced
-    // roles are `category`, `field_id` and `standard_code`; none of them is in a dropdown yet.
+    // REVIEW FEEDBACK 2026-08-26: the advanced roles were held behind a "Show advanced column roles (3)"
+    // disclosure. The reviewer's verdict was to show them in the dropdown by default. A dropdown is
+    // already a closed list the reviewer opens deliberately — putting three of its options behind a
+    // SECOND disclosure made the reviewer open two things to answer one question, and the roles it hid
+    // (`category`, `field_id`, `standard_code`) are ordinary mapping targets, not dangerous ones.
     const select = page.getByTestId("role-select").first();
-    for (const role of ["category", "field_id", "standard_code"]) {
-      await expect(select.locator(`option[value="${role}"]`)).toHaveCount(0);
-    }
-    // The primary roles are, of course, still there.
-    await expect(select.locator('option[value="description"]')).toHaveCount(1);
-
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("data-open", "true");
-    await expect(toggle).toContainText(/hide/i);
     for (const role of ["category", "field_id", "standard_code"]) {
       await expect(select.locator(`option[value="${role}"]`)).toHaveCount(1);
     }
+    // The primary roles are of course still there, and still grouped.
+    await expect(select.locator('option[value="description"]')).toHaveCount(1);
+    await expect(select.locator("optgroup")).not.toHaveCount(0);
 
-    // ONCE AN ADVANCED ROLE IS IN USE the group is pinned open, and the trigger says why. Withholding it
-    // then would leave a select holding a value with no matching option, which renders BLANK — a
-    // silently dropped mapping, the one outcome this table exists to prevent. So the disclosure stops
-    // being a control at that point rather than becoming a way to lose a mapping.
+    // The disclosure is GONE, not merely defaulted open — a trigger that never hides anything is a
+    // control with no state, which reads as broken.
+    await expect(page.getByTestId("advanced-roles-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("advanced-roles-in-use")).toHaveCount(0);
+
+    // And selecting one of the formerly-hidden roles still works and still sticks.
     await page.getByTestId("role-select").nth(2).selectOption("category");
-    await expect(toggle).toHaveAttribute("data-open", "true");
-    await expect(toggle).toBeDisabled();
-    await expect(page.getByTestId("advanced-roles-in-use")).toBeVisible();
-    // And the assignment survived: the option is still offered, and the select still holds it.
     await expect(page.getByTestId("role-select").nth(2)).toHaveValue("category");
-    await expect(select.locator('option[value="category"]')).toHaveCount(1);
   });
 
   test("@setup the data-handling copy is the fuller production wording", async ({ page }) => {

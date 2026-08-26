@@ -187,6 +187,19 @@ export interface CostLine {
   label: string;
   cost: number;
   note?: string;
+  /**
+   * WHICH PAUSE POINT'S CONTINUE BUYS THIS LINE — the mapping the table at the top of this file states in
+   * prose, made machine-readable (review 2026-08-26).
+   *
+   * Setup used to render two lists: stage costs, then per-gate forecasts. Nothing connected them, so the
+   * screen could tell a reviewer what the coherence judge costs and, separately, what Gate 1 costs, while
+   * never saying that the first is part of the second. A per-gate consent flow whose bill is not grouped
+   * by gate is asking for a decision without showing what the decision buys.
+   *
+   * `"after"` means no gate's Continue buys it — analysis ideas are a post-run add on the results page.
+   * That value is why the per-gate forecasts sum to the total LESS this line.
+   */
+  gate: GatePosition | "after";
 }
 
 /** What reaching one gate is FORECAST to cost. Carries no realized figure, deliberately. */
@@ -310,9 +323,25 @@ export function estimateRunCostBreakdown(
   const conceptGateCost = conceptGateCalls * CONCEPT_GATE_CALL_BATCH_USD * modeFactor;
 
   const lines: CostLine[] = [
-    { id: "embedding", label: "Embedding & clustering", cost: 0, note: "local — no API" },
-    { id: "ideal", label: "Generate ideal CDEs", cost: line(STAGE_SHARES.ideal) },
-    { id: "splitAssign", label: "Split + assign to CDEs", cost: line(STAGE_SHARES.splitAssign) },
+    { id: "embedding", label: "Embedding & clustering", cost: 0, note: "local — no API", gate: "gate0" },
+    { id: "ideal", label: "Generate ideal CDEs", cost: line(STAGE_SHARES.ideal), gate: "gate1" },
+    // UNFUSED (review 2026-08-26). `byGate` has always divided this share between Gate 1 and Gate 2 by
+    // the measured ratio in SPLIT_ASSIGN_DIVISION; the rendered LINE stayed fused, so it was the one item
+    // that could not be filed under a single gate. Splitting it here — by the same constant, so the two
+    // halves still sum to the fused share and no total moves — is what lets every line sit under the gate
+    // that pays for it. Split is Gate 1's (it reshapes the groups Gate 1 reviews); assign is Gate 2's.
+    {
+      id: "split",
+      label: "Split into distinct concepts",
+      cost: line(STAGE_SHARES.splitAssign * SPLIT_ASSIGN_DIVISION.split),
+      gate: "gate1",
+    },
+    {
+      id: "assign",
+      label: "Assign to CDEs",
+      cost: line(STAGE_SHARES.splitAssign * SPLIT_ASSIGN_DIVISION.assign),
+      gate: "gate2",
+    },
     {
       // UNCONDITIONAL, unlike the spec-generation line below it. R8 requires this to read $0 rather than
       // vanish when no group qualifies: a line that disappears is indistinguishable from a line that was
@@ -324,20 +353,31 @@ export function estimateRunCostBreakdown(
         judgeCalls > 0
           ? `${judgeCalls} judge ${judgeCalls === 1 ? "call" : "calls"} + a second read each`
           : `no group reaches ${COHERENCE_MIN_MEMBERS} variables, so the judge is not asked`,
+      gate: "gate1",
     },
-    { id: "gencde", label: "Generate CDEs for novel concepts", cost: line(STAGE_SHARES.gencde) },
+    { id: "gencde", label: "Generate CDEs for novel concepts", cost: line(STAGE_SHARES.gencde), gate: "gate2" },
   ];
-  if (genSpecs) lines.push({ id: "specgen", label: "Transform spec-gen", cost: line(STAGE_SHARES.specgen) });
+  if (genSpecs)
+    lines.push({ id: "specgen", label: "Transform spec-gen", cost: line(STAGE_SHARES.specgen), gate: "gate3" });
   if (conceptGate) {
     lines.push({
       id: "conceptGate",
       label: "Concept-match check",
       cost: conceptGateCost,
       note: `${conceptGateCalls} extra model calls — you turned this on`,
+      // Gate 3, matching GATE_LEDGER_KEYS: the check runs AFTER specgen so its flag can set needs_review
+      // on a record's recodes, even though the reviewer opts in at Gate 2.
+      gate: "gate3",
     });
   }
   if (suggestIdeas) {
-    lines.push({ id: "analysisIdeas", label: "Analysis ideas", cost: ANALYSIS_IDEAS_USD, note: "one LLM pass" });
+    lines.push({
+      id: "analysisIdeas",
+      label: "Analysis ideas",
+      cost: ANALYSIS_IDEAS_USD,
+      note: "one LLM pass",
+      gate: "after",
+    });
   }
 
   const mid = lines.reduce((s, l) => s + l.cost, 0);

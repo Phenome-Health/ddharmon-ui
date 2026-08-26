@@ -23,6 +23,88 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
 import type { CdeSet, GatePosition, JobResult, RunMode } from "@/types";
 
 /**
+ * PER-LINE DETAIL FOR THE CONSOLIDATED BILL (review 2026-08-26).
+ *
+ * Setup used to render three blocks: informational cards for the three opt-in run options, then a list of
+ * stage costs, then a list of per-gate forecasts. The reviewer's verdicts, in order: the cards are
+ * redundant with the estimate beneath them and their tooltips belong on the cost lines; and nothing tied
+ * an itemised cost to the gate where its go/no-go decision is actually made. So all three collapse into
+ * ONE list, grouped by gate, and this map carries what the cards used to say.
+ *
+ * `help` is the card's own tooltip text, kept verbatim where it was already reviewed. `optIn` marks the
+ * three lines that are a CHOICE rather than an inevitability — rendered with their default and the gate
+ * that owns the decision, which is the whole content of the deleted cards.
+ *
+ * Keyed by `CostLine.id`, so a label can be rewritten without breaking the mapping.
+ */
+const LINE_HELP: Record<string, { help: string; optIn?: { on: boolean; decidedAt: string } }> = {
+  embedding: {
+    help:
+      "Grouping your variables runs on this machine — embedding, dimensionality reduction and " +
+      "clustering. No provider is called, so it costs nothing and it is why Gate 0 is free to reach.",
+  },
+  ideal: {
+    help:
+      "For each group, a description of what the ideal common data element WOULD be, written before any " +
+      "catalogue candidate is retrieved. Deliberately shown no candidates, so it describes the concept " +
+      "your variables actually share instead of rationalising whatever retrieval happened to return.",
+  },
+  split: {
+    help:
+      "Clustering over-merges: a group can fuse blood pressure with pulse because they travel together " +
+      "in a dictionary. This step partitions such a group into its distinct concepts before anything is " +
+      "matched, which is why it is Gate 1's — Gate 1 reviews the groups it produces.",
+  },
+  assign: {
+    help:
+      "Each post-split group is re-retrieved on its own and ranked against the catalogue, then given a " +
+      "verdict: adopt an existing element, refine one with a value transform, or route to novel. This is " +
+      "the largest single stage in a run.",
+  },
+  coherence: {
+    help:
+      "A second model reads each group and says whether its members are really one concept. Only groups " +
+      "of at least six variables are judged — below that the judge cannot form a disjoint sample to " +
+      "verify against, so smaller groups are left explicitly UNJUDGED and marked as such. That is not " +
+      "the same as coherent: a judge that was never asked has not approved anything.",
+  },
+  gencde: {
+    help:
+      "Where no catalogue element fits, one is generated so the residual has a target instead of being " +
+      "dropped. Generated elements are marked as generated and carry no catalogue identifier.",
+  },
+  specgen: {
+    help:
+      "The recipe that converts your values into the form the matched element expects — value recodes " +
+      "for categoricals, unit and arithmetic conversions for numerics. Without it you get matches but no " +
+      "instructions for actually transforming your data.",
+    optIn: { on: true, decidedAt: "Gate 3" },
+  },
+  conceptGate: {
+    help:
+      "One call per group that got matched to an element, asking whether the element it was matched TO " +
+      "is the right one. It exists because value coverage is not evidence of meaning: two 1-5 Likert " +
+      "items map cleanly onto each other, so a recode reads 100% covered even when one asks how " +
+      "confident you are filling out medical forms and the other asks whether you felt happy. Flags the " +
+      "suspect recodes at Gate 3; never changes a verdict on its own.",
+    optIn: { on: false, decidedAt: "Gate 2" },
+  },
+  analysisIdeas: {
+    help:
+      "One pass over the finished concepts, proposing cross-cohort analyses this harmonization makes " +
+      "possible. A small flat add, independent of corpus size. It suggests; it never runs anything.",
+    optIn: { on: true, decidedAt: "the results page" },
+  },
+};
+
+/** What each pause point charges for, in words, when it charges nothing. */
+const GATE_FREE_REASON: Partial<Record<GatePosition, string>> = {
+  setup: "local — no charge",
+  gate0: "local — no charge",
+  gate4: "no charge",
+};
+
+/**
  * Only Sonnet 4.6 has been validated end to end against this pipeline. Untested choices are OFFERED but
  * DISABLED, the same treatment the shipped New Run form gives them — visible so the picker does not
  * misrepresent what exists, unselectable so a run cannot be pointed at an unvalidated model.
@@ -216,9 +298,14 @@ export default function SetupPage() {
   // described there are the same object. `conceptGate` is the one addition (STGD-16) and defaults OFF.
   const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
   const [runMode, setRunMode] = useState<RunMode>("batch");
-  const [genSpecs, setGenSpecs] = useState(true);
-  const [suggestIdeas, setSuggestIdeas] = useState(true);
-  const [conceptGate, setConceptGate] = useState(false);
+  // THE RUN'S DEFAULTS, not controls. All three decisions moved to the gate that owns them (08-16
+  // amendment for the first and third, 08-17 for the second), and the 2026-08-26 review then removed the
+  // informational cards that restated them here — the consolidated bill below now shows each one under its
+  // gate with its cost and its default, which is the same information without a second block to read.
+  // Setters are deliberately absent: nothing on this screen may change them.
+  const [genSpecs] = useState(true);
+  const [suggestIdeas] = useState(true);
+  const [conceptGate] = useState(false);
   const [displayName, setDisplayName] = useState("");
   // BYOK: component memory only. Never persisted, never echoed back, cleared on reload.
   const [apiKey, setApiKey] = useState("");
@@ -991,93 +1078,6 @@ export default function SetupPage() {
           )}
         </div>
 
-        <div className="flex flex-col gap-2">
-          {[
-            {
-              id: "gen-specs",
-              testid: "gen-specs-toggle",
-              checked: genSpecs,
-              set: setGenSpecs,
-              decidedAt: "Gate 3",
-              priced: "in the estimate",
-              label: "Generate transform specs",
-              help:
-                "The recipe that converts your values into the form the matched element expects — value " +
-                "recodes for categoricals, unit and arithmetic conversions for numerics. Without it you get " +
-                "matches but no instructions for actually transforming your data.",
-              detail: "Turns each match into instructions for converting your values.",
-            },
-            {
-              id: "suggest-ideas",
-              testid: "suggest-ideas-toggle",
-              checked: suggestIdeas,
-              set: setSuggestIdeas,
-              decidedAt: "the results page",
-              priced: "~$0.05 flat",
-              label: "Suggest analysis ideas",
-              help:
-                "One pass over the finished concepts, proposing cross-cohort analyses this harmonization " +
-                "makes possible. A small flat add, independent of corpus size. It suggests; it never runs " +
-                "anything.",
-              detail: "One pass over the finished concepts. A small flat add, independent of corpus size.",
-            },
-            {
-              // STGD-16. Default OFF, and deliberately NOT buried: an opt-in the reviewer never sees is an
-              // unavailable feature with extra code behind it.
-              id: "concept-gate",
-              testid: "concept-gate-toggle",
-              checked: conceptGate,
-              set: setConceptGate,
-              decidedAt: "Gate 2",
-              priced: "1 call / match",
-              label: "Double-check matches",
-              help:
-                "One call per concept group that got matched to an element — the same granularity as the " +
-                "coherence check, not per variable and not pairwise. Where coherence asks whether a group's " +
-                "members are one concept, this asks whether the element the group was matched TO is the " +
-                "right one. It exists because value coverage is not evidence of meaning: two 1-5 Likert " +
-                "items map cleanly onto each other, so a recode reads 100% covered even when one asks how " +
-                "confident you are filling out medical forms and the other asks whether you felt happy. " +
-                "Flags the suspect recodes at Gate 3; never changes a verdict on its own.",
-              // Third rewrite. v1 named the mechanism ("a second model pass ... the same CONCEPT"). v2 led
-              // with a units example I invented, which is the wrong shape — the real failure is a shared
-              // ANSWER FORMAT, and the documented case is far sharper. This one leads with the transform
-              // spec, which is what the check actually protects: a recode whose coverage reads 100% and is
-              // still wrong. Source: transform.py's M7 comment + the 2026-07-04 full-5 audit.
-              detail: "A recode can read 100% covered and still mean the wrong thing.",
-            },
-          ].map((opt) => (
-            <div
-              key={opt.id}
-              data-testid={opt.testid}
-              data-default={String(opt.checked)}
-              className="flex flex-col gap-0.5 rounded-inner border border-rule-on-raised px-3 py-2"
-            >
-              <span className="flex items-baseline justify-between gap-2">
-                <span className="inline-flex items-baseline gap-1 text-xs font-semibold text-on-raised">
-                  {opt.label}
-                  <InfoTip text={opt.help} label={`About ${opt.label}`} />
-                </span>
-                <span className="shrink-0 text-xs tabular-nums text-on-raised-muted">{opt.priced}</span>
-              </span>
-              <span className="text-xs text-on-raised-muted">{opt.detail}</span>
-              <span className="text-xs text-on-raised-muted">
-                <span className="text-on-raised">{opt.checked ? "On" : "Off"}</span> by default · you choose
-                at {opt.decidedAt}
-              </span>
-            </div>
-          ))}
-          {/* NOT CONTROLS, on purpose (08-13 review). Each of these is a decision you make better once you
-              can see what it would apply to: whether specs are worth generating depends on the assignments
-              at Gate 2, and analysis ideas are a post-run add. Asking at Setup is asking at the moment of
-              least information, which is the opposite of what the staged gates are for. They are shown here
-              PRICED so the estimate is honest about what the defaults cost, and the decision moves to the
-              gate that owns it. */}
-          <p className="text-xs text-on-raised-muted">
-            The estimate below assumes these defaults. Changing them at their gate changes what you pay from
-            that gate onward — nothing already spent.
-          </p>
-        </div>
       </section>
 
       {/* --- the estimate ------------------------------------------------------------------------ */}
@@ -1130,18 +1130,46 @@ export default function SetupPage() {
             data-mode={runMode}
             className="flex flex-col gap-1 border-t border-rule-on-raised pt-2"
           >
-            {/* ITEMISED FOR BATCH, single span otherwise (2026-08-26).
+            {/* CONCISE, with the reasoning in a tooltip (review 2026-08-26). This block previously
+                carried a four-line paragraph per mode. The reviewer's verdict: long prose does not earn
+                main-display space — shorten it or move it to a tooltip. The numbers stay on screen; the
+                explanation of WHY a batch run goes quiet for an hour is one hover away.
 
-                A batch estimate is two terms with nothing in common: the WORK, which is minutes and
-                predictable from the corpus, and the QUEUE, which is hours and not ours to predict.
-                Blending them produced a span like "6 min–24 h" whose width told the reviewer nothing
-                about which half was uncertain. Sync and preview have one term, so one span is honest
-                there and an itemisation would be false precision. */}
-            {time.parts ? (
+                Batch still itemises, because its two terms have nothing in common: the work is minutes and
+                predictable from the corpus, the queue is hours and not ours to predict. Sync and preview
+                have one term, so one figure is honest and an itemisation would be false precision. */}
+            <div className="flex items-baseline justify-between gap-4 text-xs">
+              <span className="inline-flex items-baseline gap-1 text-on-raised">
+                Estimated time
+                <InfoTip
+                  label="How the time estimate is derived"
+                  text={
+                    runMode === "batch"
+                      ? "An estimate, not a commitment. Batch work is queued by the provider, and the " +
+                        "queue — not your corpus — is what makes a batch run long: it does not shrink if " +
+                        "your dictionaries are small. Most batches finish within the hour and the provider " +
+                        "permits up to 24, so a long quiet stretch is normal for batch rather than a " +
+                        "stalled run."
+                      : runMode === "preview"
+                        ? "An estimate, not a commitment. Preview runs entirely on this machine — no model " +
+                          "is called and nothing waits on a provider, which is why it is the quickest of " +
+                          "the three."
+                        : "An estimate, not a commitment. A synchronous run calls the model variable by " +
+                          "variable, so it scales with how many variables the run covers."
+                  }
+                />
+              </span>
+              {!time.parts && (
+                <span
+                  data-testid="estimate-duration-range"
+                  className="shrink-0 tabular-nums text-on-raised"
+                >
+                  about {formatDurationRange(time)}
+                </span>
+              )}
+            </div>
+            {time.parts && (
               <>
-                <div className="flex items-baseline justify-between gap-4 text-xs">
-                  <span className="text-on-raised">Estimated time</span>
-                </div>
                 <div
                   data-testid="estimate-duration-processing"
                   data-low={String(Math.round(time.parts.processing.low))}
@@ -1159,165 +1187,196 @@ export default function SetupPage() {
                   data-low={String(Math.round(time.parts.queue.low))}
                   data-mid={String(Math.round(time.parts.queue.mid))}
                   data-high={String(Math.round(time.parts.queue.high))}
-                  className="flex flex-col gap-0.5 pl-3 text-xs"
+                  className="flex items-baseline justify-between gap-4 pl-3 text-xs"
                 >
-                  <div className="flex items-baseline justify-between gap-4">
-                    <span className="text-on-raised-muted">Waiting in the provider&rsquo;s queue</span>
-                    <span className="shrink-0 tabular-nums text-on-raised">
-                      {formatDurationRange(time.parts.queue)}
-                    </span>
-                  </div>
-                  {/* The TYPICAL case, stated. Without it the 24-hour ceiling reads as the expected
-                      outcome rather than the permitted worst one. */}
                   <span className="text-on-raised-muted">
-                    typically about {formatDuration(time.parts.queue.mid)} &mdash; this is the
-                    uncertain half, and it does not depend on how big your corpus is
+                    Waiting in the provider&rsquo;s queue
+                  </span>
+                  <span className="shrink-0 tabular-nums text-on-raised">
+                    {formatDurationRange(time.parts.queue)}
+                    <span className="text-on-raised-muted">
+                      {" "}
+                      · typically {formatDuration(time.parts.queue.mid)}
+                    </span>
                   </span>
                 </div>
               </>
-            ) : (
-              <div className="flex items-baseline justify-between gap-4 text-xs">
-                <span className="text-on-raised">Estimated time</span>
-                <span
-                  data-testid="estimate-duration-range"
-                  className="shrink-0 tabular-nums text-on-raised"
-                >
-                  about {formatDurationRange(time)}
-                </span>
-              </div>
             )}
-            {/* A RANGE, hedged. Never one figure and never a promise: the estimate covers the work, and
-                for batch the provider's queue sits in front of the work and is not ours to predict. */}
-            <p className="max-w-[68ch] text-xs text-on-raised-muted">
-              {runMode === "batch"
-                ? "A rough estimate of the work, not a commitment. A batch run also waits in the " +
-                  `provider's queue before it starts${time.note ? `, and ${time.note}` : ""} — a busy ` +
-                  "queue can push a batch run out by hours, so a long quiet stretch is normal for batch " +
-                  "rather than a stalled run."
-                : runMode === "preview"
-                  ? "A rough estimate, not a commitment. Preview runs entirely on this machine — no " +
-                    "model is called and nothing waits on a provider, which is why it is the quickest " +
-                    "of the three."
-                  : "A rough estimate, not a commitment. A synchronous run calls the model variable by " +
-                    "variable, so it scales with how many variables the run covers."}
-            </p>
           </div>
         )}
 
         {!estimatePending && estimate && !estimate.free && (
           <>
-            {/* Itemised. `data-cost-line` carries the line's STABLE id, so a test can assert the coherence
-                line by identity rather than by row position. */}
-            <ul className="flex flex-col gap-1 border-t border-rule-on-raised pt-2">
-              {estimate.lines.map((l) => (
-                <li
-                  key={l.id}
-                  data-cost-line={l.id}
-                  className="flex items-baseline justify-between gap-4 text-xs"
-                >
-                  <span className="text-on-raised">
-                    {l.label}
-                    {l.note && <span className="ml-1 text-on-raised-muted">· {l.note}</span>}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-on-raised">
-                    {l.cost === 0 ? "$0" : `~${formatUsd(l.cost)}`}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            {/* ONE BILL, GROUPED BY GATE (review 2026-08-26).
 
-            {/* The judge's workload in GROUPS, not dollars — the money above means little without it. The
-                caveat that under-six groups are left explicitly unjudged (not "coherent") is real and
-                load-bearing, but it is a footnote, so it is a tooltip rather than a paragraph. */}
-            <p data-testid="coherence-workload" className="text-xs text-on-raised-muted">
-              {estimate.judgeCalls > 0 ? (
-                <>
-                  Coherence judge priced for{" "}
-                  <span className="font-semibold text-on-raised">
-                    {estimate.judgeCalls.toLocaleString()} {estimate.judgeCalls === 1 ? "group" : "groups"}
-                  </span>{" "}
-                  {estimate.judgeCallsEstimated ? "(estimated)" : "(counted)"}
-                  <InfoTip
-                    label="How the coherence judge is priced"
-                    text={
-                      `Only groups of at least six variables are judged — below that the judge cannot form a ` +
-                      `disjoint sample to verify against. ${estimate.judgeCallsEstimated
-                        ? "This run's groups do not exist yet, so the count is estimated from corpus size."
-                        : "Counted from this run's own groups."} ` +
-                      `Smaller groups are left explicitly UNJUDGED and marked as such — which is not the ` +
-                      `same as coherent. A judge that was never asked has not approved anything.`
-                    }
-                  />
-                </>
-              ) : (
-                <>
-                  No group can reach six variables, so the judge is not asked:{" "}
-                  <span className="font-semibold text-on-raised">$0</span>
-                  <InfoTip
-                    label="Why the line still shows"
-                    text={
-                      "The line stays on the bill at zero rather than disappearing, because a line that " +
-                      "vanishes is indistinguishable from a stage nobody costed. Those groups will be " +
-                      "marked NOT JUDGED, which is not the same as coherent."
-                    }
-                  />
-                </>
-              )}
-            </p>
+                Replaces three blocks: informational cards for the opt-in options, a flat list of stage
+                costs, and a separate list of per-gate forecasts. The reviewer's finding was that nothing
+                connected an itemised cost to the gate where its go/no-go decision is made — the screen
+                could say what the coherence judge costs and, separately, what Gate 1 costs, without ever
+                saying the first is part of the second. On a screen whose only job is informed consent to
+                spend, that is the connection that matters.
 
-            {/* WHERE THE FIRST CHARGE FALLS. UI-SPEC §0.1 as reversed at plan review: Gate 0's Continue,
-                not Gate 1's. Getting this wrong on the one screen whose whole job is informed consent to
-                spend is the exact failure R8 exists to prevent. */}
+                Each line now sits under the gate whose Continue buys it, from `CostLine.gate`. The three
+                lines that are a CHOICE carry their default and the gate that owns the decision, which is
+                all the deleted cards said. Detail is in tooltips, not prose. */}
             <p
               data-testid="first-charge"
-              className="max-w-[68ch] border-t border-rule-on-raised pt-2 text-xs text-on-raised"
+              className="border-t border-rule-on-raised pt-2 text-xs text-on-raised"
             >
               <span className="font-semibold">
-                You pay gate by gate. First charge: Continue at Gate 0, about{" "}
-                {formatUsd(estimate.firstCharge)}.
-              </span>{" "}
-              Each gate quotes its own cost from the real run before you commit to it.
+                You pay gate by gate. First charge {formatUsd(estimate.firstCharge)} at Gate 0.
+              </span>
               <InfoTip
                 label="What the first charge buys, and what is free"
                 text={
                   "Everything up to that point can be abandoned at no cost: setting up, loading, preparing " +
                   "and grouping your dictionaries, and reading Gate 0's review. Pressing Continue at Gate 0 " +
-                  "is what buys the next step — a candidate element generated per group, groups that fuse " +
-                  "more than one concept split apart, and the coherence judge. From there every gate is its " +
-                  "own decision: you can stop after any of them and keep what you have already paid for."
+                  "is what buys the next step — the work listed under Concept groups below. From there " +
+                  "every gate is its own decision: you can stop after any of them and keep what you have " +
+                  "already paid for. Each gate re-quotes from this run's real groups before you commit."
                 }
               />
             </p>
 
-            <ul className="flex flex-col gap-1">
+            <ul className="flex flex-col gap-2">
               {(Object.keys(estimate.byGate) as GatePosition[]).map((gate) => {
                 const g = estimate.byGate[gate];
+                const own = estimate.lines.filter((l) => l.gate === gate);
+                // POTENTIAL, NOT YET CHOSEN. An opt-in that is off produces no cost line, so without this
+                // the bill would silently omit the thing the reviewer is being told they can turn on. It
+                // renders under its gate with no figure — present, priced as not-included.
+                const offer =
+                  gate === "gate3" && !conceptGate
+                    ? ([{ id: "conceptGate", label: "Concept-match check" }] as const)
+                    : ([] as const);
+                const free = GATE_FREE_REASON[gate];
                 return (
-                  <li
-                    key={gate}
-                    data-gate-forecast={gate}
-                    className="flex items-baseline justify-between gap-4 text-xs"
-                  >
-                    <span className="text-on-raised-muted">
-                      {GATE_LABELS[gate]}
-                      {gate === "gate0" && " · no model call happens here, but its Continue is the first charge"}
-                      {gate === "setup" && " · local"}
-                      {gate === "gate4" && " · a terminal read"}
-                    </span>
-                    <span className="shrink-0 tabular-nums text-on-raised-muted">
-                      {gate === "setup" || gate === "gate0"
-                        ? "local — no charge"
-                        : gate === "gate4"
-                          ? "no charge"
-                          : `est. ${formatUsd(g.forecast)}`}
-                    </span>
+                  <li key={gate} data-gate-forecast={gate} className="flex flex-col gap-0.5">
+                    <div className="flex items-baseline justify-between gap-4 text-xs">
+                      <span className="font-semibold text-on-raised">{GATE_LABELS[gate]}</span>
+                      <span className="shrink-0 tabular-nums text-on-raised">
+                        {free ?? `est. ${formatUsd(g.forecast)}`}
+                      </span>
+                    </div>
+                    {(own.length > 0 || offer.length > 0) && (
+                      <ul className="flex flex-col gap-0.5 pl-3">
+                        {own.map((l) => {
+                          const meta = LINE_HELP[l.id];
+                          return (
+                            <li
+                              key={l.id}
+                              data-cost-line={l.id}
+                              className="flex items-baseline justify-between gap-4 text-xs"
+                            >
+                              <span className="text-on-raised-muted">
+                                <span className="inline-flex items-baseline gap-1">
+                                  {l.label}
+                                  {meta && <InfoTip text={meta.help} label={`About ${l.label}`} />}
+                                </span>
+                                {l.note && <span className="ml-1">· {l.note}</span>}
+                                {meta?.optIn && (
+                                  <span className="ml-1" data-opt-in={String(meta.optIn.on)}>
+                                    ·{" "}
+                                    <span className="text-on-raised">
+                                      {meta.optIn.on ? "on" : "off"}
+                                    </span>{" "}
+                                    by default, you choose at {meta.optIn.decidedAt}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="shrink-0 tabular-nums text-on-raised-muted">
+                                {l.cost === 0 ? "$0" : `~${formatUsd(l.cost)}`}
+                              </span>
+                            </li>
+                          );
+                        })}
+                        {offer.map((o) => {
+                          const meta = LINE_HELP[o.id];
+                          return (
+                            <li
+                              key={o.id}
+                              data-cost-line={o.id}
+                              data-offered="true"
+                              className="flex items-baseline justify-between gap-4 text-xs"
+                            >
+                              <span className="text-on-raised-muted">
+                                <span className="inline-flex items-baseline gap-1">
+                                  {o.label}
+                                  {meta && <InfoTip text={meta.help} label={`About ${o.label}`} />}
+                                </span>
+                                {meta?.optIn && (
+                                  <span className="ml-1" data-opt-in="false">
+                                    · <span className="text-on-raised">off</span> by default, you choose at{" "}
+                                    {meta.optIn.decidedAt}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="shrink-0 tabular-nums text-on-raised-muted">
+                                not included
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
                   </li>
                 );
               })}
+
+              {/* NO GATE BUYS THIS ONE, which is why the per-gate figures sum to the total less this line.
+                  Filed under the run rather than under a gate, so the arithmetic stays checkable. */}
+              {estimate.lines.some((l) => l.gate === "after") && (
+                <li data-gate-forecast="after" className="flex flex-col gap-0.5">
+                  <div className="flex items-baseline justify-between gap-4 text-xs">
+                    <span className="font-semibold text-on-raised">After the run</span>
+                    <span className="shrink-0 tabular-nums text-on-raised">
+                      est.{" "}
+                      {formatUsd(
+                        estimate.lines
+                          .filter((l) => l.gate === "after")
+                          .reduce((s, l) => s + l.cost, 0),
+                      )}
+                    </span>
+                  </div>
+                  <ul className="flex flex-col gap-0.5 pl-3">
+                    {estimate.lines
+                      .filter((l) => l.gate === "after")
+                      .map((l) => {
+                        const meta = LINE_HELP[l.id];
+                        return (
+                          <li
+                            key={l.id}
+                            data-cost-line={l.id}
+                            className="flex items-baseline justify-between gap-4 text-xs"
+                          >
+                            <span className="text-on-raised-muted">
+                              <span className="inline-flex items-baseline gap-1">
+                                {l.label}
+                                {meta && <InfoTip text={meta.help} label={`About ${l.label}`} />}
+                              </span>
+                              {meta?.optIn && (
+                                <span className="ml-1" data-opt-in={String(meta.optIn.on)}>
+                                  ·{" "}
+                                  <span className="text-on-raised">
+                                    {meta.optIn.on ? "on" : "off"}
+                                  </span>{" "}
+                                  by default, you choose at {meta.optIn.decidedAt}
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-on-raised-muted">
+                              ~{formatUsd(l.cost)}
+                            </span>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                </li>
+              )}
             </ul>
 
             <p className="text-xs text-on-raised-muted">
-              These are estimates, not quotes.
+              Estimates, not quotes.
               <InfoTip
                 label="Why this is a range"
                 text={
@@ -1325,7 +1384,12 @@ export default function SetupPage() {
                   "concept GROUPS, which do not exist until clustering has run, rather than linearly with " +
                   "variable count — so the figure can only be a range until the groups are real. Each gate " +
                   "re-quotes from this run's actual groups before you commit, and those numbers are the " +
-                  "ones that bind."
+                  "ones that bind." +
+                  (estimate.judgeCalls > 0
+                    ? ` The coherence judge is priced for ${estimate.judgeCalls.toLocaleString()} ` +
+                      `${estimate.judgeCalls === 1 ? "group" : "groups"}, ` +
+                      `${estimate.judgeCallsEstimated ? "estimated from corpus size because this run's groups do not exist yet" : "counted from this run's own groups"}.`
+                    : "")
                 }
               />
             </p>

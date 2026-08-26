@@ -94,11 +94,14 @@ export function DictionaryMappingTable({
 }: DictionaryMappingTableProps) {
   const extras = extraRoles(roles);
   /** True when one of the advanced roles is already pointed at a column on this dictionary. */
-  const advancedInUse = ADVANCED_ROLES.some((r) => Boolean(roles[r]));
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  // Withholding the group while one of its roles is assigned would blank that select. Never do it.
-  const advancedVisible = showAdvanced || advancedInUse;
-  const roleGroups = advancedVisible ? [...PRIMARY_ROLE_GROUPS, ADVANCED_GROUP] : PRIMARY_ROLE_GROUPS;
+  // EVERY role is offered, always (review 2026-08-26). The advanced group used to sit behind a
+  // "Show advanced column roles (3)" disclosure; the reviewer's verdict was to show them in the
+  // dropdown by default. A <select> is already a closed list opened deliberately, so hiding three of
+  // its options behind a second disclosure made the reviewer open two things to answer one question —
+  // and `category`, `field_id` and `standard_code` are ordinary mapping targets, not dangerous ones.
+  // It also removes a real hazard the old disclosure had to special-case: a withheld optgroup left a
+  // select holding a value with no matching option, which renders BLANK — a silently dropped mapping.
+  const roleGroups = [...PRIMARY_ROLE_GROUPS, ADVANCED_GROUP];
   const check: NameCheck | null = rows ? nameCheck(rows, roles.variable_name) : null;
   /** First non-empty value for a column — what this column looks like, from the file itself. */
   const sample = (column: string): string =>
@@ -189,28 +192,6 @@ export function DictionaryMappingTable({
           identifier, not a meaning.
         </p>
       )}
-
-      {/* The disclosure sits ABOVE the table, because it changes what the table's dropdowns offer — a
-          control placed after the thing it governs reads as unrelated to it. */}
-      <div className="flex items-baseline justify-between gap-3">
-        <button
-          type="button"
-          data-testid="advanced-roles-toggle"
-          data-open={String(advancedVisible)}
-          data-count={String(ADVANCED_ROLES.length)}
-          onClick={() => setShowAdvanced((v) => !v)}
-          disabled={advancedInUse}
-          className="flex items-center gap-1 text-xs font-semibold text-on-raised-muted transition-colors hover:text-accent-on-raised disabled:cursor-not-allowed disabled:hover:text-on-raised-muted"
-        >
-          <span aria-hidden="true">{advancedVisible ? "▾" : "▸"}</span>
-          {advancedVisible ? "Hide" : "Show"} advanced column roles ({ADVANCED_ROLES.length})
-        </button>
-        {advancedInUse && (
-          <span data-testid="advanced-roles-in-use" className="text-xs text-on-raised-muted">
-            shown because this dictionary already maps one
-          </span>
-        )}
-      </div>
 
       <div
         data-testid="mapping-scroll"
