@@ -3,7 +3,7 @@ import { Link, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
-import { Loader2, Upload, X } from "lucide-react";
+import { Eye, EyeOff, Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { IS_STATIC, listDemos, listModels, startHarmonize } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { lookupPrefill, rememberAssignment } from "@/lib/column-prefill";
+import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDurationRange } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -222,6 +223,8 @@ export default function SetupPage() {
   // BYOK: component memory only. Never persisted, never echoed back, cleared on reload.
   const [apiKey, setApiKey] = useState("");
   const [provider, setProvider] = useState("anthropic");
+  /** Reveal the key field. Rendering only — the key itself is never persisted either way. */
+  const [showKey, setShowKey] = useState(false);
   const [model, setModel] = useState("");
   const [starting, setStarting] = useState(false);
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
@@ -314,6 +317,15 @@ export default function SetupPage() {
           }),
     [totalFields, dicts.length, runMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
   );
+
+  /**
+   * The selected provider's key hint — what a key looks like, and where to get one.
+   *
+   * OPTIONAL BY DESIGN: `PROVIDER_LABELS` also carries `local` and `other`, neither of which has a hint,
+   * so this is `undefined` for them and the field falls back to a generic placeholder with NO link. An
+   * anchor with an empty href is a dead control, and this screen does not render dead controls.
+   */
+  const keyInfo = PROVIDER_KEY_INFO[provider];
 
   /** True while a figure would be premature: a file still parsing, or a corpus size still resolving. */
   const estimatePending = sizePending || dicts.some((d) => d.state === "parsing");
@@ -914,21 +926,66 @@ export default function SetupPage() {
           )}
           {runMode !== "preview" && (
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="api-key" className="text-xs font-semibold text-on-raised">
-                Provider API key
+              <label htmlFor="api-key" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
+                {PROVIDER_LABELS[provider] ?? provider} API key
+                <InfoTip
+                  text={
+                    "Your provider API key authorises this run's model calls — concept assignment and " +
+                    "transform specs. It is sent over HTTPS for this run only: never written to disk, to " +
+                    "logs, or into the saved run configuration, and it is cleared when you reload this " +
+                    "page. Preview mode and local/on-prem models need no provider key at all."
+                  }
+                  label="About the API key"
+                />
               </label>
-              <input
-                id="api-key"
-                data-testid="api-key"
-                type="password"
-                value={apiKey}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 font-mono text-xs text-on-raised"
-              />
-              <p className="text-xs text-on-raised-muted">
-                Used for this run only, over HTTPS. Never stored, logged, or saved with the run.
+              {/* The reveal is a RENDERING toggle and nothing else — no storage, no echo, no second copy
+                  of the value. Same ARIA pattern as the shipped New Run form (`home.tsx:461`): the label
+                  states the ACTION the button will perform, so it changes with state. */}
+              <div className="relative">
+                <input
+                  id="api-key"
+                  data-testid="api-key"
+                  type={showKey ? "text" : "password"}
+                  value={apiKey}
+                  placeholder={keyInfo?.placeholder ?? "your API key"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label={`${PROVIDER_LABELS[provider] ?? provider} API key`}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 pr-8 font-mono text-xs text-on-raised placeholder:text-on-raised-muted"
+                />
+                <button
+                  type="button"
+                  data-testid="api-key-reveal"
+                  onClick={() => setShowKey((v) => !v)}
+                  aria-label={showKey ? "Hide API key" : "Show API key"}
+                  aria-pressed={showKey}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-on-raised-muted transition-colors hover:text-accent-on-raised"
+                >
+                  {showKey ? (
+                    <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
+                  ) : (
+                    <Eye aria-hidden="true" className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
+              {/* The fuller production wording. The short form said where the key goes; this one also says
+                  what it is NOT written to and that a reload clears it, which is the part a reviewer being
+                  asked to paste a credential into a browser actually wants to read. */}
+              <p data-testid="api-key-handling" className="max-w-[68ch] text-xs text-on-raised-muted">
+                Used only for this run, sent over HTTPS — never written to disk, to logs, or into the saved
+                run configuration, and cleared when you reload this page.{" "}
+                {keyInfo?.link && (
+                  <a
+                    data-testid="api-key-help-link"
+                    href={keyInfo.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-link-on-raised underline hover:text-on-raised"
+                  >
+                    Get a key
+                  </a>
+                )}
               </p>
             </div>
           )}

@@ -9,6 +9,7 @@ import {
   participantLevelColumn,
 } from "@/lib/dictionary";
 import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
+import { PROVIDER_KEY_INFO, keyPlaceholderFor } from "@/lib/provider-keys";
 import { PAUSED_RUN_FIXTURE } from "./routes";
 
 /**
@@ -1012,5 +1013,255 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
     expect(previewMid).toBeLessThan(batchMid);
     // And it explains why it is quick, in terms of what preview does — no model call, so no queue.
     await expect(dur).not.toContainText(/queue/i);
+  });
+});
+
+test.describe("Setup — the key field and the disclosure polish (08-13b)", () => {
+  // ── the four production lifts, and the one DROP (08-13b Task 3) ────────────────────────────────
+  //
+  // `08-INHERITED-UI-AUDIT.md` § "Setup (08-13)" records five candidates from the shipped New Run form.
+  // Items 1-4 were LIFTED (the provider key hint + get-a-key link, the show/hide reveal, the counted
+  // advanced-roles disclosure, the fuller data-handling copy). Item 5 — advanced RUN KNOBS — was
+  // DROPPED, on principle rather than on effort: asking for tuning parameters before any data has been
+  // read is the ask-at-minimum-information pattern the whole staged-gate review exists to remove. The
+  // last test in this block asserts the drop, because a decision nobody checks is a decision that
+  // quietly comes back.
+
+  test("@setup the key field is single-sourced from the shared provider map, not a second copy", () => {
+    // The constant was a local `const` in `pages/home.tsx`. It is now declared ONCE and imported twice —
+    // a hint map copied into the second screen is a hint map that goes stale there, and a stale
+    // placeholder is worse than none because it looks authoritative.
+    const declarations = ["src/lib/provider-keys.ts", "src/pages/home.tsx", "src/pages/run/setup.tsx"]
+      .map((rel) => path.resolve(path.dirname(test.info().file), "..", "..", rel))
+      .flatMap((abs) => {
+        expect(existsSync(abs), `expected ${abs}`).toBe(true);
+        return [...readFileSync(abs, "utf8").matchAll(/PROVIDER_KEY_INFO\s*[:=]/g)].map(() => abs);
+      });
+    expect(declarations).toHaveLength(1);
+    expect(declarations[0]).toContain("lib/provider-keys.ts");
+
+    // Both screens IMPORT it.
+    for (const rel of ["src/pages/home.tsx", "src/pages/run/setup.tsx"]) {
+      const src = readFileSync(
+        path.resolve(path.dirname(test.info().file), "..", "..", rel),
+        "utf8",
+      );
+      expect(src, `${rel} must import the shared map`).toMatch(
+        /import \{[^}]*\bPROVIDER_KEY_INFO\b[^}]*\} from "@\/lib\/provider-keys";/,
+      );
+    }
+
+    // Every hint we carry is complete and safe to render: a real placeholder, and an https link or none
+    // at all. A half-populated entry is what produces the empty anchor the next test rules out.
+    for (const [provider, info] of Object.entries(PROVIDER_KEY_INFO)) {
+      expect(info.placeholder, `${provider} needs a placeholder`).toBeTruthy();
+      if (info.link !== undefined) expect(info.link).toMatch(/^https:\/\/\S+$/);
+    }
+    // And the providers `PROVIDER_LABELS` carries but this map does not are the ones that must degrade:
+    // `local` needs no provider key at all, `other` has nowhere to send anyone.
+    expect(PROVIDER_KEY_INFO.local).toBeUndefined();
+    expect(PROVIDER_KEY_INFO.other).toBeUndefined();
+    expect(keyPlaceholderFor("local")).toBe("your API key");
+    expect(keyPlaceholderFor("anthropic")).toBe(PROVIDER_KEY_INFO.anthropic.placeholder);
+  });
+
+  test("@setup the key field is hinted for the selected provider, with a working get-a-key link", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+
+    const key = page.getByTestId("api-key");
+    await expect(key).toBeVisible();
+    // The placeholder is the SELECTED provider's, read from the shared map rather than hard-coded here —
+    // so this fails if the field stops being provider-driven, not merely if the string changes.
+    await expect(page.getByTestId("provider")).toHaveValue("anthropic");
+    await expect(key).toHaveAttribute("placeholder", PROVIDER_KEY_INFO.anthropic.placeholder);
+    // Named for its provider, so the field says WHOSE key it wants.
+    await expect(key).toHaveAttribute("aria-label", /anthropic/i);
+
+    // A real link, to a real place. Asserted as the map's href rather than as "some anchor".
+    const link = page.getByTestId("api-key-help-link");
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", PROVIDER_KEY_INFO.anthropic.link!);
+    await expect(link).toHaveAttribute("rel", /noreferrer/);
+
+    // Switching provider re-hints the field. `openai` is offered-but-disabled here (only Anthropic is
+    // validated end to end), so the change is driven on the native control the component listens to
+    // rather than by clicking an option the UI deliberately does not let you pick.
+    await page.getByTestId("provider").evaluate((el) => {
+      (el as HTMLSelectElement).value = "openai";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await expect(key).toHaveAttribute("placeholder", PROVIDER_KEY_INFO.openai.placeholder);
+    expect(PROVIDER_KEY_INFO.openai.placeholder).not.toBe(PROVIDER_KEY_INFO.anthropic.placeholder);
+    await expect(page.getByTestId("api-key-help-link")).toHaveAttribute(
+      "href",
+      PROVIDER_KEY_INFO.openai.link!,
+    );
+    await expect(key).toHaveAttribute("aria-label", /openai/i);
+  });
+
+  test("@setup an unhinted provider degrades to a generic field rather than a broken link", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    // `local` (on-prem) has no entry in the map. The field must still work: generic placeholder, and NO
+    // anchor at all — an <a> with an empty href is a dead control, and this screen does not render them.
+    await page.getByTestId("provider").evaluate((el) => {
+      (el as HTMLSelectElement).value = "local";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await expect(page.getByTestId("api-key")).toHaveAttribute("placeholder", "your API key");
+    await expect(page.getByTestId("api-key-help-link")).toHaveCount(0);
+    // Nowhere on the screen is there an anchor with nothing behind it.
+    const deadLinks = await page.$$eval("a", (as) =>
+      as.filter((a) => {
+        const href = a.getAttribute("href");
+        return href === null || href.trim() === "" || href.trim() === "#";
+      }).length,
+    );
+    expect(deadLinks).toBe(0);
+  });
+
+  test("@setup the key can be revealed, and the reveal says which way it is about to go", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const key = page.getByTestId("api-key");
+    const reveal = page.getByTestId("api-key-reveal");
+
+    // Masked by default — the reveal is opt-in, never the starting state.
+    await expect(key).toHaveAttribute("type", "password");
+    await expect(reveal).toHaveAttribute("aria-label", "Show API key");
+
+    await reveal.click();
+    await expect(key).toHaveAttribute("type", "text");
+    // The label names the ACTION, so it changes with state. A static "Toggle key visibility" would tell
+    // a screen-reader user nothing about which state they are in — this is production's pattern.
+    await expect(reveal).toHaveAttribute("aria-label", "Hide API key");
+
+    await reveal.click();
+    await expect(key).toHaveAttribute("type", "password");
+    await expect(reveal).toHaveAttribute("aria-label", "Show API key");
+
+    // Revealing is a RENDERING change only: the value is untouched and nothing is persisted.
+    await key.fill("sk-ant-test-value");
+    await reveal.click();
+    await expect(key).toHaveValue("sk-ant-test-value");
+    const persisted = await page.evaluate(() => ({
+      local: JSON.stringify(localStorage).includes("sk-ant-test-value"),
+      session: JSON.stringify(sessionStorage).includes("sk-ant-test-value"),
+    }));
+    expect(persisted).toEqual({ local: false, session: false });
+  });
+
+  test("@setup the advanced column roles are held behind a trigger that names how many", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "roles.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(4)),
+    });
+
+    const toggle = page.getByTestId("advanced-roles-toggle");
+    await expect(toggle).toBeVisible();
+    // THE COUNT IS ON THE TRIGGER. A disclosure that does not say how much it holds is one you must open
+    // to find out whether opening it was worth it.
+    await expect(toggle).toHaveAttribute("data-count", "3");
+    await expect(toggle).toContainText("(3)");
+    await expect(toggle).toContainText(/advanced/i);
+    await expect(toggle).toHaveAttribute("data-open", "false");
+
+    // CLOSED means the roles are genuinely not offered — not merely visually de-emphasised. The advanced
+    // roles are `category`, `field_id` and `standard_code`; none of them is in a dropdown yet.
+    const select = page.getByTestId("role-select").first();
+    for (const role of ["category", "field_id", "standard_code"]) {
+      await expect(select.locator(`option[value="${role}"]`)).toHaveCount(0);
+    }
+    // The primary roles are, of course, still there.
+    await expect(select.locator('option[value="description"]')).toHaveCount(1);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("data-open", "true");
+    await expect(toggle).toContainText(/hide/i);
+    for (const role of ["category", "field_id", "standard_code"]) {
+      await expect(select.locator(`option[value="${role}"]`)).toHaveCount(1);
+    }
+
+    // ONCE AN ADVANCED ROLE IS IN USE the group is pinned open, and the trigger says why. Withholding it
+    // then would leave a select holding a value with no matching option, which renders BLANK — a
+    // silently dropped mapping, the one outcome this table exists to prevent. So the disclosure stops
+    // being a control at that point rather than becoming a way to lose a mapping.
+    await page.getByTestId("role-select").nth(2).selectOption("category");
+    await expect(toggle).toHaveAttribute("data-open", "true");
+    await expect(toggle).toBeDisabled();
+    await expect(page.getByTestId("advanced-roles-in-use")).toBeVisible();
+    // And the assignment survived: the option is still offered, and the select still holds it.
+    await expect(page.getByTestId("role-select").nth(2)).toHaveValue("category");
+    await expect(select.locator('option[value="category"]')).toHaveCount(1);
+  });
+
+  test("@setup the data-handling copy is the fuller production wording", async ({ page }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const handling = page.getByTestId("api-key-handling");
+    await expect(handling).toBeVisible();
+    // The short form said only where the key goes. The fuller wording also says what it is NOT written
+    // to, and that a reload clears it — which is the part a reviewer being asked to paste a credential
+    // into a browser actually wants to read.
+    await expect(handling).toContainText(/this run/i);
+    await expect(handling).toContainText(/HTTPS/);
+    await expect(handling).toContainText(/disk/i);
+    await expect(handling).toContainText(/logs?/i);
+    await expect(handling).toContainText(/saved run configuration/i);
+    await expect(handling).toContainText(/reload/i);
+    // And it never claims more than it can: no encryption promise, no "secure" hand-wave.
+    await expect(handling).not.toContainText(/encrypted|bank-grade|military/i);
+  });
+
+  test("@setup Setup offers NO run-tuning control — item 5 was dropped, and stays dropped", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+
+    // Asking for a tuning parameter before any dictionary has been read is asking at the moment of least
+    // information. Named individually rather than as one regex so a future addition fails against the
+    // specific knob it added.
+    for (const knob of [
+      /temperature/i,
+      /top[-_ ]?[pk]\b/i,
+      /max[-_ ]?tokens/i,
+      /\bseed\b/i,
+      /min[-_ ]?cluster[-_ ]?size/i,
+      /n[-_ ]?neighbou?rs/i,
+      /min[-_ ]?samples/i,
+      /\bepsilon\b/i,
+      /retrieval[-_ ]?floor/i,
+      /adopt[-_ ]?floor/i,
+      /\btop[-_ ]?k\b/i,
+      /chunk[-_ ]?size/i,
+      /\bthreshold\b/i,
+      /advanced (options|settings|parameters)/i,
+    ]) {
+      await expect(page.locator("body"), `Setup must not offer ${knob}`).not.toContainText(knob);
+    }
+
+    // And the run-configuration panel's controls are EXACTLY the known set: what to match against, how
+    // to run it, what to call it, who runs it, on what, and with whose key. Nothing tunable.
+    const ids = await page.$$eval("select, input:not([type=file]), textarea", (els) =>
+      els.map((e) => e.getAttribute("data-testid") ?? e.getAttribute("id") ?? "").filter(Boolean),
+    );
+    const expected = ["cde-set", "run-mode", "run-name", "provider", "model", "api-key"];
+    for (const id of expected) expect(ids).toContain(id);
+    // Everything else on the screen is a role select in a mapping table, never a knob.
+    const unexpected = ids.filter((id) => !expected.includes(id) && id !== "role-select");
+    expect(unexpected).toEqual([]);
   });
 });

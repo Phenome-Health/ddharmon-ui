@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ADVANCED_ROLES,
   COLUMN_ROLES,
@@ -44,11 +45,28 @@ import { assignRole, nameCheck, roleOf, type DictRow, type NameCheck } from "@/l
  * Any role already present on this file but outside the known vocabulary is kept, under "other", so a
  * run-seeded dictionary never silently loses a mapping this build does not recognise.
  */
-const ROLE_GROUPS: { label: string; roles: readonly string[] }[] = [
+const PRIMARY_ROLE_GROUPS: { label: string; roles: readonly string[] }[] = [
   { label: "Question — what the variable asks", roles: SEMANTIC_ROLES },
   { label: "Response — the values & how they're coded", roles: VALUE_ROLES },
-  { label: "Advanced — organizational & external ids", roles: ADVANCED_ROLES },
 ];
+
+/**
+ * The advanced group, COLLAPSED BEHIND A DISCLOSURE (08-13b Task 3, lifted from `home.tsx:340-346`).
+ *
+ * Organizational and external-id roles are a minority need — most dictionaries never map one — and every
+ * option in a native select is a line the reviewer reads past on their way to `description`. The shipped
+ * New Run form has hidden them behind a counted "Show advanced columns (3)" trigger all along; Setup was
+ * showing all three groups at once.
+ *
+ * THE TRIGGER NAMES THE COUNT rather than saying "advanced": a disclosure that does not say how much it
+ * is holding is a disclosure you have to open to find out whether it was worth opening.
+ *
+ * IT OPENS ITSELF WHEN IT IS ALREADY IN USE. A run-seeded or prefilled dictionary can arrive with
+ * `category` already mapped; hiding the group then would leave a select holding a value with no matching
+ * option, which renders blank — a silently dropped mapping, which is the one outcome this table exists
+ * to prevent.
+ */
+const ADVANCED_GROUP = { label: "Advanced — organizational & external ids", roles: ADVANCED_ROLES };
 
 function extraRoles(roles: Record<string, string>): string[] {
   return Object.keys(roles).filter(
@@ -75,6 +93,12 @@ export function DictionaryMappingTable({
   disabled = false,
 }: DictionaryMappingTableProps) {
   const extras = extraRoles(roles);
+  /** True when one of the advanced roles is already pointed at a column on this dictionary. */
+  const advancedInUse = ADVANCED_ROLES.some((r) => Boolean(roles[r]));
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  // Withholding the group while one of its roles is assigned would blank that select. Never do it.
+  const advancedVisible = showAdvanced || advancedInUse;
+  const roleGroups = advancedVisible ? [...PRIMARY_ROLE_GROUPS, ADVANCED_GROUP] : PRIMARY_ROLE_GROUPS;
   const check: NameCheck | null = rows ? nameCheck(rows, roles.variable_name) : null;
   /** First non-empty value for a column — what this column looks like, from the file itself. */
   const sample = (column: string): string =>
@@ -166,6 +190,28 @@ export function DictionaryMappingTable({
         </p>
       )}
 
+      {/* The disclosure sits ABOVE the table, because it changes what the table's dropdowns offer — a
+          control placed after the thing it governs reads as unrelated to it. */}
+      <div className="flex items-baseline justify-between gap-3">
+        <button
+          type="button"
+          data-testid="advanced-roles-toggle"
+          data-open={String(advancedVisible)}
+          data-count={String(ADVANCED_ROLES.length)}
+          onClick={() => setShowAdvanced((v) => !v)}
+          disabled={advancedInUse}
+          className="flex items-center gap-1 text-xs font-semibold text-on-raised-muted transition-colors hover:text-accent-on-raised disabled:cursor-not-allowed disabled:hover:text-on-raised-muted"
+        >
+          <span aria-hidden="true">{advancedVisible ? "▾" : "▸"}</span>
+          {advancedVisible ? "Hide" : "Show"} advanced column roles ({ADVANCED_ROLES.length})
+        </button>
+        {advancedInUse && (
+          <span data-testid="advanced-roles-in-use" className="text-xs text-on-raised-muted">
+            shown because this dictionary already maps one
+          </span>
+        )}
+      </div>
+
       <div
         data-testid="mapping-scroll"
         className="max-h-[19rem] overflow-auto rounded-inner border border-rule-on-raised"
@@ -235,7 +281,7 @@ export function DictionaryMappingTable({
                       className="h-7 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
                     >
                       <option value="">— not used —</option>
-                      {ROLE_GROUPS.map((group) => (
+                      {roleGroups.map((group) => (
                         <optgroup key={group.label} label={group.label}>
                           {group.roles.map((role) => (
                             // `title` carries ROLE_HELP: an <option> cannot host a React tooltip, and the

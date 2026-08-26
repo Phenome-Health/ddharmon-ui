@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { InfoTip, RoleInfo } from "@/components/ui/info-tip";
 import { IS_STATIC, listModels, startHarmonize } from "@/lib/api";
 import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
+import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { useAuthState } from "@/auth";
 import {
   ADVANCED_ROLES,
@@ -36,14 +37,11 @@ import {
 
 const NONE = "__none__";
 
-// Human-facing provider labels + per-provider key hints for the picker. Providers not listed here
-// (e.g. "other") fall back to the raw id and a generic key field.
-// PROVIDER_LABELS moved to types.ts — Setup renders a provider picker too (08-13 review).
-const PROVIDER_KEY_INFO: Record<string, { placeholder: string; link?: string }> = {
-  anthropic: { placeholder: "sk-ant-…", link: "https://console.anthropic.com/settings/keys" },
-  openai: { placeholder: "sk-…", link: "https://platform.openai.com/api-keys" },
-  gemini: { placeholder: "AIza…", link: "https://aistudio.google.com/apikey" },
-};
+// Human-facing provider labels + per-provider key hints for the picker. Providers not listed in
+// PROVIDER_KEY_INFO (e.g. "other", "local") fall back to the raw id and a generic key field.
+// PROVIDER_LABELS moved to types.ts, and PROVIDER_KEY_INFO to lib/provider-keys.ts — Setup renders a
+// provider picker and a key field too, and a hint map copied into the second screen is a hint map that
+// goes stale there (08-13 review; extracted 08-13b).
 
 // Models validated end-to-end with ddharmon are selectable; the rest render greyed-out/disabled until we
 // finish testing them. So far only Anthropic's Claude Sonnet 4.6 has been validated. Matched tolerantly so a
