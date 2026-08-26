@@ -40,8 +40,16 @@ import type { CdeSet, GatePosition, JobResult, RunMode } from "@/types";
 const LINE_HELP: Record<string, { help: string; optIn?: { on: boolean; decidedAt: string } }> = {
   embedding: {
     help:
+      // Phrased to NAME WHERE THE CHARGE LANDS, which is what the content-drift truth gate
+      // `test_no_public_surface_claims_the_staged_flow_is_free` requires of any sentence that pairs a
+      // free claim with a staged-flow subject. My first version said "…it is why Gate 0 is free to
+      // reach" — true (reaching Gate 0 IS free; its Continue is the first charge) but exactly the
+      // ambiguous shape the gate exists to catch, because a skimming reader sees "Gate 0 is free".
+      // The gate's own passing fixture is the model: "Starting costs nothing — the first charge is
+      // Continue at Gate 0."
       "Grouping your variables runs on this machine — embedding, dimensionality reduction and " +
-      "clustering. No provider is called, so it costs nothing and it is why Gate 0 is free to reach.",
+      "clustering. No provider is called, so this step costs nothing; the first charge is Continue " +
+      "at Gate 0.",
   },
   ideal: {
     help:
