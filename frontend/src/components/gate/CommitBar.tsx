@@ -54,6 +54,11 @@ export function CommitBar({
   return (
     <div
       data-testid="commit-bar"
+      // The amount as DATA as well as words. A gate asserting "this press carries a non-zero charge" has
+      // to read the figure, and parsing it back out of a formatted sentence is a gate that breaks on a
+      // copy edit rather than on a wrong number.
+      data-total={total === undefined ? "" : String(total)}
+      data-first-charge={String(firstCharge)}
       className={cn(
         "sticky bottom-0 z-10 flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
         className,

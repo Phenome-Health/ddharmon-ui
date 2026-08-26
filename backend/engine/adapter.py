@@ -750,6 +750,25 @@ def _stopwords_configured() -> bool:
         return False
 
 
+def _embed_text(dd: Any, variable: str) -> str:
+    """The exact text the grouping stage consumes for one variable — core's own composition.
+
+    Asked of core rather than re-derived, because the precedence is easy to get backwards and getting it
+    backwards is invisible: ``to_embedding_text`` reads ``question_text or description`` while the UI's
+    display derivation (``_field_detail``) reads ``description or question_text``. A re-derivation would
+    put a plausible wrong string on the only screen that explains why two variables grouped.
+
+    A field that cannot compose text yields ``""`` — the same honest empty ``_nothing_to_embed`` counts.
+    """
+    field = getattr(dd, "fields", {}).get(variable)
+    if field is None:
+        return ""
+    try:
+        return str(field.to_embedding_text() or "")
+    except Exception:  # noqa: BLE001 - a text-composition failure must not fail the report
+        return ""
+
+
 def _preprocess_diff(dd: Any) -> tuple[list[UIPreprocessDiff], int]:
     """Per-variable before/after for the variables preprocessing changed (capped sample + true count)."""
     try:
@@ -763,6 +782,7 @@ def _preprocess_diff(dd: Any) -> tuple[list[UIPreprocessDiff], int]:
             "rawVariableName": str(r.get("raw_variable_name", "")),
             "rawDescription": str(r.get("raw_description", "")),
             "cleanedDescription": str(r.get("cleaned_description", "")),
+            "embedText": _embed_text(dd, str(r.get("variable_name", ""))),
             "nameChanged": bool(r.get("name_changed")),
             "descChanged": bool(r.get("desc_changed")),
             "embedNameSuppressed": bool(r.get("embed_name_suppressed")),

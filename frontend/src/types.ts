@@ -346,6 +346,18 @@ export interface PreprocessDiff {
   rawVariableName: string;
   rawDescription: string;
   cleanedDescription: string;
+  /**
+   * The EXACT text the grouping stage consumes for this variable — core's own composition, carried on the
+   * wire because it cannot be reconstructed from the fields beside it.
+   *
+   * Its precedence is `question_text or description`, falling back to the cleaned variable name only when
+   * there is no primary text and the name still reaches the vector. That is the OPPOSITE of
+   * `FieldDetail.text` (`description or question_text`), which is a DISPLAY derivation — so the two are
+   * not interchangeable and neither may stand in for the other.
+   *
+   * `""` means this variable embeds nothing and reaches no concept group. An honest empty, not a gap.
+   */
+  embedText: string;
   nameChanged: boolean;
   descChanged: boolean;
   embedNameSuppressed: boolean;

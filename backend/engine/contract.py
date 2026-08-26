@@ -616,6 +616,20 @@ class UIPreprocessDiff(TypedDict):
     rawVariableName: str
     rawDescription: str
     cleanedDescription: str
+    #: The EXACT string the grouping stage consumes for this variable — core's own
+    #: ``Field.to_embedding_text()``, not a re-derivation of it.
+    #:
+    #: Carried because it cannot be reconstructed from the other keys, and Gate 0's row-to-vector panel is
+    #: the one place a reviewer can see why two variables did or did not group. The precedence is
+    #: ``question_text or description`` (the question is assumed richer), falling back to the cleaned
+    #: variable name only when there is no primary text AND the name still reaches the vector — which is
+    #: the OPPOSITE precedence from ``FieldDetail.text``, a display derivation reading
+    #: ``description or question_text``. Deriving one from the other would put a plausible-looking wrong
+    #: string on the only screen that explains grouping, which is worse than showing nothing.
+    #:
+    #: Empty string means the variable embeds NOTHING and reaches no concept group (see
+    #: ``nNothingToEmbed``) — an honest empty, not a missing value.
+    embedText: str
     nameChanged: bool
     descChanged: bool
     embedNameSuppressed: bool  # the variable name was dropped from the embedding text (it echoed the description)

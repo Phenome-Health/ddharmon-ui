@@ -500,3 +500,157 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     }
   });
 });
+
+test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two honest gaps", () => {
+  test("@gate0 each cohort gets its own tab, and switching tabs switches the report", async ({ page }) => {
+    await page.goto(GATE0);
+    const panel = page.getByTestId("cohort-panel");
+    await expect(panel).toHaveAttribute("data-state-kind", "report");
+
+    const tabs = page.getByRole("tab");
+    // `data-cohort`, not `value`: Radix consumes the `value` prop and never puts it in the DOM, so
+    // reading it back yields null — which then blows up inside the matcher rather than failing clearly.
+    const names = await tabs.evaluateAll((els) => els.map((e) => e.getAttribute("data-cohort")));
+    expect(names.length).toBeGreaterThan(1);
+    expect(names.every(Boolean)).toBe(true);
+    // One tab open at a time, and the open one is the panel's cohort — not one report re-labelled.
+    await expect(panel).toHaveAttribute("data-cohort", names[0]!);
+
+    await tabs.nth(1).click();
+    await expect(panel).toHaveAttribute("data-cohort", names[1]!);
+    await expect(panel).toHaveAttribute("data-state-kind", "report");
+    // Each tab carries its OWN reconciliation, against its own dictionary.
+    await expect(panel.getByTestId("rule-reconciliation")).toBeVisible();
+  });
+
+  test("@gate0 a cohort still running shows progress, never a completed report", async ({ page }) => {
+    await withPayload(page, (p) => {
+      const reports = reportsOf(p);
+      // One cohort finished, one still to come: the run declares five cohorts and carries four reports.
+      const pending = reports.pop()!;
+      (p.result as { summary: { cohorts: string[] } }).summary.cohorts = [
+        ...reports.map((r) => r.cohort),
+        pending.cohort,
+      ];
+      (p as { status: string; phase: string }).status = "embedding";
+      (p as { status: string; phase: string }).phase = "embedding";
+    });
+    await page.goto(GATE0);
+
+    const pendingTab = page.locator('[role="tab"][data-progress="pending"]').first();
+    await expect(pendingTab).toBeVisible();
+    await pendingTab.click();
+
+    const panel = page.getByTestId("cohort-panel");
+    // The panel says it is still working. It does NOT render a rule list, which would be a completed
+    // report on a cohort that has not finished one.
+    await expect(panel).toHaveAttribute("data-state-kind", "pending");
+    await expect(panel.getByTestId("rule-reconciliation")).toHaveCount(0);
+    await expect(panel.getByTestId("rule-row")).toHaveCount(0);
+
+    // And the aggregate does not imply completeness it has not reached.
+    const aggregate = page.getByTestId("prepare-aggregate");
+    await expect(aggregate).toBeVisible();
+    expect(await aggregate.getAttribute("data-complete")).toBe("false");
+    const words = (await aggregate.innerText()).replace(/\s+/g, " ");
+    expect(words).toMatch(/still (being prepared|preparing|to come)|of 5|not finished/i);
+  });
+
+  test("@gate0 the aggregate says so plainly when every cohort IS finished", async ({ page }) => {
+    await page.goto(GATE0);
+    const aggregate = page.getByTestId("prepare-aggregate");
+    expect(await aggregate.getAttribute("data-complete")).toBe("true");
+  });
+
+  test("@gate0 the row-to-vector panel shows the exact grouping input, not the cleaned description", async ({ page }) => {
+    await page.goto(GATE0);
+    const panel = page.getByTestId("row-to-vector");
+    await expect(panel).toBeVisible();
+
+    // Read the payload the screen is rendering, and assert the panel shows THAT string.
+    const payload = await fixturePayload(page);
+    const report = reportsOf(payload)[0];
+    const row = report.diff.find((d) => d.embedText && d.embedText !== d.cleanedDescription);
+    expect(row, "the fixture must carry a variable whose embedding text differs from its description").toBeTruthy();
+
+    await panel.getByRole("combobox").selectOption(row!.variableName);
+    const shown = panel.getByTestId("embed-text");
+    await expect(shown).toHaveText(row!.embedText);
+    // The near-miss is the whole point: the cleaned description is a DIFFERENT string, and showing it
+    // here would answer "why did these group?" wrongly while looking right.
+    await expect(shown).not.toHaveText(row!.cleanedDescription);
+  });
+
+  test("@gate0 the nothing-to-embed count is rendered, out of variables", async ({ page }) => {
+    await page.goto(GATE0);
+    const count = page.getByTestId("nothing-to-embed");
+    await expect(count).toBeVisible();
+    const payload = await fixturePayload(page);
+    expect(await count.getAttribute("data-count")).toBe(String(reportsOf(payload)[0].nNothingToEmbed));
+    expect((await count.innerText()).toLowerCase()).toContain("variable");
+  });
+
+  test("@gate0 both deferred capabilities render as neutral not-available tiles, with their contract copy", async ({ page }) => {
+    await page.goto(GATE0);
+    const tiles = page.getByTestId("not-available");
+    // Settle first. `evaluateAll` over an unsettled page measures an empty list and pronounces the
+    // surface clean, which is a gate that is blind rather than passing.
+    await expect(tiles).toHaveCount(2);
+    // Neither may be quietly omitted: an absent panel reads as "nothing to say here".
+    const texts = await tiles.evaluateAll((els) => els.map((e) => (e.textContent ?? "").replace(/\s+/g, " ")));
+    expect(texts.some((t) => /Which rule changed a variable/i.test(t))).toBe(true);
+    expect(texts.some((t) => /value vector/i.test(t))).toBe(true);
+
+    // Deferred by design, not failed to build — so no destructive colour and no warning icon anywhere.
+    for (const tile of await tiles.all()) {
+      const bad = await tile.evaluate((el) => {
+        const words = ["danger", "destructive", "warn", "error"];
+        const hit: string[] = [];
+        for (const node of [el, ...Array.from(el.querySelectorAll("*"))]) {
+          const cls = node.getAttribute("class") ?? "";
+          if (words.some((w) => cls.includes(w))) hit.push(cls);
+          if (node.tagName.toLowerCase() === "svg" && node.getAttribute("aria-hidden") !== "true") {
+            hit.push(`visible icon: ${node.getAttribute("class") ?? ""}`);
+          }
+        }
+        return hit;
+      });
+      expect(bad, "a deferred tile must not look like a failure").toEqual([]);
+    }
+  });
+
+  test("@gate0 the rule grouping is labelled inferred, consistent with the provenance tile", async ({ page }) => {
+    await page.goto(GATE0);
+    const words = (await page.getByTestId("cohort-panel").innerText()).toLowerCase();
+    expect(words).toContain("inferred");
+  });
+
+  test("@gate0 Continue carries a non-zero amount and an INLINE irreversible-spend statement", async ({ page }) => {
+    await page.goto(GATE0);
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toBeVisible();
+
+    const amount = Number(await bar.getAttribute("data-total"));
+    expect(amount).toBeGreaterThan(0);
+    const words = (await bar.innerText()).replace(/\s+/g, " ");
+    // The amount is on the control the reviewer presses, not only in an attribute.
+    expect(words).toMatch(/\$\d/);
+    // The irreversible-spend statement is inline, in the bar being read.
+    expect(words.toLowerCase()).toContain("not refundable");
+    expect(words.toLowerCase()).toContain("spending begins");
+
+    // No modal stands between the reviewer and the first charge: a modal on the primary path is met at
+    // every gate, always says yes, and by the third gate is dismissed unread.
+    expect(await page.locator('[role="dialog"], [role="alertdialog"]').count()).toBe(0);
+  });
+
+  test("@gate0 nothing on this screen claims the flow is free until the reviewer chooses what to buy", async ({ page }) => {
+    await page.goto(GATE0);
+    const words = (await page.locator("main, body").first().innerText()).replace(/\s+/g, " ");
+    // Gate 0's own review work is free; CONTINUING from it is the run's first charge, so any blanket
+    // "free until you choose" claim is false here.
+    expect(words).not.toMatch(/free until you (choose|decide|pick)/i);
+    expect(words).not.toMatch(/nothing is charged yet/i);
+    expect(words).not.toMatch(/step 1 is free/i);
+  });
+});
