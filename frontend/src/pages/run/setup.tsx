@@ -15,8 +15,8 @@ import { InfoTip } from "@/components/ui/info-tip";
 import { IS_STATIC, listDemos, listModels, startHarmonize } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
-import { lookupPrefill } from "@/lib/column-prefill";
-import { COLUMN_ROLES, PROVIDER_LABELS } from "@/types";
+import { lookupPrefill, rememberAssignment } from "@/lib/column-prefill";
+import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDurationRange } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import type { CdeSet, GatePosition, JobResult, RunMode } from "@/types";
@@ -318,6 +318,23 @@ export default function SetupPage() {
   /** True while a figure would be premature: a file still parsing, or a corpus size still resolving. */
   const estimatePending = sizePending || dicts.some((d) => d.state === "parsing");
 
+  /**
+   * How long the run will take — the WALL-CLOCK companion to the cost estimate (08-13b Task 2).
+   *
+   * A batch run can sit in the provider's queue for a long time before it produces anything, and a
+   * reviewer who was never told that reads a long run as a hung one. So the duration is quoted beside the
+   * price, from the SAME estimator the shipped New Run form uses (`estimateRunTime` + `formatDurationRange`
+   * in `types.ts`) rather than a second model that could disagree with it.
+   *
+   * It is a RANGE and it is hedged in copy. `estimateRunTime`'s own comment calls it order-of-magnitude —
+   * batch turnaround is set mostly by the Anthropic Batch API queue, which is only weakly tied to corpus
+   * size — so a single figure here would be a commitment the run cannot keep.
+   */
+  const time = useMemo(
+    () => estimateRunTime(totalFields ?? 0, dicts.length, runMode),
+    [totalFields, dicts.length, runMode],
+  );
+
     /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
   const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
 
@@ -527,6 +544,15 @@ export default function SetupPage() {
         "anthropic",
         runMode === "preview" ? undefined : apiKey.trim(),
       );
+      // WRITE the column-mapping cache Setup already READ. `initialRoles` calls `lookupPrefill`, so before
+      // this line Setup consumed a cache that only the New Run form ever filled — a read path fed by a
+      // writer living on another screen. Written HERE, at run start, exactly where `home.tsx:228` writes
+      // it: a mid-mapping edit would cache a half-finished assignment as if it were the reviewer's answer.
+      //
+      // HEADERS AND ROLES ONLY (T-08b-2). Both are dictionary METADATA — column names and which role each
+      // column plays. Nothing derived from the FIRST VALUE column the mapping table displays goes in here;
+      // that column holds cell contents, and a cache of cell contents is a different thing entirely.
+      dicts.forEach((d) => rememberAssignment(d.headers, d.roles));
       navigate(`/run/${started}/gate0`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not start this run");
@@ -1035,6 +1061,44 @@ export default function SetupPage() {
             </p>
           )}
         </div>
+
+        {/* HOW LONG, beside HOW MUCH. Rendered for every mode including preview — a mode whose duration is
+            blank reads as unknown when it is in fact the shortest and cheapest of the three. */}
+        {!estimatePending && time.mid > 0 && (
+          <div
+            data-testid="estimate-duration"
+            data-low={String(Math.round(time.low))}
+            data-mid={String(Math.round(time.mid))}
+            data-high={String(Math.round(time.high))}
+            data-mode={runMode}
+            className="flex flex-col gap-1 border-t border-rule-on-raised pt-2"
+          >
+            <div className="flex items-baseline justify-between gap-4 text-xs">
+              <span className="text-on-raised">Estimated time</span>
+              <span
+                data-testid="estimate-duration-range"
+                className="shrink-0 tabular-nums text-on-raised"
+              >
+                about {formatDurationRange(time)}
+              </span>
+            </div>
+            {/* A RANGE, hedged. Never one figure and never a promise: the estimate covers the work, and
+                for batch the provider's queue sits in front of the work and is not ours to predict. */}
+            <p className="max-w-[68ch] text-xs text-on-raised-muted">
+              {runMode === "batch"
+                ? "A rough estimate of the work, not a commitment. A batch run also waits in the " +
+                  `provider's queue before it starts${time.note ? `, and ${time.note}` : ""} — a busy ` +
+                  "queue can push a batch run out by hours, so a long quiet stretch is normal for batch " +
+                  "rather than a stalled run."
+                : runMode === "preview"
+                  ? "A rough estimate, not a commitment. Preview runs entirely on this machine — no " +
+                    "model is called and nothing waits on a provider, which is why it is the quickest " +
+                    "of the three."
+                  : "A rough estimate, not a commitment. A synchronous run calls the model variable by " +
+                    "variable, so it scales with how many variables the run covers."}
+            </p>
+          </div>
+        )}
 
         {!estimatePending && estimate && !estimate.free && (
           <>

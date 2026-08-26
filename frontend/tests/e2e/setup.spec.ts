@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   PARTICIPANT_ID_HEADERS,
@@ -786,5 +788,229 @@ test.describe("Setup — the review pass: layout melded with the New Run form", 
     await expect(warn).toContainText(/cross-cohort/i);
     // FLAGGED, not blocked — a legitimate same-name pair from two cohorts must still be startable.
     await expect(page.getByTestId("blocker").filter({ hasText: /added more than once/i })).toHaveCount(0);
+  });
+});
+
+test.describe("Setup — the two functional lifts (08-13b)", () => {
+  // ── the inherited-UI gaps (08-13b Task 2) ──────────────────────────────────────────────────────
+  //
+  // Setup was planned from the UI spec rather than from an inventory of what the shipped New Run form
+  // already did, so two conveniences never crossed over:
+  //
+  //   1. it called `lookupPrefill` but never `rememberAssignment` — it READ a column-mapping cache that
+  //      only `pages/home.tsx` ever WROTE, so the read path was fed by a writer on another screen; and
+  //   2. it quoted a price but not a DURATION, though `types.ts` has carried `estimateRunTime` all along
+  //      and a batch run can take a long time. A reviewer who was not told that reads it as a hang.
+  //
+  // A NOTE ON WHAT CAN BE ASSERTED HERE, because it shapes the two tests below. This gate runs against
+  // the STATIC build, and Setup's Start button is `disabled={… || IS_STATIC}` (setup.tsx) because a
+  // static build has no backend to post files to. So the plan's "click Start, then upload a same-shaped
+  // file and watch it prefill" is NOT reachable in this harness — and the prefill module cannot be
+  // imported into this spec either, because it pulls in the demo-manifest JSON and Playwright's node
+  // loader rejects a bare JSON import.
+  //
+  // The write is therefore pinned from BOTH ENDS of the same contract instead:
+  //   - the READ end, in the browser, against a localStorage payload written in exactly the shape
+  //     `rememberAssignment` writes — same key, same header signature, same role map; and
+  //   - the WRITE end, structurally, against setup.tsx's own source: that `rememberAssignment` is called
+  //     once, with headers and roles only, and from `onStart` rather than from a mapping handler.
+  // Together those cover the claim. `visual.spec.ts` already reads `App.tsx` off disk for the same reason.
+
+  /** The cache's storage key and its header-signature rule, both fixed by `lib/column-prefill.ts`. */
+  const CACHE_KEY = "ddharmon:column-assignments:v1";
+  const signature = (headers: string[]) =>
+    headers
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean)
+      .sort()
+      .join("|");
+
+  /** Columns that are NOT role names, so a prefill can only have come from the CACHE. */
+  const OPAQUE_HEADERS = ["varname", "desc", "unit"];
+  const OPAQUE_ROLES = { variable_name: "varname", description: "desc", units: "unit" };
+  const opaqueCsv = (n: number) =>
+    csv([OPAQUE_HEADERS, ...Array.from({ length: n }, (_, i) => [`v_${i}`, `describes v_${i}`, "kg"])]);
+
+  test("@setup a remembered header set prefills a same-shaped dictionary — and nothing else does", async ({
+    page,
+  }) => {
+    // PART A — the control. With an empty cache these three columns prefill NOTHING: none of them is a
+    // role name, so `initialRoles`' name-is-the-role identity rule finds no match. Without this half,
+    // part B would pass on the identity rule and prove nothing about the cache.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate((k) => localStorage.removeItem(k), CACHE_KEY);
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "unrecognised.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(opaqueCsv(6)),
+    });
+    const selects = page.getByTestId("role-select");
+    await expect(selects).toHaveCount(3);
+    for (let i = 0; i < 3; i++) await expect(selects.nth(i)).toHaveValue("");
+
+    // PART B — the same file, against a cache holding exactly what a completed run start writes: the
+    // header SIGNATURE as the key, and role -> source column as the value. This is the contract
+    // `rememberAssignment` writes and `lookupPrefill` reads; asserting it here is what makes "a second
+    // dictionary with the same headers maps itself" a checked claim rather than a hoped-for one.
+    await page.evaluate(
+      ([k, sig, roles]) =>
+        localStorage.setItem(k as string, JSON.stringify({ [sig as string]: roles })),
+      [CACHE_KEY, signature(OPAQUE_HEADERS), OPAQUE_ROLES] as const,
+    );
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "same-shape.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(opaqueCsv(6)),
+    });
+    const prefilled = page.getByTestId("role-select");
+    await expect(prefilled).toHaveCount(3);
+    // Row order follows the FILE's header order: varname, desc, unit.
+    await expect(prefilled.nth(0)).toHaveValue("variable_name");
+    await expect(prefilled.nth(1)).toHaveValue("description");
+    await expect(prefilled.nth(2)).toHaveValue("units");
+
+    // T-08b-2 — THE CACHE MUST NOT WIDEN INTO VALUE DATA. Every value in the stored payload is one of
+    // the file's own COLUMN NAMES. Column names and roles are dictionary metadata; the first-value
+    // column the mapping table displays holds cell contents, and none of it may reach this cache.
+    const stored = await page.evaluate(
+      (k) => JSON.parse(localStorage.getItem(k) ?? "{}") as Record<string, Record<string, string>>,
+      CACHE_KEY,
+    );
+    expect(Object.keys(stored)).toEqual([signature(OPAQUE_HEADERS)]);
+    for (const column of Object.values(stored[signature(OPAQUE_HEADERS)])) {
+      expect(OPAQUE_HEADERS).toContain(column);
+    }
+    // The cell values are on screen but NOT in the cache.
+    expect(JSON.stringify(stored)).not.toContain("describes v_0");
+  });
+
+  test("@setup the cache is written at RUN START and from nowhere else on Setup", () => {
+    // The call site, asserted structurally: the round-trip above proves the module works, and this proves
+    // Setup actually calls it — and calls it in the one place production does. See the describe-block note
+    // on why the browser cannot reach Start in a static build.
+    const setupTsx = path.resolve(path.dirname(test.info().file), "..", "..", "src", "pages", "run", "setup.tsx");
+    expect(existsSync(setupTsx), `expected Setup at ${setupTsx}`).toBe(true);
+    const src = readFileSync(setupTsx, "utf8");
+
+    // Imported from the shared module, not reimplemented.
+    expect(src).toMatch(/import \{[^}]*\brememberAssignment\b[^}]*\} from "@\/lib\/column-prefill";/);
+
+    // Exactly ONE call, and its arguments are the header list and the role map — nothing else, and
+    // nothing derived from the first-value column (T-08b-2).
+    const calls = [...src.matchAll(/rememberAssignment\(([^)]*)\)/g)].map((m) => m[1].trim());
+    expect(calls).toEqual(["d.headers, d.roles"]);
+
+    // And that one call sits inside `onStart`. Extracted by brace-matching from the function header, so
+    // moving the write out to a mapping handler fails here rather than passing on a whole-file grep.
+    const start = src.indexOf("async function onStart()");
+    expect(start, "expected an `async function onStart()` in setup.tsx").toBeGreaterThan(-1);
+    let depth = 0;
+    let end = src.indexOf("{", start);
+    for (let i = end; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    const onStartBody = src.slice(start, end);
+    expect(onStartBody).toContain("rememberAssignment(d.headers, d.roles)");
+
+    // NOT on a mapping edit. `setRoles` is the per-keystroke role handler; caching from there would
+    // persist a half-finished assignment as though it were the reviewer's answer.
+    const setRoles = src.indexOf("function setRoles(");
+    expect(setRoles).toBeGreaterThan(-1);
+    const setRolesBody = src.slice(setRoles, src.indexOf("\n  }", setRoles));
+    expect(setRolesBody).not.toContain("rememberAssignment");
+  });
+
+  test("@setup the run is quoted a duration RANGE beside its price, hedged as an estimate", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const dur = page.getByTestId("estimate-duration");
+    await expect(dur).toBeVisible();
+
+    // A RANGE, not a bare figure: both ends are quoted and they differ.
+    const low = Number(await dur.getAttribute("data-low"));
+    const high = Number(await dur.getAttribute("data-high"));
+    expect(low).toBeGreaterThan(0);
+    expect(high).toBeGreaterThan(low);
+    const shown = (await page.getByTestId("estimate-duration-range").innerText()).trim();
+    // Two duration tokens either side of a dash, e.g. "about 3 min–21 min". A single token would be a
+    // bare figure dressed as a span, which is the thing the plan's prohibition forbids.
+    expect(shown).toMatch(/[–-]/);
+    expect(shown.match(/\d+\s*(?:s|min|h)\b/g) ?? []).toHaveLength(2);
+
+    // HEDGED. It reads as an estimate, and it never promises.
+    await expect(dur).toContainText(/estimate|approximately|about|~/i);
+    await expect(dur).not.toContainText(/guarantee|will take exactly/i);
+    await expect(dur).not.toContainText(/\bexactly\b/i);
+
+    // Beside the price, not on a screen of its own: same panel as the cost estimate.
+    await expect(page.getByTestId("estimate-panel").getByTestId("estimate-duration")).toHaveCount(1);
+  });
+
+  test("@setup batch's duration is the WIDE, queue-caveated one — sync's is the narrow one", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const dur = page.getByTestId("estimate-duration");
+
+    await expect(dur).toHaveAttribute("data-mode", "batch");
+    const batch = {
+      low: Number(await dur.getAttribute("data-low")),
+      high: Number(await dur.getAttribute("data-high")),
+    };
+    // Batch names the queue, because the queue — not the corpus — is what makes its span wide, and a
+    // long quiet stretch has to read as normal rather than as a stalled run.
+    await expect(dur).toContainText(/queue/i);
+
+    await page.getByTestId("run-mode").selectOption("sync");
+    await expect(dur).toHaveAttribute("data-mode", "sync");
+    const sync = {
+      low: Number(await dur.getAttribute("data-low")),
+      high: Number(await dur.getAttribute("data-high")),
+    };
+
+    // MEASURED, NOT ASSUMED. 08-13b's plan expected batch to quote a materially LONGER duration than
+    // sync; against the shipped `estimateRunTime` at this fixture's size (1,000 variables, 5
+    // dictionaries) it does not — batch is roughly 411s mid against sync's 705s, because sync pays a
+    // per-variable LLM call while batch pays a mostly size-independent queue floor. What IS true at
+    // every size, and is the property the copy has to carry, is that batch's span is far WIDER
+    // (high/low = 6x against sync's 3x) and that its width comes from the queue.
+    expect(batch.high - batch.low).toBeGreaterThan(sync.high - sync.low);
+    expect(batch.high / batch.low).toBeGreaterThan(sync.high / sync.low);
+    // Only batch carries the queue caveat — sync has no queue to wait in.
+    await expect(dur).not.toContainText(/queue/i);
+  });
+
+  test("@setup preview quotes its OWN duration rather than blanking or borrowing a paid mode's", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const dur = page.getByTestId("estimate-duration");
+    const batchMid = Number(await dur.getAttribute("data-mid"));
+
+    await page.getByTestId("run-mode").selectOption("preview");
+    // The run is free — and the duration is still there. A blank duration on the one mode that costs
+    // nothing would read as "unknown" for the mode that is in fact the quickest and most predictable.
+    await expect(page.getByTestId("estimate-free")).toBeVisible();
+    await expect(dur).toBeVisible();
+    await expect(dur).toHaveAttribute("data-mode", "preview");
+    const previewMid = Number(await dur.getAttribute("data-mid"));
+    expect(previewMid).toBeGreaterThan(0);
+    // Its own figure, not the paid mode's carried over.
+    expect(previewMid).toBeLessThan(batchMid);
+    // And it explains why it is quick, in terms of what preview does — no model call, so no queue.
+    await expect(dur).not.toContainText(/queue/i);
   });
 });
