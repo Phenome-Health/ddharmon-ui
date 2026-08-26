@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { GateShell, railFor } from "@/components/gate/GateShell";
+import { InputQualitySignals } from "@/components/gate/InputQualitySignals";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RulePipelineList } from "@/components/gate/RulePipelineList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -315,6 +316,10 @@ export default function Gate0Page() {
                   {t.report ? (
                     <>
                       <RulePipelineList report={t.report} />
+                      {/* The pre-spend read on the INPUT, per cohort and never averaged across them. It
+                          sits under this cohort's tab rather than above the tabs for exactly that
+                          reason: a cross-cohort mean would be the composite the panel refuses to be. */}
+                      <InputQualitySignals report={t.report} />
                       <RowToVector report={t.report} />
                     </>
                   ) : (

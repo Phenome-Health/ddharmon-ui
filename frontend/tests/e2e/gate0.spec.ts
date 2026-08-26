@@ -593,9 +593,11 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
   test("@gate0 both deferred capabilities render as neutral not-available tiles, with their contract copy", async ({ page }) => {
     await page.goto(GATE0);
     const tiles = page.getByTestId("not-available");
-    // Settle first. `evaluateAll` over an unsettled page measures an empty list and pronounces the
-    // surface clean, which is a gate that is blind rather than passing.
-    await expect(tiles).toHaveCount(2);
+    // Settle on the two tiles THIS test is about, by their own copy. `evaluateAll` over an unsettled page
+    // measures an empty list and pronounces the surface clean — blind rather than passing — and a total
+    // count would break every time a tile is added anywhere else on the screen.
+    await expect(tiles.filter({ hasText: /Which rule changed a variable/i })).toHaveCount(1);
+    await expect(tiles.filter({ hasText: /value vector/i })).toHaveCount(1);
     // Neither may be quietly omitted: an absent panel reads as "nothing to say here".
     const texts = await tiles.evaluateAll((els) => els.map((e) => (e.textContent ?? "").replace(/\s+/g, " ")));
     expect(texts.some((t) => /Which rule changed a variable/i.test(t))).toBe(true);
@@ -652,5 +654,141 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     expect(words).not.toMatch(/free until you (choose|decide|pick)/i);
     expect(words).not.toMatch(/nothing is charged yet/i);
     expect(words).not.toMatch(/step 1 is free/i);
+  });
+});
+
+test.describe("Gate 0 — the input-quality signals, rendered", () => {
+  test("@gate0 every rendered signal carries its own count AND its own denominator", async ({ page }) => {
+    await page.goto(GATE0);
+    const panel = page.getByTestId("input-quality");
+    await expect(panel).toBeVisible();
+
+    const rows = panel.getByTestId("quality-signal");
+    await expect(rows.first()).toBeVisible();
+    expect(await rows.count()).toBeGreaterThanOrEqual(3);
+
+    for (const row of await rows.all()) {
+      // A count, as data and as words.
+      const count = await row.getAttribute("data-count");
+      expect(count).toMatch(/^\d+$/);
+      const words = (await row.innerText()).replace(/\s+/g, " ");
+      // The denominator is named ON SCREEN, not implied by placement.
+      expect(await row.getAttribute("data-denominator")).toBe("variables");
+      expect(words).toContain("variables");
+      // P2: this screen counts VARIABLES (dictionary rows). A count of metadata attributes is a
+      // different kind of number and must never be presented as the same one.
+      expect(words.toLowerCase()).not.toMatch(/\bfields?\b/);
+      expect(words.toLowerCase()).not.toMatch(/\battributes?\b/);
+    }
+  });
+
+  test("@gate0 NO composite is rendered anywhere on the quality panel", async ({ page }) => {
+    await page.goto(GATE0);
+    const panel = page.getByTestId("input-quality");
+    await expect(panel).toBeVisible();
+    const words = (await panel.innerText()).replace(/\s+/g, " ");
+
+    // A tier IS a composite, and a composite is the exact defect that got the published
+    // Interoperability Score rejected: a single mean hides which of the signals is the problem.
+    expect(words).not.toMatch(/\b(tier|grade|score|rating|out of 100|A\+|★)\b/i);
+    // Nor a percentage dressed as a quality reading.
+    expect(words).not.toMatch(/\d+\s*%/);
+    // And no rollup vocabulary that would imply one. Narrowed to STATISTICAL usage on purpose: a bare
+    // /\bmean\b/ convicts "variables that mean different things", and a gate that fires on correct prose
+    // gets muted rather than fixed.
+    expect(words).not.toMatch(/\b(composite|overall (score|reading|quality)|quality (score|index)|(the |an? )(average|mean) (of|across|reading|score))\b/i);
+  });
+
+  test("@gate0 the placeholder strings themselves are rendered, not only their count", async ({ page }) => {
+    const PLACEHOLDER = "Selected variable is part of a skip pattern";
+    await withPayload(page, (p) => {
+      const r = reportsOf(p)[0];
+      r.rules = r.rules.map((x) =>
+        x.rule === "placeholder_description_replacement"
+          ? { ...x, outcome: "changed" as const, nChanged: 45, detail: `${PLACEHOLDER}; See the study codebook` }
+          : x,
+      );
+    });
+    await page.goto(GATE0);
+
+    const row = page.locator('[data-testid="quality-signal"][data-signal="boilerplate-description"]').first();
+    await expect(row).toBeVisible();
+    // "45 placeholder descriptions" is an abstraction; the sentence itself is evidence.
+    await expect(row).toContainText(PLACEHOLDER);
+    await expect(row).toContainText("See the study codebook");
+    expect(await row.getAttribute("data-count")).toBe("45");
+  });
+
+  test("@gate0 the two unavailable signals are declared, with their reason, never approximated", async ({ page }) => {
+    await page.goto(GATE0);
+    const panel = page.getByTestId("input-quality");
+    const gaps = panel.getByTestId("not-available");
+    await expect(gaps).toHaveCount(2);
+
+    const texts = await gaps.evaluateAll((els) => els.map((e) => (e.textContent ?? "").replace(/\s+/g, " ")));
+    // The opaque-abbreviation share: computable inside the pipeline, reported by nothing.
+    expect(texts.some((t) => /opaque code/i.test(t))).toBe(true);
+    // Per-attribute population rates: on the dictionary, not on the preparation report.
+    expect(texts.some((t) => /units, answer options or question wording/i.test(t))).toBe(true);
+    // Each names WHY. "Not available" with no reason cannot be told from "zero".
+    for (const t of texts) expect(t.length).toBeGreaterThan(80);
+    // Declared as deferred, not as an error or a per-run opt-out.
+    for (const gap of await gaps.all()) expect(await gap.getAttribute("data-claim")).toBe("deferred");
+  });
+
+  test("@gate0 an all-clear dictionary reads as a positive finding, not as an empty region", async ({ page }) => {
+    await withPayload(page, (p) => {
+      const r = reportsOf(p)[0];
+      r.rules = r.rules.map((x) => ({ ...x, outcome: "no_change" as const, nChanged: 0, detail: "" }));
+      r.nNothingToEmbed = 0;
+      r.nChangedVariables = 0;
+      r.diff = [];
+    });
+    await page.goto(GATE0);
+
+    const panel = page.getByTestId("input-quality");
+    await expect(panel).toHaveAttribute("data-all-clear", "true");
+    const words = (await panel.innerText()).replace(/\s+/g, " ");
+    // Nothing-to-flag IS a result, and it is stated. An empty region says nothing was looked for.
+    expect(words.length).toBeGreaterThan(60);
+    expect(words).toMatch(/none of these|nothing.*flag|no .*(problem|weakness)/i);
+    // The rows still render with their zeros — a hidden zero cannot be told from a check not made.
+    expect(await panel.getByTestId("quality-signal").count()).toBeGreaterThanOrEqual(3);
+  });
+
+  test("@gate0 each cohort carries its own signals, and no cross-cohort average is computed", async ({ page }) => {
+    await page.goto(GATE0);
+    // One panel per open tab, inside that tab's own cohort panel — never one panel for the run.
+    await expect(page.getByTestId("input-quality")).toHaveCount(1);
+    const panel = page.getByTestId("input-quality");
+    const cohort = await page.getByTestId("cohort-panel").getAttribute("data-cohort");
+    expect(await panel.getAttribute("data-cohort")).toBe(cohort);
+
+    // Switching cohorts switches the signals with it.
+    const tabs = page.getByRole("tab");
+    const names = await tabs.evaluateAll((els) => els.map((e) => e.getAttribute("data-cohort")));
+    await tabs.nth(1).click();
+    await expect(panel).toHaveAttribute("data-cohort", names[1]!);
+
+    // And nothing anywhere on the screen averages across cohorts.
+    const all = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    expect(all).not.toMatch(/(average|mean) (quality|reading|score)|across (all )?cohorts[^.]*(quality|score)/i);
+  });
+
+  test("@gate0 descriptionsChanged is not read by the signals panel at all", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = readFileSync(resolve(here, "../../src/components/gate/InputQualitySignals.tsx"), "utf8");
+    // COMMENTS STRIPPED. The docstring records WHY this field is not a population signal — it counts how
+    // many descriptions the RULES altered, which is cleaning effort, not how populated the source was —
+    // and a naive substring gate convicts the sentence that documents the rule. Code is what must be clean.
+    const src = raw.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    expect(src).not.toContain("descriptionsChanged");
+    expect(src).not.toContain("descriptions_changed");
+    // ...and the reasoning IS recorded somewhere, so this stays a documented refusal rather than an
+    // accident that happens to hold.
+    expect(raw).toContain("descriptionsChanged");
   });
 });
