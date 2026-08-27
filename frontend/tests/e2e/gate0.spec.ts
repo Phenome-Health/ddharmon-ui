@@ -8,6 +8,7 @@ import {
   qualitySignals,
   reconcile,
 } from "@/lib/preprocess-report";
+import { afterOf, beforeOf, describeInvisibleChange, wordDiff } from "@/lib/text-diff";
 import type { PreprocessDiff, PreprocessReport, PreprocessRule } from "@/types";
 import { PAUSED_RUN_FIXTURE } from "./routes";
 
@@ -264,6 +265,125 @@ async function withPayload(
 function reportsOf(payload: Record<string, unknown>): PreprocessReport[] {
   return (payload.result as { preprocessing: PreprocessReport[] }).preprocessing;
 }
+
+test.describe("Gate 0 — the word diff that makes a small edit findable", () => {
+  /**
+   * The defect: preparation's edits are frequently a few characters inside a paragraph, and two blocks of
+   * prose side by side do not show them. The reviewer is then asked to authorise the run's first charge on
+   * a difference they cannot locate. Every assertion below is about the diff being both VISIBLE and TRUE —
+   * a marking that is merely plausible is worse than none, because it invents an edit the run did not make.
+   */
+
+  test("@gate0 the diff is lossless — each side rebuilds its own string exactly", () => {
+    const before = "Current smoking status. <p>Acquired from central registry, updated by participant.";
+    const after = "Current smoking status. Acquired from central registry, updated by participant.";
+
+    const d = wordDiff(before, after);
+
+    expect(beforeOf(d)).toBe(before);
+    expect(afterOf(d)).toBe(after);
+    expect(d.changed).toBe(true);
+  });
+
+  test("@gate0 an unchanged pair marks nothing, which is different from rendering nothing", () => {
+    const d = wordDiff("Age in years", "Age in years");
+
+    expect(d.changed).toBe(false);
+    expect(d.segments.every((s) => s.kind === "same")).toBe(true);
+    expect(beforeOf(d)).toBe("Age in years");
+  });
+
+  test("@gate0 only the tokens that actually moved are marked, not the paragraph around them", () => {
+    const d = wordDiff("a b c d e", "a b d e");
+
+    const removed = d.segments.filter((s) => s.kind === "removed").map((s) => s.text.trim());
+    expect(removed).toEqual(["c"]);
+    expect(d.segments.some((s) => s.kind === "added")).toBe(false);
+  });
+
+  test("@gate0 a pure whitespace change still reads as a change", () => {
+    // The normalisation rules exist to collapse these. If the diff dropped whitespace the panel would
+    // report "changed" while displaying two identical-looking strings — the exact confusion the second
+    // pair was added to end.
+    const d = wordDiff("Body  mass\tindex", "Body mass index");
+
+    expect(d.changed).toBe(true);
+    expect(beforeOf(d)).toBe("Body  mass\tindex");
+    expect(afterOf(d)).toBe("Body mass index");
+  });
+
+  test("@gate0 an emptied value is a removal, not an empty panel", () => {
+    const d = wordDiff("See accompanying documentation", "");
+
+    expect(afterOf(d)).toBe("");
+    expect(d.segments.filter((s) => s.kind === "removed").length).toBeGreaterThan(0);
+  });
+
+  test("@gate0 a pair too large to diff degrades to a whole-value replacement AND says so", () => {
+    // Silently returning a coarse result would let the screen claim the entire value changed. `coarse`
+    // exists so the UI can label it instead.
+    const long = Array.from({ length: 900 }, (_, i) => `w${i}`).join(" ");
+    const other = Array.from({ length: 900 }, (_, i) => `x${i}`).join(" ");
+
+    const d = wordDiff(long, other);
+
+    expect(d.coarse).toBe(true);
+    expect(beforeOf(d)).toBe(long);
+    expect(afterOf(d)).toBe(other);
+  });
+});
+
+test.describe("Gate 0 — a change you cannot see is named in words", () => {
+  /**
+   * Found while reviewing the marking on this run's own data. `cmtrt_glcs` reads
+   * `...blood glucose levels?\u00a0 Examples:` before and `...blood glucose levels? Examples:` after — a
+   * NO-BREAK SPACE collapsed to an ordinary one. The mark is correct and the two halves are genuinely
+   * different, but they render identically, so the screen shows a reviewer two matching words and asks
+   * them to accept that one of them changed. Marking is not enough when the difference has no glyph: it
+   * has to be SAID.
+   */
+
+  test("@gate0 a difference with no glyph is reported as invisible", () => {
+    // Both classes, because they fail differently: a no-break space IS whitespace to a regex, and a
+    // zero-width space is NOT — `\s` does not match it, so a whitespace-only test misses it entirely.
+    expect(wordDiff("blood glucose levels?\u00a0 Examples", "blood glucose levels? Examples").invisibleOnly).toBe(
+      true,
+    );
+    expect(wordDiff("a\u200bb", "ab").invisibleOnly).toBe(true);
+  });
+
+  test("@gate0 a real word change is NOT reported as invisible", () => {
+    // The failure mode of an over-eager normaliser: calling a substantive edit invisible.
+    expect(wordDiff("Age in years", "Age at visit").invisibleOnly).toBe(false);
+    expect(wordDiff("Age in years", "Age in years too").invisibleOnly).toBe(false);
+    expect(wordDiff("See documentation", "").invisibleOnly).toBe(false);
+  });
+
+  test("@gate0 the invisible character is NAMED, not called 'whitespace'", () => {
+    /**
+     * "The difference is whitespace" leaves the reviewer unable to check it against their own file.
+     * Naming the codepoint makes it findable — which is the whole point of a preparation report.
+     */
+    expect(describeInvisibleChange("levels?\u00a0 Examples", "levels? Examples")).toMatch(/no-break space/i);
+    expect(describeInvisibleChange("a\tb", "a b")).toMatch(/tab/i);
+    expect(describeInvisibleChange("a\u200bb", "ab")).toMatch(/zero-width/i);
+    expect(describeInvisibleChange("a  b", "a b")).toMatch(/repeated space|extra space/i);
+    // Nothing invisible to report → null, so the caller renders no note rather than an empty one.
+    expect(describeInvisibleChange("Age in years", "Age at visit")).toBeNull();
+  });
+
+  test("@gate0 the screen says so where the pair renders identically", async ({ page }) => {
+    await page.goto(GATE0);
+    await page.waitForLoadState("networkidle");
+    await page.locator('[data-testid="rule-row"][data-outcome="changed"]').first().click();
+
+    // This fixture's `cmtrt_glcs` is the no-break-space case. If it ever stops being, this assertion
+    // should be re-pointed at whatever row carries an invisible change rather than deleted.
+    const note = page.getByTestId("invisible-change-note").first();
+    await expect(note).toBeVisible();
+    await expect(note).toContainText(/no-break space/i);
+  });
+});
 
 test.describe("Gate 0 — the rule pipeline, rendered", () => {
   test("@gate0 every rule that ran is listed, including the ones that changed nothing", async ({ page }) => {
@@ -611,6 +731,102 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     // The near-miss is the whole point: the cleaned description is a DIFFERENT string, and showing it
     // here would answer "why did these group?" wrongly while looking right.
     await expect(shown).not.toHaveText(row!.cleanedDescription);
+  });
+
+  test("@gate0 a long embedding text is readable in full — it scrolls, it is not cut off", async ({ page }) => {
+    /**
+     * The defect, found on the real screen: the box was `line-clamp-3`, so a long value ended mid-word
+     * with no scrollbar and no control to reveal the rest. `toHaveText` still passed, because textContent
+     * is complete — which is exactly why this asserts on the RENDERED box rather than on its text. The
+     * full string being present in the DOM is not the same as the reviewer being able to read it, and
+     * this panel is the one place the question "what does the model actually see?" can be answered.
+     */
+    await page.goto(GATE0);
+    const payload = await fixturePayload(page);
+    const reports = reportsOf(payload);
+
+    // Pick the LONGEST embedding text the fixture carries — a short one cannot demonstrate the overflow.
+    let longest: { cohort: string; variableName: string; embedText: string } | undefined;
+    for (const r of reports) {
+      for (const d of r.diff) {
+        if (d.embedText && (!longest || d.embedText.length > longest.embedText.length)) {
+          longest = { cohort: r.cohort, variableName: d.variableName, embedText: d.embedText };
+        }
+      }
+    }
+    expect(longest, "the fixture carries no embedding text to overflow").toBeTruthy();
+
+    await page.getByRole("tab", { name: longest!.cohort, exact: false }).first().click();
+    const panel = page
+      .locator(`[data-testid="cohort-panel"][data-cohort="${longest!.cohort}"]`)
+      .getByTestId("row-to-vector");
+    await panel.getByRole("combobox").selectOption(longest!.variableName);
+    const box = panel.getByTestId("embed-text");
+    await expect(box).toHaveText(longest!.embedText);
+
+    const metrics = await box.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        lineClamp: cs.webkitLineClamp,
+        overflowY: cs.overflowY,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      };
+    });
+    expect(metrics.lineClamp, "the value is still clamped, so the tail is unreachable").toBe("none");
+    expect(["auto", "scroll"]).toContain(metrics.overflowY);
+    if (metrics.scrollHeight > metrics.clientHeight) {
+      // Overflowing is fine — being unable to reach the overflow is not.
+      const moved = await box.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+        return el.scrollTop > 0;
+      });
+      expect(moved, "the box overflows but will not scroll").toBe(true);
+    }
+  });
+
+  test("@gate0 the value states its own length, so a bounded box is not mistaken for the whole string", async ({
+    page,
+  }) => {
+    // The box is capped and macOS hides its scrollbar until touched, so a truncated-looking value and a
+    // short one are visually identical. The count is what separates them without a hover or a scroll.
+    await page.goto(GATE0);
+    const payload = await fixturePayload(page);
+    const reports = reportsOf(payload);
+    let longest: { cohort: string; variableName: string; embedText: string } | undefined;
+    for (const r of reports) {
+      for (const d of r.diff) {
+        if (d.embedText && (!longest || d.embedText.length > longest.embedText.length)) {
+          longest = { cohort: r.cohort, variableName: d.variableName, embedText: d.embedText };
+        }
+      }
+    }
+    expect(longest).toBeTruthy();
+    await page.getByRole("tab", { name: longest!.cohort, exact: false }).first().click();
+    const panel = page
+      .locator(`[data-testid="cohort-panel"][data-cohort="${longest!.cohort}"]`)
+      .getByTestId("row-to-vector");
+    await panel.getByRole("combobox").selectOption(longest!.variableName);
+    const len = panel.getByTestId("embed-text-length");
+    await expect(len).toBeVisible();
+    expect(await len.getAttribute("data-chars")).toBe(String(longest!.embedText.length));
+  });
+
+  test("@gate0 the panel gives the width to the value, not to the picker", async ({ page }) => {
+    /**
+     * The other half of the same report: the card ran the full width of the page while its contents were
+     * capped at a prose measure, so the string this screen exists to show sat in a narrow column with
+     * empty space beside it. Prose keeps its measure; DATA gets the room.
+     */
+    await page.goto(GATE0);
+    const panel = page.getByTestId("row-to-vector").first();
+    const picker = panel.getByRole("combobox");
+    const box = panel.getByTestId("embed-text");
+
+    const pickerBox = await picker.boundingBox();
+    const valueBox = await box.boundingBox();
+    expect(pickerBox && valueBox).toBeTruthy();
+    expect(valueBox!.width).toBeGreaterThan(pickerBox!.width * 1.5);
   });
 
   test("@gate0 the nothing-to-embed count is rendered, out of variables", async ({ page }) => {
@@ -1082,3 +1298,103 @@ test.describe("Gate 0 — the worked examples show the whole string, and the rig
   });
 });
 
+
+
+// ── the review fixes of 2026-08-27 ────────────────────────────────────────────────────────────────
+//
+// Three more findings from Bhargav's hands-on review of the same panels:
+//   1. the before/after difference is often "very subtle" — two paragraphs of prose with a few
+//      characters between them, and no way to find the change the screen claims to be reporting
+//   2. the row-to-vector value was cut off with no scroll, in a card with unused width beside it
+//   3. there was no way to get this for the WHOLE dictionary, against the reviewer's own file
+test.describe("Gate 0 — the change is marked, not merely reported", () => {
+  test("@gate0 an expanded rule marks the words that moved, on both sides of the pair", async ({ page }) => {
+    await page.goto(GATE0);
+    await page.waitForLoadState("networkidle");
+    await page.locator('[data-testid="rule-row"][data-outcome="changed"]').first().click();
+
+    // At least one example carries marking. Not "every" — a rule can fire on a row whose visible pair is
+    // unchanged (name suppression is exactly that), and marking such a row would be inventing an edit.
+    const marks = page.locator('[data-diff="removed"], [data-diff="added"]');
+    expect(await marks.count()).toBeGreaterThan(0);
+  });
+
+  test("@gate0 marking does not alter the string — the rendered text is still the whole value", async ({ page }) => {
+    /**
+     * The failure this prevents is the one the 2026-08-26 review already fixed once, reintroduced by a
+     * different mechanism: a diff that reflows, trims or drops a character would put a string on screen
+     * that neither the file nor the model contains, while looking more authoritative than before.
+     */
+    await page.goto(GATE0);
+    await page.waitForLoadState("networkidle");
+    const payload = await fixturePayload(page);
+    const known = new Set<string>();
+    for (const r of reportsOf(payload)) {
+      for (const d of r.diff) {
+        if (d.rawDescription) known.add(d.rawDescription);
+        if (d.cleanedDescription) known.add(d.cleanedDescription);
+        if (d.rawEmbedText) known.add(d.rawEmbedText);
+        if (d.embedText) known.add(d.embedText);
+        if (d.rawVariableName) known.add(d.rawVariableName);
+        if (d.variableName) known.add(d.variableName);
+      }
+    }
+    await page.locator('[data-testid="rule-row"][data-outcome="changed"]').first().click();
+
+    const rendered = await page
+      .locator('[data-testid="example-before"], [data-testid="example-after"]')
+      .evaluateAll((els) => els.map((e) => e.textContent ?? ""));
+    expect(rendered.length).toBeGreaterThan(0);
+    for (const text of rendered) {
+      // "(empty)" / "(cleared)" are the declared placeholders for a genuinely absent side.
+      if (text === "(empty)" || text === "(cleared)" || text === "(nothing)") continue;
+      expect(known.has(text), `rendered a string the payload does not contain: ${JSON.stringify(text)}`).toBe(true);
+    }
+  });
+
+  test("@gate0 the marking is not carried by colour alone", async ({ page }) => {
+    /**
+     * There is deliberately NO legend (review 2026-08-27): struck-through under a Before heading and
+     * underlined under an After heading is self-explanatory, and a key repeated under every fired rule is
+     * noise. That puts the whole burden on the marks themselves being distinguishable without colour —
+     * which is what this asserts. A <span> pair differing only in background would not survive it.
+     */
+    await page.goto(GATE0);
+    await page.waitForLoadState("networkidle");
+    await page.locator('[data-testid="rule-row"][data-outcome="changed"]').first().click();
+
+    await expect(page.getByTestId("diff-legend")).toHaveCount(0);
+    const marks = page.locator('[data-diff="removed"], [data-diff="added"]');
+    expect(await marks.count()).toBeGreaterThan(0);
+    const tags = await marks.evaluateAll((els) => els.map((e) => e.tagName));
+    expect(tags.every((t) => t === "DEL" || t === "INS")).toBe(true);
+  });
+
+  test("@gate0 the whole prepared dictionary is offered, with what it contains stated", async ({ page }) => {
+    /**
+     * The picker above it can only offer the variables preparation CHANGED — that is all the run carries
+     * per-variable detail for. The export is how the reviewer reaches the rest, and their own file.
+     *
+     * The static preview has no backend to re-read an upload from, so what is asserted here is that the
+     * control DECLARES its state rather than rendering a link that downloads a 404 named `.csv`.
+     */
+    await page.goto(GATE0);
+    await page.waitForLoadState("networkidle");
+    const section = page.getByTestId("prepared-export").first();
+    await expect(section).toBeVisible();
+
+    const link = section.getByTestId("prepared-export-link");
+    const unavailable = section.getByTestId("prepared-export-unavailable");
+    const wired = (await link.count()) > 0;
+    if (wired) {
+      await expect(link).toHaveAttribute("href", /prepared\.csv\?cohort=/);
+      await expect(link).toHaveAttribute("download", "");
+      // The three appended columns are NAMED, so the reviewer knows what they are getting before the
+      // download rather than after opening it.
+      await expect(section).toContainText("ddharmon_embedding_text");
+    } else {
+      await expect(unavailable).toBeVisible();
+      await expect(section).toContainText(/no server|unavailable/i);
+    }
+  });
+});

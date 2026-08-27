@@ -47,6 +47,10 @@ PERSISTED_STATES = frozenset(TERMINAL_STATES) | CHECKPOINT_STATES
 #: (UI-SPEC §8.2) means the first UNCOMMITTED gate — see :meth:`Job.resume_gate`.
 FIRST_GATE = "setup"
 
+#: Where a run that is no longer parked lands. Gate 4 is a pure read (UI-SPEC §7), so it is the one gate
+#: that cannot spend on arrival — which is the property that matters for a terminal run.
+LAST_GATE = "gate4"
+
 _TTL_SECONDS = 3600
 
 # Runs the TTL purge must never evict: the prepopulated demo (``demo``) and any pinned/sample run. These
@@ -271,7 +275,16 @@ class Job:
         first **uncommitted** gate — this run's own checkpoint when it has one, and :data:`FIRST_GATE`
         when it has reached none. Read as "always Setup" it would contradict R7 (resume where you left
         off) and the truth that closing the browser at Gate 1 returns you to Gate 1.
+
+        A TERMINAL run has no uncommitted gate, and its ``gate_position`` is the last one it PASSED, not
+        one it is waiting on. Answering with it would put a returning reviewer on a screen whose Continue
+        buys the next stage — on Gate 0, a button labelled with the run's first charge, for a run that has
+        already finished. So a finished, errored or cancelled run lands at the end instead. (This only
+        became reachable when submitted runs started entering the flow at Gate 0: before that no terminal
+        row ever carried a gate position, and this method always answered ``setup``.)
         """
+        if self.status in TERMINAL_STATES:
+            return LAST_GATE
         return self.gate_position or FIRST_GATE
 
     def summary_dict(self, artifacts: dict[str, Any] | None = None) -> dict[str, Any]:

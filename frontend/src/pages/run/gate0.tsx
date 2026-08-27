@@ -10,7 +10,7 @@ import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RulePipelineList } from "@/components/gate/RulePipelineList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { resumeRun } from "@/lib/api";
+import { preparedExportUrl, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import type { PreprocessReport, RunMode } from "@/types";
 
@@ -66,10 +66,11 @@ const PRE_PREPARE_PHASES = new Set(["queued", "loading", "embedding"]);
  * WHICH VARIABLES ARE OFFERED, stated on screen: the ones preprocessing changed. Those are the variables
  * this run carries per-variable detail for; the rest are not withheld, they are simply not in the report.
  */
-function RowToVector({ report }: { report: PreprocessReport }) {
+function RowToVector({ report, jobId }: { report: PreprocessReport; jobId: string }) {
   const rows = report.diff;
   const [selected, setSelected] = useState<string>(rows[0]?.variableName ?? "");
   const row = rows.find((r) => r.variableName === selected) ?? rows[0];
+  const exportHref = preparedExportUrl(jobId, report.cohort);
 
   return (
     <section data-testid="row-to-vector" className="flex flex-col gap-3 border-t border-rule-on-raised px-6 py-4">
@@ -91,47 +92,70 @@ function RowToVector({ report }: { report: PreprocessReport }) {
         </p>
       ) : (
         <>
-          <label className="flex flex-col gap-1 text-xs text-on-raised-muted">
-            Variable
-            <select
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-              className="w-full max-w-[24rem] rounded border border-rule-control-on-raised bg-surface-raised px-3 py-2 text-sm text-on-raised"
-            >
-              {rows.map((r) => (
-                <option key={r.variableName} value={r.variableName}>
-                  {r.variableName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex flex-col gap-1">
-            <p className="text-xs font-semibold text-on-raised-muted">What the grouping stage embeds</p>
-            {row.embedText ? (
-              /* Escaped text child. `title` carries the full value so a long one is clamped, not lost. */
-              <p
-                data-testid="embed-text"
-                title={row.embedText}
-                className="line-clamp-3 max-w-[68ch] rounded-inner bg-surface-inset px-3 py-2 text-sm text-on-inset"
+          {/* PROSE KEEPS ITS MEASURE; DATA GETS THE ROOM. The picker is a control and needs a control's
+              width; the string beside it is the thing the screen exists to show, and capping it at a
+              prose measure left half the card empty while the value it holds was the part being read. */}
+          <div className="grid gap-4 md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] md:items-start">
+            <label className="flex flex-col gap-1 text-xs text-on-raised-muted">
+              Variable
+              <select
+                value={selected}
+                onChange={(e) => setSelected(e.target.value)}
+                className="w-full rounded border border-rule-control-on-raised bg-surface-raised px-3 py-2 text-sm text-on-raised"
               >
-                {row.embedText}
-              </p>
-            ) : (
-              <p data-testid="embed-text" className="max-w-[68ch] text-sm text-on-raised">
-                {""}
-                <span className="text-on-raised-muted">
-                  Nothing. This variable composes no text at all, so it embeds nothing and reaches no
-                  concept group — a silent loss rather than a visible failure.
-                </span>
-              </p>
-            )}
+                {rows.map((r) => (
+                  <option key={r.variableName} value={r.variableName}>
+                    {r.variableName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="text-xs font-semibold text-on-raised-muted">What the grouping stage embeds</p>
+              {row.embedText ? (
+                /* SCROLLS, NEVER CLAMPS (review 2026-08-26). This was `line-clamp-3`, so a long value ended
+                   mid-word with no scrollbar and no control to reveal the rest — and `title` is not a
+                   reading surface for a paragraph. The box is bounded so it cannot push the rest of the
+                   card off screen, and the bound is reachable. */
+                <p
+                  data-testid="embed-text"
+                  tabIndex={0}
+                  className="max-h-[11rem] overflow-y-auto whitespace-pre-wrap break-words rounded-inner bg-surface-inset px-3 py-2 text-sm text-on-inset"
+                >
+                  {row.embedText}
+                </p>
+              ) : (
+                <p data-testid="embed-text" className="max-w-[68ch] text-sm text-on-raised">
+                  {""}
+                  <span className="text-on-raised-muted">
+                    Nothing. This variable composes no text at all, so it embeds nothing and reaches no
+                    concept group — a silent loss rather than a visible failure.
+                  </span>
+                </p>
+              )}
+              {/* THE LENGTH, STATED. The box is bounded so it cannot push the card off screen, and macOS
+                  hides its scrollbar until you touch it — so a long value looks the same as a short one
+                  that happens to end there. The count is how the reader knows there is more, and how much,
+                  without having to discover the scroll. Characters rather than words: this is a machine
+                  string being inspected, not prose being read. */}
+              {row.embedText && (
+                <p
+                  data-testid="embed-text-length"
+                  data-chars={String(row.embedText.length)}
+                  className="text-xs text-on-raised-muted"
+                >
+                  {row.embedText.length.toLocaleString()} characters
+                  {row.embedText.length > 320 ? " — scroll the box to read the rest." : ""}
+                </p>
+              )}
+              {row.embedNameSuppressed && (
+                <p className="text-xs text-on-raised-muted">
+                  This variable&rsquo;s name is not part of that text: the description already contained
+                  it, so repeating it would weight the same words twice.
+                </p>
+              )}
+            </div>
           </div>
-          {row.embedNameSuppressed && (
-            <p className="max-w-[68ch] text-xs text-on-raised-muted">
-              This variable&rsquo;s name is not part of that text: the description already contained it, so
-              repeating it would weight the same words twice.
-            </p>
-          )}
         </>
       )}
 
@@ -149,6 +173,38 @@ function RowToVector({ report }: { report: PreprocessReport }) {
           ? "— every variable in this dictionary reaches the grouping stage with something to say."
           : "— they appear in every listing and reach no concept group, so they are a silent loss rather than a visible failure."}
       </p>
+
+      {/* THE WHOLE DICTIONARY, not the sample above.
+          The picker can only offer the variables preparation CHANGED, because that is all the run carries
+          per-variable detail for — which leaves the reviewer unable to check the ones it left alone, or to
+          see any of this against their own file. The export answers both: their columns come back verbatim
+          and in order, with the prepared name, the prepared description and the exact embedding string
+          appended. It is re-read and re-prepared locally on request, so it costs nothing and the "nothing
+          has been charged" claim above it stays true. */}
+      <div
+        data-testid="prepared-export"
+        className="flex flex-col gap-1 border-t border-rule-quiet-on-raised pt-3"
+      >
+        {exportHref ? (
+          <a
+            data-testid="prepared-export-link"
+            href={exportHref}
+            download
+            className="text-xs font-semibold text-link-on-raised underline underline-offset-2"
+          >
+            Download this dictionary with the prepared columns (CSV)
+          </a>
+        ) : (
+          <p data-testid="prepared-export-unavailable" className="text-xs font-semibold text-on-raised-muted">
+            Download of the prepared dictionary is unavailable in this preview
+          </p>
+        )}
+        <p className="max-w-[68ch] text-xs text-on-raised-muted">
+          {exportHref
+            ? "Your original file, unchanged and in its own column order, with ddharmon_variable_name, ddharmon_description and ddharmon_embedding_text appended for every variable — not only the ones that changed. Preparing it runs locally and is not charged."
+            : "This preview has no server to re-read your upload from. Start a run to export the prepared dictionary."}
+        </p>
+      </div>
     </section>
   );
 }
@@ -186,6 +242,18 @@ export default function Gate0Page() {
    * the estimator's own name for what Gate 0's Continue buys, so the figure the reviewer reads here and
    * the one Setup quoted come from one function rather than two.
    */
+  const runMode = ((jobState?.config ?? {}) as Record<string, unknown>).run_mode;
+  /**
+   * PREVIEW BUYS NOTHING, so it must not be told it is about to spend.
+   *
+   * Preview run mode calls no model: it clusters and builds the prompts, and stops. Gate 0 became
+   * reachable in preview when the entry boundary landed, and this screen's copy was written when only a
+   * paid run could get here — so "pressing Continue is the run's first charge" and the irreversible-spend
+   * statement below it would both be false. Quoting a charge that will not happen is the same class of
+   * error as under-quoting one, and R8 binds on both directions.
+   */
+  const isPreview = runMode === "preview";
+
   const firstCharge = useMemo(() => {
     const variables = reports.reduce((n, r) => n + r.nUniqueVariableNames, 0);
     const config = (jobState?.config ?? {}) as Record<string, unknown>;
@@ -213,7 +281,11 @@ export default function Gate0Page() {
   return (
     <GateShell
       gate="gate0"
-      subhead="Every preparation rule that ran on your dictionaries, and what each one changed. Pressing Continue here is the run's first charge — it pays for naming and dividing the concept groups."
+      subhead={
+        isPreview
+          ? "Every preparation rule that ran on your dictionaries, and what each one changed. This run is a preview, so Continue calls no model and buys nothing — it groups your variables and stops."
+          : "Every preparation rule that ran on your dictionaries, and what each one changed. Pressing Continue here is the run's first charge — it pays for naming and dividing the concept groups."
+      }
       rail={railFor("gate0", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
@@ -325,7 +397,7 @@ export default function Gate0Page() {
                           sits under this cohort's tab rather than above the tabs for exactly that
                           reason: a cross-cohort mean would be the composite the panel refuses to be. */}
                       <InputQualitySignals report={t.report} />
-                      <RowToVector report={t.report} />
+                      <RowToVector report={t.report} jobId={jobId} />
                     </>
                   ) : (
                     /* A tab must NEVER show a completed report while its cohort is still running. No rule
@@ -355,8 +427,8 @@ export default function Gate0Page() {
           {/* THE SPEND GATE. Inline statement, no modal — see the file docstring. */}
           <CommitBar
             action="Continue to Gate 1"
-            total={firstCharge}
-            firstCharge
+            total={isPreview ? undefined : firstCharge}
+            firstCharge={!isPreview}
             scopeLabel={`${reports.reduce((n, r) => n + r.nUniqueVariableNames, 0).toLocaleString()} variables`}
             onCommit={onContinue}
             busy={resuming}

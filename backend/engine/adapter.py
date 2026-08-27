@@ -635,6 +635,170 @@ def build_ui_result(
     return result
 
 
+#: The columns the prepared export APPENDS. Namespaced so they cannot collide with the reviewer's own
+#: header, and ordered so the answer reads left to right: what the variable is called now, what it says
+#: now, what the model will actually read, what moved, and whether this row could be attributed at all.
+PREPARED_EXPORT_COLUMNS = [
+    "ddharmon_variable_name",
+    "ddharmon_description",
+    "ddharmon_embedding_text",
+    "ddharmon_changed",
+    "ddharmon_note",
+]
+
+
+def _delimiter_of(path: Path | str) -> str:
+    """Tab or comma, decided from the header line — the same rule ``_count_data_rows`` uses."""
+    try:
+        with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+            return "\t" if "\t" in fh.readline() else ","
+    except OSError:
+        return ","
+
+
+def build_prepared_export(
+    source_path: Path | str,
+    *,
+    cohort_name: str,
+    column_roles: dict[str, str],
+) -> tuple[list[str], list[list[str]]]:
+    """The reviewer's own dictionary with the preparation step's output appended, row for row.
+
+    Returns ``(header, rows)``. The header is the FILE's own columns in the file's own order, followed by
+    :data:`PREPARED_EXPORT_COLUMNS`. Nothing is renamed, reordered or dropped: the export exists so the
+    reviewer can read their file and our version of it side by side, and a re-shaped file makes that a
+    reconciliation exercise instead of an answer.
+
+    Everything here is LOCAL and free — the file is re-read, core's rule-based preparation is re-run over
+    it, and the embedding text is composed. No model is called and nothing is embedded, which is what lets
+    Gate 0 offer this without qualifying its "nothing has been charged" claim.
+
+    THE JOIN IS THE HARD PART, and it is allowed to fail loudly. ``load_dictionary`` keys fields on the
+    variable name, so a repeated name silently overwrites the earlier row and that variable vanishes. This
+    joins on the RAW name each field remembers, counts the file's own occurrences of it first, and leaves
+    the prepared columns EMPTY with a note on any name that occurs more than once. A wrong join here would
+    print one variable's cleaned text against a different variable's original — the export's whole value
+    is that the two halves of a row describe the same thing.
+    """
+    from ddharmon.ingestion import load_dictionary
+
+    source_path = Path(source_path)
+    delimiter = _delimiter_of(source_path)
+    with open(source_path, newline="", encoding="utf-8", errors="replace") as fh:
+        reader = csv.reader(fh, delimiter=delimiter)
+        file_rows = [r for r in reader if any((c or "").strip() for c in r)]
+    if not file_rows:
+        return list(PREPARED_EXPORT_COLUMNS), []
+    header, data_rows = file_rows[0], file_rows[1:]
+
+    dd = load_dictionary(source_path, cohort_name=cohort_name, **column_roles)
+    try:
+        from ddharmon.ingestion.preprocessor import preprocess_dictionary
+
+        preprocess_dictionary(dd)
+        prepared = True
+    except Exception as exc:  # noqa: BLE001 - an export must not fail on the step it is reporting
+        logger.warning("prepared export for %s could not preprocess (%s) — exporting the raw load", cohort_name, exc)
+        prepared = False
+
+    by_raw_name: dict[str, Any] = {}
+    for f in dd.fields.values():
+        by_raw_name[str(f.raw_variable_name or f.variable_name or "")] = f
+
+    name_col = column_roles.get("variable_name")
+    name_at = header.index(name_col) if name_col and name_col in header else None
+    # The file's OWN occurrence count, not the loaded dictionary's — the loaded one has already collapsed
+    # the duplicates, which is the very thing being detected.
+    occurrences: dict[str, int] = {}
+    if name_at is not None:
+        for row in data_rows:
+            key = (row[name_at] if name_at < len(row) else "").strip()
+            occurrences[key] = occurrences.get(key, 0) + 1
+
+    out: list[list[str]] = []
+    for row in data_rows:
+        padded = list(row) + [""] * (len(header) - len(row))
+        appended = ["", "", "", "", ""]
+        if name_at is None:
+            appended[4] = (
+                "This run mapped no variable-name column, so a prepared row cannot be matched to this one "
+                "by name. Re-run with a variable-name column mapped to see per-variable detail here."
+            )
+        else:
+            raw = (padded[name_at] or "").strip()
+            field = by_raw_name.get(raw)
+            if occurrences.get(raw, 0) > 1:
+                appended[4] = (
+                    f"{raw!r} appears on {occurrences[raw]} rows of this file. Variables are keyed by name, "
+                    "so only one of them survived loading and none of these rows can be attributed to it."
+                )
+            elif field is None:
+                appended[4] = "No prepared variable corresponds to this row — it did not survive loading."
+            else:
+                changed = []
+                if str(field.raw_variable_name or "") != str(field.variable_name or ""):
+                    changed.append("name")
+                if str(field.raw_description or "") != str(field.description or ""):
+                    changed.append("description")
+                try:
+                    embed_text = field.to_embedding_text() or ""
+                except Exception:  # noqa: BLE001 - a composition failure is a fact to report, not a 500
+                    embed_text = ""
+                    appended[4] = "This variable's embedding text could not be composed."
+                appended[0] = str(field.variable_name or "")
+                appended[1] = str(field.description or "")
+                appended[2] = embed_text
+                appended[3] = "+".join(changed) if prepared else ""
+                if not embed_text and not appended[4]:
+                    appended[4] = (
+                        "Composes no text to embed — this variable reaches no concept group. It is a silent "
+                        "loss, not a failure, which is why it is stated rather than omitted."
+                    )
+        out.append(padded + appended)
+    return list(header) + list(PREPARED_EXPORT_COLUMNS), out
+
+
+def build_gate0_result(
+    *,
+    mode: str,
+    cohorts: list[str],
+    atlas: list[AtlasPoint],
+    field_index: dict[str, FieldDetail],
+    preprocessing: list[UIPreprocessReport],
+) -> UIResult:
+    """The PARTIAL a run parked at Gate 0 carries — everything prepared, nothing computed.
+
+    Built directly rather than through :func:`build_ui_result`, which needs a ``LeanBResult`` this leg does
+    not have and must not manufacture: a stand-in with empty prompt lists would put ``prompts: {ideal: 0}``
+    on the wire, and "zero ideal prompts" is a claim about a stage that has not been reached. Absent and
+    zero are different statements, and the whole screen exists to keep that distinction.
+
+    ``cohorts`` is DECLARED, not derived. Everywhere else ``summary.cohorts`` falls out of the records; here
+    there are none, so it is taken from the run's own dictionary list — which is what lets Gate 0 show a
+    cohort still being prepared as a pending tab instead of leaving it invisible.
+    """
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "mode": mode,
+        "phases": PHASES_PREVIEW if mode == "preview" else PHASES_RUN,
+        "records": [],
+        "summary": {**empty_summary(), "cohorts": list(cohorts)},
+        "prompts": {"ideal": 0, "split": 0, "groupAssign": 0, "gencde": 0, "specgen": 0},
+        "atlas": atlas,
+        "fieldIndex": field_index,
+        # Every field is unassigned at Gate 0 — but saying so would read as a FINDING, and the finding it
+        # imitates ("these fields reached no concept") is one this leg has not tested. Left empty.
+        "unassignedFields": [],
+        "cost": empty_cost(),
+        "previewClusters": [],
+        "conceptGroups": [],
+        "conceptGroupMembers": {},
+        "notComputed": _not_computed(concept_gate=False, readjudicated=False),
+        "preprocessing": preprocessing,
+        "gatePosition": cast(Any, "gate0"),
+    }
+
+
 def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list[AtlasPoint]:
     """Project every (non-CDE) field's embedding to 2D via PCA (SVD) for the cohort-colored atlas.
 
@@ -1149,9 +1313,20 @@ def _save_substrate_if_new(substrate_path: Path | None, result: Any) -> None:
 #            Gate 1, and using it here would stop the run a whole paid stage too late.
 #   gate2  — ``stop_after="gencde"``, the one named boundary 08-04 shipped.
 #
-# Gates 0, 3 and 4 need no core boundary at all (Gate 0 is adapter-side and free; Gate 3 is the finished
-# pipeline held by the UI backend; Gate 4 is a pure read), so they are not stop targets here.
-_GATE_STOP_MECHANISM = {"gate1": "withhold_classify", "gate2": "stop_after_gencde"}
+#   gate0  — ADAPTER-SIDE, and the one entry that is not core vocabulary because there is nothing in core
+#            to name: the leg returns after ``load_dictionary`` → *preprocess* → ``embed_dictionary`` and
+#            ``harmonize_leanb`` is never called. It is nonetheless a real stop target and belongs in this
+#            table, because it is the boundary a run ENTERS the staged flow at. Leaving it out is what
+#            made the flow unreachable: ``stop_at_gate`` was set only by the resume endpoint, resume
+#            refuses a run that is not already parked, and so nothing could ever park.
+#
+# Gates 3 and 4 need no boundary at all (Gate 3 is the finished pipeline held by the UI backend; Gate 4 is
+# a pure read), so they are not stop targets here.
+_GATE_STOP_MECHANISM = {
+    "gate0": "before_harmonize",
+    "gate1": "withhold_classify",
+    "gate2": "stop_after_gencde",
+}
 
 
 #: The three ADVISORY stages: they FLAG, they never decide. Two consequences follow, and both are
@@ -1395,6 +1570,24 @@ def run_pipeline(
     # {"cohort:var" -> FieldDetail} over every source field (uncapped) — full per-field detail for the UI and
     # the basis for unassignedFields (source fields that land in no concept). CDE cohort excluded (backbone).
     field_index = build_field_index(embedded, cde_cohort)
+
+    # --- Gate 0: the boundary a run ENTERS the staged flow at (UI-SPEC §7) ---
+    #
+    # Everything above this line is local and free — reading the files, running the rule-based preparation,
+    # and embedding. Everything below it costs money on the first LLM stage. So the pause goes HERE, and it
+    # is expressed as a return rather than as a flag threaded into `harmonize_leanb`: the honest way to
+    # promise "Gate 0 is free" is for the paid call not to happen. Clustering sits below the line too — it
+    # takes no model, but it is the UMAP+HDBSCAN pass, and a gate quoted as `local` should not silently buy
+    # it either.
+    if stop_at_gate == "gate0":
+        progress("prepared" if mode == "preview" else "embedding", total, total)
+        return build_gate0_result(
+            mode=mode,
+            cohorts=[str(s["cohort_name"]) for s in dict_specs],
+            atlas=atlas,
+            field_index=field_index,
+            preprocessing=preprocess_reports,
+        )
 
     # --- knobs: passthrough only (absent -> harmonize_leanb's own defaults). New knobs need no GUI change. ---
     kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}

@@ -523,7 +523,7 @@ async def start_batch(
     # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted.
     threading.Thread(
         target=run_harmonization,
-        args=(store, job_id, dict_specs, cde_spec, run_config),
+        args=(store, job_id, dict_specs, cde_spec, {**run_config, "stop_at_gate": ENTRY_GATE}),
         kwargs={"api_key": effective_key},
         daemon=True,
     ).start()
@@ -697,6 +697,16 @@ def checkpoint_state(
     }
 
 
+#: The boundary a FRESH run stops at. Every submitted run enters the staged flow at Gate 0 — the pause
+#: after load → preprocess → embed, before anything is charged (UI-SPEC §7).
+#:
+#: It is passed to the worker and NOT written into the run's stored config, deliberately. `run_config`
+#: records what the user asked for and is replayed verbatim by re-run; the boundary is a property of the
+#: LEG, recomputed from the run's gate position every time :func:`resume_run` spawns the next one. Storing
+#: it would give the same question two answers, and the stale one would be the sticky one.
+ENTRY_GATE = "gate0"
+
+
 @app.post("/api/harmonize/resume/{job_id}")
 def resume_run(
     job_id: str, request: Request, x_anthropic_key: Annotated[str | None, Header()] = None
@@ -816,7 +826,7 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     store.create(new_id, display, run_config, owner_subject=subject, dict_specs=new_specs)
     threading.Thread(
         target=run_harmonization,
-        args=(store, new_id, new_specs, cde_spec, run_config),
+        args=(store, new_id, new_specs, cde_spec, {**run_config, "stop_at_gate": ENTRY_GATE}),
         kwargs={"api_key": x_anthropic_key},
         daemon=True,
     ).start()
@@ -1483,6 +1493,55 @@ def _gencde_decision_json(dec: dict[str, Any]) -> str:
     match/transform column positions stay stable for index-based test assertions."""
     gencde = dec.get("gencde")
     return _clean(json.dumps(gencde, sort_keys=True)) if gencde else ""
+
+
+@app.get("/api/harmonize/jobs/{job_id}/prepared.csv")
+def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResponse:
+    """Gate 0's export: ONE uploaded dictionary, returned with the preparation step's output appended.
+
+    The reviewer's own columns come back verbatim and in order, followed by the prepared name, the prepared
+    description, and the exact string the next step embeds — so the three things Gate 0 talks about can be
+    read on one row instead of inferred from a sampled example.
+
+    A GET, and free. It re-reads the run's retained upload and re-runs the rule-based preparation locally;
+    no model is called, nothing is embedded, and no run state is touched — which is what lets Gate 0 offer
+    it without qualifying its "nothing has been charged yet" claim.
+
+    Available BEFORE the run has a result, deliberately: Gate 0 is where the question is asked, and the run
+    is parked there with no result by construction.
+    """
+    from backend.engine.adapter import build_prepared_export
+
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    spec = next((d for d in (job.dict_specs or []) if str(d.get("cohort_name")) == cohort), None)
+    if spec is None:
+        # Named rather than defaulted to the first dictionary: silently exporting a different cohort's file
+        # is worse than failing, because the file that arrives looks exactly like the one that was asked for.
+        raise HTTPException(status_code=404, detail=f"This run has no dictionary named {cohort!r}")
+    source = Path(str(spec.get("path", "")))
+    if not source.exists():
+        raise HTTPException(status_code=409, detail="The uploaded file for this dictionary is no longer available")
+
+    header, rows = build_prepared_export(
+        source,
+        cohort_name=cohort,
+        column_roles=dict(spec.get("column_roles") or {}),
+    )
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(header)
+    writer.writerows(rows)
+    # The filename is echoed back into a response header, so it is rebuilt from a safe alphabet rather
+    # than escaped: the upload name is user-supplied and a header is the wrong place to trust one.
+    stem = "".join(c if (c.isalnum() or c in "_-.") else "_" for c in source.stem) or "dictionary"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{stem}_prepared.csv"'},
+    )
 
 
 @app.get("/api/harmonize/jobs/{job_id}/export")

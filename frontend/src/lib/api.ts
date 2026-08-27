@@ -418,6 +418,21 @@ export function exportUrl(jobId: string, format: ExportFormat): string {
   return _lastToken ? `${base}&token=${encodeURIComponent(_lastToken)}` : base;
 }
 
+/**
+ * Gate 0's prepared-dictionary export: ONE uploaded dictionary, returned with the preparation step's
+ * output appended to the reviewer's own columns.
+ *
+ * Returns `null` in the static preview, which has no backend to re-read the upload from. A dead link that
+ * downloads a 404 page named `.csv` is worse than a control that says why it is unavailable, so the caller
+ * renders the reason instead of the button.
+ */
+export function preparedExportUrl(jobId: string, cohort: string): string | null {
+  if (IS_STATIC) return null;
+  const base = `${BASE}/jobs/${jobId}/prepared.csv?cohort=${encodeURIComponent(cohort)}`;
+  // Same reason as `exportUrl`: a download href cannot carry an Authorization header.
+  return _lastToken ? `${base}&token=${encodeURIComponent(_lastToken)}` : base;
+}
+
 export async function listDemos(): Promise<DemosResponse> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/demos.json`));
   return json(await fetch(`${BASE}/demos`, { headers: await authed() }));

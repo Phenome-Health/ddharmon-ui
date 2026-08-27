@@ -1120,3 +1120,218 @@ def test_no_reconcile_http_route_was_added():
     # `/jobs/{id}/readjudicate` (the one gate action that starts paid work). Bumped deliberately: this
     # assertion exists so a POST appears only when a plan says so, not so the number never moves.
     assert posts == 14, f"the POST surface changed ({posts} != 14)"
+
+
+# ── Gate 0: the boundary that lets a run ENTER the staged flow ───────────────────────────────
+#
+# Every test below prevents one half of the same shipped defect. `stop_at_gate` was written in exactly
+# one place — the RESUME endpoint — and resume refuses a job that is not already parked. Nothing set the
+# first gate, so nothing could ever park, and every submitted run went straight through to `complete`
+# with `gatePosition: None`. The six-gate flow was unreachable from Setup by construction.
+
+
+def test_gate_0_is_a_legal_stop_target(tmp_path, _one_cluster):
+    """A typo'd gate raises; `gate0` must not. The validator is a whitelist, so adding the screen without
+    adding the boundary makes the honest request the one that fails."""
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec = _fixture_specs(tmp_path)
+    base = {"run_mode": "batch", "cde_cohort": "NIH_CDE", "work_dir": str(tmp_path / "w"), "min_cluster_size": 2}
+
+    with pytest.raises(ValueError, match="not a resumable boundary"):
+        run_pipeline(dict_specs, cde_spec, {**base, "stop_at_gate": "gate9"}, provider=StubProvider())
+
+    out = run_pipeline(dict_specs, cde_spec, {**base, "stop_at_gate": "gate0"}, provider=StubProvider())
+    assert out["gatePosition"] == "gate0"
+
+
+def test_a_run_stopping_at_gate_0_never_calls_the_pipeline_at_all(tmp_path, monkeypatch):
+    """UI-SPEC §7's boundary table: Gate 0 is ADAPTER-SIDE — `harmonize_leanb` has not been called.
+
+    Asserted by making the call itself fail. A weaker test (no LLM stage ran) would still pass if the
+    adapter clustered first and threw the partition away, which is not free: it is the UMAP+HDBSCAN pass,
+    and quoting Gate 0 as `local · free` while paying for it is the cost-honesty defect R8 exists for.
+    """
+    import ddharmon.harmonization as harm
+
+    from backend.engine.adapter import run_pipeline
+
+    def _forbidden(*a, **kw):
+        raise AssertionError("harmonize_leanb was called on a gate0 leg — the boundary is adapter-side")
+
+    monkeypatch.setattr(harm, "harmonize_leanb", _forbidden)
+
+    dict_specs, cde_spec = _fixture_specs(tmp_path)
+    result = run_pipeline(
+        dict_specs,
+        cde_spec,
+        {
+            "run_mode": "batch",
+            "cde_cohort": "NIH_CDE",
+            "work_dir": str(tmp_path / "work"),
+            "stop_at_gate": "gate0",
+        },
+        provider=StubProvider(),
+    )
+
+    assert result["gatePosition"] == "gate0"
+    # Nothing downstream of the boundary may be present, and each absence is a DIFFERENT claim from a
+    # zero: an empty group list on a gate0 leg means "not computed yet", which is why the screen never
+    # renders it as a count.
+    assert result["records"] == []
+    assert result["conceptGroups"] == []
+    assert (result["cost"] or {}).get("actualUsd", 0) == 0
+
+
+def test_the_gate_0_partial_carries_what_the_screen_renders(tmp_path):
+    """The screen's three data sources must survive the early return, or Gate 0 renders an empty page.
+
+    A partial that parks the run but drops the preparation report is worse than not parking: the reviewer
+    is asked to authorise the first charge while looking at nothing.
+    """
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec = _fixture_specs(tmp_path)
+    result = run_pipeline(
+        dict_specs,
+        cde_spec,
+        {
+            "run_mode": "batch",
+            "cde_cohort": "NIH_CDE",
+            "work_dir": str(tmp_path / "work"),
+            "stop_at_gate": "gate0",
+        },
+        provider=StubProvider(),
+    )
+
+    # 1. one preparation report per SOURCE dictionary — the CDE backbone is excluded on purpose
+    reports = result["preprocessing"]
+    assert [r["cohort"] for r in reports] == ["CohortA", "CohortB"]
+    assert all(r["ran"] for r in reports)
+    # 2. the per-field detail the row-to-vector panel and the export both read
+    assert result["fieldIndex"], "gate0 dropped the field index"
+    # 3. the DECLARED cohort list, which is what puts a still-pending cohort on screen as a pending tab
+    #    rather than making it invisible. Derived from records everywhere else — and there are none here.
+    assert result["summary"]["cohorts"] == ["CohortA", "CohortB"]
+    assert result["phases"], "a gate0 partial with no phase list cannot drive the progress rail"
+
+
+def test_gate_0_hands_off_to_gate_1_without_reclustering_from_scratch(tmp_path, _one_cluster):
+    """The two legs must compose: leg 1 parks free at Gate 0, leg 2 does the paid Gate 1 work.
+
+    Guards the sequencing bug where leg 2 re-reads a `stop_at_gate` it should have replaced and parks at
+    Gate 0 again — an infinite Continue that never spends and never progresses.
+    """
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec = _fixture_specs(tmp_path)
+    work = tmp_path / "work"
+    base = {
+        "run_mode": "batch",
+        "cde_cohort": "NIH_CDE",
+        "work_dir": str(work),
+        "min_cluster_size": 2,
+        "retrieval_floor": 0.0,
+    }
+    calls: dict[str, int] = {}
+
+    def _count(name, fn):
+        def stage(prompts):
+            calls[name] = calls.get(name, 0) + len(prompts)
+            return fn(prompts)
+
+        return stage
+
+    overrides = {
+        "generate": _count("generate", lambda recs: {r.id: {"ideal_cde": "Smoking status"} for r in recs}),
+        "split": _count("split", lambda recs: {}),
+        "classify": _count("classify", lambda recs: {r.id: {"verdict": "adopt", "cde_id": "1"} for r in recs}),
+    }
+
+    leg1 = run_pipeline(dict_specs, cde_spec, {**base, "stop_at_gate": "gate0"}, provider=StubProvider())
+    assert leg1["gatePosition"] == "gate0"
+    assert calls == {}, "the free leg paid for a stage"
+
+    leg2 = run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**base, "stop_at_gate": "gate1"},
+        provider=StubProvider(),
+        stage_overrides=overrides,
+    )
+    assert leg2["gatePosition"] == "gate1"
+    assert leg2["conceptGroups"], "the second leg produced no rows for Gate 1"
+    assert calls.get("generate", 0) > 0 and "classify" not in calls
+
+
+def test_submitting_a_run_asks_for_the_gate_0_stop(monkeypatch, tmp_path):
+    """The other half of the same defect: the boundary existing is useless if nobody ever requests it.
+
+    Asserted on the config the SUBMIT path hands the worker, not on a status, so the test states the
+    contract ("this leg stops at gate0") rather than racing a daemon thread.
+
+    It also pins where the flag lives. `stop_at_gate` is PER-LEG and must not be persisted onto the run:
+    the resume endpoint computes the next boundary from the run's gate position, and a sticky `gate0` in
+    the stored config would be a second, stale source of truth for the same question.
+    """
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    seen: dict[str, object] = {}
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, **kwargs):
+        seen.update(config)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    client = TestClient(app_module.app)
+    cfg = {
+        "dictionaries": [
+            {
+                "filename": "cohortA.csv",
+                "cohortName": "CohortA",
+                "columnRoles": {"variable_name": "var", "description": "desc"},
+            }
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+        "displayName": "Staged run",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobId"]
+
+    assert seen.get("stop_at_gate") == "gate0", "a submitted run still runs straight past every gate"
+    stored = app_module.store.get(job_id)
+    assert stored is not None
+    assert "stop_at_gate" not in stored.config, "the per-leg boundary was persisted onto the run"
+
+
+def test_a_finished_run_does_not_resume_at_the_gate_it_last_parked_on():
+    """A terminal run has left every gate, so its parked position is stale — and dangerously so.
+
+    Before the entry boundary existed no run could park at all, so ``gate_position`` was always None on a
+    terminal row and ``resume_gate`` always answered ``setup``. Now every run parks at Gate 0 on the way
+    through, and a COMPLETED run still carrying ``gate0`` would send a returning reviewer to a screen
+    whose Continue button reads "the run's first charge" — offering to spend money on a run that has
+    already finished. Landing them at the end is both the correct reading of "first UNCOMMITTED gate" and
+    the only one that cannot re-charge.
+    """
+    from backend.checkpoint import GATE_ORDER
+
+    parked = Job(job_id="p", display_name="P", status=AWAITING_REVIEW, gate_position="gate0")
+    assert parked.resume_gate() == "gate0", "a genuinely parked run must still resume where it stopped"
+
+    for state in sorted(TERMINAL_STATES):
+        done = Job(job_id="d", display_name="D", status=state, gate_position="gate0")
+        assert done.resume_gate() == GATE_ORDER[-1], f"a {state} run resumes at a gate it already left"
+
+    # A run that never reached a gate is unchanged — it starts where every run starts.
+    fresh = Job(job_id="f", display_name="F", status="queued")
+    assert fresh.resume_gate() == FIRST_GATE

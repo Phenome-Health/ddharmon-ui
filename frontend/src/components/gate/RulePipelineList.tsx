@@ -1,4 +1,6 @@
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { DiffText } from "@/components/gate/DiffText";
+import { describeInvisibleChange } from "@/lib/text-diff";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import {
   examplesFor,
@@ -88,18 +90,24 @@ function Example({ row }: { row: PreprocessDiff }) {
       <div className="grid grid-cols-2 gap-4">
         <div className="flex min-w-0 flex-col gap-1">
           <p className="text-xs font-semibold text-on-raised-muted">Before</p>
-          {/* Escaped text child. The clamp is a display bound, not a truncation of the data. */}
-          <p data-testid="example-before" className="whitespace-pre-wrap break-words text-xs text-on-raised">
-            {before || "(empty)"}
-          </p>
+          {/* Marked in place (`DiffText`): the edits are small and interior, and unmarked prose hides them.
+              The rendered text is still the WHOLE value — marking adds spans, it does not truncate. */}
+          <DiffText testId="example-before" side="before" before={before} after={after} empty="(empty)" />
         </div>
         <div className="flex min-w-0 flex-col gap-1">
           <p className="text-xs font-semibold text-on-raised-muted">After</p>
-          <p data-testid="example-after" className="whitespace-pre-wrap break-words text-xs text-on-raised">
-            {after || "(cleared)"}
-          </p>
+          <DiffText testId="example-after" side="after" before={before} after={after} empty="(cleared)" />
         </div>
       </div>
+      {/* A CHANGE WITH NO GLYPH IS SAID, NOT ONLY MARKED. On this run's own data a no-break space collapsed
+          to an ordinary one: the marking is correct and the two marked words render identically, which
+          reads as the screen contradicting itself. Naming the codepoint also makes it findable in the
+          reviewer's own file, which "the difference is whitespace" does not. */}
+      {describeInvisibleChange(before, after) && (
+        <p data-testid="invisible-change-note" className="text-xs text-on-raised-muted">
+          {describeInvisibleChange(before, after)}
+        </p>
+      )}
       {showEmbedPair && (
         <div
           data-testid="example-embed-pair"
@@ -112,23 +120,30 @@ function Example({ row }: { row: PreprocessDiff }) {
           <div className="grid grid-cols-2 gap-4">
             <div className="flex min-w-0 flex-col gap-1">
               <p className="text-xs text-on-raised-muted">Before</p>
-              <p
-                data-testid="example-embed-before"
-                className="whitespace-pre-wrap break-words text-xs text-on-raised"
-              >
-                {row.rawEmbedText || "(nothing)"}
-              </p>
+              <DiffText
+                testId="example-embed-before"
+                side="before"
+                before={row.rawEmbedText || ""}
+                after={row.embedText || ""}
+                empty="(nothing)"
+              />
             </div>
             <div className="flex min-w-0 flex-col gap-1">
               <p className="text-xs text-on-raised-muted">After</p>
-              <p
-                data-testid="example-embed-after"
-                className="whitespace-pre-wrap break-words text-xs text-on-raised"
-              >
-                {row.embedText || "(nothing)"}
-              </p>
+              <DiffText
+                testId="example-embed-after"
+                side="after"
+                before={row.rawEmbedText || ""}
+                after={row.embedText || ""}
+                empty="(nothing)"
+              />
             </div>
           </div>
+          {describeInvisibleChange(row.rawEmbedText || "", row.embedText || "") && (
+            <p data-testid="invisible-change-note" className="text-xs text-on-raised-muted">
+              {describeInvisibleChange(row.rawEmbedText || "", row.embedText || "")}
+            </p>
+          )}
           {!embedChanged && (
             <p className="text-xs text-on-raised-muted">
               Unchanged. The variable name was dropped from the embedding text, but this variable has a
