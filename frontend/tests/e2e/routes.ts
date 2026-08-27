@@ -82,8 +82,18 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "job-composite", path: "/job/:jobId/composite", needsJobFixture: true },
   { name: "job-dashboard", path: "/job/:jobId", query: "?results=1", needsJobFixture: true },
   { name: "jobs", path: "/jobs" },
-  // The staged review flow. One baseline per gate, all against the PAUSED-run fixture, so each screen is
+  // The staged review flow. One baseline per screen, all against the PAUSED-run fixture, so each is
   // captured holding real state rather than its empty state.
+  //
+  // `gate0` KEEPS ITS ENTRY, AND ITS NAME. The screen was retired on 2026-08-26 (08-DECISION-GATE0 D-2)
+  // and its route is now a redirect to that run's Setup, but the route is still REGISTERED — the wire
+  // still parks runs at that position (D-3) — so the bidirectional coverage guard below still demands a
+  // baseline for it. Keeping the existing `run-gate0` stem UPDATES the committed image rather than
+  // orphaning it and adding a second, and what it now captures is the post-redirect Setup render, which is
+  // precisely the assertion that the redirect works.
+  //
+  // ACCEPTED COST, stated rather than discovered later: a Setup visual change now moves TWO baselines.
+  // Both must be reviewed on their own — a snapshot diff is a design decision, never a bulk approval.
   ...(["setup", "gate0", "gate1", "gate2", "gate3", "gate4"] as const).map((gate) => ({
     name: `run-${gate}`,
     path: `/run/:jobId/${gate}`,

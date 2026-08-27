@@ -21,7 +21,7 @@ import { stopCostSplit } from "@/lib/estimate";
  *     two parts AppShell does not have: the tagline and the run chip. Rendering a second lockup here would
  *     put two Phenome Health marks on one screen, which is a brand defect, not extra compliance.
  *  2. **Masthead** — eyebrow (`Gate N of 4`), display h1, one-sentence subhead.
- *  3. **Gate rail** — six columns, always. See `GateRail`.
+ *  3. **Gate rail** — five columns, always. See `GateRail`.
  *  4. **How-to panel** — on the ground, above the working surface. See `HowToPanel`.
  *  5. **Banner slots** — the sandbox banner (passed in by the page, since only it knows whether the run is
  *     the shared demo) and the resume banner (rendered here from `resumed`).
@@ -30,9 +30,10 @@ import { stopCostSplit } from "@/lib/estimate";
  * no screen under `pages/run/` or `components/gate/` offered a cancel: with a run in flight the only way
  * out of a gate was closing the tab while paid stages kept spending. Gate 0 is the first screen where a
  * reviewer sees a run going wrong, which is why the gap surfaced there — but the fix belongs one level up,
- * so ONE placement serves all six gates and the next five inherit it rather than each re-adding it. A gate
- * test asserts that single call site, because two implementations of a control that spends or saves real
- * money is the outcome this lift exists to avoid.
+ * so ONE placement serves every screen in the flow rather than each re-adding it. A gate test asserts that
+ * single call site, because two implementations of a control that spends or saves real money is the
+ * outcome this lift exists to avoid. (Gate 0 was demoted on 2026-08-26 and the flow is now five screens;
+ * the placement is unchanged — it simply serves five instead of six.)
  *
  * `StopRunAction` is CONSUMED, NOT REBUILT. It is already in production on the dashboard and the runs
  * list, and it already offers both modes behind one confirmation with the committed-versus-avoided cost
@@ -48,7 +49,15 @@ import { stopCostSplit } from "@/lib/estimate";
  * `title`, so the bar's height can never reflow.
  */
 
-/** UI-SPEC §7.1.2 — the eyebrow. Setup is not "Gate N", so it says what it is. */
+/**
+ * UI-SPEC §7.1.2 — the eyebrow. Setup is not "Gate N", so it says what it is.
+ *
+ * CHECKED AND DELIBERATELY LEFT ALONE at the Gate 0 demotion (2026-08-26). It already formatted every
+ * non-Setup position as `N of 4`, which was one gate short while `gate0` was on the rail and became
+ * correct by itself the moment it came off: the four remaining gates read `Gate 1 of 4` … `Gate 4 of 4`.
+ * A correct-looking string with no explanation is the kind of thing a later reader "fixes", so this note
+ * is the explanation. `gates.spec.ts` reads the rendered eyebrow on all five screens.
+ */
 function eyebrowFor(gate: GatePosition): string {
   return gate === "setup" ? "Set up" : `Gate ${gate.slice(4)} of 4`;
 }
@@ -59,7 +68,7 @@ export interface GateShellProps {
   title?: string;
   /** One sentence. What this screen is for, in the reviewer's terms. */
   subhead: string;
-  /** The six rail columns. Supplied by the page because only it knows this run's realized spend. */
+  /** The five rail columns. Supplied by the page because only it knows this run's realized spend. */
   rail: GateRailItem[];
   /** The run's name, or undefined when no run is in progress — in which case NO chip renders. */
   runName?: string;
@@ -220,14 +229,19 @@ export function railFor(
   const currentIndex = GATE_SEQUENCE.indexOf(current);
   return GATE_SEQUENCE.map((gate, i) => {
     const label = GATE_LABELS[gate];
+    // Setup is `local` because everything it now carries — loading, preparing, embedding and the free
+    // pre-flight over the result — calls no model. That free leg used to be Gate 0's, whose column read
+    // `local` for the same reason and whose Continue was the run's first charge; both moved here with the
+    // demotion (D-2/D-3). The charge itself is still attributed to Gate 1, because that is the work it
+    // buys — a reviewer who saw the amount twice would think they had been billed twice.
+    //
+    // NOTHING MAY PASS THE RETIRED POSITION TO THIS FUNCTION. It is no longer in `GATE_SEQUENCE`, so
+    // `indexOf` would return -1 and every column would render as a forecast — including gates the run has
+    // already paid for. There is no call site left that can: the route redirects before a page mounts.
     if (gate === "setup") return { gate, label, cost: { kind: "state" as const, text: "local" } };
     if (gate === "gate4") return { gate, label, cost: { kind: "state" as const, text: "no charge" } };
     if (i <= currentIndex) {
       const realized = realizedByGate[gate] ?? (gate === current ? totalRealized : 0);
-      // Gate 0's own stages call no model, so its column has no figure of its own. Its Continue IS the
-      // run's first charge — but that charge buys the work Gate 1 renders, so it is attributed there. A
-      // reviewer who saw the amount twice would think they had been billed twice.
-      if (gate === "gate0") return { gate, label, cost: { kind: "state" as const, text: "local" } };
       return { gate, label, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } };
     }
     const forecast = forecastByGate[gate];

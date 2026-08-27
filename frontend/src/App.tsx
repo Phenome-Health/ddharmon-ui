@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Route, Router, Switch } from "wouter";
+import { Redirect, Route, Router, Switch, useParams } from "wouter";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/auth";
@@ -28,11 +28,29 @@ import PreviewKnowledgeGraphPage from "@/pages/preview-knowledge-graph";
 // The staged review flow: one page file per gate, so no later screen plan has to touch this router.
 // The file boundaries are fixed HERE, once, and each is owned by exactly one later plan.
 import SetupPage from "@/pages/run/setup";
-import Gate0Page from "@/pages/run/gate0";
 import Gate1Page from "@/pages/run/gate1";
 import Gate2Page from "@/pages/run/gate2";
 import Gate3Page from "@/pages/run/gate3";
 import Gate4Page from "@/pages/run/gate4";
+
+/**
+ * The retired `gate0` path — REGISTERED, and a redirect rather than a deleted route.
+ *
+ * Gate 0 was demoted on 2026-08-26 (`08-DECISION-GATE0.md` D-2): its content is now a free pre-flight on
+ * Setup and the flow is five screens. The BACKEND BOUNDARY IS UNCHANGED (D-3), so the wire still parks
+ * runs at `gatePosition: "gate0"` and `next_gate("gate0") === "gate1"` still drives the resume. A live
+ * wire value whose URL 404s is a landmine for every resume link built from `gatePosition` — the guest walk
+ * and the runs list both will be. So the route stays and lands the reviewer on that run's Setup, which is
+ * where the screen's content went. This follows D-16's precedent in this phase: a retired surface
+ * redirects rather than being deleted.
+ *
+ * `replace`, not a push: the reviewer arrived here from a resume link, and leaving the dead URL in history
+ * would make Back bounce them straight through it again.
+ */
+function RetiredGate0Route() {
+  const { jobId = "" } = useParams<{ jobId: string }>();
+  return <Redirect to={`/run/${jobId}/setup`} replace />;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -66,7 +84,7 @@ export default function App() {
             <Route path="/preview/knowledge-graph" component={PreviewKnowledgeGraphPage} />
             <Route path="/phenome" component={PhenomeHealthPage} />
             <Route path="/run/:jobId/setup" component={SetupPage} />
-            <Route path="/run/:jobId/gate0" component={Gate0Page} />
+            <Route path="/run/:jobId/gate0" component={RetiredGate0Route} />
             <Route path="/run/:jobId/gate1" component={Gate1Page} />
             <Route path="/run/:jobId/gate2" component={Gate2Page} />
             <Route path="/run/:jobId/gate3" component={Gate3Page} />

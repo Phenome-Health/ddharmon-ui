@@ -3,11 +3,16 @@ import { cn } from "@/lib/utils";
 import type { GatePosition } from "@/types";
 
 /**
- * The gate rail — six equal columns, always, on the ground above the working surface (UI-SPEC §7.1.3).
+ * The gate rail — five equal columns, always, on the ground above the working surface (UI-SPEC §7.1.3).
  *
- * ALWAYS SIX, never collapsed and never variable-length. A rail that shortens as gates complete makes the
+ * ALWAYS FIVE, never collapsed and never variable-length. A rail that shortens as gates complete makes the
  * reviewer's position mean something different on every screen, which is the opposite of what a progress
- * rail is for. Zero through six completed gates therefore render at identical width.
+ * rail is for. Zero through five completed gates therefore render at identical width.
+ *
+ * FIVE RATHER THAN SIX SINCE 2026-08-26 (`08-DECISION-GATE0.md` D-2). Gate 0 was a gate with no decision —
+ * its only control was Continue — so it was a receipt, not a gate, and its content moved to Setup as a
+ * free pre-flight. THE RULE ABOVE DID NOT CHANGE; only the length did. This rail is still fixed-length,
+ * and the reason is still that a variable-length rail relocates the reviewer on every screen.
  *
  * REALIZED vs FORECAST is the load-bearing distinction here. After UI-SPEC §0.1's reversal the reviewer
  * standing at Gate 1 is DOWNSTREAM of real spend — reaching Gate 1 already paid for concept generation,
@@ -29,7 +34,14 @@ export interface GateRailItem {
   cost: { kind: "realized" | "forecast" | "state"; text: string };
 }
 
-/** The six columns and their order — the one place the rail's shape is declared. */
+/**
+ * Every gate position's label, keyed by the WIRE type.
+ *
+ * IT HOLDS ONE MORE ENTRY THAN THE RAIL DRAWS, and that is deliberate — do not "tidy" it. `GatePosition`
+ * is the client half of contract.py's literal and still carries `gate0`, because the backend still PARKS
+ * runs there (D-3 keeps the entry boundary exactly as built). Dropping the key fails typecheck, and
+ * `setup.tsx` reads `GATE_LABELS[gate]` when it renders the per-gate bill, which walks every wire position.
+ */
 export const GATE_LABELS: Record<GatePosition, string> = {
   setup: "Set up",
   gate0: "Load & prepare",
@@ -39,7 +51,16 @@ export const GATE_LABELS: Record<GatePosition, string> = {
   gate4: "Export",
 };
 
-export const GATE_SEQUENCE: GatePosition[] = ["setup", "gate0", "gate1", "gate2", "gate3", "gate4"];
+/**
+ * The five columns and their order — the ONE place the rail's shape is declared.
+ *
+ * NOT THE SAME LIST AS `GATE_ORDER` in `lib/api.ts`, and the difference is load-bearing. That constant is
+ * the client half of the WIRE contract and still contains `gate0`, so `next_gate("gate0") === "gate1"`
+ * still resumes a parked run. This one is what the rail DRAWS. Two near-identical names, opposite jobs;
+ * `gates.spec.ts` asserts they differ in exactly the retired position so a later tidying edit fails loudly
+ * rather than silently breaking either the rail or the resume.
+ */
+export const GATE_SEQUENCE: GatePosition[] = ["setup", "gate1", "gate2", "gate3", "gate4"];
 
 export function GateRail({
   current,
@@ -47,7 +68,7 @@ export function GateRail({
   className,
 }: {
   current: GatePosition;
-  /** One entry per gate, in order. Exactly six; a short list is a bug, not a collapsed rail. */
+  /** One entry per gate, in order. Exactly five; a short list is a bug, not a collapsed rail. */
   items: GateRailItem[];
   className?: string;
 }) {
@@ -56,7 +77,7 @@ export function GateRail({
     <ol
       aria-label="Review gates"
       data-testid="gate-rail"
-      className={cn("grid grid-cols-6 gap-2", className)}
+      className={cn("grid grid-cols-5 gap-2", className)}
     >
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
@@ -66,7 +87,7 @@ export function GateRail({
             key={item.gate}
             data-gate={item.gate}
             data-state={isCurrent ? "current" : isDone ? "done" : "ahead"}
-            // `aria-current="step"` on the CURRENT gate only. Without it the rail is six links and a
+            // `aria-current="step"` on the CURRENT gate only. Without it the rail is five links and a
             // screen-reader user has no way to tell which screen they are on.
             aria-current={isCurrent ? "step" : undefined}
             className={cn(
