@@ -11,6 +11,7 @@ import {
 import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
 import { PROVIDER_KEY_INFO, keyPlaceholderFor } from "@/lib/provider-keys";
 import { PAUSED_RUN_FIXTURE } from "./routes";
+import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
 
 /**
  * Setup — the first of the six staged-review screens (08-13).
@@ -1431,6 +1432,155 @@ test.describe("Setup — the batch duration is modelled on the queue, and itemis
       // And they keep the single blended range, which is honest when there is only one term.
       await expect(page.getByTestId("estimate-duration-range")).toHaveCount(1);
       await expect(dur).not.toContainText(/queue/i);
+    }
+  });
+});
+
+
+/**
+ * Setup's THIRD STATE — the free pre-flight (08-14b).
+ *
+ * Gate 0 was demoted on 2026-08-26 (`08-DECISION-GATE0.md` D-2) and its content is now a panel on this
+ * screen. What is asserted here is the WIRING, not the panel's content: the panel's own 60-odd assertions
+ * came with it and live in `preflight.spec.ts`. The three claims this block makes are the ones that only
+ * exist because of the move — that the pre-flight is absent before a run, that the screen visibly changes
+ * state when one is started, and that reaching it never detours through the retired path.
+ */
+test.describe("Setup — the free pre-flight", () => {
+  /**
+   * Serve a MUTATED copy of the committed fixture, so the state under test is a real payload with one
+   * fact substituted. Same technique the panel's own spec uses, and for the same reason: the shipped
+   * fixture is parked at Gate 1, and a file cannot honestly be parked at two boundaries at once.
+   */
+  async function withRun(
+    page: import("@playwright/test").Page,
+    mutate: (payload: Record<string, unknown>) => void,
+  ): Promise<void> {
+    const res = await page.request.get(`/static-data/result-${PAUSED_RUN_FIXTURE}.json`);
+    const payload = (await res.json()) as Record<string, unknown>;
+    mutate(payload);
+    await page.route("**/static-data/result-*.json", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) }),
+    );
+  }
+
+  /** The fixture, re-parked at the pre-flight boundary — where a real run sits after Start. */
+  const atPreflight = (p: Record<string, unknown>): void => {
+    (p as { status: string; phase: string }).status = "awaiting_review";
+    (p as { status: string; phase: string }).phase = "awaiting_review";
+    (p as { gatePosition: string }).gatePosition = RETIRED_GATE;
+    (p.result as { gatePosition: string }).gatePosition = RETIRED_GATE;
+  };
+
+  test("@setup a Setup with no run renders no pre-flight region at all", async ({ page }) => {
+    // COMPOSE mode: there is nothing to report on, and an empty pre-flight would read as a run whose
+    // preparation found nothing — a claim about the dictionaries rather than about the absence of a run.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("preflight")).toHaveCount(0);
+    await expect(page.getByTestId("setup-dictionaries-disclosure")).toHaveCount(0);
+    // The screen is still the one it always was.
+    await expect(page.getByTestId("dict-upload")).toHaveCount(1);
+    await expect(page.getByTestId("start-run")).toBeVisible();
+  });
+
+  test("@setup a run at the pre-flight boundary leads with the findings and collapses the mapping", async ({
+    page,
+  }) => {
+    await withRun(page, atPreflight);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+
+    // The pre-flight is present, and it is ABOVE the dictionaries — the reviewer's job at this point is
+    // to read and fix, not to configure.
+    const preflight = page.getByTestId("preflight");
+    await expect(preflight).toBeVisible();
+    const disclosure = page.getByTestId("setup-dictionaries-disclosure");
+    await expect(disclosure).toBeVisible();
+    const preflightTop = (await preflight.boundingBox())!.y;
+    const mappingTop = (await disclosure.boundingBox())!.y;
+    expect(preflightTop).toBeLessThan(mappingTop);
+
+    // The mapping is COLLAPSED, not deleted: the column roles are fixed for this run, so five open
+    // tables would be five tables of decisions that can no longer be made.
+    await expect(page.getByTestId("dict-card")).toHaveCount(0);
+    await expect(page.getByTestId("setup-dictionaries-summary")).toContainText(/dictionaries/);
+    await disclosure.getByRole("button").first().click();
+    await expect(page.getByTestId("dict-card")).toHaveCount(5);
+    // And the read-back's honest absence survived the collapse.
+    await expect(page.getByTestId("name-check-unavailable").first()).toBeVisible();
+  });
+
+  test("@setup a run that has moved past the pre-flight keeps the report as a read-back, and says so", async ({
+    page,
+  }) => {
+    // The committed fixture is parked at Gate 1, i.e. PAST this boundary. The cleaning stays auditable
+    // (pre-build question Q2) but it is a record now — and nothing here may offer a charge that has
+    // already happened.
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("preflight")).toBeVisible();
+    const note = page.getByTestId("preflight-read-back");
+    await expect(note).toBeVisible();
+    await expect(note).toContainText(/moved on/i);
+    // The mapping is NOT collapsed here: there is no finding above it competing for attention.
+    await expect(page.getByTestId("setup-dictionaries-disclosure")).toHaveCount(0);
+    await expect(page.getByTestId("dict-card")).toHaveCount(5);
+  });
+
+  test("@setup reaching the pre-flight never hops through the retired gate path", async ({ page }) => {
+    // ASSERT THE HOP, NOT THE DESTINATION. After the demotion the retired URL redirects to this screen,
+    // so Setup -> retired path -> Setup leaves the correct final URL and fails nothing — it is visible
+    // only as a flicker. `framenavigated` fires for the history-API pushes this router uses, so the whole
+    // path is observable.
+    const seen: string[] = [];
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) seen.push(new URL(frame.url()).pathname);
+    });
+    await withRun(page, atPreflight);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("preflight")).toBeVisible();
+    expect(seen.filter((u) => u.endsWith(`/${RETIRED_GATE}`)), `navigated: ${seen.join(" -> ")}`).toEqual(
+      [],
+    );
+  });
+
+  test("@setup the post-Start destination is Setup's own route, and no input makes it the retired one", async () => {
+    // ASSERTED AS A PURE FUNCTION because the button that calls it is DISABLED in the static build this
+    // suite runs against (`setup.tsx`'s IS_STATIC guard), so a click-through is untestable here — and an
+    // untestable destination is exactly how this line came to still point at a retired route.
+    expect(setupPathFor("abc123")).toBe("/run/abc123/setup");
+    for (const id of ["abc123", "", "demo-staged-gate1", "0", "a/b"]) {
+      expect(setupPathFor(id), `setupPathFor(${JSON.stringify(id)})`).not.toContain(`/${RETIRED_GATE}`);
+      expect(setupPathFor(id)).toMatch(/\/setup$/);
+    }
+  });
+
+  test("@setup Setup holds ONE subscription to the run, not two", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+    const src = readFileSync(resolve(root, "src/pages/run/setup.tsx"), "utf8");
+    // Matched on the ASSIGNMENT, so a comment naming the hook cannot push the count to two. The
+    // pre-flight reads the run the page already holds; a second subscription beside it is two sources for
+    // one run's state, which is the defect the shell's own stop control was written to avoid.
+    expect([...src.matchAll(/=\s*useHarmonizeStream\(/g)]).toHaveLength(1);
+    // …and the panel opens none of its own.
+    const panel = readFileSync(resolve(root, "src/components/gate/PreFlightPanel.tsx"), "utf8");
+    expect(panel).not.toContain("useHarmonizeStream");
+  });
+
+  test("@setup there is no raw-HTML injection on Setup or on the pre-flight", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+    // Uploaded dictionary text is echoed on a screen the guest walk reaches. The before/after examples
+    // moved here with the panel, so the no-raw-HTML rule followed them to their new path.
+    for (const f of ["src/pages/run/setup.tsx", "src/components/gate/PreFlightPanel.tsx"]) {
+      expect(readFileSync(resolve(root, f), "utf8"), f).not.toContain("dangerouslySetInnerHTML");
     }
   });
 });

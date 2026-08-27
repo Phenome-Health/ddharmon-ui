@@ -1,25 +1,29 @@
 import { useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
-import { useParams } from "wouter";
-import { toast } from "sonner";
-import { CommitBar } from "@/components/gate/CommitBar";
+import { ChevronDown, Loader2 } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
-import { GateShell, railFor } from "@/components/gate/GateShell";
 import { InputQualitySignals } from "@/components/gate/InputQualitySignals";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RulePipelineList } from "@/components/gate/RulePipelineList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { preparedExportUrl, resumeRun } from "@/lib/api";
-import { estimateRunCostBreakdown } from "@/lib/estimate";
-import type { PreprocessReport, RunMode } from "@/types";
+import { preparedExportUrl } from "@/lib/api";
+import type { JobResult, PreprocessReport } from "@/types";
 
 /**
- * Gate 0 — Load &amp; prepare — the staged review flow's second screen.
+ * The free PRE-FLIGHT on Setup — what preparation found, read before anything is bought.
  *
- * WHAT IT IS FOR. Preprocessing had never run in the product until 08-09; now that it does, this screen's
- * job is to make its effect legible on the way to the run's FIRST CHARGE. Everything it shows is local,
- * $0 work that already happened — so the reviewer is reading a report, not authorising one.
+ * WHAT IT IS FOR, and why it is a panel rather than a screen. This was Gate 0, the staged flow's second
+ * screen, until `08-DECISION-GATE0.md` (2026-08-26) demoted it: a gate whose only control is Continue is a
+ * receipt, not a gate, and on a clean dictionary half of what it reports is invisible by construction. The
+ * PREPARATION ITSELF IS UNTOUCHED (D-1) — same eight rules, same order, same output. A screen was retired,
+ * not a stage.
+ *
+ * IT IS FREE BECAUSE THE RUN PARKS BEFORE THE FIRST PAID STAGE. The backend boundary added on 2026-08-26
+ * is kept exactly as built (D-3): the run loads, preprocesses and embeds, then stops BEFORE
+ * `harmonize_leanb` is ever called. So everything here is local, $0 work that has already happened, and
+ * the reader is deciding whether to FIX THEIR INPUT BEFORE SPENDING rather than authorising what they are
+ * looking at. The control that does the spending is Setup's own, beside this panel — not in it.
  *
  * THE THREE STATES IT MUST KEEP APART, delegated to `RulePipelineList`: a rule that ran and changed
  * nothing, a rule that did not run, and a rule that threw. Collapsing them is the same class of error as
@@ -31,11 +35,11 @@ import type { PreprocessReport, RunMode } from "@/types";
  * report with zeros. The aggregate above the tabs states the fraction rather than a total, because a
  * total across four of five cohorts implies a completeness the run has not reached.
  *
- * ITS CONTINUE IS THE RUN'S FIRST CHARGE (UI-SPEC §0.1, §8.1). Gate 0's own stages call no model, so its
- * rail column reads "local" — but pressing Continue buys concept generation, splitting and the coherence
- * judge over the whole corpus before Gate 1 can render anything. So the amount is ON the button and the
- * irreversible-spend statement is INLINE in the bar, never a modal: a modal on the primary path is met at
- * every gate, always says yes, and by the third gate is dismissed unread.
+ * THE FROZEN AUDIT TRAIL IS REACHABLE, NOT DELETED (pre-build question Q2, answered 2026-08-26). The rule
+ * pipeline, the worked before/after examples and the row-to-vector panel sit under a collapsed disclosure
+ * below the findings. No further work goes into them — they are frozen as built — but the app stays the
+ * one place the cleaning can be audited, and the ~30 rendered assertions over them keep a home. The
+ * accepted cost, stated at decision time: ~600 lines of frozen UI stay in the bundle.
  *
  * TWO THINGS THE PIPELINE DOES NOT RECORD ARE STATED, not omitted. Which rule changed a variable is not
  * stamped anywhere, so the grouping under each rule is inferred; and the value vector is composed for
@@ -209,108 +213,128 @@ function RowToVector({ report, jobId }: { report: PreprocessReport; jobId: strin
   );
 }
 
-export default function Gate0Page() {
-  const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
-  const [resuming, setResuming] = useState(false);
+/**
+ * The frozen audit trail — the rule pipeline, its worked before/after examples, and the row-to-vector
+ * panel — behind ONE collapsed disclosure, below the findings.
+ *
+ * COLLAPSED, NOT DELETED (pre-build question Q2, answered 2026-08-26 by the user; the decision recommended
+ * it). Everything inside is FROZEN as built: no further work goes into it. It stays reachable for two
+ * reasons that outlived the screen it was built for. The app is the only place the cleaning can be
+ * audited at all — an export shows you the result, not which rule produced it. And the spec assertion
+ * *"every rule the backend reports has a declared facet"* keeps its subject: `RULE_FACETS` is a HAND-KEPT
+ * map, so a rule added to core and not added to it renders ZERO examples, which reads as "this rule
+ * changed nothing". That assertion is the only thing standing between a new core rule and a silent
+ * misreport (D-6's retired hazard), and deleting this surface would delete what it asserts against.
+ *
+ * BELOW THE FINDINGS, DELIBERATELY. What preparation DID is provenance; what it FOUND is what the reader
+ * is here to act on. Leading with the provenance is what made the retired screen a receipt.
+ */
+function FrozenAuditTrail({ report, jobId }: { report: PreprocessReport; jobId: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      data-testid="frozen-audit-trail"
+      data-open={String(open)}
+      className="border-t border-rule-on-raised"
+    >
+      <CollapsibleTrigger
+        aria-label={open ? "Hide what preparation changed" : "Show what preparation changed"}
+        className="flex w-full items-center justify-between gap-2 px-6 py-3 text-left"
+      >
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            What preparation changed
+          </span>
+          {/* VISIBLE WITHOUT EXPANDING A ROW. The pipeline does not stamp which rule changed a variable,
+              so which examples sit under which rule is inferred — and an honesty label behind a
+              disclosure is not a label. It is stated a second time inside each expanded rule, where the
+              inference is actually made, and once more as a tile. */}
+          <span className="text-xs font-normal normal-case text-on-raised-muted">
+            Every rule that ran, a worked example of each, and the exact text one variable embeds.
+            Examples are grouped under rules as inferred, not reported.
+          </span>
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("h-4 w-4 shrink-0 text-on-raised-muted transition-transform", open && "rotate-180")}
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <RulePipelineList report={report} />
+        <RowToVector report={report} jobId={jobId} />
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 
-  const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
-  const reports: PreprocessReport[] = jobState?.result?.preprocessing ?? [];
+/**
+ * How far preparation has actually got, derived ONCE and read by both this panel and Setup.
+ *
+ * TWO SURFACES, ONE DERIVATION. Setup needs `allPrepared` to know whether the run may be committed and
+ * `variables` to price it from this run's own corpus rather than the pre-upload guess; this panel needs
+ * the tab list and the same fraction. Deriving it twice is how two readings of one number end up
+ * disagreeing on the same screen — the defect `@setup the variable count on screen is the same one the
+ * estimate is priced from` was written to catch.
+ */
+export interface PreflightProgress {
+  /** DECLARED cohorts first — see `tabs`. */
+  tabs: CohortTab[];
+  /** How many of them have produced a report. */
+  prepared: number;
+  /** True only when every declared cohort is done AND the run is past the pre-preparation phases. */
+  allPrepared: boolean;
+  /** Variables across the FINISHED reports. Only a total for the run when `allPrepared`. */
+  variables: number;
+}
 
-  /**
-   * The tab list. DECLARED cohorts first, so a cohort the run knows about but has not prepared yet gets a
-   * tab in the pending state rather than being invisible — an absent tab is indistinguishable from a
-   * cohort that was never in the run.
-   */
-  const tabs: CohortTab[] = useMemo(() => {
-    const byCohort = new Map(reports.map((r) => [r.cohort, r]));
-    const declared: string[] = jobState?.result?.summary?.cohorts ?? [];
-    const order = [...declared, ...reports.map((r) => r.cohort).filter((c) => !declared.includes(c))];
-    return order.map((cohort) => ({ cohort, report: byCohort.get(cohort) ?? null }));
-  }, [reports, jobState?.result?.summary?.cohorts]);
-
+export function preflightProgress(run: JobResult | null): PreflightProgress {
+  const reports: PreprocessReport[] = run?.result?.preprocessing ?? [];
+  const byCohort = new Map(reports.map((r) => [r.cohort, r]));
+  const declared: string[] = run?.result?.summary?.cohorts ?? [];
+  // DECLARED cohorts first, so a cohort the run knows about but has not prepared yet gets a tab in the
+  // pending state rather than being invisible — an absent tab is indistinguishable from a cohort that was
+  // never in the run.
+  const order = [...declared, ...reports.map((r) => r.cohort).filter((c) => !declared.includes(c))];
+  const tabs: CohortTab[] = order.map((cohort) => ({ cohort, report: byCohort.get(cohort) ?? null }));
   const prepared = tabs.filter((t) => t.report).length;
-  const allPrepared = tabs.length > 0 && prepared === tabs.length && !PRE_PREPARE_PHASES.has(jobState?.phase ?? "");
+  return {
+    tabs,
+    prepared,
+    allPrepared:
+      tabs.length > 0 && prepared === tabs.length && !PRE_PREPARE_PHASES.has(run?.phase ?? ""),
+    variables: reports.reduce((n, r) => n + r.nUniqueVariableNames, 0),
+  };
+}
+
+/**
+ * @param run    the run this pre-flight is about, straight off Setup's OWN stream subscription. Passed in
+ *               rather than fetched: a second subscription beside the page's is two sources for one run's
+ *               state, which is the defect the shell's stop control was written to avoid.
+ * @param jobId  the run's id, for the prepared-dictionary export link.
+ */
+export function PreFlightPanel({ run, jobId }: { run: JobResult | null; jobId: string }) {
+  const reports: PreprocessReport[] = run?.result?.preprocessing ?? [];
+  const { tabs, prepared, allPrepared } = useMemo(() => preflightProgress(run), [run]);
   const [active, setActive] = useState<string>("");
   const current = active || tabs[0]?.cohort || "";
 
-  /**
-   * What Continue buys, priced off THIS RUN'S OWN corpus rather than the pre-upload guess.
-   *
-   * The variable counts on screen are the real ones — the rules have already run — so they are a better
-   * denominator than the `est_fields` the New-Run form stored before a file was parsed. `firstCharge` is
-   * the estimator's own name for what Gate 0's Continue buys, so the figure the reviewer reads here and
-   * the one Setup quoted come from one function rather than two.
-   */
-  const runMode = ((jobState?.config ?? {}) as Record<string, unknown>).run_mode;
-  /**
-   * PREVIEW BUYS NOTHING, so it must not be told it is about to spend.
-   *
-   * Preview run mode calls no model: it clusters and builds the prompts, and stops. Gate 0 became
-   * reachable in preview when the entry boundary landed, and this screen's copy was written when only a
-   * paid run could get here — so "pressing Continue is the run's first charge" and the irreversible-spend
-   * statement below it would both be false. Quoting a charge that will not happen is the same class of
-   * error as under-quoting one, and R8 binds on both directions.
-   */
-  const isPreview = runMode === "preview";
-
-  const firstCharge = useMemo(() => {
-    const variables = reports.reduce((n, r) => n + r.nUniqueVariableNames, 0);
-    const config = (jobState?.config ?? {}) as Record<string, unknown>;
-    const fields =
-      variables > 0 ? variables : typeof config.est_fields === "number" ? config.est_fields : 0;
-    const cohorts =
-      tabs.length > 0 ? tabs.length : typeof config.est_cohorts === "number" ? config.est_cohorts : 0;
-    if (fields <= 0) return undefined;
-    const mode = (typeof config.run_mode === "string" ? config.run_mode : "batch") as RunMode;
-    return estimateRunCostBreakdown(fields, cohorts, mode, true).firstCharge;
-  }, [reports, tabs.length, jobState?.config]);
-
-  async function onContinue() {
-    setResuming(true);
-    try {
-      await resumeRun(jobId);
-      toast.success("Continuing to Gate 1");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not continue this run");
-    } finally {
-      setResuming(false);
-    }
-  }
-
   return (
-    <GateShell
-      gate="gate0"
-      subhead={
-        isPreview
-          ? "Every preparation rule that ran on your dictionaries, and what each one changed. This run is a preview, so Continue calls no model and buys nothing — it groups your variables and stops."
-          : "Every preparation rule that ran on your dictionaries, and what each one changed. Pressing Continue here is the run's first charge — it pays for naming and dividing the concept groups."
-      }
-      rail={railFor("gate0", { totalRealized: costSoFar })}
-      runName={jobState?.displayName}
-      costSoFar={costSoFar}
-      resumed={jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate0"}
-      // The stop control lives in the shell, so this is the whole of Gate 0's part in it: hand over the
-      // run and the same `cancel(mode)` path the dashboard and the runs list already use. The other five
-      // gates pass the same two props and inherit the control.
-      job={jobState}
-      onStop={cancel}
-    >
-      {reconnecting && (
-        <p role="status" data-testid="stream-reconnecting" className="text-sm font-semibold text-status-warn">
-          Lost contact with the server — reconnecting. The figures below are from the last update, not live.
+    <section data-testid="preflight" className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-semibold text-on-field">Before you spend</h2>
+        <p className="max-w-[68ch] text-sm text-on-field-muted">
+          Your dictionaries have been loaded, prepared and grouped on this machine. Nothing has been
+          charged for any of it. What follows is what preparation found — read it before committing the
+          run&rsquo;s first charge.
         </p>
-      )}
-      {error && (
-        <p role="alert" className="text-sm font-semibold text-status-danger">
-          {error.message}
-        </p>
-      )}
+      </div>
 
       {tabs.length === 0 ? (
         /* NOT an empty panel, and not a "not built yet" notice: this run genuinely carries no preparation
            report, which is a fact about the RUN. A run recorded before preprocessing existed is this. */
-        <section className="rounded-card bg-surface-raised shadow-card">
+        <div className="rounded-card bg-surface-raised shadow-card">
           <GateEmptyState
             heading="No preparation report for this run"
             nextStep="Start a new run to see what the preparation rules do to your dictionaries."
@@ -319,7 +343,7 @@ export default function Gate0Page() {
             changed. That is different from a run where the rules found nothing to change — that run would
             list every rule with a count of zero.
           </GateEmptyState>
-        </section>
+        </div>
       ) : (
         <>
           {/* THE AGGREGATE, which never implies completeness it has not reached. */}
@@ -378,26 +402,16 @@ export default function Gate0Page() {
                 >
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-rule-on-raised px-6 py-3">
                     <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-                      Preparation rules · {t.cohort}
+                      What preparation found · {t.cohort}
                     </h2>
-                    {/* VISIBLE WITHOUT EXPANDING A ROW. The pipeline does not stamp which rule changed a
-                        variable, so which examples sit under which rule is inferred — and an honesty
-                        label behind a disclosure is not a label. It is stated a second time inside each
-                        expanded rule, where the inference is actually made, and once more as a tile. */}
-                    {t.report && (
-                      <p className="text-xs font-normal normal-case text-on-raised-muted">
-                        Examples are grouped under rules as inferred, not reported
-                      </p>
-                    )}
                   </div>
                   {t.report ? (
                     <>
-                      <RulePipelineList report={t.report} />
                       {/* The pre-spend read on the INPUT, per cohort and never averaged across them. It
                           sits under this cohort's tab rather than above the tabs for exactly that
                           reason: a cross-cohort mean would be the composite the panel refuses to be. */}
                       <InputQualitySignals report={t.report} />
-                      <RowToVector report={t.report} jobId={jobId} />
+                      <FrozenAuditTrail report={t.report} jobId={jobId} />
                     </>
                   ) : (
                     /* A tab must NEVER show a completed report while its cohort is still running. No rule
@@ -424,21 +438,8 @@ export default function Gate0Page() {
             not use it. Whether it should is an open research question, not a setting.
           </NotAvailable>
 
-          {/* THE SPEND GATE. Inline statement, no modal — see the file docstring. */}
-          <CommitBar
-            action="Continue to Gate 1"
-            total={isPreview ? undefined : firstCharge}
-            firstCharge={!isPreview}
-            scopeLabel={`${reports.reduce((n, r) => n + r.nUniqueVariableNames, 0).toLocaleString()} variables`}
-            onCommit={onContinue}
-            busy={resuming}
-            disabled={!allPrepared}
-            recheckNotice={
-              allPrepared ? undefined : "Some dictionaries are still being prepared. Continue once they finish."
-            }
-          />
         </>
       )}
-    </GateShell>
+    </section>
   );
 }

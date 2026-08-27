@@ -3,16 +3,20 @@ import { Link, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
-import { Eye, EyeOff, Loader2, Upload, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
+import { PreFlightPanel, preflightProgress } from "@/components/gate/PreFlightPanel";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { InfoTip } from "@/components/ui/info-tip";
-import { IS_STATIC, listDemos, listModels, startHarmonize } from "@/lib/api";
+import { GATE_ORDER, IS_STATIC, listDemos, listModels, startHarmonize } from "@/lib/api";
+import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { lookupPrefill, rememberAssignment } from "@/lib/column-prefill";
@@ -105,6 +109,9 @@ const LINE_HELP: Record<string, { help: string; optIn?: { on: boolean; decidedAt
   },
 };
 
+/** A run that has stopped for good. It has no uncommitted gate and nothing left to commit. */
+const TERMINAL_STATUSES = new Set(["complete", "error", "cancelled"]);
+
 /** What each pause point charges for, in words, when it charges nothing. */
 const GATE_FREE_REASON: Partial<Record<GatePosition, string>> = {
   setup: "local — no charge",
@@ -141,6 +148,25 @@ const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
  * their columns). A run that already exists is READ BACK here from its own record, with the controls
  * disabled and the reason named on the start action. One layout rather than two, because a second layout
  * is a second set of empty states, error states and overflow behaviours to keep honest.
+ *
+ * THREE STATES SINCE THE GATE 0 DEMOTION (2026-08-26; pre-build question Q1, answered Option B). Gate 0
+ * was retired as a screen and its content moved here as a FREE PRE-FLIGHT, so this screen now spans the
+ * whole local, unpaid part of a run:
+ *
+ *  1. **`compose`** — no run yet. Exactly what it was before: drop files, map columns, price the run.
+ *  2. **`preflight`** — the run has been started and has not yet passed the pre-flight boundary. The
+ *     reviewer's job has changed, from CONFIGURE to READ AND FIX, so the screen changes with it: the
+ *     dictionaries collapse to a summary disclosure and the pre-flight takes the left column. The run
+ *     parks before `harmonize_leanb` is ever called (D-3), so this state costs nothing and the control
+ *     that commits the first charge is the one thing on it that spends.
+ *  3. **`past`** — the run has moved beyond that boundary, or finished. The pre-flight still renders, as
+ *     a READ-BACK: it is the only place the cleaning can be audited (Q2), and a report that vanished the
+ *     moment the run continued would be an audit trail with a shelf life. NO commit control is offered —
+ *     that charge has already happened, and re-offering it would be a false claim about the run.
+ *
+ * THE STATE IS DERIVED FROM THE RUN, NOT STORED. `useHarmonizeStream` is already subscribed at the top of
+ * this component and the pre-flight reads THAT — a second subscription beside it would be two sources for
+ * one run's state, which is the defect the shell's own stop control was written to avoid.
  *
  * WHAT A RUN-SEEDED DICTIONARY CANNOT SAY. The source file is not kept with the run, so the unique-name
  * count is genuinely unknown for one. It renders as not-available WITH THE REASON — never as "all names
@@ -296,7 +322,7 @@ const hasMeaning = (roles: Record<string, string>): boolean => MEANING_ROLES.som
 export default function SetupPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const [, navigate] = useLocation();
-  const { jobState, cancel } = useHarmonizeStream(jobId, true, true);
+  const { jobState, cancel, error: streamError, reconnecting } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const [dicts, setDicts] = useState<SetupDict[]>([]);
@@ -322,6 +348,8 @@ export default function SetupPage() {
   const [showKey, setShowKey] = useState(false);
   const [model, setModel] = useState("");
   const [starting, setStarting] = useState(false);
+  /** Whether the pre-flight's read-back of the dictionaries is expanded. Closed by default — see below. */
+  const [dictsOpen, setDictsOpen] = useState(false);
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
   const composed = useRef(false);
 
@@ -369,6 +397,51 @@ export default function SetupPage() {
     [fieldsByDataset],
   );
 
+    /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
+  const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
+
+  /**
+   * Which of the three states this screen is in — see the file docstring.
+   *
+   * `preflight` is *"started, and not past the pre-flight boundary"*, and it is deliberately written as
+   * two facts about the RUN rather than one:
+   *
+   *  - **parked at it** — `awaiting_review` AT the retired position. That is the wire value the backend
+   *    still emits (D-3) and the only state in which the first charge has not happened yet.
+   *  - **on its way to it** — started, not terminal, and carrying NO gate position at all, which is the
+   *    window between Start and the first checkpoint.
+   *
+   * `gatePosition` alone is not enough for either. It is NOT cleared when a run resumes (`app.py`'s
+   * resume endpoint sets only `status`/`phase`), so a run running from the retired position TOWARD Gate 1
+   * still reports it — and offering the first charge there would offer to buy work already bought. The
+   * `awaiting_review` half is what excludes that.
+   */
+  const gatePosition = jobState?.gatePosition ?? jobState?.result?.gatePosition ?? null;
+  const runTerminal = TERMINAL_STATUSES.has(jobState?.status ?? "");
+  const atPreflightBoundary = jobState?.status === "awaiting_review" && gatePosition === RETIRED_GATE;
+  const stage: "compose" | "preflight" | "past" = !runStarted
+    ? "compose"
+    : atPreflightBoundary || (!runTerminal && !gatePosition)
+      ? "preflight"
+      : "past";
+
+  /** How far preparation has got — ONE derivation, read by the panel below and by the estimate above. */
+  const preflight = useMemo(() => preflightProgress(jobState), [jobState]);
+
+  /**
+   * Where a run that is PAST the pre-flight should be rejoined.
+   *
+   * The retired position is mapped forward rather than linked to: its URL redirects back to this screen,
+   * so offering it as the way onward would be a loop. `GATE_ORDER` is the WIRE order and is what knows
+   * which position follows it.
+   */
+  const resumeAt: GatePosition = useMemo(() => {
+    if (!gatePosition || gatePosition === RETIRED_GATE) {
+      return GATE_ORDER[GATE_ORDER.indexOf(RETIRED_GATE) + 1] ?? "gate1";
+    }
+    return gatePosition;
+  }, [gatePosition]);
+
   /**
    * The corpus the quote is for, and whether it is knowable yet.
    *
@@ -379,6 +452,17 @@ export default function SetupPage() {
    * which persists the total it was quoted at even though it keeps no per-dictionary counts.
    */
   const { totalFields, sizePending } = useMemo(() => {
+    // THE RUN'S OWN CORPUS WINS AT THE PRE-FLIGHT. There the rules have already run, so the real variable
+    // counts are on the report and they are a better denominator than the `est_fields` this run was
+    // quoted at before a file was parsed — and this is the state whose control commits the first charge,
+    // so it is the one where the denominator has to be the real one.
+    //
+    // Read ONLY when every declared cohort has finished: a sum over the cohorts that happen to have
+    // reported is not a smaller estimate, it is an UNDER-QUOTE that looks finished (R8). Scoped to this
+    // state for the same reason the mode override is — see `effectiveRunMode`.
+    if (stage === "preflight" && preflight.allPrepared && preflight.variables > 0) {
+      return { totalFields: preflight.variables, sizePending: false };
+    }
     if (!dicts.length) return { totalFields: 0, sizePending: false };
     const counts = dicts.map(variableCount);
     if (counts.every((n) => n !== null)) {
@@ -388,7 +472,7 @@ export default function SetupPage() {
     const persisted = typeof config.est_fields === "number" ? config.est_fields : null;
     if (persisted !== null) return { totalFields: persisted, sizePending: false };
     return { totalFields: null as number | null, sizePending: true };
-  }, [dicts, variableCount, jobState]);
+  }, [dicts, variableCount, jobState, stage, preflight.allPrepared, preflight.variables]);
 
   /**
    * The judge's real workload, when the run already knows it.
@@ -402,15 +486,38 @@ export default function SetupPage() {
     return groups.length ? groups.map((g) => g.nMembers) : undefined;
   }, [jobState]);
 
+  /**
+   * The mode the quote is computed at.
+   *
+   * A RUN AT THE PRE-FLIGHT IS PRICED AT ITS OWN MODE, not at this screen's local default. `runMode` is
+   * component state seeded to `batch`, and nothing seeds it from the run — so a PREVIEW run sitting at the
+   * boundary would be quoted as a batch run and, by the control beside it, told it was about to spend on a
+   * leg that calls no model. Quoting a charge that will not happen is the same class of error as
+   * under-quoting one, and R8 binds in both directions.
+   *
+   * SCOPED TO THE `preflight` STATE on purpose. That is the only state carrying a control that spends, so
+   * it is the only one where the local default can cause a false claim about money. Elsewhere the mode
+   * select stays a live control over the quote, which is what it is for while a run is being composed.
+   *
+   * `run_mode` is the key the backend persists (`app.py` writes it from the form's `runMode`). The demo
+   * fixtures carry a different `mode` key describing the demo, not the run, and it is deliberately NOT
+   * read here: reinterpreting one key as another is how a figure comes to describe the wrong thing.
+   */
+  const effectiveRunMode: RunMode = useMemo(() => {
+    if (stage !== "preflight") return runMode;
+    const declared = ((jobState?.config ?? {}) as Record<string, unknown>).run_mode;
+    return typeof declared === "string" ? (declared as RunMode) : runMode;
+  }, [stage, runMode, jobState?.config]);
+
   const estimate = useMemo(
     () =>
       totalFields === null
         ? null
-        : estimateRunCostBreakdown(totalFields, dicts.length, runMode, genSpecs, suggestIdeas, {
+        : estimateRunCostBreakdown(totalFields, dicts.length, effectiveRunMode, genSpecs, suggestIdeas, {
             conceptGate,
             groupSizes,
           }),
-    [totalFields, dicts.length, runMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
+    [totalFields, dicts.length, effectiveRunMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
   );
 
   /**
@@ -441,9 +548,6 @@ export default function SetupPage() {
     () => estimateRunTime(totalFields ?? 0, dicts.length, runMode),
     [totalFields, dicts.length, runMode],
   );
-
-    /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
-  const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
 
   /**
    * Dictionaries that look like the SAME source added twice — matched on filename, or on an identical
@@ -617,7 +721,7 @@ export default function SetupPage() {
   }, [dicts, runStarted, runMode, apiKey]);
 
   /**
-   * Start the run and hand off to Gate 0.
+   * Start the run and hand off to the pre-flight — which is THIS screen, in its second state.
    *
    * The button is only reachable with an empty blocker list, so this does not re-validate — it submits. It
    * posts the FILES, which is why each upload keeps its `File` rather than only its parsed rows: a run
@@ -660,7 +764,11 @@ export default function SetupPage() {
       // column plays. Nothing derived from the FIRST VALUE column the mapping table displays goes in here;
       // that column holds cell contents, and a cache of cell contents is a different thing entirely.
       dicts.forEach((d) => rememberAssignment(d.headers, d.roles));
-      navigate(`/run/${started}/gate0`);
+      // ONE navigation, to the NEW run's own Setup route. This used to point at the retired gate's URL,
+      // which now redirects straight back here — Setup → retired path → Setup, a double navigation on the
+      // run's first transition that nothing would have failed on, because the final URL is right either
+      // way. The target lives in `setupPathFor` so it can be asserted directly; see its docstring.
+      navigate(setupPathFor(started));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not start this run");
     } finally {
@@ -668,28 +776,12 @@ export default function SetupPage() {
     }
   }
 
-  return (
-    <GateShell
-      gate="setup"
-      subhead="Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Nothing is charged yet — the first charge is Continue at Gate 0."
-      rail={railFor("setup", { totalRealized: costSoFar })}
-      runName={jobState?.displayName}
-      costSoFar={costSoFar}
-      // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
-      // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
-      job={jobState}
-      onStop={cancel}
-    >
-      {/* TWO COLUMNS, following the shipped New Run form (08-13 review).
-          The single-column stack put the price and the start control ~3,000px below the fold, behind five
-          mapping tables — so the number the user is consenting to was never on screen at the same time as
-          the choices that change it. Left: what the run IS (the dictionaries, and how each one's columns map). Right,
-          sticky: how it RUNS, what it COSTS, and the control that starts it — the three that belong
-          together and must stay visible while the left column is scrolled. */}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-        {/* ── left: what the run is ── */}
-        <div className="flex min-w-0 flex-col gap-8">
-      {/* --- dictionaries ------------------------------------------------------------------------- */}
+  /**
+   * The dictionaries and their column mapping — one JSX value, rendered either open or inside the
+   * pre-flight's disclosure. Held in a variable rather than duplicated: two copies of a mapping table is
+   * two places for an empty state, an overflow rule and an honest-absence branch to drift apart.
+   */
+  const dictionariesSection = (
       <section data-testid="setup-dictionaries" className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <h2 className="text-sm font-semibold text-on-field">Data dictionaries</h2>
@@ -855,6 +947,113 @@ export default function SetupPage() {
           ))
         )}
       </section>
+  );
+
+  return (
+    <GateShell
+      gate="setup"
+      subhead="Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Nothing is charged yet — the first charge is Continue at Gate 0."
+      rail={railFor("setup", { totalRealized: costSoFar })}
+      runName={jobState?.displayName}
+      costSoFar={costSoFar}
+      // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
+      // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
+      job={jobState}
+      onStop={cancel}
+    >
+      {/* TWO COLUMNS, following the shipped New Run form (08-13 review).
+          The single-column stack put the price and the start control ~3,000px below the fold, behind five
+          mapping tables — so the number the user is consenting to was never on screen at the same time as
+          the choices that change it. Left: what the run IS (the dictionaries, and how each one's columns map). Right,
+          sticky: how it RUNS, what it COSTS, and the control that starts it — the three that belong
+          together and must stay visible while the left column is scrolled. */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+        {/* ── left: what the run is ── */}
+        <div className="flex min-w-0 flex-col gap-8">
+
+      {/* --- the free pre-flight (08-14b) ---------------------------------------------------------
+          FIRST in the column once a run exists, because once it does the reviewer's job is to READ AND
+          FIX rather than to configure. It reads the run off the subscription this component already has;
+          `PreFlightPanel` opens no second one. */}
+      {stage !== "compose" && (
+        <div className="flex flex-col gap-3">
+          {reconnecting && (
+            <p role="status" data-testid="stream-reconnecting" className="text-sm font-semibold text-status-warn">
+              Lost contact with the server — reconnecting. The figures below are from the last update, not
+              live.
+            </p>
+          )}
+          {streamError && (
+            <p role="alert" className="text-sm font-semibold text-status-danger">
+              {streamError.message}
+            </p>
+          )}
+          {stage === "past" && (
+            /* A READ-BACK, and it says so. The run is past this boundary, so the report below is history
+               rather than something to act on — and nothing here offers to commit a charge that has
+               already happened. */
+            <p data-testid="preflight-read-back" className="max-w-[68ch] text-sm text-on-field-muted">
+              <span className="font-semibold text-on-field">This run has moved on from here.</span> What
+              preparation found is kept below so the cleaning stays auditable, but it is a record now, not
+              a decision — rejoin the run at{" "}
+              <Link
+                href={`/run/${jobId}/${resumeAt}`}
+                className="font-semibold text-link-on-field underline underline-offset-2"
+              >
+                {GATE_LABELS[resumeAt]}
+              </Link>
+              .
+            </p>
+          )}
+          <PreFlightPanel run={jobState} jobId={jobId} />
+        </div>
+      )}
+
+      {/* --- dictionaries -------------------------------------------------------------------------
+
+          COLLAPSED ONCE THE RUN IS STARTED (pre-build question Q1, Option B). At the pre-flight the
+          mapping is FIXED — a run's column roles are set at `startHarmonize` and changing one means
+          starting a fresh run — so five open mapping tables above the findings would be five tables of
+          decisions that can no longer be made. It is a disclosure rather than a deletion: the read-back
+          is still the record of what this run was configured with, including the honest not-available
+          where a run-seeded dictionary genuinely cannot report its unique-name count.
+
+          NOT collapsed in the `past` state, where the screen is a plain read-back and there is no
+          finding above it competing for the reader's attention. */}
+      {stage === "preflight" ? (
+        <Collapsible
+          open={dictsOpen}
+          onOpenChange={setDictsOpen}
+          data-testid="setup-dictionaries-disclosure"
+          className="rounded-inner bg-on-field/5 px-4 py-3"
+        >
+          <CollapsibleTrigger
+            aria-label={dictsOpen ? "Hide the dictionaries and their column mapping" : "Show the dictionaries and their column mapping"}
+            className="flex w-full items-center justify-between gap-2 text-left"
+          >
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
+                What this run was set up with
+              </span>
+              <span data-testid="setup-dictionaries-summary" className="truncate text-sm text-on-field">
+                {dicts.length} {dicts.length === 1 ? "dictionary" : "dictionaries"}
+                {totalFields === null ? "" : ` · ${totalFields.toLocaleString()} variables`} · the column
+                mapping is fixed for this run
+              </span>
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                "h-4 w-4 shrink-0 text-on-field-muted transition-transform",
+                dictsOpen && "rotate-180",
+              )}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-4">{dictionariesSection}</CollapsibleContent>
+        </Collapsible>
+      ) : (
+        dictionariesSection
+      )}
 
         </div>
 
