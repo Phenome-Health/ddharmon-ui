@@ -1,9 +1,12 @@
 import type { PreprocessDiff, PreprocessReport, PreprocessRule, RuleOutcome } from "@/types";
 
 /**
- * The pure half of Gate 0 — every decision the preparation report drives, as functions.
+ * The pure half of the pre-flight — every decision the preparation report drives, as functions.
  *
- * WHY THESE ARE NOT IN THE COMPONENTS. Three of the things Gate 0 must get right are claims about
+ * (It was Gate 0's until that screen was demoted on 2026-08-26; the surface moved to Setup, the
+ * arithmetic did not move at all.)
+ *
+ * WHY THESE ARE NOT IN THE COMPONENTS. Three of the things this surface must get right are claims about
  * arithmetic and provenance rather than about layout: which before/after rows may be shown under which
  * rule, whether the counts close against the row count, and which quality signals the report can honestly
  * supply. A rule that can only be checked by driving a page is a rule that stops being checked (the same
@@ -284,3 +287,184 @@ export const UNAVAILABLE_SIGNALS: UnavailableSignal[] = [
       "These are per-attribute population rates, and the preparation report does not carry them; they live on the loaded dictionary. Estimating them from what the rules happened to change would report our own cleaning as the dictionary's quality.",
   },
 ];
+
+// --- the pre-flight read (08-14b) ----------------------------------------------------------------------
+
+/**
+ * What preparation FOUND, as opposed to what it DID — the pre-flight's own content.
+ *
+ * WHY THIS IS NARROWER THAN THE DECISION FIRST ASKED FOR. `08-DECISION-GATE0.md` D-4 asked for *"here is
+ * what you should fix before you spend"* and made repeated variable names the headline. The standing
+ * inherited-UI review (08-14b's pre-build question Q3) then established that this finding ALREADY SHIPS,
+ * pre-Start, on the same screen: `nameCheck` in `@/lib/dictionary`, rendered by `DictionaryMappingTable`,
+ * where it recomputes as the mapping changes and is therefore fixable IN PLACE with no restart. D-4 now
+ * carries a CORRECTED block because of it.
+ *
+ * So this derivation is deliberately NOT the whole of "what you should fix". It is the subset that only
+ * RUNNING the rules could reveal — and it must not restate the pre-Start finding in different words
+ * either. A reviewer who reads the same finding twice, the second time at the moment it has become harder
+ * to act on, trusts the screen less rather than more. `nVariables - nUniqueVariableNames` is right there
+ * on the report; not using it is the point.
+ *
+ * EVERY NUMBER IS OUT OF VARIABLES. Dictionary ROWS, stated in words beside the figure. A count of
+ * metadata attributes is a different kind of number and is never presented as the same one (P2). And no
+ * tier, grade, letter, star or composite: that prohibition came from 08-14 and binds here unchanged.
+ *
+ * PURE, AND HERE RATHER THAN IN THE COMPONENT, for the reason this file's own header gives: a rule that
+ * can only be checked by driving a page is a rule that stops being checked.
+ */
+
+/** One thing preparation found, with its count, its denominator and what to do about it. */
+export interface PreflightFinding {
+  id: string;
+  label: string;
+  count: number;
+  /** The denominator as a number — this dictionary's VARIABLE count. */
+  of: number;
+  /** The denominator IN WORDS, rendered beside the number. */
+  denominator: string;
+  /** What it means for the run about to be paid for, and what the reviewer can do. */
+  detail: string;
+  /**
+   * True when this is something to act on, false when it is just a statement of what happened. The
+   * "nothing to flag" state is the absence of CONCERNS, not the absence of content.
+   */
+  concern: boolean;
+  /**
+   * True when acting on it means starting a FRESH run rather than fixing something in place.
+   *
+   * A run's column mapping is fixed at `startHarmonize`, so a finding about the MAPPING cannot be acted
+   * on where it is read. That restart is free — nothing has been charged at this point — but it IS a
+   * restart, and the panel says so rather than implying an in-place fix.
+   */
+  needsRestart: boolean;
+}
+
+/**
+ * A finding this report CANNOT supply, declared rather than approximated.
+ *
+ * The reason and the pointer are both the point. "Not available" with no reason is indistinguishable from
+ * "zero"; "not available" with no pointer is a dead end.
+ */
+export interface PreflightGap {
+  id: string;
+  label: string;
+  reason: string;
+  /** Where the reviewer can actually get the answer. */
+  pointer: string;
+}
+
+export interface PreflightRead {
+  /** What the rules did to THIS cohort. Never a concern, and never averaged across cohorts. */
+  summary: PreflightFinding;
+  findings: PreflightFinding[];
+  gaps: PreflightGap[];
+  /** True when no finding is a concern — rendered as a positive statement, not an empty region. */
+  nothingToFlag: boolean;
+}
+
+/**
+ * Where every declared gap points.
+ *
+ * The export is structurally more reliable than this screen: it re-reads and re-prepares the file locally
+ * rather than reading the run's capped diff, so it returns EVERY row with the text that was embedded —
+ * including the ones no rule touched, which are precisely the rows a gap is about.
+ */
+const EXPORT_POINTER =
+  "Download the prepared dictionary below. It re-reads your file and returns every row with the exact " +
+  "text ddharmon embedded — including the rows no rule touched, which are the ones this cannot see.";
+
+/** Which mapped role carries the participant-facing wording. */
+const WORDING_ROLE = "question_text";
+
+/**
+ * The pre-flight's read on one cohort's report.
+ *
+ * @param report the cohort's own preparation report.
+ * @param roles  the column roles this run recorded FOR THIS COHORT, or null when it recorded none (the
+ *               demo path persists dataset ids instead). Null is not "clean" — it is unknown, and it is
+ *               declared as a gap rather than assumed either way.
+ *
+ * It takes ONE report and cannot average anything, which is deliberate: a mean over cohorts hides which
+ * cohort is the problem, the same defect that got the composite score rejected in 08-14.
+ */
+export function preflightRead(
+  report: PreprocessReport,
+  roles: Record<string, string> | null,
+): PreflightRead {
+  const of = report.nUniqueVariableNames;
+  const changed = Math.min(report.nChangedVariables, Math.max(0, of));
+
+  const summary: PreflightFinding = {
+    id: "rules-did",
+    label: "changed by preparation",
+    count: changed,
+    of,
+    denominator: "variables",
+    detail:
+      changed === 0
+        ? "Every rule ran and found nothing to change in this dictionary. That is a result, not a skipped step — open What preparation changed below to see each rule's own outcome."
+        : "Open What preparation changed below for each rule's outcome and a worked before-and-after example of what it did.",
+    concern: false,
+    needsRestart: false,
+  };
+
+  const findings: PreflightFinding[] = [];
+  const gaps: PreflightGap[] = [];
+
+  // 1. VARIABLES THAT COMPOSE NO TEXT TO EMBED. This leads, and it is the one finding that is
+  //    unambiguously the pre-flight's to make: you cannot know a row composes to nothing until the rules
+  //    have run over it, so it exists nowhere earlier in the product.
+  findings.push({
+    id: "nothing-to-embed",
+    label: "Variables with no text to embed at all",
+    count: report.nNothingToEmbed,
+    of,
+    denominator: "variables",
+    detail:
+      report.nNothingToEmbed === 0
+        ? "Every variable in this dictionary reaches the grouping stage with something to say."
+        : "These appear in every listing and reach no concept group, so they are a silent loss rather than a visible failure. They are paid for in nothing and produce nothing.",
+    concern: report.nNothingToEmbed > 0,
+    needsRestart: false,
+  });
+
+  // 2. THE PARTICIPANT-FACING WORDING. Derived from the run's OWN recorded mapping — a fact about this
+  //    run, not an estimate, and not a figure carried over from any other cohort. When the run recorded
+  //    no mapping the question is unanswerable from it, and that is DECLARED rather than read as clean.
+  if (roles === null) {
+    gaps.push({
+      id: "question-wording",
+      label: "Whether the participant-facing wording reached the model",
+      reason:
+        "This run does not keep a record of which column played which role, so there is no way to tell from it whether a column holding the question as it was asked was mapped — or existed. Reading that as 'nothing was missed' would be a claim the run cannot support.",
+      pointer: EXPORT_POINTER,
+    });
+  } else if (!roles[WORDING_ROLE]) {
+    findings.push({
+      id: "question-wording",
+      label: "No column was mapped as the question as it was asked",
+      count: of,
+      of,
+      denominator: "variables",
+      detail:
+        "Every variable here was embedded from its description, because that is all that was mapped. Where a dictionary keeps the participant-facing wording in a separate column, that wording is the strongest thing the model can read — and none of it reached this run. The column mapping is fixed once a run starts, so mapping it means starting a new run. That is free: nothing has been charged yet.",
+      concern: true,
+      needsRestart: true,
+    });
+  }
+
+  // 3. TEXT THAT IS STILL NOISY AFTER CLEANING — NOT AVAILABLE, and measured rather than assumed. The
+  //    per-variable diff carries only variables something CHANGED and is capped besides, so when no rule
+  //    fires it is EMPTY: there is nothing to scan. Approximating it from an empty sample would be
+  //    inventing a measurement, which is worse than saying the report cannot answer.
+  gaps.push({
+    id: "unfired-noise",
+    label: "Whether text no rule touched is still noisy",
+    reason:
+      "The run carries before-and-after detail only for variables preparation changed, and only for a sample of those. A variable no rule fired on is not in it at all — so a dictionary the rules left alone produces an empty sample rather than a clean bill of health.",
+    pointer: EXPORT_POINTER,
+  });
+
+  return { summary, findings, gaps, nothingToFlag: findings.every((f) => !f.concern) };
+}

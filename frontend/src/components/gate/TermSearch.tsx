@@ -86,8 +86,8 @@ export function TermSearch({ onSearch, noMatches = [], onUseScore, value = "", c
           </Button>
         )}
         <span className="text-xs text-on-raised-muted">
-          Matching is semantic and runs on this machine, so searching costs nothing and the first charge is
-          still Continue at Gate 0.
+          Matching is semantic and runs on this machine, so searching costs nothing — and the run&rsquo;s
+          first charge was committed back on Set up, before this screen existed.
         </span>
       </div>
 

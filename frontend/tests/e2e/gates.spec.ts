@@ -86,11 +86,14 @@ test.describe("staged review", () => {
     await page.waitForLoadState("networkidle");
 
     // Written for someone who has never used the tool: numbered actions, in order, naming their control,
-    // and saying plainly when money starts being spent. The honest answer since §0.1 is Gate 0's Continue.
+    // and saying plainly when money starts being spent. Since §0.1's reversal that is the run's FIRST
+    // charge, and since the Gate 0 demotion (2026-08-26) that press lives on Set up.
     const toggle = page.getByRole("button", { name: /how to use this screen/i });
     await expect(toggle).toBeVisible();
     await toggle.click();
-    await expect(page.getByText(/already charged at Gate 0/i)).toBeVisible();
+    await expect(page.getByText(/already charged on Set up/i)).toBeVisible();
+    // …and it does not still send the reviewer to a screen that no longer exists.
+    await expect(page.getByText(/Gate 0/i)).toHaveCount(0);
   });
 });
 

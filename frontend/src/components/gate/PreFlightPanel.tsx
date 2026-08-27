@@ -8,6 +8,7 @@ import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RulePipelineList } from "@/components/gate/RulePipelineList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { preparedExportUrl } from "@/lib/api";
+import { preflightRead, type PreflightRead } from "@/lib/preprocess-report";
 import type { JobResult, PreprocessReport } from "@/types";
 
 /**
@@ -70,11 +71,10 @@ const PRE_PREPARE_PHASES = new Set(["queued", "loading", "embedding"]);
  * WHICH VARIABLES ARE OFFERED, stated on screen: the ones preprocessing changed. Those are the variables
  * this run carries per-variable detail for; the rest are not withheld, they are simply not in the report.
  */
-function RowToVector({ report, jobId }: { report: PreprocessReport; jobId: string }) {
+function RowToVector({ report }: { report: PreprocessReport }) {
   const rows = report.diff;
   const [selected, setSelected] = useState<string>(rows[0]?.variableName ?? "");
   const row = rows.find((r) => r.variableName === selected) ?? rows[0];
-  const exportHref = preparedExportUrl(jobId, report.cohort);
 
   return (
     <section data-testid="row-to-vector" className="flex flex-col gap-3 border-t border-rule-on-raised px-6 py-4">
@@ -163,53 +163,141 @@ function RowToVector({ report, jobId }: { report: PreprocessReport; jobId: strin
         </>
       )}
 
-      {/* The nothing-to-embed count, stated with its denominator. */}
+    </section>
+  );
+}
+
+/**
+ * The column roles this run recorded for one cohort, or null when it recorded none.
+ *
+ * Null is NOT "clean". The demo path persists dataset ids rather than a mapping, and a run started before
+ * the mapping was persisted has none either — so the honest answer for those is that the question cannot
+ * be answered from the run, which `preflightRead` renders as a declared gap.
+ */
+function rolesForCohort(run: JobResult | null, cohort: string): Record<string, string> | null {
+  const declared = ((run?.config ?? {}) as Record<string, unknown>).dictionaries;
+  if (!Array.isArray(declared)) return null;
+  const fold = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const match = (declared as { cohortName?: string; columnRoles?: Record<string, string> }[]).find(
+    (d) => fold(d.cohortName ?? "") === fold(cohort),
+  );
+  return match?.columnRoles ?? null;
+}
+
+/**
+ * What preparation FOUND — the panel's headline, and the reason it is worth reading before spending.
+ *
+ * ORDERED BY WHAT THE READER CAN DO. The count that only running the rules could produce leads; what the
+ * rules DID follows it as context; the classes the report cannot answer are DECLARED at the bottom with
+ * the reason and a pointer, never omitted. An omitted panel reads as "nothing to say here", which is a
+ * claim about the product rather than about this run.
+ *
+ * A CLEAN DICTIONARY GETS A POSITIVE STATEMENT, not an empty region. "Nothing to flag" is a finding; a
+ * blank space is a bug the reader cannot distinguish from one.
+ */
+function PreflightFindings({ read }: { read: PreflightRead }) {
+  return (
+    <div
+      data-testid="preflight-findings"
+      data-nothing-to-flag={String(read.nothingToFlag)}
+      className="flex flex-col gap-3 px-6 py-4"
+    >
+      {read.nothingToFlag && (
+        <p data-testid="preflight-all-clear" className="max-w-[68ch] text-sm text-on-raised">
+          <span className="font-semibold">Nothing to flag in this dictionary.</span> Every variable
+          composes text to embed, and the wording the model reads is the wording you mapped.
+        </p>
+      )}
+
+      {read.findings.map((f) => (
+        <p
+          key={f.id}
+          data-testid="preflight-finding"
+          data-finding={f.id}
+          data-count={String(f.count)}
+          data-of={String(f.of)}
+          data-concern={String(f.concern)}
+          className="max-w-[68ch] text-sm text-on-raised-muted"
+        >
+          <span className="font-semibold text-on-raised">
+            {f.count.toLocaleString()} of {f.of.toLocaleString()} {f.denominator} — {f.label}
+          </span>{" "}
+          {f.detail}
+          {f.needsRestart && (
+            <span data-testid="needs-restart" className="ml-1 font-semibold text-on-raised">
+              Acting on this means starting a fresh run, not changing this one.
+            </span>
+          )}
+        </p>
+      ))}
+
+      {/* WHAT THE RULES DID, per cohort and never averaged across them: a mean over cohorts hides which
+          cohort is the problem, which is the same defect that got the composite score rejected. */}
       <p
-        data-testid="nothing-to-embed"
-        data-count={String(report.nNothingToEmbed)}
-        className="max-w-[68ch] text-xs text-on-raised-muted"
+        data-testid="preflight-summary"
+        data-count={String(read.summary.count)}
+        data-of={String(read.summary.of)}
+        className="max-w-[68ch] text-sm text-on-raised-muted"
       >
         <span className="font-semibold text-on-raised">
-          {report.nNothingToEmbed.toLocaleString()} of {report.nUniqueVariableNames.toLocaleString()}{" "}
-          variables compose no text to embed
+          {read.summary.count.toLocaleString()} of {read.summary.of.toLocaleString()}{" "}
+          {read.summary.denominator} {read.summary.label}
         </span>{" "}
-        {report.nNothingToEmbed === 0
-          ? "— every variable in this dictionary reaches the grouping stage with something to say."
-          : "— they appear in every listing and reach no concept group, so they are a silent loss rather than a visible failure."}
+        {read.summary.detail}
       </p>
 
-      {/* THE WHOLE DICTIONARY, not the sample above.
-          The picker can only offer the variables preparation CHANGED, because that is all the run carries
-          per-variable detail for — which leaves the reviewer unable to check the ones it left alone, or to
-          see any of this against their own file. The export answers both: their columns come back verbatim
-          and in order, with the prepared name, the prepared description and the exact embedding string
-          appended. It is re-read and re-prepared locally on request, so it costs nothing and the "nothing
-          has been charged" claim above it stays true. */}
-      <div
-        data-testid="prepared-export"
-        className="flex flex-col gap-1 border-t border-rule-quiet-on-raised pt-3"
-      >
-        {exportHref ? (
-          <a
-            data-testid="prepared-export-link"
-            href={exportHref}
-            download
-            className="text-xs font-semibold text-link-on-raised underline underline-offset-2"
-          >
-            Download this dictionary with the prepared columns (CSV)
-          </a>
-        ) : (
-          <p data-testid="prepared-export-unavailable" className="text-xs font-semibold text-on-raised-muted">
-            Download of the prepared dictionary is unavailable in this preview
-          </p>
-        )}
-        <p className="max-w-[68ch] text-xs text-on-raised-muted">
-          {exportHref
-            ? "Your original file, unchanged and in its own column order, with ddharmon_variable_name, ddharmon_description and ddharmon_embedding_text appended for every variable — not only the ones that changed. Preparing it runs locally and is not charged."
-            : "This preview has no server to re-read your upload from. Start a run to export the prepared dictionary."}
+      {read.gaps.map((g) => (
+        <p
+          key={g.id}
+          data-testid="preflight-gap"
+          data-gap={g.id}
+          className="max-w-[68ch] border-t border-rule-quiet-on-raised pt-2 text-xs text-on-raised-muted"
+        >
+          <span className="font-semibold text-on-raised">Not available — {g.label}.</span> {g.reason}{" "}
+          {g.pointer}
         </p>
-      </div>
-    </section>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The prepared-dictionary export, as a PRIMARY affordance rather than a footnote.
+ *
+ * ITS SHARE OF THIS PANEL'S VALUE WENT UP. `08-DECISION-GATE0.md` D-5 already called it the one part of
+ * this surface a reviewer can actually use; with the headline recommendation removed by Q3 — it ships
+ * pre-Start, where it is fixable in place — this is now the answer to two of the three classes the report
+ * cannot supply on its own. It is also structurally more reliable than the screen: it re-reads and
+ * re-prepares the file locally rather than reading the run's capped diff, so it returns EVERY row.
+ */
+function PreparedExport({ jobId, cohort }: { jobId: string; cohort: string }) {
+  const href = preparedExportUrl(jobId, cohort);
+  return (
+    <div
+      data-testid="prepared-export"
+      className="flex flex-col gap-2 border-t border-rule-on-raised px-6 py-4"
+    >
+      <h3 className="text-sm font-semibold text-on-raised">Check the whole dictionary yourself</h3>
+      {href ? (
+        <a
+          data-testid="prepared-export-link"
+          href={href}
+          download
+          className="self-start rounded-inner border border-rule-control-on-raised px-3 py-2 text-sm font-semibold text-link-on-raised underline underline-offset-2"
+        >
+          Download this dictionary with the prepared columns (CSV)
+        </a>
+      ) : (
+        <p data-testid="prepared-export-unavailable" className="text-sm font-semibold text-on-raised-muted">
+          Download of the prepared dictionary is unavailable in this preview
+        </p>
+      )}
+      <p className="max-w-[68ch] text-xs text-on-raised-muted">
+        {href
+          ? "Your original file, unchanged and in its own column order, with ddharmon_variable_name, ddharmon_description and ddharmon_embedding_text appended for EVERY variable — not only the ones that changed, and not only the sample this screen carries. It is re-read and re-prepared on request, so it costs nothing and nothing above it stops being true."
+          : "This preview has no server to re-read your upload from. Start a run to export the prepared dictionary."}
+      </p>
+    </div>
   );
 }
 
@@ -229,7 +317,7 @@ function RowToVector({ report, jobId }: { report: PreprocessReport; jobId: strin
  * BELOW THE FINDINGS, DELIBERATELY. What preparation DID is provenance; what it FOUND is what the reader
  * is here to act on. Leading with the provenance is what made the retired screen a receipt.
  */
-function FrozenAuditTrail({ report, jobId }: { report: PreprocessReport; jobId: string }) {
+function FrozenAuditTrail({ report }: { report: PreprocessReport }) {
   const [open, setOpen] = useState(false);
   return (
     <Collapsible
@@ -263,7 +351,7 @@ function FrozenAuditTrail({ report, jobId }: { report: PreprocessReport; jobId: 
       </CollapsibleTrigger>
       <CollapsibleContent>
         <RulePipelineList report={report} />
-        <RowToVector report={report} jobId={jobId} />
+        <RowToVector report={report} />
       </CollapsibleContent>
     </Collapsible>
   );
@@ -410,8 +498,10 @@ export function PreFlightPanel({ run, jobId }: { run: JobResult | null; jobId: s
                       {/* The pre-spend read on the INPUT, per cohort and never averaged across them. It
                           sits under this cohort's tab rather than above the tabs for exactly that
                           reason: a cross-cohort mean would be the composite the panel refuses to be. */}
+                      <PreflightFindings read={preflightRead(t.report, rolesForCohort(run, t.cohort))} />
                       <InputQualitySignals report={t.report} />
-                      <FrozenAuditTrail report={t.report} jobId={jobId} />
+                      <PreparedExport jobId={jobId} cohort={t.cohort} />
+                      <FrozenAuditTrail report={t.report} />
                     </>
                   ) : (
                     /* A tab must NEVER show a completed report while its cohort is still running. No rule

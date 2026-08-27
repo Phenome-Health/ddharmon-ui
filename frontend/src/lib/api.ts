@@ -425,7 +425,7 @@ export function exportUrl(jobId: string, format: ExportFormat): string {
 }
 
 /**
- * Gate 0's prepared-dictionary export: ONE uploaded dictionary, returned with the preparation step's
+ * The pre-flight's prepared-dictionary export: ONE uploaded dictionary, returned with the preparation step's
  * output appended to the reviewer's own columns.
  *
  * Returns `null` in the static preview, which has no backend to re-read the upload from. A dead link that

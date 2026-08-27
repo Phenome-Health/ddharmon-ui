@@ -13,8 +13,10 @@ import type { GatePosition } from "@/types";
  * money starts being spent.
  *
  * WHERE THE MONEY STARTS. Since UI-SPEC §0.1's reversal, `generate(ideal)` and `split` run BEFORE Gate 1,
- * so the run's first charge is **Continue at Gate 0** — that press pays for concept generation, splitting
- * and the coherence judge. Setup's "Nothing is charged yet" stays true because Setup → Gate 0 is local.
+ * so the run's first charge pays for concept generation, splitting and the coherence judge. Since the
+ * Gate 0 demotion (2026-08-26) that press lives on **Setup**, on the pre-flight's own Continue: the run
+ * parks after loading, preparing and embedding, all of which are local, so "Nothing is charged yet" stays
+ * true right up to it.
  *
  * The panel therefore may NOT reproduce the retired §0.4 claim about when spending starts. The guest demo
  * walk makes these strings an unauthenticated public surface, and that claim is prohibited on every screen
@@ -31,35 +33,34 @@ export interface HowToStep {
 }
 
 /**
- * Per-screen steps. Setup, Gate 0 and Gate 1 all name Gate 0's Continue as the first charge, because on
- * those three screens the reviewer has not yet reached, is about to press, or has just passed it.
+ * Per-screen steps. Setup and Gate 1 both name Setup's own Continue as the first charge, because on those
+ * two screens the reviewer is about to press it or has just passed it.
+ *
+ * THE `gate0` KEY STAYS. This map is `Record<GatePosition, …>` and `GatePosition` is the WIRE type, which
+ * still carries the retired position (D-3) — dropping the key fails typecheck. Nothing renders it: the
+ * route redirects before any screen mounts. Do not "tidy" it into a compile error.
  */
 export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   setup: [
     { text: "Add one data dictionary per cohort, then map each file's columns." },
     { text: "Check the row count against the unique-name count — a repeated variable name is dropped silently." },
     { text: "Pick a run mode and a model, and paste a provider key if you are using your own." },
+    { text: "Press Start run. Nothing is charged yet — loading, preparing and grouping all run on your machine." },
+    { text: "Read the pre-flight that appears here: what preparation found, and what it could not tell you." },
     {
-      text: "Press Start run. Nothing is charged yet — preparing runs on your machine. The first charge is Continue at Gate 0, which pays for naming and splitting the groups.",
+      text: "Press Continue. This is the first charge of the run — it pays for naming the concepts, splitting the groups and the coherence judge. The amount is on the button.",
       charge: true,
     },
   ],
-  gate0: [
-    { text: "Pick a cohort tab and read the list of preparation rules that ran." },
-    { text: "Open a rule to see a before-and-after example of what it changed." },
-    { text: "Check the From a row to a vector panel: that is the only text the grouping step reads." },
-    {
-      text: "Press Continue to Gate 1. This is the first charge of the run — it pays for naming the concepts, splitting the groups and the coherence judge. The amount is on the button.",
-      charge: true,
-    },
-  ],
+  // NEVER RENDERED. Kept only because `GatePosition` still carries the position — see the docstring.
+  gate0: [{ text: "This screen was retired; its content is the pre-flight on Set up." }],
   gate1: [
     { text: "Read the grouping strip: how many concept groups formed, and from how many clusters." },
     { text: "Search for the concepts you care about, one term per line." },
     { text: "Tick the groups you want to take to Gate 2." },
     { text: "Open a group to see every variable in it and any proposed division." },
     {
-      text: "Press Continue to Gate 2. The naming, splitting and judging that produced this screen were already charged at Gate 0; this button buys the assignment step, and its amount is on it.",
+      text: "Press Continue to Gate 2. The naming, splitting and judging that produced this screen were already charged on Set up; this button buys the assignment step, and its amount is on it.",
       charge: true,
     },
   ],

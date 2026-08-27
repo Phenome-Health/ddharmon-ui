@@ -16,8 +16,9 @@ import type { GatePosition, RunCost, RunMode } from "@/types";
  *
  * | pause point | paid to reach it |
  * |---|---|
- * | Setup   | nothing — "Nothing is charged yet" is TRUE here |
- * | Gate 0  | nothing (local) — but its Continue is the run's FIRST CHARGE |
+ * | Setup   | nothing to REACH it, and nothing to prepare on it — but its pre-flight's Continue is the
+ *             run's FIRST CHARGE (the retired Gate 0's, re-sited there on 2026-08-26) |
+ * | Gate 0  | RETIRED as a screen. Still a wire position, still a $0 local leg (D-3) |
  * | Gate 1  | `generate(ideal)` + `split` + the coherence judge |
  * | Gate 2  | assign (+ merge / GenCDE synthesis) |
  * | Gate 3  | spec generation (+ `refine`, + the opt-in concept gate) |
@@ -223,7 +224,12 @@ export interface CostBreakdown {
   batchSavings: number;
   /** Forecast per gate. NEVER a realized figure — see `realizedSpendByGate` for that. */
   byGate: Record<GatePosition, GateForecast>;
-  /** What Gate 0's Continue buys: the run's first charge (UI-SPEC §8.1). */
+  /**
+   * What the pre-flight's Continue buys: the run's first charge (UI-SPEC §8.1 as amended by D-3).
+   *
+   * ONE FUNCTION, TWO SURFACES. Setup's forecast bill and Setup's own commit control both read THIS
+   * field, so the two amounts a reviewer can see for one press cannot disagree.
+   */
   firstCharge: number;
   /** How many coherence-judge calls the quote is priced for — the work behind the money. */
   judgeCalls: number;
@@ -396,13 +402,15 @@ export function estimateRunCostBreakdown(
   const gate3 = (genSpecs ? line(STAGE_SHARES.specgen) : 0) + conceptGateCost;
   const byGate: Record<GatePosition, GateForecast> = {
     setup: { gate: "setup", forecast: 0, divisionUnmeasured: false },
-    // Gate 0's own stages call no model. Its CONTINUE is the first charge, and that charge buys the work
-    // Gate 1 renders — attributed there, so a reviewer never sees the same amount twice.
+    // The retired position. Its stages call no model, and its CONTINUE — now Setup's, since the 2026-08-26
+    // demotion — is the first charge, buying the work Gate 1 renders. Attributed there, so a reviewer never
+    // sees the same amount twice. The entry stays because `byGate` is keyed by the WIRE type (D-3); no
+    // screen renders it, since no screen answers to that position any more.
     gate0: {
       gate: "gate0",
       forecast: 0,
       divisionUnmeasured: false,
-      note: "no model call happens here — the first charge is Continue at Gate 0, which buys what Gate 1 shows",
+      note: "no model call happens here — the first charge is Continue on Set up, which buys what Gate 1 shows",
     },
     gate1: { gate: "gate1", forecast: gate1, divisionUnmeasured: false, note: divisionNote },
     gate2: { gate: "gate2", forecast: gate2, divisionUnmeasured: false, note: divisionNote },

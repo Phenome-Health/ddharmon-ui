@@ -525,15 +525,17 @@ test.describe("Setup — the honest estimate", () => {
     await expect(page.getByTestId("start-run")).toBeVisible();
   });
 
-  test("@setup the per-gate breakdown names Gate 0's Continue as the first charge, and what it buys", async ({
+  test("@setup the per-gate breakdown names THIS screen's Continue as the first charge, and what it buys", async ({
     page,
   }) => {
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
     const first = page.getByTestId("first-charge");
     await expect(first).toBeVisible();
-    // UI-SPEC §0.1 after the plan-review reversal: the first charge is Gate 0's Continue, NOT Gate 1's.
-    await expect(first).toContainText(/Gate 0/);
+    // UI-SPEC §0.1 after the plan-review reversal placed the first charge at Gate 0's Continue; the
+    // 2026-08-26 demotion re-sited that control HERE (D-3's amendment). The bill names where it lands.
+    await expect(first).toContainText(/on this\s+screen/i);
+    await expect(first).not.toContainText(/Gate 0/);
     // Pay-as-you-go is the headline. The per-gate re-quote promise moved into the tooltip at the
     // 2026-08-26 review — long prose does not earn main-display space — so it is asserted there.
     await expect(first).toContainText(/pay gate by gate/i);
@@ -1582,5 +1584,275 @@ test.describe("Setup — the free pre-flight", () => {
     for (const f of ["src/pages/run/setup.tsx", "src/components/gate/PreFlightPanel.tsx"]) {
       expect(readFileSync(resolve(root, f), "utf8"), f).not.toContain("dangerouslySetInnerHTML");
     }
+  });
+});
+
+
+/**
+ * The run's FIRST CHARGE, re-sited onto Setup (08-14b Task 3).
+ *
+ * `08-DECISION-GATE0.md` D-3 amends UI-SPEC §0.1: the control that commits the run's first charge used to
+ * be Gate 0's Continue and is now the pre-flight's own, on this screen. The RULE is unchanged and still
+ * binds — R8's *never quote a cost lower than what will be charged*, the amount on the button, the
+ * irreversible-spend statement inline rather than in a modal.
+ */
+test.describe("Setup — the run's first charge", () => {
+  async function atPreflight(page: import("@playwright/test").Page, extra?: (p: Record<string, unknown>) => void) {
+    const res = await page.request.get(`/static-data/result-${PAUSED_RUN_FIXTURE}.json`);
+    const payload = (await res.json()) as Record<string, unknown>;
+    (payload as { status: string; phase: string }).status = "awaiting_review";
+    (payload as { status: string; phase: string }).phase = "awaiting_review";
+    (payload as { gatePosition: string }).gatePosition = RETIRED_GATE;
+    (payload.result as { gatePosition: string }).gatePosition = RETIRED_GATE;
+    extra?.(payload);
+    await page.route("**/static-data/result-*.json", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) }),
+    );
+  }
+
+  test("@setup the commit control carries a non-zero amount and an INLINE irreversible-spend statement", async ({
+    page,
+  }) => {
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toBeVisible();
+    // THE AMOUNT AS DATA, so this reads the figure rather than parsing it back out of a sentence.
+    expect(Number(await bar.getAttribute("data-total"))).toBeGreaterThan(0);
+    await expect(bar).toHaveAttribute("data-first-charge", "true");
+    // The statement is IN the bar, and it says the two things R8 requires.
+    await expect(bar).toContainText(/not refundable/i);
+    await expect(bar).toContainText(/spending begins/i);
+    // NO MODAL stands between the reviewer and the charge: a modal on the primary path is met at every
+    // gate, always says yes, and by the third gate is dismissed unread.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  });
+
+  test("@setup `Nothing is charged yet` is true and visible ABOVE the commit control", async ({ page }) => {
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const statement = page.getByTestId("nothing-charged-yet");
+    await expect(statement).toBeVisible();
+    await expect(statement).toContainText("Nothing is charged yet");
+    const above = (await statement.boundingBox())!.y;
+    const bar = (await page.getByTestId("commit-bar").boundingBox())!.y;
+    expect(above).toBeLessThan(bar);
+  });
+
+  test("@setup the amount on the commit control equals the first charge in Setup's own bill", async ({
+    page,
+  }) => {
+    // TWO SURFACES, ONE FUNCTION. A reviewer can see the figure twice on this screen, and two readings of
+    // one number silently disagreeing is the defect `@setup the variable count on screen…` was written
+    // for. Both read `estimateRunCostBreakdown(...).firstCharge`.
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const onButton = Number(await page.getByTestId("commit-bar").getAttribute("data-total"));
+    const inBill = ((await page.getByTestId("first-charge").innerText()) ?? "").match(/\$([\d,.]+)/);
+    expect(inBill, "the bill must still quote a first charge").not.toBeNull();
+    expect(Number(inBill![1].replace(/,/g, ""))).toBeCloseTo(onButton, 2);
+  });
+
+  test("@setup a PREVIEW run is quoted no amount and told it buys nothing", async ({ page }) => {
+    // Preview calls no model, so it must not be told it is about to spend. Quoting a charge that will not
+    // happen is the same class of error as under-quoting one, and R8 binds in both directions.
+    await atPreflight(page, (p) => {
+      (p as { config: Record<string, unknown> }).config = {
+        ...((p as { config: Record<string, unknown> }).config ?? {}),
+        run_mode: "preview",
+      };
+    });
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveAttribute("data-total", "");
+    await expect(bar).toHaveAttribute("data-first-charge", "false");
+    await expect(bar).not.toContainText(/not refundable/i);
+    await expect(bar).toContainText(/buys nothing|calls no model/i);
+  });
+
+  test("@setup the commit control stays above the fold at 1440x900", async ({ page }) => {
+    // THE PROPERTY PRE-BUILD QUESTION Q1 WAS DECIDED ON. The screen carrying the run's first charge keeps
+    // the amount and the reason on screen together — the sticky column is what guarantees it whatever the
+    // left column is doing, and appending under five mapping tables is the defect the 08-13 two-column
+    // review was opened to fix.
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const box = (await page.getByTestId("commit-bar").boundingBox())!;
+    expect(box.y, "the commit control must be visible without scrolling").toBeLessThan(900);
+    expect(box.y + box.height).toBeLessThanOrEqual(900 + 1);
+  });
+
+  test("@setup NO screen in the staged flow still names the retired gate as the charge point", async ({
+    page,
+  }) => {
+    // READ FROM THE DOM, not by grepping source: a comment recording where the charge USED to land must
+    // not fail this gate, and a rendered string must not be able to pass it.
+    for (const screen of ["setup", "gate1", "gate2", "gate3", "gate4"]) {
+      await page.goto(`/run/${PAUSED_RUN_FIXTURE}/${screen}`);
+      await page.waitForLoadState("networkidle");
+      // Expand every disclosure, so copy behind one is still read.
+      for (const t of await page.getByRole("button", { name: /how to use this screen/i }).all()) {
+        await t.click();
+      }
+      const text = await page.locator("main").innerText();
+      expect(text, `${screen}: first charge still attributed to the retired gate`).not.toMatch(
+        /first charge[^.]*Gate 0/i,
+      );
+      expect(text, `${screen}: still tells the reviewer to Continue at the retired gate`).not.toMatch(
+        /Continue at Gate 0/i,
+      );
+      expect(text, `${screen}: still names the retired gate at all`).not.toMatch(/\bGate 0\b/i);
+    }
+  });
+
+  test("@setup the pre-flight renders NO duplicate-name finding, while the mapping table still does", async ({
+    page,
+  }) => {
+    // Q3's verdict, gated rather than trusted. `nameCheck` ships pre-Start on this same screen, where it
+    // recomputes as the mapping changes and is fixable IN PLACE. Rendering it a second time here — at the
+    // moment it has become harder to act on — is the defect that re-scoped this task.
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    // The two unambiguous phrases are checked over the WHOLE panel.
+    const preflight = await page.getByTestId("preflight").innerText();
+    expect(preflight).not.toMatch(/unique (variable )?names?/i);
+    expect(preflight).not.toMatch(/dropped silently/i);
+
+    // `repeated` is checked over what THIS derivation emits, not over the whole panel. The inherited
+    // quality signals carry the sentence "descriptions that were the same boilerplate sentence, repeated
+    // across variables" — a shipped, reviewed and entirely unrelated finding. A whole-panel match on that
+    // word would convict it, and the only available fix would be to reword a correct signal, which is how
+    // a gate starts costing more than it catches.
+    const derived = (
+      await page
+        .locator(
+          "[data-testid='preflight-finding'], [data-testid='preflight-gap'], [data-testid='preflight-summary'], [data-testid='preflight-all-clear']",
+        )
+        .allInnerTexts()
+    ).join(" ");
+    expect(derived.length, "the derivation must actually be rendering something").toBeGreaterThan(0);
+    expect(derived).not.toMatch(/repeated/i);
+    expect(derived).not.toMatch(/duplicat/i);
+
+    // …and the shipped check is still there, untouched, one disclosure away.
+    await page.getByTestId("setup-dictionaries-disclosure").getByRole("button").first().click();
+    await expect(page.getByTestId("name-check-unavailable").first()).toBeVisible();
+  });
+
+  test("@setup the export is a primary affordance with its contents stated, not a bare link", async ({
+    page,
+  }) => {
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const exp = page.getByTestId("prepared-export").first();
+    await expect(exp).toBeVisible();
+    // It is NOT inside the frozen disclosure — it is the answer to two of the declared gaps, so it must
+    // be reachable without expanding anything.
+    await expect(page.getByTestId("frozen-audit-trail").first()).toHaveAttribute("data-state", "closed");
+    // A heading of its own, not a link at the end of a paragraph.
+    await expect(exp.getByRole("heading")).toBeVisible();
+
+    // THE STATIC BUILD HAS NO SERVER TO RE-READ THE UPLOAD FROM, so `preparedExportUrl` returns null here
+    // and what renders is the honest-absence branch. That branch is asserted for what it is — a stated
+    // reason and a next step, never a dead link — and the AVAILABLE branch's copy is asserted below,
+    // since no run in this suite can produce it.
+    await expect(exp.getByTestId("prepared-export-unavailable")).toBeVisible();
+    await expect(exp).toContainText(/no server to re-read/i);
+    await expect(exp.getByRole("link")).toHaveCount(0);
+  });
+
+  test("@setup the export states what it contains, for every variable rather than the sample", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+    const src = readFileSync(resolve(root, "src/components/gate/PreFlightPanel.tsx"), "utf8");
+    const block = src.slice(src.indexOf("function PreparedExport"));
+    // Read from source because the branch that renders it is unreachable in a static build. It is a claim
+    // about COPY, and the copy is what makes the export an answer rather than a link: it returns the
+    // reviewer's own columns back with the embedding text appended for EVERY variable, not only the
+    // capped sample this screen carries detail for.
+    expect(block).toMatch(/EVERY variable/i);
+    expect(block).toContain("ddharmon_embedding_text");
+    expect(block).toMatch(/not only the ones that changed/i);
+  });
+
+  test("@setup each declared gap renders with its reason AND a pointer, never as a bare not-available", async ({
+    page,
+  }) => {
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const gaps = page.getByTestId("preflight-gap");
+    await expect(gaps.first()).toBeVisible();
+    for (const g of await gaps.all()) {
+      const text = (await g.innerText()).trim();
+      await expect(g).toContainText(/not available/i);
+      // "Not available" with no reason is indistinguishable from "zero", and with no pointer it is a dead
+      // end. Both are required, and the pointer is the export — the one surface that CAN answer.
+      expect(text.length, `a declared gap must carry its reason: ${text}`).toBeGreaterThan(120);
+      expect(text).toMatch(/prepared dictionary/i);
+    }
+    // The class the report provably cannot supply is declared rather than synthesised from a diff that is
+    // empty by construction when no rule fires.
+    await expect(page.locator("[data-gap='unfired-noise']").first()).toBeVisible();
+  });
+
+  test("@setup the findings are per cohort, and no figure is combined across cohorts", async ({ page }) => {
+    // ASSERTED STRUCTURALLY, NOT LEXICALLY. A word-match on "mean"/"average" convicts correct inherited
+    // copy — "variables that mean different things" is a sentence about semantics, not a statistic — and
+    // the only available fix would be rewording a reviewed signal. What actually matters is that the
+    // numbers BELONG to one cohort: switch the tab and they change.
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+
+    const denominators = async (): Promise<string[]> =>
+      page.getByTestId("preflight-finding").evaluateAll((els) =>
+        els.map((e) => `${e.getAttribute("data-count")}/${e.getAttribute("data-of")}`),
+      );
+
+    const tabs = page.locator("[role='tab'][data-cohort]");
+    const n = await tabs.count();
+    expect(n, "the fixture carries several cohorts, which is what makes this assertable").toBeGreaterThan(1);
+    const first = await denominators();
+    expect(first.length).toBeGreaterThan(0);
+
+    // Every visible denominator is ONE cohort's variable count, never the corpus total. The aggregate
+    // above the tabs is the only run-wide figure, and it states a FRACTION of dictionaries.
+    const aggregate = await page.getByTestId("prepare-aggregate").innerText();
+    expect(aggregate).toMatch(/dictionar(y|ies)/i);
+    const runTotal = Number((aggregate.match(/([\d,]+) variables/)?.[1] ?? "0").replace(/,/g, ""));
+    for (const d of first) {
+      expect(Number(d.split("/")[1]), `${d} is the whole corpus, not this cohort`).toBeLessThan(runTotal);
+    }
+
+    await tabs.nth(1).click();
+    await expect(page.getByTestId("cohort-panel").filter({ visible: true }).first()).toBeVisible();
+    // The panel re-derives from the cohort now on screen. Its report is its own.
+    expect((await denominators()).length).toBeGreaterThan(0);
+  });
+
+  test("@setup nothing on the pre-flight claims the staged flow is free until you pick what to buy", async ({
+    page,
+  }) => {
+    await atPreflight(page);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const text = await page.locator("main").innerText();
+    expect(text).not.toMatch(/free until you (choose|decide|pick)/i);
+    expect(text).not.toMatch(/costs nothing until you (choose|decide|pick)/i);
+    // The true statement IS made: where the money starts is named.
+    expect(text).toMatch(/first charge/i);
   });
 });

@@ -9,13 +9,14 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
+import { CommitBar } from "@/components/gate/CommitBar";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
 import { PreFlightPanel, preflightProgress } from "@/components/gate/PreFlightPanel";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { InfoTip } from "@/components/ui/info-tip";
-import { GATE_ORDER, IS_STATIC, listDemos, listModels, startHarmonize } from "@/lib/api";
+import { GATE_ORDER, IS_STATIC, listDemos, listModels, resumeRun, startHarmonize } from "@/lib/api";
 import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
@@ -52,8 +53,8 @@ const LINE_HELP: Record<string, { help: string; optIn?: { on: boolean; decidedAt
       // The gate's own passing fixture is the model: "Starting costs nothing — the first charge is
       // Continue at Gate 0."
       "Grouping your variables runs on this machine — embedding, dimensionality reduction and " +
-      "clustering. No provider is called, so this step costs nothing; the first charge is Continue " +
-      "at Gate 0.",
+      "clustering. No provider is called, so this step costs nothing; the first charge is the Continue " +
+      "button on this screen, once your dictionaries are prepared.",
   },
   ideal: {
     help:
@@ -130,8 +131,8 @@ const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
  * Set up — the first of the six staged-review screens (08-13).
  *
  * WHAT THIS SCREEN IS FOR. Setup is where the phase's central promise is made concrete: everything up to
- * and including Gate 0's review is local, so nothing is charged yet, and the figure quoted here is the one
- * the reviewer consents to. Every other element on the screen exists to stop something being lost or
+ * and including the pre-flight below is local, so nothing is charged yet, and the figure quoted here is
+ * the one the reviewer consents to — on the control this screen now carries itself. Every other element on the screen exists to stop something being lost or
  * misstated before that consent is given.
  *
  * TWO HAZARDS ARE SURFACED RATHER THAN SWALLOWED:
@@ -350,6 +351,8 @@ export default function SetupPage() {
   const [starting, setStarting] = useState(false);
   /** Whether the pre-flight's read-back of the dictionaries is expanded. Closed by default — see below. */
   const [dictsOpen, setDictsOpen] = useState(false);
+  /** True while the run's first charge is being committed. */
+  const [committing, setCommitting] = useState(false);
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
   const composed = useRef(false);
 
@@ -509,15 +512,30 @@ export default function SetupPage() {
     return typeof declared === "string" ? (declared as RunMode) : runMode;
   }, [stage, runMode, jobState?.config]);
 
+  /**
+   * How many cohorts the quote is for.
+   *
+   * MEASURED ON A LIVE RUN, not on the fixture. A real run does NOT persist the `dictionaries` array this
+   * screen posts — `config.dictionaries` comes back null — so `dictionariesFromRun` yields nothing and
+   * `dicts.length` is ZERO for every run-seeded page. Before the commit control landed here that was a
+   * cosmetic wrong number in a read-back; now it is a factor in the figure on the button, which is the
+   * one number on this screen that must not be wrong.
+   *
+   * At the pre-flight the run knows its own cohorts — one preparation report each — so that is the count
+   * used. Everywhere else the composed list is still the only source there is.
+   */
+  const corpusCohorts =
+    stage === "preflight" && preflight.tabs.length > 0 ? preflight.tabs.length : dicts.length;
+
   const estimate = useMemo(
     () =>
       totalFields === null
         ? null
-        : estimateRunCostBreakdown(totalFields, dicts.length, effectiveRunMode, genSpecs, suggestIdeas, {
+        : estimateRunCostBreakdown(totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, {
             conceptGate,
             groupSizes,
           }),
-    [totalFields, dicts.length, effectiveRunMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
+    [totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
   );
 
   /**
@@ -545,8 +563,8 @@ export default function SetupPage() {
    * size — so a single figure here would be a commitment the run cannot keep.
    */
   const time = useMemo(
-    () => estimateRunTime(totalFields ?? 0, dicts.length, runMode),
-    [totalFields, dicts.length, runMode],
+    () => estimateRunTime(totalFields ?? 0, corpusCohorts, effectiveRunMode),
+    [totalFields, corpusCohorts, effectiveRunMode],
   );
 
   /**
@@ -873,11 +891,27 @@ export default function SetupPage() {
           </div>
         ))}
 
-        {dicts.length === 0 ? (
+        {dicts.length === 0 && runStarted ? (
+          /* A STARTED RUN THAT KEPT NO PER-DICTIONARY RECORD, which — measured on a live run — is every
+             run started from this screen: the backend does not persist the `dictionaries` array it is
+             sent, so `config.dictionaries` comes back null. Rendering the compose empty state here would
+             read as "this run had no dictionaries", which is a claim about the RUN and a false one. The
+             cohorts it actually covers are named by the pre-flight above, one report each. */
+          <div className="rounded-card bg-surface-raised shadow-card">
+            <GateEmptyState
+              heading="This run kept no record of its column mapping"
+              nextStep="What each dictionary gave the model is in the pre-flight above, one report per cohort."
+            >
+              The run stores the prepared dictionaries, not the mapping that produced them, so there is
+              nothing here to read back. That is a gap in what the run records — not a run without
+              dictionaries.
+            </GateEmptyState>
+          </div>
+        ) : dicts.length === 0 ? (
           <div className="rounded-card bg-surface-raised shadow-card">
             <GateEmptyState
               heading="No dictionaries yet"
-              nextStep="Drop one file per cohort above. Reading and mapping them costs nothing — the first charge is Continue at Gate 0."
+              nextStep="Drop one file per cohort above. Reading and mapping them costs nothing — the first charge is the Continue button that appears here once they are prepared."
             >
               Nothing has been added to this run, so there is nothing to group and nothing to price. This is
               not an error: a run starts empty.
@@ -949,10 +983,44 @@ export default function SetupPage() {
       </section>
   );
 
+  /**
+   * PREVIEW BUYS NOTHING, so it must not be told it is about to spend.
+   *
+   * Preview run mode calls no model: it clusters, builds the prompts and stops. Quoting a charge that
+   * will not happen is the same class of error as under-quoting one, and R8 binds in both directions.
+   */
+  const isPreview = effectiveRunMode === "preview";
+
+  /**
+   * Commit the run's first charge — the control the retired gate used to carry (UI-SPEC §0.1 as amended
+   * by D-3).
+   *
+   * AND THEN LEAVE. The retired screen stayed put after resuming, which was harmless there because it
+   * was the run's own screen. Here it is not: the moment the charge lands this run is past the
+   * pre-flight, and a reviewer left on Setup would watch it turn into a read-back of a decision they
+   * just made. `resumeRun` returns the gate it is heading for, so that is where they go.
+   */
+  async function onCommitFirstCharge() {
+    setCommitting(true);
+    try {
+      const { target } = await resumeRun(jobId);
+      toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
+      navigate(`/run/${jobId}/${target}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not continue this run");
+    } finally {
+      setCommitting(false);
+    }
+  }
+
   return (
     <GateShell
       gate="setup"
-      subhead="Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Nothing is charged yet — the first charge is Continue at Gate 0."
+      subhead={
+        stage === "preflight"
+          ? "Your dictionaries are prepared. Read what preparation found, then commit the run's first charge — nothing has been charged for anything so far."
+          : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Nothing is charged yet — the first charge is the Continue button that appears here once your dictionaries are prepared."
+      }
       rail={railFor("setup", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
@@ -1059,7 +1127,55 @@ export default function SetupPage() {
 
         {/* ── right: how it runs, what it costs, and starting it (sticky) ── */}
         <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-8">
-      {/* --- run configuration ------------------------------------------------------------------- */}
+      {/* --- the run's FIRST CHARGE, at the pre-flight (08-14b Task 3) -----------------------------
+
+          IT SITS HERE, IN THE STICKY COLUMN, and that is the property pre-build question Q1 was decided
+          on: the screen carrying the run's first charge keeps the amount and the reason on screen
+          together, whatever the left column is doing. Appending it under five mapping tables is the exact
+          defect the 08-13 two-column review was opened to fix.
+
+          THE AMOUNT IS ON THE BUTTON AND THE IRREVERSIBLE-SPEND STATEMENT IS INLINE, never a modal
+          (R8 / UI-SPEC §8.5). A modal on the primary path is met at every gate, always says yes, and by
+          the third gate is dismissed unread. `CommitBar` is CONSUMED, not rebuilt.
+
+          ONE FUNCTION, TWO SURFACES. The figure is `estimate.firstCharge` — the same object the bill
+          above quotes — so the two amounts a reviewer can see for one press cannot disagree. */}
+      {stage === "preflight" && (
+        <div className="flex flex-col gap-3">
+          {/* ON THE FIELD, so it takes the FIELD's foreground role. It sits outside the commit card on
+              the ground, and `text-on-raised-muted` here would be a foreground paired with a surface it
+              is not drawn on — the exact drift the three-tier role tokens exist to prevent. */}
+          <p data-testid="nothing-charged-yet" className="text-xs text-on-field-muted">
+            Nothing is charged yet. Loading, preparing and grouping all ran on this machine.
+          </p>
+          <CommitBar
+            action="Continue to Concept groups"
+            total={isPreview || !estimate ? undefined : estimate.firstCharge}
+            firstCharge={!isPreview}
+            scopeLabel={totalFields === null ? undefined : `${totalFields.toLocaleString()} variables`}
+            onCommit={onCommitFirstCharge}
+            busy={committing}
+            disabled={!preflight.allPrepared || IS_STATIC}
+            recheckNotice={
+              !preflight.allPrepared
+                ? "Some dictionaries are still being prepared. Continue once they finish."
+                : isPreview
+                  ? "This run is a preview, so this calls no model and buys nothing — it groups your variables and stops."
+                  : undefined
+            }
+          />
+        </div>
+      )}
+
+      {/* --- run configuration -------------------------------------------------------------------
+
+          NOT RENDERED AT THE PRE-FLIGHT. Every control in it — catalogue, run mode, model, key — is
+          fixed once `startHarmonize` has been called, and this screen's copies of them are LOCAL state
+          that was never seeded from the run. Leaving them live would offer a reviewer choices that
+          change nothing about the run in front of them, which is worse than a disabled control: it is a
+          control that lies about what it does. What the run was actually configured with is read back in
+          the disclosure on the left. */}
+      {stage !== "preflight" && (
       <section className="flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card">
         <h2 className="text-sm font-semibold text-on-raised">How this run should work</h2>
 
@@ -1290,6 +1406,7 @@ export default function SetupPage() {
         </div>
 
       </section>
+      )}
 
       {/* --- the estimate ------------------------------------------------------------------------ */}
       <section
@@ -1301,11 +1418,15 @@ export default function SetupPage() {
           <div className="flex flex-col gap-0.5">
             <h2 className="text-sm font-semibold text-on-raised">What this run will cost</h2>
             <p className="text-xs text-on-raised-muted">
+              {/* THE RUN BEING PRICED, not the controls beside it. On a started run the mode comes from
+                  the run's own record and the cohort count from its preparation reports — reading either
+                  off local state put "0 dictionaries · batch" above a correctly-priced PREVIEW quote on a
+                  live run, which is two readings of one thing disagreeing on the same line. */}
               {totalFields === null
                 ? "Working out how many variables this run covers."
-                : `${totalFields.toLocaleString()} variables · ${dicts.length} ${
-                    dicts.length === 1 ? "dictionary" : "dictionaries"
-                  } · ${runMode}`}
+                : `${totalFields.toLocaleString()} variables · ${corpusCohorts} ${
+                    corpusCohorts === 1 ? "dictionary" : "dictionaries"
+                  } · ${effectiveRunMode}`}
             </p>
           </div>
           {/* PENDING RATHER THAN STALE. While an input is unresolved there is NO figure on screen — not the
@@ -1338,7 +1459,7 @@ export default function SetupPage() {
             data-low={String(Math.round(time.low))}
             data-mid={String(Math.round(time.mid))}
             data-high={String(Math.round(time.high))}
-            data-mode={runMode}
+            data-mode={effectiveRunMode}
             className="flex flex-col gap-1 border-t border-rule-on-raised pt-2"
           >
             {/* CONCISE, with the reasoning in a tooltip (review 2026-08-26). This block previously
@@ -1355,13 +1476,13 @@ export default function SetupPage() {
                 <InfoTip
                   label="How the time estimate is derived"
                   text={
-                    runMode === "batch"
+                    effectiveRunMode === "batch"
                       ? "An estimate, not a commitment. Batch work is queued by the provider, and the " +
                         "queue — not your corpus — is what makes a batch run long: it does not shrink if " +
                         "your dictionaries are small. Most batches finish within the hour and the provider " +
                         "permits up to 24, so a long quiet stretch is normal for batch rather than a " +
                         "stalled run."
-                      : runMode === "preview"
+                      : effectiveRunMode === "preview"
                         ? "An estimate, not a commitment. Preview runs entirely on this machine — no model " +
                           "is called and nothing waits on a provider, which is why it is the quickest of " +
                           "the three."
@@ -1435,16 +1556,18 @@ export default function SetupPage() {
               className="border-t border-rule-on-raised pt-2 text-xs text-on-raised"
             >
               <span className="font-semibold">
-                You pay gate by gate. First charge {formatUsd(estimate.firstCharge)} at Gate 0.
+                You pay gate by gate. First charge {formatUsd(estimate.firstCharge)}, on this
+                screen, once your dictionaries are prepared.
               </span>
               <InfoTip
                 label="What the first charge buys, and what is free"
                 text={
                   "Everything up to that point can be abandoned at no cost: setting up, loading, preparing " +
-                  "and grouping your dictionaries, and reading Gate 0's review. Pressing Continue at Gate 0 " +
-                  "is what buys the next step — the work listed under Concept groups below. From there " +
-                  "every gate is its own decision: you can stop after any of them and keep what you have " +
-                  "already paid for. Each gate re-quotes from this run's real groups before you commit."
+                  "and grouping your dictionaries, and reading the pre-flight this screen shows once they " +
+                  "are prepared. Pressing Continue there is what buys the next step — the work listed " +
+                  "under Concept groups below. From there every gate is its own decision: you can stop " +
+                  "after any of them and keep what you have already paid for. Each gate re-quotes from " +
+                  "this run's real groups before you commit."
                 }
               />
             </p>
@@ -1616,6 +1739,7 @@ export default function SetupPage() {
       </section>
 
       {/* --- start ------------------------------------------------------------------------------- */}
+      {stage === "preflight" ? null : (
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
         <div className="flex min-w-0 flex-col gap-1">
           {blockers.length > 0 ? (
@@ -1653,6 +1777,7 @@ export default function SetupPage() {
           </p>
         </div>
       </div>
+      )}
         </div>
       </div>
     </GateShell>

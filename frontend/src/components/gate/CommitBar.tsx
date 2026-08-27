@@ -27,7 +27,7 @@ export interface CommitBarProps {
   total?: number;
   /** Realized spend already committed to reach this gate. */
   spentHere?: number;
-  /** True when this press is the run's FIRST charge — Gate 0's Continue (UI-SPEC §8.1). */
+  /** True when this press is the run's FIRST charge — Setup's pre-flight Continue (UI-SPEC §8.1). */
   firstCharge?: boolean;
   /** How many things are in scope, so the statement names what is being bought. */
   scopeLabel?: string;

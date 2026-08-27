@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "wouter";
+import { Link, useParams } from "wouter";
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -131,7 +131,7 @@ export default function Gate1Page() {
             <p className="text-sm font-semibold text-on-raised">No groups formed</p>
             <p className="max-w-[68ch] text-sm text-on-raised-muted">
               Every variable was left unassigned. That usually means the dictionaries share too little text
-              to group. Go back to Gate 0 and check the column mapping, or add a dictionary.
+              to group. Go back to <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">Set up</Link> and check the column mapping, or add a dictionary.
             </p>
           </div>
         ) : (

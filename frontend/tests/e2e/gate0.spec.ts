@@ -5,6 +5,7 @@ import {
   noRuleFired,
   outcomeLabel,
   placeholderStrings,
+  preflightRead,
   qualitySignals,
   reconcile,
 } from "@/lib/preprocess-report";
@@ -1396,5 +1397,127 @@ test.describe("Gate 0 — the change is marked, not merely reported", () => {
       await expect(unavailable).toBeVisible();
       await expect(section).toContainText(/no server|unavailable/i);
     }
+  });
+});
+
+
+/**
+ * The PRE-FLIGHT read (08-14b Task 3) — what only RUNNING the rules could reveal.
+ *
+ * NARROWER THAN THE DECISION FIRST ASKED FOR, on purpose. `08-DECISION-GATE0.md` D-4 made repeated
+ * variable names the headline. The standing inherited-UI review (pre-build question Q3) then found that
+ * finding already SHIPPED, pre-Start, on this same screen — `nameCheck` in `lib/dictionary.ts`, rendered
+ * by `DictionaryMappingTable` — where it recomputes as the mapping changes and is fixable IN PLACE with
+ * no restart. Restating it here would say the same thing later and less actionably, so D-4 now carries a
+ * CORRECTED block and this derivation deliberately does not compute it.
+ *
+ * The load-bearing distinction under test: a finding the report can supply, versus one it CANNOT and must
+ * declare. `diff` is a capped sample of variables something CHANGED, so when no rule fires it is EMPTY —
+ * "nothing fired and the noise is still there" is not derivable from the report at any cap, and
+ * approximating it from an empty sample would be inventing a measurement.
+ */
+test.describe("Gate 0 — the pre-flight read, as functions", () => {
+  test("@gate0 the nothing-to-embed finding carries its count AND a variables denominator", () => {
+    const read = preflightRead(report({ nNothingToEmbed: 7, nUniqueVariableNames: 240 }), null);
+    const finding = read.findings.find((f) => f.id === "nothing-to-embed");
+    expect(finding, "the finding the report can always supply must be present").toBeDefined();
+    expect(finding!.count).toBe(7);
+    expect(finding!.of).toBe(240);
+    // VARIABLES, in words, beside the number. A count of metadata attributes is a different kind of
+    // number and must never be presented as the same one.
+    expect(finding!.denominator).toBe("variables");
+    // No grade, letter, star or composite anywhere in the read.
+    expect(JSON.stringify(read)).not.toMatch(/\btier\b|\bgrade\b|\bscore\b|\b[A-F][+-]?\s*grade\b|★/i);
+  });
+
+  test("@gate0 the pre-flight NEVER restates the repeated-variable-name finding", () => {
+    // Q3's verdict, gated rather than trusted: that finding belongs to Setup's pre-Start mapping table.
+    // The numbers it would need are RIGHT THERE on the report, which is exactly why this needs a test.
+    const read = preflightRead(
+      report({ nVariables: 6018, nUniqueVariableNames: 5518, nDuplicateVariableNames: 500 }),
+      null,
+    );
+    const words = JSON.stringify(read);
+    expect(words).not.toMatch(/unique (variable )?names?/i);
+    expect(words).not.toMatch(/dropped silently|silently/i);
+    expect(words).not.toMatch(/repeated/i);
+    // And no finding quotes the collision count as its number.
+    for (const f of read.findings) expect(f.count).not.toBe(500);
+  });
+
+  test("@gate0 what the rules DID is stated per cohort, never as a cross-cohort mean", () => {
+    const read = preflightRead(
+      report({ cohort: "CLSA", nUniqueVariableNames: 5518, nChangedVariables: 97 }),
+      null,
+    );
+    expect(read.summary.count).toBe(97);
+    expect(read.summary.of).toBe(5518);
+    expect(read.summary.denominator).toBe("variables");
+    // A mean over cohorts hides which cohort is the problem — the same defect that got the composite
+    // score rejected in 08-14. The derivation takes ONE report and cannot average anything.
+    expect(preflightRead.length).toBe(2);
+  });
+
+  test("@gate0 the class the report provably cannot supply is DECLARED, never synthesised from the diff", () => {
+    // No rule fired, so `diff` is empty by construction — there is nothing to scan for residual noise.
+    const quiet = report({
+      rules: [rule({ outcome: "no_change", nChanged: 0 })],
+      nChangedVariables: 0,
+      diff: [],
+    });
+    const gap = preflightRead(quiet, null).gaps.find((g) => g.id === "unfired-noise");
+    expect(gap, "an unavailable class must render as a declared gap, not be omitted").toBeDefined();
+    expect(gap!.reason).toMatch(/changed/i);
+    // …and it points at the answer rather than leaving a dead end.
+    expect(gap!.pointer).toMatch(/export|download|prepared/i);
+    // It is a GAP even when rules DID fire: the diff is a capped sample either way.
+    expect(preflightRead(report(), null).gaps.map((g) => g.id)).toContain("unfired-noise");
+  });
+
+  test("@gate0 the question-wording class is derived from the run's OWN mapping, or declared", () => {
+    // AVAILABLE: the run recorded its column roles, so whether a participant-wording column was mapped
+    // is a FACT about this run — not an estimate, and not a figure remembered from another cohort.
+    const mapped = preflightRead(report(), { variable_name: "var", description: "desc", question_text: "q" });
+    expect(mapped.findings.find((f) => f.id === "question-wording")).toBeUndefined();
+    expect(mapped.gaps.find((g) => g.id === "question-wording")).toBeUndefined();
+
+    const unmapped = preflightRead(report(), { variable_name: "var", description: "desc" });
+    const finding = unmapped.findings.find((f) => f.id === "question-wording");
+    expect(finding, "an unmapped wording column is a real finding about this run").toBeDefined();
+    // Acting on it means a FRESH run: a run's column mapping is fixed at startHarmonize.
+    expect(finding!.needsRestart).toBe(true);
+    expect(finding!.detail).toMatch(/new run|fresh run|start.*again|another run/i);
+
+    // UNAVAILABLE: the run kept no column roles (the demo path records dataset ids instead), so the
+    // question cannot be answered from the run at all. Declared, with a pointer — never guessed.
+    const gap = preflightRead(report(), null).gaps.find((g) => g.id === "question-wording");
+    expect(gap, "with no recorded mapping this must be declared, not assumed clean").toBeDefined();
+    expect(gap!.pointer).toMatch(/export|download|prepared/i);
+  });
+
+  test("@gate0 the derivation contains no percentage literal and no remembered cohort figure", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+    const src = readFileSync(resolve(root, "src/lib/preprocess-report.ts"), "utf8");
+    const body = src.slice(src.indexOf("--- the pre-flight read"));
+    // A figure measured on one cohort is not a measurement of the dictionary on screen. There is no
+    // honest reason for a literal percentage to appear in a derivation over the report in hand.
+    expect(body.match(/\d+(?:\.\d+)?\s*%/g) ?? []).toEqual([]);
+    expect(body).not.toMatch(/\b(UKBB|CLSA|Arivale|AoU|MESA|AI-READI|TwinsUK)\b/);
+    // It measures the INPUT, never our own cleaning.
+    expect(body).not.toMatch(/descriptionsChanged/);
+  });
+
+  test("@gate0 a report with nothing to flag is a POSITIVE finding, not an empty region", () => {
+    const clean = preflightRead(
+      report({ nNothingToEmbed: 0 }),
+      { variable_name: "var", description: "desc", question_text: "q" },
+    );
+    expect(clean.findings.filter((f) => f.concern)).toHaveLength(0);
+    expect(clean.nothingToFlag).toBe(true);
+    // …and it still says what the rules did, so the region is never blank.
+    expect(clean.summary.label.length).toBeGreaterThan(0);
   });
 });
