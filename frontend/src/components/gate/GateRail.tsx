@@ -11,7 +11,7 @@ import type { GatePosition } from "@/types";
  *
  * FIVE RATHER THAN SIX SINCE 2026-08-26 (`08-DECISION-GATE0.md` D-2). Gate 0 was a gate with no decision —
  * its only control was Continue — so it was a receipt, not a gate, and its content moved to Setup as a
- * free pre-flight. THE RULE ABOVE DID NOT CHANGE; only the length did. This rail is still fixed-length,
+ * free pre-flight whose own Continue is the run's first charge. THE RULE ABOVE DID NOT CHANGE; only the length did. This rail is still fixed-length,
  * and the reason is still that a variable-length rail relocates the reviewer on every screen.
  *
  * REALIZED vs FORECAST is the load-bearing distinction here. After UI-SPEC §0.1's reversal the reviewer

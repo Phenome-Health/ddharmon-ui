@@ -37,7 +37,8 @@ import Gate4Page from "@/pages/run/gate4";
  * The retired `gate0` path — REGISTERED, and a redirect rather than a deleted route.
  *
  * Gate 0 was demoted on 2026-08-26 (`08-DECISION-GATE0.md` D-2): its content is now a free pre-flight on
- * Setup and the flow is five screens. The BACKEND BOUNDARY IS UNCHANGED (D-3), so the wire still parks
+ * Setup — free because the run parks before any model is called, and the first charge is the control that
+ * pre-flight carries — and the flow is five screens. The BACKEND BOUNDARY IS UNCHANGED (D-3), so the wire still parks
  * runs at `gatePosition: "gate0"` and `next_gate("gate0") === "gate1"` still drives the resume. A live
  * wire value whose URL 404s is a landmine for every resume link built from `gatePosition` — the guest walk
  * and the runs list both will be. So the route stays and lands the reviewer on that run's Setup, which is

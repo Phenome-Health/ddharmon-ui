@@ -151,8 +151,14 @@ const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
  * is a second set of empty states, error states and overflow behaviours to keep honest.
  *
  * THREE STATES SINCE THE GATE 0 DEMOTION (2026-08-26; pre-build question Q1, answered Option B). Gate 0
- * was retired as a screen and its content moved here as a FREE PRE-FLIGHT, so this screen now spans the
- * whole local, unpaid part of a run:
+ * was retired as a screen and its content moved here as a FREE PRE-FLIGHT — free until the first charge,
+ * which this screen's own control now commits.
+ *
+ * (Both halves of that reconciling phrase have to sit on ONE line. `test_no_public_surface_claims_the_
+ * staged_flow_is_free` reads SOURCE text, so a comment wrap between "first" and "charge" splits the very
+ * words that reconcile the claim and the gate convicts a true sentence.)
+ *
+ * So this screen now spans the whole local, unpaid part of a run:
  *
  *  1. **`compose`** — no run yet. Exactly what it was before: drop files, map columns, price the run.
  *  2. **`preflight`** — the run has been started and has not yet passed the pre-flight boundary. The
@@ -1573,9 +1579,22 @@ export default function SetupPage() {
             </p>
 
             <ul className="flex flex-col gap-2">
-              {(Object.keys(estimate.byGate) as GatePosition[]).map((gate) => {
+              {/* THE RETIRED POSITION DRAWS NO ROW. `byGate` is keyed by the WIRE type and still carries
+                  it (D-3), and mapping the keys blindly printed a bill line labelled "Load & prepare" for
+                  a screen the flow no longer has — beside Setup's own row, which describes the very same
+                  free local leg. One leg, one line. */}
+              {(Object.keys(estimate.byGate) as GatePosition[])
+                .filter((gate) => gate !== RETIRED_GATE)
+                .map((gate) => {
                 const g = estimate.byGate[gate];
-                const own = estimate.lines.filter((l) => l.gate === gate);
+                // SETUP ABSORBS THE RETIRED POSITION'S LINES. The estimator files embedding + clustering
+                // under `gate0` because that leg used to be Gate 0's; it is Setup's now, and the work
+                // itself did not move an inch. Filing it here keeps the $0 local line VISIBLE — dropping
+                // the phantom row without re-homing its lines would have deleted the one place the bill
+                // says that grouping calls no provider.
+                const own = estimate.lines.filter(
+                  (l) => l.gate === gate || (gate === "setup" && l.gate === RETIRED_GATE),
+                );
                 // POTENTIAL, NOT YET CHOSEN. An opt-in that is off produces no cost line, so without this
                 // the bill would silently omit the thing the reviewer is being told they can turn on. It
                 // renders under its gate with no figure — present, priced as not-included.

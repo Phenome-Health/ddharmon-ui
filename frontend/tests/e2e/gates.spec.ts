@@ -296,3 +296,159 @@ test.describe("five screens", () => {
   });
 });
 
+/**
+ * Serve a MUTATED copy of the committed fixture, for the states a committed file cannot honestly hold.
+ * The mutation is applied to the real payload, so the screen still renders against the true contract.
+ */
+async function withPayload(
+  page: import("@playwright/test").Page,
+  mutate: (payload: Record<string, unknown>) => void,
+): Promise<void> {
+  const res = await page.request.get(`/static-data/result-${PAUSED_JOB}.json`);
+  const payload = (await res.json()) as Record<string, unknown>;
+  mutate(payload);
+  await page.route("**/static-data/result-*.json", (route) =>
+    route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) }),
+  );
+}
+
+const GATE1 = `/run/${PAUSED_JOB}/gate1`;
+
+async function gotoGate(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto(GATE1);
+  await page.waitForLoadState("networkidle");
+}
+
+/**
+ * THE STOP CONTROL — shell chrome, asserted from the shell's own spec (moved here by 08-14b Task 4).
+ *
+ * It is placed ONCE in `GateShell` and inherited by every screen in the flow, so a page spec was never
+ * the right home for it: the single-call-site assertion below is a claim about the shell, and two
+ * implementations of a control that spends or saves real money is precisely what that placement exists to
+ * prevent. Driven from a GATE route rather than from the page it was first written against.
+ */
+test.describe("the stop control", () => {
+  /** Put the fixture into a genuinely in-flight state: a worker is running and money is accruing. */
+  async function inFlight(page: import("@playwright/test").Page, over: Record<string, unknown> = {}) {
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: "splitting", phase: "splitting", stopping: false }, over);
+      // A priced run, so the confirmation can state the committed-versus-avoided split.
+      const config = p.config as Record<string, unknown>;
+      config.est_fields = 1000;
+      config.est_cohorts = 5;
+      config.run_mode = "batch";
+      delete config.demo;
+    });
+  }
+
+  test("@gates an in-flight run can be stopped from the gate chrome, with BOTH modes reachable", async ({ page }) => {
+    await inFlight(page);
+    await gotoGate(page);
+
+    const stop = page.getByRole("button", { name: /stop/i }).first();
+    await expect(stop).toBeVisible();
+    await stop.click();
+
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    // Both ways out, behind ONE confirmation — keeping the production wording.
+    await expect(dialog.getByRole("button", { name: /stop & keep results/i })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /discard now/i })).toBeVisible();
+    // ...and a way to not stop at all.
+    await expect(dialog.getByRole("button", { name: /keep running/i })).toBeVisible();
+  });
+
+  test("@gates the confirmation names the committed-versus-avoided cost split when the run is priced", async ({ page }) => {
+    await inFlight(page);
+    await gotoGate(page);
+    await page.getByRole("button", { name: /stop/i }).first().click();
+
+    const words = (await page.getByRole("alertdialog").innerText()).replace(/\s+/g, " ");
+    // Stopping is a decision made against money, not in the dark.
+    expect(words).toMatch(/already committed/i);
+    expect(words).toMatch(/avoids/i);
+    expect(words).toMatch(/\$\d/);
+  });
+
+  test("@gates no stop action renders for a finished, cancelled or PAUSED run, and that is not an error", async ({ page }) => {
+    // A run parked at a gate is non-terminal but has NO worker — a pause is an exit, so nothing is
+    // spending and a stop control there would claim to save money that is not being spent.
+    for (const status of ["complete", "cancelled", "awaiting_review"]) {
+      await page.unrouteAll();
+      await withPayload(page, (p) => {
+        Object.assign(p, { status, phase: status });
+        delete (p.config as Record<string, unknown>).demo;
+      });
+      await gotoGate(page);
+      await expect(page.locator("[data-testid='gate-rail']")).toBeVisible();
+      expect(await page.getByRole("button", { name: /^stop/i }).count(), `status ${status}`).toBe(0);
+      // Absence, not a disabled control and not an error notice.
+      expect(await page.getByTestId("stop-unavailable").count(), `status ${status}`).toBe(0);
+    }
+  });
+
+  test("@gates the demo path degrades to an honest not-available, never a dead control", async ({ page }) => {
+    await inFlight(page, {});
+    // ...and then mark it the shared demo, whose replay has no backend to cancel.
+    await page.unrouteAll();
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: "splitting", phase: "splitting" });
+      (p.config as Record<string, unknown>).demo = true;
+    });
+    await gotoGate(page);
+
+    const tile = page.getByTestId("stop-unavailable");
+    await expect(tile).toBeVisible();
+    const words = (await tile.innerText()).replace(/\s+/g, " ");
+    expect(words.length).toBeGreaterThan(30);
+    // A control that looks live and does nothing is worse than a stated absence.
+    expect(await page.getByRole("button", { name: /^stop/i }).count()).toBe(0);
+  });
+
+  test("@gates stopping leaves the reviewer on the gate they were on", async ({ page }) => {
+    await inFlight(page);
+    await gotoGate(page);
+    await page.getByRole("button", { name: /stop/i }).first().click();
+    await page.getByRole("button", { name: /stop & keep results/i }).click();
+
+    // The run's state reflects the stop; the reviewer is not navigated away.
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe(GATE1);
+    await expect(page.locator("[data-testid='gate-rail']")).toBeVisible();
+  });
+
+  test("@gates the stop action is wired ONCE, in the shell, so every screen inherits it", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    const dirs = [resolve(here, "../../src/components/gate"), resolve(here, "../../src/pages/run")];
+    const hits: string[] = [];
+    for (const dir of dirs) {
+      for (const f of readdirSync(dir).filter((x) => x.endsWith(".tsx"))) {
+        const src = readFileSync(resolve(dir, f), "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, " ")
+          .replace(/^\s*\/\/.*$/gm, " ");
+        // Count JSX usages, not the import line — an import is not a placement.
+        for (const _ of src.matchAll(/<StopRunAction\b/g)) hits.push(f);
+      }
+    }
+    // ONE placement across the whole staged-review surface. Every screen inherits it rather than each
+    // re-adding it, which is how two implementations of the same control end up in the tree. It served
+    // six screens before the Gate 0 demotion and serves five now; the placement did not change.
+    expect(hits).toEqual(["GateShell.tsx"]);
+  });
+
+  test("@gates stop-run-action.tsx was CONSUMED, not rewritten", async () => {
+    const { execSync } = await import("node:child_process");
+    // It is already in production use on the dashboard and the runs list. A second implementation of a
+    // control that spends or saves real money is the thing this lift exists to avoid.
+    execSync("git diff --exit-code -- src/components/stop-run-action.tsx", {
+      cwd: (await import("node:path")).resolve(
+        (await import("node:path")).dirname((await import("node:url")).fileURLToPath(import.meta.url)),
+        "../..",
+      ),
+    });
+  });
+});

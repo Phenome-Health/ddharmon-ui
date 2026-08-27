@@ -547,8 +547,17 @@ test.describe("Setup — the honest estimate", () => {
     await expect(tipText).toContainText(/abandon/i);
 
     // The per-gate rows are present, and the free gates say so rather than forecasting a figure.
-    await expect(page.locator("[data-gate-forecast='gate0']")).toContainText(/local|no charge/i);
+    await expect(page.locator("[data-gate-forecast='setup']")).toContainText(/local|no charge/i);
     await expect(page.locator("[data-gate-forecast='gate4']")).toContainText(/no charge|nothing/i);
+
+    // THE RETIRED POSITION DRAWS NO ROW. It used to, labelled "Load & prepare", beside Setup's own row
+    // describing the very same free local leg — one leg, two lines, one of them naming a screen the flow
+    // no longer has. Its COST LINES were re-homed rather than dropped: embedding and clustering are still
+    // itemised, under Setup, which is where that work is now read.
+    await expect(page.locator("[data-gate-forecast='gate0']")).toHaveCount(0);
+    await expect(
+      page.locator("[data-gate-forecast='setup']").locator("[data-cost-line='embedding']"),
+    ).toHaveCount(1);
 
     // THE POINT OF THE CONSOLIDATION (review 2026-08-26): every cost line sits INSIDE the gate whose
     // Continue buys it. Previously the stage costs and the per-gate forecasts were two disconnected

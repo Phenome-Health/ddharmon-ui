@@ -14,11 +14,20 @@ import type { PreprocessDiff, PreprocessReport, PreprocessRule } from "@/types";
 import { PAUSED_RUN_FIXTURE } from "./routes";
 
 /**
- * Gate 0 — Load & prepare (08-14).
+ * The free PRE-FLIGHT on Setup — what preparation found (08-14, demoted onto Setup by 08-14b).
  *
- *   run: npm run test:e2e -- --grep "@gate0"
+ *   run: npm run test:e2e -- --grep "@preflight"
  *
- * WHAT THIS SCREEN IS ASKED TO BE HONEST ABOUT, which is what the assertions are weighted towards:
+ * THIS WAS GATE 0'S SPEC and it is the same 60-odd assertions, re-pointed. `08-DECISION-GATE0.md` (D-2)
+ * retired the SCREEN, not the stage: the preparation rules, their order and their output are unchanged
+ * (D-1), and the surface they report on is now a panel on Setup rather than the flow's second screen. The
+ * assertions moved with it because what they hold the surface to did not change at all.
+ *
+ * TWO THINGS THE MOVE ADDED. The rule pipeline, the worked examples and the row-to-vector panel now sit
+ * behind a collapsed disclosure (pre-build question Q2 — reachable, frozen), so the tests over them
+ * expand it first. And the panel is reached at Setup's route, because the retired one redirects.
+ *
+ * WHAT THIS SURFACE IS ASKED TO BE HONEST ABOUT, which is what the assertions are weighted towards:
  *
  *  1. **Three outcomes that a careless implementation collapses into one.** A rule that ran and changed
  *     nothing, a rule that did not run, and a rule that threw are three different claims. Merging them is
@@ -44,7 +53,28 @@ import { PAUSED_RUN_FIXTURE } from "./routes";
  * test-supplied data rather than inventing a rule failure in a committed file.
  */
 
-const GATE0 = `/run/${PAUSED_RUN_FIXTURE}/gate0`;
+const PREFLIGHT = `/run/${PAUSED_RUN_FIXTURE}/setup`;
+
+/**
+ * Open the frozen audit trail — the rule pipeline and the row-to-vector panel live behind it now (Q2).
+ *
+ * Called after every navigation rather than only where it is needed, so no assertion depends on the
+ * disclosure's default state. That the default IS closed is asserted once, on its own, below.
+ */
+async function openAuditTrail(page: Page): Promise<void> {
+  const trail = page.getByTestId("frozen-audit-trail").filter({ visible: true }).first();
+  if ((await trail.count()) === 0) return;
+  if ((await trail.getAttribute("data-state")) === "open") return;
+  await trail.getByRole("button").first().click();
+  await expect(trail).toHaveAttribute("data-state", "open");
+}
+
+/** Navigate to the pre-flight, with the frozen surface expanded. */
+async function gotoPreflight(page: Page): Promise<void> {
+  await page.goto(PREFLIGHT);
+  await page.waitForLoadState("networkidle");
+  await openAuditTrail(page);
+}
 
 // --- the pure half -------------------------------------------------------------------------------------
 
@@ -94,8 +124,8 @@ function report(over: Partial<PreprocessReport> = {}): PreprocessReport {
   };
 }
 
-test.describe("Gate 0 — the report's own arithmetic and provenance, as functions", () => {
-  test("@gate0 a zero-change rule and a one-change rule produce DIFFERENT words, and neither is silence", () => {
+test.describe("The pre-flight — the report's own arithmetic and provenance, as functions", () => {
+  test("@preflight a zero-change rule and a one-change rule produce DIFFERENT words, and neither is silence", () => {
     const none = outcomeLabel(rule({ outcome: "no_change", nChanged: 0 }));
     const one = outcomeLabel(rule({ outcome: "changed", nChanged: 1 }));
     const many = outcomeLabel(rule({ outcome: "changed", nChanged: 4 }));
@@ -110,7 +140,7 @@ test.describe("Gate 0 — the report's own arithmetic and provenance, as functio
     expect(none).toContain("0 variables");
   });
 
-  test("@gate0 did-not-run and failed are each distinct from changed-nothing — three claims, three labels", () => {
+  test("@preflight did-not-run and failed are each distinct from changed-nothing — three claims, three labels", () => {
     const labels = (["no_change", "not_run", "failed"] as const).map((o) =>
       outcomeLabel(rule({ outcome: o, nChanged: 0 })),
     );
@@ -122,7 +152,7 @@ test.describe("Gate 0 — the report's own arithmetic and provenance, as functio
     expect(labels[1]).not.toContain("changed");
   });
 
-  test("@gate0 examples are narrowed by the facet a rule can touch, never attributed to it", () => {
+  test("@preflight examples are narrowed by the facet a rule can touch, never attributed to it", () => {
     const rows = [
       diffRow({ variableName: "a", descChanged: true }),
       diffRow({ variableName: "b", nameChanged: true }),
@@ -138,7 +168,7 @@ test.describe("Gate 0 — the report's own arithmetic and provenance, as functio
     expect(examplesFor(rule({ rule: "some_rule_added_later" }), rows)).toEqual([]);
   });
 
-  test("@gate0 every rule the backend reports has a declared facet, so no rule silently loses its examples", () => {
+  test("@preflight every rule the backend reports has a declared facet, so no rule silently loses its examples", () => {
     // The contract's rule ids come from the adapter's `_PREPROCESS_RULES`. If one is added there and not
     // here, its accordion would expand to an empty body with no error anywhere — so this is the gate.
     for (const id of [
@@ -155,7 +185,7 @@ test.describe("Gate 0 — the report's own arithmetic and provenance, as functio
     }
   });
 
-  test("@gate0 the reconciliation closes against the VARIABLE count, and names the silent drop separately", () => {
+  test("@preflight the reconciliation closes against the VARIABLE count, and names the silent drop separately", () => {
     const r = reconcile(report({ nVariables: 120, nUniqueVariableNames: 100, nDuplicateVariableNames: 20, nChangedVariables: 30 }));
     expect(r.variables).toBe(100);
     expect(r.changed + r.untouched).toBe(r.variables);
@@ -166,12 +196,12 @@ test.describe("Gate 0 — the report's own arithmetic and provenance, as functio
     expect(r.ok).toBe(true);
   });
 
-  test("@gate0 a rule claiming more changes than there are variables fails the reconciliation", () => {
+  test("@preflight a rule claiming more changes than there are variables fails the reconciliation", () => {
     const r = reconcile(report({ nUniqueVariableNames: 10, rules: [rule({ nChanged: 11 })], nChangedVariables: 4 }));
     expect(r.ok).toBe(false);
   });
 
-  test("@gate0 no-rule-fired is a state of the whole report, and a failed report is not it", () => {
+  test("@preflight no-rule-fired is a state of the whole report, and a failed report is not it", () => {
     expect(noRuleFired(report({ rules: [rule({ outcome: "no_change", nChanged: 0 })], nChangedVariables: 0 }))).toBe(true);
     expect(noRuleFired(report({ rules: [rule({ outcome: "changed", nChanged: 1 })] }))).toBe(false);
     // A failure is not "nothing changed" — the outcome is unknown.
@@ -181,8 +211,8 @@ test.describe("Gate 0 — the report's own arithmetic and provenance, as functio
   });
 });
 
-test.describe("Gate 0 — the input-quality signals, as functions", () => {
-  test("@gate0 every signal carries a count AND a variables denominator, and none is a composite", () => {
+test.describe("The pre-flight — the input-quality signals, as functions", () => {
+  test("@preflight every signal carries a count AND a variables denominator, and none is a composite", () => {
     const signals = qualitySignals(report({ nUniqueVariableNames: 200 }));
     expect(signals.length).toBeGreaterThanOrEqual(3);
     for (const s of signals) {
@@ -199,7 +229,7 @@ test.describe("Gate 0 — the input-quality signals, as functions", () => {
     expect(ids.join(" ")).not.toMatch(/\b(tier|grade|score|rating|composite|overall|index)\b/i);
   });
 
-  test("@gate0 the boilerplate signal carries the actual placeholder strings, not only their count", () => {
+  test("@preflight the boilerplate signal carries the actual placeholder strings, not only their count", () => {
     const detail = "Field description available on the study website; Selected variable is part of a skip pattern";
     const r = report({
       rules: [rule({ rule: "placeholder_description_replacement", outcome: "changed", nChanged: 45, detail })],
@@ -214,7 +244,7 @@ test.describe("Gate 0 — the input-quality signals, as functions", () => {
     expect(boilerplate.evidence.length).toBe(2);
   });
 
-  test("@gate0 descriptionsChanged is never a quality signal — it measures OUR cleaning, not the input", () => {
+  test("@preflight descriptionsChanged is never a quality signal — it measures OUR cleaning, not the input", () => {
     // A report whose rules all found nothing but whose descriptionsChanged is high must still read clean:
     // if the derivation leaned on that field, this would report a sparse dictionary that is not one.
     const r = report({
@@ -229,7 +259,7 @@ test.describe("Gate 0 — the input-quality signals, as functions", () => {
     for (const s of qualitySignals(r)) expect(s.count).toBe(0);
   });
 
-  test("@gate0 a signal reads 0 when its rule did not RUN, and the rule list is where that is disclosed", () => {
+  test("@preflight a signal reads 0 when its rule did not RUN, and the rule list is where that is disclosed", () => {
     // A `not_run` rule cannot contribute a count — claiming one would report a check that never happened.
     const r = report({
       rules: [rule({ rule: "option_echo_clearing", outcome: "not_run", nChanged: 0 })],
@@ -267,7 +297,7 @@ function reportsOf(payload: Record<string, unknown>): PreprocessReport[] {
   return (payload.result as { preprocessing: PreprocessReport[] }).preprocessing;
 }
 
-test.describe("Gate 0 — the word diff that makes a small edit findable", () => {
+test.describe("The pre-flight — the word diff that makes a small edit findable", () => {
   /**
    * The defect: preparation's edits are frequently a few characters inside a paragraph, and two blocks of
    * prose side by side do not show them. The reviewer is then asked to authorise the run's first charge on
@@ -275,7 +305,7 @@ test.describe("Gate 0 — the word diff that makes a small edit findable", () =>
    * a marking that is merely plausible is worse than none, because it invents an edit the run did not make.
    */
 
-  test("@gate0 the diff is lossless — each side rebuilds its own string exactly", () => {
+  test("@preflight the diff is lossless — each side rebuilds its own string exactly", () => {
     const before = "Current smoking status. <p>Acquired from central registry, updated by participant.";
     const after = "Current smoking status. Acquired from central registry, updated by participant.";
 
@@ -286,7 +316,7 @@ test.describe("Gate 0 — the word diff that makes a small edit findable", () =>
     expect(d.changed).toBe(true);
   });
 
-  test("@gate0 an unchanged pair marks nothing, which is different from rendering nothing", () => {
+  test("@preflight an unchanged pair marks nothing, which is different from rendering nothing", () => {
     const d = wordDiff("Age in years", "Age in years");
 
     expect(d.changed).toBe(false);
@@ -294,7 +324,7 @@ test.describe("Gate 0 — the word diff that makes a small edit findable", () =>
     expect(beforeOf(d)).toBe("Age in years");
   });
 
-  test("@gate0 only the tokens that actually moved are marked, not the paragraph around them", () => {
+  test("@preflight only the tokens that actually moved are marked, not the paragraph around them", () => {
     const d = wordDiff("a b c d e", "a b d e");
 
     const removed = d.segments.filter((s) => s.kind === "removed").map((s) => s.text.trim());
@@ -302,7 +332,7 @@ test.describe("Gate 0 — the word diff that makes a small edit findable", () =>
     expect(d.segments.some((s) => s.kind === "added")).toBe(false);
   });
 
-  test("@gate0 a pure whitespace change still reads as a change", () => {
+  test("@preflight a pure whitespace change still reads as a change", () => {
     // The normalisation rules exist to collapse these. If the diff dropped whitespace the panel would
     // report "changed" while displaying two identical-looking strings — the exact confusion the second
     // pair was added to end.
@@ -313,14 +343,14 @@ test.describe("Gate 0 — the word diff that makes a small edit findable", () =>
     expect(afterOf(d)).toBe("Body mass index");
   });
 
-  test("@gate0 an emptied value is a removal, not an empty panel", () => {
+  test("@preflight an emptied value is a removal, not an empty panel", () => {
     const d = wordDiff("See accompanying documentation", "");
 
     expect(afterOf(d)).toBe("");
     expect(d.segments.filter((s) => s.kind === "removed").length).toBeGreaterThan(0);
   });
 
-  test("@gate0 a pair too large to diff degrades to a whole-value replacement AND says so", () => {
+  test("@preflight a pair too large to diff degrades to a whole-value replacement AND says so", () => {
     // Silently returning a coarse result would let the screen claim the entire value changed. `coarse`
     // exists so the UI can label it instead.
     const long = Array.from({ length: 900 }, (_, i) => `w${i}`).join(" ");
@@ -334,7 +364,7 @@ test.describe("Gate 0 — the word diff that makes a small edit findable", () =>
   });
 });
 
-test.describe("Gate 0 — a change you cannot see is named in words", () => {
+test.describe("The pre-flight — a change you cannot see is named in words", () => {
   /**
    * Found while reviewing the marking on this run's own data. `cmtrt_glcs` reads
    * `...blood glucose levels?\u00a0 Examples:` before and `...blood glucose levels? Examples:` after — a
@@ -344,7 +374,7 @@ test.describe("Gate 0 — a change you cannot see is named in words", () => {
    * has to be SAID.
    */
 
-  test("@gate0 a difference with no glyph is reported as invisible", () => {
+  test("@preflight a difference with no glyph is reported as invisible", () => {
     // Both classes, because they fail differently: a no-break space IS whitespace to a regex, and a
     // zero-width space is NOT — `\s` does not match it, so a whitespace-only test misses it entirely.
     expect(wordDiff("blood glucose levels?\u00a0 Examples", "blood glucose levels? Examples").invisibleOnly).toBe(
@@ -353,14 +383,14 @@ test.describe("Gate 0 — a change you cannot see is named in words", () => {
     expect(wordDiff("a\u200bb", "ab").invisibleOnly).toBe(true);
   });
 
-  test("@gate0 a real word change is NOT reported as invisible", () => {
+  test("@preflight a real word change is NOT reported as invisible", () => {
     // The failure mode of an over-eager normaliser: calling a substantive edit invisible.
     expect(wordDiff("Age in years", "Age at visit").invisibleOnly).toBe(false);
     expect(wordDiff("Age in years", "Age in years too").invisibleOnly).toBe(false);
     expect(wordDiff("See documentation", "").invisibleOnly).toBe(false);
   });
 
-  test("@gate0 the invisible character is NAMED, not called 'whitespace'", () => {
+  test("@preflight the invisible character is NAMED, not called 'whitespace'", () => {
     /**
      * "The difference is whitespace" leaves the reviewer unable to check it against their own file.
      * Naming the codepoint makes it findable — which is the whole point of a preparation report.
@@ -373,8 +403,8 @@ test.describe("Gate 0 — a change you cannot see is named in words", () => {
     expect(describeInvisibleChange("Age in years", "Age at visit")).toBeNull();
   });
 
-  test("@gate0 the screen says so where the pair renders identically", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight the screen says so where the pair renders identically", async ({ page }) => {
+    await gotoPreflight(page);
     await page.waitForLoadState("networkidle");
     await page.locator('[data-testid="rule-row"][data-outcome="changed"]').first().click();
 
@@ -386,9 +416,9 @@ test.describe("Gate 0 — a change you cannot see is named in words", () => {
   });
 });
 
-test.describe("Gate 0 — the rule pipeline, rendered", () => {
-  test("@gate0 every rule that ran is listed, including the ones that changed nothing", async ({ page }) => {
-    await page.goto(GATE0);
+test.describe("The pre-flight — the rule pipeline, rendered", () => {
+  test("@preflight every rule that ran is listed, including the ones that changed nothing", async ({ page }) => {
+    await gotoPreflight(page);
     const rows = page.getByTestId("rule-row");
     await expect(rows.first()).toBeVisible();
 
@@ -401,7 +431,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     for (const row of await rows.all()) await expect(row).toBeVisible();
   });
 
-  test("@gate0 a zero-change row and a one-or-more-change row render distinct text, both visible", async ({ page }) => {
+  test("@preflight a zero-change row and a one-or-more-change row render distinct text, both visible", async ({ page }) => {
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
       r.rules = [
@@ -410,7 +440,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
       ];
       r.nChangedVariables = 1;
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const zeroRow = page.locator('[data-testid="rule-row"][data-outcome="no_change"]').first();
     const oneRow = page.locator('[data-testid="rule-row"][data-outcome="changed"]').first();
@@ -425,7 +455,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     expect(oneText).not.toContain("changed 1 variables");
   });
 
-  test("@gate0 a rule that threw renders a THIRD state, distinct from changed-nothing and from not-run", async ({ page }) => {
+  test("@preflight a rule that threw renders a THIRD state, distinct from changed-nothing and from not-run", async ({ page }) => {
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
       r.rules = [
@@ -442,7 +472,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
         },
       ];
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const text = async (outcome: string) =>
       (await page.locator(`[data-testid="rule-row"][data-outcome="${outcome}"]`).first().innerText()).replace(/\s+/g, " ");
@@ -459,8 +489,8 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     expect(claim).toBe("failed");
   });
 
-  test("@gate0 a rule that fired shows at least one worked before/after example", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight a rule that fired shows at least one worked before/after example", async ({ page }) => {
+    await gotoPreflight(page);
     const fired = page.locator('[data-testid="rule-row"][data-outcome="changed"]').first();
     await fired.getByRole("button").first().click();
     const example = fired.getByTestId("rule-example").first();
@@ -470,8 +500,8 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     await expect(example.getByTestId("example-after")).toBeVisible();
   });
 
-  test("@gate0 the reconciled total is stated on screen and equals the dictionary's variable count", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight the reconciled total is stated on screen and equals the dictionary's variable count", async ({ page }) => {
+    await gotoPreflight(page);
     const strip = page.getByTestId("rule-reconciliation");
     await expect(strip).toBeVisible();
 
@@ -491,7 +521,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     expect(words.toLowerCase()).not.toContain("field");
   });
 
-  test("@gate0 mojibake in an example is displayed as text and never executed", async ({ page }) => {
+  test("@preflight mojibake in an example is displayed as text and never executed", async ({ page }) => {
     const MOJIBAKE = 'PatientâÂs weight <img src=x onerror="window.__pwned=1"> Ã© <script>window.__pwned=1</script>';
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
@@ -511,7 +541,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
       ];
       r.nChangedVariables = 1;
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const fired = page.locator('[data-testid="rule-row"][data-outcome="changed"]').first();
     await fired.getByRole("button").first().click();
@@ -526,7 +556,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
   });
 
-  test("@gate0 a long example is shown IN FULL — the clamp and the 80-char cap are both gone", async ({ page }) => {
+  test("@preflight a long example is shown IN FULL — the clamp and the 80-char cap are both gone", async ({ page }) => {
     const LONG = `The participant was asked the following at the study visit: ${"a very long clause about the instrument ".repeat(30)}`;
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
@@ -546,7 +576,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
       ];
       r.nChangedVariables = 1;
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const fired = page.locator('[data-testid="rule-row"][data-outcome="changed"]').first();
     await fired.getByRole("button").first().click();
@@ -574,7 +604,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     expect(fits).toBe(true);
   });
 
-  test("@gate0 a dictionary where no rule fired renders the no-changes copy, and it says how that differs from not-run", async ({ page }) => {
+  test("@preflight a dictionary where no rule fired renders the no-changes copy, and it says how that differs from not-run", async ({ page }) => {
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
       r.rules = r.rules.map((x) => ({ ...x, outcome: "no_change" as const, nChanged: 0, detail: "", error: "" }));
@@ -582,7 +612,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
       r.nChangedVariables = 0;
       r.diffTruncated = false;
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const empty = page.getByTestId("gate-empty-state").first();
     await expect(empty).toBeVisible();
@@ -594,7 +624,7 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     await expect(page.locator('[data-testid="rule-row"][data-outcome="no_change"]').first()).toBeVisible();
   });
 
-  test("@gate0 there is no raw-HTML injection anywhere on this surface", async () => {
+  test("@preflight there is no raw-HTML injection anywhere on this surface", async () => {
     const { readFileSync, readdirSync } = await import("node:fs");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
@@ -604,9 +634,12 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
     // surface has to be covered — and a hardcoded list is dodged for free by adding a file to it, which is
     // the failure mode a security gate cannot afford. The page, everything it composes from and the module
     // that derives what it shows.
+    // The panel itself is now INSIDE the globbed directory (08-14b), so the page named here is the one
+    // that hosts it — uploaded dictionary text is echoed on Setup now, which is the surface the guest
+    // walk reaches.
     const gateDir = resolve(here, "../../src/components/gate");
     const files = [
-      resolve(here, "../../src/pages/run/gate0.tsx"),
+      resolve(here, "../../src/pages/run/setup.tsx"),
       resolve(here, "../../src/lib/preprocess-report.ts"),
       ...readdirSync(gateDir)
         .filter((f) => f.endsWith(".tsx"))
@@ -626,9 +659,51 @@ test.describe("Gate 0 — the rule pipeline, rendered", () => {
   });
 });
 
-test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two honest gaps", () => {
-  test("@gate0 each cohort gets its own tab, and switching tabs switches the report", async ({ page }) => {
-    await page.goto(GATE0);
+test.describe("The pre-flight — the frozen surface is reachable, and it is not the headline", () => {
+  test("@preflight the audit trail is COLLAPSED by default, with the findings above it", async ({ page }) => {
+    // Pre-build question Q2, answered 2026-08-26: the rule pipeline, the worked examples and the
+    // row-to-vector panel stay REACHABLE but are frozen, so they sit under a disclosure below the
+    // findings. Leading with the provenance is what made the retired screen a receipt rather than a gate.
+    await page.goto(PREFLIGHT);
+    await page.waitForLoadState("networkidle");
+
+    const trail = page.getByTestId("frozen-audit-trail").filter({ visible: true }).first();
+    await expect(trail).toBeVisible();
+    await expect(trail).toHaveAttribute("data-state", "closed");
+    // Closed means the frozen content is not on screen — and the findings ARE.
+    await expect(page.getByTestId("rule-row")).toHaveCount(0);
+    await expect(page.getByTestId("row-to-vector")).toHaveCount(0);
+    const findings = page.getByTestId("preflight-finding").first();
+    await expect(findings).toBeVisible();
+    expect((await findings.boundingBox())!.y).toBeLessThan((await trail.boundingBox())!.y);
+
+    // Reachable, in one action, with an accessible name that says what it opens.
+    await expect(trail.getByRole("button", { name: /what preparation changed/i })).toBeVisible();
+    await openAuditTrail(page);
+    await expect(page.getByTestId("rule-row").first()).toBeVisible();
+    await expect(page.getByTestId("row-to-vector")).toBeVisible();
+  });
+
+  test("@preflight the facet-coverage assertion still has a subject after the move", async ({ page }) => {
+    // D-6's RETIRED HAZARD, and the reason Q2's answer had to be "reachable". `RULE_FACETS` is a
+    // hand-kept map: a rule added to core and not added to it renders ZERO examples, which reads as
+    // "this rule changed nothing". The spec assertion that every reported rule has a declared facet is
+    // the only thing standing between a new core rule and that silent misreport — and it asserts against
+    // THIS surface. Had the surface been deleted, the assertion would have lost what it checks.
+    await gotoPreflight(page);
+    const rules = await page.getByTestId("rule-row").evaluateAll((els) =>
+      els.map((e) => e.getAttribute("data-rule")),
+    );
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) {
+      expect(RULE_FACETS[r!], `rule ${r} renders here but has no declared facet`).toBeDefined();
+    }
+  });
+});
+
+test.describe("The pre-flight — per-cohort tabs, the row-to-vector panel, and the two honest gaps", () => {
+  test("@preflight each cohort gets its own tab, and switching tabs switches the report", async ({ page }) => {
+    await gotoPreflight(page);
     const panel = page.getByTestId("cohort-panel");
     await expect(panel).toHaveAttribute("data-state-kind", "report");
 
@@ -644,11 +719,12 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     await tabs.nth(1).click();
     await expect(panel).toHaveAttribute("data-cohort", names[1]!);
     await expect(panel).toHaveAttribute("data-state-kind", "report");
-    // Each tab carries its OWN reconciliation, against its own dictionary.
+    // Each tab carries its OWN reconciliation, against its own dictionary — behind its own disclosure.
+    await openAuditTrail(page);
     await expect(panel.getByTestId("rule-reconciliation")).toBeVisible();
   });
 
-  test("@gate0 a cohort still running shows progress, never a completed report", async ({ page }) => {
+  test("@preflight a cohort still running shows progress, never a completed report", async ({ page }) => {
     await withPayload(page, (p) => {
       const reports = reportsOf(p);
       // One cohort finished, one still to come: the run declares five cohorts and carries four reports.
@@ -660,7 +736,7 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
       (p as { status: string; phase: string }).status = "embedding";
       (p as { status: string; phase: string }).phase = "embedding";
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const pendingTab = page.locator('[role="tab"][data-progress="pending"]').first();
     await expect(pendingTab).toBeVisible();
@@ -681,14 +757,14 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     expect(words).toMatch(/still (being prepared|preparing|to come)|of 5|not finished/i);
   });
 
-  test("@gate0 the aggregate says so plainly when every cohort IS finished", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight the aggregate says so plainly when every cohort IS finished", async ({ page }) => {
+    await gotoPreflight(page);
     const aggregate = page.getByTestId("prepare-aggregate");
     expect(await aggregate.getAttribute("data-complete")).toBe("true");
   });
 
-  test("@gate0 the row-to-vector panel shows the exact grouping input, not the cleaned description", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight the row-to-vector panel shows the exact grouping input, not the cleaned description", async ({ page }) => {
+    await gotoPreflight(page);
 
     // Read the payload the screen is rendering, and assert the panel shows THAT string.
     const payload = await fixturePayload(page);
@@ -722,6 +798,10 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     // the tab list, not inside `cohort-panel`, so scoping the trigger lookup to the panel finds nothing.
     // Activate the owning cohort first, then scope the panel by `data-cohort`.
     await page.getByRole("tab", { name: report!.cohort, exact: false }).first().click();
+    // A COHORT'S FROZEN SURFACE IS ITS OWN DISCLOSURE. Radix mounts only the active tab's content, so
+    // switching cohorts brings up a panel whose audit trail is closed again — and the row-to-vector panel
+    // lives inside it (pre-build question Q2).
+    await openAuditTrail(page);
     const panel = page
       .locator(`[data-testid="cohort-panel"][data-cohort="${report!.cohort}"]`)
       .getByTestId("row-to-vector");
@@ -734,7 +814,7 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     await expect(shown).not.toHaveText(row!.cleanedDescription);
   });
 
-  test("@gate0 a long embedding text is readable in full — it scrolls, it is not cut off", async ({ page }) => {
+  test("@preflight a long embedding text is readable in full — it scrolls, it is not cut off", async ({ page }) => {
     /**
      * The defect, found on the real screen: the box was `line-clamp-3`, so a long value ended mid-word
      * with no scrollbar and no control to reveal the rest. `toHaveText` still passed, because textContent
@@ -742,7 +822,7 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
      * full string being present in the DOM is not the same as the reviewer being able to read it, and
      * this panel is the one place the question "what does the model actually see?" can be answered.
      */
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     const payload = await fixturePayload(page);
     const reports = reportsOf(payload);
 
@@ -758,6 +838,8 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     expect(longest, "the fixture carries no embedding text to overflow").toBeTruthy();
 
     await page.getByRole("tab", { name: longest!.cohort, exact: false }).first().click();
+    // Switching cohorts brings up a panel whose frozen disclosure is closed again — see above.
+    await openAuditTrail(page);
     const panel = page
       .locator(`[data-testid="cohort-panel"][data-cohort="${longest!.cohort}"]`)
       .getByTestId("row-to-vector");
@@ -786,12 +868,12 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     }
   });
 
-  test("@gate0 the value states its own length, so a bounded box is not mistaken for the whole string", async ({
+  test("@preflight the value states its own length, so a bounded box is not mistaken for the whole string", async ({
     page,
   }) => {
     // The box is capped and macOS hides its scrollbar until touched, so a truncated-looking value and a
     // short one are visually identical. The count is what separates them without a hover or a scroll.
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     const payload = await fixturePayload(page);
     const reports = reportsOf(payload);
     let longest: { cohort: string; variableName: string; embedText: string } | undefined;
@@ -804,6 +886,8 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     }
     expect(longest).toBeTruthy();
     await page.getByRole("tab", { name: longest!.cohort, exact: false }).first().click();
+    // Switching cohorts brings up a panel whose frozen disclosure is closed again — see above.
+    await openAuditTrail(page);
     const panel = page
       .locator(`[data-testid="cohort-panel"][data-cohort="${longest!.cohort}"]`)
       .getByTestId("row-to-vector");
@@ -813,13 +897,13 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     expect(await len.getAttribute("data-chars")).toBe(String(longest!.embedText.length));
   });
 
-  test("@gate0 the panel gives the width to the value, not to the picker", async ({ page }) => {
+  test("@preflight the panel gives the width to the value, not to the picker", async ({ page }) => {
     /**
      * The other half of the same report: the card ran the full width of the page while its contents were
      * capped at a prose measure, so the string this screen exists to show sat in a narrow column with
      * empty space beside it. Prose keeps its measure; DATA gets the room.
      */
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     const panel = page.getByTestId("row-to-vector").first();
     const picker = panel.getByRole("combobox");
     const box = panel.getByTestId("embed-text");
@@ -830,17 +914,22 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     expect(valueBox!.width).toBeGreaterThan(pickerBox!.width * 1.5);
   });
 
-  test("@gate0 the nothing-to-embed count is rendered, out of variables", async ({ page }) => {
-    await page.goto(GATE0);
-    const count = page.getByTestId("nothing-to-embed");
+  test("@preflight the nothing-to-embed count is rendered, out of variables", async ({ page }) => {
+    // RE-POINTED, not weakened. The count used to sit at the foot of the row-to-vector panel; 08-14b Task
+    // 3 made it the pre-flight's LEADING finding, because it is the one thing on this surface that only
+    // running the rules could reveal. Same number, same denominator, read where a reader now meets it —
+    // which is also outside the frozen disclosure, where it can be read without expanding anything.
+    await gotoPreflight(page);
+    const count = page.locator("[data-testid='preflight-finding'][data-finding='nothing-to-embed']").first();
     await expect(count).toBeVisible();
     const payload = await fixturePayload(page);
     expect(await count.getAttribute("data-count")).toBe(String(reportsOf(payload)[0].nNothingToEmbed));
+    expect(await count.getAttribute("data-of")).toBe(String(reportsOf(payload)[0].nUniqueVariableNames));
     expect((await count.innerText()).toLowerCase()).toContain("variable");
   });
 
-  test("@gate0 both deferred capabilities render as neutral not-available tiles, with their contract copy", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight both deferred capabilities render as neutral not-available tiles, with their contract copy", async ({ page }) => {
+    await gotoPreflight(page);
     const tiles = page.getByTestId("not-available");
     // Settle on the two tiles THIS test is about, by their own copy. `evaluateAll` over an unsettled page
     // measures an empty list and pronounces the surface clean — blind rather than passing — and a total
@@ -870,45 +959,46 @@ test.describe("Gate 0 — per-cohort tabs, the row-to-vector panel, and the two 
     }
   });
 
-  test("@gate0 the rule grouping is labelled inferred, consistent with the provenance tile", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight the rule grouping is labelled inferred, consistent with the provenance tile", async ({ page }) => {
+    await gotoPreflight(page);
     const words = (await page.getByTestId("cohort-panel").innerText()).toLowerCase();
     expect(words).toContain("inferred");
   });
 
-  test("@gate0 Continue carries a non-zero amount and an INLINE irreversible-spend statement", async ({ page }) => {
-    await page.goto(GATE0);
-    const bar = page.getByTestId("commit-bar");
-    await expect(bar).toBeVisible();
+  // RETIRED, and this note is the record of it: `@gate0 Continue carries a non-zero amount and an INLINE
+  // irreversible-spend statement` asserted a control this SURFACE no longer carries. The pre-flight is a
+  // panel now; the control that commits the run's first charge belongs to the screen it sits on, and the
+  // assertion was rebuilt there before this one was removed — `setup.spec.ts`:
+  //
+  //   @setup the commit control carries a non-zero amount and an INLINE irreversible-spend statement
+  //   @setup `Nothing is charged yet` is true and visible ABOVE the commit control
+  //   @setup the amount on the commit control equals the first charge in Setup's own bill
+  //   @setup a PREVIEW run is quoted no amount and told it buys nothing
+  //
+  // Coverage went UP rather than down: the replacement also gates the two-surfaces-one-figure claim and
+  // the preview branch, neither of which the original checked.
 
-    const amount = Number(await bar.getAttribute("data-total"));
-    expect(amount).toBeGreaterThan(0);
-    const words = (await bar.innerText()).replace(/\s+/g, " ");
-    // The amount is on the control the reviewer presses, not only in an attribute.
-    expect(words).toMatch(/\$\d/);
-    // The irreversible-spend statement is inline, in the bar being read.
-    expect(words.toLowerCase()).toContain("not refundable");
-    expect(words.toLowerCase()).toContain("spending begins");
-
-    // No modal stands between the reviewer and the first charge: a modal on the primary path is met at
-    // every gate, always says yes, and by the third gate is dismissed unread.
-    expect(await page.locator('[role="dialog"], [role="alertdialog"]').count()).toBe(0);
-  });
-
-  test("@gate0 nothing on this screen claims the flow is free until the reviewer chooses what to buy", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight nothing on this screen claims the flow is free until the reviewer chooses what to buy", async ({ page }) => {
+    await gotoPreflight(page);
     const words = (await page.locator("main, body").first().innerText()).replace(/\s+/g, " ");
-    // Gate 0's own review work is free; CONTINUING from it is the run's first charge, so any blanket
-    // "free until you choose" claim is false here.
+    // A blanket "free until you choose" claim is false anywhere in the staged flow: continuing from the
+    // pre-flight is the run's first charge, and the reviewer scopes before the BULK of the spend, not
+    // before all of it.
     expect(words).not.toMatch(/free until you (choose|decide|pick)/i);
-    expect(words).not.toMatch(/nothing is charged yet/i);
     expect(words).not.toMatch(/step 1 is free/i);
+
+    // `Nothing is charged yet` INVERTS with the move, and the inversion is the whole point of it. On the
+    // retired screen that sentence would have been misleading — the reviewer was one press from the first
+    // charge. On Setup it is simply TRUE until that press, and 08-DECISION-GATE0 D-3 requires it to stay
+    // visible and true above the control. So it is asserted PRESENT here rather than absent.
+    expect(words).toMatch(/nothing is charged yet/i);
+    expect(words).toMatch(/first charge/i);
   });
 });
 
-test.describe("Gate 0 — the input-quality signals, rendered", () => {
-  test("@gate0 every rendered signal carries its own count AND its own denominator", async ({ page }) => {
-    await page.goto(GATE0);
+test.describe("The pre-flight — the input-quality signals, rendered", () => {
+  test("@preflight every rendered signal carries its own count AND its own denominator", async ({ page }) => {
+    await gotoPreflight(page);
     const panel = page.getByTestId("input-quality");
     await expect(panel).toBeVisible();
 
@@ -931,8 +1021,8 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
     }
   });
 
-  test("@gate0 NO composite is rendered anywhere on the quality panel", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight NO composite is rendered anywhere on the quality panel", async ({ page }) => {
+    await gotoPreflight(page);
     const panel = page.getByTestId("input-quality");
     await expect(panel).toBeVisible();
     const words = (await panel.innerText()).replace(/\s+/g, " ");
@@ -948,7 +1038,7 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
     expect(words).not.toMatch(/\b(composite|overall (score|reading|quality)|quality (score|index)|(the |an? )(average|mean) (of|across|reading|score))\b/i);
   });
 
-  test("@gate0 the placeholder strings themselves are rendered, not only their count", async ({ page }) => {
+  test("@preflight the placeholder strings themselves are rendered, not only their count", async ({ page }) => {
     const PLACEHOLDER = "Selected variable is part of a skip pattern";
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
@@ -958,7 +1048,7 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
           : x,
       );
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const row = page.locator('[data-testid="quality-signal"][data-signal="boilerplate-description"]').first();
     await expect(row).toBeVisible();
@@ -968,8 +1058,8 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
     expect(await row.getAttribute("data-count")).toBe("45");
   });
 
-  test("@gate0 the two unavailable signals are declared, with their reason, never approximated", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight the two unavailable signals are declared, with their reason, never approximated", async ({ page }) => {
+    await gotoPreflight(page);
     const panel = page.getByTestId("input-quality");
     const gaps = panel.getByTestId("not-available");
     await expect(gaps).toHaveCount(2);
@@ -985,7 +1075,7 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
     for (const gap of await gaps.all()) expect(await gap.getAttribute("data-claim")).toBe("deferred");
   });
 
-  test("@gate0 an all-clear dictionary reads as a positive finding, not as an empty region", async ({ page }) => {
+  test("@preflight an all-clear dictionary reads as a positive finding, not as an empty region", async ({ page }) => {
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
       r.rules = r.rules.map((x) => ({ ...x, outcome: "no_change" as const, nChanged: 0, detail: "" }));
@@ -993,7 +1083,7 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
       r.nChangedVariables = 0;
       r.diff = [];
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
 
     const panel = page.getByTestId("input-quality");
     await expect(panel).toHaveAttribute("data-all-clear", "true");
@@ -1005,8 +1095,8 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
     expect(await panel.getByTestId("quality-signal").count()).toBeGreaterThanOrEqual(3);
   });
 
-  test("@gate0 each cohort carries its own signals, and no cross-cohort average is computed", async ({ page }) => {
-    await page.goto(GATE0);
+  test("@preflight each cohort carries its own signals, and no cross-cohort average is computed", async ({ page }) => {
+    await gotoPreflight(page);
     // One panel per open tab, inside that tab's own cohort panel — never one panel for the run.
     await expect(page.getByTestId("input-quality")).toHaveCount(1);
     const panel = page.getByTestId("input-quality");
@@ -1024,7 +1114,7 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
     expect(all).not.toMatch(/(average|mean) (quality|reading|score)|across (all )?cohorts[^.]*(quality|score)/i);
   });
 
-  test("@gate0 descriptionsChanged is not read by the signals panel at all", async () => {
+  test("@preflight descriptionsChanged is not read by the signals panel at all", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
@@ -1042,134 +1132,18 @@ test.describe("Gate 0 — the input-quality signals, rendered", () => {
   });
 });
 
-test.describe("Gate 0 — stopping an in-flight run from the gate chrome", () => {
-  /** Put the fixture into a genuinely in-flight state: a worker is running and money is accruing. */
-  async function inFlight(page: Page, over: Record<string, unknown> = {}) {
-    await withPayload(page, (p) => {
-      Object.assign(p, { status: "splitting", phase: "splitting", stopping: false }, over);
-      // A priced run, so the confirmation can state the committed-versus-avoided split.
-      const config = p.config as Record<string, unknown>;
-      config.est_fields = 1000;
-      config.est_cohorts = 5;
-      config.run_mode = "batch";
-      delete config.demo;
-    });
-  }
+// THE STOP CONTROL'S ASSERTIONS MOVED TO `gates.spec.ts` (08-14b Task 4).
+//
+// They were written here because this was the first screen on which a reviewer could see a run going
+// wrong — but what they assert is the SHELL: one placement in `GateShell`, inherited by every screen,
+// including the single-call-site claim, which is a statement about the shell and not about any page. A
+// page spec was never their home; the demotion is just what made that obvious. They now sit beside the
+// other chrome assertions, re-pointed at a gate route, and their wording no longer names a count of
+// screens the flow does not have.
 
-  test("@gate0 an in-flight run can be stopped from the gate chrome, with BOTH modes reachable", async ({ page }) => {
-    await inFlight(page);
-    await page.goto(GATE0);
-
-    const stop = page.getByRole("button", { name: /stop/i }).first();
-    await expect(stop).toBeVisible();
-    await stop.click();
-
-    const dialog = page.getByRole("alertdialog");
-    await expect(dialog).toBeVisible();
-    // Both ways out, behind ONE confirmation — keeping the production wording.
-    await expect(dialog.getByRole("button", { name: /stop & keep results/i })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: /discard now/i })).toBeVisible();
-    // ...and a way to not stop at all.
-    await expect(dialog.getByRole("button", { name: /keep running/i })).toBeVisible();
-  });
-
-  test("@gate0 the confirmation names the committed-versus-avoided cost split when the run is priced", async ({ page }) => {
-    await inFlight(page);
-    await page.goto(GATE0);
-    await page.getByRole("button", { name: /stop/i }).first().click();
-
-    const words = (await page.getByRole("alertdialog").innerText()).replace(/\s+/g, " ");
-    // Stopping is a decision made against money, not in the dark.
-    expect(words).toMatch(/already committed/i);
-    expect(words).toMatch(/avoids/i);
-    expect(words).toMatch(/\$\d/);
-  });
-
-  test("@gate0 no stop action renders for a finished, cancelled or PAUSED run, and that is not an error", async ({ page }) => {
-    // A run parked at a gate is non-terminal but has NO worker — a pause is an exit, so nothing is
-    // spending and a stop control there would claim to save money that is not being spent.
-    for (const status of ["complete", "cancelled", "awaiting_review"]) {
-      await page.unrouteAll();
-      await withPayload(page, (p) => {
-        Object.assign(p, { status, phase: status });
-        delete (p.config as Record<string, unknown>).demo;
-      });
-      await page.goto(GATE0);
-      await expect(page.getByTestId("cohort-panel")).toBeVisible();
-      expect(await page.getByRole("button", { name: /^stop/i }).count(), `status ${status}`).toBe(0);
-      // Absence, not a disabled control and not an error notice.
-      expect(await page.getByTestId("stop-unavailable").count(), `status ${status}`).toBe(0);
-    }
-  });
-
-  test("@gate0 the demo path degrades to an honest not-available, never a dead control", async ({ page }) => {
-    await inFlight(page, {});
-    // ...and then mark it the shared demo, whose replay has no backend to cancel.
-    await page.unrouteAll();
-    await withPayload(page, (p) => {
-      Object.assign(p, { status: "splitting", phase: "splitting" });
-      (p.config as Record<string, unknown>).demo = true;
-    });
-    await page.goto(GATE0);
-
-    const tile = page.getByTestId("stop-unavailable");
-    await expect(tile).toBeVisible();
-    const words = (await tile.innerText()).replace(/\s+/g, " ");
-    expect(words.length).toBeGreaterThan(30);
-    // A control that looks live and does nothing is worse than a stated absence.
-    expect(await page.getByRole("button", { name: /^stop/i }).count()).toBe(0);
-  });
-
-  test("@gate0 stopping leaves the reviewer on the gate they were on", async ({ page }) => {
-    await inFlight(page);
-    await page.goto(GATE0);
-    await page.getByRole("button", { name: /stop/i }).first().click();
-    await page.getByRole("button", { name: /stop & keep results/i }).click();
-
-    // The run's state reflects the stop; the reviewer is not navigated away.
-    await expect(page.getByRole("alertdialog")).toHaveCount(0);
-    expect(new URL(page.url()).pathname).toBe(GATE0);
-    await expect(page.getByTestId("cohort-panel")).toBeVisible();
-  });
-
-  test("@gate0 the stop action is wired ONCE, in the shell, so all six gates inherit it", async () => {
-    const { readFileSync, readdirSync } = await import("node:fs");
-    const { dirname, resolve } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const here = dirname(fileURLToPath(import.meta.url));
-
-    const dirs = [resolve(here, "../../src/components/gate"), resolve(here, "../../src/pages/run")];
-    const hits: string[] = [];
-    for (const dir of dirs) {
-      for (const f of readdirSync(dir).filter((x) => x.endsWith(".tsx"))) {
-        const src = readFileSync(resolve(dir, f), "utf8")
-          .replace(/\/\*[\s\S]*?\*\//g, " ")
-          .replace(/^\s*\/\/.*$/gm, " ");
-        // Count JSX usages, not the import line — an import is not a placement.
-        for (const _ of src.matchAll(/<StopRunAction\b/g)) hits.push(f);
-      }
-    }
-    // ONE placement across the whole staged-review surface. The next five gates inherit it rather than
-    // each re-adding it, which is how two implementations of the same control end up in the tree.
-    expect(hits).toEqual(["GateShell.tsx"]);
-  });
-
-  test("@gate0 stop-run-action.tsx was CONSUMED, not rewritten", async () => {
-    const { execSync } = await import("node:child_process");
-    // It is already in production use on the dashboard and the runs list. A second implementation of a
-    // control that spends or saves real money is the thing this lift exists to avoid.
-    execSync("git diff --exit-code -- src/components/stop-run-action.tsx", {
-      cwd: (await import("node:path")).resolve(
-        (await import("node:path")).dirname((await import("node:url")).fileURLToPath(import.meta.url)),
-        "../..",
-      ),
-    });
-  });
-});
-
-test.describe("Gate 0 — the card holds the whole pipeline without hiding a rule", () => {
-  test("@gate0 every rule row is inside the scroller's visible box, not below its fold", async ({ page }) => {
-    await page.goto(GATE0);
+test.describe("The pre-flight — the card holds the whole pipeline without hiding a rule", () => {
+  test("@preflight every rule row is inside the scroller's visible box, not below its fold", async ({ page }) => {
+    await gotoPreflight(page);
     const scroller = page.getByTestId("rule-pipeline-scroll");
     await expect(scroller).toBeVisible();
 
@@ -1202,7 +1176,7 @@ test.describe("Gate 0 — the card holds the whole pipeline without hiding a rul
     expect(clipped, "no rule may be clipped away by the card").toEqual([]);
   });
 
-  test("@gate0 the card still scrolls rather than growing the page when the pipeline is long", async ({ page }) => {
+  test("@preflight the card still scrolls rather than growing the page when the pipeline is long", async ({ page }) => {
     await withPayload(page, (p) => {
       const r = reportsOf(p)[0];
       // A hypothetical longer pipeline. The backstop must engage rather than the page growing.
@@ -1218,7 +1192,7 @@ test.describe("Gate 0 — the card holds the whole pipeline without hiding a rul
       r.nChangedVariables = 0;
       r.diff = [];
     });
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     const box = await page.getByTestId("rule-pipeline-scroll").evaluate((el) => ({
       client: el.clientHeight,
       scroll: el.scrollHeight,
@@ -1242,9 +1216,9 @@ test.describe("Gate 0 — the card holds the whole pipeline without hiding a rul
 // full string never reached the browser at all. (2) needed a new `rawEmbedText` on the wire, composed by
 // core on the raw strings — deriving it in the UI is forbidden, because a plausible-looking wrong string
 // on the one screen that explains grouping is worse than showing nothing.
-test.describe("Gate 0 — the worked examples show the whole string, and the right pair", () => {
-  test("@gate0 a before/after example is never cut mid-word at 80 characters", async ({ page }) => {
-    await page.goto(GATE0);
+test.describe("The pre-flight — the worked examples show the whole string, and the right pair", () => {
+  test("@preflight a before/after example is never cut mid-word at 80 characters", async ({ page }) => {
+    await gotoPreflight(page);
     await page.waitForLoadState("networkidle");
     const fired = page.locator('[data-testid="rule-row"][data-outcome="changed"]').first();
     await fired.click();
@@ -1265,10 +1239,10 @@ test.describe("Gate 0 — the worked examples show the whole string, and the rig
     expect(clamped).toBe(0);
   });
 
-  test("@gate0 an embedding-affecting rule shows the string the grouping stage reads, before and after", async ({
+  test("@preflight an embedding-affecting rule shows the string the grouping stage reads, before and after", async ({
     page,
   }) => {
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     await page.waitForLoadState("networkidle");
 
     // Expand every fired rule so whichever one carries the embedding-affecting rows is open.
@@ -1308,9 +1282,9 @@ test.describe("Gate 0 — the worked examples show the whole string, and the rig
 //      characters between them, and no way to find the change the screen claims to be reporting
 //   2. the row-to-vector value was cut off with no scroll, in a card with unused width beside it
 //   3. there was no way to get this for the WHOLE dictionary, against the reviewer's own file
-test.describe("Gate 0 — the change is marked, not merely reported", () => {
-  test("@gate0 an expanded rule marks the words that moved, on both sides of the pair", async ({ page }) => {
-    await page.goto(GATE0);
+test.describe("The pre-flight — the change is marked, not merely reported", () => {
+  test("@preflight an expanded rule marks the words that moved, on both sides of the pair", async ({ page }) => {
+    await gotoPreflight(page);
     await page.waitForLoadState("networkidle");
     await page.locator('[data-testid="rule-row"][data-outcome="changed"]').first().click();
 
@@ -1320,13 +1294,13 @@ test.describe("Gate 0 — the change is marked, not merely reported", () => {
     expect(await marks.count()).toBeGreaterThan(0);
   });
 
-  test("@gate0 marking does not alter the string — the rendered text is still the whole value", async ({ page }) => {
+  test("@preflight marking does not alter the string — the rendered text is still the whole value", async ({ page }) => {
     /**
      * The failure this prevents is the one the 2026-08-26 review already fixed once, reintroduced by a
      * different mechanism: a diff that reflows, trims or drops a character would put a string on screen
      * that neither the file nor the model contains, while looking more authoritative than before.
      */
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     await page.waitForLoadState("networkidle");
     const payload = await fixturePayload(page);
     const known = new Set<string>();
@@ -1353,14 +1327,14 @@ test.describe("Gate 0 — the change is marked, not merely reported", () => {
     }
   });
 
-  test("@gate0 the marking is not carried by colour alone", async ({ page }) => {
+  test("@preflight the marking is not carried by colour alone", async ({ page }) => {
     /**
      * There is deliberately NO legend (review 2026-08-27): struck-through under a Before heading and
      * underlined under an After heading is self-explanatory, and a key repeated under every fired rule is
      * noise. That puts the whole burden on the marks themselves being distinguishable without colour —
      * which is what this asserts. A <span> pair differing only in background would not survive it.
      */
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     await page.waitForLoadState("networkidle");
     await page.locator('[data-testid="rule-row"][data-outcome="changed"]').first().click();
 
@@ -1371,7 +1345,7 @@ test.describe("Gate 0 — the change is marked, not merely reported", () => {
     expect(tags.every((t) => t === "DEL" || t === "INS")).toBe(true);
   });
 
-  test("@gate0 the whole prepared dictionary is offered, with what it contains stated", async ({ page }) => {
+  test("@preflight the whole prepared dictionary is offered, with what it contains stated", async ({ page }) => {
     /**
      * The picker above it can only offer the variables preparation CHANGED — that is all the run carries
      * per-variable detail for. The export is how the reviewer reaches the rest, and their own file.
@@ -1379,7 +1353,7 @@ test.describe("Gate 0 — the change is marked, not merely reported", () => {
      * The static preview has no backend to re-read an upload from, so what is asserted here is that the
      * control DECLARES its state rather than rendering a link that downloads a 404 named `.csv`.
      */
-    await page.goto(GATE0);
+    await gotoPreflight(page);
     await page.waitForLoadState("networkidle");
     const section = page.getByTestId("prepared-export").first();
     await expect(section).toBeVisible();
@@ -1416,8 +1390,8 @@ test.describe("Gate 0 — the change is marked, not merely reported", () => {
  * "nothing fired and the noise is still there" is not derivable from the report at any cap, and
  * approximating it from an empty sample would be inventing a measurement.
  */
-test.describe("Gate 0 — the pre-flight read, as functions", () => {
-  test("@gate0 the nothing-to-embed finding carries its count AND a variables denominator", () => {
+test.describe("The pre-flight — the pre-flight read, as functions", () => {
+  test("@preflight the nothing-to-embed finding carries its count AND a variables denominator", () => {
     const read = preflightRead(report({ nNothingToEmbed: 7, nUniqueVariableNames: 240 }), null);
     const finding = read.findings.find((f) => f.id === "nothing-to-embed");
     expect(finding, "the finding the report can always supply must be present").toBeDefined();
@@ -1430,7 +1404,7 @@ test.describe("Gate 0 — the pre-flight read, as functions", () => {
     expect(JSON.stringify(read)).not.toMatch(/\btier\b|\bgrade\b|\bscore\b|\b[A-F][+-]?\s*grade\b|★/i);
   });
 
-  test("@gate0 the pre-flight NEVER restates the repeated-variable-name finding", () => {
+  test("@preflight the pre-flight NEVER restates the repeated-variable-name finding", () => {
     // Q3's verdict, gated rather than trusted: that finding belongs to Setup's pre-Start mapping table.
     // The numbers it would need are RIGHT THERE on the report, which is exactly why this needs a test.
     const read = preflightRead(
@@ -1445,7 +1419,7 @@ test.describe("Gate 0 — the pre-flight read, as functions", () => {
     for (const f of read.findings) expect(f.count).not.toBe(500);
   });
 
-  test("@gate0 what the rules DID is stated per cohort, never as a cross-cohort mean", () => {
+  test("@preflight what the rules DID is stated per cohort, never as a cross-cohort mean", () => {
     const read = preflightRead(
       report({ cohort: "CLSA", nUniqueVariableNames: 5518, nChangedVariables: 97 }),
       null,
@@ -1458,7 +1432,7 @@ test.describe("Gate 0 — the pre-flight read, as functions", () => {
     expect(preflightRead.length).toBe(2);
   });
 
-  test("@gate0 the class the report provably cannot supply is DECLARED, never synthesised from the diff", () => {
+  test("@preflight the class the report provably cannot supply is DECLARED, never synthesised from the diff", () => {
     // No rule fired, so `diff` is empty by construction — there is nothing to scan for residual noise.
     const quiet = report({
       rules: [rule({ outcome: "no_change", nChanged: 0 })],
@@ -1474,7 +1448,7 @@ test.describe("Gate 0 — the pre-flight read, as functions", () => {
     expect(preflightRead(report(), null).gaps.map((g) => g.id)).toContain("unfired-noise");
   });
 
-  test("@gate0 the question-wording class is derived from the run's OWN mapping, or declared", () => {
+  test("@preflight the question-wording class is derived from the run's OWN mapping, or declared", () => {
     // AVAILABLE: the run recorded its column roles, so whether a participant-wording column was mapped
     // is a FACT about this run — not an estimate, and not a figure remembered from another cohort.
     const mapped = preflightRead(report(), { variable_name: "var", description: "desc", question_text: "q" });
@@ -1495,7 +1469,7 @@ test.describe("Gate 0 — the pre-flight read, as functions", () => {
     expect(gap!.pointer).toMatch(/export|download|prepared/i);
   });
 
-  test("@gate0 the derivation contains no percentage literal and no remembered cohort figure", async () => {
+  test("@preflight the derivation contains no percentage literal and no remembered cohort figure", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
@@ -1510,7 +1484,7 @@ test.describe("Gate 0 — the pre-flight read, as functions", () => {
     expect(body).not.toMatch(/descriptionsChanged/);
   });
 
-  test("@gate0 a report with nothing to flag is a POSITIVE finding, not an empty region", () => {
+  test("@preflight a report with nothing to flag is a POSITIVE finding, not an empty region", () => {
     const clean = preflightRead(
       report({ nNothingToEmbed: 0 }),
       { variable_name: "var", description: "desc", question_text: "q" },

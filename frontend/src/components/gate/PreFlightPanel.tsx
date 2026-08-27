@@ -99,7 +99,11 @@ function RowToVector({ report }: { report: PreprocessReport }) {
           {/* PROSE KEEPS ITS MEASURE; DATA GETS THE ROOM. The picker is a control and needs a control's
               width; the string beside it is the thing the screen exists to show, and capping it at a
               prose measure left half the card empty while the value it holds was the part being read. */}
-          <div className="grid gap-4 md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] md:items-start">
+          {/* THE PICKER TRACK NARROWED WITH THE MOVE (08-14b). At 20rem it left the value 352px in Setup's
+              left column, where the retired full-width screen had given it ~700 — so the control was
+              taking half the room from the thing the panel exists to show. The rule did not change; the
+              container did, and the track follows it. */}
+          <div className="grid gap-4 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] md:items-start">
             <label className="flex flex-col gap-1 text-xs text-on-raised-muted">
               Variable
               <select
