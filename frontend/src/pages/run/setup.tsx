@@ -1283,11 +1283,18 @@ export default function SetupPage() {
           row until it is asked for. */}
       {/* TWO disclosures, not one. They answer different questions at different moments — "is my file
           clean enough to upload?" and "which column is which?" — and merging them reproduces the
-          verbosity that got the first version rewritten. Both CLOSED, so together they cost two rows. */}
+          verbosity that got the first version rewritten. Both CLOSED, so together they cost two rows.
+
+          ROLES FIRST, CHECKLIST SECOND (08-14g Task 2), and the order is load-bearing rather than a
+          layout preference: every checklist directive is ABOUT a role — the variable name, the
+          description, the question text — so a reviewer who meets the checklist first is being told what
+          to do in vocabulary they have not been given yet. Context precedes instruction. Gated in
+          `setup.spec.ts`, by geometry rather than by source order, because a flex container can reverse
+          what the JSX says. */}
       {stage === "compose" && (
         <div className="flex flex-col gap-2">
-          <DictionaryTipsPanel />
           <ColumnRolesPanel />
+          <DictionaryTipsPanel />
         </div>
       )}
 

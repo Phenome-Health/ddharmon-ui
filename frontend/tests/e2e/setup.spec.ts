@@ -2431,3 +2431,46 @@ test.describe("Setup — the how-to describes the screen that exists (08-14g)", 
     expect(text.length, "the orientation panel is too long to read in one pass").toBeLessThan(700);
   });
 });
+
+// --- context before instruction (08-14g Task 2) ---------------------------------------------------------
+//
+// Bhargav, 2026-08-31: "switch order of the other 2 dropdowns - user should have column role context so
+// they know what the check dictionary suggestions are referring to."
+//
+// He is right, and the reason generalises. The checklist's directives are ABOUT roles — description,
+// question text, the variable name — so a reviewer who meets the checklist first is being told what to do
+// with vocabulary they have not been given. Context precedes instruction. This is an ORDERING change
+// only: two questions, two disclosures, both still closed (08-14f Task 5's contract is unchanged).
+
+test.describe("Setup — the roles reference comes before the checklist (08-14g)", () => {
+  test("@setup the column-roles panel renders above the pre-upload checklist", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const roles = page.getByTestId("column-roles");
+    const tips = page.getByTestId("dictionary-tips");
+    await expect(roles).toBeVisible();
+    await expect(tips).toBeVisible();
+
+    const rolesBox = (await roles.boundingBox())!;
+    const tipsBox = (await tips.boundingBox())!;
+    expect(rolesBox.y, "the checklist still comes first, so its directives have no referent").toBeLessThan(
+      tipsBox.y,
+    );
+  });
+
+  test("@setup they are still two separate closed disclosures, not one merged panel", async ({ page }) => {
+    // An ordering change is not a licence to merge them. Merging reproduces the verbosity that got the
+    // first version rewritten — one long panel that answers neither question quickly.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("column-roles")).toHaveCount(1);
+    await expect(page.getByTestId("dictionary-tips")).toHaveCount(1);
+    // CLOSED: neither one's content is rendered until it is asked for.
+    await expect(page.getByTestId("column-role")).toHaveCount(0);
+    await expect(page.getByTestId("dictionary-tip")).toHaveCount(0);
+    for (const id of ["column-roles", "dictionary-tips"]) {
+      const box = (await page.getByTestId(id).boundingBox())!;
+      expect(box.height, `${id} is not a closed row`).toBeLessThan(72);
+    }
+  });
+});
