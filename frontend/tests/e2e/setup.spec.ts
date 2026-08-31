@@ -1449,18 +1449,28 @@ test.describe("Setup — the batch duration is modelled on the queue, and itemis
 
 
 /**
- * Setup's THIRD STATE — the free pre-flight (08-14b).
+ * Setup's THIRD STATE — the free BOUNDARY, with the preprocessing report RETIRED (08-14d).
  *
- * Gate 0 was demoted on 2026-08-26 (`08-DECISION-GATE0.md` D-2) and its content is now a panel on this
- * screen. What is asserted here is the WIRING, not the panel's content: the panel's own 60-odd assertions
- * came with it and live in `preflight.spec.ts`. The three claims this block makes are the ones that only
- * exist because of the move — that the pre-flight is absent before a run, that the screen visibly changes
- * state when one is started, and that reaching it never detours through the retired path.
+ * WHAT CHANGED AND WHY. 08-14b demoted Gate 0 and moved its 444 reviewed lines onto this screen as a
+ * pre-flight panel. Reviewing that live on 2026-08-31, Bhargav retired the content outright: the
+ * verbosity buried the screen, and the phase's remaining value is in Gates 1-4. So the PANEL is gone —
+ * `PreFlightPanel.tsx`, `lib/preprocess-report.ts`, `lib/text-diff.ts` and the components built to serve
+ * them, plus the 1,497-line `preflight.spec.ts` that covered it.
+ *
+ * WHAT SURVIVES, and it is the point of this block. The BOUNDARY is not the panel. `08-DECISION-GATE0.md`
+ * D-3 keeps the backend pause at `gate0: before_harmonize` exactly as built, so a run still parks here,
+ * still costs nothing to reach, and still needs its first charge committed from this screen. The panel was
+ * the receipt; the boundary is the money. Deleting the first must not disturb the second, and these
+ * assertions are what says so.
+ *
+ * ASSERTED FROM SOURCE AS WELL AS FROM THE DOM. A deleted component that is still imported somewhere is a
+ * build error, but a deleted component whose *copy* was pasted into its replacement is not — and copy is
+ * exactly what was being complained about. The grep gate below reads the source tree.
  */
-test.describe("Setup — the free pre-flight", () => {
+test.describe("Setup — the boundary, with the report retired", () => {
   /**
    * Serve a MUTATED copy of the committed fixture, so the state under test is a real payload with one
-   * fact substituted. Same technique the panel's own spec uses, and for the same reason: the shipped
+   * fact substituted. Same technique the retired panel's spec used, and for the same reason: the shipped
    * fixture is parked at Gate 1, and a file cannot honestly be parked at two boundaries at once.
    */
   async function withRun(
@@ -1475,45 +1485,88 @@ test.describe("Setup — the free pre-flight", () => {
     );
   }
 
-  /** The fixture, re-parked at the pre-flight boundary — where a real run sits after Start. */
-  const atPreflight = (p: Record<string, unknown>): void => {
+  /** The fixture, re-parked at the free boundary — where a real run sits after Start. */
+  const atBoundary = (p: Record<string, unknown>): void => {
     (p as { status: string; phase: string }).status = "awaiting_review";
     (p as { status: string; phase: string }).phase = "awaiting_review";
     (p as { gatePosition: string }).gatePosition = RETIRED_GATE;
     (p.result as { gatePosition: string }).gatePosition = RETIRED_GATE;
   };
 
-  test("@setup a Setup with no run renders no pre-flight region at all", async ({ page }) => {
-    // COMPOSE mode: there is nothing to report on, and an empty pre-flight would read as a run whose
-    // preparation found nothing — a claim about the dictionaries rather than about the absence of a run.
-    await page.goto(DRAFT);
-    await page.waitForLoadState("networkidle");
-    await expect(page.getByTestId("preflight")).toHaveCount(0);
-    await expect(page.getByTestId("setup-dictionaries-disclosure")).toHaveCount(0);
-    // The screen is still the one it always was.
-    await expect(page.getByTestId("dict-upload")).toHaveCount(1);
-    await expect(page.getByTestId("start-run")).toBeVisible();
+  test("@setup the source tree no longer reaches for the retired report, in any file", async () => {
+    // THE DELETION GATE. A component with no importer still ships in the bundle if something imports it
+    // for a type, and a stray import is how "deleted" quietly becomes "unrendered". Read the tree.
+    const { readdirSync, readFileSync, statSync, existsSync: exists } = await import("node:fs");
+    const { dirname, join, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+    // The files themselves are GONE — not emptied, not commented out.
+    for (const gone of [
+      "src/components/gate/PreFlightPanel.tsx",
+      "src/components/gate/InputQualitySignals.tsx",
+      "src/components/gate/RulePipelineList.tsx",
+      "src/components/gate/DiffText.tsx",
+      "src/lib/preprocess-report.ts",
+      "src/lib/text-diff.ts",
+      "tests/e2e/preflight.spec.ts",
+    ]) {
+      expect(exists(resolve(root, gone)), `${gone} must be deleted, not left behind`).toBe(false);
+    }
+
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((e) => {
+        const p = join(dir, e);
+        return statSync(p).isDirectory() ? walk(p) : [p];
+      });
+    const offenders = walk(resolve(root, "src"))
+      .filter((f) => /\.tsx?$/.test(f))
+      .filter((f) => /PreFlightPanel|preprocess-report|text-diff|DiffText|RulePipelineList|InputQualitySignals/.test(readFileSync(f, "utf8")));
+    expect(offenders.map((f) => f.slice(root.length + 1))).toEqual([]);
   });
 
-  test("@setup a run at the pre-flight boundary leads with the findings and collapses the mapping", async ({
-    page,
-  }) => {
-    await withRun(page, atPreflight);
+  test("@setup a run at the boundary renders no preprocessing report at all", async ({ page }) => {
+    await withRun(page, atBoundary);
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
 
-    // The pre-flight is present, and it is ABOVE the dictionaries — the reviewer's job at this point is
-    // to read and fix, not to configure.
-    const preflight = page.getByTestId("preflight");
-    await expect(preflight).toBeVisible();
+    // Every testid the report owned, gone — including the ones behind its disclosure, which is why the
+    // count is asserted rather than the visibility.
+    for (const id of [
+      "preflight",
+      "prepare-aggregate",
+      "preflight-finding",
+      "preflight-gap",
+      "preflight-summary",
+      "preflight-all-clear",
+      "frozen-audit-trail",
+      "cohort-panel",
+      "example-before",
+      "example-after",
+    ]) {
+      await expect(page.getByTestId(id), `${id} belonged to the retired report`).toHaveCount(0);
+    }
+    // And its prose is not paraphrased somewhere else on the screen either.
+    const text = await page.locator("main").innerText();
+    expect(text).not.toMatch(/what preparation found/i);
+    expect(text).not.toMatch(/before you spend/i);
+  });
+
+  test("@setup the boundary still parks the run, collapses the mapping and offers the first charge", async ({
+    page,
+  }) => {
+    // THE BOUNDARY IS NOT THE PANEL (D-3). Deleting the report must leave a parked run exactly as
+    // committable as it was — this is the assertion that separates the two.
+    await withRun(page, atBoundary);
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByTestId("commit-bar")).toBeVisible();
+    await expect(page.getByTestId("nothing-charged-yet")).toBeVisible();
+    // The mapping is COLLAPSED, not deleted: the column roles are fixed for this run, so five open tables
+    // would be five tables of decisions that can no longer be made.
     const disclosure = page.getByTestId("setup-dictionaries-disclosure");
     await expect(disclosure).toBeVisible();
-    const preflightTop = (await preflight.boundingBox())!.y;
-    const mappingTop = (await disclosure.boundingBox())!.y;
-    expect(preflightTop).toBeLessThan(mappingTop);
-
-    // The mapping is COLLAPSED, not deleted: the column roles are fixed for this run, so five open
-    // tables would be five tables of decisions that can no longer be made.
     await expect(page.getByTestId("dict-card")).toHaveCount(0);
     await expect(page.getByTestId("setup-dictionaries-summary")).toContainText(/dictionaries/);
     await disclosure.getByRole("button").first().click();
@@ -1522,24 +1575,22 @@ test.describe("Setup — the free pre-flight", () => {
     await expect(page.getByTestId("name-check-unavailable").first()).toBeVisible();
   });
 
-  test("@setup a run that has moved past the pre-flight keeps the report as a read-back, and says so", async ({
-    page,
-  }) => {
-    // The committed fixture is parked at Gate 1, i.e. PAST this boundary. The cleaning stays auditable
-    // (pre-build question Q2) but it is a record now — and nothing here may offer a charge that has
-    // already happened.
+  test("@setup a run past the boundary says so and points at where to rejoin", async ({ page }) => {
+    // The committed fixture is parked at Gate 1, i.e. PAST this boundary. The note is what stops this
+    // screen reading as a live decision, and it must not offer a charge that has already happened.
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
-    await expect(page.getByTestId("preflight")).toBeVisible();
-    const note = page.getByTestId("preflight-read-back");
+    const note = page.getByTestId("past-boundary-note");
     await expect(note).toBeVisible();
     await expect(note).toContainText(/moved on/i);
+    await expect(note.getByRole("link")).toBeVisible();
+    await expect(page.getByTestId("commit-bar")).toHaveCount(0);
     // The mapping is NOT collapsed here: there is no finding above it competing for attention.
     await expect(page.getByTestId("setup-dictionaries-disclosure")).toHaveCount(0);
     await expect(page.getByTestId("dict-card")).toHaveCount(5);
   });
 
-  test("@setup reaching the pre-flight never hops through the retired gate path", async ({ page }) => {
+  test("@setup reaching the boundary never hops through the retired gate path", async ({ page }) => {
     // ASSERT THE HOP, NOT THE DESTINATION. After the demotion the retired URL redirects to this screen,
     // so Setup -> retired path -> Setup leaves the correct final URL and fails nothing — it is visible
     // only as a flicker. `framenavigated` fires for the history-API pushes this router uses, so the whole
@@ -1548,10 +1599,10 @@ test.describe("Setup — the free pre-flight", () => {
     page.on("framenavigated", (frame) => {
       if (frame === page.mainFrame()) seen.push(new URL(frame.url()).pathname);
     });
-    await withRun(page, atPreflight);
+    await withRun(page, atBoundary);
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
-    await expect(page.getByTestId("preflight")).toBeVisible();
+    await expect(page.getByTestId("commit-bar")).toBeVisible();
     expect(seen.filter((u) => u.endsWith(`/${RETIRED_GATE}`)), `navigated: ${seen.join(" -> ")}`).toEqual(
       [],
     );
@@ -1574,23 +1625,27 @@ test.describe("Setup — the free pre-flight", () => {
     const { fileURLToPath } = await import("node:url");
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
     const src = readFileSync(resolve(root, "src/pages/run/setup.tsx"), "utf8");
-    // Matched on the ASSIGNMENT, so a comment naming the hook cannot push the count to two. The
-    // pre-flight reads the run the page already holds; a second subscription beside it is two sources for
-    // one run's state, which is the defect the shell's own stop control was written to avoid.
+    // Matched on the ASSIGNMENT, so a comment naming the hook cannot push the count to two. A second
+    // subscription beside the page's own is two sources for one run's state, which is the defect the
+    // shell's own stop control was written to avoid. The panel that used to be checked here for the same
+    // property is gone; the export that replaced it is a pure render over props and opens none either.
     expect([...src.matchAll(/=\s*useHarmonizeStream\(/g)]).toHaveLength(1);
-    // …and the panel opens none of its own.
-    const panel = readFileSync(resolve(root, "src/components/gate/PreFlightPanel.tsx"), "utf8");
-    expect(panel).not.toContain("useHarmonizeStream");
+    const exp = readFileSync(resolve(root, "src/components/gate/PreparedExport.tsx"), "utf8");
+    expect(exp).not.toContain("useHarmonizeStream");
   });
 
-  test("@setup there is no raw-HTML injection on Setup or on the pre-flight", async () => {
+  test("@setup there is no raw-HTML injection on Setup or on what it still renders", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
     // Uploaded dictionary text is echoed on a screen the guest walk reaches. The before/after examples
-    // moved here with the panel, so the no-raw-HTML rule followed them to their new path.
-    for (const f of ["src/pages/run/setup.tsx", "src/components/gate/PreFlightPanel.tsx"]) {
+    // that made this rule urgent are deleted, but the cohort names on the export are still the user's.
+    for (const f of [
+      "src/pages/run/setup.tsx",
+      "src/components/gate/PreparedExport.tsx",
+      "src/components/gate/DictionaryTipsPanel.tsx",
+    ]) {
       expect(readFileSync(resolve(root, f), "utf8"), f).not.toContain("dangerouslySetInnerHTML");
     }
   });
@@ -1722,53 +1777,20 @@ test.describe("Setup — the run's first charge", () => {
     }
   });
 
-  test("@setup the pre-flight renders NO duplicate-name finding, while the mapping table still does", async ({
+  test("@setup the prepared-dictionary export survives the report, as a primary affordance", async ({
     page,
   }) => {
-    // Q3's verdict, gated rather than trusted. `nameCheck` ships pre-Start on this same screen, where it
-    // recomputes as the mapping changes and is fixable IN PLACE. Rendering it a second time here — at the
-    // moment it has become harder to act on — is the defect that re-scoped this task.
-    await atPreflight(page);
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
-    // The two unambiguous phrases are checked over the WHOLE panel.
-    const preflight = await page.getByTestId("preflight").innerText();
-    expect(preflight).not.toMatch(/unique (variable )?names?/i);
-    expect(preflight).not.toMatch(/dropped silently/i);
-
-    // `repeated` is checked over what THIS derivation emits, not over the whole panel. The inherited
-    // quality signals carry the sentence "descriptions that were the same boilerplate sentence, repeated
-    // across variables" — a shipped, reviewed and entirely unrelated finding. A whole-panel match on that
-    // word would convict it, and the only available fix would be to reword a correct signal, which is how
-    // a gate starts costing more than it catches.
-    const derived = (
-      await page
-        .locator(
-          "[data-testid='preflight-finding'], [data-testid='preflight-gap'], [data-testid='preflight-summary'], [data-testid='preflight-all-clear']",
-        )
-        .allInnerTexts()
-    ).join(" ");
-    expect(derived.length, "the derivation must actually be rendering something").toBeGreaterThan(0);
-    expect(derived).not.toMatch(/repeated/i);
-    expect(derived).not.toMatch(/duplicat/i);
-
-    // …and the shipped check is still there, untouched, one disclosure away.
-    await page.getByTestId("setup-dictionaries-disclosure").getByRole("button").first().click();
-    await expect(page.getByTestId("name-check-unavailable").first()).toBeVisible();
-  });
-
-  test("@setup the export is a primary affordance with its contents stated, not a bare link", async ({
-    page,
-  }) => {
+    // D-5 SURVIVES 08-14d. The export was always the one part of this surface a reviewer could use: their
+    // own columns back, verbatim and in order, with the embedding text appended. It is independent of the
+    // report — it re-reads and re-prepares the file on request rather than reading the run's capped diff —
+    // and with the report deleted it is the ONLY way to see what preparation did.
     await atPreflight(page);
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
     const exp = page.getByTestId("prepared-export").first();
     await expect(exp).toBeVisible();
-    // It is NOT inside the frozen disclosure — it is the answer to two of the declared gaps, so it must
-    // be reachable without expanding anything.
-    await expect(page.getByTestId("frozen-audit-trail").first()).toHaveAttribute("data-state", "closed");
-    // A heading of its own, not a link at the end of a paragraph.
+    // REACHABLE WITHOUT EXPANDING ANYTHING. It is the answer, not a footnote behind a disclosure — and the
+    // disclosure it used to sit beside is deleted, so there is nothing left to hide it behind.
     await expect(exp.getByRole("heading")).toBeVisible();
 
     // THE STATIC BUILD HAS NO SERVER TO RE-READ THE UPLOAD FROM, so `preparedExportUrl` returns null here
@@ -1780,79 +1802,21 @@ test.describe("Setup — the run's first charge", () => {
     await expect(exp.getByRole("link")).toHaveCount(0);
   });
 
-  test("@setup the export states what it contains, for every variable rather than the sample", async () => {
+  test("@setup the export states what it contains, for every variable rather than a sample", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-    const src = readFileSync(resolve(root, "src/components/gate/PreFlightPanel.tsx"), "utf8");
-    const block = src.slice(src.indexOf("function PreparedExport"));
-    // Read from source because the branch that renders it is unreachable in a static build. It is a claim
-    // about COPY, and the copy is what makes the export an answer rather than a link: it returns the
-    // reviewer's own columns back with the embedding text appended for EVERY variable, not only the
-    // capped sample this screen carries detail for.
-    expect(block).toMatch(/EVERY variable/i);
-    expect(block).toContain("ddharmon_embedding_text");
-    expect(block).toMatch(/not only the ones that changed/i);
+    // READ FROM SOURCE because the branch that renders it is unreachable in a static build. It is a claim
+    // about COPY, and the copy is what makes the export an answer rather than a link. Its file moved out
+    // of the deleted panel and into its own component, which is the whole reason this path is re-pointed.
+    const src = readFileSync(resolve(root, "src/components/gate/PreparedExport.tsx"), "utf8");
+    expect(src).toMatch(/EVERY variable/i);
+    expect(src).toContain("ddharmon_embedding_text");
+    expect(src).toMatch(/not only the ones that changed/i);
   });
 
-  test("@setup each declared gap renders with its reason AND a pointer, never as a bare not-available", async ({
-    page,
-  }) => {
-    await atPreflight(page);
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
-    const gaps = page.getByTestId("preflight-gap");
-    await expect(gaps.first()).toBeVisible();
-    for (const g of await gaps.all()) {
-      const text = (await g.innerText()).trim();
-      await expect(g).toContainText(/not available/i);
-      // "Not available" with no reason is indistinguishable from "zero", and with no pointer it is a dead
-      // end. Both are required, and the pointer is the export — the one surface that CAN answer.
-      expect(text.length, `a declared gap must carry its reason: ${text}`).toBeGreaterThan(120);
-      expect(text).toMatch(/prepared dictionary/i);
-    }
-    // The class the report provably cannot supply is declared rather than synthesised from a diff that is
-    // empty by construction when no rule fires.
-    await expect(page.locator("[data-gap='unfired-noise']").first()).toBeVisible();
-  });
-
-  test("@setup the findings are per cohort, and no figure is combined across cohorts", async ({ page }) => {
-    // ASSERTED STRUCTURALLY, NOT LEXICALLY. A word-match on "mean"/"average" convicts correct inherited
-    // copy — "variables that mean different things" is a sentence about semantics, not a statistic — and
-    // the only available fix would be rewording a reviewed signal. What actually matters is that the
-    // numbers BELONG to one cohort: switch the tab and they change.
-    await atPreflight(page);
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
-
-    const denominators = async (): Promise<string[]> =>
-      page.getByTestId("preflight-finding").evaluateAll((els) =>
-        els.map((e) => `${e.getAttribute("data-count")}/${e.getAttribute("data-of")}`),
-      );
-
-    const tabs = page.locator("[role='tab'][data-cohort]");
-    const n = await tabs.count();
-    expect(n, "the fixture carries several cohorts, which is what makes this assertable").toBeGreaterThan(1);
-    const first = await denominators();
-    expect(first.length).toBeGreaterThan(0);
-
-    // Every visible denominator is ONE cohort's variable count, never the corpus total. The aggregate
-    // above the tabs is the only run-wide figure, and it states a FRACTION of dictionaries.
-    const aggregate = await page.getByTestId("prepare-aggregate").innerText();
-    expect(aggregate).toMatch(/dictionar(y|ies)/i);
-    const runTotal = Number((aggregate.match(/([\d,]+) variables/)?.[1] ?? "0").replace(/,/g, ""));
-    for (const d of first) {
-      expect(Number(d.split("/")[1]), `${d} is the whole corpus, not this cohort`).toBeLessThan(runTotal);
-    }
-
-    await tabs.nth(1).click();
-    await expect(page.getByTestId("cohort-panel").filter({ visible: true }).first()).toBeVisible();
-    // The panel re-derives from the cohort now on screen. Its report is its own.
-    expect((await denominators()).length).toBeGreaterThan(0);
-  });
-
-  test("@setup nothing on the pre-flight claims the staged flow is free until you pick what to buy", async ({
+  test("@setup nothing on Setup claims the staged flow is free until you pick what to buy", async ({
     page,
   }) => {
     await atPreflight(page);
