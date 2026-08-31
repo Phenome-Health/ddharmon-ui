@@ -4,12 +4,24 @@
 // metadata without leaving the app, and an over-merge (is this really 25 BP vars, or BP+pulse mislumped?)
 // becomes obvious at a glance.
 //
-// Reads the already-persisted contract only — `record.members` ("cohort:var" keys) into `fieldIndex` — so it
+// Reads the already-persisted contract only — member ids ("cohort:var" keys) into `fieldIndex` — so it
 // slots into EXISTING runs with no re-run or migration. For a run that predates `fieldIndex` it degrades to
 // `memberDetails` (name + embedded text), then to the raw id: fewer columns, never a crash.
+//
+// LIFTED TO GATE 1, 2026-08-31 (the inherited-UI audit's verdict on this file). It was reachable only from
+// the workbench, which is downstream of assignment — but the judgement it supports is Gate 1's: "is this
+// really 25 blood-pressure variables, or blood-pressure plus pulse mislumped?" is exactly what a reviewer
+// is asked at the concept-group gate, and asking it from a generated name and a row of chips leaves the
+// evidence one screen away.
+//
+// THE ADAPT IS THE SIGNATURE, AND ONLY THE SIGNATURE. It took a whole `UIRecord`, which is a POST-ASSIGN
+// shape — it carries a verdict, a route, a CDE and ranked candidates, none of which exist yet at Gate 1,
+// whose row is a `ConceptGroup`. So it now takes the two things it ever read: the member ids and the
+// optional per-member detail. Both call sites pass what they hold, and there is still ONE grid — building
+// a second for Gate 1 is the duplication the audit exists to catch.
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { FieldDetail, UIRecord } from "@/types";
+import type { FieldDetail, UIMember } from "@/types";
 
 // Bound a pathological over-merge so the grid stays a bounded widget, never a page-blowing dump. The
 // scroll region already caps height; this caps the DOM row count. Overflow is surfaced with a footer note.
@@ -41,10 +53,14 @@ function encodingText(fd: FieldDetail | undefined): string | undefined {
   return fd.valueEncoding || undefined;
 }
 
-function buildRows(record: UIRecord, fieldIndex: Record<string, FieldDetail>): SourceRow[] {
-  // `members` is the canonical, ordered member list; fall back to memberDetails ids for older shapes.
-  const ids = record.members?.length ? record.members : (record.memberDetails ?? []).map((m) => m.id);
-  const byId = new Map((record.memberDetails ?? []).map((m) => [m.id, m]));
+function buildRows(
+  memberIds: string[],
+  memberDetails: UIMember[] | undefined,
+  fieldIndex: Record<string, FieldDetail>,
+): SourceRow[] {
+  // The caller's ordered member list; fall back to memberDetails ids for older shapes.
+  const ids = memberIds.length ? memberIds : (memberDetails ?? []).map((m) => m.id);
+  const byId = new Map((memberDetails ?? []).map((m) => [m.id, m]));
   return ids.map((id) => {
     const fd = fieldIndex[id];
     const md = byId.get(id);
@@ -91,16 +107,27 @@ function TextCell({ value, className }: { value?: string; className?: string }) 
 }
 
 /** The raw source-dictionary rows behind a concept group, as a bounded, horizontally-scrollable grid.
- *  Optional columns render only when at least one member carries that field, so older/sparse runs stay clean. */
+ *  Optional columns render only when at least one member carries that field, so older/sparse runs stay clean.
+ *
+ *  RETURNS NULL WHEN THERE IS NOTHING TO SHOW, which is the caller's cue to fall back to whatever
+ *  membership view it already has. An empty grid would claim the rows are missing from the dictionary;
+ *  they are missing from this RUN's payload, which is a different thing. */
 export function SourceRows({
-  record,
+  memberIds,
+  memberDetails,
   fieldIndex,
 }: {
-  record: UIRecord;
+  /** The group's member ids, `cohort:var`, in the order the pipeline pooled them. */
+  memberIds: string[];
+  /** Per-member name and embedded text, when the caller's shape carries it. */
+  memberDetails?: UIMember[];
   fieldIndex: Record<string, FieldDetail>;
 }) {
-  const rows = buildRows(record, fieldIndex);
-  if (!rows.length) return null;
+  const rows = buildRows(memberIds, memberDetails, fieldIndex);
+  // Ids alone are not evidence: with no `fieldIndex` and no `memberDetails` every column but the two the
+  // caller already renders as a chip would be a dash.
+  const hasDetail = rows.some((r) => r.description || r.questionText || r.valueEncoding || r.units || r.dataType);
+  if (!rows.length || !hasDetail) return null;
 
   const shown = rows.slice(0, ROW_CAP);
   const extra = rows.length - shown.length;
@@ -118,8 +145,15 @@ export function SourceRows({
   const showEmbedded = has((r) => !!r.text && r.text !== r.description && r.text !== r.questionText);
 
   return (
-    <div className="space-y-1.5">
-      <div className="max-h-[28rem] overflow-auto rounded-md border border-rule-on-raised">
+    // `min-w-0` is load-bearing INSIDE THE GATE 1 EXPANDED ROW. Its parent is a flex column, whose items
+    // default to `min-width: auto` and therefore refuse to shrink below their content — so without this
+    // the widest cell would push the ledger's own columns sideways and give the whole page a horizontal
+    // scrollbar. Wide content scrolls in the container below instead.
+    <div data-testid="source-rows" className="min-w-0 space-y-1.5">
+      <div
+        data-testid="source-rows-scroll"
+        className="max-h-[28rem] overflow-auto rounded-md border border-rule-on-raised"
+      >
         <table className="w-full border-collapse text-xs">
           {/* sticky on the <thead> section (with border-collapse) is the combination that actually pins in
               Chromium/Firefox/Safari 16+; sticky on <th> cells silently fails under border-collapse. */}

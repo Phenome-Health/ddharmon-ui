@@ -265,3 +265,52 @@ export function matchTerms(
   }
   return { ids, noMatches };
 }
+
+// --- regrouping, and the one paid action on this screen ----------------------------------------------------
+
+/**
+ * The effective membership of every group AFTER the reviewer's moves.
+ *
+ * Regroup decisions are keyed on the VARIABLE MOVED (`gate1_regroup`'s identity field is `memberId`), so
+ * the current grouping is the original one with those per-variable overrides applied. Computed rather than
+ * stored, for the same reason the touched state is: a copy of the membership held in component state is
+ * gone on reload, and R6 requires the correction to still be there.
+ *
+ * `moves` maps a member id to the group it now belongs to. `UNASSIGNED` is a real destination in that map,
+ * not a sentinel to special-case at every call site.
+ */
+export function effectiveMembers(
+  groups: readonly ConceptGroup[],
+  membersByGroup: Record<string, string[]>,
+  moves: Record<string, string>,
+): { byGroup: Record<string, string[]>; unassigned: string[] } {
+  const byGroup: Record<string, string[]> = {};
+  const unassigned: string[] = [];
+  for (const g of groups) byGroup[g.groupId] = [];
+  for (const g of groups) {
+    // The UNCAPPED list when the run carries one; the collapsed sample only as a last resort, and a move
+    // written against a partial sample is exactly what T-08-89 forbids — which is why the expanded row
+    // reads this and never `memberVariableNames` directly.
+    for (const memberId of membersByGroup[g.groupId] ?? g.memberVariableNames) {
+      const destination = moves[memberId] ?? g.groupId;
+      if (destination in byGroup) byGroup[destination].push(memberId);
+      else unassigned.push(memberId);
+    }
+  }
+  return { byGroup, unassigned };
+}
+
+/**
+ * The re-adjudication request for ONE accepted carve.
+ *
+ * A FUNCTION, RATHER THAN AN INLINE OBJECT LITERAL AT THE CALL SITE, because "exactly one id, never an
+ * empty list, never everything flagged" is the prohibition this screen has to satisfy and an inline
+ * literal is a prohibition asserted nowhere. Re-splitting every flagged group BECAUSE it was flagged is an
+ * auto-resolution of an over-merge with no human decision behind it — core's own `readjudicate` docstring
+ * forbids the pipeline from doing it, and the backend refuses an empty list for the same reason.
+ */
+export function readjudicationRequest(groupId: string): { groupIds: string[] } {
+  const id = groupId.trim();
+  if (!id) throw new Error("re-adjudication needs the id of the one group the reviewer accepted");
+  return { groupIds: [id] };
+}

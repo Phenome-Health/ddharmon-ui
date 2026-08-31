@@ -50,6 +50,9 @@ export function MemberChip({
     <span
       data-testid="member-chip"
       data-member-id={memberId}
+      // The moved state as DATA as well as as a border colour. It is derived from a persisted decision, so
+      // a gate asserting "this correction survived a reload" has to read it rather than eyeball a hue.
+      data-moved={String(moved)}
       draggable={draggable}
       onDragStart={(e) => {
         e.dataTransfer.setData(MEMBER_DRAG_TYPE, memberId);
@@ -100,10 +103,18 @@ export function MemberDropZone({
       aria-label={label}
       onDragOver={(e) => {
         e.preventDefault();
+        // STOPS AT THE INNERMOST ZONE. A drop zone nested inside a droppable ledger row would otherwise
+        // let the row light up as the destination while the cursor is over the tray inside it.
+        e.stopPropagation();
         e.dataTransfer.dropEffect = "move";
       }}
       onDrop={(e) => {
         e.preventDefault();
+        // LOAD-BEARING. Without it the drop bubbles to the enclosing ledger row, whose own handler runs
+        // SECOND and moves the variable straight back into the group it was just dragged out of — so
+        // dropping onto the no-group tray silently did nothing. Found in test, and invisible by
+        // inspection: each handler is correct on its own.
+        e.stopPropagation();
         const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
         if (memberId) onDropMember(memberId, groupId);
       }}

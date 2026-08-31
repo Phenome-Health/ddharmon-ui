@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import { Grid3x3, Sparkles } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
 import { LedgerRow } from "@/components/gate/LedgerRow";
@@ -9,19 +10,25 @@ import { CoherenceMark } from "@/components/gate/CoherenceMark";
 import { CohortCoverage } from "@/components/gate/CohortCoverage";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
+import { CarveProposal } from "@/components/gate/CarveProposal";
 import { GroupingStrip } from "@/components/gate/GroupingStrip";
+import { MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } from "@/components/gate/MemberChip";
+import { NotAvailable } from "@/components/gate/NotAvailable";
+import { SourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { TermSearch } from "@/components/gate/TermSearch";
 import { useGateDecisions } from "@/hooks/use-gate-decisions";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { resumeRun } from "@/lib/api";
+import { readjudicateGroups, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import {
   DEFAULT_BUCKET,
   NO_FILTERS,
   applyFilters,
   activeFilterCount,
+  effectiveMembers,
   isFlagged,
+  readjudicationRequest,
   matchTerms,
   partitionByBreadth,
   pricePerGroup,
@@ -31,7 +38,7 @@ import {
   type SortKey,
 } from "@/lib/ledger";
 import { isParked } from "@/lib/run-state";
-import type { ConceptGroup, RunMode } from "@/types";
+import type { ConceptGroup, FieldDetail, RunMode } from "@/types";
 
 /**
  * Gate 1 — the ledger. The load-bearing screen: where the reviewer scopes and reshapes before the BULK of
@@ -104,16 +111,23 @@ function GroupRow({
   group,
   allCohorts,
   price,
+  count,
   inScope,
   onScopeChange,
   changed,
+  onDropMember,
+  children,
 }: {
   group: ConceptGroup;
   allCohorts: string[];
   price: number;
+  /** The membership size AFTER the reviewer's moves, which is what the row reports. */
+  count: number;
   inScope: boolean;
   onScopeChange: (inScope: boolean) => void;
   changed: boolean;
+  onDropMember: (memberId: string) => void;
+  children: React.ReactNode;
 }) {
   const judged = group.coherence !== "not_judged";
   return (
@@ -145,11 +159,12 @@ function GroupRow({
       count={
         <>
           {/* The TRUE member count, even when the collapsed sample is capped — regrouping against a
-              partial sample would silently drop the members it never showed (T-08-89). */}
-          {group.nMembers}
+              partial sample would silently drop the members it never showed (T-08-89) — and updated by
+              the reviewer's own moves, so the row never reports a size it no longer has. */}
+          {count}
           {/* The column header is `Vars`, which a reviewer reads once and a screen-reader user hears
               never: the row announces its own unit so the number is not a bare digit. */}
-          <span className="sr-only"> {group.nMembers === 1 ? "variable" : "variables"}</span>
+          <span className="sr-only"> {count === 1 ? "variable" : "variables"}</span>
         </>
       }
       cost={price}
@@ -157,17 +172,284 @@ function GroupRow({
       onSelectedChange={onScopeChange}
       unresolved={isFlagged(group)}
       changed={changed}
+      // Every row is a drop destination, which is what makes the ledger itself the list of places a
+      // variable can go — see `LedgerRow.onDropMember`.
+      onDropMember={onDropMember}
     >
-      {/* The expanded body is 08-15 Task 3's. Until then the row still expands and still says something
-          true, rather than opening onto nothing. */}
-      <p className="text-sm text-on-raised-muted">
-        {group.nMembers} {group.nMembers === 1 ? "variable" : "variables"} from{" "}
-        {group.cohorts.join(", ") || "no cohort recorded"}.
-      </p>
-      {group.coherenceSummary && (
-        <p className="max-w-[80ch] text-sm text-on-raised">{group.coherenceSummary}</p>
-      )}
+      {children}
     </LedgerRow>
+  );
+}
+
+/**
+ * Why accepting a carve is not available on THIS run — or `null` when it is.
+ *
+ * Three refusals, in the order the backend applies them, so the copy on screen matches the reason the
+ * server would actually give. Each is rendered as an honest `NotAvailable` naming its own cause rather
+ * than as a hidden control or a bare disabled button: hiding it means the reviewer never learns the
+ * capability exists, and a disabled button tells them they cannot do something without telling them why.
+ */
+function readjudicationRefusal(
+  { pinned, optedIn }: { pinned: boolean; optedIn: boolean },
+): { claim: "failed" | "not-enabled"; reason: React.ReactNode } | null {
+  if (pinned) {
+    return {
+      claim: "not-enabled",
+      reason:
+        "This is the shared sample run, which everyone sees, so it cannot be re-split — and it replays in " +
+        "your browser and spends nothing, so there would be nothing to charge. Start a run of your own to " +
+        "use it. Ignoring the proposal or editing it by hand still works here.",
+    };
+  }
+  if (!optedIn) {
+    return {
+      claim: "not-enabled",
+      reason:
+        "Accepting a division re-splits the group and re-assigns its parts, which costs money, so it is " +
+        "off unless a run asks for it. Turn it on at Set up when you start a run to enable it. Ignoring " +
+        "the proposal or editing it by hand still works.",
+    };
+  }
+  // NO BUILD-MODE ARM HERE, deliberately. A backend-less static build only ever serves the PINNED sample
+  // run, which the first refusal above already catches — so a third arm for it would be unreachable copy
+  // describing a state no reviewer can be in. If a request is somehow attempted without a server, the API
+  // client refuses it and the failure is surfaced as itself rather than pre-empted by a guess.
+  return null;
+}
+
+/**
+ * The group's own members: a real drop destination when a drop can be honoured, and a plain container when
+ * it cannot. Declared at module scope for the same remount reason as everything else that renders a chip.
+ */
+function MemberList({
+  groupId,
+  label,
+  onDropMember,
+  children,
+}: {
+  groupId: string;
+  label: string;
+  onDropMember?: (memberId: string) => void;
+  children: React.ReactNode;
+}) {
+  if (!onDropMember) {
+    return (
+      <div role="group" aria-label={label} className="flex flex-wrap gap-1 rounded-inner border border-rule-on-raised p-3">
+        {children}
+      </div>
+    );
+  }
+  return (
+    <MemberDropZone groupId={groupId} label={label} onDropMember={(memberId) => onDropMember(memberId)}>
+      {children}
+    </MemberDropZone>
+  );
+}
+
+/**
+ * The expanded row — the FULL membership, the evidence behind it, and the judge's proposal.
+ *
+ * DECLARED AT MODULE SCOPE, LIKE `MemberChip`, AND FOR THE SAME REASON. A component defined inside the
+ * page is a new component type on every render, so React unmounts and remounts its whole subtree on each
+ * state change — which cancels any drag in flight. That trap was found on the drag prototype branch; it is
+ * recorded on `MemberChip` and it applies to everything that renders one.
+ */
+function ExpandedGroup({
+  group,
+  members,
+  unassignedFromHere,
+  fieldIndex,
+  movedMembers,
+  onMove,
+  onRestore,
+  canRegroup,
+  refusal,
+  carvePrice,
+  onAcceptCarve,
+  onIgnoreCarve,
+  accepting,
+}: {
+  group: ConceptGroup;
+  /** The group's membership AFTER the reviewer's moves — uncapped. */
+  members: string[];
+  /**
+   * Variables that STARTED in this group and are now in no group.
+   *
+   * The tray has to show them. Without this the drop destination accepted a chip and then rendered
+   * nothing, so a variable dragged out simply vanished — a correction with no visible consequence, which
+   * is the same defect as a row that disappears when it is emptied.
+   */
+  unassignedFromHere: string[];
+  fieldIndex: Record<string, FieldDetail>;
+  /** Member ids the reviewer has moved, so a chip can say so. */
+  movedMembers: Set<string>;
+  onMove: (memberId: string, toGroupId: string) => void;
+  onRestore: () => void;
+  /** False when the run carries only a capped sample of this group — see `hasFullMembership`. */
+  canRegroup: boolean;
+  refusal: ReturnType<typeof readjudicationRefusal>;
+  carvePrice: React.ReactNode;
+  onAcceptCarve: () => void;
+  onIgnoreCarve: () => void;
+  accepting: boolean;
+}) {
+  const [ignored, setIgnored] = useState(false);
+  const emptied = canRegroup && members.length === 0;
+
+  return (
+    <>
+      {!canRegroup ? (
+        /* T-08-89 MADE MECHANICAL. This run carries only a capped SAMPLE of this group's members, so the
+           screen cannot see past the cap — and a move written against a partial list would silently drop
+           every member it never showed. The verb is withdrawn and the reason is stated, rather than the
+           move being offered over an incomplete list. */
+        <NotAvailable thing="Moving variables in this group" claim="failed">
+          This run recorded only the first {members.length} of its {" "}
+          {group.nMembers} variables for this group, so the rest are not on this screen. Moving one now
+          would quietly drop the ones you cannot see, so the move is withheld rather than offered over a
+          partial list. The variables below are the sample that was recorded.
+        </NotAvailable>
+      ) : emptied ? (
+        /* THE LAST VARIABLE LEFT. The row must NOT silently vanish — a reviewer has to be able to see what
+           they did and undo it, and a group that disappeared on the move it was emptied by is a change
+           with no visible consequence. */
+        <div
+          data-testid="group-emptied"
+          className="flex flex-col gap-2 rounded-inner border-l-4 border-l-accent-action bg-surface-inset px-4 py-3"
+        >
+          <p className="text-sm font-semibold text-on-inset">You moved every variable out of this group.</p>
+          <p className="max-w-[80ch] text-sm text-on-inset-muted">
+            It is empty, so it will not go on to Gate 2 and nothing will be matched for it. The row stays
+            here so you can see the change and undo it.
+          </p>
+          <div>
+            <Button type="button" variant="outline" size="sm" onClick={onRestore}>
+              Put them back
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {(canRegroup ? !emptied : true) && (
+        <MemberList
+          groupId={group.groupId}
+          label={`Variables in ${group.concept || group.groupId}`}
+          // A drop DESTINATION only where a drop can be honoured. A zone that announced itself as a
+          // destination and then rejected everything is a dead control with an accessible name.
+          onDropMember={canRegroup ? (memberId) => onMove(memberId, group.groupId) : undefined}
+        >
+          {members.map((memberId) => {
+            // A member id is `cohort:variable`. `fieldIndex` carries the variable's dictionary NAME but
+            // not its cohort, so the cohort comes from the id — which is where it came from in the first
+            // place — and the name from the index when the run has one.
+            const separator = memberId.indexOf(":");
+            const cohort = separator > 0 ? memberId.slice(0, separator) : "";
+            const variable = separator > 0 ? memberId.slice(separator + 1) : memberId;
+            return (
+              <MemberChip
+                key={memberId}
+                memberId={memberId}
+                cohort={cohort}
+                variable={fieldIndex[memberId]?.name || variable}
+                moved={movedMembers.has(memberId)}
+                draggable={canRegroup}
+              />
+            );
+          })}
+        </MemberList>
+      )}
+
+      {canRegroup && (
+        <p className="text-xs text-on-raised-muted">
+          Drag a variable onto another row to move it there, or onto the tray below to take it out of every
+          group. Your moves are saved as you make them.
+        </p>
+      )}
+
+      {/* The no-group tray. A REAL DESTINATION with its own identifier, not a sentinel special-cased at
+          each call site — which is what lets "take this out of every group" be the same verb as "put it in
+          that one" rather than a second code path. */}
+      {canRegroup && (
+        <MemberDropZone
+          groupId={UNASSIGNED_GROUP_ID}
+          label="Variables in no group"
+          onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
+          className="bg-surface-inset"
+        >
+          <span className="w-full text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
+            In no group
+            {unassignedFromHere.length > 0 && (
+              <span className="ml-2 font-mono normal-case tracking-normal">{unassignedFromHere.length}</span>
+            )}
+          </span>
+          {unassignedFromHere.length === 0 ? (
+            <span className="text-xs text-on-inset-muted">
+              Drop a variable here to take it out of every group. It will not be matched against a common
+              data element.
+            </span>
+          ) : (
+            unassignedFromHere.map((memberId) => {
+              const separator = memberId.indexOf(":");
+              return (
+                <MemberChip
+                  key={memberId}
+                  memberId={memberId}
+                  cohort={separator > 0 ? memberId.slice(0, separator) : ""}
+                  variable={
+                    fieldIndex[memberId]?.name ||
+                    (separator > 0 ? memberId.slice(separator + 1) : memberId)
+                  }
+                  moved
+                />
+              );
+            })
+          )}
+        </MemberDropZone>
+      )}
+
+      {/* THE EVIDENCE LAYER (lifted from the workbench by the 2026-08-31 inherited-UI audit). The judgement
+          this screen asks for — is this really one concept? — is made against the dictionary rows, and
+          asking it from a generated name and a row of chips leaves them a screen away. Returns null when
+          the run carries no field detail, in which case the chips above are the whole membership view. */}
+      <SourceRows memberIds={members} fieldIndex={fieldIndex} />
+
+      {/* The carve proposal, ONLY where the judge flagged an over-merge. The pipeline flags and never
+          re-groups, so nothing here is applied until the reviewer acts. */}
+      {isFlagged(group) && !ignored && (
+        <div className="flex flex-col gap-2">
+          <CarveProposal
+            subConcepts={group.coherenceDistinctValues.map((label, i) => ({
+              id: `${group.groupId}#sub${i}`,
+              label,
+            }))}
+            axis={group.coherenceAxis || undefined}
+            summary={group.coherenceSummary || undefined}
+            readjudicationEnabled={refusal === null}
+            notAvailable={
+              refusal && (
+                <NotAvailable thing="Accepting the division" claim={refusal.claim} className="bg-surface-raised">
+                  {refusal.reason}
+                </NotAvailable>
+              )
+            }
+            acceptPrice={carvePrice}
+            accepting={accepting}
+            acceptGroupIds={readjudicationRequest(group.groupId).groupIds}
+            onAccept={onAcceptCarve}
+            onIgnore={() => {
+              setIgnored(true);
+              onIgnoreCarve();
+            }}
+          />
+        </div>
+      )}
+      {isFlagged(group) && ignored && (
+        <p className="text-sm text-on-raised-muted">
+          Proposal ignored — the grouping is unchanged. The judge&rsquo;s flag stays on the row, because
+          ignoring a proposal is not the same as resolving what it was about.
+        </p>
+      )}
+    </>
   );
 }
 
@@ -260,7 +542,6 @@ export default function Gate1Page() {
   // Default IN. A reviewer who scopes nothing continues with everything, which is what "nothing blocks
   // Continue" has to mean; the checkbox REMOVES a group rather than admitting one.
   const isInScope = (groupId: string) => scope.decisions[groupId]?.chosen !== OUT_OF_SCOPE;
-  const inScopeGroups = groups.filter((g) => isInScope(g.groupId));
 
   // "You changed it" is DERIVED from persisted decisions, never from component state — R6 requires the
   // correction to be visible after a reload, and a flag in `useState` is gone the moment the page reloads.
@@ -274,11 +555,125 @@ export default function Gate1Page() {
   }, [regroups.decisions]);
   const isChanged = (groupId: string) => groupId in scope.decisions || touchedByRegroup.has(groupId);
 
+  /**
+   * The reviewer's moves, as `memberId -> destination group id`, read straight off the persisted decisions.
+   * `chosen` IS the destination (`__unassigned__` is one), so no second map is stored anywhere.
+   */
+  const moves = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [memberId, d] of Object.entries(regroups.decisions)) {
+      if (typeof d.chosen === "string" && d.chosen) out[memberId] = d.chosen;
+    }
+    return out;
+  }, [regroups.decisions]);
+
+  const membersByGroup = jobState?.result?.conceptGroupMembers ?? {};
+  const membership = useMemo(
+    () => effectiveMembers(groups, membersByGroup, moves),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groups, jobState?.result?.conceptGroupMembers, moves],
+  );
+  const fieldIndex = jobState?.result?.fieldIndex ?? {};
+
+  /**
+   * Whether this group's FULL membership is on the wire — and therefore whether it may be regrouped.
+   *
+   * T-08-89, and it is the reason the check exists rather than a defensive habit. `memberVariableNames` is
+   * a capped SAMPLE when `membersTruncated`, so a run that carries no `conceptGroupMembers` entry gives
+   * this screen no way to see the members past the cap. Writing a regroup against that sample would
+   * silently drop every member it never showed, and the row would go on reporting the sample's length as
+   * the group's size. So the row keeps reporting `nMembers`, and the expanded row says plainly that it
+   * cannot offer the move.
+   */
+  const hasFullMembership = (g: ConceptGroup) =>
+    Array.isArray(membersByGroup[g.groupId]) || !g.membersTruncated;
+
+  /**
+   * The size the row reports. The effective membership where it is knowable; otherwise the contract's
+   * TRUE count adjusted by the moves that touched this group — never the length of a capped sample.
+   */
+  const memberCount = (g: ConceptGroup) => {
+    if (hasFullMembership(g)) return membership.byGroup[g.groupId]?.length ?? 0;
+    const movedIn = Object.values(moves).filter((to) => to === g.groupId).length;
+    return g.nMembers + movedIn;
+  };
+
+  /**
+   * Where a member started, so a move can record what it is a move FROM and a restore can put it back.
+   * Built from the ORIGINAL membership rather than the effective one — otherwise a second move would
+   * record the first move's destination as the origin, and "put them back" would undo one step.
+   */
+  const originalGroupOf = useMemo(() => {
+    const out: Record<string, string> = {};
+    const byGroup = jobState?.result?.conceptGroupMembers ?? {};
+    for (const g of groups) {
+      for (const memberId of byGroup[g.groupId] ?? g.memberVariableNames) out[memberId] = g.groupId;
+    }
+    return out;
+  }, [groups, jobState?.result?.conceptGroupMembers]);
+
+  async function moveMember(memberId: string, toGroupId: string) {
+    const from = originalGroupOf[memberId] ?? "";
+    if (toGroupId === from) {
+      // Back where it started, so the decision is CLEARED rather than written as a no-op. A stored
+      // "moved to where it already was" would keep the row marked as changed forever.
+      await regroups.clear({ memberId });
+      return;
+    }
+    await regroups.write(
+      { memberId, fromGroupId: from },
+      {
+        chosen: toGroupId,
+        // The destinations offered FOR THIS VARIABLE at the moment of the move: where it was, the no-group
+        // tray, and where it went. Deliberately NOT every group in the run — that would be honest about
+        // the option space but would mark every regroup decision stale the moment any group id changed,
+        // including the ones a re-adjudication elsewhere had nothing to do with, and a notice that fires
+        // on unrelated changes is a notice reviewers learn to ignore.
+        alternatives: [...new Set([from, UNASSIGNED_GROUP_ID, toGroupId].filter(Boolean))],
+      },
+    );
+  }
+
+  /** Undo every move out of one group — the "put them back" the emptied state offers. */
+  async function restoreGroup(groupId: string) {
+    const strayed = Object.entries(moves).filter(([memberId]) => originalGroupOf[memberId] === groupId);
+    await Promise.all(strayed.map(([memberId]) => regroups.clear({ memberId })));
+  }
+
+  /** Member ids the reviewer has moved — what makes a chip render in the you-changed-it register. */
+  const movedMemberIds = useMemo(() => new Set(Object.keys(moves)), [moves]);
+
+  /** Why accepting is unavailable on this run, resolved once rather than per row. */
+  const refusalFor = readjudicationRefusal({
+    pinned: pinned === true,
+    optedIn: Boolean((jobState?.config as { allowReadjudication?: boolean } | undefined)?.allowReadjudication),
+  });
+
+  const [accepting, setAccepting] = useState("");
+  async function acceptCarve(groupId: string) {
+    setAccepting(groupId);
+    try {
+      // EXACTLY ONE ID, built by a named function so the prohibition has somewhere to be asserted.
+      const { groupIds } = readjudicationRequest(groupId);
+      await readjudicateGroups(jobId, groupIds);
+      toast.success("Re-split that group — its parts are below");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not re-split that group");
+    } finally {
+      setAccepting("");
+    }
+  }
+
   // The progress readout's numerator. Counted over the WHOLE corpus rather than the visible bucket: a
   // reviewer who worked the single-cohort tab has reviewed those groups, and a figure that reset when
   // they switched tabs would report the wrong thing. DERIVED from persisted decisions on every read, so
   // it is unchanged by a reload (R6) — a counter in `useState` is the defect this avoids.
   const reviewedCount = groups.filter((g) => isChanged(g.groupId)).length;
+
+  // An EMPTIED group buys nothing at Gate 2 — there is no membership left to assign — so it drops out of
+  // the price without the reviewer having to also untick it. The row still renders and still says what
+  // happened; what it no longer does is quote a charge for work that cannot be done.
+  const inScopeGroups = groups.filter((g) => isInScope(g.groupId) && memberCount(g) > 0);
 
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
   const nCrossCohort = groups.filter((g) => g.crossCohort).length;
@@ -499,15 +894,39 @@ export default function Gate1Page() {
               group={g}
               allCohorts={allCohorts}
               price={price}
+              count={memberCount(g)}
               inScope={isInScope(g.groupId)}
               changed={isChanged(g.groupId)}
+              onDropMember={(memberId) => void moveMember(memberId, g.groupId)}
               onScopeChange={(next) =>
                 void scope.write(
                   { groupId: g.groupId },
                   { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
                 )
               }
-            />
+            >
+              <ExpandedGroup
+                group={g}
+                members={membership.byGroup[g.groupId] ?? []}
+                unassignedFromHere={membership.unassigned.filter((m) => originalGroupOf[m] === g.groupId)}
+                fieldIndex={fieldIndex}
+                movedMembers={movedMemberIds}
+                onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+                onRestore={() => void restoreGroup(g.groupId)}
+                canRegroup={hasFullMembership(g)}
+                refusal={refusalFor}
+                carvePrice={
+                  <>
+                    This costs money. Re-splitting this group and re-assigning its parts is paid work —
+                    about {formatUsd(price * 2)} for a group this size — and it starts as soon as you press
+                    the button. Your spend so far updates when it finishes.
+                  </>
+                }
+                accepting={accepting === g.groupId}
+                onAcceptCarve={() => void acceptCarve(g.groupId)}
+                onIgnoreCarve={() => undefined}
+              />
+            </GroupRow>
           ))
         )}
       </Ledger>

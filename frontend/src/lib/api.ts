@@ -262,6 +262,39 @@ export async function extractScoreDocument(
   return json(await fetch(`${BASE}/score/extract`, { method: "POST", headers: await authed(), body: form }));
 }
 
+/**
+ * Re-adjudicate EXACTLY the concept groups a human named (STGD-16) — the one gate action that STARTS PAID
+ * WORK. Every other gate decision rides the generic artifact route, because recording a decision is storage.
+ *
+ * `groupIds` is required and must be non-empty, and this client never widens it. The backend refuses an
+ * empty list too, but the prohibition is a UI-layer one as much as a backend one: re-splitting every
+ * flagged group BECAUSE it was flagged is an auto-resolution of an over-merge with no human decision
+ * behind it, which core's own `readjudicate` docstring forbids the pipeline from doing.
+ *
+ * The server carries three refusals — a pinned demo outright, a run that did not opt in at creation, and
+ * an empty id list — and the opt-in refusal names itself so the caller can render the honest
+ * "not enabled for this run" state instead of a generic error.
+ */
+export async function readjudicateGroups(
+  jobId: string,
+  groupIds: string[],
+  apiKey?: string,
+): Promise<{ jobId: string; groupIds: string[]; nRecords: number }> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (groupIds.length === 0) throw new Error("Name the concept groups to re-adjudicate.");
+  const headers = await authed({
+    "content-type": "application/json",
+    ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
+  });
+  return json(
+    await fetch(`${BASE}/jobs/${jobId}/readjudicate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ groupIds }),
+    }),
+  );
+}
+
 export async function getResult(jobId: string): Promise<JobResult> {
   if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/result-${jobId}.json`));
   return json(await fetch(`${BASE}/result/${jobId}`, { headers: await authed() }));

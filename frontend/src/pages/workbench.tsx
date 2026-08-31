@@ -645,7 +645,7 @@ export function WorkbenchBody({
                 </div>
               </CardHeader>
               <CardContent>
-                <SourceRows record={selected} fieldIndex={fieldIndex} />
+                <SourceRows memberIds={selected.members} memberDetails={selected.memberDetails} fieldIndex={fieldIndex} />
               </CardContent>
             </Card>
 

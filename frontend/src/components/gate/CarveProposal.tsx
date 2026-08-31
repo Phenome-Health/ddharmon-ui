@@ -22,12 +22,33 @@ import { cn } from "@/lib/utils";
  */
 
 export interface CarveProposalProps {
-  /** The judge's proposed sub-concepts, in the order it proposed them. */
-  subConcepts: { id: string; label: string; memberIds: string[] }[];
+  /**
+   * The judge's proposed sub-concepts, in the order it proposed them.
+   *
+   * `memberIds` IS OPTIONAL, and its absence is the common case rather than a degraded one. The contract
+   * carries the axis the group is fused along and the distinct values on it, but NOT which member belongs
+   * to which value — core does not attribute them, because the attribution is what a re-split computes.
+   * So a count is rendered only when the caller actually has one; inventing "0 variables" beside a real
+   * sub-concept would be a fabricated fact on the screen whose whole job is judging one.
+   */
+  subConcepts: { id: string; label: string; memberIds?: string[] }[];
   /** One sentence: what axis the judge thinks the group is fused along. */
   axis?: string;
-  /** Whether THIS RUN opted in to re-adjudication. False (the default) is not an error state. */
+  /** The judge's theme sentence for the group — what it read the members as being about. */
+  summary?: string;
+  /** Whether accepting is available on THIS RUN. False (the default) is not an error state. */
   readjudicationEnabled: boolean;
+  /**
+   * What to render in accept's place when it is unavailable. Supplied by the caller because the REASON is
+   * the caller's to know — opt-in off, shared demo, no server — and one generic sentence covering three
+   * different causes tells the reviewer nothing about which applies to them.
+   */
+  notAvailable?: React.ReactNode;
+  /** The inline price statement, shown BEFORE accept runs and never behind a modal. */
+  acceptPrice?: React.ReactNode;
+  /** The ids accept will send. Surfaced as data so a gate can assert the set is exactly one. */
+  acceptGroupIds?: string[];
+  accepting?: boolean;
   onAccept?: () => void;
   onEdit?: () => void;
   onIgnore?: () => void;
@@ -37,7 +58,12 @@ export interface CarveProposalProps {
 export function CarveProposal({
   subConcepts,
   axis,
+  summary,
   readjudicationEnabled,
+  notAvailable,
+  acceptPrice,
+  acceptGroupIds,
+  accepting = false,
   onAccept,
   onEdit,
   onIgnore,
@@ -61,30 +87,61 @@ export function CarveProposal({
             ? `It reads the members as differing along: ${axis}. Nothing has been changed — this is a proposal.`
             : "Nothing has been changed — this is a proposal. Accept it, edit it by moving variables yourself, or ignore it."}
         </p>
+        {summary && <p className="max-w-[68ch] text-xs text-on-warn">{summary}</p>}
       </div>
 
-      <ul className="flex flex-col gap-2">
-        {subConcepts.map((sub) => (
-          <li key={sub.id} className="flex flex-col gap-1 rounded-inner bg-surface-raised px-3 py-2">
-            <span className="text-sm font-semibold text-on-raised">{sub.label}</span>
-            <span className="font-mono text-xs tabular-nums text-on-raised-muted">
-              {sub.memberIds.length} {sub.memberIds.length === 1 ? "variable" : "variables"}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {subConcepts.length > 0 ? (
+        <ul className="flex flex-col gap-2">
+          {subConcepts.map((sub) => (
+            <li key={sub.id} className="flex flex-col gap-1 rounded-inner bg-surface-raised px-3 py-2">
+              <span className="text-sm font-semibold text-on-raised">{sub.label}</span>
+              {sub.memberIds && (
+                <span className="font-mono text-xs tabular-nums text-on-raised-muted">
+                  {sub.memberIds.length} {sub.memberIds.length === 1 ? "variable" : "variables"}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        /* THE JUDGE FLAGGED THE FUSION WITHOUT NAMING THE DIVISION. Said plainly rather than papered over:
+           an invented sub-concept list would be the screen fabricating the very finding it is asking the
+           reviewer to check. Accepting still works — the division is computed by the re-split itself. */
+        <p data-testid="carve-no-division" className="max-w-[68ch] text-xs text-on-warn">
+          It did not name the sub-concepts it would divide this into. Accepting works out the division as
+          part of the re-split; editing by hand lets you decide it yourself.
+        </p>
+      )}
+
+      {/* PRICED INLINE, BEFORE IT RUNS, NEVER BEHIND A MODAL — the same register as the commit bar's
+          irreversible-spend statement. A modal on a paid action trains the reviewer to dismiss it. */}
+      {readjudicationEnabled && acceptPrice && (
+        <p data-testid="carve-price" className="max-w-[68ch] text-xs font-semibold text-on-warn">
+          {acceptPrice}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {readjudicationEnabled ? (
-          <Button type="button" onClick={onAccept}>
-            Accept this division
+          <Button
+            type="button"
+            onClick={onAccept}
+            disabled={accepting}
+            // The payload as DATA as well as behaviour. "Exactly one group id, never an empty list" is the
+            // prohibition this control exists under, and reading it off the request is a gate that only
+            // works where a request can be made — which is not the static build every other gate runs in.
+            data-group-ids={acceptGroupIds ? JSON.stringify(acceptGroupIds) : undefined}
+          >
+            {accepting ? "Re-splitting…" : "Accept this division"}
           </Button>
         ) : (
-          <NotAvailable thing="Re-adjudication" claim="not-enabled" className="bg-surface-raised">
-            Accepting a carve re-splits the group and re-assigns its parts, which costs money, so it is off
-            by default. Turn it on at Setup to enable it. Ignoring or editing the proposal by hand still
-            works.
-          </NotAvailable>
+          notAvailable ?? (
+            <NotAvailable thing="Re-adjudication" claim="not-enabled" className="bg-surface-raised">
+              Accepting a carve re-splits the group and re-assigns its parts, which costs money, so it is off
+              by default. Turn it on at Setup to enable it. Ignoring or editing the proposal by hand still
+              works.
+            </NotAvailable>
+          )
         )}
         <Button type="button" variant="outline" onClick={onEdit}>
           Edit by moving variables

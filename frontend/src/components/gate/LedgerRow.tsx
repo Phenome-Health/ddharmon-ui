@@ -4,6 +4,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { formatUsd } from "@/lib/estimate";
+import { MEMBER_DRAG_TYPE } from "@/components/gate/MemberChip";
 
 /**
  * One ledger row — an expandable ruled grid row, NOT a table row.
@@ -52,6 +53,18 @@ export interface LedgerRowProps {
   changed?: boolean;
   /** The expanded body: full membership, drop zones, the carve proposal. */
   children?: React.ReactNode;
+  /**
+   * Accept a member chip dropped anywhere on this row — how a variable moves BETWEEN groups.
+   *
+   * THE ROW IS THE DROP TARGET, and it has to be. A ledger shows one expanded row at a time, so a
+   * destination tray inside that row could only ever offer a hand-picked subset of the other groups; the
+   * rows themselves are the complete, already-visible, already-sorted destination list. Optional and
+   * off by default, so the three gates that render a ledger without a regroup verb are unaffected.
+   *
+   * Reads the payload on DROP, never on dragover — the payload is not readable during dragover in every
+   * browser, so a target that inspected it there would reject legitimate drags.
+   */
+  onDropMember?: (memberId: string) => void;
   className?: string;
 }
 
@@ -68,9 +81,11 @@ export function LedgerRow({
   unresolved = false,
   changed = false,
   children,
+  onDropMember,
   className,
 }: LedgerRowProps) {
   const [open, setOpen] = useState(false);
+  const [over, setOver] = useState(false);
   // Amber outranks the accent. Both, and amber wins — see the docstring.
   const spine = unresolved ? "border-l-status-warn" : changed ? "border-l-accent-action" : "border-l-transparent";
   return (
@@ -83,12 +98,30 @@ export function LedgerRow({
         data-testid="ledger-row"
         data-row-id={rowId}
         data-spine={unresolved ? "unresolved" : changed ? "changed" : "none"}
+        data-drop-over={over ? "true" : undefined}
+        {...(onDropMember && {
+          onDragOver: (e: React.DragEvent) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setOver(true);
+          },
+          onDragLeave: () => setOver(false),
+          onDrop: (e: React.DragEvent) => {
+            e.preventDefault();
+            setOver(false);
+            const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
+            if (memberId) onDropMember(memberId);
+          },
+        })}
         className={cn(
           "border-b border-l-4 border-b-rule-quiet-on-raised last:border-b-0",
           // Hundreds of rows: let the browser skip the ones nobody is looking at. `contain-intrinsic-size`
           // keeps the scrollbar honest while they are skipped.
           "[content-visibility:auto] [contain-intrinsic-size:auto_56px]",
           spine,
+          // The row a chip is currently over. An inset ring rather than a fill: the spine already carries
+          // this row's state and a second full surface would overwrite it mid-drag.
+          over && "ring-2 ring-inset ring-rule-info",
           className,
         )}
       >
