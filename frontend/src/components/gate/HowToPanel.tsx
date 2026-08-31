@@ -14,9 +14,15 @@ import type { GatePosition } from "@/types";
  *
  * WHERE THE MONEY STARTS. Since UI-SPEC §0.1's reversal, `generate(ideal)` and `split` run BEFORE Gate 1,
  * so the run's first charge pays for concept generation, splitting and the coherence judge. Since the
- * Gate 0 demotion (2026-08-26) that press lives on **Setup**, on its own Continue: the run
- * parks after loading, preparing and embedding, all of which are local, so "Nothing is charged yet" stays
- * true right up to it.
+ * Gate 0 demotion (2026-08-26) that press lives on **Setup**, and since 08-14f deleted the pre-flight
+ * screen it is **Start run** itself — not a later Continue. Setup's list was rewritten in 08-14g because
+ * it had not caught up with either change: it still walked the reviewer through Start, then a prepared
+ * download, then a Continue that no longer exists, which is a confident wrong map rather than stale copy.
+ *
+ * WHAT SETUP'S LIST NOW HAS TO CARRY. 08-14f made the embedded-text check per-dictionary and free: mark a
+ * dictionary complete and you can download your own rows with the exact clustered string appended. That
+ * is the screen's main affordance and its whole value is that it comes BEFORE the charge, so the list
+ * states it in that position. `setup.spec.ts` ("08-14g") gates the step's presence AND its index.
  *
  * The panel therefore may NOT reproduce the retired §0.4 claim about when spending starts. The guest demo
  * walk makes these strings an unauthenticated public surface, and that claim is prohibited on every screen
@@ -44,11 +50,12 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   setup: [
     { text: "Add one data dictionary per cohort, then map each file's columns." },
     { text: "Check the row count against the unique-name count — a repeated variable name is dropped silently." },
-    { text: "Pick a run mode and a model, and paste a provider key if you are using your own." },
-    { text: "Press Start run. Nothing is charged yet — loading, preparing and grouping all run on your machine." },
-    { text: "Download a prepared dictionary if you want to check exactly what each file gave the model." },
     {
-      text: "Press Continue. This is the first charge of the run — it pays for naming the concepts, splitting the groups and the coherence judge. The amount is on the button.",
+      text: "Mark each dictionary complete, then download it and read the exact text that will be clustered — before you spend anything.",
+    },
+    { text: "Pick a run mode and a model, and paste a provider key if you are using your own." },
+    {
+      text: "Press Start run. This is the run's first charge — it pays for naming the concepts, splitting the groups and the coherence judge. The amount is on the button.",
       charge: true,
     },
   ],
@@ -89,7 +96,14 @@ export function HowToPanel({ gate, className }: { gate: GatePosition; className?
   const [open, setOpen] = useState(false);
   const steps = HOW_TO[gate];
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={cn("rounded-inner bg-on-field/5 px-4 py-3", className)}>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      // Addressable, because 08-14g gates the SETUP steps on their content and their order. Reaching them
+      // through the trigger's ancestors couples the assertion to the collapsible's markup.
+      data-testid="how-to"
+      className={cn("rounded-inner bg-on-field/5 px-4 py-3", className)}
+    >
       <CollapsibleTrigger
         // The accessible name states the ACTION and its OBJECT, not just "toggle" — an icon-only control
         // whose name does not say what it operates on is a defect, not a style choice (UI-SPEC §6).

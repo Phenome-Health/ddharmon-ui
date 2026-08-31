@@ -2373,3 +2373,61 @@ test.describe("Setup — the pre-upload checklist and the column-roles reference
     await expect(page.getByTestId("column-roles")).toHaveCount(0);
   });
 });
+
+// --- Setup's orientation text, second pass (08-14g Task 1) ----------------------------------------------
+//
+// The numbered how-to predates TWO structural changes — the Gate 0 demotion and 08-14f's per-dictionary
+// rebuild — and still walked the reviewer through a pre-flight screen that no longer exists: press Start,
+// download a prepared dictionary, then press Continue for the first charge. All three of those are wrong
+// now. Start run IS the first charge and it lands on Gate 1 with nothing in between, and the check worth
+// naming happens BEFORE it, per dictionary.
+//
+// Bhargav's words on 2026-08-31: "'How to use this screen' is now outdated on setup. should mention that
+// you can check embedded text for each mapped dict before pressing continue and starting spend."
+
+test.describe("Setup — the how-to describes the screen that exists (08-14g)", () => {
+  /** Open the shell's numbered how-to on Setup and hand back its text. */
+  const openHowTo = async (page: import("@playwright/test").Page) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const panel = page.getByTestId("how-to");
+    await expect(panel).toBeVisible();
+    await panel.getByRole("button").first().click();
+    return panel;
+  };
+
+  test("@setup the how-to names the embedded-text check, and places it before the charge", async ({ page }) => {
+    const panel = await openHowTo(page);
+    const steps = panel.locator("li");
+    const texts = await steps.allInnerTexts();
+
+    // THE SCREEN'S MAIN AFFORDANCE. Mark a dictionary complete and you can read the exact string that
+    // will be clustered, for your own rows, before committing to anything.
+    const checkIdx = texts.findIndex((t) => /clustered/i.test(t) && /download|export/i.test(t));
+    expect(checkIdx, `no step offers the embedded-text check:\n${texts.join("\n")}`).toBeGreaterThanOrEqual(0);
+
+    // ORDER IS THE POINT, not mere presence: the check is only useful if it is taken before the money.
+    const chargeIdx = texts.findIndex((t) => /start run/i.test(t) && /first charge/i.test(t));
+    expect(chargeIdx, `no step names Start run as the first charge:\n${texts.join("\n")}`).toBeGreaterThanOrEqual(0);
+    expect(checkIdx, "the check is offered after the reviewer has already paid").toBeLessThan(chargeIdx);
+  });
+
+  test("@setup the how-to sends the reviewer to no screen that was deleted", async ({ page }) => {
+    const panel = await openHowTo(page);
+    const text = await panel.innerText();
+
+    // The pre-flight screen, its preparation report, and the Continue that used to carry the charge are
+    // all gone. Copy that still routes through them is worse than no copy: it is a confident wrong map.
+    expect(text).not.toMatch(/press continue/i);
+    expect(text).not.toMatch(/gate 0/i);
+    expect(text).not.toMatch(/prepared dictionary|preparation report/i);
+  });
+
+  test("@setup the how-to stays orientation, not documentation", async ({ page }) => {
+    const panel = await openHowTo(page);
+    const n = await panel.locator("li").count();
+    expect(n, "the orientation list grew into a manual").toBeLessThanOrEqual(6);
+    const text = await panel.innerText();
+    expect(text.length, "the orientation panel is too long to read in one pass").toBeLessThan(700);
+  });
+});
