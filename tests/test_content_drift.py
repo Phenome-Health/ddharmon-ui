@@ -400,7 +400,13 @@ def test_the_staged_flow_spend_claim_detector_distinguishes_the_two_claims() -> 
 
 
 def test_no_public_surface_claims_the_staged_flow_is_free() -> None:
-    """The staged flow's first charge is Gate 0's Continue, and the copy must say so."""
+    """The staged flow's first charge is Setup's Start run, and the copy must say so.
+
+    It was Gate 0's Continue until 08-14f, which deleted the intermediate screen and moved the charge onto
+    Start. What this gate enforces is unchanged and is not about WHICH control charges: a public surface
+    may say a step is free only in a sentence that also names where the money does land. A reviewer who
+    reads "costs nothing" and nothing else has been told the flow is free, whichever gate charges them.
+    """
     if not FRONTEND_SRC.exists():  # pragma: no cover
         pytest.skip(f"frontend source tree not found at {FRONTEND_SRC}")
     for excluded in CLAIM_EXCLUSIONS:

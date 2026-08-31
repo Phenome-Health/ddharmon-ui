@@ -19,6 +19,11 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.9",
 
+    # The Setup workbook export (one sheet per uploaded dictionary). Importable today only because
+    # something upstream happens to pull it; declared here because that is not a guarantee, and an
+    # undeclared-but-present dependency is how a feature works locally and 500s on the server.
+    "openpyxl>=3.1.0",
+
     # Clerk SSO: verify the session JWT (RS256) against Clerk's JWKS (backend/auth.py). Imported
     # lazily and inert unless CLERK_* env is set, but the deploy needs it installed for the gate to
     # work. [crypto] pulls the RSA backend PyJWKClient requires.

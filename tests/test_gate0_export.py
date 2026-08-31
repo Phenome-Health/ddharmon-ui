@@ -164,6 +164,11 @@ def test_the_export_route_404s_on_an_unknown_cohort_rather_than_exporting_the_wr
 
 
 def test_the_export_route_is_not_a_new_post_surface(monkeypatch, tmp_path):
-    """It reads retained uploads and spends nothing, so it is a GET — and the POST budget is unchanged."""
+    """It reads retained uploads and spends nothing, so it is a GET — and it added no POST of its own.
+
+    The budget itself moved to 16 in 08-14f, which added the PRE-Start siblings of this export (a
+    per-dictionary CSV and the whole-set workbook). Those must be POSTs: it runs before a run exists, so the file it describes is in the request body rather
+    than on the server. This route's own shape is what is being pinned here, not the total.
+    """
     posts = len([1 for r in app_module.app.routes if "POST" in (getattr(r, "methods", None) or set())])
-    assert posts == 14, f"the POST surface changed ({posts} != 14)"
+    assert posts == 16, f"the POST surface changed ({posts} != 16)"

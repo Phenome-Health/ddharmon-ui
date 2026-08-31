@@ -34,6 +34,8 @@ import logging
 import os
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, cast
 
@@ -756,6 +758,175 @@ def build_prepared_export(
                     )
         out.append(padded + appended)
     return list(header) + list(PREPARED_EXPORT_COLUMNS), out
+
+
+# ── the PRE-START embedding export: what will be clustered, before a run exists ───────────────
+#
+# THE ONE COLUMN. `build_prepared_export` above appends five, because it was answering "what did
+# PREPARATION do to my file?" — a question that only exists while preparation is a visible step. With
+# preparation going opt-in and off (08-14e) the question that survives is narrower and more useful: *what
+# text will actually be fed to clustering for this variable?* One string, one column. Adding the other
+# four back would re-import the verbosity that got the Gate 0 report deleted.
+#
+# THE JOIN IS THE SAME HARD PART, and it is solved the same way plus one improvement. `load_dictionary`
+# keys fields on the variable name and is LAST-WINS on a repeat, so a repeated name means the EARLIER rows
+# reached nothing. `build_prepared_export` blanks every row of a repeated name; this one blanks all but the
+# LAST, which is the row that actually survived. Same honesty, one more true fact.
+
+#: The single appended column. `ddharmon_`-prefixed like `PREPARED_EXPORT_COLUMNS`, so it cannot be
+#: mistaken for one of the reviewer's own columns in a file where every other column is theirs.
+EMBEDDING_EXPORT_COLUMN = "ddharmon_embedding_text"
+
+#: Whether the product prepares an uploaded dictionary before embedding it.
+#:
+#: ONE CONSTANT, TWO READERS, and that is the point of it existing rather than being written twice. The
+#: run path reads it (`config.get("preprocess", ...)` in `run_harmonization`) and so does this export. The
+#: export's entire claim is "this is the string your run will embed" — so if the two could be set
+#: independently, the first divergence would turn the export from an answer into a confident lie, and
+#: nothing on the screen would look any different. Flipping preparation off is then one edit here.
+PREPARE_BEFORE_EMBED_DEFAULT = True
+
+#: A row index core synthesises when no variable-name column is mapped: one per DATA row, in file order,
+#: so the join stays exact instead of degrading to "we cannot attribute this file at all".
+_SYNTHETIC_NAME = "_ROW_%05d"
+
+
+@dataclass
+class EmbeddingExport:
+    """The reviewer's own rows with the clustering input appended, plus what the load cost them."""
+
+    #: The file's own header, in the file's own order, then :data:`EMBEDDING_EXPORT_COLUMN`.
+    header: list[str]
+    rows: list[list[str]]
+    #: Data rows in the FILE. Counted from the file, never from the loaded dictionary — the loaded one has
+    #: already collapsed the duplicates, which is the very thing being measured.
+    n_rows: int = 0
+    #: Variables the loader actually produced. Lower than ``n_rows`` means rows were collapsed.
+    n_variables: int = 0
+    n_collapsed: int = 0
+    #: Variables whose composed text is empty. They embed nothing and reach no concept group — a silent
+    #: loss everywhere else in the product, which is why this export states it rather than omitting it.
+    n_nothing_to_embed: int = 0
+    #: The names that repeat, capped: "some name repeats" is not actionable, and 6,000 of them is not a
+    #: message. The COUNT is exact regardless.
+    repeated_names: list[str] = dataclass_field(default_factory=list)
+
+
+#: How many repeated names travel with the export. A response header is not a place for a 6,000-item list.
+_REPEATED_NAME_CAP = 20
+
+
+def build_embedding_export(
+    source_path: Path | str,
+    *,
+    cohort_name: str,
+    column_roles: dict[str, str],
+    prepare: bool | None = None,
+) -> EmbeddingExport:
+    """One dictionary's rows, verbatim, with the exact string clustering will consume appended.
+
+    LOCAL AND FREE. The file is read, core loads it, core composes the text. No model is called, nothing
+    is embedded, and no run is created — which is what lets Setup offer this before the first charge
+    without qualifying its "nothing has been charged" claim.
+
+    ``prepare`` defaults to :data:`PREPARE_BEFORE_EMBED_DEFAULT` deliberately rather than to ``True``: the
+    export must mirror whatever the run does, and a literal default here is a second place for that answer
+    to be written down.
+
+    Raises ``ValueError`` when the file cannot become a dictionary at all. A stated error is better than a
+    partial file, because an empty-looking CSV reads as *"my dictionary is empty"* rather than as a failure.
+    """
+    from ddharmon.ingestion import load_dictionary
+
+    source_path = Path(source_path)
+    delimiter = _delimiter_of(source_path)
+    with open(source_path, newline="", encoding="utf-8", errors="replace") as fh:
+        # THE INDEXING RULE, MEASURED AGAINST CORE RATHER THAN ASSUMED, because getting it wrong
+        # mis-attributes every row after the first oddity and does so silently. Core reads with pandas'
+        # `skip_blank_lines`, so a TRULY blank line is gone before anything is numbered — but a row of
+        # `,,,` is numbered and only then discarded for being empty. Measured: `alpha / ,, / beta /
+        # <blank> / gamma` yields `_ROW_00000, _ROW_00002, _ROW_00003`. So blank lines are skipped here
+        # and all-empty rows are KEPT, which is what keeps the synthesised indices aligned. An all-empty
+        # row then finds no field and gets an empty cell — true, since core dropped it.
+        file_rows = [
+            r for r in csv.reader(fh, delimiter=delimiter) if r and not (len(r) == 1 and (r[0] or "").strip() == "")
+        ]
+    if len(file_rows) < 2:
+        raise ValueError("This file has a header but no variables — a data dictionary needs one row per variable.")
+    header, data_rows = file_rows[0], file_rows[1:]
+
+    dd = load_dictionary(source_path, cohort_name=cohort_name, **column_roles)
+    if prepare is None:
+        prepare = PREPARE_BEFORE_EMBED_DEFAULT
+    if prepare:
+        try:
+            from ddharmon.ingestion.preprocessor import preprocess_dictionary
+
+            preprocess_dictionary(dd)
+        except Exception as exc:  # noqa: BLE001 - an export must not fail on a step it only reports
+            logger.warning("embedding export for %s could not prepare (%s) — exporting the raw load", cohort_name, exc)
+
+    # Keyed on the RAW name, because preparation may rewrite `variable_name` (prefix stripping, stopwords)
+    # and the file still holds the original. `raw_*` is only populated once preparation has run, hence the
+    # fallback — the same join `build_prepared_export` uses.
+    by_raw_name = {str(f.raw_variable_name or f.variable_name or ""): f for f in dd.fields.values()}
+
+    name_col = column_roles.get("variable_name")
+    name_at = header.index(name_col) if name_col and name_col in header else None
+
+    occurrences: dict[str, int] = {}
+    if name_at is not None:
+        for row in data_rows:
+            key = (row[name_at] if name_at < len(row) else "").strip()
+            if key:
+                occurrences[key] = occurrences.get(key, 0) + 1
+    # The LAST row bearing a repeated name is the one the loader kept, so it is the only one that may
+    # carry text. Recorded as an index set rather than re-scanned per row.
+    survivor_at: dict[str, int] = {}
+    if name_at is not None:
+        for i, row in enumerate(data_rows):
+            key = (row[name_at] if name_at < len(row) else "").strip()
+            if key:
+                survivor_at[key] = i
+
+    out: list[list[str]] = []
+    n_empty = 0
+    for i, row in enumerate(data_rows):
+        padded = list(row) + [""] * (len(header) - len(row))
+        raw = (padded[name_at] or "").strip() if name_at is not None else ""
+        # An unnamed row is not nameless to core: it synthesises `_ROW_NNNNN` from the DATA-row index, so
+        # a file with no variable-name column (or a blank cell in one) still joins exactly.
+        key = raw or _SYNTHETIC_NAME % i
+        field = by_raw_name.get(key)
+        if raw and occurrences.get(raw, 0) > 1 and survivor_at.get(raw) != i:
+            # Collapsed. Crediting it with the survivor's text would state the opposite of what happened.
+            text = ""
+        elif field is None:
+            text = ""
+        else:
+            try:
+                text = str(field.to_embedding_text() or "")
+            except Exception:  # noqa: BLE001 - a composition failure is a fact to report, not a 500
+                text = ""
+        if not text:
+            n_empty += 1
+        out.append(padded + [text])
+
+    repeated = sorted(name for name, n in occurrences.items() if n > 1)
+    # COUNTED FROM THE REPEATS, not as `rows - variables`. The subtraction conflates two different losses:
+    # a row collapsed onto another row's name, and a row core discarded for being empty. They need
+    # different fixes, so reporting one figure for both would send the reviewer looking for a duplicate
+    # name that does not exist.
+    n_collapsed = sum(n - 1 for n in occurrences.values() if n > 1)
+    return EmbeddingExport(
+        header=list(header) + [EMBEDDING_EXPORT_COLUMN],
+        rows=out,
+        n_rows=len(data_rows),
+        n_variables=len(dd.fields),
+        n_collapsed=n_collapsed,
+        n_nothing_to_embed=n_empty,
+        repeated_names=repeated[:_REPEATED_NAME_CAP],
+    )
 
 
 def build_gate0_result(
@@ -1525,7 +1696,7 @@ def run_pipeline(
     # on changes the embedded text and therefore every downstream result. Source dictionaries only — the
     # CDE backbone is excluded on purpose, with the reasoning recorded there.
     preprocess_reports: list[UIPreprocessReport] = []
-    if config.get("preprocess", True):
+    if config.get("preprocess", PREPARE_BEFORE_EMBED_DEFAULT):
         for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
             preprocess_reports.append(preprocess_for_run(dd, source_path=spec["path"]))
 
@@ -1989,7 +2160,7 @@ def replay_leanb_result(
     # Preprocessing is part of the deterministic front half and it CHANGES the embedded text, so replaying
     # with it configured differently than the original leg would embed different text and cluster differently.
     # The run's own config is the record of what it did.
-    if config.get("preprocess", True):
+    if config.get("preprocess", PREPARE_BEFORE_EMBED_DEFAULT):
         for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
             preprocess_for_run(dd, source_path=spec["path"])
     if provider is None:

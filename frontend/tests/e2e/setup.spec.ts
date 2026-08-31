@@ -11,7 +11,7 @@ import {
 import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
 import { PROVIDER_KEY_INFO, keyPlaceholderFor } from "@/lib/provider-keys";
 import { PAUSED_RUN_FIXTURE } from "./routes";
-import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
+import { RETIRED_GATE, setupPathFor, startedPathFor } from "@/lib/gate-routes";
 
 /**
  * Setup — the first of the six staged-review screens (08-13).
@@ -516,13 +516,22 @@ test.describe("Setup — the honest estimate", () => {
     await expect(page.getByTestId("estimate-pending")).toHaveCount(0);
   });
 
-  test("@setup the primary action carries the nothing-is-charged-yet statement", async ({ page }) => {
-    await page.goto(SETUP);
+  test("@setup the primary action carries the nothing-is-charged-yet statement, ABOVE it", async ({ page }) => {
+    // ON THE COMPOSE SCREEN, which is where the primary action lives since 08-14f. It used to be asserted
+    // against a started run because Start bought nothing then and the real charge was one screen later;
+    // Start IS the charge now, so a started run correctly offers no charge control at all and this
+    // pairing is only meaningful before the press.
+    await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");
     const statement = page.getByTestId("nothing-charged-yet");
     await expect(statement).toBeVisible();
     await expect(statement).toContainText("Nothing is charged yet");
     await expect(page.getByTestId("start-run")).toBeVisible();
+    // ABOVE, not merely present: a statement a reviewer needs BEFORE they press must not be discoverable
+    // only after they have scrolled past the button.
+    const above = (await statement.boundingBox())!.y;
+    const control = (await page.getByTestId("start-run").boundingBox())!.y;
+    expect(above).toBeLessThan(control);
   });
 
   test("@setup the per-gate breakdown names THIS screen's Continue as the first charge, and what it buys", async ({
@@ -1485,7 +1494,13 @@ test.describe("Setup — the boundary, with the report retired", () => {
     );
   }
 
-  /** The fixture, re-parked at the free boundary — where a real run sits after Start. */
+  /**
+   * The fixture, re-parked at the RETIRED boundary.
+   *
+   * This used to be described as "where a real run sits after Start". It is not, since 08-14f: a fresh
+   * run enters the staged flow at Gate 1 and never parks here. It is where the six runs that predate the
+   * change are parked, which is exactly why the position and its screen must keep working.
+   */
   const atBoundary = (p: Record<string, unknown>): void => {
     (p as { status: string; phase: string }).status = "awaiting_review";
     (p as { status: string; phase: string }).phase = "awaiting_review";
@@ -1608,15 +1623,23 @@ test.describe("Setup — the boundary, with the report retired", () => {
     );
   });
 
-  test("@setup the post-Start destination is Setup's own route, and no input makes it the retired one", async () => {
+  test("@setup the post-Start destination is Gate 1, and no input makes it the retired one", async () => {
     // ASSERTED AS A PURE FUNCTION because the button that calls it is DISABLED in the static build this
     // suite runs against (`setup.tsx`'s IS_STATIC guard), so a click-through is untestable here — and an
     // untestable destination is exactly how this line came to still point at a retired route.
-    expect(setupPathFor("abc123")).toBe("/run/abc123/setup");
+    //
+    // IT IS GATE 1 SINCE 08-14f. It used to come back to Setup, into a "pre-flight" state whose Continue
+    // was the real first charge. Start IS that charge now, so there is no screen between the press and
+    // the first gate.
+    expect(startedPathFor("abc123")).toBe("/run/abc123/gate1");
     for (const id of ["abc123", "", "demo-staged-gate1", "0", "a/b"]) {
-      expect(setupPathFor(id), `setupPathFor(${JSON.stringify(id)})`).not.toContain(`/${RETIRED_GATE}`);
-      expect(setupPathFor(id)).toMatch(/\/setup$/);
+      expect(startedPathFor(id), `startedPathFor(${JSON.stringify(id)})`).not.toContain(`/${RETIRED_GATE}`);
+      expect(startedPathFor(id)).toMatch(/\/gate1$/);
+      // AND IT IS NOT SETUP EITHER. Landing back here is what produced the intermediate screen.
+      expect(startedPathFor(id)).not.toMatch(/\/setup$/);
     }
+    // The retired position is still a legal RESUME target's input — six runs carry it and must not 404.
+    expect(setupPathFor("abc123")).toBe("/run/abc123/setup");
   });
 
   test("@setup Setup holds ONE subscription to the run, not two", async () => {
@@ -1876,28 +1899,12 @@ test.describe("Setup — the dictionary-hygiene tips", () => {
     await expect(trigger).toHaveAccessibleName(/hide .*(dictionary|file)/i);
   });
 
-  test("@setup opened, it lists five or six pitfalls, each with a one-line what-to-do", async ({
-    page,
-  }) => {
-    await page.goto(DRAFT);
-    await page.waitForLoadState("networkidle");
-    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
-    const tips = page.getByTestId("dictionary-tip");
-    const n = await tips.count();
-    // THE CEILING IS THE POINT. Verbosity is what retired the thing this replaces; fifteen tips would
-    // reproduce it. The floor is here so the list cannot quietly decay to one.
-    expect(n, "five or six pitfalls, not fifteen").toBeGreaterThanOrEqual(5);
-    expect(n, "five or six pitfalls, not fifteen").toBeLessThanOrEqual(6);
-    for (const t of await tips.all()) {
-      // Each carries a NAMED problem and a fix. A pitfall with no remedy is a complaint about the
-      // reviewer's file rather than help with it.
-      await expect(t.getByTestId("dictionary-tip-what")).toBeVisible();
-      const fix = t.getByTestId("dictionary-tip-fix");
-      await expect(fix).toBeVisible();
-      const words = (await fix.innerText()).trim().split(/\s+/).length;
-      expect(words, `a what-to-do is one line: ${await fix.innerText()}`).toBeLessThanOrEqual(40);
-    }
-  });
+  // The 08-14d bound ("five or six pitfalls, each with a what / why / fix") is SUPERSEDED by 08-14f, which
+  // rewrote the panel as imperative one-liners with one example each and re-bounded it at seven. Its
+  // replacement lives with the other 08-14f checklist assertions at the end of this file; keeping both
+  // would leave two specs disagreeing about the same panel's shape. The rules that were NOT about shape —
+  // it leads with the repeated name, it never claims we clean the file, it names no cohort — are all
+  // still asserted below, unchanged.
 
   test("@setup it LEADS with the repeated-variable-name trap, and points at the live check", async ({
     page,
@@ -1913,7 +1920,10 @@ test.describe("Setup — the dictionary-hygiene tips", () => {
     expect(text).toMatch(/(last|only the last|silently|vanish|dropped)/i);
     // AND IT CROSS-REFERENCES the check already on this screen rather than duplicating it. The tips
     // explain the class; `nameCheck` reports the reviewer's actual file, live, as the mapping changes.
-    expect(text).toMatch(/(this screen|the mapping|below|checks your file)/i);
+    // Read from the PANEL rather than the bullet: 08-14f made every bullet a one-line directive, so the
+    // pointer moved to the panel's closing line. The rule is unchanged; only where it is written is.
+    const panel = await page.getByTestId("dictionary-tips").innerText();
+    expect(panel).toMatch(/(this screen|the mapping|below|checks your file)/i);
   });
 
   test("@setup the copy says automated preparation is FORTHCOMING and claims nothing about today", async ({
@@ -1957,5 +1967,409 @@ test.describe("Setup — the dictionary-hygiene tips", () => {
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
     await expect(page.getByTestId("dictionary-tips")).toHaveCount(0);
+  });
+});
+
+// --- the per-dictionary flow: map, confirm, export (08-14f) ---------------------------------------------
+//
+// THE SHAPE BHARGAV ASKED FOR, after stress-testing the live screen on 2026-08-31: upload a dictionary,
+// map its columns, mark THAT dictionary complete, and its embedding-text CSV becomes available on the same
+// page. When every dictionary is marked, the workbook becomes available. Nothing on this path charges
+// anything, and proceeding afterwards goes straight to Gate 1.
+//
+// WHAT THE STATIC BUILD CAN AND CANNOT SEE. There is no backend here, so the DOWNLOAD itself is
+// unreachable and its absence branch is what renders. That is asserted for what it is. The state machine —
+// unconfirmed → confirmed → invalidated by a re-map — is fully exercisable and is the half that carries the
+// defect this task exists to prevent.
+
+test.describe("Setup — per-dictionary confirmation and the embedding export", () => {
+  async function uploadMapped(page: import("@playwright/test").Page, name = "mapme.csv") {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name,
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a", "col_b"], ["v1", "d1"], ["v2", "d2"]])),
+    });
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_b"]') });
+    await row.getByTestId("role-select").selectOption("description");
+    return page.getByTestId("dict-embedding-export").first();
+  }
+
+  test("@setup an unmapped dictionary offers no export, and says what the mapping still needs", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "bare.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a", "col_b"], ["1", "2"], ["3", "4"]])),
+    });
+    const panel = page.getByTestId("dict-embedding-export").first();
+    await expect(panel).toHaveAttribute("data-confirmed", "false");
+    await expect(page.getByTestId("dict-embedding-download")).toHaveCount(0);
+    // A DISABLED CONTROL WITH NO REASON IS A DEAD END, and this screen already has five tables above it.
+    await expect(panel.getByTestId("dict-mapping-confirm")).toBeDisabled();
+    await expect(panel.getByTestId("dict-mapping-blocked")).toContainText(/variable name|description|question/i);
+  });
+
+  test("@setup marking one dictionary complete offers ITS export, on the same page and with no run", async ({
+    page,
+  }) => {
+    const posts: string[] = [];
+    await page.route("**/api/**", async (route) => {
+      if (route.request().method() !== "GET") posts.push(route.request().url());
+      await route.continue();
+    });
+    const panel = await uploadMapped(page);
+
+    await panel.getByTestId("dict-mapping-confirm").click();
+
+    await expect(panel).toHaveAttribute("data-confirmed", "true");
+    await expect(panel.getByTestId("dict-mapping-confirmed")).toBeVisible();
+    await expect(panel.getByTestId("dict-embedding-download")).toBeVisible();
+    // ON THE SAME PAGE: confirming navigated nowhere.
+    expect(new URL(page.url()).pathname).toBe(DRAFT);
+    // AND STARTED NOTHING. The whole point of the job-less endpoint is that this path is free; a run
+    // created here would be a charge the reviewer did not ask for.
+    expect(posts, `unexpected writes: ${posts.join(", ")}`).toEqual([]);
+  });
+
+  test("@setup re-mapping a confirmed dictionary invalidates it and withdraws the export", async ({ page }) => {
+    // THE DEFECT THIS STATE SHAPE EXISTS FOR. A reviewer who downloads a CSV, edits the mapping, and then
+    // reads the CSV as current is reading a description of a mapping that no longer exists — and nothing
+    // on the screen would have told them. Confirmation holds the MAPPING, so the edit invalidates it
+    // structurally rather than through an effect that has to remember to fire.
+    const panel = await uploadMapped(page);
+    await panel.getByTestId("dict-mapping-confirm").click();
+    await expect(panel).toHaveAttribute("data-confirmed", "true");
+
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_a"]') });
+    await row.getByTestId("role-select").selectOption("variable_name");
+
+    await expect(panel).toHaveAttribute("data-confirmed", "false");
+    await expect(page.getByTestId("dict-embedding-download")).toHaveCount(0);
+    await expect(panel.getByTestId("dict-mapping-confirm")).toBeEnabled();
+  });
+
+  test("@setup the workbook control names what is outstanding rather than sitting inert", async ({ page }) => {
+    const panel = await uploadMapped(page);
+    const workbook = page.getByTestId("workbook-export");
+    await expect(workbook).toBeVisible();
+    await expect(workbook).toHaveAttribute("data-remaining", "1");
+    await expect(workbook.getByTestId("workbook-remaining")).toContainText("1 of 1");
+    await expect(workbook.getByTestId("workbook-confirm")).toBeDisabled();
+
+    await panel.getByTestId("dict-mapping-confirm").click();
+
+    await expect(workbook).toHaveAttribute("data-remaining", "0");
+    await expect(workbook.getByTestId("workbook-confirm")).toBeEnabled();
+    await workbook.getByTestId("workbook-confirm").click();
+    await expect(workbook).toHaveAttribute("data-confirmed", "true");
+    await expect(workbook.getByTestId("workbook-download")).toBeVisible();
+  });
+
+  test("@setup editing a mapping withdraws the workbook too", async ({ page }) => {
+    const panel = await uploadMapped(page);
+    await panel.getByTestId("dict-mapping-confirm").click();
+    const workbook = page.getByTestId("workbook-export");
+    await workbook.getByTestId("workbook-confirm").click();
+    await expect(workbook.getByTestId("workbook-download")).toBeVisible();
+
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_a"]') });
+    await row.getByTestId("role-select").selectOption("variable_name");
+
+    await expect(workbook.getByTestId("workbook-download")).toHaveCount(0);
+    await expect(workbook).toHaveAttribute("data-confirmed", "false");
+  });
+
+  test("@setup the whole per-dictionary path is free, and the page says so", async ({ page }) => {
+    const panel = await uploadMapped(page);
+    await panel.getByTestId("dict-mapping-confirm").click();
+    await expect(panel).toContainText(/costs nothing|starts no run/i);
+    await expect(page.getByTestId("nothing-charged-yet")).toBeVisible();
+  });
+
+  test("@setup the repeated-name check still fires pre-Start, alongside the new flow", async ({ page }) => {
+    // THIS FLOW MUST NOT DISPLACE THE ONE CHECK THAT ALREADY WORKED. The loader's silent last-wins drop is
+    // the project's longest-standing data loss, and it is reported live from the reviewer's own file.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "repeats.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(10, { repeat: true })),
+    });
+    await expect(page.getByTestId("name-check")).toHaveAttribute("data-fired", "true");
+    await expect(page.getByTestId("dict-embedding-export").first()).toBeVisible();
+  });
+
+  test("@setup a dictionary read back from a started run offers no confirmation control", async ({ page }) => {
+    // Its column roles are FIXED at `startHarmonize`, so a control that marks the mapping complete would
+    // be a control that changes nothing — worse than a disabled one, because it lies about what it does.
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("dict-card").first()).toBeVisible();
+    await expect(page.getByTestId("dict-embedding-export")).toHaveCount(0);
+    await expect(page.getByTestId("workbook-export")).toHaveCount(0);
+  });
+});
+
+
+// --- Start is the first charge, and it lands on Gate 1 (08-14f) -----------------------------------------
+
+test.describe("Setup — Start is the charge, Gate 1 is the destination", () => {
+  /** Serve a MUTATED copy of the committed fixture — one fact substituted on a real payload. */
+  async function withParkedRun(page: import("@playwright/test").Page): Promise<void> {
+    const res = await page.request.get(`/static-data/result-${PAUSED_RUN_FIXTURE}.json`);
+    const payload = (await res.json()) as Record<string, unknown>;
+    // Re-parked at the RETIRED position: the state the six existing runs are in, which nothing new can
+    // reach any more and which must still resolve.
+    (payload as { status: string; phase: string }).status = "awaiting_review";
+    (payload as { status: string; phase: string }).phase = "awaiting_review";
+    (payload as { gatePosition: string }).gatePosition = RETIRED_GATE;
+    ((payload as { result: { gatePosition: string } }).result).gatePosition = RETIRED_GATE;
+    await page.route("**/static-data/result-*.json", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) }),
+    );
+  }
+
+  test("@setup the Start control states the amount and the irreversible-spend sentence", async ({ page }) => {
+    // THE OBLIGATION MOVED WITH THE CHARGE. It used to sit on the pre-flight's Continue one screen later;
+    // deleting that screen relocated the charge here, and both duties came with it rather than being
+    // dropped in transit.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "charged.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toBeVisible();
+    // THE AMOUNT AS DATA, so this reads the figure rather than parsing it back out of a sentence.
+    expect(Number(await bar.getAttribute("data-total"))).toBeGreaterThan(0);
+    await expect(bar).toHaveAttribute("data-first-charge", "true");
+    await expect(bar).toContainText(/not refundable/i);
+    await expect(bar).toContainText(/spending begins/i);
+    // NO MODAL stands between the reviewer and the charge (R8 / UI-SPEC §8.5).
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  });
+
+  test("@setup the amount on Start equals the first charge in Setup's own bill", async ({ page }) => {
+    // TWO SURFACES, ONE FUNCTION. A reviewer can see the figure twice on this screen, and two readings of
+    // one number silently disagreeing is the defect this pairing exists to prevent. Both read
+    // `estimateRunCostBreakdown(...).firstCharge`.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "billed.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    const onButton = Number(await page.getByTestId("commit-bar").getAttribute("data-total"));
+    const inBill = ((await page.getByTestId("first-charge").innerText()) ?? "").match(/\$([\d,.]+)/);
+    expect(inBill, "the bill must still quote a first charge").not.toBeNull();
+    expect(Number(inBill![1].replace(/,/g, ""))).toBeCloseTo(onButton, 2);
+  });
+
+  test("@setup a PREVIEW run is quoted no amount at Start and told it buys nothing", async ({ page }) => {
+    // R8 binds in BOTH directions: quoting a charge that will not happen is the same class of error as
+    // under-quoting one.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "previewed.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    await page.getByTestId("run-mode").selectOption("preview");
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toHaveAttribute("data-total", "");
+    await expect(bar).toHaveAttribute("data-first-charge", "false");
+    await expect(bar).not.toContainText(/not refundable/i);
+    await expect(bar).toContainText(/buys nothing|calls no model/i);
+  });
+
+  test("@setup the bill names Start run as the first charge, not a Continue on another screen", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "named.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    const first = page.getByTestId("first-charge");
+    await expect(first).toContainText(/Start run/i);
+    await expect(first).not.toContainText(/Gate 0/);
+  });
+
+  test("@setup a run parked at the retired position still resolves and can still be continued", async ({
+    page,
+  }) => {
+    // SIX RUNS ARE PARKED THERE RIGHT NOW. Nothing new enters that position, but the wire value and its
+    // redirect stay (D-3) — ripping them out would strand those runs behind a 404, which is the one
+    // outcome this change is not allowed to have.
+    await withParkedRun(page);
+    await page.goto(`/run/${PAUSED_RUN_FIXTURE}/${RETIRED_GATE}`);
+    await page.waitForLoadState("networkidle");
+    expect(new URL(page.url()).pathname).toMatch(/\/setup$/);
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveAttribute("data-first-charge", "true");
+  });
+
+  test("@setup a COMPOSE screen offers exactly one charge control", async ({ page }) => {
+    // The pre-flight control and the Start control must never both be on screen: two bars each claiming
+    // to be the first charge is worse than either one being wrong, because the reviewer cannot tell
+    // which figure binds.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "one-bar.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(12)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    await expect(page.getByTestId("commit-bar")).toHaveCount(1);
+  });
+});
+
+// --- the two reference disclosures (08-14f Task 5) ------------------------------------------------------
+//
+// TWO QUESTIONS, TWO DISCLOSURES, asked at different moments: *"is my file clean enough to upload?"* and
+// *"which column is which?"*. Merging them reproduces the verbosity that got the first version rewritten
+// — Bhargav read the 08-14d panel live on 2026-08-31 and called it too wordy, which is why the checklist
+// is now imperative one-liners with one real example each rather than what/why/fix paragraphs.
+
+test.describe("Setup — the pre-upload checklist and the column-roles reference", () => {
+  test("@setup the checklist is at most seven imperative one-liners, each with one example", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const tips = page.getByTestId("dictionary-tips");
+    await expect(tips).toBeVisible();
+    // CLOSED by default: it costs one row until it is asked for.
+    await expect(page.getByTestId("dictionary-tip")).toHaveCount(0);
+    await tips.getByRole("button").first().click();
+
+    const bullets = page.getByTestId("dictionary-tip");
+    const n = await bullets.count();
+    expect(n).toBeGreaterThan(0);
+    expect(n, "the checklist grew past the bound that keeps it readable").toBeLessThanOrEqual(7);
+    for (let i = 0; i < n; i += 1) {
+      const bullet = bullets.nth(i);
+      // ONE EXAMPLE EACH, and it is a distinct element rather than prose — so it renders visibly AS an
+      // example and cannot be read as part of the directive.
+      await expect(bullet.getByTestId("dictionary-tip-example")).toHaveCount(1);
+      const directive = (await bullet.getByTestId("dictionary-tip-do").innerText()).trim();
+      expect(directive.length, `bullet ${i} is a paragraph, not a directive: ${directive}`).toBeLessThan(120);
+    }
+  });
+
+  test("@setup the checklist leads with the repeated variable name and points at the live check", async ({
+    page,
+  }) => {
+    // THE ONE NOTHING CAN FIX FOR THEM. `load_dictionary` keys on the variable name and the last row with
+    // a repeat wins, so the earlier rows are gone before any other rule runs. The checklist names the
+    // CLASS; the live check on this same screen reports their actual file.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const first = page.getByTestId("dictionary-tip").first();
+    await expect(first).toContainText(/variable name/i);
+    await expect(first).toContainText(/once|unique|repeat/i);
+  });
+
+  test("@setup the expanded checklist fits a desktop viewport without scrolling", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const box = (await page.getByTestId("dictionary-tips").boundingBox())!;
+    expect(box.height, "the checklist is taller than the viewport it has to be read in").toBeLessThan(900);
+  });
+
+  test("@setup the roles panel states the bare minimum, and that question_text beats description", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const roles = page.getByTestId("column-roles");
+    await expect(roles).toBeVisible();
+    // CLOSED by default, like its sibling.
+    await expect(page.getByTestId("column-role")).toHaveCount(0);
+    await roles.getByRole("button").first().click();
+
+    // THE BARE MINIMUM IS THE POINT. A reviewer who thinks they must map twelve columns will not start.
+    const minimum = roles.getByTestId("roles-bare-minimum");
+    await expect(minimum).toBeVisible();
+    await expect(minimum).toContainText(/at least one of/i);
+    await expect(minimum).toContainText(/question_text/);
+    await expect(minimum).toContainText(/description/);
+
+    // THE PRECEDENCE, stated as what it means for MAPPING rather than as an implementation note. Getting
+    // these two round the wrong way silently changes what is clustered.
+    const precedence = roles.getByTestId("roles-precedence");
+    await expect(precedence).toContainText(/question_text/);
+    await expect(precedence).toContainText(/wins|beats|outranks/i);
+    await expect(precedence).toContainText(/verbatim|asked|wording/i);
+  });
+
+  test("@setup the roles panel marks required against what to_embedding_text actually does", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("column-roles").getByRole("button").first().click();
+
+    const byRole = async (role: string) => page.getByTestId("column-role").filter({ has: page.locator(`[data-role="${role}"]`) });
+
+    // `category` is OPTIONAL but it DOES enter the clustered string — core appends "Category: …". Marking
+    // it "does not affect clustering" alongside units would be the easy, wrong grouping.
+    await expect((await byRole("category")).first()).toHaveAttribute("data-clustered", "true");
+    // These three feed PROMPTS, never the semantic vector. Value metadata is routed symbolically on
+    // purpose: it is geometric noise in the embedding.
+    for (const role of ["value_encoding", "data_type", "units"]) {
+      await expect((await byRole(role)).first(), role).toHaveAttribute("data-clustered", "false");
+    }
+    await expect((await byRole("question_text")).first()).toHaveAttribute("data-clustered", "true");
+  });
+
+  test("@setup value_encoding shows its inline structure with a worked example", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("column-roles").getByRole("button").first().click();
+    const row = page.getByTestId("column-role").filter({ has: page.locator('[data-role="value_encoding"]') });
+    await expect(row).toContainText("1=Male|2=Female|3=Other");
+    await expect(row).toContainText(/transform[- ]spec/i);
+  });
+
+  test("@setup both disclosures name what they reveal, for a screen reader", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    for (const id of ["dictionary-tips", "column-roles"]) {
+      const trigger = page.getByTestId(id).getByRole("button").first();
+      const name = await trigger.getAttribute("aria-label");
+      expect(name, `${id} has no accessible name`).toBeTruthy();
+      expect(name!.length, `${id}'s accessible name says nothing`).toBeGreaterThan(20);
+    }
+  });
+
+  test("@setup neither disclosure is rendered once the run has started", async ({ page }) => {
+    // A run's column roles are fixed at `startHarmonize`, so neither question is still answerable —
+    // advice you cannot take is noise on a screen this phase has twice cleared of noise.
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("dictionary-tips")).toHaveCount(0);
+    await expect(page.getByTestId("column-roles")).toHaveCount(0);
   });
 });

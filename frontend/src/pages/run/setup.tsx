@@ -3,22 +3,36 @@ import { Link, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
-import { ChevronDown, Eye, EyeOff, Loader2, Upload, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
+import { ColumnRolesPanel } from "@/components/gate/ColumnRolesPanel";
 import { DictionaryTipsPanel } from "@/components/gate/DictionaryTipsPanel";
-import { PreparedExport } from "@/components/gate/PreparedExport";
+import {
+  DictionaryEmbeddingExport,
+  PreparedExport,
+  WorkbookExport,
+} from "@/components/gate/PreparedExport";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { InfoTip } from "@/components/ui/info-tip";
-import { GATE_ORDER, IS_STATIC, listDemos, listModels, resumeRun, startHarmonize } from "@/lib/api";
-import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
+import {
+  GATE_ORDER,
+  IS_STATIC,
+  embeddingCsv,
+  embeddingWorkbook,
+  listDemos,
+  listModels,
+  resumeRun,
+  saveBlob,
+  startHarmonize,
+} from "@/lib/api";
+import { RETIRED_GATE, startedPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { preparationProgress } from "@/lib/run-state";
@@ -111,9 +125,6 @@ const LINE_HELP: Record<string, { help: string; optIn?: { on: boolean; decidedAt
     optIn: { on: true, decidedAt: "the results page" },
   },
 };
-
-/** A run that has stopped for good. It has no uncommitted gate and nothing left to commit. */
-const TERMINAL_STATUSES = new Set(["complete", "error", "cancelled"]);
 
 /** What each pause point charges for, in words, when it charges nothing. */
 const GATE_FREE_REASON: Partial<Record<GatePosition, string>> = {
@@ -211,8 +222,30 @@ interface SetupDict {
   datasetId?: string;
   /** role -> source column. */
   roles: Record<string, string>;
+  /**
+   * The mapping AS CONFIRMED by the reviewer, or null while it has not been.
+   *
+   * A MAPPING, NOT A BOOLEAN, and that is the whole design. Confirmation has to invalidate the moment a
+   * column is re-assigned — a reviewer downloading a CSV that describes a mapping they have since edited,
+   * and believing it, is worse than no download at all. Holding the confirmed mapping makes that
+   * invalidation STRUCTURAL: `confirmedRoles` simply stops matching `roles`, with no effect to remember
+   * to fire and nothing to keep in sync.
+   */
+  confirmedRoles: Record<string, string> | null;
   state: ParseState;
   origin: "run" | "upload";
+}
+
+/** Two role -> column mappings are the same mapping. Order-insensitive: the object is rebuilt on edit. */
+function sameRoles(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a).sort();
+  const kb = Object.keys(b).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
+}
+
+/** Whether this dictionary's CURRENT mapping is the one the reviewer marked complete. */
+function isConfirmed(d: SetupDict): boolean {
+  return d.confirmedRoles !== null && sameRoles(d.confirmedRoles, d.roles);
 }
 
 /** A file that never became a dictionary, and why. Rendered problem-then-next-step (UI-SPEC §8.4). */
@@ -273,6 +306,7 @@ function dictionariesFromRun(job: JobResult | null): SetupDict[] {
         rows: null,
         rowCount: null,
         roles,
+        confirmedRoles: null,
         state: "ready" as ParseState,
         origin: "run" as const,
       };
@@ -294,6 +328,7 @@ function dictionariesFromRun(job: JobResult | null): SetupDict[] {
         rowCount: null,
         datasetId: id,
         roles: { ...entry.roles },
+        confirmedRoles: null,
         state: "ready" as ParseState,
         origin: "run" as const,
       },
@@ -366,6 +401,14 @@ export default function SetupPage() {
   const [dictsOpen, setDictsOpen] = useState(false);
   /** True while the run's first charge is being committed. */
   const [committing, setCommitting] = useState(false);
+  // The pre-Start export's own state. Per-dictionary busy/note/error are keyed by dictionary, because a
+  // failure on one file must not read as a failure of the set.
+  const [runConfirmed, setRunConfirmed] = useState(false);
+  const [exportBusy, setExportBusy] = useState<Record<string, boolean>>({});
+  const [exportNote, setExportNote] = useState<Record<string, string | undefined>>({});
+  const [exportError, setExportError] = useState<Record<string, string | undefined>>({});
+  const [workbookBusy, setWorkbookBusy] = useState(false);
+  const [workbookError, setWorkbookError] = useState<string | undefined>(undefined);
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
   const composed = useRef(false);
 
@@ -413,7 +456,16 @@ export default function SetupPage() {
     [fieldsByDataset],
   );
 
-    /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
+    /**
+   * The dictionaries the pre-Start export can actually be built from — the ones read in THIS browser.
+   *
+   * A run-seeded entry is a read-back with no `File` behind it, so it can be neither confirmed nor
+   * exported. Counting it towards "how many are still to be marked complete" would give the reviewer an
+   * outstanding item they have no control that can clear.
+   */
+  const uploadedDicts = useMemo(() => dicts.filter((d) => d.origin === "upload" && d.file), [dicts]);
+
+  /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
   const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
 
   /**
@@ -433,11 +485,17 @@ export default function SetupPage() {
    * `awaiting_review` half is what excludes that.
    */
   const gatePosition = jobState?.gatePosition ?? jobState?.result?.gatePosition ?? null;
-  const runTerminal = TERMINAL_STATUSES.has(jobState?.status ?? "");
   const atPreflightBoundary = jobState?.status === "awaiting_review" && gatePosition === RETIRED_GATE;
+  //
+  // NARROWED IN 08-14f, and the narrowing is a safety property rather than a tidy-up. `preflight` used to
+  // also cover "started, not terminal, carrying no gate position" — the window between Start and the
+  // first checkpoint, which every fresh run passed through. Fresh runs now enter at Gate 1 and never park
+  // at the retired position, so that arm would offer the first-charge control for a run whose first
+  // charge has ALREADY been committed by Start. Only a run genuinely parked at the retired boundary — the
+  // six that exist today — still gets it.
   const stage: "compose" | "preflight" | "past" = !runStarted
     ? "compose"
-    : atPreflightBoundary || (!runTerminal && !gatePosition)
+    : atPreflightBoundary
       ? "preflight"
       : "past";
 
@@ -637,6 +695,7 @@ export default function SetupPage() {
           rows: null,
           rowCount: null,
           roles: {},
+          confirmedRoles: null,
           state: "parsing",
           origin: "upload",
         },
@@ -717,10 +776,74 @@ export default function SetupPage() {
   function setRoles(key: string, roles: Record<string, string>) {
     composed.current = true;
     setDicts((prev) => prev.map((d) => (d.key === key ? { ...d, roles } : d)));
+    // The run-level confirmation is dropped on ANY mapping edit. Per-dictionary confirmation invalidates
+    // structurally (`confirmedRoles` stops matching `roles`); this one is a separate gesture about the
+    // whole set, so it has to be dropped explicitly or the workbook would stay on offer for a set the
+    // reviewer has since changed.
+    setRunConfirmed(false);
+    setWorkbookError(undefined);
   }
   function removeDict(key: string) {
     composed.current = true;
     setDicts((prev) => prev.filter((d) => d.key !== key));
+    setRunConfirmed(false);
+    setWorkbookError(undefined);
+  }
+
+  /**
+   * PER-DICTIONARY EXPORT: mark the mapping complete, then take that dictionary's embedding-text CSV.
+   *
+   * Everything here is FREE and starts no run — the endpoint is job-less by construction, because the
+   * file is still in the browser at this point. That is what makes the new flow better than the one it
+   * replaces: the reviewer can read the exact clustering input, in Excel, before spending anything.
+   */
+  function confirmMapping(key: string) {
+    setDicts((prev) => prev.map((d) => (d.key === key ? { ...d, confirmedRoles: { ...d.roles } } : d)));
+  }
+
+  async function downloadEmbeddingCsv(d: SetupDict) {
+    if (!d.file) return;
+    setExportBusy((prev) => ({ ...prev, [d.key]: true }));
+    setExportError((prev) => ({ ...prev, [d.key]: undefined }));
+    try {
+      const out = await embeddingCsv({ file: d.file, cohortName: d.cohortName, columnRoles: d.roles });
+      saveBlob(out.blob, out.filename);
+      // THE SERVER'S OWN COUNTS, reported back on the screen. The live `nameCheck` in the mapping table
+      // already tells the reviewer their file repeats a name; this says what the LOADER did about it,
+      // which is the half no client-side check can know.
+      const parts = [`${out.rows.toLocaleString()} rows · ${out.variables.toLocaleString()} variables`];
+      if (out.collapsed > 0) {
+        parts.push(
+          `${out.collapsed.toLocaleString()} ${out.collapsed === 1 ? "row was" : "rows were"} collapsed onto a repeated variable name` +
+            (out.repeatedNames.length ? ` (${out.repeatedNames.slice(0, 5).join(", ")})` : "") +
+            " and carry no text",
+        );
+      }
+      if (out.nothingToEmbed > 0) {
+        parts.push(
+          `${out.nothingToEmbed.toLocaleString()} ${out.nothingToEmbed === 1 ? "row embeds" : "rows embed"} nothing and will reach no concept group`,
+        );
+      }
+      setExportNote((prev) => ({ ...prev, [d.key]: parts.join(" · ") }));
+    } catch (e) {
+      setExportError((prev) => ({ ...prev, [d.key]: e instanceof Error ? e.message : "Export failed" }));
+    } finally {
+      setExportBusy((prev) => ({ ...prev, [d.key]: false }));
+    }
+  }
+
+  async function downloadWorkbook() {
+    const mapped = dicts.filter((d) => d.file).map((d) => ({ file: d.file!, cohortName: d.cohortName, columnRoles: d.roles }));
+    setWorkbookBusy(true);
+    setWorkbookError(undefined);
+    try {
+      const out = await embeddingWorkbook(mapped);
+      saveBlob(out.blob, out.filename);
+    } catch (e) {
+      setWorkbookError(e instanceof Error ? e.message : "The workbook could not be built");
+    } finally {
+      setWorkbookBusy(false);
+    }
   }
 
   /**
@@ -802,11 +925,12 @@ export default function SetupPage() {
       // column plays. Nothing derived from the FIRST VALUE column the mapping table displays goes in here;
       // that column holds cell contents, and a cache of cell contents is a different thing entirely.
       dicts.forEach((d) => rememberAssignment(d.headers, d.roles));
-      // ONE navigation, to the NEW run's own Setup route. This used to point at the retired gate's URL,
-      // which now redirects straight back here — Setup → retired path → Setup, a double navigation on the
-      // run's first transition that nothing would have failed on, because the final URL is right either
-      // way. The target lives in `setupPathFor` so it can be asserted directly; see its docstring.
-      navigate(setupPathFor(started));
+      // ONE navigation, STRAIGHT TO GATE 1 (08-14f). It used to come back here, into a "pre-flight" state
+      // whose Continue was the real first charge — so Start bought nothing and the reviewer met an
+      // intermediate screen before the run began. The free inspection that screen existed for now happens
+      // BEFORE Start, per dictionary. The target lives in `startedPathFor` so it can be asserted directly;
+      // its docstring records why the retired path must never be it.
+      navigate(startedPathFor(started));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not start this run");
     } finally {
@@ -931,7 +1055,7 @@ export default function SetupPage() {
           <div className="rounded-card bg-surface-raised shadow-card">
             <GateEmptyState
               heading="No dictionaries yet"
-              nextStep="Drop one file per cohort above. Reading and mapping them costs nothing — the first charge is the Continue button that appears here once they are prepared."
+              nextStep="Drop one file per cohort above. Reading, mapping and exporting them costs nothing — the first charge is Start run."
             >
               Nothing has been added to this run, so there is nothing to group and nothing to price. This is
               not an error: a run starts empty.
@@ -997,6 +1121,28 @@ export default function SetupPage() {
                   onRolesChange={(roles) => setRoles(d.key, roles)}
                 />
               )}
+
+              {/* PER-DICTIONARY CONFIRMATION AND EXPORT, compose stage only. A started run's column roles
+                  are fixed at `startHarmonize`, so there is nothing left to confirm and the job-scoped
+                  export above is the one that applies. A run-seeded read-back has no File to post. */}
+              {stage === "compose" && d.state !== "parsing" && d.origin === "upload" && (
+                <DictionaryEmbeddingExport
+                  cohortName={d.cohortName}
+                  confirmed={isConfirmed(d)}
+                  canConfirm={hasMeaning(d.roles)}
+                  blockedReason={
+                    hasMeaning(d.roles)
+                      ? undefined
+                      : "Map at least a variable name, a description or the question text before marking this dictionary complete — with none of them there is no text to cluster."
+                  }
+                  onConfirm={() => confirmMapping(d.key)}
+                  onDownload={() => void downloadEmbeddingCsv(d)}
+                  downloading={Boolean(exportBusy[d.key])}
+                  note={exportNote[d.key]}
+                  error={exportError[d.key]}
+                  available={!IS_STATIC}
+                />
+              )}
             </article>
           ))
         )}
@@ -1037,9 +1183,16 @@ export default function SetupPage() {
     <GateShell
       gate="setup"
       subhead={
+        // THREE STATES, THREE SENTENCES, because two of them make a claim about money and the claim is
+        // different in each. A run PAST this point has already been charged, so the compose subhead's
+        // "nothing is charged until you press Start run" would be false of the run in front of the
+        // reviewer — it was false in the old wording too, and it is not a thing to carry forward while
+        // relocating the charge.
         stage === "preflight"
           ? "Your dictionaries are loaded, prepared and grouped, all on this machine. Commit the run's first charge when you are ready — nothing has been charged for anything so far."
-          : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Nothing is charged yet — the first charge is the Continue button that appears here once your dictionaries are prepared."
+          : stage === "past"
+            ? "What this run was set up with. It is a record now, not a decision — the column mapping is fixed for a run that has started, and this run is already past its first charge."
+            : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Mark each dictionary complete to export the exact text that will be clustered — all of that is free. Nothing is charged until you press Start run."
       }
       rail={railFor("setup", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
@@ -1128,7 +1281,15 @@ export default function SetupPage() {
           ABOVE the dictionaries, because that is the order the reviewer works in. It matches the shell's
           own how-to disclosure rather than inventing a second pattern, and it is CLOSED, so it costs one
           row until it is asked for. */}
-      {stage === "compose" && <DictionaryTipsPanel />}
+      {/* TWO disclosures, not one. They answer different questions at different moments — "is my file
+          clean enough to upload?" and "which column is which?" — and merging them reproduces the
+          verbosity that got the first version rewritten. Both CLOSED, so together they cost two rows. */}
+      {stage === "compose" && (
+        <div className="flex flex-col gap-2">
+          <DictionaryTipsPanel />
+          <ColumnRolesPanel />
+        </div>
+      )}
 
       {stage === "preflight" ? (
         <Collapsible
@@ -1163,6 +1324,24 @@ export default function SetupPage() {
         </Collapsible>
       ) : (
         dictionariesSection
+      )}
+
+      {/* --- the whole set, once every dictionary is mapped (08-14f) ------------------------------
+
+          BELOW the dictionaries, because it is the step after them: the reviewer marks each file
+          complete going down the list, and the workbook is what they reach at the bottom. Compose only —
+          after Start the mapping is fixed and the job-scoped export above serves the same need. */}
+      {stage === "compose" && (
+        <WorkbookExport
+          total={uploadedDicts.length}
+          remaining={uploadedDicts.filter((d) => !isConfirmed(d)).length}
+          confirmed={runConfirmed}
+          onConfirm={() => setRunConfirmed(true)}
+          onDownload={() => void downloadWorkbook()}
+          downloading={workbookBusy}
+          error={workbookError}
+          available={!IS_STATIC}
+        />
       )}
 
         </div>
@@ -1599,14 +1778,14 @@ export default function SetupPage() {
             >
               <span className="font-semibold">
                 You pay gate by gate. First charge {formatUsd(estimate.firstCharge)}, on this
-                screen, once your dictionaries are prepared.
+                screen, when you press Start run.
               </span>
               <InfoTip
                 label="What the first charge buys, and what is free"
                 text={
-                  "Everything up to that point can be abandoned at no cost: setting up, loading, preparing " +
-                  "and grouping your dictionaries, all of which run on your machine. Pressing Continue " +
-                  "here is what buys the next step — the work listed " +
+                  "Everything up to that point can be abandoned at no cost: adding dictionaries, mapping " +
+                  "their columns, marking each one complete and exporting the exact text that will be " +
+                  "clustered. Pressing Start run here is what buys the first step — the work listed " +
                   "under Concept groups below. From there every gate is its own decision: you can stop " +
                   "after any of them and keep what you have already paid for. Each gate re-quotes from " +
                   "this run's real groups before you commit."
@@ -1793,8 +1972,15 @@ export default function SetupPage() {
         )}
       </section>
 
-      {/* --- start ------------------------------------------------------------------------------- */}
-      {stage === "preflight" ? null : (
+      {/* --- start: the run's FIRST CHARGE ---------------------------------------------------------
+
+          COMPOSE ONLY, and that is a correctness constraint rather than a layout one. This block used to
+          render in the `past` state too, holding a Start button that a blocker disabled — harmless while
+          it was a plain button. It is now the control that commits the first charge, and a bar stating an
+          amount and "this is where spending begins" on a run that has ALREADY spent it is a lie about the
+          run in front of the reviewer, disabled or not. A run past this point has the read-back note and
+          its rejoin link; it does not need a charge control. */}
+      {stage === "compose" && (
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
         <div className="flex min-w-0 flex-col gap-1">
           {blockers.length > 0 ? (
@@ -1813,24 +1999,45 @@ export default function SetupPage() {
             </div>
           ) : (
             <p className="max-w-[68ch] text-sm text-on-raised-muted">
-              Ready to start. Loading, preparing and grouping all run before anything is charged.
+              Ready to start. Uploading, mapping, confirming and exporting all ran on this machine and cost
+              nothing — pressing Start run is this run's first charge.
             </p>
           )}
         </div>
-        <div className="flex flex-col items-start gap-1">
-          <Button
-            type="button"
-            data-testid="start-run"
-            onClick={onStart}
-            disabled={blockers.length > 0 || starting || IS_STATIC}
-          >
-            {starting && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
-            Start run
-          </Button>
-          <p data-testid="nothing-charged-yet" className="text-xs text-on-raised-muted">
-            Nothing is charged yet.
-          </p>
-        </div>
+        {/* ABOVE the control, and that ordering is asserted: the statement a reviewer needs before they
+            press must not be discoverable only after they have. */}
+        <p data-testid="nothing-charged-yet" className="text-xs text-on-raised-muted">
+          Nothing is charged yet.
+        </p>
+        {/* --- THE RUN'S FIRST CHARGE (08-14f) -------------------------------------------------
+
+            THE OBLIGATION MOVED WITH THE CHARGE. Until this plan the first charge was the pre-flight's
+            Continue, one screen later; deleting that screen relocated the charge here, so this control
+            inherits both of its duties verbatim — the AMOUNT ON THE BUTTON and the irreversible-spend
+            statement INLINE, never a modal (R8 / UI-SPEC §8.5). `CommitBar` is consumed rather than
+            rebuilt, so there is one implementation of that promise on the six screens rather than two.
+
+            EVERYTHING ABOVE IT IS FREE, and that is what makes the new flow better than the old one: the
+            reviewer can read the exact clustering input, in Excel, before spending a cent.
+
+            A PREVIEW RUN BUYS NOTHING and must not be told it is about to spend — R8 binds in both
+            directions, so the amount is withheld and the reason is stated. */}
+        <CommitBar
+          action="Start run"
+          actionTestId="start-run"
+          total={isPreview || !estimate || estimate.free ? undefined : estimate.firstCharge}
+          firstCharge={!isPreview && !estimate?.free}
+          scopeLabel={totalFields === null ? undefined : `${totalFields.toLocaleString()} variables`}
+          onCommit={() => void onStart()}
+          busy={starting}
+          disabled={blockers.length > 0 || IS_STATIC}
+          className="static"
+          recheckNotice={
+            isPreview || estimate?.free
+              ? "This run is a preview, so it calls no model and buys nothing — it groups your variables and stops."
+              : undefined
+          }
+        />
       </div>
       )}
         </div>

@@ -1117,9 +1117,13 @@ def test_no_reconcile_http_route_was_added():
     assert not [p for p in paths if "reconcile" in p.lower()], f"a reconcile route exists: {paths}"
     posts = len([1 for r in app_module.app.routes if "POST" in (getattr(r, "methods", None) or set())])
     # 12 at 08-10; 14 after 08-11 added `/score/extract` (Setup, job-independent) and
-    # `/jobs/{id}/readjudicate` (the one gate action that starts paid work). Bumped deliberately: this
-    # assertion exists so a POST appears only when a plan says so, not so the number never moves.
-    assert posts == 14, f"the POST surface changed ({posts} != 14)"
+    # `/jobs/{id}/readjudicate` (the one gate action that starts paid work); 15 after 08-14f added
+    # `/dictionary/embedding.csv` and 16 with its `.xlsx` sibling. Those are POSTs despite spending
+    # nothing and touching no run,
+    # because the file it exports has not been uploaded yet — it rides in the request body, which is the
+    # same reason `/score/extract` is a POST. Bumped deliberately: this assertion exists so a POST appears
+    # only when a plan says so, not so the number never moves.
+    assert posts == 16, f"the POST surface changed ({posts} != 16)"
 
 
 # ── Gate 0: the boundary that lets a run ENTER the staged flow ───────────────────────────────
@@ -1264,14 +1268,20 @@ def test_gate_0_hands_off_to_gate_1_without_reclustering_from_scratch(tmp_path, 
     assert calls.get("generate", 0) > 0 and "classify" not in calls
 
 
-def test_submitting_a_run_asks_for_the_gate_0_stop(monkeypatch, tmp_path):
+def test_submitting_a_run_asks_for_the_entry_gate_stop(monkeypatch, tmp_path):
     """The other half of the same defect: the boundary existing is useless if nobody ever requests it.
 
     Asserted on the config the SUBMIT path hands the worker, not on a status, so the test states the
-    contract ("this leg stops at gate0") rather than racing a daemon thread.
+    contract ("this leg stops at the entry gate") rather than racing a daemon thread.
+
+    THE ENTRY GATE IS `gate1` SINCE 08-14f, and this test reads `ENTRY_GATE` rather than a literal so it
+    keeps asserting the contract instead of a value. `gate0` used to be it: a free pause after
+    load/preprocess/embed so a reviewer could inspect their dictionaries before spending. The job-less
+    `/dictionary/embedding.csv` now serves that inspection with no run at all, so the stop bought nothing
+    and cost a second press. The BOUNDARY still exists (D-3) — nothing new enters it.
 
     It also pins where the flag lives. `stop_at_gate` is PER-LEG and must not be persisted onto the run:
-    the resume endpoint computes the next boundary from the run's gate position, and a sticky `gate0` in
+    the resume endpoint computes the next boundary from the run's gate position, and a sticky value in
     the stored config would be a second, stale source of truth for the same question.
     """
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
@@ -1307,7 +1317,13 @@ def test_submitting_a_run_asks_for_the_gate_0_stop(monkeypatch, tmp_path):
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
 
-    assert seen.get("stop_at_gate") == "gate0", "a submitted run still runs straight past every gate"
+    assert seen.get("stop_at_gate") == app_module.ENTRY_GATE, "a submitted run runs straight past every gate"
+    assert app_module.ENTRY_GATE != "gate0", "a fresh run must no longer park at the retired position"
+    # The retired position stays a LEGAL boundary even though nothing enters it any more: six runs are
+    # parked there and removing it would strand them (D-3).
+    from backend.engine.adapter import _GATE_STOP_MECHANISM
+
+    assert "gate0" in _GATE_STOP_MECHANISM
     stored = app_module.store.get(job_id)
     assert stored is not None
     assert "stop_at_gate" not in stored.config, "the per-leg boundary was persisted onto the run"

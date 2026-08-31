@@ -177,11 +177,28 @@ _ALLOWED_ORIGINS = [
     for o in os.environ.get("DDHARMON_UI_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
     if o.strip()
 ]
+#: The counts that travel BESIDE the file rather than inside it. A CSV has one appended column by design,
+#: so the load-time findings — how many rows the loader collapsed, how many variables embed nothing — ride
+#: as response headers, where the screen can read them without the reviewer having to.
+_EXPORT_COUNT_HEADERS = (
+    "X-Ddharmon-Rows",
+    "X-Ddharmon-Variables",
+    "X-Ddharmon-Collapsed",
+    "X-Ddharmon-Nothing-To-Embed",
+    "X-Ddharmon-Repeated-Names",
+    "X-Ddharmon-Sheets",
+)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
+    # RESPONSE headers are not readable cross-origin unless they are named, and `allow_headers` is
+    # about the REQUEST. The embedding export's load-time counts (rows collapsed, variables embedding
+    # nothing) ride as response headers, so the screen that reports them needs them exposed.
+    expose_headers=list(_EXPORT_COUNT_HEADERS),
 )
 
 
@@ -697,14 +714,26 @@ def checkpoint_state(
     }
 
 
-#: The boundary a FRESH run stops at. Every submitted run enters the staged flow at Gate 0 — the pause
-#: after load → preprocess → embed, before anything is charged (UI-SPEC §7).
+#: The boundary a FRESH run stops at. Gate 1 since 08-14f; ``gate0`` before it.
+#:
+#: WHY IT MOVED. ``gate0`` existed to give a run a FREE pause after load → preprocess → embed, so a
+#: reviewer could inspect their dictionaries before committing money. That pause is now unnecessary and
+#: was actively in the way: the inspection it enabled is served better, and EARLIER, by the job-less
+#: ``/dictionary/embedding.csv`` — which needs no run at all, so the reviewer sees the exact clustering
+#: input while they are still mapping columns rather than after starting something. Keeping the stop as
+#: well meant Start bought nothing, parked the run on an intermediate screen, and asked for a SECOND press
+#: to actually begin. One press, one charge, straight to Gate 1.
+#:
+#: THE BOUNDARY ITSELF IS NOT REMOVED, and that is deliberate (08-DECISION-GATE0 D-3).
+#: ``_GATE_STOP_MECHANISM["gate0"]`` and ``build_gate0_result()`` stay, the position stays a legal wire
+#: value, and its route still redirects to Setup. Six runs are parked at that position right now; ripping
+#: the value out would strand them behind a 404. Nothing new enters it — that is the whole change.
 #:
 #: It is passed to the worker and NOT written into the run's stored config, deliberately. `run_config`
 #: records what the user asked for and is replayed verbatim by re-run; the boundary is a property of the
 #: LEG, recomputed from the run's gate position every time :func:`resume_run` spawns the next one. Storing
 #: it would give the same question two answers, and the stale one would be the sticky one.
-ENTRY_GATE = "gate0"
+ENTRY_GATE = "gate1"
 
 
 @app.post("/api/harmonize/resume/{job_id}")
@@ -1244,6 +1273,173 @@ async def score_extract(file: Annotated[UploadFile, File()]) -> dict[str, Any]:
     except (ValueError, ImportError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"text": source.text, "provenance": source.provenance, "sha256": source.sha256, "nChars": len(source.text)}
+
+
+# --- the PRE-START embedding export -----------------------------------------------------------
+#
+# JOB-LESS BY NECESSITY, not by preference. Dictionaries live client-side until Start — the frontend's
+# `startHarmonize` builds its multipart body at press time — so before a run exists there is no
+# server-side per-dictionary state to hang a download off. `score_extract` above is the precedent: a bare
+# upload, no job id, no run created, no provider called, $0. The alternative considered and rejected was
+# creating a draft job so the job-scoped `prepared.csv` could be reused; that is run state whose only
+# purpose is a download, and the product would then have to reap it.
+#
+# WHAT IT IS FOR. The reviewer's own rows come back with ONE column appended: the exact string
+# `to_embedding_text()` composes, which is what clustering consumes and what is invisible everywhere else
+# in the product. It is free, and it is reachable before the first charge — that is the point of it.
+
+
+def _safe_stem(name: str) -> str:
+    """A download filename rebuilt from a safe alphabet rather than escaped.
+
+    The upload name is user-supplied and a response header is the wrong place to trust one — the same
+    reasoning (and the same alphabet) as ``prepared_export``.
+    """
+    return "".join(c if (c.isalnum() or c in "_-.") else "_" for c in Path(name).stem) or "dictionary"
+
+
+def _mapped_uploads(files: list[UploadFile], config: str, tmp: Path) -> list[dict[str, Any]]:
+    """Save the uploads under ``tmp`` and pair each with its declared cohort name and column mapping.
+
+    THE SAME PAYLOAD SHAPE `/batch` TAKES (``{dictionaries: [{filename, cohortName, columnRoles}]}``), and
+    the same two refusals at the door. Divergence between what the export accepts and what a run accepts
+    is how a reviewer gets a clean download for a file the run then rejects.
+    """
+    try:
+        cfg = json.loads(config)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"config is not valid JSON: {exc}") from exc
+
+    saved: dict[str, Path] = {}
+    for up in files:
+        dest = tmp / Path(up.filename or "upload.csv").name
+        with open(dest, "wb") as fh:
+            shutil.copyfileobj(up.file, fh)
+        saved[dest.name] = dest
+
+    declared = cfg.get("dictionaries") or []
+    if not declared:
+        raise HTTPException(status_code=400, detail="config.dictionaries is empty — nothing to export")
+
+    specs: list[dict[str, Any]] = []
+    for d in declared:
+        fname = Path(str(d.get("filename", ""))).name
+        if fname not in saved:
+            raise HTTPException(status_code=400, detail=f"Uploaded file missing for {fname!r}")
+        roles = {k: v for k, v in (d.get("columnRoles") or {}).items() if v}
+        if "variable_name" not in roles and "description" not in roles and "question_text" not in roles:
+            raise HTTPException(
+                status_code=400, detail=f"{fname!r} needs at least variable_name/description/question_text"
+            )
+        # Refused here as well as at `/batch`: a standing product prohibition belongs at every door, and
+        # this one accepts an upload without a run in front of it.
+        offender = _participant_level_column(saved[fname])
+        if offender is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{fname!r} looks like participant-level data: the column {offender!r} holds a unique "
+                    "value on every row. Upload a data DICTIONARY — one row per variable, describing the "
+                    "fields — not the participant records themselves. ddharmon harmonizes metadata and "
+                    "never accepts participant data."
+                ),
+            )
+        specs.append(
+            {
+                "path": saved[fname],
+                "filename": fname,
+                "cohort_name": str(d.get("cohortName") or Path(fname).stem),
+                "column_roles": roles,
+            }
+        )
+    return specs
+
+
+@app.post("/api/harmonize/dictionary/embedding.csv")
+async def dictionary_embedding_csv(
+    files: Annotated[list[UploadFile], File()],
+    config: Annotated[str, Form()],
+) -> StreamingResponse:
+    """ONE unmapped-yet-uploaded dictionary, returned with the string clustering will consume appended.
+
+    No job id, no run created, no model called, $0 — see the section header. ``config`` is the same shape
+    ``/batch`` takes, narrowed to exactly one entry: one download is about one file, and accepting a list
+    here would leave the response's ``Content-Disposition`` naming an arbitrary member of it.
+    """
+    import tempfile
+
+    from backend.engine.adapter import build_embedding_export
+
+    with tempfile.TemporaryDirectory(prefix="ddharmon-embed-") as td:
+        specs = _mapped_uploads(files, config, Path(td))
+        if len(specs) != 1:
+            raise HTTPException(status_code=400, detail="This export is per dictionary — send exactly one file")
+        spec = specs[0]
+        try:
+            export = build_embedding_export(
+                spec["path"], cohort_name=spec["cohort_name"], column_roles=spec["column_roles"]
+            )
+        except ValueError as exc:
+            # A STATED ERROR, never a partial file. An empty-looking CSV reads as "my dictionary is empty"
+            # rather than as a failure, and the reviewer would act on it.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - an unreadable upload is the caller's problem, not a 500
+            raise HTTPException(status_code=400, detail=f"{spec['filename']!r} could not be read: {exc}") from exc
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(export.header)
+        writer.writerows(export.rows)
+        body = buf.getvalue()
+
+    return StreamingResponse(
+        iter([body]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_safe_stem(spec["filename"])}_embedding.csv"',
+            "X-Ddharmon-Rows": str(export.n_rows),
+            "X-Ddharmon-Variables": str(export.n_variables),
+            "X-Ddharmon-Collapsed": str(export.n_collapsed),
+            "X-Ddharmon-Nothing-To-Embed": str(export.n_nothing_to_embed),
+            # Comma-joined and already capped by the builder: "some name repeats" is not actionable, and
+            # six thousand of them is not a header.
+            "X-Ddharmon-Repeated-Names": ",".join(export.repeated_names),
+        },
+    )
+
+
+@app.post("/api/harmonize/dictionary/embedding.xlsx")
+async def dictionary_embedding_workbook(
+    files: Annotated[list[UploadFile], File()],
+    config: Annotated[str, Form()],
+) -> StreamingResponse:
+    """The WHOLE upload set as one workbook — a sheet per dictionary, each with the embedding column.
+
+    Job-less on the same terms as its CSV sibling above and for the same reason: this is offered once every
+    dictionary is mapped and BEFORE the first charge, so there is no run to scope it to. It is the same
+    computation over N files rather than a second implementation of it.
+    """
+    import tempfile
+
+    from backend.export.workbook import build_embedding_workbook
+
+    with tempfile.TemporaryDirectory(prefix="ddharmon-embed-") as td:
+        specs = _mapped_uploads(files, config, Path(td))
+        try:
+            data = build_embedding_workbook(specs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - an unreadable upload is the caller's problem, not a 500
+            raise HTTPException(status_code=400, detail=f"The workbook could not be built: {exc}") from exc
+
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="ddharmon_embedding_text.xlsx"',
+            "X-Ddharmon-Sheets": str(len(specs)),
+        },
+    )
 
 
 @app.post("/api/harmonize/jobs/{job_id}/composite")

@@ -27,7 +27,7 @@ export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
 // it is found beside `GATE_ORDER` where it belongs by subject. It cannot be DEFINED here: this module
 // reads `import.meta.env` two lines up, which makes it unimportable from a Playwright spec, and the whole
 // point of that helper is that a test can assert it. See `gate-routes.ts` for the measurement.
-export { RETIRED_GATE, setupPathFor } from "./gate-routes";
+export { RETIRED_GATE, setupPathFor, startedPathFor } from "./gate-routes";
 const STATIC_BASE = `${import.meta.env.BASE_URL}static-data`;
 
 // Whether the Clerk SSO gate is configured for this build (single source of truth; src/auth.tsx re-exports
@@ -470,6 +470,128 @@ export function preparedExportUrl(jobId: string, cohort: string): string | null 
   const base = `${BASE}/jobs/${jobId}/prepared.csv?cohort=${encodeURIComponent(cohort)}`;
   // Same reason as `exportUrl`: a download href cannot carry an Authorization header.
   return _lastToken ? `${base}&token=${encodeURIComponent(_lastToken)}` : base;
+}
+
+/**
+ * One mapped dictionary, as it is described to the pre-Start export endpoints.
+ *
+ * The SAME payload shape `/batch` takes, deliberately: an export that accepts a mapping the run would
+ * reject (or the reverse) sends a reviewer a clean-looking download for a file that cannot be run.
+ */
+export interface MappedDictionary {
+  file: File;
+  cohortName: string;
+  columnRoles: Record<string, string>;
+}
+
+/** What a pre-Start export hands back: the bytes, the filename to save under, and the load-time counts. */
+export interface EmbeddingDownload {
+  blob: Blob;
+  filename: string;
+  /** Data rows in the reviewer's own file. */
+  rows: number;
+  /** Variables the loader produced. Lower than `rows` means names repeated and rows were collapsed. */
+  variables: number;
+  collapsed: number;
+  nothingToEmbed: number;
+  repeatedNames: string[];
+}
+
+/**
+ * A FILENAME FROM THE RESPONSE, not from the request. The server rebuilds it from a safe alphabet
+ * (the upload name is user-supplied), so echoing our own guess back would drop that sanitisation on the
+ * floor — and a download is exactly the wrong place to write an unsanitised name to disk.
+ */
+function filenameFrom(res: Response, fallback: string): string {
+  const match = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "");
+  return match?.[1] || fallback;
+}
+
+async function failureOf(res: Response, fallback: string): Promise<never> {
+  // The endpoints answer a bad mapping or an unreadable file with a STATED reason, and that reason is the
+  // only actionable thing the reviewer gets — so it is surfaced rather than replaced with a status code.
+  let detail = "";
+  try {
+    detail = String(((await res.json()) as { detail?: unknown }).detail ?? "");
+  } catch {
+    detail = "";
+  }
+  throw new Error(detail || fallback);
+}
+
+/**
+ * ONE dictionary's own rows with the exact clustering input appended — before any run exists, for $0.
+ *
+ * A POST rather than a link, because the file has not been uploaded yet: it lives in the browser until
+ * Start, so it rides in the request body. That also means no `<a href download>` can fetch it and the
+ * caller works with a Blob.
+ */
+export async function embeddingCsv(dict: MappedDictionary): Promise<EmbeddingDownload> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  const fd = new FormData();
+  fd.append("files", dict.file, dict.file.name);
+  fd.append(
+    "config",
+    JSON.stringify({
+      dictionaries: [
+        { filename: dict.file.name, cohortName: dict.cohortName, columnRoles: dict.columnRoles },
+      ],
+    }),
+  );
+  const res = await fetch(`${BASE}/dictionary/embedding.csv`, {
+    method: "POST",
+    body: fd,
+    headers: await authed(),
+  });
+  if (!res.ok) await failureOf(res, "This dictionary could not be exported");
+  const num = (h: string): number => Number(res.headers.get(h) ?? 0) || 0;
+  const repeated = (res.headers.get("x-ddharmon-repeated-names") ?? "").split(",").filter(Boolean);
+  return {
+    blob: await res.blob(),
+    filename: filenameFrom(res, `${dict.cohortName}_embedding.csv`),
+    rows: num("x-ddharmon-rows"),
+    variables: num("x-ddharmon-variables"),
+    collapsed: num("x-ddharmon-collapsed"),
+    nothingToEmbed: num("x-ddharmon-nothing-to-embed"),
+    repeatedNames: repeated,
+  };
+}
+
+/** Every mapped dictionary as ONE workbook, a sheet each. Same computation as `embeddingCsv`, N files. */
+export async function embeddingWorkbook(dicts: MappedDictionary[]): Promise<{ blob: Blob; filename: string }> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  const fd = new FormData();
+  for (const d of dicts) fd.append("files", d.file, d.file.name);
+  fd.append(
+    "config",
+    JSON.stringify({
+      dictionaries: dicts.map((d) => ({
+        filename: d.file.name,
+        cohortName: d.cohortName,
+        columnRoles: d.columnRoles,
+      })),
+    }),
+  );
+  const res = await fetch(`${BASE}/dictionary/embedding.xlsx`, {
+    method: "POST",
+    body: fd,
+    headers: await authed(),
+  });
+  if (!res.ok) await failureOf(res, "The workbook could not be built");
+  return { blob: await res.blob(), filename: filenameFrom(res, "ddharmon_embedding_text.xlsx") };
+}
+
+/** Hand a Blob to the browser as a saved file, then release the object URL. */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick, not immediately: Safari has not started the download when `click()` returns.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 export async function listDemos(): Promise<DemosResponse> {
