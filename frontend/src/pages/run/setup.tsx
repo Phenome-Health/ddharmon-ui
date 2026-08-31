@@ -10,6 +10,7 @@ import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
+import { ColumnRolesPanel } from "@/components/gate/ColumnRolesPanel";
 import { DictionaryTipsPanel } from "@/components/gate/DictionaryTipsPanel";
 import {
   DictionaryEmbeddingExport,
@@ -1280,7 +1281,15 @@ export default function SetupPage() {
           ABOVE the dictionaries, because that is the order the reviewer works in. It matches the shell's
           own how-to disclosure rather than inventing a second pattern, and it is CLOSED, so it costs one
           row until it is asked for. */}
-      {stage === "compose" && <DictionaryTipsPanel />}
+      {/* TWO disclosures, not one. They answer different questions at different moments — "is my file
+          clean enough to upload?" and "which column is which?" — and merging them reproduces the
+          verbosity that got the first version rewritten. Both CLOSED, so together they cost two rows. */}
+      {stage === "compose" && (
+        <div className="flex flex-col gap-2">
+          <DictionaryTipsPanel />
+          <ColumnRolesPanel />
+        </div>
+      )}
 
       {stage === "preflight" ? (
         <Collapsible

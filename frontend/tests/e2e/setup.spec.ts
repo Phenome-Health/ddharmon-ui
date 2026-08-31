@@ -1899,28 +1899,12 @@ test.describe("Setup — the dictionary-hygiene tips", () => {
     await expect(trigger).toHaveAccessibleName(/hide .*(dictionary|file)/i);
   });
 
-  test("@setup opened, it lists five or six pitfalls, each with a one-line what-to-do", async ({
-    page,
-  }) => {
-    await page.goto(DRAFT);
-    await page.waitForLoadState("networkidle");
-    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
-    const tips = page.getByTestId("dictionary-tip");
-    const n = await tips.count();
-    // THE CEILING IS THE POINT. Verbosity is what retired the thing this replaces; fifteen tips would
-    // reproduce it. The floor is here so the list cannot quietly decay to one.
-    expect(n, "five or six pitfalls, not fifteen").toBeGreaterThanOrEqual(5);
-    expect(n, "five or six pitfalls, not fifteen").toBeLessThanOrEqual(6);
-    for (const t of await tips.all()) {
-      // Each carries a NAMED problem and a fix. A pitfall with no remedy is a complaint about the
-      // reviewer's file rather than help with it.
-      await expect(t.getByTestId("dictionary-tip-what")).toBeVisible();
-      const fix = t.getByTestId("dictionary-tip-fix");
-      await expect(fix).toBeVisible();
-      const words = (await fix.innerText()).trim().split(/\s+/).length;
-      expect(words, `a what-to-do is one line: ${await fix.innerText()}`).toBeLessThanOrEqual(40);
-    }
-  });
+  // The 08-14d bound ("five or six pitfalls, each with a what / why / fix") is SUPERSEDED by 08-14f, which
+  // rewrote the panel as imperative one-liners with one example each and re-bounded it at seven. Its
+  // replacement lives with the other 08-14f checklist assertions at the end of this file; keeping both
+  // would leave two specs disagreeing about the same panel's shape. The rules that were NOT about shape —
+  // it leads with the repeated name, it never claims we clean the file, it names no cohort — are all
+  // still asserted below, unchanged.
 
   test("@setup it LEADS with the repeated-variable-name trap, and points at the live check", async ({
     page,
@@ -1936,7 +1920,10 @@ test.describe("Setup — the dictionary-hygiene tips", () => {
     expect(text).toMatch(/(last|only the last|silently|vanish|dropped)/i);
     // AND IT CROSS-REFERENCES the check already on this screen rather than duplicating it. The tips
     // explain the class; `nameCheck` reports the reviewer's actual file, live, as the mapping changes.
-    expect(text).toMatch(/(this screen|the mapping|below|checks your file)/i);
+    // Read from the PANEL rather than the bullet: 08-14f made every bullet a one-line directive, so the
+    // pointer moved to the panel's closing line. The rule is unchanged; only where it is written is.
+    const panel = await page.getByTestId("dictionary-tips").innerText();
+    expect(panel).toMatch(/(this screen|the mapping|below|checks your file)/i);
   });
 
   test("@setup the copy says automated preparation is FORTHCOMING and claims nothing about today", async ({
@@ -2363,7 +2350,7 @@ test.describe("Setup — the pre-upload checklist and the column-roles reference
     await page.getByTestId("column-roles").getByRole("button").first().click();
     const row = page.getByTestId("column-role").filter({ has: page.locator('[data-role="value_encoding"]') });
     await expect(row).toContainText("1=Male|2=Female|3=Other");
-    await expect(row).toContainText(/transform spec/i);
+    await expect(row).toContainText(/transform[- ]spec/i);
   });
 
   test("@setup both disclosures name what they reveal, for a screen reader", async ({ page }) => {
