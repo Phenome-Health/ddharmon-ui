@@ -2255,3 +2255,134 @@ test.describe("Setup — Start is the charge, Gate 1 is the destination", () => 
     await expect(page.getByTestId("commit-bar")).toHaveCount(1);
   });
 });
+
+// --- the two reference disclosures (08-14f Task 5) ------------------------------------------------------
+//
+// TWO QUESTIONS, TWO DISCLOSURES, asked at different moments: *"is my file clean enough to upload?"* and
+// *"which column is which?"*. Merging them reproduces the verbosity that got the first version rewritten
+// — Bhargav read the 08-14d panel live on 2026-08-31 and called it too wordy, which is why the checklist
+// is now imperative one-liners with one real example each rather than what/why/fix paragraphs.
+
+test.describe("Setup — the pre-upload checklist and the column-roles reference", () => {
+  test("@setup the checklist is at most seven imperative one-liners, each with one example", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const tips = page.getByTestId("dictionary-tips");
+    await expect(tips).toBeVisible();
+    // CLOSED by default: it costs one row until it is asked for.
+    await expect(page.getByTestId("dictionary-tip")).toHaveCount(0);
+    await tips.getByRole("button").first().click();
+
+    const bullets = page.getByTestId("dictionary-tip");
+    const n = await bullets.count();
+    expect(n).toBeGreaterThan(0);
+    expect(n, "the checklist grew past the bound that keeps it readable").toBeLessThanOrEqual(7);
+    for (let i = 0; i < n; i += 1) {
+      const bullet = bullets.nth(i);
+      // ONE EXAMPLE EACH, and it is a distinct element rather than prose — so it renders visibly AS an
+      // example and cannot be read as part of the directive.
+      await expect(bullet.getByTestId("dictionary-tip-example")).toHaveCount(1);
+      const directive = (await bullet.getByTestId("dictionary-tip-do").innerText()).trim();
+      expect(directive.length, `bullet ${i} is a paragraph, not a directive: ${directive}`).toBeLessThan(120);
+    }
+  });
+
+  test("@setup the checklist leads with the repeated variable name and points at the live check", async ({
+    page,
+  }) => {
+    // THE ONE NOTHING CAN FIX FOR THEM. `load_dictionary` keys on the variable name and the last row with
+    // a repeat wins, so the earlier rows are gone before any other rule runs. The checklist names the
+    // CLASS; the live check on this same screen reports their actual file.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const first = page.getByTestId("dictionary-tip").first();
+    await expect(first).toContainText(/variable name/i);
+    await expect(first).toContainText(/once|unique|repeat/i);
+  });
+
+  test("@setup the expanded checklist fits a desktop viewport without scrolling", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const box = (await page.getByTestId("dictionary-tips").boundingBox())!;
+    expect(box.height, "the checklist is taller than the viewport it has to be read in").toBeLessThan(900);
+  });
+
+  test("@setup the roles panel states the bare minimum, and that question_text beats description", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const roles = page.getByTestId("column-roles");
+    await expect(roles).toBeVisible();
+    // CLOSED by default, like its sibling.
+    await expect(page.getByTestId("column-role")).toHaveCount(0);
+    await roles.getByRole("button").first().click();
+
+    // THE BARE MINIMUM IS THE POINT. A reviewer who thinks they must map twelve columns will not start.
+    const minimum = roles.getByTestId("roles-bare-minimum");
+    await expect(minimum).toBeVisible();
+    await expect(minimum).toContainText(/at least one of/i);
+    await expect(minimum).toContainText(/question_text/);
+    await expect(minimum).toContainText(/description/);
+
+    // THE PRECEDENCE, stated as what it means for MAPPING rather than as an implementation note. Getting
+    // these two round the wrong way silently changes what is clustered.
+    const precedence = roles.getByTestId("roles-precedence");
+    await expect(precedence).toContainText(/question_text/);
+    await expect(precedence).toContainText(/wins|beats|outranks/i);
+    await expect(precedence).toContainText(/verbatim|asked|wording/i);
+  });
+
+  test("@setup the roles panel marks required against what to_embedding_text actually does", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("column-roles").getByRole("button").first().click();
+
+    const byRole = async (role: string) => page.getByTestId("column-role").filter({ has: page.locator(`[data-role="${role}"]`) });
+
+    // `category` is OPTIONAL but it DOES enter the clustered string — core appends "Category: …". Marking
+    // it "does not affect clustering" alongside units would be the easy, wrong grouping.
+    await expect((await byRole("category")).first()).toHaveAttribute("data-clustered", "true");
+    // These three feed PROMPTS, never the semantic vector. Value metadata is routed symbolically on
+    // purpose: it is geometric noise in the embedding.
+    for (const role of ["value_encoding", "data_type", "units"]) {
+      await expect((await byRole(role)).first(), role).toHaveAttribute("data-clustered", "false");
+    }
+    await expect((await byRole("question_text")).first()).toHaveAttribute("data-clustered", "true");
+  });
+
+  test("@setup value_encoding shows its inline structure with a worked example", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("column-roles").getByRole("button").first().click();
+    const row = page.getByTestId("column-role").filter({ has: page.locator('[data-role="value_encoding"]') });
+    await expect(row).toContainText("1=Male|2=Female|3=Other");
+    await expect(row).toContainText(/transform spec/i);
+  });
+
+  test("@setup both disclosures name what they reveal, for a screen reader", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    for (const id of ["dictionary-tips", "column-roles"]) {
+      const trigger = page.getByTestId(id).getByRole("button").first();
+      const name = await trigger.getAttribute("aria-label");
+      expect(name, `${id} has no accessible name`).toBeTruthy();
+      expect(name!.length, `${id}'s accessible name says nothing`).toBeGreaterThan(20);
+    }
+  });
+
+  test("@setup neither disclosure is rendered once the run has started", async ({ page }) => {
+    // A run's column roles are fixed at `startHarmonize`, so neither question is still answerable —
+    // advice you cannot take is noise on a screen this phase has twice cleared of noise.
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("dictionary-tips")).toHaveCount(0);
+    await expect(page.getByTestId("column-roles")).toHaveCount(0);
+  });
+});
