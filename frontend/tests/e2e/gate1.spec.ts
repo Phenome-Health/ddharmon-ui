@@ -5,6 +5,7 @@ import {
   isFlagged,
   matchTerms,
   partitionByBreadth,
+  readjudicationRequest,
   sortGroups,
 } from "@/lib/ledger";
 import { PAUSED_JOB, fixtureGroups, serveRun } from "./gate1-fixture";
@@ -267,6 +268,8 @@ test.describe("gate1 ledger", () => {
       const g = run.result!.conceptGroups!.find((x) => x.groupId === "c8331409f61e1#g0")!;
       g.nMembers = 137;
       g.membersTruncated = true;
+      // …and the run does NOT carry the uncapped list, which is the case the count must survive.
+      delete run.result!.conceptGroupMembers![g.groupId];
     });
     await openGate1(page);
     // Named by ROW ID, not by position: the ledger sorts, so the group mutated above is not the first row.
@@ -276,6 +279,13 @@ test.describe("gate1 ledger", () => {
     expect(fixtureGroups().find((g) => g.groupId === "c8331409f61e1#g0")!.memberVariableNames.length).toBeLessThan(
       137,
     );
+
+    // AND THE MOVE IS WITHHELD. With only a sample on the wire, offering a regroup would silently drop
+    // every member past the cap — so the verb is withdrawn and the reason is stated.
+    await row.getByRole("button", { name: /^Expand /i }).click();
+    await expect(row.locator("[data-testid='not-available']")).toBeVisible();
+    await expect(row.locator("[data-testid='member-drop-zone']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='member-chip']").first()).toHaveAttribute("draggable", "false");
   });
 });
 
@@ -529,5 +539,249 @@ test.describe("gate1 toolbar", () => {
     }));
     expect(overflow.doc).toBeLessThanOrEqual(0);
     expect(overflow.body).toBeLessThanOrEqual(0);
+  });
+});
+
+// --- the expanded row: membership, regrouping, the evidence grid and the carve proposal (Task 3) ----------
+
+/** Open the row named by group id and return its locator. */
+async function expandRow(page: Page, groupId: string) {
+  const row = page.locator(`[data-testid='ledger-row'][data-row-id='${groupId}']`);
+  await expect(row).toBeVisible();
+  await row.locator("[data-state] >> nth=-1").first().waitFor({ state: "attached" });
+  await row.getByRole("button", { name: /^Expand /i }).click();
+  return row;
+}
+
+/** The two flagged (split) groups in the default view — the ones carrying a carve proposal. */
+const FLAGGED = "c45aa294f30f6#g1";
+/** A large, unflagged cross-cohort group — the one with the most members to drag. */
+const BIG = "c8331409f61e1#g0";
+
+test.describe("gate1 expanded row", () => {
+  test("@gate1 the expanded row renders the FULL membership, not the collapsed sample", async ({ page }) => {
+    await openGate1(page);
+    const group = fixtureGroups().find((g) => g.groupId === BIG)!;
+    const row = await expandRow(page, BIG);
+    // T-08-89: a regroup verb over a partial sample would silently discard the members it never showed,
+    // so the expanded row reads the uncapped list rather than the collapsed row's cap.
+    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(group.nMembers);
+    await expect(row.locator("[data-testid='member-chip']").first()).toHaveAttribute("draggable", "true");
+  });
+
+  test("@gate1 a single-member group's one chip is still draggable", async ({ page }) => {
+    const singles = fixtureGroups().filter((g) => g.nMembers === 1);
+    await openGate1(page);
+    // Single-member groups are single-cohort by construction, so they live in the other bucket.
+    await page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']").click();
+    const row = await expandRow(page, singles[0].groupId);
+    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(1);
+    await expect(row.locator("[data-testid='member-chip']")).toHaveAttribute("draggable", "true");
+  });
+
+  test("@gate1 a move persists, survives a reload, and marks both groups as changed", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const chip = row.locator("[data-testid='member-chip']").first();
+    const memberId = await chip.getAttribute("data-member-id");
+
+    // The no-group tray is a REAL destination with its own identifier, not a sentinel special-cased at
+    // every call site.
+    const tray = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
+    await expect(tray).toBeVisible();
+    await chip.dragTo(tray);
+
+    await expect(tray.locator("[data-testid='member-chip']")).toHaveCount(1);
+    await expect(
+      page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`),
+    ).toHaveAttribute("data-spine", "changed");
+
+    // R6 / T-08-88: the move and the touched state are DERIVED from persisted decisions, so both are
+    // still there after a reload. The prototype held them in component state, which is the defect.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const after = await expandRow(page, BIG);
+    await expect(after.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__'] [data-testid='member-chip']")).toHaveCount(1);
+    await expect(after.locator(`[data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveAttribute(
+      "data-moved",
+      "true",
+    );
+    await expect(
+      page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`),
+    ).toHaveAttribute("data-spine", "changed");
+  });
+
+  test("@gate1 emptying a group renders a defined state instead of the row vanishing", async ({ page }) => {
+    // A one-member group, so one drag empties it.
+    const single = fixtureGroups().filter((g) => g.nMembers === 1)[0];
+    await openGate1(page);
+    await page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']").click();
+    const row = await expandRow(page, single.groupId);
+    await row
+      .locator("[data-testid='member-chip']")
+      .first()
+      .dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
+
+    // The row MUST NOT silently disappear — the reviewer has to be able to see what they did and undo it.
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${single.groupId}']`)).toBeVisible();
+    const emptied = row.locator("[data-testid='group-emptied']");
+    await expect(emptied).toBeVisible();
+    await expect(emptied).toContainText(/will not/i);
+    await expect(row.getByRole("button", { name: /put them back|undo/i })).toBeVisible();
+  });
+
+  test("@gate1 the raw dictionary rows are the evidence layer, and degrade rather than render empty", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    // The grid the audit lifted: one row per pooled variable, columns as ingested. An over-merge becomes
+    // visible at a glance instead of inferred from a name and a chip.
+    const grid = row.locator("[data-testid='source-rows']");
+    await expect(grid).toBeVisible();
+    await expect(grid.locator("tbody tr")).toHaveCount(fixtureGroups().find((g) => g.groupId === BIG)!.nMembers);
+
+    // Wide content scrolls WITHIN ITS OWN CONTAINER and never pushes the ledger's columns sideways.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+    const scrolls = await grid.locator("[data-testid='source-rows-scroll']").evaluate((el) => ({
+      x: getComputedStyle(el).overflowX,
+      wider: el.scrollWidth >= el.clientWidth,
+    }));
+    expect(scrolls.x).toMatch(/auto|scroll/);
+    expect(scrolls.wider).toBe(true);
+  });
+
+  test("@gate1 with no field rows on the run, the expanded row falls back to membership", async ({ page }) => {
+    // A run that predates `fieldIndex` — the grid is omitted, not rendered empty, and the chips remain.
+    await serveRun(page, (run) => {
+      run.result!.fieldIndex = {};
+    });
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    await expect(row.locator("[data-testid='source-rows']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='member-chip']").first()).toBeVisible();
+  });
+
+  test("@gate1 the lifted grid paints from the role layer, checked by COMPUTED STYLE", async ({ page }) => {
+    // T-08-65: 08-12b found three files painting the ORG'S LOGO from semantic UI role tokens, and this
+    // component predates the 08-07 retheme. Reading the source would only show which utility class is
+    // written there; what matters is the colour that actually lands, so both are resolved in the page and
+    // compared.
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const grid = row.locator("[data-testid='source-rows']");
+    await expect(grid).toBeVisible();
+
+    const probe = async (token: string, prop: "color" | "background-color") =>
+      page.evaluate(
+        ({ token, prop }) => {
+          const el = document.createElement("div");
+          el.style.position = "fixed";
+          el.style.left = "-9999px";
+          el.style.setProperty(prop, `var(${token})`);
+          document.body.appendChild(el);
+          const v = getComputedStyle(el)[prop === "color" ? "color" : "backgroundColor"];
+          el.remove();
+          return v;
+        },
+        { token, prop },
+      );
+
+    const head = grid.locator("thead th").first();
+    expect(await head.evaluate((el) => getComputedStyle(el).color)).toBe(await probe("--on-raised-muted", "color"));
+    expect(await grid.locator("thead").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+      await probe("--surface-inset", "background-color"),
+    );
+    // And nothing in it is painted from a BRAND token, which is what T-08-65 caught.
+    const brand = await probe("--brand-ink", "color");
+    const cellColours = await grid.locator("tbody td").evaluateAll((els) =>
+      els.slice(0, 20).map((el) => getComputedStyle(el).color),
+    );
+    expect(cellColours.filter((c) => c === brand)).toEqual([]);
+  });
+});
+
+test.describe("gate1 carve", () => {
+  test("@gate1 the carve proposal is a proposal — ignoring it leaves the grouping untouched", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, FLAGGED);
+    const carve = row.locator("[data-testid='carve-proposal']");
+    await expect(carve).toBeVisible();
+    // The judge FLAGS and never re-groups. Nothing is applied until the reviewer acts.
+    const before = await row.locator("[data-testid='member-chip']").count();
+    await carve.getByRole("button", { name: /ignore/i }).click();
+    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(before);
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${FLAGGED}']`)).toBeVisible();
+  });
+
+  test("@gate1 an unflagged group carries no carve proposal", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    expect(isFlagged(fixtureGroups().find((g) => g.groupId === BIG)!)).toBe(false);
+    await expect(row.locator("[data-testid='carve-proposal']")).toHaveCount(0);
+  });
+
+  test("@gate1 with re-adjudication off, accept is an honest not-available and sends nothing", async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/readjudicate")) requests.push(r.url());
+    });
+    await openGate1(page); // the fixture's run did NOT opt in
+    const carve = (await expandRow(page, FLAGGED)).locator("[data-testid='carve-proposal']");
+    const na = carve.locator("[data-testid='not-available'][data-claim='not-enabled']");
+    await expect(na).toBeVisible();
+    // NAMES THE OPTION rather than implying the product cannot do it — an opt-in rendered as a permanent
+    // gap understates what the tool has.
+    await expect(na).toContainText(/turn it on|enable/i);
+    // Both free verbs stay live: they are how a reviewer resolves the flag by hand when the paid path is off.
+    await expect(carve.getByRole("button", { name: /edit/i })).toBeEnabled();
+    await expect(carve.getByRole("button", { name: /ignore/i })).toBeEnabled();
+    expect(requests).toEqual([]);
+  });
+
+  test("@gate1 the request is exactly one group id, and never an empty list", () => {
+    // ASSERTED ON THE BUILDER, IN NODE, because the whole e2e suite runs against a backend-less static
+    // build and no request can leave it. That is a real limit and it is named in the summary — what is
+    // asserted here is the thing the prohibition is actually about: the set the UI would send.
+    expect(readjudicationRequest(FLAGGED)).toEqual({ groupIds: [FLAGGED] });
+    expect(readjudicationRequest(FLAGGED).groupIds).toHaveLength(1);
+    expect(() => readjudicationRequest("")).toThrow(/one group/i);
+    expect(() => readjudicationRequest("   ")).toThrow(/one group/i);
+  });
+
+  test("@gate1 with re-adjudication on, accept states its price inline and carries exactly one group id", async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/readjudicate")) requests.push(r.url());
+    });
+    await serveRun(page, (run) => {
+      // A run that opted in at creation, and is NOT the shared demo — the demo is refused outright, first,
+      // so that a guest walk can never spend money.
+      run.config = { ...(run.config as object), demo: false, allowReadjudication: true } as never;
+    });
+    await openGate1(page);
+    const carve = (await expandRow(page, FLAGGED)).locator("[data-testid='carve-proposal']");
+    const accept = carve.getByRole("button", { name: /accept/i });
+    await expect(accept).toBeVisible();
+
+    // PRICED INLINE, BEFORE IT RUNS, never behind a modal — the same register as the commit bar.
+    await expect(carve.locator("[data-testid='carve-price']")).toBeVisible();
+    await expect(carve.locator("[data-testid='carve-price']")).toContainText(/costs money|\$/i);
+    await expect(page.locator("[role='dialog']")).toHaveCount(0);
+
+    // EXACTLY ONE ID, carried as data on the control itself. Never an empty list, never "everything
+    // flagged" — re-splitting every flagged group BECAUSE it was flagged is an auto-resolution of an
+    // over-merge with no human decision behind it, which core's own docstring forbids.
+    expect(JSON.parse((await accept.getAttribute("data-group-ids"))!)).toEqual([FLAGGED]);
+
+    // And nothing has been sent yet: the price is stated BEFORE the press, not after it.
+    expect(requests).toEqual([]);
   });
 });
