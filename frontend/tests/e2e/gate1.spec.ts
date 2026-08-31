@@ -8,6 +8,7 @@ import {
   readjudicationRequest,
   sortGroups,
 } from "@/lib/ledger";
+import { componentVerdictFor, missingReason, scopeVerdictFor } from "@/lib/score-scope";
 import { PAUSED_JOB, fixtureGroups, serveRun } from "./gate1-fixture";
 
 /**
@@ -783,5 +784,176 @@ test.describe("gate1 carve", () => {
 
     // And nothing has been sent yet: the price is stated BEFORE the press, not after it.
     expect(requests).toEqual([]);
+  });
+});
+
+// --- the declared-score panel, moved here from Setup (Task 4, the 2026-08-25 amendment) -------------------
+
+test.describe("gate1 score", () => {
+  test("@gate1 the verdict is derived, and absent evidence is indeterminate rather than infeasible", () => {
+    // THE PROHIBITION, as an algebra. Positive-or-indeterminate is determinable from what a run holds; a
+    // NEGATIVE claim is not. So `infeasible` is reachable only from a completed match that came back
+    // empty, and everything else that is not a match resolves to `indeterminate`.
+    const declared = (name: string) => ({ name, searched: false, matched: false, shortlistSize: 0 });
+    expect(scopeVerdictFor([declared("grip"), declared("gait")])).toBe("indeterminate");
+    expect(componentVerdictFor(declared("grip"))).toBe("indeterminate");
+
+    const matched = { name: "grip", searched: true, matched: true, shortlistSize: 3 };
+    const searchedAndEmpty = { name: "gait", searched: true, matched: false, shortlistSize: 0 };
+    expect(scopeVerdictFor([matched])).toBe("full");
+    expect(scopeVerdictFor([matched, searchedAndEmpty])).toBe("partial");
+    expect(scopeVerdictFor([searchedAndEmpty])).toBe("infeasible");
+    expect(componentVerdictFor(searchedAndEmpty)).toBe("infeasible");
+    // One component still unsearched keeps the WHOLE verdict off `infeasible` — a negative claim about a
+    // score needs every component actually looked for.
+    expect(scopeVerdictFor([searchedAndEmpty, declared("chair rise")])).toBe("indeterminate");
+  });
+
+  test("@gate1 rejected candidates and nothing retrieved are different findings", () => {
+    // "We retrieved 8 candidates and the judge rejected them all" means the concepts exist and none
+    // measures the component. "Nothing was retrieved" is closer to absence. Collapsing them loses the
+    // distinction, and MISSING never means "the cohort lacks it" — it means "not retrieved in this run".
+    expect(missingReason({ name: "gait", searched: true, matched: false, shortlistSize: 8 })).toMatch(
+      /8 .*rejected|rejected.*8/i,
+    );
+    expect(missingReason({ name: "gait", searched: true, matched: false, shortlistSize: 0 })).toMatch(
+      /nothing .*retrieved|retrieved nothing/i,
+    );
+    expect(missingReason({ name: "gait", searched: true, matched: false, shortlistSize: 8 })).not.toEqual(
+      missingReason({ name: "gait", searched: true, matched: false, shortlistSize: 0 }),
+    );
+    // Neither of them says the cohort does not measure it.
+    for (const n of [0, 8]) {
+      expect(missingReason({ name: "gait", searched: true, matched: false, shortlistSize: n })).not.toMatch(
+        /cohort (does not|doesn't|lacks)/i,
+      );
+    }
+  });
+
+  test("@gate1 the panel is a section of Gate 1, not a screen and not a modal", async ({ page }) => {
+    await openGate1(page);
+    const panel = page.locator("[data-testid='score-panel']");
+    await expect(panel).toBeVisible();
+    // ON the ledger screen: the ledger is still there beside it, so reaching the panel never means
+    // leaving the purchase decision to be pitched an add-on.
+    await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+    await expect(page.locator("[role='dialog']")).toHaveCount(0);
+
+    // …and there is no separate score route to be sent to instead.
+    const routes = await page.evaluate(async () => {
+      const res = await fetch("/assets/../index.html");
+      return res.ok;
+    });
+    expect(routes).toBe(true);
+    await page.goto("/run/demo-staged-gate1/score");
+    await expect(page.locator("[data-testid='score-panel']")).toHaveCount(0);
+  });
+
+  test("@gate1 declaring components renders indeterminate, and it survives a reload", async ({ page }) => {
+    await openGate1(page);
+    await page.locator("[data-testid='score-components']").fill("Weak grip strength\nSlow walking speed");
+    await page.getByRole("button", { name: /declare/i }).click();
+
+    await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
+    const verdict = page.locator("[data-testid='score-verdict']");
+    await expect(verdict).toHaveAttribute("data-verdict", "indeterminate");
+    // Never the negative claim, and never Setup's reason — Gate 1 HAS concepts, so "this run has produced
+    // no concepts" would be false here even though it was true there.
+    await expect(verdict).not.toContainText(/not computable/i);
+    await expect(page.locator("[data-testid='score-component'][data-verdict='infeasible']")).toHaveCount(0);
+
+    // Written through the durable gate-decision layer, so it is still declared after a reload.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
+    await expect(page.locator("[data-testid='score-verdict']")).toHaveAttribute("data-verdict", "indeterminate");
+  });
+
+  test("@gate1 reading the document is free and says so, and matching states its price inline", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const panel = page.locator("[data-testid='score-panel']");
+    // The 08-11 extract route is $0 and job-independent. Nothing here makes reading cost money.
+    await expect(panel.locator("[data-testid='score-upload']")).toContainText(/costs nothing|free|\$0/i);
+    // The paid boundary is stated INLINE, before it runs — never behind a modal.
+    const price = panel.locator("[data-testid='score-match-price']");
+    await expect(price).toBeVisible();
+    await expect(price).toContainText(/costs money|one .*call|\$/i);
+    await expect(page.locator("[role='dialog']")).toHaveCount(0);
+  });
+
+  test("@gate1 a run that cannot match renders an honest not-available, not a dead control", async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/composite")) requests.push(r.url());
+    });
+    await openGate1(page);
+    // A run PARKED at Gate 1 has produced concept groups but no assigned records, and matching components
+    // onto concepts needs the latter. So the action is unavailable — and it says which, rather than being
+    // hidden (the reviewer never learns it exists) or disabled (they cannot tell why).
+    const na = page.locator("[data-testid='score-panel'] [data-testid='not-available']");
+    await expect(na).toBeVisible();
+    await expect(na).toContainText(/Gate 2|matched against/i);
+    expect(requests).toEqual([]);
+  });
+
+  test("@gate1 a completed match reaches full and partial, and never invents a cutoff", async ({ page }) => {
+    // The path to the other three verdicts, exercised against a run that HAS a derived spec — which is
+    // what makes "the verdict is derived rather than hard-coded" a checked claim rather than a comment.
+    await serveRun(page, (run) => {
+      run.composites = [
+        {
+          definition: {
+            name: "Fried frailty phenotype",
+            kind: "index",
+            citation: "",
+            combinationRule: "count of criteria met",
+            threshold: "",
+            notes: "",
+            statedNItems: 2,
+            underEnumerated: 0,
+            provenance: "pasted text",
+            sourceSha256: "",
+            components: [
+              { name: "Weak grip strength", definition: "", required: true, weight: null, coding: { kind: "unstated", cutoff: "", referenceRange: "", needsReview: true } },
+              { name: "Slow walking speed", definition: "", required: true, weight: null, coding: { kind: "unstated", cutoff: "", referenceRange: "", needsReview: true } },
+            ],
+          },
+          matches: [
+            { component: "Weak grip strength", conceptId: "c1#g0", concept: "Grip strength", column: "", cohorts: ["UKBB"], sourceVariables: [], confidence: 0.9, rationale: "", required: true, pinned: false, shortlist: ["c1#g0"] },
+            { component: "Slow walking speed", conceptId: null, concept: "", column: "", cohorts: [], sourceVariables: [], confidence: 0, rationale: "", required: true, pinned: false, shortlist: ["a", "b", "c"] },
+          ],
+          feasibility: { verdict: "partial", nRequired: 2, nRequiredMatched: 1, matched: ["Weak grip strength"], missing: ["Slow walking speed"], needsReview: [], computableCohorts: [], perCohort: [], caveats: [] },
+          derivation: [],
+          units: "",
+          validationRules: [],
+        },
+      ] as never;
+    });
+    await openGate1(page);
+    const verdict = page.locator("[data-testid='score-verdict']");
+    await expect(verdict).toHaveAttribute("data-verdict", "partial");
+    // PARTIAL IS NOT THE PUBLISHED SCORE, and it says so in words rather than leaving it to be inferred
+    // from a colour.
+    await expect(verdict).toContainText(/not the published|is not the score as published/i);
+
+    // The matched one, and the missing one — reported as a RESULT, with which of the two findings it is.
+    await expect(page.locator("[data-testid='score-component'][data-verdict='full']")).toHaveCount(1);
+    const missing = page.locator("[data-testid='score-component'][data-verdict='infeasible']");
+    await expect(missing).toHaveCount(1);
+    await expect(missing).toContainText(/3 .*rejected|rejected/i);
+
+    // NO CUTOFF IS INVENTED. The source stated none, so the panel flags it for a human instead of
+    // deriving a plausible one — a score's threshold is a clinical claim.
+    await expect(page.locator("[data-testid='score-cutoff-unstated']").first()).toBeVisible();
+    await expect(page.locator("[data-testid='score-panel']")).not.toContainText(/\bkg\b|<\s*\d|≥\s*\d/);
+
+    // Presence is per DATA DICTIONARY. No participant-level completeness, no effective N — ddharmon never
+    // computes the score, it writes the recipe.
+    await expect(page.locator("[data-testid='score-panel']")).toContainText(/data dictionar/i);
+    await expect(page.locator("[data-testid='score-panel']")).not.toContainText(/effective N|participants? with/i);
   });
 });
