@@ -714,14 +714,26 @@ def checkpoint_state(
     }
 
 
-#: The boundary a FRESH run stops at. Every submitted run enters the staged flow at Gate 0 — the pause
-#: after load → preprocess → embed, before anything is charged (UI-SPEC §7).
+#: The boundary a FRESH run stops at. Gate 1 since 08-14f; ``gate0`` before it.
+#:
+#: WHY IT MOVED. ``gate0`` existed to give a run a FREE pause after load → preprocess → embed, so a
+#: reviewer could inspect their dictionaries before committing money. That pause is now unnecessary and
+#: was actively in the way: the inspection it enabled is served better, and EARLIER, by the job-less
+#: ``/dictionary/embedding.csv`` — which needs no run at all, so the reviewer sees the exact clustering
+#: input while they are still mapping columns rather than after starting something. Keeping the stop as
+#: well meant Start bought nothing, parked the run on an intermediate screen, and asked for a SECOND press
+#: to actually begin. One press, one charge, straight to Gate 1.
+#:
+#: THE BOUNDARY ITSELF IS NOT REMOVED, and that is deliberate (08-DECISION-GATE0 D-3).
+#: ``_GATE_STOP_MECHANISM["gate0"]`` and ``build_gate0_result()`` stay, the position stays a legal wire
+#: value, and its route still redirects to Setup. Six runs are parked at that position right now; ripping
+#: the value out would strand them behind a 404. Nothing new enters it — that is the whole change.
 #:
 #: It is passed to the worker and NOT written into the run's stored config, deliberately. `run_config`
 #: records what the user asked for and is replayed verbatim by re-run; the boundary is a property of the
 #: LEG, recomputed from the run's gate position every time :func:`resume_run` spawns the next one. Storing
 #: it would give the same question two answers, and the stale one would be the sticky one.
-ENTRY_GATE = "gate0"
+ENTRY_GATE = "gate1"
 
 
 @app.post("/api/harmonize/resume/{job_id}")

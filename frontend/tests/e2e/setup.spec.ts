@@ -11,7 +11,7 @@ import {
 import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
 import { PROVIDER_KEY_INFO, keyPlaceholderFor } from "@/lib/provider-keys";
 import { PAUSED_RUN_FIXTURE } from "./routes";
-import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
+import { RETIRED_GATE, setupPathFor, startedPathFor } from "@/lib/gate-routes";
 
 /**
  * Setup — the first of the six staged-review screens (08-13).
@@ -516,13 +516,22 @@ test.describe("Setup — the honest estimate", () => {
     await expect(page.getByTestId("estimate-pending")).toHaveCount(0);
   });
 
-  test("@setup the primary action carries the nothing-is-charged-yet statement", async ({ page }) => {
-    await page.goto(SETUP);
+  test("@setup the primary action carries the nothing-is-charged-yet statement, ABOVE it", async ({ page }) => {
+    // ON THE COMPOSE SCREEN, which is where the primary action lives since 08-14f. It used to be asserted
+    // against a started run because Start bought nothing then and the real charge was one screen later;
+    // Start IS the charge now, so a started run correctly offers no charge control at all and this
+    // pairing is only meaningful before the press.
+    await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");
     const statement = page.getByTestId("nothing-charged-yet");
     await expect(statement).toBeVisible();
     await expect(statement).toContainText("Nothing is charged yet");
     await expect(page.getByTestId("start-run")).toBeVisible();
+    // ABOVE, not merely present: a statement a reviewer needs BEFORE they press must not be discoverable
+    // only after they have scrolled past the button.
+    const above = (await statement.boundingBox())!.y;
+    const control = (await page.getByTestId("start-run").boundingBox())!.y;
+    expect(above).toBeLessThan(control);
   });
 
   test("@setup the per-gate breakdown names THIS screen's Continue as the first charge, and what it buys", async ({
@@ -1485,7 +1494,13 @@ test.describe("Setup — the boundary, with the report retired", () => {
     );
   }
 
-  /** The fixture, re-parked at the free boundary — where a real run sits after Start. */
+  /**
+   * The fixture, re-parked at the RETIRED boundary.
+   *
+   * This used to be described as "where a real run sits after Start". It is not, since 08-14f: a fresh
+   * run enters the staged flow at Gate 1 and never parks here. It is where the six runs that predate the
+   * change are parked, which is exactly why the position and its screen must keep working.
+   */
   const atBoundary = (p: Record<string, unknown>): void => {
     (p as { status: string; phase: string }).status = "awaiting_review";
     (p as { status: string; phase: string }).phase = "awaiting_review";
@@ -1608,15 +1623,23 @@ test.describe("Setup — the boundary, with the report retired", () => {
     );
   });
 
-  test("@setup the post-Start destination is Setup's own route, and no input makes it the retired one", async () => {
+  test("@setup the post-Start destination is Gate 1, and no input makes it the retired one", async () => {
     // ASSERTED AS A PURE FUNCTION because the button that calls it is DISABLED in the static build this
     // suite runs against (`setup.tsx`'s IS_STATIC guard), so a click-through is untestable here — and an
     // untestable destination is exactly how this line came to still point at a retired route.
-    expect(setupPathFor("abc123")).toBe("/run/abc123/setup");
+    //
+    // IT IS GATE 1 SINCE 08-14f. It used to come back to Setup, into a "pre-flight" state whose Continue
+    // was the real first charge. Start IS that charge now, so there is no screen between the press and
+    // the first gate.
+    expect(startedPathFor("abc123")).toBe("/run/abc123/gate1");
     for (const id of ["abc123", "", "demo-staged-gate1", "0", "a/b"]) {
-      expect(setupPathFor(id), `setupPathFor(${JSON.stringify(id)})`).not.toContain(`/${RETIRED_GATE}`);
-      expect(setupPathFor(id)).toMatch(/\/setup$/);
+      expect(startedPathFor(id), `startedPathFor(${JSON.stringify(id)})`).not.toContain(`/${RETIRED_GATE}`);
+      expect(startedPathFor(id)).toMatch(/\/gate1$/);
+      // AND IT IS NOT SETUP EITHER. Landing back here is what produced the intermediate screen.
+      expect(startedPathFor(id)).not.toMatch(/\/setup$/);
     }
+    // The retired position is still a legal RESUME target's input — six runs carry it and must not 404.
+    expect(setupPathFor("abc123")).toBe("/run/abc123/setup");
   });
 
   test("@setup Setup holds ONE subscription to the run, not two", async () => {
@@ -2103,5 +2126,132 @@ test.describe("Setup — per-dictionary confirmation and the embedding export", 
     await expect(page.getByTestId("dict-card").first()).toBeVisible();
     await expect(page.getByTestId("dict-embedding-export")).toHaveCount(0);
     await expect(page.getByTestId("workbook-export")).toHaveCount(0);
+  });
+});
+
+
+// --- Start is the first charge, and it lands on Gate 1 (08-14f) -----------------------------------------
+
+test.describe("Setup — Start is the charge, Gate 1 is the destination", () => {
+  /** Serve a MUTATED copy of the committed fixture — one fact substituted on a real payload. */
+  async function withParkedRun(page: import("@playwright/test").Page): Promise<void> {
+    const res = await page.request.get(`/static-data/result-${PAUSED_RUN_FIXTURE}.json`);
+    const payload = (await res.json()) as Record<string, unknown>;
+    // Re-parked at the RETIRED position: the state the six existing runs are in, which nothing new can
+    // reach any more and which must still resolve.
+    (payload as { status: string; phase: string }).status = "awaiting_review";
+    (payload as { status: string; phase: string }).phase = "awaiting_review";
+    (payload as { gatePosition: string }).gatePosition = RETIRED_GATE;
+    ((payload as { result: { gatePosition: string } }).result).gatePosition = RETIRED_GATE;
+    await page.route("**/static-data/result-*.json", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) }),
+    );
+  }
+
+  test("@setup the Start control states the amount and the irreversible-spend sentence", async ({ page }) => {
+    // THE OBLIGATION MOVED WITH THE CHARGE. It used to sit on the pre-flight's Continue one screen later;
+    // deleting that screen relocated the charge here, and both duties came with it rather than being
+    // dropped in transit.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "charged.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toBeVisible();
+    // THE AMOUNT AS DATA, so this reads the figure rather than parsing it back out of a sentence.
+    expect(Number(await bar.getAttribute("data-total"))).toBeGreaterThan(0);
+    await expect(bar).toHaveAttribute("data-first-charge", "true");
+    await expect(bar).toContainText(/not refundable/i);
+    await expect(bar).toContainText(/spending begins/i);
+    // NO MODAL stands between the reviewer and the charge (R8 / UI-SPEC §8.5).
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  });
+
+  test("@setup the amount on Start equals the first charge in Setup's own bill", async ({ page }) => {
+    // TWO SURFACES, ONE FUNCTION. A reviewer can see the figure twice on this screen, and two readings of
+    // one number silently disagreeing is the defect this pairing exists to prevent. Both read
+    // `estimateRunCostBreakdown(...).firstCharge`.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "billed.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    const onButton = Number(await page.getByTestId("commit-bar").getAttribute("data-total"));
+    const inBill = ((await page.getByTestId("first-charge").innerText()) ?? "").match(/\$([\d,.]+)/);
+    expect(inBill, "the bill must still quote a first charge").not.toBeNull();
+    expect(Number(inBill![1].replace(/,/g, ""))).toBeCloseTo(onButton, 2);
+  });
+
+  test("@setup a PREVIEW run is quoted no amount at Start and told it buys nothing", async ({ page }) => {
+    // R8 binds in BOTH directions: quoting a charge that will not happen is the same class of error as
+    // under-quoting one.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "previewed.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    await page.getByTestId("run-mode").selectOption("preview");
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toHaveAttribute("data-total", "");
+    await expect(bar).toHaveAttribute("data-first-charge", "false");
+    await expect(bar).not.toContainText(/not refundable/i);
+    await expect(bar).toContainText(/buys nothing|calls no model/i);
+  });
+
+  test("@setup the bill names Start run as the first charge, not a Continue on another screen", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "named.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(40)),
+    });
+    const first = page.getByTestId("first-charge");
+    await expect(first).toContainText(/Start run/i);
+    await expect(first).not.toContainText(/Gate 0/);
+  });
+
+  test("@setup a run parked at the retired position still resolves and can still be continued", async ({
+    page,
+  }) => {
+    // SIX RUNS ARE PARKED THERE RIGHT NOW. Nothing new enters that position, but the wire value and its
+    // redirect stay (D-3) — ripping them out would strand those runs behind a 404, which is the one
+    // outcome this change is not allowed to have.
+    await withParkedRun(page);
+    await page.goto(`/run/${PAUSED_RUN_FIXTURE}/${RETIRED_GATE}`);
+    await page.waitForLoadState("networkidle");
+    expect(new URL(page.url()).pathname).toMatch(/\/setup$/);
+    const bar = page.getByTestId("commit-bar");
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveAttribute("data-first-charge", "true");
+  });
+
+  test("@setup a COMPOSE screen offers exactly one charge control", async ({ page }) => {
+    // The pre-flight control and the Start control must never both be on screen: two bars each claiming
+    // to be the first charge is worse than either one being wrong, because the reviewer cannot tell
+    // which figure binds.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "one-bar.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(12)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    await expect(page.getByTestId("commit-bar")).toHaveCount(1);
   });
 });

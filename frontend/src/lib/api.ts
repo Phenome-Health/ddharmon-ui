@@ -27,7 +27,7 @@ export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
 // it is found beside `GATE_ORDER` where it belongs by subject. It cannot be DEFINED here: this module
 // reads `import.meta.env` two lines up, which makes it unimportable from a Playwright spec, and the whole
 // point of that helper is that a test can assert it. See `gate-routes.ts` for the measurement.
-export { RETIRED_GATE, setupPathFor } from "./gate-routes";
+export { RETIRED_GATE, setupPathFor, startedPathFor } from "./gate-routes";
 const STATIC_BASE = `${import.meta.env.BASE_URL}static-data`;
 
 // Whether the Clerk SSO gate is configured for this build (single source of truth; src/auth.tsx re-exports

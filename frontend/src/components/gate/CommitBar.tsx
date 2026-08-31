@@ -23,6 +23,15 @@ import { formatUsd } from "@/lib/estimate";
 export interface CommitBarProps {
   /** The button's words, without the amount — e.g. `Continue to Gate 2`. */
   action: string;
+  /**
+   * A stable hook for the button itself, when a screen's primary control has an identity of its own.
+   *
+   * Setup's start control uses it to keep `start-run`. That hook predates this bar by three plans and is
+   * asserted from a dozen places; renaming every one of them to `commit-bar` in the plan that MOVED the
+   * charge onto it would have mixed "the control is now the first charge" with "the control is called
+   * something else", and only one of those is a behaviour change.
+   */
+  actionTestId?: string;
   /** What pressing it will cost. Omit for a gate that buys nothing (Gate 4's download). */
   total?: number;
   /** Realized spend already committed to reach this gate. */
@@ -41,6 +50,7 @@ export interface CommitBarProps {
 
 export function CommitBar({
   action,
+  actionTestId,
   total,
   spentHere,
   firstCharge = false,
@@ -91,7 +101,13 @@ export function CommitBar({
             </p>
           )}
         </div>
-        <Button type="button" onClick={onCommit} disabled={disabled || busy} className="min-h-10">
+        <Button
+          type="button"
+          data-testid={actionTestId}
+          onClick={onCommit}
+          disabled={disabled || busy}
+          className="min-h-10"
+        >
           {busy && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
           {action}
           {total !== undefined && (

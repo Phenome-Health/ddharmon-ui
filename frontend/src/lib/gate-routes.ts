@@ -37,6 +37,26 @@ export function setupPathFor(jobId: string): string {
   return `/run/${jobId}/setup`;
 }
 
+/**
+ * Where a reviewer goes the moment a run is STARTED — Gate 1, since 08-14f.
+ *
+ * WHAT CHANGED AND WHY. Until 08-14f a submitted run parked at the retired position, so Start bought
+ * nothing and landed the reviewer back on Setup in a "pre-flight" state whose Continue was the real first
+ * charge. Bhargav read that flow live on 2026-08-31 and cut the middle screen: the free inspection it
+ * existed for now happens BEFORE Start, per dictionary, through a job-less export. So Start is the first
+ * charge and Gate 1 is where it lands. One press, one charge, no screen in between.
+ *
+ * IT MUST NEVER RETURN THE RETIRED PATH, for the reason `setupPathFor` records: that URL redirects to
+ * Setup, so pointing at it produces a double navigation on the run's very first transition — a flicker
+ * that no gate we have can see, because the FINAL url is correct either way.
+ *
+ * `GATE_ORDER` is not consulted. It is the WIRE order and still contains the retired position, so
+ * "the one after setup" is the wrong answer by exactly one step.
+ */
+export function startedPathFor(jobId: string): string {
+  return `/run/${jobId}/gate1`;
+}
+
 /** The one position the flow no longer draws a screen for. It is still a live WIRE value (D-3). */
 export const RETIRED_GATE: GatePosition = "gate0";
 
