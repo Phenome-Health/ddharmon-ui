@@ -259,3 +259,169 @@ def test_participant_level_data_is_refused_here_too():
 
     assert res.status_code == 400
     assert "participant" in res.json()["detail"].lower()
+
+
+# --- the workbook ---------------------------------------------------------------------------------------
+#
+# ONE SHEET PER DICTIONARY, and the same computation as the CSV above rather than a second one. Two
+# implementations of "what string gets embedded" is precisely the duplication that produces two different
+# answers, and the reviewer would have no way to tell which was lying.
+
+
+def _sheet_rows(data: bytes, title: str) -> list[list[str]]:
+    import io as _io
+
+    from openpyxl import load_workbook
+
+    wb = load_workbook(_io.BytesIO(data), read_only=True)
+    return [[("" if c is None else str(c)) for c in row] for row in wb[title].iter_rows(values_only=True)]
+
+
+def _spec(path, cohort: str, roles: dict[str, str] | None = None) -> dict:
+    from pathlib import Path as _Path
+
+    return {
+        "path": path,
+        "filename": _Path(path).name,
+        "cohort_name": cohort,
+        "column_roles": roles or ROLES,
+    }
+
+
+def test_one_sheet_per_dictionary_each_carrying_its_own_rows_plus_the_embedding_column(tmp_path):
+    from openpyxl import load_workbook
+
+    from backend.export.workbook import build_embedding_workbook
+
+    a = tmp_path / "alpha.csv"
+    a.write_text("var,desc\nA1,alpha one\nA2,alpha two\n")
+    b = tmp_path / "beta.csv"
+    b.write_text("var,desc,units\nB1,beta one,kg\n")
+
+    data = build_embedding_workbook([_spec(a, "Alpha"), _spec(b, "Beta")])
+
+    wb = load_workbook(io.BytesIO(data), read_only=True)
+    assert wb.sheetnames == ["Alpha", "Beta"]
+    rows = _sheet_rows(data, "Alpha")
+    assert rows[0] == ["var", "desc", EMBEDDING_EXPORT_COLUMN]
+    assert rows[1] == ["A1", "alpha one", "alpha one"]
+    assert _sheet_rows(data, "Beta")[0] == ["var", "desc", "units", EMBEDDING_EXPORT_COLUMN]
+
+
+def test_one_dictionary_still_produces_a_workbook(tmp_path):
+    """A reviewer may have uploaded one. A workbook of one sheet is a valid answer, not a degenerate case."""
+    from backend.export.workbook import build_embedding_workbook
+
+    a = tmp_path / "solo.csv"
+    a.write_text("var,desc\nX,ex\n")
+
+    data = build_embedding_workbook([_spec(a, "Solo")])
+
+    assert _sheet_rows(data, "Solo")[1] == ["X", "ex", "ex"]
+
+
+def test_two_long_names_differing_only_in_their_tail_get_distinct_sheets():
+    """Excel caps a sheet name at 31 characters, so a naive truncation collides silently and loses a sheet."""
+    from backend.export.workbook import sheet_names_for
+
+    names = sheet_names_for(
+        [
+            "cohort_with_a_very_long_name_alpha",
+            "cohort_with_a_very_long_name_beta",
+            "cohort_with_a_very_long_name_beta",
+        ]
+    )
+
+    assert len(set(names)) == 3, f"sheet names collided: {names}"
+    assert all(len(n) <= 31 for n in names), names
+
+
+def test_a_sheet_name_survives_excels_forbidden_characters_and_an_empty_name():
+    from backend.export.workbook import sheet_names_for
+
+    names = sheet_names_for(["a/b:c*d?e[f]g", "   ", ""])
+
+    for n in names:
+        assert n, "a sheet name may not be empty"
+        assert len(n) <= 31
+        assert not set(n) & set(r"[]:*?/\\"), n
+    assert len(set(names)) == 3
+
+
+def test_a_cell_over_excels_limit_is_truncated_with_a_visible_marker(tmp_path):
+    """Excel's 32,767-character cell limit is real, and a SILENT cut would misrepresent the one thing this
+    export exists to show — so the cell says it was cut and by how much."""
+    from backend.export.workbook import CELL_CHAR_LIMIT, build_embedding_workbook
+
+    long_description = "x" * (CELL_CHAR_LIMIT + 500)
+    a = tmp_path / "long.csv"
+    a.write_text(f"var,desc\nBIG,{long_description}\nSMALL,short\n")
+
+    data = build_embedding_workbook([_spec(a, "Long")])
+
+    rows = _sheet_rows(data, "Long")
+    cell = rows[1][2]
+    assert len(cell) <= CELL_CHAR_LIMIT
+    assert "truncated" in cell.lower(), "a cut cell must say it was cut"
+    assert "500" in cell, "the marker must say how much was lost"
+    assert rows[2][2] == "short", "a normal cell was touched"
+
+
+def test_a_control_character_does_not_fail_the_whole_workbook(tmp_path):
+    """Real exports carry control characters; openpyxl refuses them. Losing every sheet to one stray byte
+    in one cell is a worse answer than the cell arriving cleaned."""
+    from backend.export.workbook import build_embedding_workbook
+
+    a = tmp_path / "ctrl.csv"
+    a.write_text("var,desc\nA,before\x07after\n")
+
+    data = build_embedding_workbook([_spec(a, "Ctrl")])
+
+    assert "beforeafter" in _sheet_rows(data, "Ctrl")[1][2]
+
+
+def test_the_workbook_and_the_per_dictionary_csv_agree_on_every_cell(tmp_path):
+    """Neither replaces the other, so they must not be able to disagree — they share one row builder."""
+    from backend.export.workbook import build_embedding_workbook
+
+    a = tmp_path / "same.csv"
+    a.write_text("var,desc,qt\nA,definition,the question?\nB,,\n")
+    roles = {"variable_name": "var", "description": "desc", "question_text": "qt"}
+
+    from_csv = build_embedding_export(a, cohort_name="Same", column_roles=roles)
+    rows = _sheet_rows(build_embedding_workbook([_spec(a, "Same", roles)]), "Same")
+
+    assert rows[0] == from_csv.header
+    assert rows[1:] == from_csv.rows
+
+
+def test_the_workbook_endpoint_needs_no_job_either():
+    client = _client()
+    files = [
+        ("files", ("one.csv", "var,desc\nA,alpha\n", "text/csv")),
+        ("files", ("two.csv", "var,desc\nB,beta\n", "text/csv")),
+    ]
+    config = json.dumps(
+        {
+            "dictionaries": [
+                {"filename": "one.csv", "cohortName": "One", "columnRoles": ROLES},
+                {"filename": "two.csv", "cohortName": "Two", "columnRoles": ROLES},
+            ]
+        }
+    )
+
+    res = client.post("/api/harmonize/dictionary/embedding.xlsx", files=files, data={"config": config})
+
+    assert res.status_code == 200, res.text
+    assert "spreadsheetml" in res.headers["content-type"]
+    assert "attachment" in res.headers["content-disposition"]
+    assert _sheet_rows(res.content, "One")[1] == ["A", "alpha", "alpha"]
+    assert _sheet_rows(res.content, "Two")[1] == ["B", "beta", "beta"]
+
+
+def test_openpyxl_is_declared_and_not_merely_installed():
+    """Undeclared-but-present is how this works locally and 500s on the server the first time it deploys."""
+    from pathlib import Path as _Path
+
+    pyproject = _Path(__file__).resolve().parents[1] / "pyproject.toml"
+    assert "openpyxl" in pyproject.read_text(), "the workbook export's dependency is not declared"
