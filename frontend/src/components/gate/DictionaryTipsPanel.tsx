@@ -18,6 +18,10 @@ import { cn } from "@/lib/utils";
  * dictionaries do the thing they fix, which makes this list empirical rather than invented. With
  * preparation off, the list is now the reviewer's job description.
  *
+ * IT POINTS UP, NOT SIDEWAYS (08-14g). The first bullet's way out — leave the name unmapped and let core
+ * generate one per row — lives on the roles panel, which Task 2 moved directly above this one. The bullet
+ * names the direction and stops; the caveats that ride with that advice are stated once, there.
+ *
  * IT LEADS WITH THE ONE NOTHING CAN FIX FOR THEM. `load_dictionary` keys fields on the variable name and
  * the last row bearing a repeat wins, so the earlier rows are gone before any rule runs — 658 of them
  * across two public catalogues in the D-1 measurement. It CROSS-REFERENCES the live check rather than
@@ -44,7 +48,11 @@ interface Check {
 
 const CHECKS: Check[] = [
   {
-    do: "Give every row a variable name that appears only once.",
+    // CROSS-REFERENCES the escape hatch rather than restating it. The roles panel sits directly ABOVE
+    // this one since 08-14g Task 2, so "the roles reference above" is a direction the reviewer can
+    // follow. Writing the caveats twice would mean editing them twice, and they are the kind of caveat
+    // that goes stale in exactly one of the two places (08-DECISION-GATE0 D-4).
+    do: "Give every row a variable name that appears only once — or map none, and see the roles reference above.",
     example: "two rows named bmi — only the last survives loading, and the first is gone silently",
   },
   {

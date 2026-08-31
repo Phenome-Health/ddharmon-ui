@@ -2474,3 +2474,89 @@ test.describe("Setup — the roles reference comes before the checklist (08-14g)
     }
   });
 });
+
+// --- the repeated-name escape hatch (08-14g Task 3) -----------------------------------------------------
+//
+// Bhargav, 2026-08-31: "edge case: variable_name contains repeats but the question_texts are unique.
+// should provide instruction to user that if they know this is the case, dont map var_name and ddharmon
+// auto gens unique var names for each row (right?)."
+//
+// Right — and RUN, not reasoned, because `load_dictionary`'s collapse is silent (CLAUDE.md §Cohorts).
+// Measured against core on 2026-08-31, 6-row fixtures with every name "Q1":
+//
+//   variable_name MAPPED to the repeating column     rows=6  field_count=1   ← the trap
+//   both unmapped, description column mapped          rows=6  field_count=6   ← the hatch works
+//   both unmapped, question_text ONLY, no description rows=6  field_count=0   ← the whole file vanishes
+//   both unmapped, description blank on two rows      rows=6  field_count=4   ← those two rows dropped
+//
+// THE THIRD LINE IS WHY THE PRECONDITION IS NOT "question text or a description". The plan asserted that
+// pairing, reading `to_embedding_text`'s variable_name fallback. But the row never reaches embedding: the
+// parser's DESCRIPTION fallback is description → short_label → variable_name, and it refuses the synthetic
+// `_ROW_` name, so a row with no description is `continue`d away at csv_parser.py:132. question_text is
+// not in that chain and does not save it. `short_label` would, but this screen cannot map it.
+//
+// So the copy has to say DESCRIPTION, on every row, and it has to say DROPPED rather than "embeds its
+// name" — a reviewer told the weaker version would map question_text alone and lose the entire file.
+
+test.describe("Setup — the repeated-name escape hatch (08-14g)", () => {
+  const openRoles = async (page: import("@playwright/test").Page) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("column-roles").getByRole("button").first().click();
+    return page.getByTestId("column-role").filter({ has: page.locator('[data-role="variable_name"]') });
+  };
+
+  test("@setup the hatch sits on variable_name, where the decision is made", async ({ page }) => {
+    const row = await openRoles(page);
+    const hatch = row.getByTestId("role-escape-hatch");
+    await expect(hatch).toBeVisible();
+    // Both roles, because leaving only variable_name unmapped falls through to field_id and collapses
+    // on THAT instead — the reviewer has to be told to leave both.
+    await expect(hatch).toContainText(/field_id/);
+    await expect(hatch).toContainText(/generated identifier/i);
+  });
+
+  test("@setup the hatch states the precondition that was measured, not the one that was assumed", async ({
+    page,
+  }) => {
+    const row = await openRoles(page);
+    const hatch = row.getByTestId("role-escape-hatch");
+    const text = await hatch.innerText();
+
+    // A DESCRIPTION on every row. Naming question_text as an alternative here is the specific wrong
+    // advice that empties the reviewer's dictionary: measured field_count=0 on a 6-row file.
+    expect(text).toMatch(/description/i);
+    expect(text).toMatch(/every row|each row|all rows/i);
+    // DROPPED, not "embeds its name". The row is gone before embedding, so the honest word is the
+    // stronger one.
+    expect(text).toMatch(/dropped|discarded|lost|gone/i);
+    // The second cost: identity downstream.
+    expect(text).toMatch(/export/i);
+  });
+
+  test("@setup the hatch is scoped to the reviewer who knows, not offered as a default", async ({ page }) => {
+    const row = await openRoles(page);
+    const hatch = row.getByTestId("role-escape-hatch");
+    const text = await hatch.innerText();
+    // Conditional framing. An unconditional "leave variable_name unmapped" is advice for everyone, and
+    // for most files it throws away a perfectly good identifier.
+    expect(text).toMatch(/\bif\b|\bwhen\b|\?/i);
+    // Still one sentence plus two conditions — not a new section.
+    expect(text.length, `the escape hatch grew into documentation: ${text}`).toBeLessThan(420);
+  });
+
+  test("@setup the checklist points at the hatch instead of restating it", async ({ page }) => {
+    // Two surfaces stating one finding differently is how both become untrustworthy (08-DECISION-GATE0
+    // D-4). The checklist names the class; the roles panel above it carries the escape.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const first = page.getByTestId("dictionary-tip").first();
+    await expect(first).toContainText(/variable name/i);
+    // It refers UPWARD — which only reads correctly because Task 2 put the roles panel above it.
+    await expect(first).toContainText(/above|roles/i);
+    // …and it does not reproduce the caveats, which would then need editing in two places.
+    const tips = await page.getByTestId("dictionary-tips").innerText();
+    expect(tips).not.toMatch(/generated identifier/i);
+  });
+});

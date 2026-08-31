@@ -30,6 +30,27 @@ import { ROLE_FORMAT } from "@/types";
  * The groupings are core's own (`FieldRole`'s docstring), so the panel reads in the order the model
  * thinks in. Only the roles this screen can actually MAP are listed — documenting a role with no control
  * behind it is worse than omitting it.
+ *
+ * THE `variable_name` ESCAPE HATCH (08-14g) IS MEASURED, and the measurement corrected the plan that
+ * asked for it. Fixtures of six rows all named "Q1", loaded against core on 2026-08-31:
+ *
+ *   variable_name mapped to the repeating column       field_count 1 of 6   the silent collapse
+ *   variable_name + field_id unmapped, description      field_count 6 of 6   the hatch works
+ *   variable_name + field_id unmapped, question_text    field_count 0 of 6   the file VANISHES
+ *   ditto, description blank on two rows                field_count 4 of 6   those two rows dropped
+ *
+ * The third row is the whole reason this copy names DESCRIPTION rather than "question text or a
+ * description". `csv_parser` derives the description as description → short_label → variable_name and
+ * REFUSES the synthetic `_ROW_` name, so a row with none of those is `continue`d away (`csv_parser.py:132`)
+ * before embedding is reached. `question_text` is not in that chain. `short_label` is, but this screen
+ * cannot map it, so on this screen the precondition is exactly "a description on every row".
+ *
+ * That also means `to_embedding_text`'s variable_name fallback — the mechanism the plan cited — is NOT
+ * what a reviewer hits: the row is gone before it could embed its own identifier. "Dropped" is the honest
+ * word and it is the stronger warning, so the copy uses it.
+ *
+ * `_ROW_00042` is shown as a SPECIMEN, never promised: it is an implementation detail of core's fallback
+ * and may change. What is promised is that the identifier is generated and unique per row.
  */
 
 interface RoleDoc {
@@ -46,6 +67,11 @@ interface RoleDoc {
    */
   instead?: string;
   example?: string;
+  /**
+   * An ESCAPE HATCH for one named situation — rendered apart from the gloss, because it is advice for the
+   * reviewer who already knows their file is the odd case, not a recommendation for everyone.
+   */
+  escapeHatch?: string;
 }
 
 interface RoleGroup {
@@ -62,6 +88,12 @@ const GROUPS: RoleGroup[] = [
         gloss: "The field's own name. Clustered ONLY when there is no question text and no description.",
         clustered: true,
         example: "bmi, age_at_enrollment",
+        escapeHatch:
+          "Names repeat but each row's text is its own? Leave this and field_id unmapped — every row " +
+          "gets its own generated identifier (today _ROW_00042) and nothing collapses. Two conditions: " +
+          "a description on every row, since question_text does not stand in here and a row without one " +
+          "is dropped rather than left unnamed; and that identifier is what you see wherever the " +
+          "variable is named, exports included.",
       },
       {
         role: "description",
@@ -207,6 +239,17 @@ export function ColumnRolesPanel({ className }: { className?: string }) {
                     </span>
                     {r.example && (
                       <span className="max-w-[78ch] font-mono text-xs text-on-field-muted">e.g. {r.example}</span>
+                    )}
+                    {/* SET APART from the gloss and the example both. It is neither — it is a way out of
+                        one specific bind, and a reviewer whose file is not in that bind should be able to
+                        skip it on sight. */}
+                    {r.escapeHatch && (
+                      <span
+                        data-testid="role-escape-hatch"
+                        className="mt-1 max-w-[78ch] border-l-2 border-on-field/20 pl-2 text-xs text-on-field-muted"
+                      >
+                        {r.escapeHatch}
+                      </span>
                     )}
                   </li>
                 ))}
