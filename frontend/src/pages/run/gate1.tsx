@@ -1,63 +1,208 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
-import { Loader2, Sparkles } from "lucide-react";
+import { Grid3x3, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { GateShell, railFor } from "@/components/gate/GateShell";
+import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
+import { LedgerRow } from "@/components/gate/LedgerRow";
+import { CoherenceMark } from "@/components/gate/CoherenceMark";
+import { CohortCoverage } from "@/components/gate/CohortCoverage";
+import { CommitBar } from "@/components/gate/CommitBar";
+import { GateEmptyState } from "@/components/gate/GateEmptyState";
+import { GroupingStrip } from "@/components/gate/GroupingStrip";
+import { useGateDecisions } from "@/hooks/use-gate-decisions";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resumeRun } from "@/lib/api";
-import { formatUsd, type ConceptGroup } from "@/types";
+import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
+import { isFlagged, pricePerGroup, sortGroups } from "@/lib/ledger";
+import { isParked } from "@/lib/run-state";
+import type { ConceptGroup, RunMode } from "@/types";
 
 /**
- * Gate 1 — Concept groups. THE TRACER'S SCREEN.
+ * Gate 1 — the ledger. The load-bearing screen: where the reviewer scopes and reshapes before the BULK of
+ * the money is spent.
  *
- * ROWS ARE POST-SPLIT CONCEPT GROUPS (UI-SPEC §0.1), read from `result.conceptGroups`. Deliberately NOT
- * `previewClusters`: that field is preview run mode's shape — a $0 run that calls no model — and it is no
- * longer Gate 1's row source. A group names its own parent cluster, which is where provenance comes from.
+ * A ROW IS A POST-SPLIT CONCEPT GROUP (UI-SPEC §0.1, reversed at plan review on 2026-08-17), read from
+ * `result.conceptGroups`. Deliberately NOT `previewClusters`: that field is preview run mode's shape — a
+ * $0 run that calls no model — and reading it here would render the wrong granularity. A group names its
+ * own parent cluster, which is where provenance comes from.
  *
- * THE NAME IS GENERATED, AND SAYS SO. `concept` is what `generate(ideal)` produced, which has already been
- * paid for by the time this screen renders. So it carries a "generated" marker and NO catalog badge, no
- * identifier link and no endorsement — and it is never labelled a GenCDE, which is a different thing minted
- * later and only for `novel` records (UI-SPEC §8).
+ * THE NAME IS GENERATED, AND SAYS SO. `concept` is what `generate(ideal)` produced, already paid for by
+ * the time this screen renders. Three nouns stay separate and the copy contract is binding: a **CDE** is
+ * an existing catalog element; a **GenCDE** is one ddharmon mints much later, at the `gencde` stage, and
+ * only for `novel` records; and this label is NEITHER — it is the generated concept anchor. So it carries
+ * a generated marker and no catalog badge, no identifier link and no endorsement of any kind (T-08-89a).
+ * Under the post-split reversal the label is a real generated name rather than a machine-derived one,
+ * which makes it MORE plausible as a catalog element and the marking correspondingly more load-bearing.
  *
- * DELIBERATELY THIN. No ledger spine, no sort, no filter, no drag, no carve panel and no coherence column:
- * those are 08-15's, and building half of one here is how two implementations of the same row end up in the
- * tree. This is the tracer — one path, proven end to end, that later plans expand in place.
+ * REACHED BY SPENDING, NOT BEFORE IT. Concept generation, splitting and the coherence judge are all paid
+ * to produce what this screen shows, so the sum block LEADS with a realized figure. A screen that opened
+ * with a forecast would imply the reviewer is scoping before any money moved. What is still true, and is
+ * the honest claim, is that they scope before the *bulk*: assignment is 77% of the run.
  *
- * HONEST ABOUT SPEND. Reaching Gate 1 already paid for concept generation, splitting and the coherence
- * judge, so the figure above the Continue button is a REALIZED one. The Continue button buys the assignment
- * step and carries its own amount.
+ * NO CLUSTER-SIZE CONTROL, EVER. See `GroupingStrip` for the three reasons.
  */
 
-function ConceptGroupRow({ group }: { group: ConceptGroup }) {
+/** The two things a scope decision can say. Written out so the payload and the UI cannot disagree. */
+const IN_SCOPE = "in";
+const OUT_OF_SCOPE = "out";
+const SCOPE_OPTIONS = [IN_SCOPE, OUT_OF_SCOPE];
+
+/**
+ * The $0 template detector's mark — DELIBERATELY WEAKER THAN A VERDICT.
+ *
+ * It is a deterministic frequent-template/rare-slot suspicion, not an adjudication, and it must never be
+ * mistaken for the judge having run. Two things enforce that: it renders ONLY on rows the judge did not
+ * score (so it never sits beside a verdict), and it says in words that it is a pattern rather than a
+ * finding. It earns its place because it fires from 2 members up — exactly the range the judge skips,
+ * where a row would otherwise carry no signal at all.
+ */
+function TemplateSuspicion() {
   return (
-    <li
-      data-testid="concept-group"
-      data-group-id={group.groupId}
-      className="flex items-start justify-between gap-6 border-b border-rule-quiet-on-raised px-6 py-4 last:border-b-0"
+    <span
+      data-testid="template-suspicion"
+      data-signal="deterministic"
+      title="A cheap, local check noticed these variables share one question template with different fillers. That often means a matrix of separate items rather than one concept — but it is a pattern, not a judgement, and the coherence judge was not asked about this group."
+      className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
     >
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-semibold text-on-raised" title={group.concept}>
+      <Grid3x3 aria-hidden="true" className="h-3 w-3 shrink-0" />
+      repeating template
+    </span>
+  );
+}
+
+/** The generated-name marker. Icon PLUS text: an icon-only provenance claim is not a claim. */
+function GeneratedMark() {
+  return (
+    <span
+      data-testid="generated-mark"
+      title="ddharmon wrote this name from the variables in the group. It is not an entry in the NIH catalog, and no catalog element has been chosen yet."
+      className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
+    >
+      <Sparkles aria-hidden="true" className="h-3 w-3" />
+      generated
+    </span>
+  );
+}
+
+function GroupRow({
+  group,
+  allCohorts,
+  price,
+  inScope,
+  onScopeChange,
+  changed,
+}: {
+  group: ConceptGroup;
+  allCohorts: string[];
+  price: number;
+  inScope: boolean;
+  onScopeChange: (inScope: boolean) => void;
+  changed: boolean;
+}) {
+  const judged = group.coherence !== "not_judged";
+  return (
+    <LedgerRow
+      rowId={group.groupId}
+      title={
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate" title={group.concept}>
             {group.concept || "Unnamed group"}
           </span>
-          {/* The generated marker. Icon PLUS text: an icon-only provenance claim is not a claim. */}
-          <span
-            className="flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs text-on-inset-muted"
-            title="This name was generated by ddharmon. It is not an NIH catalog element."
-          >
-            <Sparkles aria-hidden="true" className="h-3 w-3" />
-            generated
-          </span>
-        </div>
-        <p className="text-xs text-on-raised-muted">
-          from cluster {group.clusterId || "—"} · {group.cohorts.join(", ") || "no cohort recorded"}
-        </p>
-      </div>
-      <span className="shrink-0 text-sm tabular-nums text-on-raised-muted">
-        {group.nMembers} {group.nMembers === 1 ? "variable" : "variables"}
-      </span>
-    </li>
+          <GeneratedMark />
+        </span>
+      }
+      subtitle={
+        <span data-testid="row-provenance" className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {/* Provenance is the group's OWN cluster id — never the preview-cluster field. */}
+          <span>from cluster {group.clusterId || "—"}</span>
+          {/* Only where the judge did NOT score the group: a verdict always leads on its own. */}
+          {!judged && group.matrixSuspect && (
+            <>
+              <span aria-hidden="true">·</span>
+              <TemplateSuspicion />
+            </>
+          )}
+        </span>
+      }
+      coherence={<CoherenceMark state={group.coherence} />}
+      coverage={<CohortCoverage cohorts={group.cohorts} allCohorts={allCohorts} />}
+      count={
+        <>
+          {/* The TRUE member count, even when the collapsed sample is capped — regrouping against a
+              partial sample would silently drop the members it never showed (T-08-89). */}
+          {group.nMembers}
+          {/* The column header is `Vars`, which a reviewer reads once and a screen-reader user hears
+              never: the row announces its own unit so the number is not a bare digit. */}
+          <span className="sr-only"> {group.nMembers === 1 ? "variable" : "variables"}</span>
+        </>
+      }
+      cost={price}
+      selected={inScope}
+      onSelectedChange={onScopeChange}
+      unresolved={isFlagged(group)}
+      changed={changed}
+    >
+      {/* The expanded body is 08-15 Task 3's. Until then the row still expands and still says something
+          true, rather than opening onto nothing. */}
+      <p className="text-sm text-on-raised-muted">
+        {group.nMembers} {group.nMembers === 1 ? "variable" : "variables"} from{" "}
+        {group.cohorts.join(", ") || "no cohort recorded"}.
+      </p>
+      {group.coherenceSummary && (
+        <p className="max-w-[80ch] text-sm text-on-raised">{group.coherenceSummary}</p>
+      )}
+    </LedgerRow>
+  );
+}
+
+/**
+ * The sum block, in three lines and in this order.
+ *
+ * REALIZED FIRST, and visually distinct. The first line is money already gone; the two below it are
+ * forecasts. They are told apart by WEIGHT as well as position, because after the post-split reversal the
+ * reviewer is standing downstream of real spend and a block that rendered both in one voice would invite
+ * reading a forecast as a receipt.
+ *
+ * THE WHOLE-CORPUS LINE IS WHAT MAKES SCOPING LEGIBLE. "This costs $4.10" means nothing on its own; "this
+ * costs $4.10 of the $9.80 the whole run would" is a decision.
+ */
+function SumBlock({
+  realized,
+  inScopeTotal,
+  wholeCorpus,
+  nInScope,
+  nGroups,
+}: {
+  realized: number;
+  inScopeTotal: number;
+  wholeCorpus: number;
+  nInScope: number;
+  nGroups: number;
+}) {
+  return (
+    <div data-testid="sum-block" className="flex flex-col gap-1">
+      <p data-sum-line="realized" className="text-sm font-semibold text-on-raised">
+        {realized > 0 ? (
+          <>
+            Already spent to reach this gate:{" "}
+            <span className="font-mono tabular-nums">{formatUsd(realized)}</span> — naming the concepts,
+            dividing them, and checking them.
+          </>
+        ) : (
+          <>Already spent to reach this gate: nothing — this run is a saved replay, so it was not billed.</>
+        )}
+      </p>
+      <p data-sum-line="in-scope" className="text-sm font-normal text-on-raised">
+        {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} in scope —{" "}
+        <span className="font-mono tabular-nums">{formatUsd(inScopeTotal)}</span> to match them against
+        common data elements at Gate 2.
+      </p>
+      <p data-sum-line="whole-corpus" className="text-sm font-normal text-on-raised-faint">
+        All {nGroups} {nGroups === 1 ? "group" : "groups"} would be{" "}
+        <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>.
+      </p>
+    </div>
   );
 }
 
@@ -66,13 +211,50 @@ export default function Gate1Page() {
   const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
   const [resuming, setResuming] = useState(false);
 
-  const groups: ConceptGroup[] = jobState?.result?.conceptGroups ?? [];
+  const groups: ConceptGroup[] = useMemo(
+    () => sortGroups(jobState?.result?.conceptGroups ?? []),
+    [jobState?.result?.conceptGroups],
+  );
+  const allCohorts = jobState?.result?.summary?.cohorts ?? [];
+  const unassigned = jobState?.result?.unassignedFields ?? [];
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
-  const clusters = new Set(groups.map((g) => g.clusterId)).size;
+
+  // The shared demo is one read-only run, so its decisions stay in the browser. `pinned` is read from the
+  // run's own config rather than guessed; the hook's own guard handles the first render, where it is still
+  // undefined because the stream's opening frame carries an empty config.
+  const pinned = (jobState?.config as { demo?: boolean } | undefined)?.demo;
+  const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
+  const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
+
+  // What Gate 2 is forecast to cost for THIS run, divided across its rows. `assign` runs once per
+  // post-split group, so the row count is the call count and every row buys the same call.
   const variables = groups.reduce((n, g) => n + g.nMembers, 0);
-  // A run rejoined at a gate rather than walked to. `awaiting_review` is exactly that state: the worker
-  // exited, so anything the reviewer is looking at was read back off disk.
-  const resumed = jobState?.status === "awaiting_review";
+  const mode = ((jobState?.config as { mode?: string } | undefined)?.mode ?? "batch") as RunMode;
+  const gate2Forecast = useMemo(
+    () => estimateRunCostBreakdown(variables, allCohorts.length, mode, true).byGate.gate2.forecast,
+    [variables, allCohorts.length, mode],
+  );
+  const price = pricePerGroup(gate2Forecast, groups.length);
+
+  // Default IN. A reviewer who scopes nothing continues with everything, which is what "nothing blocks
+  // Continue" has to mean; the checkbox REMOVES a group rather than admitting one.
+  const isInScope = (groupId: string) => scope.decisions[groupId]?.chosen !== OUT_OF_SCOPE;
+  const inScopeGroups = groups.filter((g) => isInScope(g.groupId));
+
+  // "You changed it" is DERIVED from persisted decisions, never from component state — R6 requires the
+  // correction to be visible after a reload, and a flag in `useState` is gone the moment the page reloads.
+  const touchedByRegroup = useMemo(() => {
+    const byGroup = new Set<string>();
+    for (const d of Object.values(regroups.decisions)) {
+      if (typeof d.chosen === "string" && d.chosen) byGroup.add(d.chosen);
+      if (typeof d.fromGroupId === "string" && d.fromGroupId) byGroup.add(d.fromGroupId);
+    }
+    return byGroup;
+  }, [regroups.decisions]);
+  const isChanged = (groupId: string) => groupId in scope.decisions || touchedByRegroup.has(groupId);
+
+  const clusters = new Set(groups.map((g) => g.clusterId)).size;
+  const nCrossCohort = groups.filter((g) => g.crossCohort).length;
 
   async function onContinue() {
     setResuming(true);
@@ -97,7 +279,8 @@ export default function Gate1Page() {
       // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
       job={jobState}
       onStop={cancel}
-      resumed={resumed}
+      // The shared answer to "is this run parked?", not a fourth local copy of the predicate.
+      resumed={isParked(jobState?.status)}
     >
       {reconnecting && (
         <p role="status" data-testid="stream-reconnecting" className="text-sm font-semibold text-status-warn">
@@ -110,62 +293,129 @@ export default function Gate1Page() {
         </p>
       )}
 
-      {/* The grouping strip (read-only figures + provenance). No re-clustering control: re-clustering
-          invalidates the frozen substrate and strands decisions made against the previous partition, and
-          /design already publishes hand-tuning as the REJECTED alternative (D-17). */}
-      <p data-testid="grouping-strip" className="text-sm text-on-field-muted">
-        <span className="font-semibold text-on-field">
-          {groups.length} {groups.length === 1 ? "concept group" : "concept groups"}
-        </span>{" "}
-        from {clusters} {clusters === 1 ? "cluster" : "clusters"} covering {variables}{" "}
-        {variables === 1 ? "variable" : "variables"} — clusters were auto-scaled from your dictionaries, then
-        divided into distinct concepts. Reshape a group by moving variables into it, not by re-clustering.
-      </p>
+      <GroupingStrip
+        nGroups={groups.length}
+        nClusters={clusters}
+        nVariables={variables}
+        nCrossCohort={nCrossCohort}
+      />
 
-      <section className="rounded-card bg-surface-raised shadow-card">
-        <h2 className="border-b border-rule-on-raised px-6 py-3 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-          Concept
-        </h2>
+      <Ledger
+        columns={GATE1_LEDGER_COLUMNS}
+        caption="Concept groups"
+        sum={
+          groups.length > 0 ? (
+            <SumBlock
+              realized={costSoFar}
+              inScopeTotal={price * inScopeGroups.length}
+              wholeCorpus={price * groups.length}
+              nInScope={inScopeGroups.length}
+              nGroups={groups.length}
+            />
+          ) : undefined
+        }
+      >
         {groups.length === 0 ? (
-          <div className="flex flex-col gap-2 px-6 py-8">
-            <p className="text-sm font-semibold text-on-raised">No groups formed</p>
-            <p className="max-w-[68ch] text-sm text-on-raised-muted">
+          unassigned.length > 0 ? (
+            /* ALL OUTLIERS — a different finding from "no groups formed". The clustering ran; everything
+               fell out of it. Listing what fell out is what makes "nothing can be scoped" actionable. */
+            <GateEmptyState
+              heading="Nothing grouped above the threshold"
+              nextStep={
+                <>
+                  Nothing can be scoped until at least one group forms. Go back to{" "}
+                  <Link
+                    href={`/run/${jobId}/setup`}
+                    className="font-semibold text-link-on-raised underline underline-offset-2"
+                  >
+                    Set up
+                  </Link>{" "}
+                  and check that the description column is mapped, or add a dictionary that overlaps these.
+                </>
+              }
+            >
+              Every variable was left unassigned by the clustering — {unassigned.length}{" "}
+              {unassigned.length === 1 ? "variable" : "variables"}, listed below.
+            </GateEmptyState>
+          ) : (
+            <GateEmptyState
+              heading="No groups formed"
+              nextStep={
+                <>
+                  Go back to{" "}
+                  <Link
+                    href={`/run/${jobId}/setup`}
+                    className="font-semibold text-link-on-raised underline underline-offset-2"
+                  >
+                    Set up
+                  </Link>{" "}
+                  and check the column mapping, or add a dictionary.
+                </>
+              }
+            >
               Every variable was left unassigned. That usually means the dictionaries share too little text
-              to group. Go back to <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">Set up</Link> and check the column mapping, or add a dictionary.
-            </p>
-          </div>
+              to group.
+            </GateEmptyState>
+          )
         ) : (
-          <ul>
-            {groups.map((g) => (
-              <ConceptGroupRow key={`${g.clusterId}:${g.groupId}`} group={g} />
+          groups.map((g) => (
+            <GroupRow
+              key={g.groupId}
+              group={g}
+              allCohorts={allCohorts}
+              price={price}
+              inScope={isInScope(g.groupId)}
+              changed={isChanged(g.groupId)}
+              onScopeChange={(next) =>
+                void scope.write(
+                  { groupId: g.groupId },
+                  { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+                )
+              }
+            />
+          ))
+        )}
+      </Ledger>
+
+      {groups.length === 0 && unassigned.length > 0 && (
+        <section
+          aria-label="Variables the clustering left unassigned"
+          className="flex flex-col gap-2 rounded-card bg-surface-raised px-6 py-4 shadow-card"
+        >
+          <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            Left unassigned
+          </h2>
+          <ul className="flex flex-col gap-1">
+            {unassigned.map((f) => (
+              <li
+                key={`${f.cohort}:${f.variable}`}
+                data-testid="unassigned-variable"
+                className="flex flex-wrap items-baseline gap-2 text-sm"
+              >
+                <span className="font-mono text-xs font-semibold text-accent-2-on-raised">{f.cohort}</span>
+                <span className="font-mono text-xs text-on-raised">{f.variable}</span>
+                <span className="min-w-0 text-on-raised-muted">{f.text}</span>
+              </li>
             ))}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* Commit bar. The spend above it is REALIZED; the button buys the next step. */}
-      <div className="flex items-center justify-between gap-6 rounded-card bg-surface-raised px-6 py-4 shadow-card">
-        {/* REALIZED, not a forecast. Two wordings rather than one, because "$0 — this is where spending
-            began" is a sentence about a saved replay pretending to be a sentence about a billed run. */}
-        {costSoFar > 0 ? (
-          <p className="text-sm text-on-raised-muted">
-            <span className="font-semibold text-on-raised">
-              Already spent to reach this gate: {formatUsd(costSoFar)}
-            </span>{" "}
-            — naming the concepts, dividing the groups and checking them. That is what the button below
-            builds on.
-          </p>
-        ) : (
-          <p className="text-sm text-on-raised-muted">
-            <span className="font-semibold text-on-raised">Already spent to reach this gate: nothing</span>{" "}
-            — this run is a saved replay, so naming and dividing the groups was not billed to you.
-          </p>
-        )}
-        <Button type="button" onClick={onContinue} disabled={resuming || groups.length === 0}>
-          {resuming && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
-          Continue to Gate 2
-        </Button>
-      </div>
+      <CommitBar
+        action="Continue to Gate 2"
+        total={groups.length > 0 ? price * inScopeGroups.length : undefined}
+        // `spentHere` is DELIBERATELY OMITTED here, and only on this screen. The ledger's sum block
+        // directly above already leads with the realized figure — that placement is the requirement, not
+        // a preference — so passing it to the bar as well rendered the same fact twice, in two different
+        // wordings ("$0" against "nothing"), a few pixels apart. Two amounts for one fact that disagree
+        // is worse than one amount stated once.
+        scopeLabel={`${inScopeGroups.length} ${inScopeGroups.length === 1 ? "group" : "groups"}`}
+        onCommit={onContinue}
+        busy={resuming}
+        // Nothing gates Continue on a REVIEW count — how much to triage is the reviewer's call (D-09
+        // revised). What does gate it is having something to buy at all.
+        disabled={inScopeGroups.length === 0}
+      />
     </GateShell>
   );
 }

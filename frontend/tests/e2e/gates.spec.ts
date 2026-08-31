@@ -16,11 +16,18 @@ import { expect, test } from "@playwright/test";
 /** The fixture's job id. Its result file is `result-<id>.json`, which is all `getResult` needs. */
 const PAUSED_JOB = "demo-staged-gate1";
 
-/** Group ids, in render order, as the page reports them. The identity the reload has to preserve. */
+/**
+ * Group ids, in render order, as the page reports them. The identity the reload has to preserve.
+ *
+ * READ OFF THE LEDGER ROW since 08-15. The tracer's own `concept-group` list item was expanded IN PLACE
+ * into the ledger row it was always standing in for, so the row is now `ledger-row`/`data-row-id`. The
+ * assertion is unchanged in substance — same groups, same order, same reload — and re-pointing it here is
+ * what keeps that true rather than leaving a selector matching nothing.
+ */
 async function conceptGroupIds(page: import("@playwright/test").Page): Promise<string[]> {
-  const rows = page.locator("[data-testid='concept-group']");
+  const rows = page.locator("[data-testid='ledger-row']");
   await expect(rows.first()).toBeVisible();
-  return rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-group-id") ?? ""));
+  return rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-row-id") ?? ""));
 }
 
 test.describe("staged review", () => {
@@ -42,8 +49,8 @@ test.describe("staged review", () => {
     // generated name marked as generated — no catalog badge, no identifier link, no endorsement.
     const before = await conceptGroupIds(page);
     expect(before.length).toBeGreaterThan(0);
-    await expect(page.locator("[data-testid='concept-group']").first().getByText("generated")).toBeVisible();
-    await expect(page.locator("[data-testid='concept-group']").first()).toContainText("from cluster");
+    await expect(page.locator("[data-testid='ledger-row']").first().getByText("generated")).toBeVisible();
+    await expect(page.locator("[data-testid='ledger-row']").first()).toContainText("from cluster");
 
     // A run rejoined at a gate says so, and its banner carries NO countdown: retention is indefinite
     // until the reviewer deletes the run, so a timer would be a threat the product never carries out.
