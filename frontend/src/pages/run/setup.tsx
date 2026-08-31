@@ -11,6 +11,7 @@ import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
+import { DictionaryTipsPanel } from "@/components/gate/DictionaryTipsPanel";
 import { PreparedExport } from "@/components/gate/PreparedExport";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
@@ -1117,6 +1118,18 @@ export default function SetupPage() {
 
           NOT collapsed in the `past` state, where the screen is a plain read-back and there is no
           finding above it competing for the reader's attention. */}
+      {/* --- dictionary-hygiene tips (08-14d) -----------------------------------------------------
+
+          COMPOSE ONLY, and that placement is D-4's rule rather than a layout preference. The advice is
+          "tidy the file before you upload it", and a run's column roles are fixed at `startHarmonize` —
+          so from the boundary onwards none of it can be acted on without starting again. A recommendation
+          shown where it cannot be taken is noise on a screen this plan has just cleared of noise.
+
+          ABOVE the dictionaries, because that is the order the reviewer works in. It matches the shell's
+          own how-to disclosure rather than inventing a second pattern, and it is CLOSED, so it costs one
+          row until it is asked for. */}
+      {stage === "compose" && <DictionaryTipsPanel />}
+
       {stage === "preflight" ? (
         <Collapsible
           open={dictsOpen}
