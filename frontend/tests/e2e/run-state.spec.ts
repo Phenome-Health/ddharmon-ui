@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PARKED, isInFlight, isParked, isTerminal } from "@/lib/run-state";
+import { PARKED, countInFlight, isInFlight, isParked, isTerminal, justEnded } from "@/lib/run-state";
 import { RETIRED_GATE, resumeGateOf, resumePathFor, setupPathFor } from "@/lib/gate-routes";
 import type { GatePosition } from "@/types";
 
@@ -141,6 +141,77 @@ test.describe("resume destination", () => {
           true,
         );
       }
+    }
+  });
+});
+
+test.describe("the header badge's count", () => {
+  /**
+   * ASSERTED AS PURE FUNCTIONS, NOT BY RENDERING, and the reason is structural rather than convenient:
+   * `ActiveRunsIndicator` is disabled outright in a static build (`enabled: !IS_STATIC`, and an
+   * `IS_STATIC` early return), and the static build is what this suite drives. A rendered assertion on
+   * that badge would pass against a component that never mounts — a green test measuring nothing.
+   */
+  const run = (status: string, jobId = status) => ({ jobId, status });
+
+  test("@runstate five parked runs count as zero running", () => {
+    // The literal screenshot that prompted 08-14c: the header read "5 running", with a spinning loader,
+    // over five runs that had exited and were spending nothing.
+    const jobs = [1, 2, 3, 4, 5].map((n) => run(PARKED, `parked-${n}`));
+    expect(countInFlight(jobs)).toBe(0);
+  });
+
+  test("@runstate one in-flight run among four parked counts as one", () => {
+    const jobs = [run(PARKED, "p1"), run(PARKED, "p2"), run(PARKED, "p3"), run(PARKED, "p4"), run("clustering")];
+    expect(countInFlight(jobs)).toBe(1);
+  });
+
+  test("@runstate terminal runs never count, and an empty list counts as zero", () => {
+    expect(countInFlight([run("complete"), run("error"), run("cancelled")])).toBe(0);
+    expect(countInFlight([])).toBe(0);
+    expect(countInFlight(undefined)).toBe(0);
+  });
+
+  test("@runstate a run that parks is not announced as an ending", () => {
+    // The toast effect announces a run that FINISHED. A park is not an ending — it is a handover to a
+    // human — so announcing it (and the failure toast is the fallthrough arm) would report a working
+    // pause as a broken run.
+    expect(justEnded("clustering", PARKED)).toBe(false);
+    expect(justEnded(PARKED, PARKED)).toBe(false);
+    // ...and the announcements that already worked keep working, including the one that fires when a
+    // reviewer files the last verdict and the run resumes and finishes.
+    expect(justEnded("clustering", "complete")).toBe(true);
+    expect(justEnded(PARKED, "complete")).toBe(true);
+    expect(justEnded(PARKED, "error")).toBe(true);
+    expect(justEnded("assigning", "cancelled")).toBe(true);
+    // Never re-announce a run that was already over, and never announce one seen for the first time.
+    expect(justEnded("complete", "complete")).toBe(false);
+    expect(justEnded(undefined, "complete")).toBe(false);
+  });
+});
+
+test.describe("no surface keeps a private copy of the predicate", () => {
+  /**
+   * THE REGRESSION GUARD. Two of the four copies of this predicate were wrong, and both were wrong the
+   * same way — a literal `new Set(["complete", "error", "cancelled"])` written beside the surface that
+   * used it. Nothing about either file looked wrong on its own, so a test that reads the source is the
+   * only thing that notices the third one being written.
+   */
+  const REPAIRED = ["src/pages/jobs.tsx", "src/components/active-runs-indicator.tsx"];
+
+  test("@runstate the repaired surfaces declare no terminal-status set of their own", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve, dirname } = await import("node:path");
+    const root = resolve(dirname(test.info().file), "..", "..");
+    // COMMENTS ARE STRIPPED FIRST. Both files carry a header QUOTING the set they used to declare, so
+    // that a reader learns why the predicate is imported rather than local — and a naive text match
+    // fails on the explanation itself, which would train the next author to delete the explanation.
+    const code = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    for (const rel of REPAIRED) {
+      const src = code(readFileSync(resolve(root, rel), "utf8"));
+      expect(src, `${rel} must not re-declare the status set`).not.toMatch(/new Set\(\[\s*"complete"/);
+      expect(src, `${rel} must import the shared predicates`).toContain('from "@/lib/run-state"');
     }
   });
 });

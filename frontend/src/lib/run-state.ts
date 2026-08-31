@@ -65,3 +65,32 @@ export function isParked(status: JobStatus | string | null | undefined): boolean
 export function isInFlight(status: JobStatus | string | null | undefined): boolean {
   return !!status && !NOT_IN_FLIGHT.has(status);
 }
+
+/**
+ * How many of these runs are actually running.
+ *
+ * A FUNCTION RATHER THAN AN INLINE FILTER, because the number it returns is a CLAIM the header makes to
+ * the user — "5 running", next to a spinning loader — and that claim was false for months. A count is
+ * exactly the kind of thing that reads as obviously-correct at the call site and is asserted nowhere.
+ */
+export function countInFlight(jobs: readonly { status?: JobStatus | string | null }[] | null | undefined): number {
+  return (jobs ?? []).filter((j) => isInFlight(j.status)).length;
+}
+
+/**
+ * Did this run just END — the transition worth announcing to someone who has navigated away?
+ *
+ * A PARK IS NOT AN ENDING. It is a handover to a human, and the run is expected to continue, so the
+ * completion toast would be premature and the failure toast (the fallthrough arm of that effect) would
+ * report a working pause as a broken run. Resuming out of a park and finishing IS an ending, and still
+ * announces — which is why this takes the previous status rather than testing the new one alone.
+ */
+export function justEnded(
+  prev: JobStatus | string | null | undefined,
+  next: JobStatus | string | null | undefined,
+): boolean {
+  // An unseen run announces nothing: the observer seeds its map on first load precisely so a page
+  // opened after the fact does not fire a burst of stale toasts.
+  if (!prev) return false;
+  return !isTerminal(prev) && isTerminal(next);
+}
