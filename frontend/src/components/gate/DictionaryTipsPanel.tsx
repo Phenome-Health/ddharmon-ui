@@ -72,7 +72,7 @@ const CHECKS: Check[] = [
     // The tag is written literally: this is a JS string in a JSX text position, so React escapes it for
     // display — writing the ENTITY here would show the reviewer `&lt;br&gt;` rather than the `<br>` their
     // file actually contains, which is the wrong specimen.
-    example: "Weight (kgâ€​), <br> and curly quotes all survive a bad export",
+    example: "donâ€™t know, <br> and &nbsp; all survive a bad export",
   },
 ];
 
