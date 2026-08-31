@@ -1,3 +1,4 @@
+import { isParked } from "@/lib/run-state";
 import type { GatePosition } from "@/types";
 
 /**
@@ -38,3 +39,44 @@ export function setupPathFor(jobId: string): string {
 
 /** The one position the flow no longer draws a screen for. It is still a live WIRE value (D-3). */
 export const RETIRED_GATE: GatePosition = "gate0";
+
+/**
+ * Which screen a run should be RE-ENTERED at, or null if it should not be re-entered at all.
+ *
+ * The Runs list used to answer this with a two-way branch — complete or demo went to the results view,
+ * *everything else* went to the progress dashboard — and `gatePosition` was never read. So a reviewer who
+ * walked away from a gate and came back via Runs landed on a progress bar with no way onward. That is the
+ * defect this pair of helpers closes, and it lives here rather than in the page so the NEXT surface that
+ * links to a run cannot get it wrong independently.
+ *
+ * Null for a terminal run AND for an in-flight one: both already have a correct destination of their own
+ * (results, and the dashboard), so the caller keeps what it had. Only a parked run is re-entered.
+ */
+export function resumeGateOf(job: {
+  status?: string | null;
+  gatePosition?: GatePosition | null;
+}): GatePosition | null {
+  if (!isParked(job.status)) return null;
+  // TWO INPUTS COLLAPSE TO SETUP, and both would otherwise produce a BROKEN destination rather than a
+  // merely suboptimal one. `gate0` is retired (D-2) and its route redirects straight back to Setup, so
+  // honouring it costs a double navigation on the run's re-entry — a flicker invisible to any check that
+  // only reads the final url. Every parked run on the live backend carries exactly that value (measured
+  // 2026-08-31). An ABSENT position is the other: the field is optional on the wire, and absence is not
+  // evidence of a position — Setup is the one screen correct for a run parked anywhere.
+  const gate = job.gatePosition;
+  if (!gate || gate === RETIRED_GATE) return "setup";
+  return gate;
+}
+
+/** The route for {@link resumeGateOf}. Null carries the same meaning: the caller keeps its own route. */
+export function resumePathFor(job: {
+  jobId: string;
+  status?: string | null;
+  gatePosition?: GatePosition | null;
+}): string | null {
+  const gate = resumeGateOf(job);
+  if (!gate) return null;
+  // Setup goes through `setupPathFor` rather than the generic template, so the one route with a helper of
+  // its own keeps a single definition.
+  return gate === "setup" ? setupPathFor(job.jobId) : `/run/${job.jobId}/${gate}`;
+}
