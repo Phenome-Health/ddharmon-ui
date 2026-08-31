@@ -11,6 +11,7 @@ import { CohortCoverage } from "@/components/gate/CohortCoverage";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CarveProposal } from "@/components/gate/CarveProposal";
+import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
 import { GroupingStrip } from "@/components/gate/GroupingStrip";
 import { MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } from "@/components/gate/MemberChip";
 import { NotAvailable } from "@/components/gate/NotAvailable";
@@ -649,6 +650,29 @@ export default function Gate1Page() {
     optedIn: Boolean((jobState?.config as { allowReadjudication?: boolean } | undefined)?.allowReadjudication),
   });
 
+  /**
+   * Why matching the declared components cannot run HERE — the honest not-available, rather than a dead
+   * control.
+   *
+   * A RUN PARKED AT GATE 1 HAS NO ASSIGNED RECORDS. `match_components` runs over the run's harmonized
+   * concepts, which the assign stage produces at Gate 2; the backend's own derive route refuses a run
+   * with no records for exactly that reason. So the concept GROUPS this screen renders are not yet what
+   * matching consumes, and saying so plainly is better than offering a button that would 409.
+   *
+   * The declaration itself still belongs here: it is free, it is where a reviewer scoping a run is
+   * thinking about it, and the verdict becomes derivable the moment the matching evidence exists.
+   */
+  const matchRefusal =
+    (jobState?.result?.records?.length ?? 0) > 0
+      ? null
+      : ({
+          claim: "deferred" as const,
+          reason:
+            "Matching needs this run's concepts to have been matched against common data elements, which " +
+            "happens at Gate 2. Declare the components now — it is free and it is saved — and the verdict " +
+            "fills in once the run has got that far.",
+        });
+
   const [accepting, setAccepting] = useState("");
   async function acceptCarve(groupId: string) {
     setAccepting(groupId);
@@ -954,6 +978,18 @@ export default function Gate1Page() {
           </ul>
         </section>
       )}
+
+      {/*
+        THE DECLARED-SCORE PANEL (the 2026-08-25 amendment). A SECTION of this screen's body — below the
+        ledger, above the commit bar — and never its own screen, a step before Gate 1, or a modal: a
+        pre-gate screen would interrupt a purchase decision to pitch an add-on.
+      */}
+      <DeclaredScorePanel
+        jobId={jobId}
+        pinned={pinned}
+        spec={jobState?.composites?.at(-1) ?? null}
+        matchRefusal={matchRefusal}
+      />
 
       <CommitBar
         action="Continue to Gate 2"

@@ -1,5 +1,20 @@
 /**
- * The declared score at Setup — components in, scope band out (08-13 Task 2).
+ * The declared score — components in, scope band out.
+ *
+ * RE-SITED FROM SETUP TO GATE 1 (the 2026-08-25 amendment), and re-sited is the operative word: the
+ * feasibility algebra below is unchanged, and `setupScopeVerdict` is kept rather than deleted so the
+ * reasoning that produced it stays legible. What moved is the CONSUMER. Two independent reasons, both
+ * already written into this file's original header:
+ *
+ *   1. Setup could read a document for free but not transcribe it, because transcription is a model call
+ *      and Setup's standing promise is that nothing has been charged yet — so it ingested a 41,000-
+ *      character paper and then asked the reviewer to type its components out by hand.
+ *   2. Setup's verdict was UNANSWERABLE, not merely unknown: feasibility asks whether THIS RUN's concepts
+ *      can supply the components, and at Setup there is no run. A band that can only ever say one thing
+ *      is not a control.
+ *
+ * At Gate 1 the second reason dissolves — the run has happened and its concept groups exist — and a paid
+ * call is unsurprising on a screen that is already a spend decision.
  *
  * WHY A SCORE IS *DECLARED* HERE AND NOT DERIVED. The composite builder is a thread through the six
  * screens rather than a gate, and it enters at Setup because reading a document needs only the document.
@@ -66,3 +81,91 @@ export const SCOPE_VERDICT_COPY: Record<ScopeVerdict, string> = {
     "Cannot be determined yet — this run has not produced any concepts, so there is nothing to match " +
     "these components against. It is not a finding that the score cannot be built.",
 };
+
+// --- the derived verdict, at a gate that has a run behind it ---------------------------------------------
+
+/**
+ * What this run knows about ONE declared component.
+ *
+ * `searched` IS SEPARATE FROM `matched`, and keeping them apart is the whole point of this shape. "We
+ * looked and found nothing" and "we have not looked" are different facts, and only the first supports a
+ * negative claim. A single boolean would collapse them and make every undeclared-yet component read as a
+ * finding that the score cannot be built.
+ */
+export interface ComponentEvidence {
+  name: string;
+  /** Whether matching actually RAN for this component on this run. */
+  searched: boolean;
+  /** Whether it found a concept in this run that measures it. */
+  matched: boolean;
+  /**
+   * How many candidate concepts retrieval offered and the judge rejected.
+   *
+   * Carried because "8 candidates were retrieved and none measures this" is DIFFERENT INFORMATION from
+   * "nothing was retrieved": the first says the concepts exist and do not fit, the second is closer to
+   * absence. Neither says the cohort lacks the measure — MISSING means "not retrieved in this run".
+   */
+  shortlistSize: number;
+}
+
+/** One component's own verdict. Absent evidence is `indeterminate`, never the negative claim. */
+export function componentVerdictFor(e: ComponentEvidence): ScopeVerdict {
+  if (!e.searched) return "indeterminate";
+  return e.matched ? "full" : "infeasible";
+}
+
+/**
+ * The whole score's verdict, DERIVED from the per-component evidence.
+ *
+ * `infeasible` requires that EVERY component was actually looked for and none was found. One component
+ * still unsearched keeps the verdict at `indeterminate`, because a negative claim about a score is not
+ * determinable while any part of it remains unchecked.
+ */
+export function scopeVerdictFor(evidence: readonly ComponentEvidence[]): ScopeVerdict {
+  if (evidence.length === 0) return "indeterminate";
+  const matched = evidence.filter((e) => e.matched).length;
+  if (matched === evidence.length) return "full";
+  if (matched > 0) return "partial";
+  return evidence.every((e) => e.searched) ? "infeasible" : "indeterminate";
+}
+
+/**
+ * Why a component has no match — and it is a RESULT, not a failure to hide.
+ *
+ * The two outcomes are worded differently on purpose (`pages/composite.tsx`'s first rule, which the
+ * 2026-08-25 amendment did not carry across and which this restores). Neither ever says the cohort does
+ * not measure the thing: what a run can report is what it retrieved, and "not retrieved in this run" is
+ * the only claim the evidence supports.
+ */
+export function missingReason(e: ComponentEvidence): string {
+  if (!e.searched) return "Not looked for yet on this run.";
+  if (e.shortlistSize > 0) {
+    return (
+      `${e.shortlistSize} candidate concept${e.shortlistSize === 1 ? "" : "s"} from this run were ` +
+      "retrieved and rejected — none of them measures this component. The concepts exist; they do not fit."
+    );
+  }
+  return "Retrieval returned nothing for this component in this run. That is not a finding about your cohorts — it is what this run retrieved.";
+}
+
+/** The sentence that stops `partial` being read as a qualified yes. */
+export const PARTIAL_IS_NOT_THE_SCORE =
+  "Partial coverage is not the published score. Computing it from the components that are present would " +
+  "produce a different measure with the same name.";
+
+/**
+ * What a score's coverage IS a statement about — and what it is not.
+ *
+ * `pages/composite.tsx:397-401`'s rule, restored here: presence is per DATA DICTIONARY. Participant-level
+ * missingness, and therefore an effective N, cannot be derived from metadata, and ddharmon never computes
+ * the score — the output is a recipe an analyst runs on their own rows.
+ */
+export const PRESENCE_IS_PER_DICTIONARY =
+  "Presence is per data dictionary: it says the cohort records the variable, not how many participants " +
+  "have a value for it. ddharmon produces the recipe; it never computes the score.";
+
+/** Said where the source document stated no threshold. Never derived, never defaulted. */
+export const CUTOFF_UNSTATED =
+  "The source did not state a cutoff for this component. It is flagged for a human rather than filled in — " +
+  "a score's threshold is a clinical claim, and inventing a plausible one is the most consequential thing " +
+  "this panel could get wrong.";
