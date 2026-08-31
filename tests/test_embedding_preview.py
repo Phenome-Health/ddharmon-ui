@@ -109,11 +109,15 @@ def test_the_appended_string_is_the_one_the_run_will_embed(tmp_path):
     assert "Body mass index" not in by_name["BMI"]
 
 
-def test_a_variable_that_embeds_nothing_keeps_its_row_and_an_empty_cell(tmp_path):
-    """Defect 3. A variable that reaches no concept group is exactly what the reviewer came to find."""
+def test_a_row_that_embeds_nothing_is_still_a_row(tmp_path):
+    """Defect 3. A variable that reaches no concept group is exactly what the reviewer came to find.
+
+    The empty row is also the join's sharpest edge. Core reads with pandas' ``skip_blank_lines``, so a row
+    of ``,`` is NUMBERED and then discarded for being empty while a truly blank line is gone before
+    numbering — measured, not assumed. Dropping the ``,`` row here would shift every synthesised index
+    after it, so it is kept and reported as embedding nothing, which is what core did to it.
+    """
     src = tmp_path / "cohortC.csv"
-    # An opaque identity-only code with no primary text embeds the empty string — core's own
-    # `_embed_variable_name` branch, and a silent loss everywhere else in the product.
     src.write_text("var,desc\nHAS_TEXT,a real description\n,\nALSO_FINE,another description\n")
 
     export = build_embedding_export(src, cohort_name="CohortC", column_roles=ROLES)
@@ -121,7 +125,22 @@ def test_a_variable_that_embeds_nothing_keeps_its_row_and_an_empty_cell(tmp_path
     assert len(export.rows) == 3, "a row was dropped for embedding nothing"
     cell = export.header.index(EMBEDDING_EXPORT_COLUMN)
     assert export.rows[1][cell] == ""
-    assert export.n_nothing_to_embed >= 1
+    assert export.n_nothing_to_embed == 1
+    # AND IT IS NOT REPORTED AS A COLLAPSE. Nothing was overwritten by a repeated name here, and sending
+    # the reviewer to hunt for a duplicate that does not exist is a worse outcome than saying nothing.
+    assert export.n_collapsed == 0
+    assert export.repeated_names == []
+
+
+def test_the_synthesised_row_index_survives_an_empty_row_and_a_blank_line(tmp_path):
+    """The alignment measurement itself, pinned: get this wrong and every later row is mis-attributed."""
+    src = tmp_path / "cohortG.csv"
+    src.write_text("desc,units\nalpha,kg\n,\nbeta,cm\n\ngamma,m\n")
+
+    export = build_embedding_export(src, cohort_name="CohortG", column_roles={"description": "desc"})
+
+    cell = export.header.index(EMBEDDING_EXPORT_COLUMN)
+    assert [row[cell] for row in export.rows] == ["alpha", "", "beta", "gamma"]
 
 
 def test_a_repeated_variable_name_is_counted_and_only_the_surviving_row_carries_the_text(tmp_path):

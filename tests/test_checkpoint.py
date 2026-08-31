@@ -1117,9 +1117,12 @@ def test_no_reconcile_http_route_was_added():
     assert not [p for p in paths if "reconcile" in p.lower()], f"a reconcile route exists: {paths}"
     posts = len([1 for r in app_module.app.routes if "POST" in (getattr(r, "methods", None) or set())])
     # 12 at 08-10; 14 after 08-11 added `/score/extract` (Setup, job-independent) and
-    # `/jobs/{id}/readjudicate` (the one gate action that starts paid work). Bumped deliberately: this
-    # assertion exists so a POST appears only when a plan says so, not so the number never moves.
-    assert posts == 14, f"the POST surface changed ({posts} != 14)"
+    # `/jobs/{id}/readjudicate` (the one gate action that starts paid work); 15 after 08-14f added
+    # `/dictionary/embedding.csv`. That one is a POST despite spending nothing and touching no run,
+    # because the file it exports has not been uploaded yet — it rides in the request body, which is the
+    # same reason `/score/extract` is a POST. Bumped deliberately: this assertion exists so a POST appears
+    # only when a plan says so, not so the number never moves.
+    assert posts == 15, f"the POST surface changed ({posts} != 15)"
 
 
 # ── Gate 0: the boundary that lets a run ENTER the staged flow ───────────────────────────────
