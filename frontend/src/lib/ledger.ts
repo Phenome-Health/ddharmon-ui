@@ -103,3 +103,165 @@ export function sortGroups(groups: readonly ConceptGroup[]): ConceptGroup[] {
 export function pricePerGroup(gate2Forecast: number, nGroups: number): number {
   return nGroups > 0 ? gate2Forecast / nGroups : 0;
 }
+
+// --- the partition -------------------------------------------------------------------------------------
+
+/**
+ * The two buckets, and they are a STRUCTURAL FACT rather than a judgement.
+ *
+ * A group drawing on two or more cohorts is HARMONIZATION — the thing this tool is for. A group drawing on
+ * one is CDE-mapping: a real result, and a different job, scored separately and never blended with the
+ * first. The names say which is which and neither says "good".
+ */
+export type Bucket = "cross-cohort" | "single-cohort";
+export const BUCKETS: Bucket[] = ["cross-cohort", "single-cohort"];
+
+/** The DEFAULT view. See `partitionByBreadth` for why the ledger partitions before it sorts. */
+export const DEFAULT_BUCKET: Bucket = "cross-cohort";
+
+/**
+ * Split the ledger on cohort breadth — BEFORE sorting, not after.
+ *
+ * WHY A PARTITION AND NOT JUST AN ORDER (the 2026-08-21 amendment, from measurement). On the full-5
+ * artifact the judge flags 351 of 1901 groups, and **237 of those 351 are single-cohort**. Flag-first
+ * ordering alone therefore spends 68% of the reviewer's first attention on rows that are not
+ * harmonization at all.
+ *
+ * The judge is not the problem — it is well aimed where it matters. Its flag rate is 45% on cross-cohort
+ * groups against 14% on single-cohort ones: pooling across dictionaries really is ~3x harder and the judge
+ * fires ~3x more often there. So the verdict is a good SIGNAL and a bad PARTITION. Use each for what it is
+ * good at: partition on a structural fact, then order flag-first inside the partition.
+ *
+ * That also discharges this screen's own trust boundary — *"LLM judge verdicts → the reviewer's triage
+ * order"* — without weakening the judge: the model no longer chooses the SET, only the order within a set
+ * chosen by a fact.
+ *
+ * READ OFF THE CONTRACT BOOLEAN. `crossCohort` is already a field on `UIConceptGroup`, populated from
+ * core's own `cross_cohort`. Recomputing it here from `cohorts.length` would be a second answer to a
+ * question the backend has already answered, and the two could drift. (`cohorts.length` is still the right
+ * key for ORDERING breadth, because the boolean cannot rank 2 against 5 — see `compareGroups`.)
+ */
+export function partitionByBreadth(groups: readonly ConceptGroup[]): Record<Bucket, ConceptGroup[]> {
+  const out: Record<Bucket, ConceptGroup[]> = { "cross-cohort": [], "single-cohort": [] };
+  for (const g of groups) out[g.crossCohort ? "cross-cohort" : "single-cohort"].push(g);
+  return out;
+}
+
+// --- the sort control ------------------------------------------------------------------------------------
+
+/**
+ * The orders a reviewer can choose between. Every one of them ENDS IN GROUP ID, so every one is total and
+ * no reload can reorder the screen under someone who left mid-triage.
+ */
+export type SortKey = "verdict" | "breadth" | "size";
+
+export const SORTS: { key: SortKey; label: string }[] = [
+  { key: "verdict", label: "Flagged first" },
+  { key: "breadth", label: "Most cohorts first" },
+  { key: "size", label: "Most variables first" },
+];
+
+const byId = (a: ConceptGroup, b: ConceptGroup) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0);
+
+export function sortGroupsBy(groups: readonly ConceptGroup[], key: SortKey): ConceptGroup[] {
+  if (key === "verdict") return sortGroups(groups);
+  if (key === "breadth") {
+    return [...groups].sort((a, b) => b.cohorts.length - a.cohorts.length || b.nMembers - a.nMembers || byId(a, b));
+  }
+  return [...groups].sort((a, b) => b.nMembers - a.nMembers || b.cohorts.length - a.cohorts.length || byId(a, b));
+}
+
+// --- the filters -------------------------------------------------------------------------------------------
+
+export interface LedgerFilters {
+  /** Coherence states to keep. Empty means every state — an empty filter is not a filter. */
+  verdicts: CoherenceState[];
+  /** Cohorts a group must draw on at least one of. Empty means every cohort. */
+  cohorts: string[];
+  /** Only groups the reviewer has already decided something about. */
+  touchedOnly: boolean;
+  /** Only groups currently going forward. */
+  inScopeOnly: boolean;
+}
+
+export const NO_FILTERS: LedgerFilters = { verdicts: [], cohorts: [], touchedOnly: false, inScopeOnly: false };
+
+/** How many filters are on — what the toolbar reports, so "why is this empty" is answerable at a glance. */
+export function activeFilterCount(f: LedgerFilters): number {
+  return f.verdicts.length + f.cohorts.length + (f.touchedOnly ? 1 : 0) + (f.inScopeOnly ? 1 : 0);
+}
+
+/**
+ * Narrow the visible set. The two reviewer-state predicates are INJECTED rather than read here, because
+ * both are derived from persisted decisions and this module must stay free of the decision layer to stay
+ * importable outside a bundle.
+ */
+export function applyFilters(
+  groups: readonly ConceptGroup[],
+  f: LedgerFilters,
+  state: { isTouched: (groupId: string) => boolean; isInScope: (groupId: string) => boolean },
+): ConceptGroup[] {
+  return groups.filter((g) => {
+    if (f.verdicts.length > 0 && !f.verdicts.includes(g.coherence)) return false;
+    if (f.cohorts.length > 0 && !g.cohorts.some((c) => f.cohorts.includes(c))) return false;
+    if (f.touchedOnly && !state.isTouched(g.groupId)) return false;
+    if (f.inScopeOnly && !state.isInScope(g.groupId)) return false;
+    return true;
+  });
+}
+
+// --- the search --------------------------------------------------------------------------------------------
+
+/**
+ * THE TEXT A SEARCH TERM IS MATCHED AGAINST — and the honest limit of what this search is.
+ *
+ * IT IS NOT A SEMANTIC MATCH, AND MUST NOT CLAIM TO BE. The plan specified matching a term against each
+ * group's embedding centroid, on the reasoning that the vectors are local work already done and therefore
+ * free. **They are not on the wire.** `UIConceptGroup` carries no centroid and no embedding; `UIResult`'s
+ * only geometry is `atlas`, which is a 2-D PCA projection of individual VARIABLES, is not a semantic index,
+ * and is empty on a run paused at Gate 1 because it is built at the end of a run. Putting a vector on the
+ * contract is a backend change, which this plan may not make.
+ *
+ * So the match is LEXICAL, over the text this client actually holds: the generated concept name, the ideal
+ * description behind it, and the member variable names. The consequence is stated rather than hidden — the
+ * search UI says it matches the text of each group, and never uses the word "semantic". A reviewer whose
+ * clinical term is worded differently from the generated name may get a false coverage finding, which is
+ * exactly why the finding's copy says "either the clustering never formed such a group, or no cohort in
+ * this run measures it" rather than asserting the second.
+ */
+export function searchableText(group: ConceptGroup): string {
+  return [group.concept, group.idealCde, ...group.memberVariableNames].join(" ").toLowerCase();
+}
+
+/** Word-ish tokens, so "BMI (kg/m²)" and "bmi" meet. */
+function tokens(text: string): string[] {
+  return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+/**
+ * Match a LIST of terms against the groups, returning what matched and what did not.
+ *
+ * A TERM MATCHES A GROUP WHEN EVERY ONE OF ITS TOKENS APPEARS in that group's text — order-insensitive, so
+ * "pressure blood" and "blood pressure" find the same rows, and conjunctive, so "blood pressure" does not
+ * match every group containing the word "blood".
+ *
+ * A TERM MATCHING NOTHING IS A COVERAGE FINDING, NOT AN EMPTY STATE. "No results" tells the reviewer their
+ * search failed; "nothing in this run measures smoking" tells them something true about their corpus,
+ * which is what they came to find out.
+ */
+export function matchTerms(
+  groups: readonly ConceptGroup[],
+  terms: readonly string[],
+): { ids: Set<string>; noMatches: string[] } {
+  const haystacks = groups.map((g) => ({ id: g.groupId, tokens: new Set(tokens(searchableText(g))) }));
+  const ids = new Set<string>();
+  const noMatches: string[] = [];
+  for (const term of terms) {
+    const wanted = tokens(term);
+    if (wanted.length === 0) continue;
+    const hits = haystacks.filter((h) => wanted.every((w) => h.tokens.has(w)));
+    if (hits.length === 0) noMatches.push(term);
+    for (const h of hits) ids.add(h.id);
+  }
+  return { ids, noMatches };
+}

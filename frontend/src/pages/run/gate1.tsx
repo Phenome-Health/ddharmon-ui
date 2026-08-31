@@ -10,11 +10,26 @@ import { CohortCoverage } from "@/components/gate/CohortCoverage";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { GroupingStrip } from "@/components/gate/GroupingStrip";
+import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
+import { TermSearch } from "@/components/gate/TermSearch";
 import { useGateDecisions } from "@/hooks/use-gate-decisions";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
-import { isFlagged, pricePerGroup, sortGroups } from "@/lib/ledger";
+import {
+  DEFAULT_BUCKET,
+  NO_FILTERS,
+  applyFilters,
+  activeFilterCount,
+  isFlagged,
+  matchTerms,
+  partitionByBreadth,
+  pricePerGroup,
+  sortGroupsBy,
+  type Bucket,
+  type LedgerFilters,
+  type SortKey,
+} from "@/lib/ledger";
 import { isParked } from "@/lib/run-state";
 import type { ConceptGroup, RunMode } from "@/types";
 
@@ -211,8 +226,14 @@ export default function Gate1Page() {
   const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
   const [resuming, setResuming] = useState(false);
 
+  const [bucket, setBucket] = useState<Bucket>(DEFAULT_BUCKET);
+  const [sort, setSort] = useState<SortKey>("verdict");
+  const [filters, setFilters] = useState<LedgerFilters>(NO_FILTERS);
+  /** The terms the reviewer last searched. `null` means they have not searched — not "searched and got 0". */
+  const [terms, setTerms] = useState<string[] | null>(null);
+
   const groups: ConceptGroup[] = useMemo(
-    () => sortGroups(jobState?.result?.conceptGroups ?? []),
+    () => jobState?.result?.conceptGroups ?? [],
     [jobState?.result?.conceptGroups],
   );
   const allCohorts = jobState?.result?.summary?.cohorts ?? [];
@@ -253,8 +274,52 @@ export default function Gate1Page() {
   }, [regroups.decisions]);
   const isChanged = (groupId: string) => groupId in scope.decisions || touchedByRegroup.has(groupId);
 
+  // The progress readout's numerator. Counted over the WHOLE corpus rather than the visible bucket: a
+  // reviewer who worked the single-cohort tab has reviewed those groups, and a figure that reset when
+  // they switched tabs would report the wrong thing. DERIVED from persisted decisions on every read, so
+  // it is unchanged by a reload (R6) — a counter in `useState` is the defect this avoids.
+  const reviewedCount = groups.filter((g) => isChanged(g.groupId)).length;
+
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
   const nCrossCohort = groups.filter((g) => g.crossCohort).length;
+
+  // PARTITION FIRST, then search, then filter, then sort. The order matters: the partition is a structural
+  // fact about the corpus and the other three are the reviewer's own narrowing, so a bucket count must not
+  // move when they type in the search box.
+  const buckets = useMemo(() => partitionByBreadth(groups), [groups]);
+  const bucketCounts = {
+    "cross-cohort": buckets["cross-cohort"].length,
+    "single-cohort": buckets["single-cohort"].length,
+  };
+  // Searched across the WHOLE corpus, not the visible bucket: "no cohort in this run measures gait speed"
+  // is a claim about the run, and deriving it from a filtered view would make it a claim about the filter.
+  const search = useMemo(() => (terms && terms.length > 0 ? matchTerms(groups, terms) : null), [groups, terms]);
+
+  const visible = useMemo(() => {
+    let rows = buckets[bucket];
+    if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
+    rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
+    return sortGroupsBy(rows, sort);
+    // `isChanged`/`isInScope` close over the decision maps, which is what the two entries below track.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buckets, bucket, search, filters, sort, scope.decisions, touchedByRegroup]);
+
+  // Nothing in the bucket matched — say which of the two reasons it was. A filter the reviewer set is
+  // their own doing and is cleared; a search term that matched nothing is a finding about the corpus and
+  // is reported by `TermSearch` instead.
+  const filteredToNothing = visible.length === 0 && groups.length > 0 && activeFilterCount(filters) > 0;
+  /**
+   * The DEFAULT bucket is empty and the other one is not.
+   *
+   * A real dead end, found in test: a run whose groups are all single-cohort opens on an empty
+   * cross-cohort tab, and "no rows here" is indistinguishable from "no rows at all" — which would be the
+   * coverage lie the partition exists to avoid, arrived at from the opposite direction. The default is
+   * NOT changed (the cross-cohort bucket leads on purpose); the empty view names the other bucket, says
+   * what it holds, and goes there in one click.
+   */
+  const otherBucket: Bucket = bucket === "cross-cohort" ? "single-cohort" : "cross-cohort";
+  const emptyBucket =
+    visible.length === 0 && groups.length > 0 && activeFilterCount(filters) === 0 && !search;
 
   async function onContinue() {
     setResuming(true);
@@ -299,6 +364,29 @@ export default function Gate1Page() {
         nVariables={variables}
         nCrossCohort={nCrossCohort}
       />
+
+      {groups.length > 0 && (
+        <>
+          <LedgerToolbar
+            counts={bucketCounts}
+            bucket={bucket}
+            onBucketChange={setBucket}
+            sort={sort}
+            onSortChange={setSort}
+            filters={filters}
+            onFiltersChange={setFilters}
+            allCohorts={allCohorts}
+            // Across BOTH buckets: a reviewer who has worked the single-cohort tab has reviewed those
+            // groups, and a readout that reset when they switched tabs would report the wrong thing.
+            reviewed={reviewedCount}
+            inScope={inScopeGroups.length}
+          />
+          <TermSearch
+            onSearch={(next) => setTerms(next.length > 0 ? next : null)}
+            noMatches={search?.noMatches ?? []}
+          />
+        </>
+      )}
 
       <Ledger
         columns={GATE1_LEDGER_COLUMNS}
@@ -357,8 +445,55 @@ export default function Gate1Page() {
               to group.
             </GateEmptyState>
           )
+        ) : emptyBucket ? (
+          <GateEmptyState
+            heading={
+              bucket === "cross-cohort"
+                ? "No group in this run spans more than one cohort"
+                : "Every group in this run spans more than one cohort"
+            }
+            nextStep={
+              <button
+                type="button"
+                data-testid="go-to-other-bucket"
+                onClick={() => setBucket(otherBucket)}
+                className="text-left font-semibold text-link-on-raised underline underline-offset-2"
+              >
+                Show the {bucketCounts[otherBucket]}{" "}
+                {bucketCounts[otherBucket] === 1 ? "group" : "groups"}{" "}
+                {otherBucket === "cross-cohort" ? "that span two or more cohorts" : "from a single cohort"}.
+              </button>
+            }
+          >
+            {bucket === "cross-cohort"
+              ? "Nothing pooled across your dictionaries this time. The run still produced results — every group maps variables from one cohort to a common data element — and they are on the other tab."
+              : "Every group here draws on two or more of your dictionaries, so there is nothing in the single-cohort view."}
+          </GateEmptyState>
+        ) : filteredToNothing ? (
+          /* A FILTER matching nothing — the reviewer's own doing, and clearing it is the fix. Different
+             copy from a search term that matched nothing, which is a finding about the corpus and is
+             reported above by `TermSearch`. */
+          <GateEmptyState
+            heading="No group matches this filter"
+            nextStep={
+              <button
+                type="button"
+                data-testid="clear-filters-inline"
+                onClick={() => setFilters(NO_FILTERS)}
+                className="text-left font-semibold text-link-on-raised underline underline-offset-2"
+              >
+                Clear the filter to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
+              </button>
+            }
+            className="[&]:block"
+          >
+            <span data-testid="filter-empty">
+              Clear the filter to see all {groups.length} {groups.length === 1 ? "group" : "groups"} in
+              this run.
+            </span>
+          </GateEmptyState>
         ) : (
-          groups.map((g) => (
+          visible.map((g) => (
             <GroupRow
               key={g.groupId}
               group={g}

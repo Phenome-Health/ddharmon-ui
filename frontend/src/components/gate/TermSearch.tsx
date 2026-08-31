@@ -17,6 +17,14 @@ import { cn } from "@/lib/utils";
  * amber left-ruled band naming the term and what its absence means, and it says so HERE rather than
  * deferring it: it will not resurface at a later gate.
  *
+ * IT IS A TEXT MATCH, AND THE COPY SAYS SO (corrected 08-15). This component originally told the reviewer
+ * that "matching is semantic", which was written against a plan to match each term against the group's
+ * embedding centroid. **No centroid and no embedding reach the browser** — `UIConceptGroup` carries
+ * neither, and `UIResult.atlas` is a 2-D PCA of individual variables that is empty on a run paused at
+ * Gate 1 — so the match is over each group's own text (see `lib/ledger.ts::matchTerms`). The claim was
+ * corrected rather than the feature dropped, because the coverage finding is the load-bearing part and it
+ * is still true; what would not have been true is telling a reviewer the tool understood their term.
+ *
  * TERMS ARE RENDERED AS ESCAPED TEXT CHILDREN. A coverage finding echoes user input back, and the one way
  * that becomes a vulnerability is raw-HTML injection — so no `dangerouslySetInnerHTML` on this surface,
  * ever. JSX children are escaped by construction, which is why this is a rule about what NOT to reach for.
@@ -86,8 +94,8 @@ export function TermSearch({ onSearch, noMatches = [], onUseScore, value = "", c
           </Button>
         )}
         <span className="text-xs text-on-raised-muted">
-          Matching is semantic and runs on this machine, so searching costs nothing — and the run&rsquo;s
-          first charge was committed back on Set up, before this screen existed.
+          Each term is matched against the text of each group — its generated name, the description behind
+          it, and its variable names. It runs on this machine, so searching costs nothing.
         </span>
       </div>
 
