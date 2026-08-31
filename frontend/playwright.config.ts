@@ -20,6 +20,21 @@ import { defineConfig, devices } from "@playwright/test";
  *   run:    npm run test:e2e -- --grep "@visual"
  *   update: npm run test:e2e -- --grep "@visual" --update-snapshots
  */
+/**
+ * The e2e port is ENV-DRIVEN so two worktrees can run this suite at the same time.
+ *
+ * Why this is not a cosmetic knob: `reuseExistingServer` is TRUE locally (it is only disabled under CI),
+ * so a second suite launched against an already-busy port does NOT fail — it silently attaches to
+ * whatever server is already listening there, which may be a DIFFERENT worktree's build, and reports
+ * green against code the run never compiled. A pinned port therefore makes parallel runs actively
+ * misleading rather than merely serialised.
+ *
+ * The default is 4173, unchanged, so existing invocations and CI behave exactly as before. A parallel
+ * worktree sets its own:  E2E_PORT=4183 npx playwright test
+ */
+const E2E_PORT = Number(process.env.E2E_PORT) || 4173;
+const E2E_BASE_URL = `http://localhost:${E2E_PORT}`;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   // Full-page captures of the long content pages plus the chart-settle wait need more than the smoke
@@ -53,7 +68,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://localhost:4173",
+    baseURL: E2E_BASE_URL,
     trace: "on-first-retry",
     // Desktop-only product (>=1280px), so the visual contract is ONE screenshot per route: one
     // viewport, one browser. Pinned here so every baseline shares it.
@@ -74,8 +89,8 @@ export default defineConfig({
   ],
   webServer: {
     // Build in static mode, then serve the dist with vite preview on a fixed port.
-    command: "VITE_STATIC=1 npm run build && npm run serve -- --port 4173 --strictPort",
-    url: "http://localhost:4173",
+    command: `VITE_STATIC=1 npm run build && npm run serve -- --port ${E2E_PORT} --strictPort`,
+    url: E2E_BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
   },
