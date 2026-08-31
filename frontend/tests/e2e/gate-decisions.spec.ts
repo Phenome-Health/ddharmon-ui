@@ -10,6 +10,7 @@ import {
   isEmptyDecisionPayload,
   mergeDecisionIndex,
   optionSetKey,
+  resolvePinned,
   sha256Hex,
   shouldHydrate,
   staleItemKeys,
@@ -215,5 +216,32 @@ test.describe("gate decisions", () => {
     // Nothing about the demo reached the store. A guest action that could spend or persist is the one
     // thing the sandbox exists to make impossible.
     expect(apiCalls).toEqual([]);
+  });
+});
+
+test.describe("gate decisions — the run's own config", () => {
+  test("@decisions a real run resolves to NOT pinned, so its decisions reach the store", () => {
+    // THE BUG THIS PINS. `config.demo` read directly is `undefined` on every real run, because a real
+    // run's config has no such key — and `writesGoToSandbox` deliberately treats `undefined` as "unknown,
+    // use the sandbox". Every gate decision on every real run was therefore confined to sessionStorage,
+    // silently, with no error anywhere. Found by driving the wired build against a live backend, where
+    // the Gate 1 route issued no `/artifacts` request at all; the static suite cannot see it, because it
+    // is backend-less and its persistence assertions exercise the sandbox by construction.
+    expect(resolvePinned({ run_mode: "batch", cde_cohort: "NIH_CDE" })).toBe(false);
+    expect(writesGoToSandbox({ pinned: resolvePinned({ run_mode: "batch" }), isStatic: false })).toBe(false);
+
+    // The shared demo still routes to the browser.
+    expect(resolvePinned({ demo: true, mode: "batch" })).toBe(true);
+    expect(writesGoToSandbox({ pinned: resolvePinned({ demo: true }), isStatic: false })).toBe(true);
+
+    // And the GUARD IS PRESERVED: an absent or empty config is the stream's opening frame, where the
+    // question is genuinely unanswered, so it stays unknown and the sandbox default holds.
+    expect(resolvePinned(undefined)).toBeUndefined();
+    expect(resolvePinned(null)).toBeUndefined();
+    expect(resolvePinned({})).toBeUndefined();
+    expect(writesGoToSandbox({ pinned: resolvePinned({}), isStatic: false })).toBe(true);
+
+    // A static build never reaches a store whatever the run says.
+    expect(writesGoToSandbox({ pinned: resolvePinned({ run_mode: "batch" }), isStatic: true })).toBe(true);
   });
 });

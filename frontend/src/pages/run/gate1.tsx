@@ -18,7 +18,7 @@ import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { TermSearch } from "@/components/gate/TermSearch";
-import { useGateDecisions } from "@/hooks/use-gate-decisions";
+import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { readjudicateGroups, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
@@ -523,17 +523,33 @@ export default function Gate1Page() {
   const unassigned = jobState?.result?.unassignedFields ?? [];
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
-  // The shared demo is one read-only run, so its decisions stay in the browser. `pinned` is read from the
-  // run's own config rather than guessed; the hook's own guard handles the first render, where it is still
-  // undefined because the stream's opening frame carries an empty config.
-  const pinned = (jobState?.config as { demo?: boolean } | undefined)?.demo;
+  /**
+   * Whether this run is the shared demo — and therefore whether decisions stay in the browser.
+   *
+   * RESOLVED TO A DEFINITE BOOLEAN ONCE THE RUN'S CONFIG HAS ARRIVED, and that is the whole point. The
+   * hook routes an UNDEFINED `pinned` to the sandbox on purpose: the safe default for an unknown run is
+   * the one that cannot write to somebody else's shared row. But a real run's config carries no `demo`
+   * key at all, so reading the flag straight off it leaves `pinned` undefined FOREVER — and every
+   * decision on every real run is then confined to sessionStorage and never reaches the store.
+   *
+   * Found by driving the wired build against a live backend: the Gate 1 route issued no `/artifacts`
+   * call at all. The static e2e suite cannot see this — it is backend-less, so every persistence
+   * assertion in it exercises the sandbox by construction, which is exactly the trap this phase has
+   * already recorded once.
+   *
+   * The guard is kept intact rather than removed: while the config is still EMPTY — the stream's opening
+   * frame — this stays undefined and the sandbox default holds. It becomes `false` only once the run has
+   * actually told us what it is.
+   */
+  const runConfig = jobState?.config as Record<string, unknown> | undefined;
+  const pinned = resolvePinned(runConfig);
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
 
   // What Gate 2 is forecast to cost for THIS run, divided across its rows. `assign` runs once per
   // post-split group, so the row count is the call count and every row buys the same call.
   const variables = groups.reduce((n, g) => n + g.nMembers, 0);
-  const mode = ((jobState?.config as { mode?: string } | undefined)?.mode ?? "batch") as RunMode;
+  const mode = ((runConfig?.mode as string | undefined) ?? "batch") as RunMode;
   const gate2Forecast = useMemo(
     () => estimateRunCostBreakdown(variables, allCohorts.length, mode, true).byGate.gate2.forecast,
     [variables, allCohorts.length, mode],
@@ -647,7 +663,7 @@ export default function Gate1Page() {
   /** Why accepting is unavailable on this run, resolved once rather than per row. */
   const refusalFor = readjudicationRefusal({
     pinned: pinned === true,
-    optedIn: Boolean((jobState?.config as { allowReadjudication?: boolean } | undefined)?.allowReadjudication),
+    optedIn: Boolean(runConfig?.allowReadjudication),
   });
 
   /**

@@ -281,3 +281,25 @@ export function touchedItemKeys(index: DecisionIndex, kind: GateDecisionKind): s
 export function writesGoToSandbox({ pinned, isStatic }: { pinned?: boolean; isStatic: boolean }): boolean {
   return isStatic || pinned !== false;
 }
+
+/**
+ * Resolve a run's config into the `pinned` value `writesGoToSandbox` expects.
+ *
+ * WHY THIS IS A FUNCTION AND NOT `config.demo`. Reading the flag straight off the config looks right and
+ * is wrong for every real run: a real run's config carries NO `demo` key at all, so `config.demo` is
+ * `undefined` — and `writesGoToSandbox` deliberately treats `undefined` as "unknown, use the sandbox".
+ * The result is that every gate decision on every real run is confined to sessionStorage and never
+ * reaches the store, silently, with no error anywhere.
+ *
+ * Found on 2026-08-31 by driving the WIRED build against a live backend: the Gate 1 route issued no
+ * `/artifacts` request at all. The static e2e suite cannot catch it — it is backend-less, so every
+ * persistence assertion in it exercises the sandbox by construction.
+ *
+ * THE GUARD IS PRESERVED, NOT REMOVED. An absent or EMPTY config — the stream's opening frame — still
+ * resolves to `undefined`, so the safe default holds until the run has actually said what it is. Only a
+ * config with content resolves the question, and there an absent `demo` key means a real run.
+ */
+export function resolvePinned(config: Record<string, unknown> | null | undefined): boolean | undefined {
+  if (!config || Object.keys(config).length === 0) return undefined;
+  return Boolean(config.demo);
+}
