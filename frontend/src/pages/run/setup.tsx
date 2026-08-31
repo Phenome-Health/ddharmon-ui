@@ -2000,7 +2000,7 @@ export default function SetupPage() {
           ) : (
             <p className="max-w-[68ch] text-sm text-on-raised-muted">
               Ready to start. Uploading, mapping, confirming and exporting all ran on this machine and cost
-              nothing — pressing Start is what buys the first step.
+              nothing — pressing Start run is this run's first charge.
             </p>
           )}
         </div>
