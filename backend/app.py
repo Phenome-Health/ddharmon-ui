@@ -186,6 +186,7 @@ _EXPORT_COUNT_HEADERS = (
     "X-Ddharmon-Collapsed",
     "X-Ddharmon-Nothing-To-Embed",
     "X-Ddharmon-Repeated-Names",
+    "X-Ddharmon-Sheets",
 )
 
 
@@ -1391,6 +1392,40 @@ async def dictionary_embedding_csv(
             # Comma-joined and already capped by the builder: "some name repeats" is not actionable, and
             # six thousand of them is not a header.
             "X-Ddharmon-Repeated-Names": ",".join(export.repeated_names),
+        },
+    )
+
+
+@app.post("/api/harmonize/dictionary/embedding.xlsx")
+async def dictionary_embedding_workbook(
+    files: Annotated[list[UploadFile], File()],
+    config: Annotated[str, Form()],
+) -> StreamingResponse:
+    """The WHOLE upload set as one workbook — a sheet per dictionary, each with the embedding column.
+
+    Job-less on the same terms as its CSV sibling above and for the same reason: this is offered once every
+    dictionary is mapped and BEFORE the first charge, so there is no run to scope it to. It is the same
+    computation over N files rather than a second implementation of it.
+    """
+    import tempfile
+
+    from backend.export.workbook import build_embedding_workbook
+
+    with tempfile.TemporaryDirectory(prefix="ddharmon-embed-") as td:
+        specs = _mapped_uploads(files, config, Path(td))
+        try:
+            data = build_embedding_workbook(specs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - an unreadable upload is the caller's problem, not a 500
+            raise HTTPException(status_code=400, detail=f"The workbook could not be built: {exc}") from exc
+
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="ddharmon_embedding_text.xlsx"',
+            "X-Ddharmon-Sheets": str(len(specs)),
         },
     )
 

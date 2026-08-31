@@ -363,7 +363,11 @@ def test_a_cell_over_excels_limit_is_truncated_with_a_visible_marker(tmp_path):
     cell = rows[1][2]
     assert len(cell) <= CELL_CHAR_LIMIT
     assert "truncated" in cell.lower(), "a cut cell must say it was cut"
-    assert "500" in cell, "the marker must say how much was lost"
+    # THE COUNT IS MEASURED AGAINST THE WHOLE STRING, including the characters the marker itself
+    # displaces — so it is 537, not the 500 by which the text merely exceeded the cap. The larger number
+    # is the true one: 537 characters of this variable's embedding text are not in the cell.
+    kept, marker = cell.split(" …[truncated, ")
+    assert marker == f"{len(long_description) - len(kept)} characters omitted]"
     assert rows[2][2] == "short", "a normal cell was touched"
 
 
