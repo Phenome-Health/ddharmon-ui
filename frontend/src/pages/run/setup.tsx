@@ -12,12 +12,26 @@ import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
 import { DictionaryTipsPanel } from "@/components/gate/DictionaryTipsPanel";
-import { PreparedExport } from "@/components/gate/PreparedExport";
+import {
+  DictionaryEmbeddingExport,
+  PreparedExport,
+  WorkbookExport,
+} from "@/components/gate/PreparedExport";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { InfoTip } from "@/components/ui/info-tip";
-import { GATE_ORDER, IS_STATIC, listDemos, listModels, resumeRun, startHarmonize } from "@/lib/api";
+import {
+  GATE_ORDER,
+  IS_STATIC,
+  embeddingCsv,
+  embeddingWorkbook,
+  listDemos,
+  listModels,
+  resumeRun,
+  saveBlob,
+  startHarmonize,
+} from "@/lib/api";
 import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
@@ -211,8 +225,30 @@ interface SetupDict {
   datasetId?: string;
   /** role -> source column. */
   roles: Record<string, string>;
+  /**
+   * The mapping AS CONFIRMED by the reviewer, or null while it has not been.
+   *
+   * A MAPPING, NOT A BOOLEAN, and that is the whole design. Confirmation has to invalidate the moment a
+   * column is re-assigned — a reviewer downloading a CSV that describes a mapping they have since edited,
+   * and believing it, is worse than no download at all. Holding the confirmed mapping makes that
+   * invalidation STRUCTURAL: `confirmedRoles` simply stops matching `roles`, with no effect to remember
+   * to fire and nothing to keep in sync.
+   */
+  confirmedRoles: Record<string, string> | null;
   state: ParseState;
   origin: "run" | "upload";
+}
+
+/** Two role -> column mappings are the same mapping. Order-insensitive: the object is rebuilt on edit. */
+function sameRoles(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a).sort();
+  const kb = Object.keys(b).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
+}
+
+/** Whether this dictionary's CURRENT mapping is the one the reviewer marked complete. */
+function isConfirmed(d: SetupDict): boolean {
+  return d.confirmedRoles !== null && sameRoles(d.confirmedRoles, d.roles);
 }
 
 /** A file that never became a dictionary, and why. Rendered problem-then-next-step (UI-SPEC §8.4). */
@@ -273,6 +309,7 @@ function dictionariesFromRun(job: JobResult | null): SetupDict[] {
         rows: null,
         rowCount: null,
         roles,
+        confirmedRoles: null,
         state: "ready" as ParseState,
         origin: "run" as const,
       };
@@ -294,6 +331,7 @@ function dictionariesFromRun(job: JobResult | null): SetupDict[] {
         rowCount: null,
         datasetId: id,
         roles: { ...entry.roles },
+        confirmedRoles: null,
         state: "ready" as ParseState,
         origin: "run" as const,
       },
@@ -366,6 +404,14 @@ export default function SetupPage() {
   const [dictsOpen, setDictsOpen] = useState(false);
   /** True while the run's first charge is being committed. */
   const [committing, setCommitting] = useState(false);
+  // The pre-Start export's own state. Per-dictionary busy/note/error are keyed by dictionary, because a
+  // failure on one file must not read as a failure of the set.
+  const [runConfirmed, setRunConfirmed] = useState(false);
+  const [exportBusy, setExportBusy] = useState<Record<string, boolean>>({});
+  const [exportNote, setExportNote] = useState<Record<string, string | undefined>>({});
+  const [exportError, setExportError] = useState<Record<string, string | undefined>>({});
+  const [workbookBusy, setWorkbookBusy] = useState(false);
+  const [workbookError, setWorkbookError] = useState<string | undefined>(undefined);
   /** True once the reviewer has touched the dictionary list, so a late run frame cannot overwrite it. */
   const composed = useRef(false);
 
@@ -413,7 +459,16 @@ export default function SetupPage() {
     [fieldsByDataset],
   );
 
-    /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
+    /**
+   * The dictionaries the pre-Start export can actually be built from — the ones read in THIS browser.
+   *
+   * A run-seeded entry is a read-back with no `File` behind it, so it can be neither confirmed nor
+   * exported. Counting it towards "how many are still to be marked complete" would give the reviewer an
+   * outstanding item they have no control that can clear.
+   */
+  const uploadedDicts = useMemo(() => dicts.filter((d) => d.origin === "upload" && d.file), [dicts]);
+
+  /** A run that has already moved past Setup is a read-back: its configuration cannot be changed. */
   const runStarted = Boolean(jobState?.status && jobState.status !== "pending");
 
   /**
@@ -637,6 +692,7 @@ export default function SetupPage() {
           rows: null,
           rowCount: null,
           roles: {},
+          confirmedRoles: null,
           state: "parsing",
           origin: "upload",
         },
@@ -717,10 +773,74 @@ export default function SetupPage() {
   function setRoles(key: string, roles: Record<string, string>) {
     composed.current = true;
     setDicts((prev) => prev.map((d) => (d.key === key ? { ...d, roles } : d)));
+    // The run-level confirmation is dropped on ANY mapping edit. Per-dictionary confirmation invalidates
+    // structurally (`confirmedRoles` stops matching `roles`); this one is a separate gesture about the
+    // whole set, so it has to be dropped explicitly or the workbook would stay on offer for a set the
+    // reviewer has since changed.
+    setRunConfirmed(false);
+    setWorkbookError(undefined);
   }
   function removeDict(key: string) {
     composed.current = true;
     setDicts((prev) => prev.filter((d) => d.key !== key));
+    setRunConfirmed(false);
+    setWorkbookError(undefined);
+  }
+
+  /**
+   * PER-DICTIONARY EXPORT: mark the mapping complete, then take that dictionary's embedding-text CSV.
+   *
+   * Everything here is FREE and starts no run — the endpoint is job-less by construction, because the
+   * file is still in the browser at this point. That is what makes the new flow better than the one it
+   * replaces: the reviewer can read the exact clustering input, in Excel, before spending anything.
+   */
+  function confirmMapping(key: string) {
+    setDicts((prev) => prev.map((d) => (d.key === key ? { ...d, confirmedRoles: { ...d.roles } } : d)));
+  }
+
+  async function downloadEmbeddingCsv(d: SetupDict) {
+    if (!d.file) return;
+    setExportBusy((prev) => ({ ...prev, [d.key]: true }));
+    setExportError((prev) => ({ ...prev, [d.key]: undefined }));
+    try {
+      const out = await embeddingCsv({ file: d.file, cohortName: d.cohortName, columnRoles: d.roles });
+      saveBlob(out.blob, out.filename);
+      // THE SERVER'S OWN COUNTS, reported back on the screen. The live `nameCheck` in the mapping table
+      // already tells the reviewer their file repeats a name; this says what the LOADER did about it,
+      // which is the half no client-side check can know.
+      const parts = [`${out.rows.toLocaleString()} rows · ${out.variables.toLocaleString()} variables`];
+      if (out.collapsed > 0) {
+        parts.push(
+          `${out.collapsed.toLocaleString()} ${out.collapsed === 1 ? "row was" : "rows were"} collapsed onto a repeated variable name` +
+            (out.repeatedNames.length ? ` (${out.repeatedNames.slice(0, 5).join(", ")})` : "") +
+            " and carry no text",
+        );
+      }
+      if (out.nothingToEmbed > 0) {
+        parts.push(
+          `${out.nothingToEmbed.toLocaleString()} ${out.nothingToEmbed === 1 ? "row embeds" : "rows embed"} nothing and will reach no concept group`,
+        );
+      }
+      setExportNote((prev) => ({ ...prev, [d.key]: parts.join(" · ") }));
+    } catch (e) {
+      setExportError((prev) => ({ ...prev, [d.key]: e instanceof Error ? e.message : "Export failed" }));
+    } finally {
+      setExportBusy((prev) => ({ ...prev, [d.key]: false }));
+    }
+  }
+
+  async function downloadWorkbook() {
+    const mapped = dicts.filter((d) => d.file).map((d) => ({ file: d.file!, cohortName: d.cohortName, columnRoles: d.roles }));
+    setWorkbookBusy(true);
+    setWorkbookError(undefined);
+    try {
+      const out = await embeddingWorkbook(mapped);
+      saveBlob(out.blob, out.filename);
+    } catch (e) {
+      setWorkbookError(e instanceof Error ? e.message : "The workbook could not be built");
+    } finally {
+      setWorkbookBusy(false);
+    }
   }
 
   /**
@@ -997,6 +1117,28 @@ export default function SetupPage() {
                   onRolesChange={(roles) => setRoles(d.key, roles)}
                 />
               )}
+
+              {/* PER-DICTIONARY CONFIRMATION AND EXPORT, compose stage only. A started run's column roles
+                  are fixed at `startHarmonize`, so there is nothing left to confirm and the job-scoped
+                  export above is the one that applies. A run-seeded read-back has no File to post. */}
+              {stage === "compose" && d.state !== "parsing" && d.origin === "upload" && (
+                <DictionaryEmbeddingExport
+                  cohortName={d.cohortName}
+                  confirmed={isConfirmed(d)}
+                  canConfirm={hasMeaning(d.roles)}
+                  blockedReason={
+                    hasMeaning(d.roles)
+                      ? undefined
+                      : "Map at least a variable name, a description or the question text before marking this dictionary complete — with none of them there is no text to cluster."
+                  }
+                  onConfirm={() => confirmMapping(d.key)}
+                  onDownload={() => void downloadEmbeddingCsv(d)}
+                  downloading={Boolean(exportBusy[d.key])}
+                  note={exportNote[d.key]}
+                  error={exportError[d.key]}
+                  available={!IS_STATIC}
+                />
+              )}
             </article>
           ))
         )}
@@ -1163,6 +1305,24 @@ export default function SetupPage() {
         </Collapsible>
       ) : (
         dictionariesSection
+      )}
+
+      {/* --- the whole set, once every dictionary is mapped (08-14f) ------------------------------
+
+          BELOW the dictionaries, because it is the step after them: the reviewer marks each file
+          complete going down the list, and the workbook is what they reach at the bottom. Compose only —
+          after Start the mapping is fixed and the job-scoped export above serves the same need. */}
+      {stage === "compose" && (
+        <WorkbookExport
+          total={uploadedDicts.length}
+          remaining={uploadedDicts.filter((d) => !isConfirmed(d)).length}
+          confirmed={runConfirmed}
+          onConfirm={() => setRunConfirmed(true)}
+          onDownload={() => void downloadWorkbook()}
+          downloading={workbookBusy}
+          error={workbookError}
+          available={!IS_STATIC}
+        />
       )}
 
         </div>

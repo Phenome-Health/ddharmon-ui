@@ -1959,3 +1959,149 @@ test.describe("Setup — the dictionary-hygiene tips", () => {
     await expect(page.getByTestId("dictionary-tips")).toHaveCount(0);
   });
 });
+
+// --- the per-dictionary flow: map, confirm, export (08-14f) ---------------------------------------------
+//
+// THE SHAPE BHARGAV ASKED FOR, after stress-testing the live screen on 2026-08-31: upload a dictionary,
+// map its columns, mark THAT dictionary complete, and its embedding-text CSV becomes available on the same
+// page. When every dictionary is marked, the workbook becomes available. Nothing on this path charges
+// anything, and proceeding afterwards goes straight to Gate 1.
+//
+// WHAT THE STATIC BUILD CAN AND CANNOT SEE. There is no backend here, so the DOWNLOAD itself is
+// unreachable and its absence branch is what renders. That is asserted for what it is. The state machine —
+// unconfirmed → confirmed → invalidated by a re-map — is fully exercisable and is the half that carries the
+// defect this task exists to prevent.
+
+test.describe("Setup — per-dictionary confirmation and the embedding export", () => {
+  async function uploadMapped(page: import("@playwright/test").Page, name = "mapme.csv") {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name,
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a", "col_b"], ["v1", "d1"], ["v2", "d2"]])),
+    });
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_b"]') });
+    await row.getByTestId("role-select").selectOption("description");
+    return page.getByTestId("dict-embedding-export").first();
+  }
+
+  test("@setup an unmapped dictionary offers no export, and says what the mapping still needs", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "bare.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["col_a", "col_b"], ["1", "2"], ["3", "4"]])),
+    });
+    const panel = page.getByTestId("dict-embedding-export").first();
+    await expect(panel).toHaveAttribute("data-confirmed", "false");
+    await expect(page.getByTestId("dict-embedding-download")).toHaveCount(0);
+    // A DISABLED CONTROL WITH NO REASON IS A DEAD END, and this screen already has five tables above it.
+    await expect(panel.getByTestId("dict-mapping-confirm")).toBeDisabled();
+    await expect(panel.getByTestId("dict-mapping-blocked")).toContainText(/variable name|description|question/i);
+  });
+
+  test("@setup marking one dictionary complete offers ITS export, on the same page and with no run", async ({
+    page,
+  }) => {
+    const posts: string[] = [];
+    await page.route("**/api/**", async (route) => {
+      if (route.request().method() !== "GET") posts.push(route.request().url());
+      await route.continue();
+    });
+    const panel = await uploadMapped(page);
+
+    await panel.getByTestId("dict-mapping-confirm").click();
+
+    await expect(panel).toHaveAttribute("data-confirmed", "true");
+    await expect(panel.getByTestId("dict-mapping-confirmed")).toBeVisible();
+    await expect(panel.getByTestId("dict-embedding-download")).toBeVisible();
+    // ON THE SAME PAGE: confirming navigated nowhere.
+    expect(new URL(page.url()).pathname).toBe(DRAFT);
+    // AND STARTED NOTHING. The whole point of the job-less endpoint is that this path is free; a run
+    // created here would be a charge the reviewer did not ask for.
+    expect(posts, `unexpected writes: ${posts.join(", ")}`).toEqual([]);
+  });
+
+  test("@setup re-mapping a confirmed dictionary invalidates it and withdraws the export", async ({ page }) => {
+    // THE DEFECT THIS STATE SHAPE EXISTS FOR. A reviewer who downloads a CSV, edits the mapping, and then
+    // reads the CSV as current is reading a description of a mapping that no longer exists — and nothing
+    // on the screen would have told them. Confirmation holds the MAPPING, so the edit invalidates it
+    // structurally rather than through an effect that has to remember to fire.
+    const panel = await uploadMapped(page);
+    await panel.getByTestId("dict-mapping-confirm").click();
+    await expect(panel).toHaveAttribute("data-confirmed", "true");
+
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_a"]') });
+    await row.getByTestId("role-select").selectOption("variable_name");
+
+    await expect(panel).toHaveAttribute("data-confirmed", "false");
+    await expect(page.getByTestId("dict-embedding-download")).toHaveCount(0);
+    await expect(panel.getByTestId("dict-mapping-confirm")).toBeEnabled();
+  });
+
+  test("@setup the workbook control names what is outstanding rather than sitting inert", async ({ page }) => {
+    const panel = await uploadMapped(page);
+    const workbook = page.getByTestId("workbook-export");
+    await expect(workbook).toBeVisible();
+    await expect(workbook).toHaveAttribute("data-remaining", "1");
+    await expect(workbook.getByTestId("workbook-remaining")).toContainText("1 of 1");
+    await expect(workbook.getByTestId("workbook-confirm")).toBeDisabled();
+
+    await panel.getByTestId("dict-mapping-confirm").click();
+
+    await expect(workbook).toHaveAttribute("data-remaining", "0");
+    await expect(workbook.getByTestId("workbook-confirm")).toBeEnabled();
+    await workbook.getByTestId("workbook-confirm").click();
+    await expect(workbook).toHaveAttribute("data-confirmed", "true");
+    await expect(workbook.getByTestId("workbook-download")).toBeVisible();
+  });
+
+  test("@setup editing a mapping withdraws the workbook too", async ({ page }) => {
+    const panel = await uploadMapped(page);
+    await panel.getByTestId("dict-mapping-confirm").click();
+    const workbook = page.getByTestId("workbook-export");
+    await workbook.getByTestId("workbook-confirm").click();
+    await expect(workbook.getByTestId("workbook-download")).toBeVisible();
+
+    const row = page.getByTestId("mapping-row").filter({ has: page.locator('[data-column="col_a"]') });
+    await row.getByTestId("role-select").selectOption("variable_name");
+
+    await expect(workbook.getByTestId("workbook-download")).toHaveCount(0);
+    await expect(workbook).toHaveAttribute("data-confirmed", "false");
+  });
+
+  test("@setup the whole per-dictionary path is free, and the page says so", async ({ page }) => {
+    const panel = await uploadMapped(page);
+    await panel.getByTestId("dict-mapping-confirm").click();
+    await expect(panel).toContainText(/costs nothing|starts no run/i);
+    await expect(page.getByTestId("nothing-charged-yet")).toBeVisible();
+  });
+
+  test("@setup the repeated-name check still fires pre-Start, alongside the new flow", async ({ page }) => {
+    // THIS FLOW MUST NOT DISPLACE THE ONE CHECK THAT ALREADY WORKED. The loader's silent last-wins drop is
+    // the project's longest-standing data loss, and it is reported live from the reviewer's own file.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "repeats.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(10, { repeat: true })),
+    });
+    await expect(page.getByTestId("name-check")).toHaveAttribute("data-fired", "true");
+    await expect(page.getByTestId("dict-embedding-export").first()).toBeVisible();
+  });
+
+  test("@setup a dictionary read back from a started run offers no confirmation control", async ({ page }) => {
+    // Its column roles are FIXED at `startHarmonize`, so a control that marks the mapping complete would
+    // be a control that changes nothing — worse than a disabled one, because it lies about what it does.
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("dict-card").first()).toBeVisible();
+    await expect(page.getByTestId("dict-embedding-export")).toHaveCount(0);
+    await expect(page.getByTestId("workbook-export")).toHaveCount(0);
+  });
+});
