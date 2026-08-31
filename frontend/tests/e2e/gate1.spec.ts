@@ -1,5 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { COHERENCE_ORDER, compareGroups, isFlagged, sortGroups } from "@/lib/ledger";
+import {
+  COHERENCE_ORDER,
+  compareGroups,
+  isFlagged,
+  matchTerms,
+  partitionByBreadth,
+  sortGroups,
+} from "@/lib/ledger";
 import { PAUSED_JOB, fixtureGroups, serveRun } from "./gate1-fixture";
 
 /**
@@ -244,6 +251,11 @@ test.describe("gate1 ledger", () => {
       run.result!.conceptGroups = singles;
     });
     await openGate1(page);
+    // Every one-member group is single-cohort by construction, so the default cross-cohort view is empty
+    // — and it must SAY the other bucket has them rather than reading as "no groups at all".
+    await expect(page.locator("[data-testid='gate-empty-state']")).toContainText(/other tab|single cohort/i);
+    await page.locator("[data-testid='go-to-other-bucket']").click();
+
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(singles.length);
     await expect(page.locator("[data-testid='ledger-row']").first()).toContainText(/1 variable\b/);
   });
@@ -311,5 +323,211 @@ test.describe("gate1 empty", () => {
     const listed = page.locator("[data-testid='unassigned-variable']");
     await expect(listed).toHaveCount(2);
     await expect(listed.first()).toContainText("21001");
+  });
+});
+
+// --- the partition, and making a large set tractable (Task 2) ---------------------------------------------
+
+test.describe("gate1 partition", () => {
+  test("@gate1 the buckets sum to the total — a row belongs to exactly one and none is dropped", () => {
+    const groups = fixtureGroups();
+    const { "cross-cohort": cross, "single-cohort": single } = partitionByBreadth(groups);
+    expect(cross.length + single.length).toBe(groups.length);
+    // Partitioned on the CONTRACT BOOLEAN, which is already on the wire — no field added, and no
+    // recomputation from `cohorts` that could disagree with the backend's own answer.
+    expect(cross.every((g) => g.crossCohort)).toBe(true);
+    expect(single.every((g) => !g.crossCohort)).toBe(true);
+    expect(new Set([...cross, ...single].map((g) => g.groupId)).size).toBe(groups.length);
+  });
+
+  test("@gate1 the default view is the cross-cohort bucket, and the other one is a counted destination", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const { "cross-cohort": cross, "single-cohort": single } = partitionByBreadth(fixtureGroups());
+    expect(single.length).toBeGreaterThan(0);
+
+    // The harmonization subset leads, because a single-cohort group is CDE-mapping rather than pooling
+    // and the two are scored separately, never blended.
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(cross.length);
+    await expect(page.locator("[data-testid='bucket-tab'][aria-pressed='true']")).toHaveAttribute(
+      "data-bucket",
+      "cross-cohort",
+    );
+
+    // NOT HIDDEN. A labelled, counted, one-click destination naming what it holds — 87% of the corpus
+    // lives there on a real run, and a view that silently dropped it would be a coverage lie.
+    const other = page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']");
+    await expect(other).toBeVisible();
+    await expect(other).toContainText(String(single.length));
+    await other.click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(single.length);
+
+    // …and it is never described as a failure, an error or an outlier. It is a different job.
+    const banner = page.locator("[data-testid='bucket-note']");
+    await expect(banner).toBeVisible();
+    await expect(banner).not.toContainText(/fail|error|outlier|reject|problem/i);
+  });
+
+  test("@gate1 rows are ordered flagged-first and the order survives a reload", async ({ page }) => {
+    await openGate1(page);
+    const before = await rowIds(page);
+    const expected = sortGroups(partitionByBreadth(fixtureGroups())["cross-cohort"]).map((g) => g.groupId);
+    expect(before).toEqual(expected);
+    // Flagged rows really are first — otherwise the equality above only asserts that two identical
+    // functions agree.
+    const flaggedCount = expected.filter((id) =>
+      isFlagged(fixtureGroups().find((g) => g.groupId === id)!),
+    ).length;
+    expect(flaggedCount).toBeGreaterThan(0);
+    for (let i = 0; i < flaggedCount; i++) {
+      expect(isFlagged(fixtureGroups().find((g) => g.groupId === before[i])!)).toBe(true);
+    }
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='ledger-row']").first()).toBeVisible();
+    expect(await rowIds(page)).toEqual(before);
+  });
+
+  test("@gate1 no control implies a numeric coherence confidence", async ({ page }) => {
+    await openGate1(page);
+    // The cell is a CLOSED four-state categorical. Sorting and filtering on the state is in scope; a
+    // gradient, a percentage or a confidence meter is not, because no such number is computed and the
+    // calibration to justify one does not exist.
+    await expect(page.locator("progress, [role='progressbar'], meter")).toHaveCount(0);
+    await expect(page.getByText(/\d+% (confident|coherent|confidence)/i)).toHaveCount(0);
+    await expect(page.getByText(/confidence/i)).toHaveCount(0);
+  });
+});
+
+test.describe("gate1 toolbar", () => {
+  test("@gate1 four filters narrow the set and say which are active", async ({ page }) => {
+    await openGate1(page);
+    const rows = page.locator("[data-testid='ledger-row']");
+    const all = await rows.count();
+
+    // By verdict.
+    await page.locator("[data-testid='filter-verdict'][data-verdict='split']").click();
+    const split = partitionByBreadth(fixtureGroups())["cross-cohort"].filter((g) => g.coherence === "split");
+    await expect(rows).toHaveCount(split.length);
+    expect(split.length).toBeLessThan(all);
+    // Active filters are VISIBLE — an invisible filter is how a reviewer concludes a run has no rows.
+    await expect(page.locator("[data-testid='active-filters']")).toContainText(/split/i);
+
+    // Clearing restores everything.
+    await page.locator("[data-testid='clear-filters']").click();
+    await expect(rows).toHaveCount(all);
+
+    // By cohort.
+    await page.locator("[data-testid='filter-cohort'][data-cohort='MESA']").click();
+    const mesa = partitionByBreadth(fixtureGroups())["cross-cohort"].filter((g) => g.cohorts.includes("MESA"));
+    await expect(rows).toHaveCount(mesa.length);
+    await page.locator("[data-testid='clear-filters']").click();
+
+    // Touched-by-me: nothing is touched yet, so it empties the view rather than silently doing nothing.
+    await page.locator("[data-testid='filter-touched']").click();
+    await expect(rows).toHaveCount(0);
+    await expect(page.locator("[data-testid='filter-empty']")).toContainText(/clear the filter/i);
+    await page.locator("[data-testid='clear-filters']").click();
+
+    // In-scope: everything is in scope by default, so this one changes nothing — and that is correct.
+    await page.locator("[data-testid='filter-in-scope']").click();
+    await expect(rows).toHaveCount(all);
+  });
+
+  test("@gate1 a filter matching nothing and a term matching nothing read differently", async ({ page }) => {
+    await openGate1(page);
+    // A FILTER matching nothing is the reviewer's own doing, and the fix is to clear it.
+    await page.locator("[data-testid='filter-touched']").click();
+    const filterEmpty = page.locator("[data-testid='gate-empty-state']");
+    await expect(filterEmpty).toBeVisible();
+    await expect(filterEmpty).toContainText("No group matches this filter");
+    // Naming the total is what makes the next step concrete rather than a shrug.
+    await expect(filterEmpty).toContainText(String(fixtureGroups().length));
+    await page.locator("[data-testid='clear-filters']").click();
+
+    // A SEARCH TERM matching nothing is a FINDING about the corpus: the reviewer has learned that no
+    // cohort in this run measures it. Different copy, different treatment, and it says here — not at a
+    // later gate — because it will not resurface at one.
+    await page.locator("#term-search-input").fill("gait speed\nblood pressure");
+    await page.getByRole("button", { name: /^Search/ }).click();
+    const findings = page.locator("[data-testid='coverage-findings'] li");
+    await expect(findings).toHaveCount(1);
+    await expect(findings.first()).toContainText("gait speed");
+    await expect(findings.first()).toContainText(/will not resurface/i);
+    await expect(findings.first()).not.toContainText("Clear the filter");
+    // The term that DID match narrows the ledger rather than reporting nothing.
+    await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
+  });
+
+  test("@gate1 the search matches on the group's own text, and says that is what it does", async ({ page }) => {
+    // Asserted in node against the real fixture, so the claim is about the corpus and not about a mock.
+    const groups = fixtureGroups();
+    expect(matchTerms(groups, ["blood pressure"]).noMatches).toEqual([]);
+    expect(matchTerms(groups, ["zzzz nonexistent concept"]).noMatches).toEqual(["zzzz nonexistent concept"]);
+    // Order-insensitive within a term, so "pressure blood" finds the same groups as "blood pressure".
+    expect([...matchTerms(groups, ["pressure blood"]).ids].sort()).toEqual(
+      [...matchTerms(groups, ["blood pressure"]).ids].sort(),
+    );
+
+    await openGate1(page);
+    // AND IT SAYS SO. The match is over the concept name, the ideal description and the member variable
+    // names — text this client already has. It is not a semantic match and must not claim to be one:
+    // no group vector reaches the browser (see `matchTerms`).
+    await expect(page.locator("[data-testid='term-search']")).toContainText(/text of each group/i);
+    await expect(page.locator("[data-testid='term-search']")).not.toContainText(/semantic/i);
+  });
+
+  test("@gate1 progress is derived from persisted decisions and survives a reload", async ({ page }) => {
+    await openGate1(page);
+    const readout = page.locator("[data-testid='triage-progress']");
+    await expect(readout).toContainText("0 reviewed");
+
+    // Take one group out of scope — a real decision, written through the shared layer.
+    const first = page.locator("[data-testid='ledger-row']").first();
+    const id = await first.getAttribute("data-row-id");
+    await first.locator("button[role='checkbox']").click();
+    await expect(readout).toContainText("1 reviewed");
+    // Counted over the WHOLE corpus, not the visible bucket — the sum block and the commit bar price the
+    // same set, so a readout scoped to one tab would disagree with the money.
+    const total = fixtureGroups().length;
+    await expect(readout).toContainText(`${total - 1} in scope`);
+
+    // R6: the correction is visible AFTER A RELOAD, because both figures are derived from the persisted
+    // decisions rather than held in component state.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='ledger-row']").first()).toBeVisible();
+    await expect(readout).toContainText("1 reviewed");
+    await expect(readout).toContainText(`${total - 1} in scope`);
+    await expect(
+      page.locator(`[data-testid='ledger-row'][data-row-id='${id}']`),
+    ).toHaveAttribute("data-spine", /changed|unresolved/);
+  });
+
+  test("@gate1 nothing gates Continue on a review count", async ({ page }) => {
+    await openGate1(page);
+    // D-09 revised: there is no completion gate and no triage-volume halt. A reviewer may triage a
+    // handful, use a few groups as a testing ground, or work the gate across days.
+    await expect(page.locator("[data-testid='triage-progress']")).toContainText("0 reviewed");
+    await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
+  });
+
+  test("@gate1 the full row count renders without horizontal scroll and without a new package", async ({
+    page,
+  }) => {
+    // Every group at once — the volume backstop, taken past the default view's 28 rows.
+    await serveRun(page, (run) => {
+      run.result!.conceptGroups = [...run.result!.conceptGroups!].map((g) => ({ ...g, crossCohort: true }));
+    });
+    await openGate1(page);
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(fixtureGroups().length);
+    const overflow = await page.evaluate(() => ({
+      doc: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      body: document.body.scrollWidth - document.body.clientWidth,
+    }));
+    expect(overflow.doc).toBeLessThanOrEqual(0);
+    expect(overflow.body).toBeLessThanOrEqual(0);
   });
 });
