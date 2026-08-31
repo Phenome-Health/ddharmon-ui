@@ -36,6 +36,9 @@ import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { buildRunIssueUrl } from "@/lib/links";
+import { isParked } from "@/lib/run-state";
+import { resumeGateOf } from "@/lib/gate-routes";
+import { GATE_LABELS } from "@/components/gate/GateRail";
 import { DemoBanner } from "@/components/demo-banner";
 import { readSandbox, writeSandbox } from "@/lib/sandbox";
 import { isEmptyVerdicts, toLocalVerdicts } from "@/lib/verdicts";
@@ -254,8 +257,14 @@ export default function DashboardPage() {
   // this hook stays above the early return.
   const [now, setNow] = useState(() => Date.now() / 1000);
   const [verbose, setVerbose] = useState(false);
+  // `awaiting_review` is excluded: a pause is an EXIT (08 D-01), so there is nothing left to observe and
+  // a 1s tick would only advance a clock that must stand still.
   const streaming =
-    !!jobState && jobState.status !== "complete" && jobState.status !== "error" && jobState.status !== "cancelled";
+    !!jobState &&
+    jobState.status !== "complete" &&
+    jobState.status !== "error" &&
+    jobState.status !== "cancelled" &&
+    !isParked(jobState.status);
   useEffect(() => {
     if (!streaming) return;
     const id = setInterval(() => setNow(Date.now() / 1000), 1000);
@@ -363,12 +372,27 @@ export default function DashboardPage() {
   const isPreview = result?.mode === "preview";
   const previewClusters = result?.previewClusters ?? [];
   const isDemo = !!(jobState.config as { demo?: boolean }).demo;
-  const elapsed = Math.max(0, now - jobState.createdAt);
+  // PARKED RUNS FREEZE THE CLOCK. `updatedAt` is stamped at the park (`JobStore.checkpoint`) and filing a
+  // verdict does not move it (`set_decision` never touches the field), so `updatedAt − createdAt` is the
+  // run's real compute time — no backend field is needed and none was added. The live wall-clock reading
+  // it replaces had one parked run at 109 HOURS for 6.6 seconds of work.
+  const parked = isParked(jobState.status);
+  const parkedGate = resumeGateOf(jobState);
+  const elapsed = parked
+    ? Math.max(0, jobState.updatedAt - jobState.createdAt)
+    : Math.max(0, now - jobState.createdAt);
+  // ONE SOURCE LINE PER SENTENCE: a number that stops moving with no explanation reads as a hung page.
+  const elapsedLabel = parked
+    ? `Paused at ${parkedGate ? GATE_LABELS[parkedGate] : "a review gate"} · ran for ${formatDuration(elapsed)}`
+    : `Elapsed ${formatDuration(elapsed)}`;
   // Live ETA: project the remaining time from how far the progress bar has advanced vs. how long that took
   // (self-calibrating — needs no field count). Only shown once a stable fraction exists, so it isn't wild in
   // the first seconds or during batch's opaque LLM wait.
   const pct = phasePercent(jobState.phase, jobState.completed, jobState.total);
-  const etaSecs = running && elapsed > 3 && pct >= 12 && pct < 100 ? (elapsed * (100 - pct)) / pct : null;
+  // NOT MERELY USELESS OVER A FROZEN ELAPSED — a projected finish time is a claim that work is in
+  // progress, and for a parked run that claim is false.
+  const etaSecs =
+    running && !parked && elapsed > 3 && pct >= 12 && pct < 100 ? (elapsed * (100 - pct)) / pct : null;
 
   return (
     <div className="space-y-6">
@@ -490,7 +514,9 @@ export default function DashboardPage() {
               <>
                 <div className="flex items-center justify-between text-xs text-on-raised-muted">
                   <div className="flex items-center gap-3">
-                    <span className="tabular-nums">Elapsed {formatDuration(elapsed)}</span>
+                    <span data-testid="run-elapsed" className="tabular-nums">
+                      {elapsedLabel}
+                    </span>
                     {typeof jobState.costSoFar === "number" && jobState.costSoFar > 0 && (
                       <span
                         className="tabular-nums text-accent-on-raised"
@@ -501,7 +527,11 @@ export default function DashboardPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {etaSecs !== null && <span className="tabular-nums">~{formatDuration(etaSecs)} left</span>}
+                    {etaSecs !== null && (
+                      <span data-testid="run-eta" className="tabular-nums">
+                        ~{formatDuration(etaSecs)} left
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => setVerbose((v) => !v)}

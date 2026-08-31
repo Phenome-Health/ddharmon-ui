@@ -174,3 +174,69 @@ test.describe("Runs page — a parked run is not a running run", () => {
     await expect(demo.getByTestId("resume-review")).toHaveCount(0);
   });
 });
+
+test.describe("Dashboard — elapsed freezes at the park", () => {
+  /** Serve one run's payload to the dashboard's own fetch as well as to the runs list. */
+  async function withRun(page: Page, job: Record<string, unknown>): Promise<void> {
+    await page.route(`**/static-data/result-${job.jobId}.json`, (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...job, result: null }) }),
+    );
+    await withJobs(page, [job]);
+  }
+
+  test("@jobs a parked run shows the seconds it ran, labelled as paused", async ({ page }) => {
+    await withRun(page, parkedRun());
+    await page.goto("/job/parked-gate2");
+    await page.waitForLoadState("networkidle");
+    const readout = page.getByTestId("run-elapsed");
+    // 6.64s of real compute (updatedAt − createdAt, the exact live run). The defect rendered
+    // `now − createdAt`, which on 2026-08-31 was 109 hours for this very run.
+    await expect(readout).toHaveText(/\b7s\b/);
+    await expect(readout).not.toHaveText(/\dh\b/);
+    // A number that stops moving with no explanation reads as a hung page; naming the gate makes the
+    // frozen figure legible as a fact rather than a failure.
+    await expect(readout).toHaveText(/Paused/i);
+    await expect(readout).toHaveText(/Concepts → elements/i);
+    await expect(readout).not.toHaveText(/Elapsed/);
+  });
+
+  test("@jobs the frozen readout does not advance while the page is open", async ({ page }) => {
+    await withRun(page, parkedRun());
+    await page.goto("/job/parked-gate2");
+    await page.waitForLoadState("networkidle");
+    const readout = page.getByTestId("run-elapsed");
+    const first = await readout.textContent();
+    await page.waitForTimeout(2500);
+    expect(await readout.textContent()).toBe(first);
+  });
+
+  test("@jobs no ETA is projected over a frozen clock", async ({ page }) => {
+    // THE FIXTURE CARRIES A PIPELINE PHASE ON PURPOSE. A live parked run reports `phase:
+    // "awaiting_review"`, which is not in PHASE_ORDER, so `phasePercent` already returns 5 and the ETA
+    // is suppressed by accident. Depending on that accident would leave the surface one backend field
+    // away from projecting a completion time for work that has stopped, so the guard is asserted
+    // against the shape the accident does not cover.
+    await withRun(page, parkedRun({ jobId: "parked-stalephase", phase: "assigning" }));
+    await page.goto("/job/parked-stalephase");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("run-elapsed")).toHaveText(/Paused/i);
+    await expect(page.getByTestId("run-eta")).toHaveCount(0);
+  });
+
+  test("@jobs an in-flight run still ticks live and still projects an ETA", async ({ page }) => {
+    // The control for the two tests above: freezing the clock for a parked run must not freeze it for a
+    // running one, which is the regression a "just stop the ticker" fix would introduce.
+    const started = Date.now() / 1000 - 8;
+    await withRun(page, inFlightRun({ createdAt: started, updatedAt: started + 1 }));
+    await page.goto("/job/in-flight");
+    await page.waitForLoadState("networkidle");
+    const readout = page.getByTestId("run-elapsed");
+    await expect(readout).toHaveText(/Elapsed/);
+    await expect(readout).not.toHaveText(/Paused/i);
+    await expect(page.getByTestId("run-eta")).toHaveCount(1);
+    const first = await readout.textContent();
+    await expect(async () => {
+      expect(await readout.textContent()).not.toBe(first);
+    }).toPass({ timeout: 5000 });
+  });
+});
