@@ -11,7 +11,7 @@ import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
-import { PreFlightPanel, preflightProgress } from "@/components/gate/PreFlightPanel";
+import { PreparedExport } from "@/components/gate/PreparedExport";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
@@ -20,6 +20,7 @@ import { GATE_ORDER, IS_STATIC, listDemos, listModels, resumeRun, startHarmonize
 import { RETIRED_GATE, setupPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
+import { preparationProgress } from "@/lib/run-state";
 import { lookupPrefill, rememberAssignment } from "@/lib/column-prefill";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatDurationRange } from "@/types";
@@ -131,7 +132,7 @@ const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
  * Set up — the first of the six staged-review screens (08-13).
  *
  * WHAT THIS SCREEN IS FOR. Setup is where the phase's central promise is made concrete: everything up to
- * and including the pre-flight below is local, so nothing is charged yet, and the figure quoted here is
+ * and including the free boundary below is local, so nothing is charged yet, and the figure quoted here is
  * the one the reviewer consents to — on the control this screen now carries itself. Every other element on the screen exists to stop something being lost or
  * misstated before that consent is given.
  *
@@ -161,19 +162,24 @@ const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
  * So this screen now spans the whole local, unpaid part of a run:
  *
  *  1. **`compose`** — no run yet. Exactly what it was before: drop files, map columns, price the run.
- *  2. **`preflight`** — the run has been started and has not yet passed the pre-flight boundary. The
- *     reviewer's job has changed, from CONFIGURE to READ AND FIX, so the screen changes with it: the
- *     dictionaries collapse to a summary disclosure and the pre-flight takes the left column. The run
- *     parks before `harmonize_leanb` is ever called (D-3), so this state costs nothing and the control
- *     that commits the first charge is the one thing on it that spends.
- *  3. **`past`** — the run has moved beyond that boundary, or finished. The pre-flight still renders, as
- *     a READ-BACK: it is the only place the cleaning can be audited (Q2), and a report that vanished the
- *     moment the run continued would be an audit trail with a shelf life. NO commit control is offered —
- *     that charge has already happened, and re-offering it would be a false claim about the run.
+ *  2. **`preflight`** — the run has been started and has not yet passed the free boundary. The state
+ *     keeps its name because the BOUNDARY keeps its name: `08-DECISION-GATE0.md` D-3 leaves the backend
+ *     pause at `gate0: before_harmonize` exactly as built. The run parks before `harmonize_leanb` is ever
+ *     called, so this state costs nothing and the control that commits the first charge is the one thing
+ *     on it that spends. The dictionaries collapse to a summary disclosure, since their column roles are
+ *     fixed for this run.
+ *  3. **`past`** — the run has moved beyond that boundary, or finished. It renders as a read-back with a
+ *     link back into the run. NO commit control is offered — that charge has already happened, and
+ *     re-offering it would be a false claim about the run.
+ *
+ * WHAT 08-14d REMOVED. 08-14b put the demoted Gate 0's preprocessing report in the left column of states
+ * 2 and 3. Bhargav retired it on 2026-08-31 after reading it live: the verbosity buried the screen and the
+ * phase's value is in Gates 1-4. The report is deleted; the boundary, the first charge and the
+ * prepared-dictionary export (D-5) are not.
  *
  * THE STATE IS DERIVED FROM THE RUN, NOT STORED. `useHarmonizeStream` is already subscribed at the top of
- * this component and the pre-flight reads THAT — a second subscription beside it would be two sources for
- * one run's state, which is the defect the shell's own stop control was written to avoid.
+ * this component and everything below reads THAT — a second subscription beside it would be two sources
+ * for one run's state, which is the defect the shell's own stop control was written to avoid.
  *
  * WHAT A RUN-SEEDED DICTIONARY CANNOT SAY. The source file is not kept with the run, so the unique-name
  * count is genuinely unknown for one. It renders as not-available WITH THE REASON — never as "all names
@@ -355,7 +361,7 @@ export default function SetupPage() {
   const [showKey, setShowKey] = useState(false);
   const [model, setModel] = useState("");
   const [starting, setStarting] = useState(false);
-  /** Whether the pre-flight's read-back of the dictionaries is expanded. Closed by default — see below. */
+  /** Whether the read-back of the dictionaries is expanded. Closed by default — see below. */
   const [dictsOpen, setDictsOpen] = useState(false);
   /** True while the run's first charge is being committed. */
   const [committing, setCommitting] = useState(false);
@@ -434,8 +440,15 @@ export default function SetupPage() {
       ? "preflight"
       : "past";
 
-  /** How far preparation has got — ONE derivation, read by the panel below and by the estimate above. */
-  const preflight = useMemo(() => preflightProgress(jobState), [jobState]);
+  /**
+   * How far preparation has got — ONE derivation, read by the estimate above and by the control that
+   * commits this run's first charge.
+   *
+   * IT LIVES IN `lib/run-state.ts` SINCE 08-14d. It arrived here inside the pre-flight panel, deleted
+   * along with the rest of the preprocessing report; this predicate is not part of that report. It answers
+   * *"is the free leg finished?"*, which is a fact about the run and a precondition for spending money.
+   */
+  const preparation = useMemo(() => preparationProgress(jobState), [jobState]);
 
   /**
    * Where a run that is PAST the pre-flight should be rejoined.
@@ -469,8 +482,8 @@ export default function SetupPage() {
     // Read ONLY when every declared cohort has finished: a sum over the cohorts that happen to have
     // reported is not a smaller estimate, it is an UNDER-QUOTE that looks finished (R8). Scoped to this
     // state for the same reason the mode override is — see `effectiveRunMode`.
-    if (stage === "preflight" && preflight.allPrepared && preflight.variables > 0) {
-      return { totalFields: preflight.variables, sizePending: false };
+    if (stage === "preflight" && preparation.allPrepared && preparation.variables > 0) {
+      return { totalFields: preparation.variables, sizePending: false };
     }
     if (!dicts.length) return { totalFields: 0, sizePending: false };
     const counts = dicts.map(variableCount);
@@ -481,7 +494,7 @@ export default function SetupPage() {
     const persisted = typeof config.est_fields === "number" ? config.est_fields : null;
     if (persisted !== null) return { totalFields: persisted, sizePending: false };
     return { totalFields: null as number | null, sizePending: true };
-  }, [dicts, variableCount, jobState, stage, preflight.allPrepared, preflight.variables]);
+  }, [dicts, variableCount, jobState, stage, preparation.allPrepared, preparation.variables]);
 
   /**
    * The judge's real workload, when the run already knows it.
@@ -531,7 +544,7 @@ export default function SetupPage() {
    * used. Everywhere else the composed list is still the only source there is.
    */
   const corpusCohorts =
-    stage === "preflight" && preflight.tabs.length > 0 ? preflight.tabs.length : dicts.length;
+    stage === "preflight" && preparation.cohorts.length > 0 ? preparation.cohorts.length : dicts.length;
 
   const estimate = useMemo(
     () =>
@@ -745,7 +758,7 @@ export default function SetupPage() {
   }, [dicts, runStarted, runMode, apiKey]);
 
   /**
-   * Start the run and hand off to the pre-flight — which is THIS screen, in its second state.
+   * Start the run and hand off to the free boundary — which is THIS screen, in its second state.
    *
    * The button is only reachable with an empty blocker list, so this does not re-validate — it submits. It
    * posts the FILES, which is why each upload keeps its `File` rather than only its parsed rows: a run
@@ -802,7 +815,7 @@ export default function SetupPage() {
 
   /**
    * The dictionaries and their column mapping — one JSX value, rendered either open or inside the
-   * pre-flight's disclosure. Held in a variable rather than duplicated: two copies of a mapping table is
+   * boundary state's disclosure. Held in a variable rather than duplicated: two copies of a mapping table is
    * two places for an empty state, an overflow rule and an honest-absence branch to drift apart.
    */
   const dictionariesSection = (
@@ -902,11 +915,11 @@ export default function SetupPage() {
              run started from this screen: the backend does not persist the `dictionaries` array it is
              sent, so `config.dictionaries` comes back null. Rendering the compose empty state here would
              read as "this run had no dictionaries", which is a claim about the RUN and a false one. The
-             cohorts it actually covers are named by the pre-flight above, one report each. */
+             cohorts it actually covers are the ones the export above lists, one file each. */
           <div className="rounded-card bg-surface-raised shadow-card">
             <GateEmptyState
               heading="This run kept no record of its column mapping"
-              nextStep="What each dictionary gave the model is in the pre-flight above, one report per cohort."
+              nextStep="Download a prepared dictionary above to see exactly what each file gave the model."
             >
               The run stores the prepared dictionaries, not the mapping that produced them, so there is
               nothing here to read back. That is a gap in what the run records — not a run without
@@ -1003,7 +1016,7 @@ export default function SetupPage() {
    *
    * AND THEN LEAVE. The retired screen stayed put after resuming, which was harmless there because it
    * was the run's own screen. Here it is not: the moment the charge lands this run is past the
-   * pre-flight, and a reviewer left on Setup would watch it turn into a read-back of a decision they
+   * boundary, and a reviewer left on Setup would watch it turn into a read-back of a decision they
    * just made. `resumeRun` returns the gate it is heading for, so that is where they go.
    */
   async function onCommitFirstCharge() {
@@ -1024,7 +1037,7 @@ export default function SetupPage() {
       gate="setup"
       subhead={
         stage === "preflight"
-          ? "Your dictionaries are prepared. Read what preparation found, then commit the run's first charge — nothing has been charged for anything so far."
+          ? "Your dictionaries are loaded, prepared and grouped, all on this machine. Commit the run's first charge when you are ready — nothing has been charged for anything so far."
           : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Nothing is charged yet — the first charge is the Continue button that appears here once your dictionaries are prepared."
       }
       rail={railFor("setup", { totalRealized: costSoFar })}
@@ -1045,10 +1058,21 @@ export default function SetupPage() {
         {/* ── left: what the run is ── */}
         <div className="flex min-w-0 flex-col gap-8">
 
-      {/* --- the free pre-flight (08-14b) ---------------------------------------------------------
-          FIRST in the column once a run exists, because once it does the reviewer's job is to READ AND
-          FIX rather than to configure. It reads the run off the subscription this component already has;
-          `PreFlightPanel` opens no second one. */}
+      {/* --- the free boundary (08-14b, stripped back by 08-14d) -----------------------------------
+
+          WHAT USED TO BE HERE. 08-14b moved the demoted Gate 0 onto this screen as a pre-flight report —
+          a per-rule pipeline, worked before/after examples, per-cohort findings and declared gaps.
+          Bhargav read it live on 2026-08-31 and retired it: the verbosity buried the screen and the
+          phase's value is in Gates 1-4. The report is deleted, not hidden.
+
+          WHAT IS LEFT, and why each part earned it. The stream's own status lines, because a stale figure
+          must say it is stale. The moved-on note, because a run past this boundary must not read as a live
+          decision. And the prepared-dictionary export (D-5) — the reviewer's OWN file handed back, which
+          is the one thing here that never depended on the report and is now the only way to see what
+          preparation did.
+
+          It reads the run off the subscription this component already has; nothing below opens a second
+          one. */}
       {stage !== "compose" && (
         <div className="flex flex-col gap-3">
           {reconnecting && (
@@ -1063,13 +1087,12 @@ export default function SetupPage() {
             </p>
           )}
           {stage === "past" && (
-            /* A READ-BACK, and it says so. The run is past this boundary, so the report below is history
-               rather than something to act on — and nothing here offers to commit a charge that has
-               already happened. */
-            <p data-testid="preflight-read-back" className="max-w-[68ch] text-sm text-on-field-muted">
+            /* A READ-BACK, and it says so. The run is past this boundary, so nothing on this screen is
+               still a decision — and nothing here offers to commit a charge that has already happened.
+               The link is the point of the note: a reviewer who lands here needs the way back in. */
+            <p data-testid="past-boundary-note" className="max-w-[68ch] text-sm text-on-field-muted">
               <span className="font-semibold text-on-field">This run has moved on from here.</span> What
-              preparation found is kept below so the cleaning stays auditable, but it is a record now, not
-              a decision — rejoin the run at{" "}
+              it was set up with is below, but it is a record now, not a decision — rejoin the run at{" "}
               <Link
                 href={`/run/${jobId}/${resumeAt}`}
                 className="font-semibold text-link-on-field underline underline-offset-2"
@@ -1079,7 +1102,7 @@ export default function SetupPage() {
               .
             </p>
           )}
-          <PreFlightPanel run={jobState} jobId={jobId} />
+          <PreparedExport jobId={jobId} cohorts={preparation.cohorts.map((c) => c.cohort)} />
         </div>
       )}
 
@@ -1161,9 +1184,9 @@ export default function SetupPage() {
             scopeLabel={totalFields === null ? undefined : `${totalFields.toLocaleString()} variables`}
             onCommit={onCommitFirstCharge}
             busy={committing}
-            disabled={!preflight.allPrepared || IS_STATIC}
+            disabled={!preparation.allPrepared || IS_STATIC}
             recheckNotice={
-              !preflight.allPrepared
+              !preparation.allPrepared
                 ? "Some dictionaries are still being prepared. Continue once they finish."
                 : isPreview
                   ? "This run is a preview, so this calls no model and buys nothing — it groups your variables and stops."
@@ -1569,8 +1592,8 @@ export default function SetupPage() {
                 label="What the first charge buys, and what is free"
                 text={
                   "Everything up to that point can be abandoned at no cost: setting up, loading, preparing " +
-                  "and grouping your dictionaries, and reading the pre-flight this screen shows once they " +
-                  "are prepared. Pressing Continue there is what buys the next step — the work listed " +
+                  "and grouping your dictionaries, all of which run on your machine. Pressing Continue " +
+                  "here is what buys the next step — the work listed " +
                   "under Concept groups below. From there every gate is its own decision: you can stop " +
                   "after any of them and keep what you have already paid for. Each gate re-quotes from " +
                   "this run's real groups before you commit."

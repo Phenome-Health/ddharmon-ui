@@ -1,4 +1,4 @@
-import type { JobStatus } from "@/types";
+import type { JobResult, JobStatus, PreprocessReport } from "@/types";
 
 /**
  * The ONE answer to "is this run running?", as pure functions with NO environment reads.
@@ -93,4 +93,59 @@ export function justEnded(
   // opened after the fact does not fire a burst of stale toasts.
   if (!prev) return false;
   return !isTerminal(prev) && isTerminal(next);
+}
+
+// --- how far the local, unpaid part of a run has got -----------------------------------------------------
+
+/** One cohort in the run, with its preparation report if that cohort has produced one yet. */
+export interface CohortPreparation {
+  cohort: string;
+  report: PreprocessReport | null;
+}
+
+/** Phases that run BEFORE preprocessing has produced anything for every cohort. */
+const PRE_PREPARE_PHASES = new Set(["queued", "loading", "embedding"]);
+
+/**
+ * How far preparation has actually got, and therefore whether the run may be committed.
+ *
+ * WHY IT IS IN THIS MODULE. It arrived in the pre-flight panel (08-14b), which 08-14d deleted along
+ * with the rest of the preprocessing report. This function is NOT part of that report: it answers *"is the free
+ * leg finished?"*, which is a fact about the RUN, and Setup's commit control — the run's first charge —
+ * reads it to decide whether it may be pressed. Deleting a screen must not delete the predicate its money
+ * control depends on, so it moved to the module that already owns "what state is this run in".
+ *
+ * PURE, WITH NO ENVIRONMENT READS, same as everything else here — so a Playwright spec can import it.
+ */
+export interface PreparationProgress {
+  /** DECLARED cohorts first, so a cohort the run knows about but has not prepared yet is still listed. */
+  cohorts: CohortPreparation[];
+  /** How many of them have produced a report. */
+  prepared: number;
+  /** True only when every declared cohort is done AND the run is past the pre-preparation phases. */
+  allPrepared: boolean;
+  /** Variables across the FINISHED reports. Only a total for the run when `allPrepared`. */
+  variables: number;
+}
+
+export function preparationProgress(run: JobResult | null): PreparationProgress {
+  const reports: PreprocessReport[] = run?.result?.preprocessing ?? [];
+  const byCohort = new Map(reports.map((r) => [r.cohort, r]));
+  const declared: string[] = run?.result?.summary?.cohorts ?? [];
+  // DECLARED cohorts first, so a cohort the run knows about but has not prepared yet is listed in the
+  // pending state rather than being invisible — an absent entry is indistinguishable from a cohort that
+  // was never in the run.
+  const order = [...declared, ...reports.map((r) => r.cohort).filter((c) => !declared.includes(c))];
+  const cohorts: CohortPreparation[] = order.map((cohort) => ({
+    cohort,
+    report: byCohort.get(cohort) ?? null,
+  }));
+  const prepared = cohorts.filter((c) => c.report).length;
+  return {
+    cohorts,
+    prepared,
+    allPrepared:
+      cohorts.length > 0 && prepared === cohorts.length && !PRE_PREPARE_PHASES.has(run?.phase ?? ""),
+    variables: reports.reduce((n, r) => n + r.nUniqueVariableNames, 0),
+  };
 }

@@ -1644,7 +1644,6 @@ test.describe("Setup — the boundary, with the report retired", () => {
     for (const f of [
       "src/pages/run/setup.tsx",
       "src/components/gate/PreparedExport.tsx",
-      "src/components/gate/DictionaryTipsPanel.tsx",
     ]) {
       expect(readFileSync(resolve(root, f), "utf8"), f).not.toContain("dangerouslySetInnerHTML");
     }

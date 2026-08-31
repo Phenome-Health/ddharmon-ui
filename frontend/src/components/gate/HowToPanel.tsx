@@ -14,7 +14,7 @@ import type { GatePosition } from "@/types";
  *
  * WHERE THE MONEY STARTS. Since UI-SPEC §0.1's reversal, `generate(ideal)` and `split` run BEFORE Gate 1,
  * so the run's first charge pays for concept generation, splitting and the coherence judge. Since the
- * Gate 0 demotion (2026-08-26) that press lives on **Setup**, on the pre-flight's own Continue: the run
+ * Gate 0 demotion (2026-08-26) that press lives on **Setup**, on its own Continue: the run
  * parks after loading, preparing and embedding, all of which are local, so "Nothing is charged yet" stays
  * true right up to it.
  *
@@ -46,14 +46,14 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
     { text: "Check the row count against the unique-name count — a repeated variable name is dropped silently." },
     { text: "Pick a run mode and a model, and paste a provider key if you are using your own." },
     { text: "Press Start run. Nothing is charged yet — loading, preparing and grouping all run on your machine." },
-    { text: "Read the pre-flight that appears here: what preparation found, and what it could not tell you." },
+    { text: "Download a prepared dictionary if you want to check exactly what each file gave the model." },
     {
       text: "Press Continue. This is the first charge of the run — it pays for naming the concepts, splitting the groups and the coherence judge. The amount is on the button.",
       charge: true,
     },
   ],
   // NEVER RENDERED. Kept only because `GatePosition` still carries the position — see the docstring.
-  gate0: [{ text: "This screen was retired; its content is the pre-flight on Set up." }],
+  gate0: [{ text: "This screen was retired; the run pauses at this point on Set up instead." }],
   gate1: [
     { text: "Read the grouping strip: how many concept groups formed, and from how many clusters." },
     { text: "Search for the concepts you care about, one term per line." },
