@@ -1644,6 +1644,7 @@ test.describe("Setup — the boundary, with the report retired", () => {
     for (const f of [
       "src/pages/run/setup.tsx",
       "src/components/gate/PreparedExport.tsx",
+      "src/components/gate/DictionaryTipsPanel.tsx",
     ]) {
       expect(readFileSync(resolve(root, f), "utf8"), f).not.toContain("dangerouslySetInnerHTML");
     }
@@ -1826,5 +1827,135 @@ test.describe("Setup — the run's first charge", () => {
     expect(text).not.toMatch(/costs nothing until you (choose|decide|pick)/i);
     // The true statement IS made: where the money starts is named.
     expect(text).toMatch(/first charge/i);
+  });
+});
+
+
+/**
+ * The dictionary-hygiene tips (08-14d Task 2) — what replaces the deleted report.
+ *
+ * DELIBERATELY MODEST, and the modesty is the requirement. The report was retired for verbosity, so a
+ * wall of tips would be the same failure in a friendlier voice: five or six pitfalls, closed by default,
+ * one line of what-to-do each.
+ *
+ * WHY IT IS ON THE COMPOSE STATE ONLY. The advice is *"tidy the file before you upload it"*, and a run's
+ * column mapping is fixed at `startHarmonize` — so at the boundary and past it, none of this is actionable
+ * without starting a fresh run. That is the same reasoning `08-DECISION-GATE0.md` D-4 settled for the
+ * duplicate-name finding: a recommendation belongs where it can be acted on, and restating it later and
+ * less actionably is how two surfaces make one finding untrustworthy.
+ *
+ * WHERE THE CONTENT COMES FROM. Not from imagination — from the rules core's `preprocess_dictionary`
+ * already implements, which are the empirical record of what real dictionaries get wrong, plus this
+ * repo's three recorded gotchas. Generic to any dictionary; no cohort is named as an example of doing it
+ * wrong.
+ */
+test.describe("Setup — the dictionary-hygiene tips", () => {
+  test("@setup the tips are a CLOSED disclosure, costing one row until asked", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const tips = page.getByTestId("dictionary-tips");
+    await expect(tips).toBeVisible();
+    await expect(tips).toHaveAttribute("data-state", "closed");
+    // CLOSED MEANS CLOSED: not a styled-away block. Nothing inside is in the tree until it is opened.
+    await expect(page.getByTestId("dictionary-tip")).toHaveCount(0);
+    // One row, not a panel. Measured against the screen's other closed disclosure, which is the pattern
+    // this one was told to match rather than invent a second of.
+    const box = (await tips.boundingBox())!;
+    expect(box.height, "a closed disclosure is a row").toBeLessThan(72);
+  });
+
+  test("@setup the disclosure's accessible name says what it reveals, both ways", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const trigger = page.getByTestId("dictionary-tips").getByRole("button").first();
+    // An icon-only control whose name does not say what it operates on is a defect, not a style choice
+    // (UI-SPEC §6). Asserted in BOTH states, because a name that stops describing the action once
+    // toggled is half a name.
+    await expect(trigger).toHaveAccessibleName(/show .*(dictionary|file)/i);
+    await trigger.click();
+    await expect(trigger).toHaveAccessibleName(/hide .*(dictionary|file)/i);
+  });
+
+  test("@setup opened, it lists five or six pitfalls, each with a one-line what-to-do", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const tips = page.getByTestId("dictionary-tip");
+    const n = await tips.count();
+    // THE CEILING IS THE POINT. Verbosity is what retired the thing this replaces; fifteen tips would
+    // reproduce it. The floor is here so the list cannot quietly decay to one.
+    expect(n, "five or six pitfalls, not fifteen").toBeGreaterThanOrEqual(5);
+    expect(n, "five or six pitfalls, not fifteen").toBeLessThanOrEqual(6);
+    for (const t of await tips.all()) {
+      // Each carries a NAMED problem and a fix. A pitfall with no remedy is a complaint about the
+      // reviewer's file rather than help with it.
+      await expect(t.getByTestId("dictionary-tip-what")).toBeVisible();
+      const fix = t.getByTestId("dictionary-tip-fix");
+      await expect(fix).toBeVisible();
+      const words = (await fix.innerText()).trim().split(/\s+/).length;
+      expect(words, `a what-to-do is one line: ${await fix.innerText()}`).toBeLessThanOrEqual(40);
+    }
+  });
+
+  test("@setup it LEADS with the repeated-variable-name trap, and points at the live check", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const first = page.getByTestId("dictionary-tip").first();
+    // IT IS FIRST because it is the only one here the product cannot fix for the reviewer: the loader
+    // keys on the variable name and the last row wins, so the earlier ones are gone before any rule runs.
+    await expect(first).toContainText(/variable name/i);
+    const text = await first.innerText();
+    expect(text).toMatch(/(last|only the last|silently|vanish|dropped)/i);
+    // AND IT CROSS-REFERENCES the check already on this screen rather than duplicating it. The tips
+    // explain the class; `nameCheck` reports the reviewer's actual file, live, as the mapping changes.
+    expect(text).toMatch(/(this screen|the mapping|below|checks your file)/i);
+  });
+
+  test("@setup the copy says automated preparation is FORTHCOMING and claims nothing about today", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const text = await page.getByTestId("dictionary-tips").innerText();
+    expect(text).toMatch(/forthcoming|coming|not yet/i);
+    expect(text).toMatch(/before you upload|before uploading/i);
+    // NOTHING IS PROMISED ABOUT PREPARATION THAT RUNS TODAY. 08-14e turns the pipeline stage off, and
+    // this plan must not depend on having landed first — so a present-tense claim in either direction is
+    // a claim this screen cannot keep.
+    expect(text).not.toMatch(/we (clean|prepare|fix|strip|normalis|normaliz)/i);
+    expect(text).not.toMatch(/ddharmon (cleans|prepares|fixes|strips)/i);
+    expect(text).not.toMatch(/(is|are) (cleaned|prepared|stripped|normalised|normalized) (for you|automatically)/i);
+  });
+
+  test("@setup the guidance is generic — no cohort is named as an example of doing it wrong", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const text = await page.getByTestId("dictionary-tips").innerText();
+    // Cohort-agnostic by construction is a project rule, not a copy preference: rules must be generic and
+    // discovered, never hardcoded to the cohorts we happened to test. Naming one here would also
+    // publish an internal judgement about a partner's data on a screen a guest can reach.
+    for (const cohort of ["UKBB", "UK Biobank", "CLSA", "Arivale", "HPP", "TwinsUK", "MESA", "AI-READI", "All of Us", "AoU", "PPMI", "FHS"]) {
+      expect(text, `${cohort} is named as an example`).not.toContain(cohort);
+    }
+  });
+
+  test("@setup the tips are absent once the run is started, where they cannot be acted on", async ({
+    page,
+  }) => {
+    // D-4's rule, applied to this panel. The column mapping is fixed at `startHarmonize`, so advice about
+    // the FILE is un-actionable from here without a fresh run — and advice you cannot take is noise on a
+    // screen that was just cleared of noise.
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("dictionary-tips")).toHaveCount(0);
   });
 });
