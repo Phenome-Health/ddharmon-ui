@@ -29,6 +29,7 @@ import {
   NO_FILTERS,
   applyFilters,
   activeFilterCount,
+  cohortRoster,
   effectiveMembers,
   isFlagged,
   readjudicationRequest,
@@ -560,7 +561,15 @@ export default function Gate1Page() {
     () => jobState?.result?.conceptGroups ?? [],
     [jobState?.result?.conceptGroups],
   );
-  const allCohorts = jobState?.result?.summary?.cohorts ?? [];
+  /**
+   * The coverage column's denominator. `summary.cohorts` is EMPTY at a Gate 1 park on a real run, so
+   * reading it directly drew a column of nothing — see `cohortRoster` for the measurement and the
+   * precedence rule.
+   */
+  const allCohorts = useMemo(
+    () => cohortRoster(jobState?.result?.summary?.cohorts, groups),
+    [jobState?.result?.summary?.cohorts, groups],
+  );
   const unassigned = jobState?.result?.unassignedFields ?? [];
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 

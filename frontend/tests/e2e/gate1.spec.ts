@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   COHERENCE_ORDER,
+  cohortRoster,
   compareGroups,
   isFlagged,
   matchTerms,
@@ -1358,8 +1359,16 @@ test.describe("gate1 toolbar labelling and explanations", () => {
   }) => {
     // THE CASE THAT EXPOSED THE MISLABEL. A heading over an empty group is a claim that the run has
     // cohort filters and that whatever sits beneath it is one of them.
+    //
+    // AMENDED 08-16c Task 9. Emptying `summary.cohorts` alone NO LONGER produces a cohort-less run: the
+    // roster falls back to the union of the groups' own `cohorts` precisely because a real parked run
+    // carries an empty summary alongside fully-populated groups, and the coverage column drew nothing.
+    // So the run has to be made genuinely cohort-less to reach the case this test is about — which is the
+    // honest statement of the invariant anyway: the heading renders iff there are cohorts to filter BY,
+    // not iff one particular field happened to be filled in.
     await serveRun(page, (run) => {
       run.result!.summary!.cohorts = [];
+      for (const g of run.result!.conceptGroups ?? []) g.cohorts = [];
     });
     await openGate1(page);
     const toolbar = page.locator("[data-testid='ledger-toolbar']");
@@ -1642,5 +1651,49 @@ test.describe("gate1 continue", () => {
     // refusal is what shows the flag is released rather than merely set.
     await button.click();
     await expect(button).toBeEnabled();
+  });
+});
+
+/**
+ * The cohort-coverage column's denominator (08-16c Task 9).
+ *
+ * MEASURED, NOT INVENTED: on the parked run `890638d1` the Gate 1 checkpoint carries
+ * `result.summary.cohorts === []` alongside 117 concept groups whose own `cohorts` are populated
+ * (`conceptGroups[0].cohorts === ["aou"]`). `CohortCoverage` draws one segment PER ROSTER ENTRY, so an
+ * empty roster renders an empty column — which is exactly what Bhargav reported.
+ */
+test.describe("gate1 cohort roster", () => {
+  test("@gate1 an empty run summary falls back to the union of the groups' own cohorts", () => {
+    const groups = [{ cohorts: ["ukbb", "aou"] }, { cohorts: ["aou"] }, { cohorts: ["clsa"] }];
+    expect(cohortRoster([], groups)).toEqual(["aou", "clsa", "ukbb"]);
+    expect(cohortRoster(undefined, groups)).toEqual(["aou", "clsa", "ukbb"]);
+  });
+
+  test("@gate1 a run that DOES state its cohorts keeps them verbatim", () => {
+    // Order and contents preserved: the summary can legitimately name a cohort that contributed no group,
+    // which a union over groups could never discover.
+    const stated = ["ukbb", "aou", "mesa"];
+    expect(cohortRoster(stated, [{ cohorts: ["aou"] }])).toEqual(stated);
+  });
+
+  test("@gate1 the derived roster is stable regardless of the order the groups arrive in", () => {
+    const a = cohortRoster([], [{ cohorts: ["ukbb"] }, { cohorts: ["aou"] }]);
+    const b = cohortRoster([], [{ cohorts: ["aou"] }, { cohorts: ["ukbb"] }]);
+    expect(a).toEqual(b);
+  });
+
+  test("@gate1 a single-cohort group does not look like one spanning everything", async ({ page }) => {
+    await openGate1(page);
+    const strip = page.locator("[data-testid='cohort-coverage']").first();
+    await expect(strip).toBeVisible();
+    // Segments are drawn, and the covered/uncovered distinction is real data rather than a uniform row.
+    const segments = strip.locator("span[data-covered]");
+    expect(await segments.count()).toBeGreaterThan(0);
+    const label = await strip.getAttribute("aria-label");
+    expect(label).toMatch(/cohorts:|No cohort coverage/);
+  });
+
+  test("@gate1 groups with no cohorts at all yield an empty roster rather than a crash", () => {
+    expect(cohortRoster([], [{ cohorts: [] }, {}])).toEqual([]);
   });
 });

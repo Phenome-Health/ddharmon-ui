@@ -350,3 +350,37 @@ export function readjudicationRequest(groupId: string): { groupIds: string[] } {
   if (!id) throw new Error("re-adjudication needs the id of the one group the reviewer accepted");
   return { groupIds: [id] };
 }
+
+/**
+ * The run's cohort ROSTER — the denominator the coverage column measures each group against (08-16c Task 9).
+ *
+ * WHY IT IS NOT JUST `summary.cohorts`. On the run Bhargav walked on 2026-09-01 (`890638d1`, parked at
+ * Gate 1) `result.summary.cohorts` is `[]` while `result.conceptGroups` has 117 entries and the first
+ * group's `cohorts` is `["aou"]` — so the per-group data is complete and only the run-level roster is
+ * missing. `CohortCoverage` maps over the roster to draw its segments, so an empty roster draws NOTHING
+ * and the whole column reads as blank. `summary.nRecords` is `0` on the same checkpoint, which suggests
+ * the summary is simply not finished at a Gate 1 park rather than that the run has no cohorts.
+ *
+ * ONE ANSWER WITH A STATED PRECEDENCE, not two. The summary wins whenever it is non-empty — it is the
+ * run's own statement of what it loaded, and it can legitimately name a cohort that contributed no group,
+ * which a union over groups can never discover. The union is the FALLBACK, and it is only ever reached
+ * when the alternative is an empty column. Returned verbatim in the summary case so a run that does fill
+ * the field keeps exactly the order and contents it had.
+ *
+ * THIS IS NOT THE `crossCohort` MISTAKE. That rule forbids RE-DERIVING a per-group answer the backend
+ * already gives. Here the backend gives nothing, and the question is run-level.
+ *
+ * Sorted in the derived case because the union of a `Set` follows first-encounter order, which changes
+ * with the group order — and the roster is a column's axis, so it has to be stable across renders and
+ * identical for every row.
+ *
+ * The precedent is prod's own Review queue: `dashboard.tsx` builds `headerCohorts` this way and has all
+ * along.
+ */
+export function cohortRoster(
+  summaryCohorts: readonly string[] | null | undefined,
+  groups: readonly { cohorts?: readonly string[] | null }[],
+): string[] {
+  if (summaryCohorts && summaryCohorts.length > 0) return [...summaryCohorts];
+  return [...new Set(groups.flatMap((g) => g.cohorts ?? []))].sort();
+}
