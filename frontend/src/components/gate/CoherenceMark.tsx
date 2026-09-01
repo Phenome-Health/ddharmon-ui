@@ -18,7 +18,17 @@ import type { CoherenceState } from "@/types";
  * SILENCE FROM A JUDGE THAT WAS NEVER ASKED IS NOT A PASS. That sentence is the tooltip, verbatim.
  */
 
-const COPY: Record<CoherenceState, { label: string; explain: string }> = {
+/**
+ * THE ONE REGISTER FOR WHAT EACH COHERENCE STATE MEANS — label and explanation.
+ *
+ * EXPORTED BY 08-14h. `LedgerToolbar` filters on these four states and spelled its own labels out twice
+ * (once in a `VERDICTS` table, once in the active-filter summary's inline ternary), which made three
+ * copies of a vocabulary the reviewer is asked to filter by. Three copies is how a filter chip comes to
+ * disagree with the ledger cell it filters, and the plan's instruction was explicit: take the wording
+ * from the coherence judge's own vocabulary rather than inventing glosses. The same pattern as
+ * `ROLE_HELP`, and the reason `RoleInfo` exists rather than a per-screen re-wording.
+ */
+export const COHERENCE_COPY: Record<CoherenceState, { label: string; explain: string }> = {
   split: {
     label: "split",
     explain:
@@ -56,7 +66,7 @@ const LABEL_TONE: Record<CoherenceState, string> = {
 };
 
 export function CoherenceMark({ state, className }: { state: CoherenceState; className?: string }) {
-  const copy = COPY[state];
+  const copy = COHERENCE_COPY[state];
   return (
     <span
       data-testid="coherence-mark"

@@ -9,7 +9,9 @@ import {
   sortGroups,
 } from "@/lib/ledger";
 import { componentVerdictFor, missingReason, scopeVerdictFor } from "@/lib/score-scope";
-import { PAUSED_JOB, fixtureGroups, serveRun } from "./gate1-fixture";
+import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
+import type { CoherenceState } from "@/types";
+import { PAUSED_JOB, fixtureGroups, gate1Fixture, serveRun } from "./gate1-fixture";
 
 /**
  * Gate 1 — the ledger (08-15 Task 1).
@@ -1321,5 +1323,168 @@ test.describe("gate1 the row IS the variable", () => {
     // passes no `drag` prop and renders exactly what it always did. A grid that grew a permanent drag
     // handle would have put a dead control on a screen that cannot honour it.
     expect(src).toMatch(/<SourceRows\b(?![^>]*\bdrag=)/);
+  });
+});
+
+/**
+ * 08-14h TASK 6 — the toolbar says what its controls mean, and stops mislabelling two of them.
+ *
+ * THE MISLABEL WAS A REAL DEFECT AND THE EMPTY CASE IS WHAT FOUND IT. `LedgerToolbar` opened a new `div`
+ * after the cohort chips with NO heading of its own, so "I changed it" and "Going forward" — which are
+ * about the REVIEWER's own actions — sat directly beneath the COHORT eyebrow and read as cohort filters.
+ * With the cohort chips absent, which is exactly what a run that has not populated cohorts renders, they
+ * are the only things under that heading.
+ */
+test.describe("gate1 toolbar labelling and explanations", () => {
+  test("@gate1 the review toggles are their own labelled group, not cohort filters", async ({ page }) => {
+    await openGate1(page);
+    const toolbar = page.locator("[data-testid='ledger-toolbar']");
+
+    // Each control group carries its own heading, and the two review toggles are in one of their own.
+    const reviewGroup = toolbar.locator("[data-testid='filter-group'][data-group='review']");
+    await expect(reviewGroup).toBeVisible();
+    await expect(reviewGroup.locator("[data-testid='filter-touched']")).toBeVisible();
+    await expect(reviewGroup.locator("[data-testid='filter-in-scope']")).toBeVisible();
+
+    // ...and the COHORT group contains ONLY cohort chips. This is the assertion the defect fails.
+    const cohortGroup = toolbar.locator("[data-testid='filter-group'][data-group='cohort']");
+    await expect(cohortGroup.locator("[data-testid='filter-touched']")).toHaveCount(0);
+    await expect(cohortGroup.locator("[data-testid='filter-in-scope']")).toHaveCount(0);
+    await expect(cohortGroup).toContainText("Cohort");
+  });
+
+  test("@gate1 with no cohorts on the run, the COHORT heading does not render over unrelated chips", async ({
+    page,
+  }) => {
+    // THE CASE THAT EXPOSED THE MISLABEL. A heading over an empty group is a claim that the run has
+    // cohort filters and that whatever sits beneath it is one of them.
+    await serveRun(page, (run) => {
+      run.result!.summary!.cohorts = [];
+    });
+    await openGate1(page);
+    const toolbar = page.locator("[data-testid='ledger-toolbar']");
+    await expect(toolbar.locator("[data-testid='filter-group'][data-group='cohort']")).toHaveCount(0);
+    await expect(toolbar).not.toContainText("Cohort");
+    // The review toggles are still there and still correctly labelled — they were never cohort filters.
+    await expect(toolbar.locator("[data-testid='filter-group'][data-group='review']")).toBeVisible();
+    await expect(toolbar.locator("[data-testid='filter-touched']")).toBeVisible();
+  });
+
+  /**
+   * Walk the toolbar the way a keyboard user does — one continuous run of Tab presses — and record what
+   * each control said about itself when it took focus.
+   *
+   * WHY A JOURNEY RATHER THAN `locator.focus()` PER CONTROL, and this is measured rather than assumed.
+   * Radix distinguishes programmatic focus from keyboard focus and opens a tooltip only for the latter,
+   * so `.focus()` reports `data-state="closed"` with no `aria-describedby` for a control that explains
+   * itself perfectly well to a real keyboard user — the spec would convict working code. Pressing
+   * `Escape` is no better: Radix keeps a dismissed tooltip shut while its trigger still holds focus, so
+   * a per-control focus/assert/Escape loop poisons every iteration after the first.
+   *
+   * Tabbing through in one pass is both the thing that works and the thing the requirement is actually
+   * about: "an explanation is available on hover AND on keyboard focus" is a claim about traversal.
+   *
+   * The FIRST Tab after the initial programmatic focus is the one exception — Radix does not open on it
+   * — so the walk starts at the order select, whose next stop is a heading tip rather than a control.
+   */
+  async function tabThroughToolbar(page: Page): Promise<Map<string, { describedBy: boolean; tip: string }>> {
+    const seen = new Map<string, { describedBy: boolean; tip: string }>();
+    await page.locator("#ledger-sort").focus();
+    for (let i = 0; i < 24; i++) {
+      await page.keyboard.press("Tab");
+      const probe = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        if (!el) return null;
+        const testid = el.getAttribute("data-testid");
+        if (!testid) return null;
+        const key = testid === "filter-verdict" ? `verdict:${el.getAttribute("data-verdict")}`
+          : testid === "filter-cohort" ? `cohort:${el.getAttribute("data-cohort")}`
+          : testid;
+        // RESOLVE THE TOOLTIP THROUGH `aria-describedby`, never by taking the first `[role=tooltip]` on
+        // the page. A tooltip from the control focused a moment ago can still be in the DOM, and reading
+        // it would attribute one control's words to another — which is how the first version of this
+        // test convicted the split chip of using the Coherence heading's copy.
+        const describedBy = el.getAttribute("aria-describedby");
+        const tip = describedBy ? document.getElementById(describedBy) : null;
+        return { key, describedBy: !!describedBy, tip: (tip?.textContent ?? "").trim() };
+      });
+      if (!probe) continue;
+      seen.set(probe.key, { describedBy: probe.describedBy, tip: probe.tip });
+      // Stop once focus has left the toolbar for the search box below it.
+      if (probe.key === "filter-in-scope") break;
+    }
+    return seen;
+  }
+
+  test("@gate1 every control in the toolbar explains itself on keyboard focus, not only on hover", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const cohorts = gate1Fixture().result!.summary!.cohorts!;
+    const seen = await tabThroughToolbar(page);
+
+    // Every control the plan names: the four coherence states, each cohort chip, both review toggles.
+    const required = [
+      ...["split", "qualify", "not_judged", "single"].map((v) => `verdict:${v}`),
+      ...cohorts.map((c) => `cohort:${c}`),
+      "filter-touched",
+      "filter-in-scope",
+    ];
+    expect([...seen.keys()].sort(), "every toolbar control must be reachable by Tab").toEqual(
+      expect.arrayContaining(required),
+    );
+
+    for (const key of required) {
+      const got = seen.get(key)!;
+      // `aria-describedby` is what carries the explanation to a SCREEN READER. A hover-only tooltip
+      // excludes exactly the reviewers most likely to need it.
+      expect(got.describedBy, `${key} must be described by its explanation on keyboard focus`).toBe(true);
+      expect(got.tip.length, `${key}'s explanation must say something`).toBeGreaterThan(20);
+    }
+
+    // The order select is not a tooltip trigger — opening a tooltip on the control that is about to open
+    // a listbox fights itself — so its explanation hangs off its label as the shipped `InfoTip`.
+    await expect(
+      page.locator("[data-testid='ledger-toolbar']").getByRole("button", { name: /what does the order/i }),
+    ).toBeVisible();
+  });
+
+  test("@gate1 each coherence state is explained in the JUDGE'S OWN words, not a re-gloss", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const seen = await tabThroughToolbar(page);
+    for (const state of ["split", "qualify", "not_judged", "single"] as CoherenceState[]) {
+      // THE SAME REGISTER THE LEDGER CELL USES. `CoherenceMark` already owns one explanation per state;
+      // a second, re-worded one in the toolbar would let a reviewer filter on a meaning the ledger does
+      // not agree with. The spec reads the shipped register rather than restating it here.
+      expect(seen.get(`verdict:${state}`)!.tip, `${state} must use the shipped wording`).toBe(
+        COHERENCE_COPY[state].explain,
+      );
+    }
+    // And the chip's own label is that register's label, not a fourth spelling of it.
+    for (const state of ["not_judged", "single"] as CoherenceState[]) {
+      await expect(
+        page.locator(`[data-testid='filter-verdict'][data-verdict='${state}']`),
+      ).toHaveText(COHERENCE_COPY[state].label);
+    }
+  });
+
+  test("@gate1 the coherence labels are written ONCE and read from that one register", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "../../src/components/gate/LedgerToolbar.tsx"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/^\s*\/\/.*$/gm, " ");
+    // Before 08-14h this file spelled the four labels out TWICE — once in its `VERDICTS` table and again
+    // in the active-filter summary's `f === "not_judged" ? "not judged" : f === "single" ? "checked" : f`
+    // — and `CoherenceMark` held a third copy. Three copies of a label is how a filter comes to disagree
+    // with the cell it filters.
+    expect(src).toMatch(/COHERENCE_COPY/);
+    expect(src, "the active-filter summary may not re-spell the state labels").not.toMatch(
+      /"not judged"[\s\S]{0,40}"checked"/,
+    );
   });
 });

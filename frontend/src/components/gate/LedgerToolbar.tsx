@@ -1,5 +1,8 @@
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { InfoTip } from "@/components/ui/info-tip";
+import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
 import { cn } from "@/lib/utils";
 import {
   BUCKETS,
@@ -51,25 +54,49 @@ const BUCKET_COPY: Record<Bucket, { label: string; note: string }> = {
   },
 };
 
-/** The four states, in the triage order the ledger sorts by. */
-const VERDICTS: { state: CoherenceState; label: string }[] = [
-  { state: "split", label: "split" },
-  { state: "qualify", label: "qualify" },
-  { state: "not_judged", label: "not judged" },
-  { state: "single", label: "checked" },
-];
+/**
+ * The four states, in the TRIAGE ORDER the ledger sorts by — which is this file's only claim about them.
+ *
+ * Their labels and their explanations come from `COHERENCE_COPY`, the register `CoherenceMark` owns and
+ * the ledger cell renders. This file used to spell the labels out itself, and the active-filter summary
+ * below spelled them a second time; with `CoherenceMark`'s that was THREE copies of the vocabulary a
+ * reviewer filters by. The order is a genuine local fact; the words are not.
+ */
+const VERDICT_ORDER: CoherenceState[] = ["split", "qualify", "not_judged", "single"];
 
+/** A state's label, from the one register. Used by the chips and by the active-filter summary. */
+function verdictLabel(state: string): string {
+  return COHERENCE_COPY[state as CoherenceState]?.label ?? state;
+}
+
+/**
+ * A filter chip, and — since 08-14h — its own explanation.
+ *
+ * WHY THE CHIP IS THE TRIGGER RATHER THAN AN `InfoTip` BESIDE IT. `InfoTip` renders its own small ⓘ
+ * button, which is right where an explanation hangs off a LABEL (the order select below uses it for
+ * exactly that). Here there are a dozen chips, and parking an ⓘ next to each would double the control
+ * count of the toolbar to explain it. The chip is already a `<button>`, so making it the trigger costs
+ * no extra control and is strictly better on both required paths: Radix opens on FOCUS as well as hover
+ * and wires `aria-describedby`, so the explanation reaches a keyboard user and a screen reader rather
+ * than only a mouse. It is the same `Tooltip` primitive and the same `TooltipContent` styling `InfoTip`
+ * is built from — not a second tooltip mechanism.
+ */
 function Chip({
   active,
   onClick,
+  explain,
   children,
   ...rest
 }: {
   active: boolean;
   onClick: () => void;
+  /** What this filter does, in the reviewer's terms. Required: an unexplained filter is filtering blind. */
+  explain: string;
   children: React.ReactNode;
 } & React.ComponentProps<"button">) {
   return (
+    <Tooltip>
+      <TooltipTrigger asChild>
     <button
       type="button"
       aria-pressed={active}
@@ -85,8 +112,60 @@ function Chip({
     >
       {children}
     </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs whitespace-normal text-left font-normal normal-case leading-relaxed">
+        {explain}
+      </TooltipContent>
+    </Tooltip>
   );
 }
+
+/**
+ * One labelled group of controls.
+ *
+ * IT EXISTS BECAUSE AN ANONYMOUS GROUP WAS A REAL DEFECT (08-14h Task 6). This file used to open a bare
+ * `div` after the cohort chips holding "I changed it" and "Going forward" — two filters about the
+ * REVIEWER'S OWN ACTIONS — with no heading of its own. They therefore sat directly beneath the COHORT
+ * eyebrow and read as cohort filters, and with the cohort chips absent (a run that has not populated
+ * cohorts yet) they were the ONLY things under that heading. Making the label a required prop is what
+ * stops the next group being added without one.
+ */
+function FilterGroup({
+  id,
+  label,
+  explain,
+  children,
+}: {
+  id: string;
+  label: string;
+  /** What this whole group filters on. Hangs off the heading as the shipped ⓘ. */
+  explain: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      data-testid="filter-group"
+      data-group={id}
+      role="group"
+      aria-label={label}
+      className="flex flex-wrap items-center gap-x-4 gap-y-2"
+    >
+      <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+        {label}
+        <InfoTip text={explain} label={`What does ${label} filter?`} />
+      </span>
+      {children}
+    </div>
+  );
+}
+
+/** What each review toggle actually does. Both are about the reviewer, not about the data. */
+const REVIEW_COPY = {
+  touched:
+    "Show only the groups you have changed — scoped in or out, or had a variable moved into or out of. It is a record of your own work, not a judgement the pipeline made.",
+  inScope:
+    "Show only the groups going on to Gate 2 to be matched against common data elements. Everything else stops here.",
+};
 
 export interface LedgerToolbarProps {
   counts: Record<Bucket, number>;
@@ -162,8 +241,18 @@ export function LedgerToolbar({
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="ledger-sort" className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            <label
+              htmlFor="ledger-sort"
+              className="flex items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+            >
               Order
+              {/* A SELECT CANNOT CLEANLY BE ITS OWN TOOLTIP TRIGGER — opening a tooltip on the control
+                  that is about to open a listbox fights itself — so this one uses the shipped `InfoTip`
+                  hung off the label, which is the pattern it was extracted for. */}
+              <InfoTip
+                text="What does the order change? Only the sequence the rows are read in, never which rows are shown. Flagged first leads with the groups the coherence judge raised something about, so the work that needs a human comes before the work that does not."
+                label="What does the order change?"
+              />
             </label>
             <select
               id="ledger-sort"
@@ -192,42 +281,59 @@ export function LedgerToolbar({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            Coherence
-          </span>
-          {VERDICTS.map((v) => (
+        <FilterGroup
+          id="coherence"
+          label="Coherence"
+          explain="What the coherence judge found when it read the group's variables together: whether they are one concept or several. Filtering on a state without knowing what it means is filtering blind, so each one explains itself."
+        >
+          {VERDICT_ORDER.map((state) => (
             <Chip
-              key={v.state}
+              key={state}
               data-testid="filter-verdict"
-              data-verdict={v.state}
-              active={filters.verdicts.includes(v.state)}
-              onClick={() => onFiltersChange({ ...filters, verdicts: toggle(filters.verdicts, v.state) })}
+              data-verdict={state}
+              active={filters.verdicts.includes(state)}
+              // THE JUDGE'S OWN WORDS, from the register the ledger cell renders — never a re-gloss.
+              // `qualify` and `checked` in particular say something specific about what the judge found.
+              explain={COHERENCE_COPY[state].explain}
+              onClick={() => onFiltersChange({ ...filters, verdicts: toggle(filters.verdicts, state) })}
             >
-              {v.label}
+              {COHERENCE_COPY[state].label}
             </Chip>
           ))}
-        </div>
+        </FilterGroup>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Cohort</span>
-          {allCohorts.map((c) => (
-            <Chip
-              key={c}
-              data-testid="filter-cohort"
-              data-cohort={c}
-              active={filters.cohorts.includes(c)}
-              onClick={() => onFiltersChange({ ...filters, cohorts: toggle(filters.cohorts, c) })}
-            >
-              {c}
-            </Chip>
-          ))}
-        </div>
+        {/* NO HEADING OVER AN EMPTY GROUP. A COHORT eyebrow with nothing under it claims the run has
+            cohort filters, and — before 08-14h — lent its name to whatever happened to render next. */}
+        {allCohorts.length > 0 && (
+          <FilterGroup
+            id="cohort"
+            label="Cohort"
+            explain="Show only groups that pool at least one variable from the dictionaries you pick. A fact about where the variables came from, not a judgement about the group."
+          >
+            {allCohorts.map((c) => (
+              <Chip
+                key={c}
+                data-testid="filter-cohort"
+                data-cohort={c}
+                active={filters.cohorts.includes(c)}
+                explain={`Show only groups containing at least one variable from ${c}. Combining cohorts widens the set rather than narrowing it: a group qualifies if it draws on any one of them.`}
+                onClick={() => onFiltersChange({ ...filters, cohorts: toggle(filters.cohorts, c) })}
+              >
+                {c}
+              </Chip>
+            ))}
+          </FilterGroup>
+        )}
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <FilterGroup
+          id="review"
+          label="Your review"
+          explain="Your own work on this run — what you have changed and what you are sending on. Neither of these is a property of the data or a judgement the pipeline made, which is why they are not filed under Coherence or Cohort."
+        >
           <Chip
             data-testid="filter-touched"
             active={filters.touchedOnly}
+            explain={REVIEW_COPY.touched}
             onClick={() => onFiltersChange({ ...filters, touchedOnly: !filters.touchedOnly })}
           >
             I changed it
@@ -235,6 +341,7 @@ export function LedgerToolbar({
           <Chip
             data-testid="filter-in-scope"
             active={filters.inScopeOnly}
+            explain={REVIEW_COPY.inScope}
             onClick={() => onFiltersChange({ ...filters, inScopeOnly: !filters.inScopeOnly })}
           >
             Going forward
@@ -248,9 +355,16 @@ export function LedgerToolbar({
               <span className="font-semibold">
                 {nActive} {nActive === 1 ? "filter" : "filters"} on:
               </span>
-              {[...filters.verdicts, ...filters.cohorts].map((f) => (
+              {/* READ FROM THE ONE REGISTER. This line used to re-spell "not judged" and "checked" in an
+                  inline ternary — a second copy of the labels three lines from the first. */}
+              {filters.verdicts.map((f) => (
                 <span key={f} className="rounded-pill bg-surface-inset px-2 py-0.5 text-on-inset-muted">
-                  {f === "not_judged" ? "not judged" : f === "single" ? "checked" : f}
+                  {verdictLabel(f)}
+                </span>
+              ))}
+              {filters.cohorts.map((f) => (
+                <span key={f} className="rounded-pill bg-surface-inset px-2 py-0.5 text-on-inset-muted">
+                  {f}
                 </span>
               ))}
               {filters.touchedOnly && (
@@ -272,7 +386,7 @@ export function LedgerToolbar({
               </Button>
             </span>
           )}
-        </div>
+        </FilterGroup>
       </div>
     </section>
   );
