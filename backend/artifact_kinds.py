@@ -103,6 +103,14 @@ GATE1_GROUP_SCOPE = "gate1_group_scope"
 #: moved in two tabs are two independent rows.
 GATE1_REGROUP = "gate1_regroup"
 
+#: Gate 1: the reviewer's own NAME for a concept group. Keyed on the group.
+#:
+#: An ANNOTATION, not a correction of what the pipeline produced. The generated name stays on the run
+#: result untouched and is carried in ``alternatives`` beside the reviewer's, so the original is always
+#: recoverable and Gate 4's export can show both. A reviewer renaming a group to find it again is not
+#: asking to erase what the pipeline decided (08-16c Task 3).
+GATE1_RENAME = "gate1_rename"
+
 #: Gate 2: which retrieved CDE candidate this concept group takes. Keyed on the group.
 GATE2_CANDIDATE_PICK = "gate2_candidate_pick"
 
@@ -120,11 +128,12 @@ GATE4_EXPORT_SELECTION = "gate4_export_selection"
 #: A composite score's component re-pointed at a different concept. Keyed on the (score, component) edge.
 COMPOSITE_SWAP = "composite_swap"
 
-#: The seven gate-decision kinds, in gate order. Shared payload shape, shared validation, shared staleness
+#: The eight gate-decision kinds, in gate order. Shared payload shape, shared validation, shared staleness
 #: derivation - so a screen plan adding an eighth gets all three by adding one name here.
 GATE_DECISION_KINDS = (
     GATE1_GROUP_SCOPE,
     GATE1_REGROUP,
+    GATE1_RENAME,
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
     GATE3_SPEC_EDIT,
@@ -138,6 +147,7 @@ GATE_DECISION_KINDS = (
 _DECISION_IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     GATE1_GROUP_SCOPE: ("groupId",),
     GATE1_REGROUP: ("memberId",),
+    GATE1_RENAME: ("groupId",),
     GATE2_CANDIDATE_PICK: ("groupId",),
     GATE2_RELATION: ("groupId", "targetId"),
     GATE3_SPEC_EDIT: ("sourceVariable",),
@@ -269,7 +279,7 @@ def derive_staleness(grouped: dict[str, Any]) -> list[dict[str, str]]:
 
 
 # One registration per kind, spelled out rather than looped: the point of this module is that the set of
-# persisted kinds is greppable, and a loop hides seven of them behind one call site.
+# persisted kinds is greppable, and a loop hides eight of them behind one call site.
 registry.register(
     ArtifactKind(
         name=GATE1_GROUP_SCOPE,
@@ -281,6 +291,13 @@ registry.register(
     ArtifactKind(
         name=GATE1_REGROUP,
         identity=_decision_identity(GATE1_REGROUP),
+        validate=_decision_validate,
+    )
+)
+registry.register(
+    ArtifactKind(
+        name=GATE1_RENAME,
+        identity=_decision_identity(GATE1_RENAME),
         validate=_decision_validate,
     )
 )

@@ -78,12 +78,18 @@ test.describe("gate decisions", () => {
       "composite_swap",
       "gate1_group_scope",
       "gate1_regroup",
+      // Added by 08-16c Task 3: the reviewer's own name for a concept group, keyed on the GROUP. Listed
+      // explicitly rather than counted, so a new kind cannot arrive without a human confirming it keys on
+      // the thing decided — the property this whole table exists to protect.
+      "gate1_rename",
       "gate2_candidate_pick",
       "gate2_relation",
       "gate3_spec_edit",
       "gate4_export_selection",
     ]);
     expect(DECISION_IDENTITY_FIELDS.gate1_regroup).toEqual(["memberId"]);
+    expect(DECISION_IDENTITY_FIELDS.gate1_rename).toEqual(["groupId"]);
+    expect(decisionItemKey("gate1_rename", { groupId: "c1#g0" })).toBe("c1#g0");
     expect(decisionItemKey("gate1_regroup", { memberId: "ukbb:21001" })).toBe("ukbb:21001");
     expect(decisionItemKey("gate2_relation", { groupId: "c1#g0", targetId: "CDE:9" })).toBe("c1#g0|CDE:9");
     expect(decisionItemKey("composite_swap", { scoreName: "frailty", componentName: "grip" })).toBe(

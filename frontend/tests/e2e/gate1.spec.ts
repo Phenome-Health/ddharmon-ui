@@ -2136,3 +2136,100 @@ test.describe("gate1 destination tray", () => {
     expect(narrow!.width).toBeGreaterThan(wide!.width);
   });
 });
+
+/**
+ * Renaming a concept group (08-16c Task 3).
+ *
+ * Bhargav renames a group to be able to FIND IT AGAIN, so this is a reviewer ANNOTATION: it never
+ * overwrites `concept`, the generated name stays visible beneath it, and the decision record carries both.
+ * It follows `gate1_regroup` exactly — same hook, same registry, same persistence path.
+ */
+test.describe("gate1 rename", () => {
+  const BIGROW = `[data-testid='ledger-row'][data-row-id='${BIG}']`;
+
+  async function rename(page: Page, to: string) {
+    await page.locator(`${BIGROW} [data-testid='rename-group']`).click();
+    const input = page.locator(`${BIGROW} [data-testid='rename-input']`);
+    await expect(input).toBeVisible();
+    await input.fill(to);
+    await input.press("Enter");
+  }
+
+  test("@gate1 a group can be renamed in place, and the new name is what the row shows", async ({ page }) => {
+    await openGate1(page);
+    await rename(page, "Smoking — my working set");
+    await expect(page.locator(`${BIGROW} [data-label-source='reviewer']`)).toHaveText("Smoking — my working set");
+  });
+
+  test("@gate1 a reviewer's name is marked as theirs, not as the pipeline's", async ({ page }) => {
+    await openGate1(page);
+    await rename(page, "My label");
+    await expect(page.locator(`${BIGROW} [data-testid='renamed-mark']`)).toBeVisible();
+    await expect(page.locator(`${BIGROW} [data-testid='generated-mark']`)).toHaveCount(0);
+  });
+
+  test("@gate1 the pipeline's own name remains recoverable beside it", async ({ page }) => {
+    await openGate1(page);
+    const generated = fixtureGroups().find((g) => g.groupId === BIG)!.concept;
+    await rename(page, "My label");
+    await expect(page.locator(`${BIGROW} [data-testid='generated-name-kept']`)).toContainText(generated);
+  });
+
+  test("@gate1 a rename survives a reload — it is a decision, not component state", async ({ page }) => {
+    await openGate1(page);
+    await rename(page, "Persisted name");
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(`${BIGROW} [data-label-source='reviewer']`)).toHaveText("Persisted name");
+  });
+
+  test("@gate1 an empty or whitespace-only rename is refused rather than making a nameless group", async ({ page }) => {
+    await openGate1(page);
+    const generated = fixtureGroups().find((g) => g.groupId === BIG)!.concept;
+    await rename(page, "Temporary");
+    await expect(page.locator(`${BIGROW} [data-label-source='reviewer']`)).toBeVisible();
+    // Clearing it restores the generated name instead of leaving the row blank.
+    await rename(page, "   ");
+    await expect(page.locator(`${BIGROW} [data-label-source='generated']`)).toHaveText(generated);
+    await expect(page.locator(`${BIGROW} [data-testid='renamed-mark']`)).toHaveCount(0);
+  });
+
+  test("@gate1 the reviewer can find the group again by the name they gave it", async ({ page }) => {
+    await openGate1(page);
+    await rename(page, "Zzyzx");
+    await page.locator("#term-search-input").fill("Zzyzx");
+    await page.getByRole("button", { name: /^Search/ }).click();
+    await expect(page.locator(BIGROW)).toBeVisible();
+    expect(await page.locator("[data-testid='ledger-row']").count()).toBe(1);
+  });
+
+  test("@gate1 a rename marks the row as reviewer-changed", async ({ page }) => {
+    await openGate1(page);
+    await rename(page, "Changed by me");
+    await expect(page.locator(BIGROW)).toHaveAttribute("data-spine", "changed");
+  });
+
+  test("@gate1 renaming replaces a BORROWED judge label and is marked as the reviewer's", async ({ page }) => {
+    await serveRun(page, (run) => {
+      const t = run.result!.conceptGroups!.find((g) => g.groupId === BIG)!;
+      t.concept = "";
+      t.coherence = "single";
+      t.coherenceSummary = "The judge's sentence about this group";
+    });
+    await openGate1(page);
+    await expect(page.locator(`${BIGROW} [data-testid='borrowed-mark']`)).toBeVisible();
+    await rename(page, "Mine now");
+    await expect(page.locator(`${BIGROW} [data-label-source='reviewer']`)).toHaveText("Mine now");
+    await expect(page.locator(`${BIGROW} [data-testid='borrowed-mark']`)).toHaveCount(0);
+    await expect(page.locator(`${BIGROW} [data-testid='renamed-mark']`)).toBeVisible();
+  });
+
+  test("@gate1 a passed gate offers no rename control", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.gatePosition = "gate2";
+      run.result!.gatePosition = "gate2";
+    });
+    await openGate1(page);
+    await expect(page.locator("[data-testid='rename-group']")).toHaveCount(0);
+  });
+});

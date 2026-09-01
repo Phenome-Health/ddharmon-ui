@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { Grid3x3, Quote, Sparkles } from "lucide-react";
+import { Grid3x3, Pencil, Quote, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -127,6 +127,23 @@ function GeneratedMark() {
  * of the group's CORE — a sample of it, not all of it. Same shape and position as the generated pill so
  * the eye finds the provenance in the same place on every row, different word so it reads differently.
  */
+/**
+ * The provenance pill for a name the REVIEWER gave (08-16c Task 3). Same shape and place as the other
+ * two, different word: a reviewer must be able to tell at a glance whose name they are reading.
+ */
+function RenamedMark() {
+  return (
+    <span
+      data-testid="renamed-mark"
+      title="You renamed this group. The name ddharmon generated for it is kept and is shown beneath — renaming is your annotation, not a change to what the pipeline produced."
+      className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
+    >
+      <Pencil aria-hidden="true" className="h-3 w-3" />
+      your name
+    </span>
+  );
+}
+
 function BorrowedMark() {
   return (
     <span
@@ -211,6 +228,100 @@ function BulkScopeControl({
   );
 }
 
+/**
+ * The row's name, and the way to change it (08-16c Task 3).
+ *
+ * Bhargav renames a group to be able to FIND IT AGAIN, so the rename is a reviewer annotation and is
+ * marked as one — it never overwrites `concept`. The generated name stays on the run result and is shown
+ * beneath the reviewer's, which is what makes "the original remains recoverable" visible rather than
+ * merely true in the artifact store.
+ *
+ * EDIT IN PLACE, COMMIT ON BLUR OR ENTER, ABANDON ON ESCAPE. The draft is local state — the only place in
+ * this screen where that is correct, because it is an uncommitted keystroke buffer rather than a decision;
+ * the moment it commits it goes through the decision hook like everything else, and what the row RENDERS
+ * is always read back from the persisted decisions.
+ */
+function GroupTitle({
+  group,
+  label,
+  readOnly,
+  onRename,
+}: {
+  group: ConceptGroup;
+  label: ReturnType<typeof groupLabel>;
+  readOnly: boolean;
+  onRename: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const generated = groupLabel(group).text;
+
+  if (editing) {
+    return (
+      <span className="flex min-w-0 items-center gap-2">
+        <input
+          data-testid="rename-input"
+          autoFocus
+          value={draft}
+          aria-label={`Rename ${label.text}`}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              onRename(draft);
+              setEditing(false);
+            } else if (e.key === "Escape") {
+              setEditing(false);
+            }
+          }}
+          onBlur={() => {
+            onRename(draft);
+            setEditing(false);
+          }}
+          className="min-w-0 flex-1 rounded border border-rule-control-on-raised bg-surface-raised px-2 py-0.5 text-sm text-on-raised"
+        />
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      {/* `truncate` keeps a long judge sentence from breaking the row; the full text stays reachable
+          through the title attribute, so nothing is lost — only folded. */}
+      <span className="truncate" data-label-source={label.source} title={label.text}>
+        {label.text}
+      </span>
+      {label.source === "reviewer" && <RenamedMark />}
+      {label.source === "generated" && <GeneratedMark />}
+      {label.source === "judge" && <BorrowedMark />}
+      {/* `source === "none"` carries NO mark on purpose: "generated" beside "Unnamed group" would
+          claim the pipeline produced that string, which it did not. */}
+      {label.source === "reviewer" && (
+        <span data-testid="generated-name-kept" className="truncate text-xs text-on-raised-muted">
+          ddharmon called it {generated}
+        </span>
+      )}
+      {!readOnly && (
+        <button
+          type="button"
+          data-testid="rename-group"
+          aria-label={`Rename ${label.text}`}
+          title="Rename this group"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDraft(label.source === "reviewer" ? label.text : "");
+            setEditing(true);
+          }}
+          className="shrink-0 rounded p-1 text-on-raised-muted hover:text-accent-on-raised"
+        >
+          <Pencil aria-hidden="true" className="h-3 w-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
 function GroupRow({
   group,
   allCohorts,
@@ -220,6 +331,8 @@ function GroupRow({
   onScopeChange,
   changed,
   readOnly,
+  renamedTo,
+  onRename,
   onDropMember,
   children,
 }: {
@@ -232,26 +345,24 @@ function GroupRow({
   onScopeChange: (inScope: boolean) => void;
   changed: boolean;
   readOnly: boolean;
+  /** The reviewer's own name for this group, if any (08-16c Task 3). */
+  renamedTo?: string;
+  onRename: (next: string) => void;
   onDropMember: (memberId: string) => void;
   children: React.ReactNode;
 }) {
   const judged = group.coherence !== "not_judged";
-  const label = groupLabel(group);
+  const label = groupLabel(group, renamedTo);
   return (
     <LedgerRow
       rowId={group.groupId}
       title={
-        <span className="flex min-w-0 items-center gap-2">
-          {/* `truncate` keeps a long judge sentence from breaking the row; the full text stays reachable
-              through the title attribute, so nothing is lost — only folded. */}
-          <span className="truncate" data-label-source={label.source} title={label.text}>
-            {label.text}
-          </span>
-          {label.source === "generated" && <GeneratedMark />}
-          {label.source === "judge" && <BorrowedMark />}
-          {/* `source === "none"` carries NO mark on purpose: "generated" beside "Unnamed group" would
-              claim the pipeline produced that string, which it did not. */}
-        </span>
+        <GroupTitle
+          group={group}
+          label={label}
+          readOnly={readOnly}
+          onRename={onRename}
+        />
       }
       subtitle={
         <span data-testid="row-provenance" className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -801,6 +912,38 @@ export default function Gate1Page() {
   const frozen = isGatePast("gate1", (jobState?.gatePosition ?? null) as GatePosition | null);
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned, frozen });
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned, frozen });
+  const renames = useGateDecisions(jobId, "gate1_rename", { pinned, frozen });
+  /** The reviewer's own name for a group, or undefined. Read straight off the persisted decisions. */
+  const renamedOf = (groupId: string): string | undefined => {
+    const chosen = renames.decisions[groupId]?.chosen;
+    return typeof chosen === "string" && chosen.trim() ? chosen : undefined;
+  };
+  /**
+   * Record a rename, or CLEAR it to restore the generated name.
+   *
+   * Follows `gate1_regroup` exactly — same hook, same kind registry, same persistence path. A new decision
+   * kind that invented its own route is how the two halves drift apart. `alternatives` carries the
+   * pipeline's own label beside the reviewer's, so the original is recoverable from the decision record
+   * itself and Gate 4's export can show both.
+   */
+  async function onRename(group: ConceptGroup, next: string) {
+    const trimmed = next.trim();
+    const generated = groupLabel(group).text;
+    try {
+      if (!trimmed || trimmed === generated) {
+        // An empty or whitespace-only rename is REFUSED as a rename and read as "undo it" — restoring the
+        // generated name rather than producing a nameless group.
+        if (renamedOf(group.groupId)) await renames.clear({ groupId: group.groupId });
+        return;
+      }
+      await renames.write(
+        { groupId: group.groupId },
+        { chosen: trimmed, alternatives: [generated, trimmed], extra: { generatedName: generated } },
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not rename this group");
+    }
+  }
 
   // What Gate 2 is forecast to cost for THIS run, divided across its rows. `assign` runs once per
   // post-split group, so the row count is the call count and every row buys the same call.
@@ -826,7 +969,8 @@ export default function Gate1Page() {
     }
     return byGroup;
   }, [regroups.decisions]);
-  const isChanged = (groupId: string) => groupId in scope.decisions || touchedByRegroup.has(groupId);
+  const isChanged = (groupId: string) =>
+    groupId in scope.decisions || groupId in renames.decisions || touchedByRegroup.has(groupId);
   const hasScopeDecision = (groupId: string) => groupId in scope.decisions;
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -986,16 +1130,20 @@ export default function Gate1Page() {
   };
   // Searched across the WHOLE corpus, not the visible bucket: "no cohort in this run measures gait speed"
   // is a claim about the run, and deriving it from a filtered view would make it a claim about the filter.
-  const search = useMemo(() => (terms && terms.length > 0 ? matchTerms(groups, terms) : null), [groups, terms]);
+  const search = useMemo(
+    () => (terms && terms.length > 0 ? matchTerms(groups, terms, renamedOf) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groups, terms, renames.decisions],
+  );
 
   const visible = useMemo(() => {
     let rows = buckets[bucket];
     if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
     rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
-    return sortGroupsByColumn(rows, colSort);
+    return sortGroupsByColumn(rows, colSort, renamedOf);
     // `isChanged`/`isInScope` close over the decision maps, which is what the two entries below track.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buckets, bucket, search, filters, colSort, scope.decisions, touchedByRegroup]);
+  }, [buckets, bucket, search, filters, colSort, scope.decisions, touchedByRegroup, renames.decisions]);
 
   /**
    * Apply a bulk scope change to the VISIBLE rows, one request at a time.
@@ -1442,6 +1590,8 @@ export default function Gate1Page() {
               inScope={isInScope(g.groupId)}
               changed={isChanged(g.groupId)}
               readOnly={frozen}
+              renamedTo={renamedOf(g.groupId)}
+              onRename={(next) => void onRename(g, next)}
               onDropMember={(memberId) => void moveMember(memberId, g.groupId)}
               onScopeChange={(next) =>
                 void scope.write(

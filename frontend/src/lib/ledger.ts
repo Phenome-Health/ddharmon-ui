@@ -230,15 +230,18 @@ export function applyFilters(
  * exactly why the finding's copy says "either the clustering never formed such a group, or no cohort in
  * this run measures it" rather than asserting the second.
  */
-export function searchableText(group: ConceptGroup): string {
+export function searchableText(group: ConceptGroup, renamedTo?: string | null): string {
   // A BORROWED LABEL IS SEARCHABLE, a hidden one is not (08-16c Task 1). The search tells the reviewer it
   // matches the text of each group, so the words they can SEE on a row have to be among them — otherwise
   // typing a group's own visible label fails to find it. The judge sentence joins only when it is the
   // label; on a group that has a generated name the summary is not on screen, and matching invisible text
   // would break the same promise from the other side.
-  const label = groupLabel(group);
-  const borrowed = label.source === "judge" ? label.text : "";
-  return [group.concept, borrowed, group.idealCde, ...group.memberVariableNames].join(" ").toLowerCase();
+  const label = groupLabel(group, renamedTo);
+  // A borrowed OR reviewer-given label is searchable, for the same reason: the words on screen must be
+  // findable. The generated name stays searchable too even when a rename hides it — a reviewer who
+  // renamed a group has not forgotten what the pipeline called it, and may well search for that.
+  const shown = label.source === "judge" || label.source === "reviewer" ? label.text : "";
+  return [group.concept, shown, group.idealCde, ...group.memberVariableNames].join(" ").toLowerCase();
 }
 
 /** Word-ish tokens, so "BMI (kg/m²)" and "bmi" meet. */
@@ -285,10 +288,15 @@ export interface TermMatches {
   missingTokens: Record<string, string[]>;
 }
 
-export function matchTerms(groups: readonly ConceptGroup[], terms: readonly string[]): TermMatches {
+export function matchTerms(
+  groups: readonly ConceptGroup[],
+  terms: readonly string[],
+  /** The reviewer's name for a group, so a renamed group is findable by the name they gave it. */
+  renamedOf?: (groupId: string) => string | undefined,
+): TermMatches {
   // Both forms kept: the Set answers an exact hit in one step, and the list is what a prefix scan needs.
   const haystacks = groups.map((g) => {
-    const list = tokens(searchableText(g));
+    const list = tokens(searchableText(g, renamedOf?.(g.groupId)));
     return { id: g.groupId, exact: new Set(list), list };
   });
   /** Does any word in this group BEGIN with `w`? */
@@ -393,8 +401,8 @@ export function cohortRoster(
   return [...new Set(groups.flatMap((g) => g.cohorts ?? []))].sort();
 }
 
-/** Where a group's displayed label came from — the distinction Task 1 exists to keep visible. */
-export type GroupLabelSource = "generated" | "judge" | "none";
+/** Where a group's displayed label came from — the distinction Tasks 1 and 3 exist to keep visible. */
+export type GroupLabelSource = "reviewer" | "generated" | "judge" | "none";
 
 /**
  * The label a group's row shows, and — inseparably — WHERE IT CAME FROM (08-16c Task 1).
@@ -415,7 +423,16 @@ export type GroupLabelSource = "generated" | "judge" | "none";
  * `not_judged` case is excluded explicitly rather than falling out of the emptiness check — the two
  * reach the same label by different routes and collapsing them would hide that.
  */
-export function groupLabel(group: ConceptGroup): { text: string; source: GroupLabelSource } {
+export function groupLabel(
+  group: ConceptGroup,
+  /** The reviewer's own name for this group, if they have given it one (08-16c Task 3). */
+  renamedTo?: string | null,
+): { text: string; source: GroupLabelSource } {
+  // THE REVIEWER'S NAME OUTRANKS EVERYTHING, including a generated one — that is the whole point of
+  // renaming: they are naming it to find it again. It does not overwrite `concept`; the generated name
+  // stays on the run result and is recoverable beside this one.
+  const renamed = (renamedTo ?? "").trim();
+  if (renamed) return { text: renamed, source: "reviewer" };
   if (group.concept) return { text: group.concept, source: "generated" };
   const judged = group.coherence !== "not_judged";
   const summary = (group.coherenceSummary ?? "").trim();
@@ -507,13 +524,15 @@ export type LedgerSortKey = "concept" | "verdict" | "cohorts" | "vars";
 export function sortGroupsByColumn(
   groups: readonly ConceptGroup[],
   sort: ColumnSort<LedgerSortKey> | null,
+  /** The reviewer's name for a group, so the Concept column sorts by what is ON SCREEN (08-16c Task 3). */
+  renamedOf?: (groupId: string) => string | undefined,
 ): ConceptGroup[] {
   if (!sort) return sortGroups(groups);
   const sign = sort.dir === "asc" ? 1 : -1;
   const value = (g: ConceptGroup): string | number => {
     switch (sort.key) {
       case "concept": {
-        const l = groupLabel(g);
+        const l = groupLabel(g, renamedOf?.(g.groupId));
         // An unnamed group has no label to compare; push it to the end rather than to the middle.
         return l.source === "none" ? "￿" : l.text.toLowerCase();
       }
