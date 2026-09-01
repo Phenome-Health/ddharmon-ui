@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   COHERENCE_ORDER,
   cohortRoster,
+  groupLabel,
+  searchableText,
   compareGroups,
   isFlagged,
   matchTerms,
@@ -1695,5 +1697,97 @@ test.describe("gate1 cohort roster", () => {
 
   test("@gate1 groups with no cohorts at all yield an empty roster rather than a crash", () => {
     expect(cohortRoster([], [{ cohorts: [] }, {}])).toEqual([]);
+  });
+});
+
+/**
+ * An unnamed group borrows the judge's sentence — honestly labelled (08-16c Task 1).
+ *
+ * THE HONESTY CONSTRAINT IS THE POINT. `coherenceSummary` is described on the wire as the judge's theme
+ * sentence for the group's CORE — a medoid sample, not the whole group — so it may be shown, must be
+ * marked as borrowed, and must never be written into `concept` as though the pipeline had named the
+ * group. `""` when not judged is a THIRD state, distinct from "judged and said nothing".
+ */
+test.describe("gate1 group label", () => {
+  const base = { concept: "", coherence: "single", coherenceSummary: "", idealCde: "", memberVariableNames: [] } as never;
+  const g = (over: Record<string, unknown>) => ({ ...(base as object), ...over }) as never;
+
+  test("@gate1 a generated name is the label and is still marked generated", () => {
+    expect(groupLabel(g({ concept: "Systolic blood pressure" }))).toEqual({
+      text: "Systolic blood pressure",
+      source: "generated",
+    });
+  });
+
+  test("@gate1 an unnamed but JUDGED group shows the judge's sentence, marked as the judge's", () => {
+    expect(groupLabel(g({ concept: "", coherence: "single", coherenceSummary: "Cigarette smoking history" })))
+      .toEqual({ text: "Cigarette smoking history", source: "judge" });
+  });
+
+  test("@gate1 a generated name always wins — the summary never overrides a produced name", () => {
+    expect(groupLabel(g({ concept: "Smoking status", coherenceSummary: "Cigarette smoking history" })).source)
+      .toBe("generated");
+  });
+
+  /** The third state. A group that was never judged has no sentence to lend, and its `""` is not a verdict. */
+  test("@gate1 an UNJUDGED group is never made to borrow, even if a summary string is present", () => {
+    expect(groupLabel(g({ concept: "", coherence: "not_judged", coherenceSummary: "leftover text" })))
+      .toEqual({ text: "Unnamed group", source: "none" });
+  });
+
+  test("@gate1 a judged group whose summary is empty reads as unnamed rather than blank", () => {
+    const out = groupLabel(g({ concept: "", coherence: "single", coherenceSummary: "   " }));
+    expect(out).toEqual({ text: "Unnamed group", source: "none" });
+    expect(out.text).not.toBe("");
+  });
+
+  test("@gate1 a borrowed label is searchable; a summary that is NOT the label is not", () => {
+    // Visible text must be findable...
+    expect(searchableText(g({ concept: "", coherence: "single", coherenceSummary: "Cigarette smoking" })))
+      .toContain("cigarette smoking");
+    // ...and text that is not on screen must not be, or the search matches what the reviewer cannot see.
+    expect(searchableText(g({ concept: "Smoking status", coherenceSummary: "Cigarette smoking" })))
+      .not.toContain("cigarette");
+  });
+
+  test("@gate1 the row marks a borrowed label differently from a generated one", async ({ page }) => {
+    // Target a CROSS-COHORT group and locate its row by id: the ledger sorts (verdict, breadth, size, id)
+    // and opens on the cross-cohort bucket, so `conceptGroups[0]` is neither the first row on screen nor
+    // necessarily rendered at all.
+    let id = "";
+    await serveRun(page, (run) => {
+      const target = run.result!.conceptGroups!.find((x) => x.crossCohort) ?? run.result!.conceptGroups![0];
+      id = target.groupId;
+      target.concept = "";
+      target.coherence = "single";
+      target.coherenceSummary = "Self-reported cigarette smoking across the cohorts";
+    });
+    await openGate1(page);
+    const row = page.locator(`[data-testid='ledger-row'][data-row-id="${id}"]`);
+    await expect(row).toBeVisible();
+    // The sentence is shown, attributed to the judge, and NOT dressed as a generated name.
+    await expect(row.locator("[data-label-source='judge']")).toContainText("Self-reported cigarette smoking");
+    await expect(row.locator("[data-testid='borrowed-mark']")).toBeVisible();
+    await expect(row.locator("[data-testid='generated-mark']")).toHaveCount(0);
+    // The full sentence stays reachable even though the line is truncated.
+    expect(await row.locator("[data-label-source='judge']").getAttribute("title"))
+      .toBe("Self-reported cigarette smoking across the cohorts");
+  });
+
+  test("@gate1 an unnamed, unjudged row carries NO provenance mark at all", async ({ page }) => {
+    let id = "";
+    await serveRun(page, (run) => {
+      const target = run.result!.conceptGroups!.find((x) => x.crossCohort) ?? run.result!.conceptGroups![0];
+      id = target.groupId;
+      target.concept = "";
+      target.coherence = "not_judged";
+      target.coherenceSummary = "";
+    });
+    await openGate1(page);
+    const row = page.locator(`[data-testid='ledger-row'][data-row-id="${id}"]`);
+    await expect(row).toBeVisible();
+    await expect(row.locator("[data-label-source='none']")).toContainText("Unnamed group");
+    await expect(row.locator("[data-testid='generated-mark']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='borrowed-mark']")).toHaveCount(0);
   });
 });

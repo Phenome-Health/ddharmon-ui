@@ -230,7 +230,14 @@ export function applyFilters(
  * this run measures it" rather than asserting the second.
  */
 export function searchableText(group: ConceptGroup): string {
-  return [group.concept, group.idealCde, ...group.memberVariableNames].join(" ").toLowerCase();
+  // A BORROWED LABEL IS SEARCHABLE, a hidden one is not (08-16c Task 1). The search tells the reviewer it
+  // matches the text of each group, so the words they can SEE on a row have to be among them — otherwise
+  // typing a group's own visible label fails to find it. The judge sentence joins only when it is the
+  // label; on a group that has a generated name the summary is not on screen, and matching invisible text
+  // would break the same promise from the other side.
+  const label = groupLabel(group);
+  const borrowed = label.source === "judge" ? label.text : "";
+  return [group.concept, borrowed, group.idealCde, ...group.memberVariableNames].join(" ").toLowerCase();
 }
 
 /** Word-ish tokens, so "BMI (kg/m²)" and "bmi" meet. */
@@ -383,4 +390,34 @@ export function cohortRoster(
 ): string[] {
   if (summaryCohorts && summaryCohorts.length > 0) return [...summaryCohorts];
   return [...new Set(groups.flatMap((g) => g.cohorts ?? []))].sort();
+}
+
+/** Where a group's displayed label came from — the distinction Task 1 exists to keep visible. */
+export type GroupLabelSource = "generated" | "judge" | "none";
+
+/**
+ * The label a group's row shows, and — inseparably — WHERE IT CAME FROM (08-16c Task 1).
+ *
+ * Bhargav asked for this: *"if we have a summary from the judge as to what's in the group, can't we make
+ * it the group name instead of leaving it unnamed?"* The data is already in the browser —
+ * `coherenceSummary` rides the wire from core's `coherence_summary` — so this is a labelling decision,
+ * not a retrieval one.
+ *
+ * THE SOURCE IS RETURNED, NOT INFERRED BY THE CALLER, because the honesty constraint is the whole
+ * difficulty. `coherenceSummary` is the judge's theme sentence for the group's CORE — a medoid sample,
+ * not the whole group — so presenting it as the name the pipeline generated would be a derived value
+ * passing as a produced one, which this phase has refused repeatedly. The caller gets the text and the
+ * provenance together so it cannot render one without the other, and nothing here writes into `concept`.
+ *
+ * THREE STATES, NOT TWO. `coherenceSummary` is `""` when the group was never judged, which is distinct
+ * from "judged, and the judge said nothing". Only a JUDGED group can lend its sentence, so the
+ * `not_judged` case is excluded explicitly rather than falling out of the emptiness check — the two
+ * reach the same label by different routes and collapsing them would hide that.
+ */
+export function groupLabel(group: ConceptGroup): { text: string; source: GroupLabelSource } {
+  if (group.concept) return { text: group.concept, source: "generated" };
+  const judged = group.coherence !== "not_judged";
+  const summary = (group.coherenceSummary ?? "").trim();
+  if (judged && summary) return { text: summary, source: "judge" };
+  return { text: "Unnamed group", source: "none" };
 }

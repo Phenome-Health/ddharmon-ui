@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { Grid3x3, Sparkles } from "lucide-react";
+import { Grid3x3, Quote, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -30,6 +30,7 @@ import {
   applyFilters,
   activeFilterCount,
   cohortRoster,
+  groupLabel,
   effectiveMembers,
   isFlagged,
   readjudicationRequest,
@@ -111,6 +112,27 @@ function GeneratedMark() {
   );
 }
 
+/**
+ * The counterpart to {@link GeneratedMark} for a label the group did NOT produce (08-16c Task 1).
+ *
+ * A reviewer must never mistake the two. "generated" says ddharmon wrote this name FROM the group; this
+ * one says the group has no name and what is standing in its place is the coherence judge's description
+ * of the group's CORE — a sample of it, not all of it. Same shape and position as the generated pill so
+ * the eye finds the provenance in the same place on every row, different word so it reads differently.
+ */
+function BorrowedMark() {
+  return (
+    <span
+      data-testid="borrowed-mark"
+      title="This group has no generated name. The text shown is the coherence judge's description of the group's CORE — a sample of its members, not the whole group — borrowed so the row can be identified. It is not a name ddharmon produced, and no catalog element has been chosen."
+      className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
+    >
+      <Quote aria-hidden="true" className="h-3 w-3" />
+      judge&rsquo;s summary
+    </span>
+  );
+}
+
 function GroupRow({
   group,
   allCohorts,
@@ -134,15 +156,21 @@ function GroupRow({
   children: React.ReactNode;
 }) {
   const judged = group.coherence !== "not_judged";
+  const label = groupLabel(group);
   return (
     <LedgerRow
       rowId={group.groupId}
       title={
         <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate" title={group.concept}>
-            {group.concept || "Unnamed group"}
+          {/* `truncate` keeps a long judge sentence from breaking the row; the full text stays reachable
+              through the title attribute, so nothing is lost — only folded. */}
+          <span className="truncate" data-label-source={label.source} title={label.text}>
+            {label.text}
           </span>
-          <GeneratedMark />
+          {label.source === "generated" && <GeneratedMark />}
+          {label.source === "judge" && <BorrowedMark />}
+          {/* `source === "none"` carries NO mark on purpose: "generated" beside "Unnamed group" would
+              claim the pipeline produced that string, which it did not. */}
         </span>
       }
       subtitle={
