@@ -37,6 +37,11 @@ import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { buildRunIssueUrl } from "@/lib/links";
 import { isParked } from "@/lib/run-state";
+// Both LIFTED OUT OF THIS FILE by 08-14h Task 1, where they were module-local and therefore reachable only
+// from a screen 08-14f stopped routing anyone through. The gate chrome now renders the same readout from
+// the same code rather than growing a second answer to "how far has this run got".
+import { phasePercent } from "@/lib/run-progress";
+import { RunTimeline } from "@/components/gate/RunProgress";
 import { resumeGateOf } from "@/lib/gate-routes";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { DemoBanner } from "@/components/demo-banner";
@@ -55,9 +60,6 @@ import {
   type UnassignedField,
 } from "@/types";
 
-// Known phase ordering for the progress bar. The phase LABEL is shown verbatim from the stream (so a new
-// pipeline phase still displays); only the percent uses this ordering, falling back gracefully if unknown.
-const PHASE_ORDER = ["loading", "embedding", "clustering", "generating", "splitting", "assigning", "specs"];
 const VERDICT_BAR: Record<string, string> = {
   adopt: "bg-success",
   refine: "bg-warning",
@@ -109,59 +111,6 @@ function ReproducibilityInfo() {
         </p>
       </PopoverContent>
     </Popover>
-  );
-}
-
-function phasePercent(phase: string, completed: number, total: number): number {
-  if (phase === "complete" || phase === "prepared") return 100;
-  const idx = PHASE_ORDER.indexOf(phase);
-  if (idx < 0) return 5;
-  const span = 100 / PHASE_ORDER.length;
-  const sub = total > 0 ? (completed / total) * span : 0;
-  return Math.min(99, Math.round(idx * span + sub));
-}
-
-const _TERMINAL_PHASES = ["complete", "error", "prepared"];
-
-/** Verbose per-stage timeline for a live run, built from the backend `phaseStartedAt` stream: each reached
- * stage with how long it ran. A stage ends when the next reached stage starts; the current (last) stage runs
- * to `now` (ticking) or to the terminal timestamp once done. Hidden gracefully when no timings are streamed
- * (e.g. a DB-hydrated historical run). */
-function RunTimeline({
-  phaseStartedAt,
-  currentPhase,
-  now,
-}: {
-  phaseStartedAt?: Record<string, number>;
-  currentPhase: string;
-  now: number;
-}) {
-  const timings = phaseStartedAt ?? {};
-  const seq = Object.keys(timings)
-    .filter((p) => !_TERMINAL_PHASES.includes(p))
-    .sort((a, b) => timings[a] - timings[b]);
-  if (!seq.length) return null;
-  const terminalAt = timings.complete ?? timings.error ?? null;
-  const endOf = (i: number): number => (i + 1 < seq.length ? timings[seq[i + 1]] : (terminalAt ?? now));
-  return (
-    <div className="space-y-1 border-t border-rule-on-raised pt-2 text-xs">
-      {seq.map((p, i) => {
-        const active = p === currentPhase && terminalAt === null;
-        return (
-          <div key={p} className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 capitalize text-on-raised">
-              {active ? (
-                <Loader2 className="h-3 w-3 animate-spin text-accent-on-raised" />
-              ) : (
-                <Check className="h-3 w-3 text-success" />
-              )}
-              {p}
-            </span>
-            <span className="tabular-nums text-on-raised-muted">{formatDuration(Math.max(0, endOf(i) - timings[p]))}</span>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
