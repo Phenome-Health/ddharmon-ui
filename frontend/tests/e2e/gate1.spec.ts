@@ -286,7 +286,13 @@ test.describe("gate1 ledger", () => {
     await row.getByRole("button", { name: /^Expand /i }).click();
     await expect(row.locator("[data-testid='not-available']")).toBeVisible();
     await expect(row.locator("[data-testid='member-drop-zone']")).toHaveCount(0);
-    await expect(row.locator("[data-testid='member-chip']").first()).toHaveAttribute("draggable", "false");
+    // Since 08-14h the membership IS the evidence grid, so the withdrawal is expressed by that grid
+    // carrying no drag affordance at all — no draggable rows, no drop destination, no keyboard remove.
+    // A stronger form of the same rule than the un-draggable chip it replaces.
+    await expect(row.locator("[data-testid='source-rows']")).toBeVisible();
+    await expect(row.locator("[data-testid='member-row']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='member-remove']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(0);
   });
 });
 
@@ -565,9 +571,11 @@ test.describe("gate1 expanded row", () => {
     const group = fixtureGroups().find((g) => g.groupId === BIG)!;
     const row = await expandRow(page, BIG);
     // T-08-89: a regroup verb over a partial sample would silently discard the members it never showed,
-    // so the expanded row reads the uncapped list rather than the collapsed row's cap.
-    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(group.nMembers);
-    await expect(row.locator("[data-testid='member-chip']").first()).toHaveAttribute("draggable", "true");
+    // so the expanded row reads the uncapped list rather than the collapsed row's cap. RE-POINTED by
+    // 08-14h from `member-chip` to `member-row`: the tiles merged into the grid, so the grid row is now
+    // the one representation of a variable. Same claim, same group, same count.
+    await expect(row.locator("[data-testid='member-row']")).toHaveCount(group.nMembers);
+    await expect(row.locator("[data-testid='member-row']").first()).toHaveAttribute("draggable", "true");
   });
 
   test("@gate1 a single-member group's one chip is still draggable", async ({ page }) => {
@@ -576,14 +584,14 @@ test.describe("gate1 expanded row", () => {
     // Single-member groups are single-cohort by construction, so they live in the other bucket.
     await page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']").click();
     const row = await expandRow(page, singles[0].groupId);
-    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(1);
-    await expect(row.locator("[data-testid='member-chip']")).toHaveAttribute("draggable", "true");
+    await expect(row.locator("[data-testid='member-row']")).toHaveCount(1);
+    await expect(row.locator("[data-testid='member-row']")).toHaveAttribute("draggable", "true");
   });
 
   test("@gate1 a move persists, survives a reload, and marks both groups as changed", async ({ page }) => {
     await openGate1(page);
     const row = await expandRow(page, BIG);
-    const chip = row.locator("[data-testid='member-chip']").first();
+    const chip = row.locator("[data-testid='member-row']").first();
     const memberId = await chip.getAttribute("data-member-id");
 
     // The no-group tray is a REAL destination with its own identifier, not a sentinel special-cased at
@@ -603,6 +611,8 @@ test.describe("gate1 expanded row", () => {
     await page.waitForLoadState("networkidle");
     const after = await expandRow(page, BIG);
     await expect(after.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__'] [data-testid='member-chip']")).toHaveCount(1);
+    // The moved variable now lives in the tray, where a chip is still the right rendering: it belongs to
+    // no group, so there is no grid for it to be a row of.
     await expect(after.locator(`[data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveAttribute(
       "data-moved",
       "true",
@@ -619,7 +629,7 @@ test.describe("gate1 expanded row", () => {
     await page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']").click();
     const row = await expandRow(page, single.groupId);
     await row
-      .locator("[data-testid='member-chip']")
+      .locator("[data-testid='member-row']")
       .first()
       .dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
 
@@ -1184,5 +1194,132 @@ test.describe("gate 1 scrolling", () => {
     const probe = await scrollProbe(page);
     expect(probe.documentMoved, "an expanded row must not make the document scrollable").toBe(0);
     expect(probe.documentScrollHeight).toBe(probe.viewportHeight);
+  });
+});
+
+/**
+ * 08-14h TASK 5 — the variable tiles merged INTO the spreadsheet rows.
+ *
+ * Bhargav, on the live run: *"the draggable var tiles + the spreadsheet style rows are redundant… have
+ * the tiles be embedded into the spreadsheet layout such that the user can drag from the row directly
+ * rather than have to look at both."* The reviewer was holding two renderings of the same variable in
+ * their head and matching them up.
+ *
+ * THE GRID SURVIVED, not the tiles: it came from `source-rows.tsx`, the production evidence layer, and it
+ * carries the metadata a coherence judgement actually needs. The tiles carried only a name.
+ */
+test.describe("gate1 the row IS the variable", () => {
+  test("@gate1 the expanded row has ONE representation of each variable, and it is the grid row", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const group = fixtureGroups().find((g) => g.groupId === BIG)!;
+    const row = await expandRow(page, BIG);
+
+    // The grid rows are the membership now — uncapped, one per pooled variable (T-08-89's rule survives).
+    await expect(row.locator("[data-testid='member-row']")).toHaveCount(group.nMembers);
+    // ...and the separate tile strip above it is GONE. Not hidden — absent.
+    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(0);
+  });
+
+  test("@gate1 a grid row is visibly and actually draggable, with a cue that needs no hover", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const first = row.locator("[data-testid='member-row']").first();
+    await expect(first).toHaveAttribute("draggable", "true");
+    await expect(first).toHaveAttribute("data-member-id", /.+/);
+    // A spreadsheet row does not look draggable by default, so the cue is a column of its own that is
+    // always rendered — never hover-only, never tooltip-only. It is the first thing in the row.
+    const cue = await first.evaluate((tr) => {
+      const cell = tr.querySelector("td");
+      const svg = cell?.querySelector("svg");
+      return { hasGlyph: !!svg, cursor: getComputedStyle(tr).cursor };
+    });
+    expect(cue.hasGlyph, "every row carries a visible drag handle").toBe(true);
+    expect(cue.cursor).toBe("grab");
+  });
+
+  test("@gate1 dragging a grid row still regroups, per-variable, and round-trips to the store", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const target = row.locator("[data-testid='member-row']").first();
+    const memberId = await target.getAttribute("data-member-id");
+    const tray = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
+
+    // THE DROP TARGET IS VISIBLE WITHOUT SCROLLING AWAY from the row being dragged — the tray sits
+    // directly below the grid, in the same expanded row.
+    await expect(tray).toBeVisible();
+    await target.dragTo(tray);
+
+    // The behaviour 08-15 built is unchanged: keyed per variable, persisted, and the row says it changed.
+    await expect(tray.locator("[data-testid='member-chip']")).toHaveCount(1);
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
+      "data-spine",
+      "changed",
+    );
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const after = await expandRow(page, BIG);
+    await expect(
+      after.locator(`[data-testid='member-drop-zone'][data-group-id='__unassigned__'] [data-member-id='${memberId}']`),
+    ).toHaveCount(1);
+  });
+
+  test("@gate1 regrouping is reachable WITHOUT a mouse", async ({ page }) => {
+    // Native HTML5 drag and drop has no keyboard equivalent, so before this merge the only way to
+    // correct an over-merged group was with a mouse. A drag with no keyboard path is a regression, not a
+    // simplification — so every row carries a real button that performs the correction this screen is for.
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const target = row.locator("[data-testid='member-row']").first();
+    const memberId = await target.getAttribute("data-member-id");
+
+    const remove = row.locator(`[data-testid='member-remove'][data-member-id='${memberId}']`);
+    await expect(remove).toBeVisible();
+    // Focusable and activated by the keyboard, and NAMED for the variable it acts on — not "remove".
+    await remove.focus();
+    await expect(remove).toBeFocused();
+    await expect(remove).toHaveAttribute("aria-label", /take .+ out of this group/i);
+    await page.keyboard.press("Enter");
+
+    const tray = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
+    await expect(tray.locator(`[data-member-id='${memberId}']`)).toHaveCount(1);
+    // Same persisted path as the drag — not a second, weaker code path.
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
+      "data-spine",
+      "changed",
+    );
+  });
+
+  test("@gate1 with no field rows on the run, the chips come back rather than the members vanishing", async ({
+    page,
+  }) => {
+    // THE FALLBACK IS LOAD-BEARING once the grid is the only membership view: a run that predates
+    // `fieldIndex` would otherwise render a group with no members at all.
+    await serveRun(page, (run) => {
+      run.result!.fieldIndex = {};
+    });
+    await openGate1(page);
+    const group = fixtureGroups().find((g) => g.groupId === BIG)!;
+    const row = await expandRow(page, BIG);
+    await expect(row.locator("[data-testid='source-rows']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='member-chip']")).toHaveCount(group.nMembers);
+    await expect(row.locator("[data-testid='member-chip']").first()).toHaveAttribute("draggable", "true");
+  });
+
+  test("@gate1 the workbench's copy of the grid gains NO drag affordance", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "../../src/pages/workbench.tsx"), "utf8");
+    // ONE grid, two callers. The workbench has no notion of regrouping and no handler to give it, so it
+    // passes no `drag` prop and renders exactly what it always did. A grid that grew a permanent drag
+    // handle would have put a dead control on a screen that cannot honour it.
+    expect(src).toMatch(/<SourceRows\b(?![^>]*\bdrag=)/);
   });
 });

@@ -19,8 +19,10 @@
 // whose row is a `ConceptGroup`. So it now takes the two things it ever read: the member ids and the
 // optional per-member detail. Both call sites pass what they hold, and there is still ONE grid — building
 // a second for Gate 1 is the duplication the audit exists to catch.
+import { GripVertical, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { MEMBER_DRAG_TYPE } from "@/components/gate/MemberChip";
 import type { FieldDetail, UIMember } from "@/types";
 
 // Bound a pathological over-merge so the grid stays a bounded widget, never a page-blowing dump. The
@@ -83,6 +85,51 @@ function buildRows(
   });
 }
 
+/**
+ * Would `SourceRows` render anything for these members?
+ *
+ * EXPORTED BECAUSE GATE 1 HAS TO KNOW (08-14h Task 5). Since the tile strip merged into this grid, the
+ * grid is the group's ONLY membership view — so when it declines to render, the caller has to put the
+ * chips back or the reviewer sees a group with no members at all. The caller cannot infer that from a
+ * component that returns null, so the question is answered here, by the same expression the component
+ * itself uses. Two copies of this test drifting apart would show an empty expanded row.
+ */
+export function hasSourceRows(
+  memberIds: string[],
+  memberDetails: UIMember[] | undefined,
+  fieldIndex: Record<string, FieldDetail>,
+): boolean {
+  const rows = buildRows(memberIds, memberDetails, fieldIndex);
+  // Ids alone are not evidence: with no `fieldIndex` and no `memberDetails` every column but the two the
+  // caller already renders as a chip would be a dash.
+  return rows.length > 0 && rows.some((r) => r.description || r.questionText || r.valueEncoding || r.units || r.dataType);
+}
+
+/**
+ * Making the grid's rows the thing a reviewer drags (08-14h Task 5).
+ *
+ * Bhargav, on the live run: *"the draggable var tiles + the spreadsheet style rows are redundant… have
+ * the tiles be embedded into the spreadsheet layout such that the user can drag from the row directly
+ * rather than have to look at both."* He is right — the reviewer was being asked to hold two renderings
+ * of the same variable in their head and match them up.
+ *
+ * THE GRID IS THE SURVIVOR because it carries the metadata a coherence judgement actually needs; the
+ * tiles carried only a name. This prop is what lets the grid take the tiles' job WITHOUT the workbench —
+ * the other call site, which has no notion of regrouping — growing a drag affordance it has no handler
+ * for. Omit it and this file behaves exactly as it did before.
+ */
+export interface SourceRowsDrag {
+  /** The group these rows belong to. Dropping a variable here moves it into that group. */
+  groupId: string;
+  /** Accessible name for the drop destination. */
+  label: string;
+  onDropMember: (memberId: string) => void;
+  /** Take one variable out of every group. The KEYBOARD path — see the button below. */
+  onRemoveMember: (memberId: string) => void;
+  /** Member ids the reviewer has already moved, so a row can say so. */
+  movedMembers: ReadonlySet<string>;
+}
+
 function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <th
@@ -116,18 +163,18 @@ export function SourceRows({
   memberIds,
   memberDetails,
   fieldIndex,
+  drag,
 }: {
   /** The group's member ids, `cohort:var`, in the order the pipeline pooled them. */
   memberIds: string[];
   /** Per-member name and embedded text, when the caller's shape carries it. */
   memberDetails?: UIMember[];
   fieldIndex: Record<string, FieldDetail>;
+  /** Present only where regrouping is offered (Gate 1). The workbench passes nothing and is unchanged. */
+  drag?: SourceRowsDrag;
 }) {
   const rows = buildRows(memberIds, memberDetails, fieldIndex);
-  // Ids alone are not evidence: with no `fieldIndex` and no `memberDetails` every column but the two the
-  // caller already renders as a chip would be a dash.
-  const hasDetail = rows.some((r) => r.description || r.questionText || r.valueEncoding || r.units || r.dataType);
-  if (!rows.length || !hasDetail) return null;
+  if (!hasSourceRows(memberIds, memberDetails, fieldIndex)) return null;
 
   const shown = rows.slice(0, ROW_CAP);
   const extra = rows.length - shown.length;
@@ -152,6 +199,28 @@ export function SourceRows({
     <div data-testid="source-rows" className="min-w-0 space-y-1.5">
       <div
         data-testid="source-rows-scroll"
+        // THE GRID IS THE GROUP'S DROP DESTINATION now that the tile strip is gone. It reads the payload
+        // on DROP rather than on dragover — the payload is not readable during dragover in every browser,
+        // so a target that inspected it there would reject legitimate drags (the rule `MemberDropZone`
+        // already records). `stopPropagation` keeps a drop landing on the innermost destination.
+        {...(drag
+          ? {
+              "data-group-id": drag.groupId,
+              role: "group",
+              "aria-label": drag.label,
+              onDragOver: (e: React.DragEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "move";
+              },
+              onDrop: (e: React.DragEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
+                if (memberId) drag.onDropMember(memberId);
+              },
+            }
+          : {})}
         className="max-h-[28rem] overflow-auto rounded-md border border-rule-on-raised"
       >
         <table className="w-full border-collapse text-xs">
@@ -159,6 +228,19 @@ export function SourceRows({
               Chromium/Firefox/Safari 16+; sticky on <th> cells silently fails under border-collapse. */}
           <thead className="sticky top-0 z-10 bg-surface-inset">
             <tr>
+              {/* THE DRAG CUE GETS ITS OWN COLUMN, ALWAYS VISIBLE. A spreadsheet row does not look
+                  draggable, and the first thing a reviewer does on this screen is try to move something —
+                  so the affordance cannot be hover-only or tooltip-only. The header cell is empty of
+                  visible text but named for assistive technology. */}
+              {/* THE ROW-ACTION COLUMN LEADS, and that placement is the point. The grid scrolls
+                  HORIZONTALLY, so anything parked at the end of a row is off-screen for a wide
+                  dictionary — which would have hidden the drag cue and put the keyboard control behind a
+                  sideways scroll. Both live at the row's start, where they are always in view. */}
+              {drag && (
+                <Th className="w-14">
+                  <span className="sr-only">Move or remove this variable</span>
+                </Th>
+              )}
               <Th className="whitespace-nowrap">Cohort</Th>
               <Th className="whitespace-nowrap">Variable</Th>
               {showDesc && <Th>Description</Th>}
@@ -171,7 +253,58 @@ export function SourceRows({
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.id} className="border-b border-rule-quiet-on-raised last:border-0 hover:bg-surface-inset">
+              <tr
+                key={r.id}
+                data-testid={drag ? "member-row" : undefined}
+                data-member-id={drag ? r.id : undefined}
+                // The moved state as DATA as well as as a colour: it is derived from a persisted
+                // decision, so a gate asserting "this correction survived a reload" has to READ it
+                // rather than eyeball a hue. Same contract `MemberChip` carries.
+                data-moved={drag ? String(drag.movedMembers.has(r.id)) : undefined}
+                draggable={drag ? true : undefined}
+                onDragStart={
+                  drag
+                    ? (e) => {
+                        e.dataTransfer.setData(MEMBER_DRAG_TYPE, r.id);
+                        e.dataTransfer.effectAllowed = "move";
+                      }
+                    : undefined
+                }
+                aria-label={drag ? `Drag ${r.name} from ${r.cohort} into another group` : undefined}
+                className={cn(
+                  "border-b border-rule-quiet-on-raised last:border-0 hover:bg-surface-inset",
+                  drag && "cursor-grab",
+                  drag && drag.movedMembers.has(r.id) && "bg-surface-inset",
+                )}
+              >
+                {drag && (
+                  <td className="whitespace-nowrap px-1 py-1.5 align-top">
+                    <span className="flex items-center gap-0.5">
+                      {/* The drag cue. ALWAYS RENDERED, never hover-only: a spreadsheet row does not look
+                          draggable, and the first thing a reviewer does here is try to move something. */}
+                      <GripVertical aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-on-raised-faint" />
+                      {/* THE KEYBOARD PATH, and it is not decoration. Native HTML5 drag and drop has NO
+                          keyboard equivalent, so before this the only way to correct an over-merged group
+                          was with a mouse — a drag with no keyboard path is a regression, not a
+                          simplification. A real button: focusable in row order, named for the variable it
+                          acts on, performing the correction this screen exists for ("this variable does
+                          not belong in this group"). Moving a variable DIRECTLY from one group into
+                          another is still drag-only, and the SUMMARY records that gap rather than
+                          implying it is covered. */}
+                      <button
+                        type="button"
+                        data-testid="member-remove"
+                        data-member-id={r.id}
+                        onClick={() => drag.onRemoveMember(r.id)}
+                        aria-label={`Take ${r.name} from ${r.cohort} out of this group`}
+                        title={`Take ${r.name} out of this group`}
+                        className="shrink-0 rounded-inner p-0.5 text-on-raised-faint hover:bg-surface-inset hover:text-on-raised"
+                      >
+                        <X aria-hidden="true" className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  </td>
+                )}
                 <td className="px-2.5 py-1.5 align-top">
                   <Badge variant="neutral" className="font-normal">
                     {r.cohort || "—"}

@@ -15,7 +15,7 @@ import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
 import { GroupingStrip } from "@/components/gate/GroupingStrip";
 import { MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } from "@/components/gate/MemberChip";
 import { NotAvailable } from "@/components/gate/NotAvailable";
-import { SourceRows } from "@/components/source-rows";
+import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { TermSearch } from "@/components/gate/TermSearch";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
@@ -296,6 +296,10 @@ function ExpandedGroup({
 }) {
   const [ignored, setIgnored] = useState(false);
   const emptied = canRegroup && members.length === 0;
+  // Does the evidence grid render for this group? If it does it IS the membership view and the tile strip
+  // is redundant; if it does not, the chips are the only thing standing between the reviewer and a group
+  // with no visible members. Asked of the same expression the grid itself uses, so the two cannot drift.
+  const gridCarriesMembers = hasSourceRows(members, undefined, fieldIndex);
 
   return (
     <>
@@ -331,7 +335,21 @@ function ExpandedGroup({
         </div>
       ) : null}
 
-      {(canRegroup ? !emptied : true) && (
+      {/*
+        THE TILE STRIP IS NOW A FALLBACK, NOT THE PRIMARY VIEW (08-14h Task 5).
+
+        Bhargav, on the live run: *"the draggable var tiles + the spreadsheet style rows are redundant…
+        have the tiles be embedded into the spreadsheet layout such that the user can drag from the row
+        directly rather than have to look at both."* The reviewer was being asked to hold two renderings
+        of the same variable in their head and match them up.
+
+        THE GRID IS THE SURVIVOR: it came from `source-rows.tsx`, the production evidence layer, and it
+        carries the metadata a coherence judgement actually needs; the tiles carried only a name. So the
+        chips render ONLY where the grid declines to — a run that predates `fieldIndex`, or one whose
+        members carry no descriptive field. Without that fallback such a group would show no members at
+        all, which is why `hasSourceRows` is asked here rather than inferred from a null render.
+      */}
+      {(canRegroup ? !emptied : true) && !gridCarriesMembers && (
         <MemberList
           groupId={group.groupId}
           label={`Variables in ${group.concept || group.groupId}`}
@@ -362,8 +380,10 @@ function ExpandedGroup({
 
       {canRegroup && (
         <p className="text-xs text-on-raised-muted">
-          Drag a variable onto another row to move it there, or onto the tray below to take it out of every
-          group. Your moves are saved as you make them.
+          Drag a {gridCarriesMembers ? "row" : "variable"} onto another group to move it there, or onto the
+          tray below to take it out of every group.
+          {gridCarriesMembers && " Without a mouse, use the × beside a row's drag handle to take that variable out of this group."}{" "}
+          Your moves are saved as you make them.
         </p>
       )}
 
@@ -412,7 +432,25 @@ function ExpandedGroup({
           this screen asks for — is this really one concept? — is made against the dictionary rows, and
           asking it from a generated name and a row of chips leaves them a screen away. Returns null when
           the run carries no field detail, in which case the chips above are the whole membership view. */}
-      <SourceRows memberIds={members} fieldIndex={fieldIndex} />
+      <SourceRows
+        memberIds={members}
+        fieldIndex={fieldIndex}
+        // ONLY WHERE A MOVE CAN BE HONOURED. `canRegroup` is false when the run recorded a capped sample
+        // of this group (T-08-89), and a drag written against a partial list would silently drop every
+        // member it never showed — so the grid stays pure evidence there, exactly as the withdrawn verb
+        // above says it does.
+        drag={
+          canRegroup
+            ? {
+                groupId: group.groupId,
+                label: `Variables in ${group.concept || group.groupId}`,
+                onDropMember: (memberId) => onMove(memberId, group.groupId),
+                onRemoveMember: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID),
+                movedMembers,
+              }
+            : undefined
+        }
+      />
 
       {/* The carve proposal, ONLY where the judge flagged an over-merge. The pipeline flags and never
           re-groups, so nothing here is applied until the reviewer acts. */}
