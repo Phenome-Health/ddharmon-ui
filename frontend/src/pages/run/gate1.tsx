@@ -29,6 +29,8 @@ import {
   NO_FILTERS,
   applyFilters,
   activeFilterCount,
+  bulkScopePlan,
+  bulkScopeState,
   cohortRoster,
   groupLabel,
   effectiveMembers,
@@ -130,6 +132,74 @@ function BorrowedMark() {
       <Quote aria-hidden="true" className="h-3 w-3" />
       judge&rsquo;s summary
     </span>
+  );
+}
+
+/**
+ * Put every VISIBLE group in or out of scope in one action (08-16c Task 7).
+ *
+ * IT NAMES ITS OWN SCOPE. "All 117" is a different promise from "all 12 in this filter", and the reviewer
+ * has to read which one before pressing, not discover it after — so the count of what will be affected is
+ * in the label, and it is the count of the rows currently on screen.
+ *
+ * IT REPORTS A REAL TRI-STATE. Claiming "all" over a partially-selected set is the same class of lie as
+ * a checkbox that submits while looking disabled.
+ *
+ * IT LOCKS WHILE IT RUNS. There is no bulk endpoint — `write`/`clear` are per-item promises — so this is
+ * N sequential requests, and `use-gate-decisions`' conflict handling is written for one decision at a
+ * time. A second bulk press landing mid-flight is exactly the half-succeeded burst that has no story here.
+ */
+function BulkScopeControl({
+  count,
+  state,
+  busy,
+  onBulk,
+}: {
+  count: number;
+  state: "all" | "none" | "some";
+  busy: boolean;
+  onBulk: (target: "in" | "out") => void;
+}) {
+  const noun = count === 1 ? "group" : "groups";
+  return (
+    <div
+      data-testid="bulk-scope"
+      data-state={state}
+      className="flex flex-wrap items-center gap-2 text-sm text-on-raised-muted"
+    >
+      <span>
+        {state === "all"
+          ? `All ${count} ${noun} shown are in scope.`
+          : state === "none"
+            ? `None of the ${count} ${noun} shown are in scope.`
+            : `Some of the ${count} ${noun} shown are in scope.`}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="bulk-scope-in"
+        disabled={busy || count === 0 || state === "all"}
+        onClick={() => onBulk("in")}
+      >
+        Put all {count} shown in scope
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="bulk-scope-out"
+        disabled={busy || count === 0 || state === "none"}
+        onClick={() => onBulk("out")}
+      >
+        Take all {count} shown out of scope
+      </Button>
+      {busy && (
+        <span role="status" data-testid="bulk-scope-busy">
+          Saving…
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -649,6 +719,8 @@ export default function Gate1Page() {
     return byGroup;
   }, [regroups.decisions]);
   const isChanged = (groupId: string) => groupId in scope.decisions || touchedByRegroup.has(groupId);
+  const hasScopeDecision = (groupId: string) => groupId in scope.decisions;
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   /**
    * The reviewer's moves, as `memberId -> destination group id`, read straight off the persisted decisions.
@@ -816,6 +888,34 @@ export default function Gate1Page() {
     // `isChanged`/`isInScope` close over the decision maps, which is what the two entries below track.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buckets, bucket, search, filters, sort, scope.decisions, touchedByRegroup]);
+
+  /**
+   * Apply a bulk scope change to the VISIBLE rows, one request at a time.
+   *
+   * SEQUENTIAL, NOT PARALLEL, and deliberately. N is the row count, `write`/`clear` are per-item promises,
+   * and `use-gate-decisions`' conflict surface is written for a single decision — so an unbounded burst
+   * that half-succeeds is precisely the state it has no way to report. A failure part-way through stops
+   * the run and leaves the PERSISTED decisions as the only source of truth; nothing here paints a
+   * checkbox optimistically, because `isInScope` reads `scope.decisions` and always has.
+   */
+  async function onBulkScope(target: "in" | "out") {
+    const ids = visible.map((g) => g.groupId);
+    const plan = bulkScopePlan(ids, target, isInScope, hasScopeDecision);
+    if (plan.clear.length === 0 && plan.write.length === 0) return;
+    setBulkBusy(true);
+    try {
+      for (const id of plan.clear) await scope.clear({ groupId: id });
+      for (const id of plan.write) {
+        await scope.write({ groupId: id }, { chosen: OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS });
+      }
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : "Could not change the scope of every group — some may be unchanged",
+      );
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   // Nothing in the bucket matched — say which of the two reasons it was. A filter the reviewer set is
   // their own doing and is cleared; a search term that matched nothing is a finding about the corpus and
@@ -991,6 +1091,14 @@ export default function Gate1Page() {
             onSearch={(next) => setTerms(next.length > 0 ? next : null)}
             noMatches={search?.noMatches ?? []}
             missingTokens={search?.missingTokens ?? {}}
+          />
+          {/* Under the toolbar and the search, because "all" means the rows those two have left on
+              screen — the control has to sit downstream of the things that decide what "all" is. */}
+          <BulkScopeControl
+            count={visible.length}
+            state={bulkScopeState(visible.map((g) => g.groupId), isInScope)}
+            busy={bulkBusy}
+            onBulk={(t) => void onBulkScope(t)}
           />
         </>
       )}

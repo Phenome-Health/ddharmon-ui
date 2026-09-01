@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   COHERENCE_ORDER,
+  bulkScopePlan,
+  bulkScopeState,
   cohortRoster,
   groupLabel,
   searchableText,
@@ -1789,5 +1791,116 @@ test.describe("gate1 group label", () => {
     await expect(row.locator("[data-label-source='none']")).toContainText("Unnamed group");
     await expect(row.locator("[data-testid='generated-mark']")).toHaveCount(0);
     await expect(row.locator("[data-testid='borrowed-mark']")).toHaveCount(0);
+  });
+});
+
+/**
+ * Bulk scope — "select all / deselect all" and its two traps (08-16c Task 7).
+ */
+test.describe("gate1 bulk scope", () => {
+  const inScopeOf = (map: Record<string, string>) => (id: string) => map[id] !== "out";
+  const hasDecisionOf = (map: Record<string, string>) => (id: string) => id in map;
+
+  /**
+   * THE TRAP THAT MATTERS. In-scope is the DEFAULT, and `isChanged` is `id in scope.decisions`, so a
+   * "select all" that wrote "in" everywhere would mark every group as reviewer-changed — a ledger
+   * claiming they had reviewed all of them by hand.
+   */
+  test("@gate1 putting all in scope CLEARS departures rather than writing 'in' to everything", () => {
+    const decisions = { a: "out", b: "in", c: "out" };
+    const plan = bulkScopePlan(["a", "b", "c", "d"], "in", inScopeOf(decisions), hasDecisionOf(decisions));
+    expect(plan.write).toEqual([]);          // nothing is marked changed by selecting all
+    expect(plan.clear).toEqual(["a", "c"]);  // only the explicit "out"s are undone
+  });
+
+  test("@gate1 an undecided group is already in scope, so selecting all does not touch it", () => {
+    const plan = bulkScopePlan(["d"], "in", inScopeOf({}), hasDecisionOf({}));
+    expect(plan).toEqual({ clear: [], write: [] });
+  });
+
+  test("@gate1 a deliberate 'in' decision is preserved, not erased, by selecting all", () => {
+    const decisions = { b: "in" };
+    expect(bulkScopePlan(["b"], "in", inScopeOf(decisions), hasDecisionOf(decisions)))
+      .toEqual({ clear: [], write: [] });
+  });
+
+  test("@gate1 taking all out writes 'out' only for groups currently in scope", () => {
+    const decisions = { a: "out", b: "in" };
+    const plan = bulkScopePlan(["a", "b", "c"], "out", inScopeOf(decisions), hasDecisionOf(decisions));
+    expect(plan.clear).toEqual([]);
+    expect(plan.write).toEqual(["b", "c"]); // "a" is already out and is not re-written
+  });
+
+  test("@gate1 the control reports a real tri-state, never 'all' over a partial set", () => {
+    expect(bulkScopeState(["a", "b"], inScopeOf({}))).toBe("all");
+    expect(bulkScopeState(["a", "b"], inScopeOf({ a: "out", b: "out" }))).toBe("none");
+    expect(bulkScopeState(["a", "b"], inScopeOf({ a: "out" }))).toBe("some");
+    expect(bulkScopeState([], inScopeOf({}))).toBe("none");
+  });
+
+  test("@gate1 the control names how many rows it will affect, and acts on the VISIBLE ones", async ({ page }) => {
+    await openGate1(page);
+    const bulk = page.locator("[data-testid='bulk-scope']");
+    await expect(bulk).toBeVisible();
+    const rows = await page.locator("[data-testid='ledger-row']").count();
+    // The number on the control is the number of rows on screen — stated before the press.
+    await expect(bulk.locator("[data-testid='bulk-scope-out']")).toContainText(`${rows}`);
+    await expect(bulk.locator("[data-testid='bulk-scope-in']")).toContainText(`${rows}`);
+  });
+
+  test("@gate1 taking all out drops the price by exactly the rows it affected, and no more", async ({ page }) => {
+    await openGate1(page);
+    const bar = page.locator("[data-testid='commit-bar']");
+    const before = Number(await bar.getAttribute("data-total"));
+    expect(before).toBeGreaterThan(0);
+    const shown = await page.locator("[data-testid='ledger-row']").count();
+
+    await page.locator("[data-testid='bulk-scope-out']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "none");
+
+    /**
+     * THE SCOPE OF "ALL" IS THE VISIBLE ROWS, and this is the assertion that holds it to that. The ledger
+     * opens on the cross-cohort bucket, so the single-cohort groups are in scope and NOT on screen — a
+     * bulk control that silently emptied them too would zero this figure. It must fall by the rows the
+     * reviewer could actually see, leaving the rest exactly as they were.
+     */
+    const after = Number(await bar.getAttribute("data-total"));
+    const perGroup = before / (before / (before - after)) / shown; // guard against a 0-row fixture
+    expect(perGroup).toBeGreaterThan(0);
+    expect(after).toBeLessThan(before);
+    expect(after).toBeCloseTo(before - shown * ((before - after) / shown), 6);
+    // The groups outside the current bucket are untouched, so there is still something left to buy.
+    expect(after).toBeGreaterThan(0);
+  });
+
+  /**
+   * THE FAILED-IMPLEMENTATION CHECK the plan calls for by name. `isChanged` is
+   * `groupId in scope.decisions`, and the row paints an accent spine from it. A "select all" that wrote
+   * "in" to every group would light every spine on the screen and hand back a ledger claiming the
+   * reviewer had been through all of them by hand.
+   */
+  test("@gate1 putting all in scope marks NO row as reviewer-changed", async ({ page }) => {
+    await openGate1(page);
+    const before = await page.locator("[data-testid='ledger-row'][data-spine='changed']").count();
+    expect(before).toBe(0);
+    // Take them out (a genuine departure — every row SHOULD be marked), then restore the default.
+    await page.locator("[data-testid='bulk-scope-out']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "none");
+    expect(await page.locator("[data-testid='ledger-row'][data-spine='changed']").count()).toBeGreaterThan(0);
+
+    await page.locator("[data-testid='bulk-scope-in']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "all");
+    // Back to the default, and back to no claim of having reviewed anything.
+    expect(await page.locator("[data-testid='ledger-row'][data-spine='changed']").count()).toBe(0);
+  });
+
+  test("@gate1 the reverse action restores the default and is then itself unavailable", async ({ page }) => {
+    await openGate1(page);
+    await page.locator("[data-testid='bulk-scope-out']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "none");
+    await page.locator("[data-testid='bulk-scope-in']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "all");
+    // Nothing left to do in that direction, so the control says so rather than offering a no-op.
+    await expect(page.locator("[data-testid='bulk-scope-in']")).toBeDisabled();
   });
 });

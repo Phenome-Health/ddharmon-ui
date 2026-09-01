@@ -421,3 +421,57 @@ export function groupLabel(group: ConceptGroup): { text: string; source: GroupLa
   if (judged && summary) return { text: summary, source: "judge" };
   return { text: "Unnamed group", source: "none" };
 }
+
+/** What a bulk scope action would do: which decisions to clear, and which to write OUT. */
+export interface BulkScopePlan {
+  clear: string[];
+  write: string[];
+}
+
+/**
+ * Plan a bulk scope change — the two traps of "select all / deselect all" (08-16c Task 7).
+ *
+ * Bhargav: *"need select all/deselect all option. too many checkboxes to do manually."*
+ *
+ * TRAP ONE — IN IS THE DEFAULT, SO "ALL IN" MOSTLY MEANS *CLEAR*. `isInScope` is
+ * `decisions[id]?.chosen !== "out"`, so a group with NO decision is already in scope, and `isChanged` is
+ * `id in scope.decisions`. Writing `"in"` to every group would therefore mark every one of them as
+ * reviewer-changed and hand back a ledger claiming the reviewer had been through all 117 by hand. So the
+ * restore-to-default direction CLEARS, and only where a departure exists to undo.
+ *
+ * TRAP TWO — MINIMAL CHANGE. Only groups whose effective scope actually differs from the target are
+ * touched. A group already out is not re-written when deselecting, and a group already in — whether by
+ * default or by an explicit earlier decision — is left exactly as the reviewer left it when selecting.
+ * That keeps `isChanged` reporting departures rather than reporting that a button was pressed, and it
+ * makes the request count proportional to the real change rather than to the corpus.
+ *
+ * IDS ARE THE CALLER'S *VISIBLE* ROWS, never the whole corpus: a reviewer who has filtered to a bucket
+ * and presses "select all" means the bucket. The caller states the count on the control so the number is
+ * on screen before the press, not discovered after it.
+ */
+export function bulkScopePlan(
+  ids: readonly string[],
+  target: "in" | "out",
+  isInScope: (groupId: string) => boolean,
+  hasDecision: (groupId: string) => boolean,
+): BulkScopePlan {
+  if (target === "in") {
+    // Only an explicit "out" needs undoing. Absent decision = already in; explicit "in" = already in, and
+    // clearing it would erase a mark the reviewer deliberately made.
+    return { clear: ids.filter((id) => hasDecision(id) && !isInScope(id)), write: [] };
+  }
+  return { clear: [], write: ids.filter((id) => isInScope(id)) };
+}
+
+/** Whether every, no, or only some of `ids` are in scope — so a bulk control can show a real tri-state. */
+export function bulkScopeState(
+  ids: readonly string[],
+  isInScope: (groupId: string) => boolean,
+): "all" | "none" | "some" {
+  if (ids.length === 0) return "none";
+  let inCount = 0;
+  for (const id of ids) if (isInScope(id)) inCount++;
+  if (inCount === ids.length) return "all";
+  if (inCount === 0) return "none";
+  return "some";
+}
