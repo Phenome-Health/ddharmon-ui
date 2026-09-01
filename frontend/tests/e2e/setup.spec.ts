@@ -1313,11 +1313,31 @@ test.describe("Setup — the key field and the disclosure polish (08-13b)", () =
     }
 
     // And the run-configuration panel's controls are EXACTLY the known set: what to match against, how
-    // to run it, what to call it, who runs it, on what, and with whose key. Nothing tunable.
+    // to run it, what to call it, who runs it, on what, with whose key, and what it is ALLOWED TO SPEND
+    // ON. Nothing tunable.
     const ids = await page.$$eval("select, input:not([type=file]), textarea", (els) =>
       els.map((e) => e.getAttribute("data-testid") ?? e.getAttribute("id") ?? "").filter(Boolean),
     );
-    const expected = ["cde-set", "run-mode", "run-name", "provider", "model", "api-key"];
+    /**
+     * `allow-readjudication` JOINED THIS LIST IN 08-16c, and it is worth saying why it is not the thing
+     * this test exists to prevent.
+     *
+     * The knobs above are MODEL AND ALGORITHM HYPERPARAMETERS — temperature, top-k, min_cluster_size,
+     * retrieval_floor — and the objection to them is that their right value cannot be known "before any
+     * dictionary has been read". This is not one of those. It is a SPEND PERMISSION: it decides whether
+     * the run is allowed to buy a further split-and-assign pass if the reviewer asks for one at Gate 1.
+     * The reviewer knows the answer at creation time, because it is a question about their own budget
+     * rather than about their corpus.
+     *
+     * It is also the sibling of `conceptGate` — `backend/app.py` records the pair together as "STGD-16's
+     * two opt-ins, recorded at CREATION and never flipped afterwards: a run resumed with a different
+     * answer would stop matching the cost it was quoted" — and Setup is the ONLY place it can live: the
+     * `/readjudicate` route's own 409 says "start a new run with it enabled to re-split a group".
+     *
+     * The tuning-knob assertions above still pass untouched, which is the part that matters: this control
+     * was added without any tuning vocabulary reaching the screen.
+     */
+    const expected = ["cde-set", "run-mode", "run-name", "provider", "model", "api-key", "allow-readjudication"];
     for (const id of expected) expect(ids).toContain(id);
     // Everything else on the screen is a role select in a mapping table, never a knob.
     const unexpected = ids.filter((id) => !expected.includes(id) && id !== "role-select");
@@ -2558,5 +2578,48 @@ test.describe("Setup — the repeated-name escape hatch (08-14g)", () => {
     // …and it does not reproduce the caveats, which would then need editing in two places.
     const tips = await page.getByTestId("dictionary-tips").innerText();
     expect(tips).not.toMatch(/generated identifier/i);
+  });
+});
+
+/**
+ * The re-split opt-in (08-16c Task 4).
+ *
+ * Bhargav asked *"where does user get to enable re-split for a run?"* — the honest answer was nowhere.
+ * The backend reads `allowReadjudication` at run creation, `/readjudicate` 409s without it, and
+ * `CarveProposal` already renders both branches; nothing in `frontend/src` ever SET it, so every run was
+ * created with it off and Gate 1's carve proposal could never fire.
+ */
+test.describe("setup re-split opt-in", () => {
+  test("@setup the reviewer can enable re-adjudication, and it is OFF by default", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const box = page.getByTestId("allow-readjudication");
+    await expect(box).toBeVisible();
+    // A run only pays for a stage it asked for; the control makes the choice available, not the default.
+    await expect(box).not.toBeChecked();
+    await box.check();
+    await expect(box).toBeChecked();
+  });
+
+  test("@setup the control says it costs money, without quoting a figure it cannot honour", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const label = page.getByTestId("allow-readjudication").locator("xpath=ancestor::div[1]");
+    // Names the unit of charge — a split-and-assign pass, per re-split — rather than a number that
+    // depends on how many groups the reviewer sends back and how big they are.
+    await expect(label).toContainText(/split-and-assign pass/i);
+    await expect(label).toContainText(/costs money/i);
+    await expect(label).toContainText(/off by default/i);
+  });
+
+  test("@setup enabling it does not silently move the run's cost estimate", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const bar = page.getByTestId("commit-bar");
+    const before = await bar.getAttribute("data-total");
+    await page.getByTestId("allow-readjudication").check();
+    // Re-split is charged only when USED, so the quote for this run is unchanged — and must not appear to
+    // change, in either direction (R8 binds both ways).
+    await expect(bar).toHaveAttribute("data-total", before ?? "");
   });
 });

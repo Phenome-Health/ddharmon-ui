@@ -389,6 +389,19 @@ export default function SetupPage() {
   const [genSpecs] = useState(true);
   const [suggestIdeas] = useState(true);
   const [conceptGate] = useState(false);
+  /**
+   * Re-adjudication: OFF by default, and a real control rather than a fixed default (08-16c Task 4).
+   *
+   * Bhargav asked *"where does user get to enable re-split for a run?"* and the honest answer was nowhere.
+   * Everything downstream is built — the backend reads `allowReadjudication` at creation, `/readjudicate`
+   * 409s without it, and `CarveProposal` already renders both branches — so the checkbox was the only
+   * missing piece.
+   *
+   * IT STAYS OFF BY DEFAULT. The backend's own reasoning is that a run only pays for a stage it asked for,
+   * and the endpoint carries three separate refusals precisely so a flagged group is never auto-resolved.
+   * The control makes the choice AVAILABLE; it does not make it the default.
+   */
+  const [allowReadjudication, setAllowReadjudication] = useState(false);
   const [displayName, setDisplayName] = useState("");
   // BYOK: component memory only. Never persisted, never echoed back, cleared on reload.
   const [apiKey, setApiKey] = useState("");
@@ -905,6 +918,7 @@ export default function SetupPage() {
           genTransformSpecs: genSpecs,
           suggestAnalysisIdeas: suggestIdeas,
           conceptGate,
+          allowReadjudication,
           displayName: displayName || undefined,
           provider,
           modelTag: model || undefined,
@@ -1491,6 +1505,34 @@ export default function SetupPage() {
                 Batch API docs
               </a>
               .
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="allow-readjudication" className="flex items-center gap-2 text-xs font-semibold text-on-raised">
+              <input
+                id="allow-readjudication"
+                data-testid="allow-readjudication"
+                type="checkbox"
+                checked={allowReadjudication}
+                onChange={(e) => setAllowReadjudication(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-rule-control-on-raised"
+              />
+              Allow re-splitting a group during review
+            </label>
+            <p className="text-xs leading-relaxed text-on-raised-muted">
+              {/*
+                SAYS WHAT IT BUYS, IN WORDS, NOT A NUMBER. The cost depends on how many groups the reviewer
+                re-splits and how large they are — neither is known here — so quoting a figure this screen
+                cannot honour would repeat the error already corrected once on this page (batch quoted as
+                faster than sync). It states the unit of charge instead, which is the part that is knowable.
+              */}
+              Off by default. When on, Gate 1 can send a group back for a further{" "}
+              <strong className="font-semibold text-on-raised">split-and-assign pass</strong>, which calls
+              the model again and <strong className="font-semibold text-on-raised">costs money each time
+              you use it</strong> — charged per re-split, on top of the estimate below, and only when you
+              ask for one. Leaving this off does not change what this run costs. It cannot be turned on
+              later: the answer is recorded when the run is created so the run keeps matching the price it
+              was quoted.
             </p>
           </div>
           <div className="flex flex-col gap-1.5">

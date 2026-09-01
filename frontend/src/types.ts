@@ -704,6 +704,18 @@ export interface RunConfig {
    * here so Setup's opt-in reaches the run as a typed field rather than through an `as RunConfig`.
    */
   conceptGate?: boolean;
+  /**
+   * Permission for the re-adjudication endpoint to spend on a re-split the reviewer names (08-16c Task 4).
+   *
+   * The backend has read this since 08-11 (`"readjudication": bool(cfg.get("allowReadjudication", False))`)
+   * and `/readjudicate` 409s without it, and `CarveProposal` has branched on the resulting
+   * `readjudicationEnabled` all along — but NOTHING in `frontend/src` ever set it, so every run was created
+   * with it off and Gate 1's carve proposal could never fire. Setup's checkbox is the missing end.
+   *
+   * DEFAULT OFF, and it is recorded at CREATION and never flipped afterwards: a run resumed with a
+   * different answer would stop matching the cost it was quoted (T-08-69).
+   */
+  allowReadjudication?: boolean;
   displayName?: string;
   // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
   // omitted, and falls back to harmonize_leanb's own defaults for the rest)
