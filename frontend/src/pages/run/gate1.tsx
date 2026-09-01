@@ -21,7 +21,7 @@ import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { TermSearch } from "@/components/gate/TermSearch";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { readjudicateGroups, resumeRun } from "@/lib/api";
+import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
 import { pathForGate } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import {
@@ -41,7 +41,7 @@ import {
   type LedgerFilters,
   type SortKey,
 } from "@/lib/ledger";
-import { isInFlight, isParked, isTerminal } from "@/lib/run-state";
+import { isInFlight, isParked, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import type { ConceptGroup, FieldDetail, GatePosition, RunMode } from "@/types";
 
 /**
@@ -880,6 +880,23 @@ export default function Gate1Page() {
     setResuming(true);
     try {
       const { target } = await resumeRun(jobId);
+      /**
+       * CONFIRM BEFORE MOVING. A 200 from this route is not proof the run advanced — see
+       * `resumeTookEffect` for the defect and its reproduction. Navigating on the body alone would land
+       * the reviewer on a Gate 2 for a run still parked at Gate 1: an empty screen that reads as success,
+       * which is strictly worse than the stranding this task set out to fix.
+       *
+       * ONE FETCH, NOT A POLL: whichever way a resume takes effect, it has already done so by the time
+       * the response is sent. FAIL-OPEN if the check itself cannot be made — a transient GET failure is
+       * not evidence that the resume failed, and the server did say yes.
+       */
+      const after = await getCheckpoint(jobId).catch(() => null);
+      if (after && !resumeTookEffect(after, target)) {
+        toast.error(
+          "The server accepted Continue, but this run has not started — it is still parked at this gate. Nothing was charged. Please report this run id.",
+        );
+        return;
+      }
       toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
       navigate(pathForGate(jobId, target));
     } catch (e) {

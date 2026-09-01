@@ -149,3 +149,31 @@ export function preparationProgress(run: JobResult | null): PreparationProgress 
     variables: reports.reduce((n, r) => n + r.nUniqueVariableNames, 0),
   };
 }
+
+/**
+ * Did a resume ACTUALLY take effect? — the confirmation Continue navigates on (08-16c Task 8).
+ *
+ * WHY A 200 IS NOT ENOUGH, measured on 2026-09-01. `POST /api/harmonize/resume/{id}` returns
+ * `{jobId, resumedFrom, target}` and reaches that return statement even when the run does not move:
+ * `resume_run` calls `store.update(job_id, status="pending", ...)` on a job that `JobStore.get` handed
+ * back as a DETACHED row (it hydrates a DB-only run without inserting it into `_jobs`), and
+ * `JobStore.update` silently returns for any job not in `_jobs`. Reproduced on an isolated backend: 200,
+ * a worker that really starts (the embedding model loads), and a run whose status, gate and cost never
+ * change. Bhargav pressed Continue five times against his own server and got five 200s and no movement.
+ *
+ * So the client confirms rather than assumes. This is a GUARD AGAINST A BACKEND DEFECT and it is stated
+ * as such: when the defect is fixed this predicate simply always passes.
+ *
+ * TWO WAYS TO HAVE MOVED, and both are needed. A resume that spawns a worker flips the run out of the
+ * parked state *before* the response is sent, so `!isParked` is observable immediately with no polling.
+ * But the Gate 4 hop deliberately spawns NO worker — it carries the finished payload forward and parks
+ * again — so it stays `awaiting_review` and announces itself only by its new POSITION. Checking one
+ * without the other would reject the legitimate case or accept the broken one.
+ */
+export function resumeTookEffect(
+  observed: { status?: string | null; gatePosition?: string | null },
+  target: string,
+): boolean {
+  if (observed.gatePosition === target) return true;
+  return !isParked(observed.status);
+}

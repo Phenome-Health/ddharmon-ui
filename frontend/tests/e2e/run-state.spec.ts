@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PARKED, countInFlight, isInFlight, isParked, isTerminal, justEnded } from "@/lib/run-state";
+import { PARKED, countInFlight, isInFlight, isParked, isTerminal, justEnded, resumeTookEffect } from "@/lib/run-state";
 import { RETIRED_GATE, pathForGate, resumeGateOf, resumePathFor, setupPathFor } from "@/lib/gate-routes";
 import type { GatePosition } from "@/types";
 
@@ -258,5 +258,34 @@ test.describe("pathForGate", () => {
         `resumePathFor(${gate})`,
       ).toBe(pathForGate("job-7", gate));
     }
+  });
+});
+
+/**
+ * `resumeTookEffect` — the confirmation Gate 1's Continue navigates on (08-16c Task 8).
+ *
+ * MEASURED, NOT DEFENSIVE PROGRAMMING. `POST /resume` returns 200 with a correct body while leaving the
+ * run untouched, because `JobStore.get` hydrates a DB-only run detached from `_jobs` and `JobStore.update`
+ * silently returns for anything not in `_jobs`. Reproduced on an isolated backend and observed five times
+ * on Bhargav's. Until that is fixed, a 200 is a claim and this is the check on it.
+ */
+test.describe("resumeTookEffect", () => {
+  test("@runstate a run that left the parked state has moved", () => {
+    for (const s of ["pending", "loading", "embedding", "splitting"]) {
+      expect(resumeTookEffect({ status: s, gatePosition: "gate1" }, "gate2"), s).toBe(true);
+    }
+  });
+
+  test("@runstate a run still parked at the SAME gate has not moved — the defect's signature", () => {
+    expect(resumeTookEffect({ status: "awaiting_review", gatePosition: "gate1" }, "gate2")).toBe(false);
+  });
+
+  /** The Gate 4 hop spawns no worker by design: it re-parks, and announces itself by POSITION alone. */
+  test("@runstate the worker-less Gate 4 hop counts as moved even though it stays parked", () => {
+    expect(resumeTookEffect({ status: "awaiting_review", gatePosition: "gate4" }, "gate4")).toBe(true);
+  });
+
+  test("@runstate a finished run is not treated as still parked", () => {
+    expect(resumeTookEffect({ status: "complete", gatePosition: "gate1" }, "gate2")).toBe(true);
   });
 });
