@@ -49,13 +49,20 @@ from backend.artifact_kinds import (
 )
 from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
-from backend.checkpoint import Checkpoint, CheckpointMissingError, load_checkpoint, next_gate, write_checkpoint
+from backend.checkpoint import (
+    Checkpoint,
+    CheckpointMissingError,
+    checkpoint_path,
+    load_checkpoint,
+    next_gate,
+    write_checkpoint,
+)
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
 from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
-from backend.runner import run_harmonization
+from backend.runner import _relative_ref, run_harmonization
 
 logger = logging.getLogger(__name__)
 
@@ -776,9 +783,37 @@ def resume_run(
     if cde_path is None or not cde_path.exists():
         raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
     cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
-    # Only gates with a core boundary are stop targets; past that the pipeline runs to completion and the
-    # UI backend holds the run itself (UI-SPEC §0.1).
-    run_config = {**job.config, "stop_at_gate": target if target in ("gate1", "gate2") else None}
+    # Gate 4 is a PURE READ of the result the run already has (UI-SPEC §0.1, and the comment above
+    # `_GATE_STOP_MECHANISM`): there is no stage left to run, so this leg spawns NO worker. It carries the
+    # finished payload forward under the new position and returns. Re-running the pipeline to reach a
+    # screen that only reads it would pay again for anything the replay could not cover, to arrive at the
+    # result already on disk.
+    if target == "gate4":
+        work_dir = Path(job.config["work_dir"])
+        carried = write_checkpoint(
+            work_dir,
+            job_id=job_id,
+            gate=target,
+            result=ckpt.result,
+            responses=ckpt.responses,
+            realized_cost=ckpt.realized_cost,
+        )
+        store.checkpoint(
+            job_id,
+            gate=target,
+            checkpoint_ref=_relative_ref(store, job_id, carried.path or checkpoint_path(work_dir, target)),
+            realized_cost=ckpt.realized_cost,
+        )
+        return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
+    # Where the ENGINE stops and where the RUN parks are two different questions. Only gates with a core
+    # boundary are stop targets; past that the pipeline runs to completion and the UI backend holds the run
+    # itself (UI-SPEC §0.1). Gate 3 is exactly that case — it reviews the FINISHED pipeline, so it takes no
+    # engine stop and still parks, which is what `park_at_gate` carries.
+    run_config = {
+        **job.config,
+        "stop_at_gate": target if target in ("gate1", "gate2") else None,
+        "park_at_gate": target,
+    }
     store.update(job_id, status="pending", phase="pending")
     threading.Thread(
         target=run_harmonization,

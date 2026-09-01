@@ -37,7 +37,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from backend.engine.contract import (
     CONTRACT_VERSION,
@@ -46,6 +46,7 @@ from backend.engine.contract import (
     AtlasPoint,
     CoherenceState,
     FieldDetail,
+    GatePosition,
     NotComputedEntry,
     PreviewCluster,
     ResponseOptionUI,
@@ -1680,6 +1681,23 @@ def run_pipeline(
             f"stop_at_gate={stop_at_gate!r} is not a resumable boundary; "
             f"expected one of {sorted(_GATE_STOP_MECHANISM)}"
         )
+    # --- staged review: which gate this leg PARKS the run at, which is a different question ---
+    #
+    # `stop_at_gate` above is where the ENGINE stops, and only a gate with a core boundary has one.
+    # `park_at_gate` is where the RUN parks for review. For gate0/gate1/gate2 the two coincide, so this
+    # defaults to `stop_at_gate` and every existing caller is unaffected. Gate 3 is the case that needs
+    # them apart: it has NO core boundary (see `_GATE_STOP_MECHANISM`) because it reviews the FINISHED
+    # pipeline, so its leg runs to completion — `stop_at_gate is None` — and still parks. Conflating the
+    # two is what made Gate 3 unreachable: `gate_position` was stamped from `stop_at_gate`, so the leg
+    # took the runner's `complete` branch and no gate3 checkpoint was ever written.
+    park_at_gate: str | None = config.get("park_at_gate") or stop_at_gate
+    if park_at_gate is not None and park_at_gate not in get_args(GatePosition):
+        # Same whitelist discipline as the boundary above, for the same reason: a typo'd park position
+        # would silently mark the run complete and strand the reviewer on the results page. Validated
+        # against the WIRE contract's closed vocabulary rather than a second copy of the list.
+        raise ValueError(
+            f"park_at_gate={park_at_gate!r} is not a known gate; expected one of {list(get_args(GatePosition))}"
+        )
     recorded: dict[str, dict[str, Any]] = stage_responses if stage_responses is not None else {}
     replay: dict[str, dict[str, Any]] = replay_responses or {}
     # Realized-cost accumulator: each LLM stage folds its captured token usage in (sync = full price, batch =
@@ -1962,7 +1980,7 @@ def run_pipeline(
         member_index=member_index,
         field_index=field_index,
         cost=cast(UICost, ledger.to_dict()),
-        gate_position=stop_at_gate,
+        gate_position=park_at_gate,
         concept_gate=concept_gate_on,
         preprocessing=preprocess_reports,
     )

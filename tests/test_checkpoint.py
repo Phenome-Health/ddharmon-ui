@@ -1351,3 +1351,222 @@ def test_a_finished_run_does_not_resume_at_the_gate_it_last_parked_on():
     # A run that never reached a gate is unchanged — it starts where every run starts.
     fresh = Job(job_id="f", display_name="F", status="queued")
     assert fresh.resume_gate() == FIRST_GATE
+
+
+# ── Gate 3: where the ENGINE stops and where the RUN parks are two different questions ───────
+#
+# The shipped defect: the gate2 -> gate3 leg ran the pipeline to completion (correctly — Gate 3 HAS no core
+# boundary) and then took the `complete` branch, because `gate_position` was stamped from `stop_at_gate`
+# and that is `None` for this leg. So no gate3 checkpoint was written, the reviewer landed on the results
+# page instead of the Gate 3 review screen, and the run could never Continue to Gate 4 (`resume_run`
+# requires awaiting_review + a gate position + a checkpoint).
+#
+# The fix separates the two ideas. `stop_at_gate` = where the ENGINE stops, and only gates with a core
+# boundary have one. `park_at_gate` = where the RUN parks, which Gate 3 has WITHOUT an engine stop.
+
+
+def test_gate_3_is_not_an_engine_stop_target(tmp_path):
+    """`_GATE_STOP_MECHANISM` means "gates with a CORE boundary". Gate 3 has none and must not gain one.
+
+    Pins the comment above the map (`adapter.py:1494`) as executable: "Gates 3 and 4 need no boundary at
+    all (Gate 3 is the finished pipeline held by the UI backend; Gate 4 is a pure read)". Expressing Gate
+    3's park as a stop entry would newly route it down the path `app.py:781` was written to avoid, and
+    there is no correct place in core to stop for it — `retarget_refined_specs` repoints the transform
+    specs AFTER specgen, so any earlier return shows the reviewer specs that silently change on resume.
+    """
+    from backend.engine.adapter import _GATE_STOP_MECHANISM, run_pipeline
+
+    assert set(_GATE_STOP_MECHANISM) == {"gate0", "gate1", "gate2"}, "gate3 must not become an engine stop"
+
+    dict_specs, cde_spec = _fixture_specs(tmp_path)
+    base = {"run_mode": "batch", "cde_cohort": "NIH_CDE", "work_dir": str(tmp_path / "w"), "min_cluster_size": 2}
+    with pytest.raises(ValueError, match="not a resumable boundary"):
+        run_pipeline(dict_specs, cde_spec, {**base, "stop_at_gate": "gate3"}, provider=StubProvider())
+
+
+def test_the_leg_that_finishes_the_pipeline_parks_at_gate_3(tmp_path, _one_cluster):
+    """Gate 3's leg runs every remaining paid stage and THEN parks. Both halves are the point.
+
+    `gatePosition` must be gate3 so the runner takes its park branch, and the result must be the FINISHED
+    pipeline — the transform specs are what Gate 3 exists to review, so a park that arrived before specgen
+    would render an empty screen and call it done.
+    """
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec = _fixture_specs(tmp_path)
+    calls: dict[str, int] = {}
+
+    def _count(name, fn):
+        def stage(prompts):
+            calls[name] = calls.get(name, 0) + len(prompts)
+            return fn(prompts)
+
+        return stage
+
+    stages = {
+        "generate": _count("generate", lambda recs: {r.id: {"ideal_cde": "Smoking status"} for r in recs}),
+        "split": _count("split", lambda recs: {}),
+        "classify": _count("classify", lambda recs: {r.id: {"verdict": "adopt", "cde_id": "1"} for r in recs}),
+        "gencde": _count("gencde", lambda recs: {}),
+        "specgen": _count("specgen", lambda recs: {}),
+    }
+    out = run_pipeline(
+        dict_specs,
+        cde_spec,
+        {
+            "run_mode": "batch",
+            "cde_cohort": "NIH_CDE",
+            "work_dir": str(tmp_path / "w"),
+            "min_cluster_size": 2,
+            "retrieval_floor": 0.0,
+            # No engine stop — the pipeline runs to completion — but the RUN parks at the review screen.
+            "stop_at_gate": None,
+            "park_at_gate": "gate3",
+        },
+        provider=StubProvider(),
+        stage_overrides=stages,
+    )
+
+    assert out["gatePosition"] == "gate3", "the finished pipeline did not park at Gate 3"
+    assert calls.get("classify", 0) > 0, "the leg never ran the assign stage, so it did not finish the pipeline"
+    assert out["records"], "Gate 3 was handed no records to review"
+
+
+def test_a_park_position_does_not_leak_into_the_engine_as_a_stop(tmp_path, _one_cluster):
+    """`park_at_gate` must never be read as a boundary. Gate 1 and Gate 2 keep their engine stops intact."""
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec = _fixture_specs(tmp_path)
+    base = {
+        "run_mode": "batch",
+        "cde_cohort": "NIH_CDE",
+        "work_dir": str(tmp_path / "w"),
+        "min_cluster_size": 2,
+        "retrieval_floor": 0.0,
+    }
+    stages = {
+        "generate": lambda recs: {r.id: {"ideal_cde": "Smoking status"} for r in recs},
+        "split": lambda recs: {},
+        "classify": lambda recs: {r.id: {"verdict": "adopt", "cde_id": "1"} for r in recs},
+        "gencde": lambda recs: {},
+        "specgen": lambda recs: {},
+    }
+    # The existing legs are unchanged: park defaults to the engine stop when nothing else is asked for.
+    out = run_pipeline(
+        dict_specs, cde_spec, {**base, "stop_at_gate": "gate1"}, provider=StubProvider(), stage_overrides=stages
+    )
+    assert out["gatePosition"] == "gate1"
+
+
+def test_resuming_from_gate_2_runs_to_completion_and_asks_for_a_gate_3_park(monkeypatch, tmp_path):
+    """The leg that unblocks the walk: no engine stop, but a park position, so the runner parks it."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    seen: dict[str, object] = {}
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, **kwargs):
+        seen.update(config)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+
+    with TestClient(app_module.app) as c:
+        wd = tmp_path / "work" / "g2"
+        app_module.store.create(
+            "g2",
+            "Parked at Gate 2",
+            {"work_dir": str(wd), "cde_set": "endorsed"},
+            owner_subject=None,
+            dict_specs=[{"path": "x.csv", "cohort_name": "A", "column_roles": {}}],
+        )
+        write_checkpoint(wd, job_id="g2", gate="gate2", result={"records": []}, responses={}, realized_cost=3.0)
+        app_module.store.checkpoint("g2", gate="gate2", checkpoint_ref="g2/checkpoint_gate2.json", realized_cost=3.0)
+
+        body = c.post("/api/harmonize/resume/g2").json()
+
+    assert body["target"] == "gate3"
+    assert seen["stop_at_gate"] is None, "Gate 3 was given an engine boundary it has no core support for"
+    assert seen["park_at_gate"] == "gate3", "the finished pipeline was not asked to park at Gate 3"
+
+
+def test_resuming_from_gate_3_to_gate_4_spawns_no_worker_and_costs_nothing(monkeypatch, tmp_path):
+    """Gate 4 is a PURE READ of the same finished result, so its leg must not re-run the pipeline.
+
+    Without this the Gate 3 park is a trap: Continue would spawn a worker that re-runs every stage, paying
+    again for anything the replay could not cover, to arrive at a result it already had. 08-17 inherits a
+    run already parked at gate4 with the same payload, and builds the screen over it.
+    """
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+
+    spawned: list[str] = []
+    monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: spawned.append("worker"))  # noqa: ARG005
+
+    with TestClient(app_module.app) as c:
+        wd = tmp_path / "work" / "g3"
+        app_module.store.create(
+            "g3",
+            "Parked at Gate 3",
+            {"work_dir": str(wd), "cde_set": "endorsed"},
+            owner_subject=None,
+            dict_specs=[{"path": "x.csv", "cohort_name": "A", "column_roles": {}}],
+        )
+        payload = {"records": [{"recordId": "r1"}], "cost": {"actualUsd": 5.0}}
+        write_checkpoint(wd, job_id="g3", gate="gate3", result=payload, responses={}, realized_cost=5.0)
+        app_module.store.checkpoint("g3", gate="gate3", checkpoint_ref="g3/checkpoint_gate3.json", realized_cost=5.0)
+
+        body = c.post("/api/harmonize/resume/g3").json()
+
+        assert body["target"] == "gate4"
+        assert spawned == [], "the Gate 4 leg re-ran the pipeline for a screen that is a pure read"
+
+        job = app_module.store.get("g3")
+        assert job.gate_position == "gate4", "Continue at Gate 3 did not advance the run"
+        assert job.status == AWAITING_REVIEW
+        assert job.cost_so_far == pytest.approx(5.0), "a pure read changed what the run is said to have cost"
+        # The same finished result, carried forward — not a re-derivation.
+        assert read_checkpoint(wd, "gate4").result["records"] == payload["records"]
+
+
+def test_the_runner_parks_a_gate_3_stamp_and_writes_its_checkpoint(tmp_path, monkeypatch):
+    """The seam the fix relies on: the adapter stamps gate3, and the runner's park branch does the rest.
+
+    Composed of two facts already proven separately (the adapter stamps `gate3`; the runner parks on any
+    truthy gate), asserted together because the SUCCESS CRITERION is the composition — a reviewer who
+    lands on the Gate 3 screen instead of the results page. The `complete` branch taking this leg is the
+    exact shipped defect, so the assertion is on `awaiting_review`, not merely on the checkpoint existing.
+    """
+    store = JobStore(work_root=tmp_path / "work", db=JobDB(tmp_path / "jobs.db"))
+    store.create("g3", "G3", {"work_dir": str(tmp_path / "work" / "g3")}, owner_subject="user_A")
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kwargs):
+        progress("specs", 1, 1, 6.5)
+        return {
+            "gatePosition": "gate3",
+            "records": [{"recordId": "r1", "transforms": [{"kind": "categorical"}]}],
+            "cost": {"actualUsd": 6.5, "tokens": {"input": 1, "output": 1}, "perStage": {}},
+        }
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    thread = threading.Thread(
+        target=runner_module.run_harmonization,
+        args=(store, "g3", [], None, {"work_dir": str(tmp_path / "work" / "g3")}),
+    )
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    job = store.get("g3")
+    assert job.status == AWAITING_REVIEW, "the finished pipeline was marked complete instead of parked at Gate 3"
+    assert job.gate_position == "gate3"
+    # The transform specs are what Gate 3 exists to review, so they must be in the state it resumes from.
+    assert read_checkpoint(tmp_path / "work" / "g3", "gate3").result["records"][0]["transforms"]
+    store.db.close()
