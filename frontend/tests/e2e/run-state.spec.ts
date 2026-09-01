@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { PARKED, countInFlight, isInFlight, isParked, isTerminal, justEnded } from "@/lib/run-state";
-import { RETIRED_GATE, resumeGateOf, resumePathFor, setupPathFor } from "@/lib/gate-routes";
+import { RETIRED_GATE, pathForGate, resumeGateOf, resumePathFor, setupPathFor } from "@/lib/gate-routes";
 import type { GatePosition } from "@/types";
 
 /**
@@ -212,6 +212,51 @@ test.describe("no surface keeps a private copy of the predicate", () => {
       const src = code(readFileSync(resolve(root, rel), "utf8"));
       expect(src, `${rel} must not re-declare the status set`).not.toMatch(/new Set\(\[\s*"complete"/);
       expect(src, `${rel} must import the shared predicates`).toContain('from "@/lib/run-state"');
+    }
+  });
+});
+
+/**
+ * `pathForGate` — the ONE place a gate position becomes a URL (08-16c Task 8).
+ *
+ * WHY IT IS ASSERTED HERE rather than through the button that uses it. Gate 1's Continue is the caller,
+ * and Continue is DISABLED in the static build the rendered suite runs against (it is the spend path), so
+ * a test that pressed it could never reach the destination. That is the precise defect this helper exists
+ * to end: `gate-routes.ts`'s header records that Setup's post-Start destination sat as an inline template
+ * inside exactly such a closure and went on pointing at a retired route with nobody noticing. A
+ * destination computed by an importable function is a destination a spec can hold to account.
+ *
+ *   run: npm run test:e2e -- --grep "@runstate"
+ */
+test.describe("pathForGate", () => {
+  test("@runstate a gate position becomes that gate's route under the run", () => {
+    for (const gate of ["gate1", "gate2", "gate3", "gate4"] as GatePosition[]) {
+      expect(pathForGate("job-7", gate), `pathForGate(gate=${gate})`).toBe(`/run/job-7/${gate}`);
+    }
+  });
+
+  test("@runstate setup goes through the helper that owns its route, not the generic template", () => {
+    expect(pathForGate("job-7", "setup")).toBe(setupPathFor("job-7"));
+  });
+
+  /**
+   * The case that produces a BROKEN destination rather than a merely suboptimal one, and the reason this
+   * translation lives in the helper instead of at each call site. `gate0` is retired but still a live WIRE
+   * value: `GATE_ORDER` contains it, so the server's `target` can genuinely BE `gate0` and a caller that
+   * emitted it would send the reviewer to a URL that redirects straight back to Setup — a double
+   * navigation invisible to any check that only reads the FINAL url.
+   */
+  test("@runstate the retired position is translated to Setup, never emitted as a route", () => {
+    expect(pathForGate("job-7", RETIRED_GATE)).toBe(setupPathFor("job-7"));
+    expect(pathForGate("job-7", RETIRED_GATE)).not.toContain(RETIRED_GATE);
+  });
+
+  test("@runstate resumePathFor and pathForGate cannot disagree — one definition, two entry points", () => {
+    for (const gate of ["setup", "gate1", "gate2", "gate3", "gate4"] as GatePosition[]) {
+      expect(
+        resumePathFor({ jobId: "job-7", status: "awaiting_review", gatePosition: gate }),
+        `resumePathFor(${gate})`,
+      ).toBe(pathForGate("job-7", gate));
     }
   });
 });

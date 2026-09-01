@@ -96,7 +96,28 @@ export function resumePathFor(job: {
 }): string | null {
   const gate = resumeGateOf(job);
   if (!gate) return null;
-  // Setup goes through `setupPathFor` rather than the generic template, so the one route with a helper of
-  // its own keeps a single definition.
-  return gate === "setup" ? setupPathFor(job.jobId) : `/run/${job.jobId}/${gate}`;
+  // Delegated to `pathForGate` so the app has exactly ONE place that turns a gate position into a URL —
+  // including the Setup special case and the retired-position translation.
+  return pathForGate(job.jobId, gate);
+}
+
+/**
+ * The route for ANY gate position — the destination half of Continue, and of the rail's backward links.
+ *
+ * WHY IT EXISTS AT ALL. Two callers were building this URL with an inline template literal inside a
+ * click handler (`gate1.tsx`'s Continue, once it had any navigation, and `setup.tsx:1174`), which is the
+ * exact shape this file's header records as the defect that let Setup keep pointing at a retired route
+ * with nobody noticing: a destination computed inside a closure whose button the static suite disables
+ * is a destination no test can reach. Every gate URL in the app now comes from here, so it is asserted
+ * once rather than trusted five times.
+ *
+ * THE RETIRED POSITION IS TRANSLATED, NOT EMITTED. `gate0` is still a live WIRE value — `GATE_ORDER`
+ * contains it and `next_gate("setup")` returns it — so a server-named `target` can genuinely BE `gate0`.
+ * Its route redirects to Setup, so emitting it costs the double navigation `setupPathFor` and
+ * `startedPathFor` each warn about. Sending the reviewer straight to Setup is the same final URL by the
+ * shorter path, and it keeps the rule in one place instead of at every call site.
+ */
+export function pathForGate(jobId: string, gate: GatePosition | string): string {
+  if (gate === "setup" || gate === RETIRED_GATE) return setupPathFor(jobId);
+  return `/run/${jobId}/${gate}`;
 }

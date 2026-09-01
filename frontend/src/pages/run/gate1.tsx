@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import { Grid3x3, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
 import { LedgerRow } from "@/components/gate/LedgerRow";
@@ -21,6 +22,7 @@ import { TermSearch } from "@/components/gate/TermSearch";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { readjudicateGroups, resumeRun } from "@/lib/api";
+import { pathForGate } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import {
   DEFAULT_BUCKET,
@@ -39,7 +41,7 @@ import {
   type SortKey,
 } from "@/lib/ledger";
 import { isInFlight, isParked, isTerminal } from "@/lib/run-state";
-import type { ConceptGroup, FieldDetail, RunMode } from "@/types";
+import type { ConceptGroup, FieldDetail, GatePosition, RunMode } from "@/types";
 
 /**
  * Gate 1 — the ledger. The load-bearing screen: where the reviewer scopes and reshapes before the BULK of
@@ -545,6 +547,7 @@ function SumBlock({
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
+  const [, navigate] = useLocation();
   const [resuming, setResuming] = useState(false);
 
   const [bucket, setBucket] = useState<Bucket>(DEFAULT_BUCKET);
@@ -841,11 +844,35 @@ export default function Gate1Page() {
   const stoppedBeforeGate =
     groups.length === 0 && !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
 
+  /**
+   * Commit this gate and GO. The second half is the one that was missing (08-16c Task 8).
+   *
+   * Until 2026-09-01 this awaited `resumeRun`, discarded the result and toasted a hardcoded "Continuing to
+   * Gate 2" — so the press spent the run's money and then left the reviewer standing on the screen they
+   * had just committed, with a success message telling them they had moved. Bhargav read that live: "I
+   * clicked continue to gate 2 but not working."
+   *
+   * THE DESTINATION IS THE SERVER'S, not this screen's guess. `resumeRun` returns `{ jobId, target }`
+   * where `target = next_gate(gate_position)` — the backend's own answer to "which gate next" — and Gate 1
+   * is not the only thing that decides what follows it (Gate 4 is a pure read the backend carries forward
+   * without a worker). Hardcoding `gate2` here would be the same class of error as the hardcoded toast,
+   * and it would go wrong silently the first time the boundary moved. The label follows the same value, so
+   * the sentence and the destination cannot drift apart.
+   *
+   * NAVIGATION IS DOWNSTREAM OF THE AWAIT, deliberately. A refused Continue — the route carries six
+   * distinct 409s — must leave the reviewer here, holding the screen whose state the refusal is about.
+   * `gate1.spec.ts`'s "a refused continue leaves the reviewer on Gate 1" is the guard on that ordering.
+   *
+   * The error arm repeats the SERVER'S sentence rather than a generic one: `json()` in `lib/api.ts`
+   * unpacks FastAPI's `detail` into the Error message, so each of those 409s reaches the reviewer as
+   * itself. The fallback string is only for a throw that is not an Error at all.
+   */
   async function onContinue() {
     setResuming(true);
     try {
-      await resumeRun(jobId);
-      toast.success("Continuing to Gate 2");
+      const { target } = await resumeRun(jobId);
+      toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
+      navigate(pathForGate(jobId, target));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not continue this run");
     } finally {

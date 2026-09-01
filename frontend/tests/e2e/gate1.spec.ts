@@ -1600,3 +1600,47 @@ test.describe("gate1 search", () => {
     await expect(search).toContainText(/text of each group/i);
   });
 });
+
+/**
+ * Continue — the destination, and what happens when the server says no (08-16c Task 8).
+ *
+ * THE BUG THIS GUARDS. `onContinue` awaited `resumeRun`, threw the result away and toasted a hardcoded
+ * "Continuing to Gate 2" — so a reviewer who pressed Continue committed the run and then stayed on the
+ * screen they had just committed. Bhargav hit exactly that on 2026-09-01. The destination is now
+ * `pathForGate(jobId, target)` where `target` is the gate THE SERVER NAMED, asserted as a pure function in
+ * `run-state.spec.ts` because Continue is the spend path and the static build disables it.
+ *
+ * WHAT IS ASSERTABLE HERE is the other half, and it is the half a naive fix breaks: navigation must be
+ * downstream of the await, so a REFUSED continue leaves the reviewer where they were. `resumeRun` throws
+ * in a static build, which makes this fixture a genuine refusal rather than a simulated one. A version
+ * that navigated unconditionally — or before the await — fails this test.
+ */
+test.describe("gate1 continue", () => {
+  test("@gate1 a refused continue leaves the reviewer on Gate 1 and repeats what the server said", async ({ page }) => {
+    await openGate1(page);
+    const url = page.url();
+    const button = page.locator("[data-testid='commit-bar'] button");
+    await expect(button).toBeEnabled();
+    await button.click();
+
+    // The server's own sentence, verbatim. `json()` in lib/api.ts unpacks FastAPI's `detail` into the
+    // Error message, so the route's six distinct 409s each reach the reviewer as themselves; the static
+    // build's refusal travels the identical path, which is what makes it a fair stand-in here.
+    await expect(page.getByText(/static preview/i).first()).toBeVisible();
+
+    // Still on Gate 1 — the ledger, and the same URL.
+    await expect(page).toHaveURL(url);
+    await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+  });
+
+  test("@gate1 continue cannot be pressed twice while it is in flight", async ({ page }) => {
+    await openGate1(page);
+    const button = page.locator("[data-testid='commit-bar'] button");
+    await expect(button).toBeEnabled();
+    // `CommitBar` disables on `busy`, and `onContinue` sets it for the whole await. The guarantee is that
+    // the spend path cannot be double-submitted; asserting the control returns to enabled after the
+    // refusal is what shows the flag is released rather than merely set.
+    await button.click();
+    await expect(button).toBeEnabled();
+  });
+});

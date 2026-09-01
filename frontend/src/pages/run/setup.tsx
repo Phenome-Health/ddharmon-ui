@@ -32,7 +32,7 @@ import {
   saveBlob,
   startHarmonize,
 } from "@/lib/api";
-import { RETIRED_GATE, startedPathFor } from "@/lib/gate-routes";
+import { RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { preparationProgress } from "@/lib/run-state";
@@ -1171,7 +1171,12 @@ export default function SetupPage() {
     try {
       const { target } = await resumeRun(jobId);
       toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
-      navigate(`/run/${jobId}/${target}`);
+      // Through the helper, not an inline template. `next_gate("setup")` is the RETIRED position — it is
+      // still in `GATE_ORDER` — so this call site could genuinely receive `gate0` and send the reviewer to
+      // a URL that redirects straight back to this screen: Setup -> retired -> Setup, on the run's very
+      // first transition, and invisible to any check that reads only the final url. `pathForGate` owns
+      // that translation for every caller (08-16c Task 8).
+      navigate(pathForGate(jobId, target));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not continue this run");
     } finally {
