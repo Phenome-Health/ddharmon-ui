@@ -50,6 +50,7 @@ import { isEmptyVerdicts, toLocalVerdicts } from "@/lib/verdicts";
 import { RerunAction } from "@/components/rerun-action";
 import { StopRunAction } from "@/components/stop-run-action";
 import { focusLabel, recordMatchesFocus, sameFocus, type Focus } from "@/lib/chart";
+import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import {
   VERDICT_STYLES,
   conceptLabel,
@@ -120,11 +121,12 @@ function cos(x: number | null): string {
 
 // ── review-queue sorting ──────────────────────────────────────────────────────────────────────
 type SortKey = "concept" | "cde" | "verdict" | "cos" | "cohorts" | "nCohorts" | "specs";
-type SortDir = "asc" | "desc";
-interface SortState {
-  key: SortKey;
-  dir: SortDir;
-}
+/**
+ * The state and its toggle now live in `lib/column-sort.ts`, shared with Gate 1's ledger (08-16c Task 10).
+ * Bhargav asked for the ledger to sort "the way Review queue is built", and two subtly different
+ * behaviours on two surfaces the reviewer moves between is exactly what that must not become.
+ */
+type SortState = ColumnSort<SortKey>;
 // Verdict sort order mirrors the EITL review priority (adopt → refine → novel → unclassified).
 const VERDICT_RANK: Record<string, number> = { adopt: 0, refine: 1, novel: 2, unclassified: 3 };
 
@@ -194,8 +196,7 @@ export default function DashboardPage() {
   const [focus, setFocus] = useState<Focus>(null);
   const toggleFocus = (f: Focus) => setFocus((cur) => (sameFocus(cur, f) ? null : f));
   const [sort, setSort] = useState<SortState | null>(null);
-  const onSort = (key: SortKey) =>
-    setSort((cur) => (cur?.key === key ? { key, dir: cur.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+  const onSort = (key: SortKey) => setSort((cur) => toggleSort(cur, key));
   // Cross-cohort = the actual harmonization (a concept pooled from ≥2 cohorts). Single-cohort concepts are
   // CDE-mappings (the CDEMapper/DIVER lane). This toggle narrows the queue to the harmonization subset.
   const [xcOnly, setXcOnly] = useState(false);

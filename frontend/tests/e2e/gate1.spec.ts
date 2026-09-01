@@ -1,6 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   COHERENCE_ORDER,
+  COLUMN_SORT_FOR_PRESET,
+  presetForColumnSort,
+  sortGroupsByColumn,
   bulkScopePlan,
   bulkScopeState,
   cohortRoster,
@@ -15,6 +18,7 @@ import {
 } from "@/lib/ledger";
 import { componentVerdictFor, missingReason, scopeVerdictFor } from "@/lib/score-scope";
 import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
+import { toggleSort } from "@/lib/column-sort";
 import type { CoherenceState } from "@/types";
 import { PAUSED_JOB, fixtureGroups, gate1Fixture, serveRun } from "./gate1-fixture";
 
@@ -1902,5 +1906,106 @@ test.describe("gate1 bulk scope", () => {
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "all");
     // Nothing left to do in that direction, so the control says so rather than offering a no-op.
     await expect(page.locator("[data-testid='bulk-scope-in']")).toBeDisabled();
+  });
+});
+
+/**
+ * Click-to-sort on the ledger's columns (08-16c Task 10).
+ *
+ * Bhargav: *"let the user sort the cols directly - it should resemble the way Review queue is built from
+ * the prod UI."* The STATE and TOGGLE are shared with `dashboard.tsx` through `lib/column-sort.ts`;
+ * `SortableHead` itself could not transfer, because that screen renders a real `<table>` and the ledger's
+ * head is a CSS grid.
+ */
+test.describe("gate1 column sort", () => {
+  test("@gate1 the toggle matches the Review queue's: new column ascending, same column reverses", () => {
+    expect(toggleSort(null, "vars")).toEqual({ key: "vars", dir: "asc" });
+    expect(toggleSort({ key: "vars", dir: "asc" }, "vars")).toEqual({ key: "vars", dir: "desc" });
+    expect(toggleSort({ key: "vars", dir: "desc" }, "vars")).toEqual({ key: "vars", dir: "asc" });
+    expect(toggleSort({ key: "vars", dir: "desc" }, "cohorts")).toEqual({ key: "cohorts", dir: "asc" });
+  });
+
+  test("@gate1 no explicit sort keeps the ledger's documented default order", () => {
+    const groups = fixtureGroups();
+    expect(sortGroupsByColumn(groups, null).map((g) => g.groupId))
+      .toEqual(sortGroups(groups).map((g) => g.groupId));
+  });
+
+  /** Verdict sorts by REVIEW PRIORITY, not alphabetically — the discipline copied from `sortValue`. */
+  test("@gate1 verdict sorts by triage priority rather than by the rendered word", () => {
+    const ids = sortGroupsByColumn(fixtureGroups(), { key: "verdict", dir: "asc" });
+    const ranks = ids.map((g) => COHERENCE_ORDER[g.coherence]);
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+  });
+
+  test("@gate1 cohorts sorts by breadth (a count), not by the joined cohort names", () => {
+    const desc = sortGroupsByColumn(fixtureGroups(), { key: "cohorts", dir: "desc" });
+    const counts = desc.map((g) => g.cohorts.length);
+    expect(counts).toEqual([...counts].sort((a, b) => b - a));
+  });
+
+  test("@gate1 reversing a column reverses the rows", () => {
+    const asc = sortGroupsByColumn(fixtureGroups(), { key: "vars", dir: "asc" }).map((g) => g.nMembers);
+    const desc = sortGroupsByColumn(fixtureGroups(), { key: "vars", dir: "desc" }).map((g) => g.nMembers);
+    expect(asc).toEqual([...asc].sort((a, b) => a - b));
+    expect(desc).toEqual([...desc].sort((a, b) => b - a));
+  });
+
+  test("@gate1 the order stays TOTAL — no two rows tie, so a reload cannot reorder the screen", () => {
+    const groups = fixtureGroups();
+    const once = sortGroupsByColumn(groups, { key: "cohorts", dir: "desc" }).map((g) => g.groupId);
+    const again = sortGroupsByColumn([...groups].reverse(), { key: "cohorts", dir: "desc" }).map((g) => g.groupId);
+    expect(once).toEqual(again);
+  });
+
+  test("@gate1 the select and the headers cannot disagree — they are one state", () => {
+    expect(presetForColumnSort(null)).toBe("verdict");
+    expect(presetForColumnSort(COLUMN_SORT_FOR_PRESET.breadth)).toBe("breadth");
+    expect(presetForColumnSort(COLUMN_SORT_FOR_PRESET.size)).toBe("size");
+    // A header sort no preset names reports itself as such rather than showing a preset it is not doing.
+    expect(presetForColumnSort({ key: "concept", dir: "asc" })).toBe("column");
+  });
+
+  test("@gate1 clicking a header sorts the rows and says so, and clicking again reverses", async ({ page }) => {
+    await openGate1(page);
+    const head = page.locator("[data-testid='ledger-sort-vars']");
+    await expect(head).toBeVisible();
+
+    await head.click();
+    // Which column is sorting, and which way, is visible AND announced without clicking anything.
+    await expect(head).toHaveAttribute("data-active", "true");
+    await expect(page.locator("[role='columnheader'][aria-sort='ascending']")).toHaveCount(1);
+    const asc = await rowIds(page);
+
+    await head.click();
+    await expect(head).toHaveAttribute("data-active", "true");
+    await expect(page.locator("[role='columnheader'][aria-sort='descending']")).toHaveCount(1);
+    const desc = await rowIds(page);
+
+    /**
+     * The direction genuinely reversed — the row that led now trails — while the row SET is untouched.
+     *
+     * Deliberately NOT `desc === reverse(asc)`: rows tied on the sorted column keep their id tiebreak in
+     * BOTH directions, which is what keeps the order total (`compareGroups`' guarantee that a reload
+     * cannot reorder the screen under a reviewer mid-triage). Reversing the primary key is the promise;
+     * scrambling the secondary is not.
+     */
+    expect(desc[0]).not.toBe(asc[0]);
+    expect(desc[desc.length - 1]).not.toBe(asc[asc.length - 1]);
+    expect([...desc].sort()).toEqual([...asc].sort());
+  });
+
+  test("@gate1 the price column is not offered as a sort — every row carries the same figure", async ({ page }) => {
+    await openGate1(page);
+    await expect(page.locator("[data-testid='ledger-sort-concept']")).toBeVisible();
+    // "Gate 2+" has no sortKey, so no button is rendered for it.
+    await expect(page.locator("[data-testid='ledger-sort-cost']")).toHaveCount(0);
+  });
+
+  test("@gate1 sorting composes with the bucket and filters rather than widening them", async ({ page }) => {
+    await openGate1(page);
+    const before = (await rowIds(page)).length;
+    await page.locator("[data-testid='ledger-sort-concept']").click();
+    expect((await rowIds(page)).length).toBe(before);
   });
 });

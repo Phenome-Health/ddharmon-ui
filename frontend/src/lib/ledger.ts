@@ -1,4 +1,5 @@
 import type { CoherenceState, ConceptGroup } from "@/types";
+import type { ColumnSort } from "@/lib/column-sort";
 
 /**
  * The Gate 1 ledger's ALGEBRA: what a row's flag means, how rows order, and what carrying one forward
@@ -474,4 +475,91 @@ export function bulkScopeState(
   if (inCount === ids.length) return "all";
   if (inCount === 0) return "none";
   return "some";
+}
+
+/** The ledger columns a reviewer can sort by. "Gate 2+" is absent deliberately — see `sortGroupsByColumn`. */
+export type LedgerSortKey = "concept" | "verdict" | "cohorts" | "vars";
+
+/**
+ * Sort the ledger by a CLICKED COLUMN (08-16c Task 10).
+ *
+ * `null` KEEPS THE LEDGER'S OWN ORDER. The default — verdict, then cohort breadth, then size, then id —
+ * is deliberate and documented on `compareGroups`, and click-to-sort is something the reviewer opts into
+ * ON TOP of it, never a replacement that arrives by default.
+ *
+ * SORTS BY MEANING, NOT BY RENDERED STRING, which is `sortValue`'s discipline on the Review queue and the
+ * reason this is not a generic table sort:
+ *   - `verdict` orders by REVIEW PRIORITY (`COHERENCE_ORDER`: split, qualify, not judged, single), not
+ *     alphabetically — "qualify" before "single" is a triage claim, not a lexical accident.
+ *   - `cohorts` orders by BREADTH (the count), because the column's subject is how widely a group pools;
+ *     ordering it by the joined cohort names would sort "aou,clsa" above "ukbb" and mean nothing.
+ *   - `concept` uses the DISPLAYED label via `groupLabel`, so a row showing a borrowed judge sentence
+ *     sorts where the reviewer can see it rather than under an empty string.
+ *   - a group with no label sorts LAST in either direction's natural reading rather than landing in the
+ *     middle as an empty string would.
+ *
+ * "Gate 2+" IS NOT SORTABLE and that is not an oversight: every row's figure is the same per-group price,
+ * so the column has exactly one value and a sort on it would be a control that visibly does nothing.
+ *
+ * THE ORDER STAYS TOTAL. Every branch tiebreaks down to the group id, so no two rows can tie and a reload
+ * cannot reorder the screen under a reviewer who left mid-triage — the guarantee `compareGroups` records.
+ */
+export function sortGroupsByColumn(
+  groups: readonly ConceptGroup[],
+  sort: ColumnSort<LedgerSortKey> | null,
+): ConceptGroup[] {
+  if (!sort) return sortGroups(groups);
+  const sign = sort.dir === "asc" ? 1 : -1;
+  const value = (g: ConceptGroup): string | number => {
+    switch (sort.key) {
+      case "concept": {
+        const l = groupLabel(g);
+        // An unnamed group has no label to compare; push it to the end rather than to the middle.
+        return l.source === "none" ? "￿" : l.text.toLowerCase();
+      }
+      case "verdict":
+        return COHERENCE_ORDER[g.coherence] ?? 9;
+      case "cohorts":
+        return g.cohorts.length;
+      case "vars":
+        return g.nMembers;
+    }
+  };
+  return [...groups].sort((a, b) => {
+    const va = value(a);
+    const vb = value(b);
+    const c =
+      typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+    return sign * c || byId(a, b);
+  });
+}
+
+/**
+ * The toolbar's three preset orders, expressed as COLUMN SORTS (08-16c Task 10).
+ *
+ * WHY THE SELECT SURVIVED click-to-sort, which the plan left as a judgement call. Every preset is now
+ * reachable by clicking a header, so the control is redundant in capability — but it is not redundant in
+ * USE: it names the orders in the reviewer's language ("Flagged first"), and removing a control Bhargav
+ * may be steering by is a bigger change than keeping one. What could NOT stand is two controls owning two
+ * states: the failure mode is a select reading "Most cohorts first" over a ledger sorted by Vars. So they
+ * were collapsed onto ONE state — the presets are just named points in the column-sort space, the select
+ * writes it and the headers write it, and neither can disagree because there is nothing to disagree with.
+ */
+export const COLUMN_SORT_FOR_PRESET: Record<SortKey, ColumnSort<LedgerSortKey>> = {
+  verdict: { key: "verdict", dir: "asc" },
+  breadth: { key: "cohorts", dir: "desc" },
+  size: { key: "vars", dir: "desc" },
+};
+
+/**
+ * Which preset the select should show for the active column sort, or `"column"` when the reviewer has
+ * sorted by a header that no preset names. The select renders that as a disabled "Sorted by a column"
+ * entry rather than silently displaying a preset that is not what the ledger is doing.
+ */
+export function presetForColumnSort(sort: ColumnSort<LedgerSortKey> | null): SortKey | "column" {
+  if (!sort) return "verdict";
+  for (const [preset, cs] of Object.entries(COLUMN_SORT_FOR_PRESET) as [SortKey, ColumnSort<LedgerSortKey>][]) {
+    if (cs.key === sort.key && cs.dir === sort.dir) return preset;
+  }
+  return "column";
 }

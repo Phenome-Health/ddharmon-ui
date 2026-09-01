@@ -171,7 +171,8 @@ export interface LedgerToolbarProps {
   counts: Record<Bucket, number>;
   bucket: Bucket;
   onBucketChange: (bucket: Bucket) => void;
-  sort: SortKey;
+  /** The active preset, or `"column"` when a header sort no preset names is active. */
+  sort: SortKey | "column";
   onSortChange: (sort: SortKey) => void;
   filters: LedgerFilters;
   onFiltersChange: (filters: LedgerFilters) => void;
@@ -265,6 +266,14 @@ export function LedgerToolbar({
                   {s.label}
                 </option>
               ))}
+              {/* Shown only while a clicked column owns the order. Disabled because it is a REPORT of the
+                  current state, not an order the reviewer can pick from here — they pick it by clicking a
+                  header. Without it the select would sit on a preset that is not what the ledger is doing. */}
+              {sort === "column" && (
+                <option value="column" disabled>
+                  Sorted by a column
+                </option>
+              )}
             </select>
           </div>
 

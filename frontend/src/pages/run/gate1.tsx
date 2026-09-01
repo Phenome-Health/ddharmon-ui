@@ -29,6 +29,7 @@ import {
   NO_FILTERS,
   applyFilters,
   activeFilterCount,
+  COLUMN_SORT_FOR_PRESET,
   bulkScopePlan,
   bulkScopeState,
   cohortRoster,
@@ -38,13 +39,15 @@ import {
   readjudicationRequest,
   matchTerms,
   partitionByBreadth,
+  presetForColumnSort,
   pricePerGroup,
-  sortGroupsBy,
+  sortGroupsByColumn,
   type Bucket,
   type LedgerFilters,
-  type SortKey,
+  type LedgerSortKey,
 } from "@/lib/ledger";
 import { isInFlight, isParked, isTerminal, resumeTookEffect } from "@/lib/run-state";
+import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import type { ConceptGroup, FieldDetail, GatePosition, RunMode } from "@/types";
 
 /**
@@ -650,7 +653,11 @@ export default function Gate1Page() {
   const [resuming, setResuming] = useState(false);
 
   const [bucket, setBucket] = useState<Bucket>(DEFAULT_BUCKET);
-  const [sort, setSort] = useState<SortKey>("verdict");
+  /**
+   * ONE sort state for both controls (08-16c Task 10). `null` = the ledger's own documented order
+   * (verdict, breadth, size, id) — click-to-sort is opted into on top of the default, never instead of it.
+   */
+  const [colSort, setColSort] = useState<ColumnSort<LedgerSortKey> | null>(null);
   const [filters, setFilters] = useState<LedgerFilters>(NO_FILTERS);
   /** The terms the reviewer last searched. `null` means they have not searched — not "searched and got 0". */
   const [terms, setTerms] = useState<string[] | null>(null);
@@ -884,10 +891,10 @@ export default function Gate1Page() {
     let rows = buckets[bucket];
     if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
     rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
-    return sortGroupsBy(rows, sort);
+    return sortGroupsByColumn(rows, colSort);
     // `isChanged`/`isInScope` close over the decision maps, which is what the two entries below track.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buckets, bucket, search, filters, sort, scope.decisions, touchedByRegroup]);
+  }, [buckets, bucket, search, filters, colSort, scope.decisions, touchedByRegroup]);
 
   /**
    * Apply a bulk scope change to the VISIBLE rows, one request at a time.
@@ -1077,8 +1084,8 @@ export default function Gate1Page() {
             counts={bucketCounts}
             bucket={bucket}
             onBucketChange={setBucket}
-            sort={sort}
-            onSortChange={setSort}
+            sort={presetForColumnSort(colSort)}
+            onSortChange={(preset) => setColSort(COLUMN_SORT_FOR_PRESET[preset])}
             filters={filters}
             onFiltersChange={setFilters}
             allCohorts={allCohorts}
@@ -1106,6 +1113,8 @@ export default function Gate1Page() {
       <Ledger
         columns={GATE1_LEDGER_COLUMNS}
         caption="Concept groups"
+        sort={colSort}
+        onSort={(key) => setColSort((cur) => toggleSort(cur, key as LedgerSortKey))}
         sum={
           groups.length > 0 ? (
             <SumBlock
