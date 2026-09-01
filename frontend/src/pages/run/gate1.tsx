@@ -38,7 +38,7 @@ import {
   type LedgerFilters,
   type SortKey,
 } from "@/lib/ledger";
-import { isParked } from "@/lib/run-state";
+import { isInFlight, isParked, isTerminal } from "@/lib/run-state";
 import type { ConceptGroup, FieldDetail, RunMode } from "@/types";
 
 /**
@@ -756,6 +756,35 @@ export default function Gate1Page() {
   const emptyBucket =
     visible.length === 0 && groups.length > 0 && activeFilterCount(filters) === 0 && !search;
 
+  /**
+   * HAS THIS RUN EVEN REACHED GATE 1 YET? (08-14h Task 3)
+   *
+   * THE DEFECT THIS ANSWERS. An empty ledger and a not-yet-populated ledger looked identical and meant
+   * opposite things. "No groups formed — every variable was left unassigned. That usually means the
+   * dictionaries share too little text to group." is a CLAIM ABOUT THE REVIEWER'S CORPUS, and a run that
+   * is still splitting has produced no evidence for it. Since 08-14f made Start land directly here, that
+   * false claim was the first thing a reviewer saw on every run they started.
+   *
+   * DERIVED FROM THE STREAMED STATUS, EVERY RENDER — never held in component state. That is what makes
+   * the ledger self-populating: `useHarmonizeStream` already delivers the park, so the moment the status
+   * changes these go false and the rows appear with no reload. A `useState` seeded on first render would
+   * strand the reviewer on a waiting screen over a run that had already arrived.
+   *
+   * AN ABSENT `jobState` COUNTS AS WAITING, deliberately. The run's payload has not landed, so the screen
+   * knows nothing about the corpus — and "No groups formed" is exactly as false then as it is mid-run.
+   * A stream failure is reported by the `error` alert above rather than by this branch.
+   */
+  const awaitingRun = groups.length === 0 && (!jobState || isInFlight(jobState.status));
+  /**
+   * The run ENDED before it produced anything.
+   *
+   * `complete` is excluded: a finished run with no groups is the genuine corpus finding, and the existing
+   * copy for it is correct. This branch is for the run that failed or was stopped — where the screen
+   * would otherwise wait for groups that are never coming.
+   */
+  const stoppedBeforeGate =
+    groups.length === 0 && !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
+
   async function onContinue() {
     setResuming(true);
     try {
@@ -793,12 +822,17 @@ export default function Gate1Page() {
         </p>
       )}
 
-      <GroupingStrip
-        nGroups={groups.length}
-        nClusters={clusters}
-        nVariables={variables}
-        nCrossCohort={nCrossCohort}
-      />
+      {/* FOUR ZEROES ARE A CLAIM TOO. "0 concept groups · 0 parent clusters · 0 variables" reads as
+          "this run measured nothing", which is the same lie as the empty ledger and just as loud, so the
+          strip is withheld until the run has actually produced figures. */}
+      {!awaitingRun && !stoppedBeforeGate && (
+        <GroupingStrip
+          nGroups={groups.length}
+          nClusters={clusters}
+          nVariables={variables}
+          nCrossCohort={nCrossCohort}
+        />
+      )}
 
       {groups.length > 0 && (
         <>
@@ -838,7 +872,59 @@ export default function Gate1Page() {
           ) : undefined
         }
       >
-        {groups.length === 0 ? (
+        {awaitingRun ? (
+          /* WAITING — the run has not got here yet, so the screen says so and names what it is waiting
+             for. The stage comes verbatim from the stream, and the list below it is what has to finish
+             before a single row can exist: it is exactly what reaching Gate 1 pays for (`lib/estimate.ts`
+             — generate-ideal, split, and the coherence judge). */
+          <GateEmptyState
+            heading="Waiting for this run to reach Gate 1"
+            nextStep={
+              <span data-testid="gate1-waiting-next">
+                Nothing to do yet — the groups appear here on their own as soon as the run gets to them,
+                with no need to reload. You can close this tab; the run keeps going and will be waiting
+                at this gate when you come back.
+              </span>
+            }
+            className="[&]:block"
+          >
+            <span data-testid="gate1-waiting">
+              This run is {jobState?.phase ? <span className="font-semibold">{jobState.phase}</span> : "still working"}.
+              Concept groups are formed after three stages finish: ddharmon describes the ideal element
+              for each cluster, splits clusters that hold more than one concept, and runs the coherence
+              judge over the result. The first rows land here when the third one does.
+            </span>
+          </GateEmptyState>
+        ) : stoppedBeforeGate ? (
+          /* THE RUN DIED. Without this, a failed run leaves the gate waiting for groups that are never
+             coming — the failure mode that makes a waiting state worse than an empty one. */
+          <GateEmptyState
+            heading={
+              jobState?.status === "cancelled"
+                ? "This run was stopped before it reached Gate 1"
+                : "This run failed before it reached Gate 1"
+            }
+            nextStep={
+              <>
+                Start again from{" "}
+                <Link
+                  href={`/run/${jobId}/setup`}
+                  className="font-semibold text-link-on-raised underline underline-offset-2"
+                >
+                  Set up
+                </Link>
+                , or open <Link href="/jobs" className="font-semibold text-link-on-raised underline underline-offset-2">Runs</Link>{" "}
+                to pick up a different one.
+              </>
+            }
+            className="[&]:block"
+          >
+            <span data-testid="gate1-run-stopped">
+              No concept groups were produced, so there is nothing to review here. This is not a finding
+              about your dictionaries — the run ended before it got far enough to have one.
+            </span>
+          </GateEmptyState>
+        ) : groups.length === 0 ? (
           unassigned.length > 0 ? (
             /* ALL OUTLIERS — a different finding from "no groups formed". The clustering ran; everything
                fell out of it. Listing what fell out is what makes "nothing can be scoped" actionable. */

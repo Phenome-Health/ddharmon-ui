@@ -957,3 +957,107 @@ test.describe("gate1 score", () => {
     await expect(page.locator("[data-testid='score-panel']")).not.toContainText(/effective N|participants? with/i);
   });
 });
+
+/**
+ * 08-14h TASK 3 — Gate 1 WAITS rather than looking empty.
+ *
+ * THE DEFECT, IN ONE SENTENCE: an empty ledger and a not-yet-populated ledger looked identical and meant
+ * opposite things. "No groups formed. Every variable was left unassigned. That usually means the
+ * dictionaries share too little text to group." is a CLAIM ABOUT THE REVIEWER'S CORPUS, and a run that
+ * has not finished splitting yet has produced no evidence for it. Since 08-14f made Start land directly
+ * on Gate 1, that false claim is the FIRST thing a reviewer sees on every run they start.
+ *
+ * The three states are separated by RUN STATE, which `lib/run-state.ts` already answers, and nothing here
+ * is held in component state — so when the stream delivers the park, the ledger fills in on its own.
+ */
+test.describe("gate 1 waiting and error states", () => {
+  /** No groups yet, and a run in whatever state the caller names. */
+  async function noGroupsYet(page: Page, status: string, phase = status) {
+    await serveRun(page, (run) => {
+      Object.assign(run, { status, phase });
+      if (run.result) {
+        run.result.conceptGroups = [];
+        run.result.unassignedFields = [];
+      }
+      const config = run.config as Record<string, unknown>;
+      config.run_mode = "batch";
+      delete config.demo;
+    });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+  }
+
+  test("@gate1 a run still working reads as WAITING, and makes no claim about the corpus", async ({ page }) => {
+    await noGroupsYet(page, "splitting");
+
+    const waiting = page.locator("[data-testid='gate1-waiting']");
+    await expect(waiting).toBeVisible();
+    // IT SAYS WHAT IS BEING WAITED FOR. A reviewer who arrives early has to be able to tell that the
+    // screen is working, and "waiting" with no object is barely better than a blank pane.
+    await expect(waiting).toContainText(/splitting/i);
+    await expect(waiting).toContainText(/coherence/i);
+    // AND IT PROMISES NO RELOAD, because none is needed — the stream delivers the groups. That promise
+    // is the NEXT STEP, which is where an empty state is required to put the thing the reviewer does.
+    await expect(page.locator("[data-testid='gate1-waiting-next']")).toContainText(
+      /on their own|no need to reload/i,
+    );
+
+    // THE FALSE CLAIM IS GONE. Not merely reworded — absent.
+    await expect(page.getByText("No groups formed")).toHaveCount(0);
+    await expect(page.getByText(/dictionaries share too little text/i)).toHaveCount(0);
+    // And no zeroed statistics strip, which reads as "this run measured nothing" just as loudly.
+    await expect(page.locator("[data-testid='grouping-strip']")).toHaveCount(0);
+  });
+
+  test("@gate1 a run that DIED before reaching gate 1 says so, rather than waiting forever", async ({ page }) => {
+    for (const status of ["error", "cancelled"]) {
+      await noGroupsYet(page, status);
+      const stopped = page.locator("[data-testid='gate1-run-stopped']");
+      await expect(stopped, status).toBeVisible();
+      await expect(page.locator("[data-testid='gate1-waiting']"), status).toHaveCount(0);
+      await expect(page.getByText("No groups formed"), status).toHaveCount(0);
+    }
+  });
+
+  test("@gate1 once the run PARKS with no groups, the corpus finding is the honest reading again", async ({
+    page,
+  }) => {
+    // The run reached this gate and produced nothing. NOW "no groups formed" is a fact about the corpus,
+    // and the waiting state must be entirely gone — no residue.
+    await noGroupsYet(page, "awaiting_review");
+    await expect(page.getByText("No groups formed")).toBeVisible();
+    await expect(page.locator("[data-testid='gate1-waiting']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='gate1-run-stopped']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='grouping-strip']")).toBeVisible();
+  });
+
+  test("@gate1 a parked run WITH groups shows the ledger and neither of the new states", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='ledger-row']").first()).toBeVisible();
+    await expect(page.locator("[data-testid='gate1-waiting']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='gate1-run-stopped']")).toHaveCount(0);
+  });
+
+  test("@gate1 the waiting state is DERIVED from the streamed status, so the park ends it without a reload", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "../../src/pages/run/gate1.tsx"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/^\s*\/\/.*$/gm, " ");
+
+    // THE PROPERTY THAT MAKES THE LEDGER SELF-POPULATING. `useHarmonizeStream` already delivers the park;
+    // what would break it is holding "am I waiting?" in component state, because a `useState` seeded on
+    // first render does not change when the stream does — the reviewer would sit on a waiting screen over
+    // a run that had already arrived. So it is derived from the run's status, every render.
+    // A plain `const`, recomputed every render, whose input is the STREAMED status.
+    expect(src).toMatch(/const awaitingRun =[^;]*isInFlight\(jobState\.status\)/s);
+    expect(src, "the waiting state may not be held in component state").not.toMatch(
+      /useState[^\n]*([Ww]aiting|awaitingRun)/,
+    );
+    // And it uses the SHARED predicates rather than a fifth local copy of them.
+    expect(src).toMatch(/import \{[^}]*isInFlight[^}]*\} from "@\/lib\/run-state"/s);
+  });
+});
