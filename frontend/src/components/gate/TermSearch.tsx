@@ -35,6 +35,16 @@ export interface TermSearchProps {
   onSearch: (terms: string[]) => void;
   /** Terms the caller found no group for, echoed back as coverage findings. */
   noMatches?: string[];
+  /**
+   * For each unmatched term, the words of it that appear NOWHERE in the run (`matchTerms`).
+   *
+   * WHAT IT BUYS: the difference between "this run does not measure that" and "you mistyped it". A term
+   * whose every word is missing is a genuine coverage finding; a term where one word landed and another
+   * did not is a wording problem, and the reviewer's next move is different in each case. The match is
+   * lexical, so the tool cannot read intent — but it can say which words it could not find, which is a
+   * REPORT rather than a correction. No did-you-mean, ever: that would be the semantic claim again.
+   */
+  missingTokens?: Record<string, string[]>;
   /** Fill the list from a declared score's components ("Use as scope"). Omitted when no score was declared. */
   onUseScore?: () => void;
   /** Prefilled terms, e.g. from a score. */
@@ -42,7 +52,14 @@ export interface TermSearchProps {
   className?: string;
 }
 
-export function TermSearch({ onSearch, noMatches = [], onUseScore, value = "", className }: TermSearchProps) {
+export function TermSearch({
+  onSearch,
+  noMatches = [],
+  missingTokens = {},
+  onUseScore,
+  value = "",
+  className,
+}: TermSearchProps) {
   const [text, setText] = useState(value);
   const terms = text
     .split(/[\n,]/)
@@ -101,19 +118,42 @@ export function TermSearch({ onSearch, noMatches = [], onUseScore, value = "", c
 
       {noMatches.length > 0 && (
         <ul data-testid="coverage-findings" className="flex flex-col gap-2">
-          {noMatches.map((term) => (
-            <li
-              key={term}
-              className="flex flex-col gap-1 rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2"
-            >
-              {/* Escaped text children — never raw HTML. See the docstring. */}
-              <span className="text-sm font-semibold text-on-warn">&ldquo;{term}&rdquo; matched no group</span>
-              <span className="text-xs text-on-warn">
-                Either the clustering never formed such a group, or no cohort in this run measures it. Settle
-                it now; it will not resurface at a later gate.
-              </span>
-            </li>
-          ))}
+          {noMatches.map((term) => {
+            const missing = missingTokens[term] ?? [];
+            // A term where SOME words landed and others did not is a wording problem, not a coverage
+            // finding — the run does contain the vocabulary, just not the way this term spells it.
+            const partial = missing.length > 0 && missing.length < term.trim().split(/\s+/).length;
+            return (
+              <li
+                key={term}
+                className="flex flex-col gap-1 rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2"
+              >
+                {/* Escaped text children — never raw HTML. See the docstring. */}
+                <span className="text-sm font-semibold text-on-warn">&ldquo;{term}&rdquo; matched no group</span>
+                <span className="text-xs text-on-warn">
+                  {partial ? (
+                    <>
+                      No group has a word beginning{" "}
+                      {missing.map((w, i) => (
+                        <span key={w}>
+                          {i > 0 && ", "}
+                          <span className="font-semibold">&ldquo;{w}&rdquo;</span>
+                        </span>
+                      ))}
+                      , though the rest of the term does appear here — so this is more likely a spelling or
+                      wording difference than a gap in the run. Try the word as this run spells it.
+                    </>
+                  ) : (
+                    <>
+                      No part of this term appears anywhere in the run, so either the clustering never
+                      formed such a group or no cohort here measures it. Settle it now; it will not
+                      resurface at a later gate.
+                    </>
+                  )}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

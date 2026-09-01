@@ -1488,3 +1488,115 @@ test.describe("gate1 toolbar labelling and explanations", () => {
     );
   });
 });
+
+/**
+ * 08-14h TASK 7 — a search that finds nothing must be legible as such, and should find more.
+ *
+ * Bhargav, on the live run: *"i searched for a term and I think now all concepts have dissapeared?"* —
+ * and the "I think" is the bug. Nothing was lost; nothing matched. The screen let him doubt it, because a
+ * search that hid every row fell through every empty state the ledger had and rendered a BLANK BODY:
+ * `filteredToNothing` required an active filter, `emptyBucket` required no search, so a search-emptied
+ * ledger matched neither and simply mapped an empty list.
+ */
+test.describe("gate1 search", () => {
+  test("@gate1 a partial word matches the word it begins", async () => {
+    const groups = fixtureGroups();
+    // PREFIX, NOT STEMMING OR FUZZY. Prefix keeps the search predictable — a reviewer can say in advance
+    // what it will do — while fixing the common case where a half-typed word silently returned nothing.
+    // Anything cleverer starts making the semantic claim 08-15 deliberately removed.
+    expect([...matchTerms(groups, ["press"]).ids].length).toBeGreaterThan(0);
+    expect([...matchTerms(groups, ["smok"]).ids].length).toBeGreaterThan(0);
+    // A prefix finds a superset of what the exact term finds — never a different set.
+    const exact = [...matchTerms(groups, ["pressure"]).ids];
+    const prefix = [...matchTerms(groups, ["press"]).ids];
+    expect(prefix).toEqual(expect.arrayContaining(exact));
+    // ...and it is a PREFIX, not a substring: an interior match does not count, so the rule stays one a
+    // reviewer can predict.
+    expect(matchTerms(groups, ["ressure"]).noMatches).toEqual(["ressure"]);
+    // Conjunction across a term's words survives the change.
+    expect(matchTerms(groups, ["zzzz nonexistent"]).noMatches).toEqual(["zzzz nonexistent"]);
+  });
+
+  test("@gate1 an unmatched term reports WHICH of its words matched nothing", async () => {
+    const groups = fixtureGroups();
+    // THE HONEST DISCRIMINATOR between "this run does not measure that" and "you mistyped it". The match
+    // is lexical, so the tool cannot read intent — but it CAN say which words it could not find. A term
+    // whose every word is absent is a coverage finding about the corpus; a term where one word landed and
+    // another did not is a wording problem, and the two need different responses from the reviewer.
+    const mistyped = matchTerms(groups, ["smokng status"]);
+    expect(mistyped.noMatches).toEqual(["smokng status"]);
+    expect(mistyped.missingTokens["smokng status"]).toEqual(["smokng"]);
+
+    const absent = matchTerms(groups, ["zzzz qqqq"]);
+    expect(absent.missingTokens["zzzz qqqq"]).toEqual(["zzzz", "qqqq"]);
+  });
+
+  test("@gate1 a search that hides every group SAYS SO, names the term, and clears in one click", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const before = await page.locator("[data-testid='ledger-row']").count();
+    expect(before).toBeGreaterThan(0);
+
+    await page.locator("#term-search-input").fill("zzzz nonexistent concept");
+    await page.getByRole("button", { name: /^Search/ }).click();
+
+    // NOT A BLANK BODY. The reviewer must never be left inferring why the rows went away.
+    const empty = page.locator("[data-testid='search-empty']");
+    await expect(empty).toBeVisible();
+    // The state SAYS the search matched nothing — that claim is the heading, which is where an empty
+    // state is required to put the headline.
+    await expect(page.locator("[data-testid='gate-empty-state']")).toContainText(/matched no group/i);
+    // The body names the term the reviewer typed...
+    await expect(empty).toContainText("zzzz nonexistent concept");
+    // ...and says the groups are HIDDEN, not gone. This sentence is the whole point: it is the one that
+    // answers "I think now all concepts have dissapeared?" before the reviewer has to ask it.
+    await expect(empty).toContainText(/nothing has been lost/i);
+    await expect(empty).toContainText(/still here/i);
+
+    // One click back to every group.
+    await page.locator("[data-testid='clear-search-inline']").click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(before);
+    await expect(page.locator("[data-testid='search-empty']")).toHaveCount(0);
+  });
+
+  test("@gate1 the empty state names WHICH of search and filters emptied the ledger", async ({ page }) => {
+    await openGate1(page);
+
+    // (a) SEARCH ALONE. The term matched nothing anywhere in the run, so the search is responsible and
+    // the finding is about the corpus.
+    await page.locator("#term-search-input").fill("zzzz nonexistent concept");
+    await page.getByRole("button", { name: /^Search/ }).click();
+    const empty = page.locator("[data-testid='search-empty']");
+    await expect(empty).toHaveAttribute("data-cause", "search");
+
+    // (b) SEARCH PLUS A FILTER, where the term DID match groups but the filter hides them. The recovery
+    // is different — clearing the filter brings them back and clearing the search does not — so saying
+    // "your search found nothing" here would send the reviewer the wrong way.
+    await page.locator("[data-testid='clear-search-inline']").click();
+    await page.locator("#term-search-input").fill("blood pressure");
+    await page.getByRole("button", { name: /^Search/ }).click();
+    await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
+    // A coherence state none of the matched groups holds.
+    await page.locator("[data-testid='filter-verdict'][data-verdict='split']").click();
+    const both = page.locator("[data-testid='search-empty']");
+    if (await both.count()) {
+      await expect(both).toHaveAttribute("data-cause", "both");
+      await expect(both).toContainText(/filter/i);
+      await expect(both).toContainText("blood pressure");
+      // BOTH ways back are offered, because either one alone may be the one the reviewer wants.
+      await expect(page.locator("[data-testid='clear-search-inline']")).toBeVisible();
+      await expect(page.locator("[data-testid='clear-filters-inline']")).toBeVisible();
+    }
+  });
+
+  test("@gate1 the search still makes no semantic claim", async ({ page }) => {
+    await openGate1(page);
+    // 08-15 removed that claim deliberately: no group centroid and no embedding reaches the browser, so
+    // telling a reviewer the tool understood their term would be false. Prefix matching does not change
+    // that and must not be described as if it did.
+    const search = page.locator("[data-testid='term-search']");
+    await expect(search).not.toContainText(/semantic|understands|meaning of your term/i);
+    await expect(search).toContainText(/text of each group/i);
+  });
+});

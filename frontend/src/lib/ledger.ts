@@ -241,29 +241,65 @@ function tokens(text: string): string[] {
 /**
  * Match a LIST of terms against the groups, returning what matched and what did not.
  *
- * A TERM MATCHES A GROUP WHEN EVERY ONE OF ITS TOKENS APPEARS in that group's text — order-insensitive, so
- * "pressure blood" and "blood pressure" find the same rows, and conjunctive, so "blood pressure" does not
- * match every group containing the word "blood".
+ * A TERM MATCHES A GROUP WHEN EVERY ONE OF ITS WORDS BEGINS A WORD in that group's text —
+ * order-insensitive, so "pressure blood" and "blood pressure" find the same rows, and conjunctive, so
+ * "blood pressure" does not match every group containing the word "blood".
+ *
+ * PREFIX, ADDED BY 08-14h — AND DELIBERATELY NOT STEMMING OR FUZZY MATCHING. The rule was whole-token and
+ * exact, so "press" and "smok" returned nothing at all while "pressure" and "smoking" returned plenty,
+ * which is the common way a reviewer's search silently failed. A prefix fixes that while keeping the
+ * search PREDICTABLE — a reviewer can say in advance what it will do, and it finds a superset of the
+ * exact rule rather than a different set. It is a prefix and not a substring for the same reason: an
+ * interior match is not a rule anyone can hold in their head. Anything cleverer would start making the
+ * semantic claim 08-15 removed.
  *
  * A TERM MATCHING NOTHING IS A COVERAGE FINDING, NOT AN EMPTY STATE. "No results" tells the reviewer their
  * search failed; "nothing in this run measures smoking" tells them something true about their corpus,
  * which is what they came to find out.
  */
-export function matchTerms(
-  groups: readonly ConceptGroup[],
-  terms: readonly string[],
-): { ids: Set<string>; noMatches: string[] } {
-  const haystacks = groups.map((g) => ({ id: g.groupId, tokens: new Set(tokens(searchableText(g))) }));
+export interface TermMatches {
+  /** Groups matched by at least one term. */
+  ids: Set<string>;
+  /** Terms that matched no group at all. */
+  noMatches: string[];
+  /**
+   * For each unmatched term, the words of it that appear NOWHERE in the run.
+   *
+   * THE HONEST DISCRIMINATOR the screen needs, and the only one a lexical match can offer. "Is this term
+   * absent from my corpus, or did I mistype it?" is the question a reviewer asks when a search returns
+   * nothing, and the two need opposite responses. The tool cannot read intent — but it can say which
+   * words it could not find: a term whose EVERY word is missing is a coverage finding about the run,
+   * while a term where one word landed and another did not ("smokng status") is a wording problem.
+   *
+   * This is a report, NOT a correction. No fuzzy matching, no suggestions, no did-you-mean — those would
+   * be the tool claiming to know what was meant, which is the claim 08-15 removed.
+   */
+  missingTokens: Record<string, string[]>;
+}
+
+export function matchTerms(groups: readonly ConceptGroup[], terms: readonly string[]): TermMatches {
+  // Both forms kept: the Set answers an exact hit in one step, and the list is what a prefix scan needs.
+  const haystacks = groups.map((g) => {
+    const list = tokens(searchableText(g));
+    return { id: g.groupId, exact: new Set(list), list };
+  });
+  /** Does any word in this group BEGIN with `w`? */
+  const present = (h: (typeof haystacks)[number], w: string): boolean =>
+    h.exact.has(w) || h.list.some((t) => t.startsWith(w));
   const ids = new Set<string>();
   const noMatches: string[] = [];
+  const missingTokens: Record<string, string[]> = {};
   for (const term of terms) {
     const wanted = tokens(term);
     if (wanted.length === 0) continue;
-    const hits = haystacks.filter((h) => wanted.every((w) => h.tokens.has(w)));
-    if (hits.length === 0) noMatches.push(term);
+    const hits = haystacks.filter((h) => wanted.every((w) => present(h, w)));
+    if (hits.length === 0) {
+      noMatches.push(term);
+      missingTokens[term] = wanted.filter((w) => !haystacks.some((h) => present(h, w)));
+    }
     for (const h of hits) ids.add(h.id);
   }
-  return { ids, noMatches };
+  return { ids, noMatches, missingTokens };
 }
 
 // --- regrouping, and the one paid action on this screen ----------------------------------------------------

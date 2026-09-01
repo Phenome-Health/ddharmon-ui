@@ -780,7 +780,25 @@ export default function Gate1Page() {
   // Nothing in the bucket matched — say which of the two reasons it was. A filter the reviewer set is
   // their own doing and is cleared; a search term that matched nothing is a finding about the corpus and
   // is reported by `TermSearch` instead.
-  const filteredToNothing = visible.length === 0 && groups.length > 0 && activeFilterCount(filters) > 0;
+  const filteredToNothing =
+    visible.length === 0 && groups.length > 0 && activeFilterCount(filters) > 0 && !search;
+  /**
+   * THE SEARCH EMPTIED THE LEDGER — and WHICH of search and filters is responsible (08-14h Task 7).
+   *
+   * Bhargav, on the live run: *"i searched for a term and I think now all concepts have dissapeared?"*
+   * The "I think" is the bug. Nothing was lost; nothing matched. But a search that hid every row fell
+   * through every empty state this ledger had — `filteredToNothing` required an active filter and
+   * `emptyBucket` required no search — so it mapped an empty list and rendered a BLANK BODY, leaving the
+   * reviewer to infer why their concepts had gone.
+   *
+   * THE CAUSE IS COMPUTED, NOT GUESSED, because the two have different recoveries and sending a reviewer
+   * to the wrong one is worse than saying nothing. `search.ids` is matched over the WHOLE corpus, so:
+   * an empty `ids` means the terms genuinely match nothing in this run and the search is responsible; a
+   * non-empty `ids` with no visible rows means the terms DID match and this bucket or the filters are
+   * hiding the matches, so both are named and both ways back are offered.
+   */
+  const searchEmptied = visible.length === 0 && groups.length > 0 && !!search;
+  const searchCause: "search" | "both" = search && search.ids.size === 0 ? "search" : "both";
   /**
    * The DEFAULT bucket is empty and the other one is not.
    *
@@ -891,6 +909,7 @@ export default function Gate1Page() {
           <TermSearch
             onSearch={(next) => setTerms(next.length > 0 ? next : null)}
             noMatches={search?.noMatches ?? []}
+            missingTokens={search?.missingTokens ?? {}}
           />
         </>
       )}
@@ -1027,6 +1046,65 @@ export default function Gate1Page() {
             {bucket === "cross-cohort"
               ? "Nothing pooled across your dictionaries this time. The run still produced results — every group maps variables from one cohort to a common data element — and they are on the other tab."
               : "Every group here draws on two or more of your dictionaries, so there is nothing in the single-cohort view."}
+          </GateEmptyState>
+        ) : searchEmptied ? (
+          /* A SEARCH THAT HID EVERYTHING. Say the term, say it matched nothing, say the groups are still
+             here, and give the way back — the four things whose absence let a reviewer doubt whether his
+             concepts had been destroyed. */
+          <GateEmptyState
+            heading={
+              searchCause === "search"
+                ? "Your search matched no group in this run"
+                : "Your search matched groups, but a filter is hiding them"
+            }
+            nextStep={
+              <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <button
+                  type="button"
+                  data-testid="clear-search-inline"
+                  onClick={() => setTerms(null)}
+                  className="text-left font-semibold text-link-on-raised underline underline-offset-2"
+                >
+                  Clear the search to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
+                </button>
+                {/* BOTH WAYS BACK when both are responsible: either one alone may be the one the
+                    reviewer wants kept, and choosing for them is how a recovery becomes a second
+                    surprise. */}
+                {searchCause === "both" && activeFilterCount(filters) > 0 && (
+                  <button
+                    type="button"
+                    data-testid="clear-filters-inline"
+                    onClick={() => setFilters(NO_FILTERS)}
+                    className="text-left font-semibold text-link-on-raised underline underline-offset-2"
+                  >
+                    Or clear the {activeFilterCount(filters) === 1 ? "filter" : "filters"} and keep the
+                    search.
+                  </button>
+                )}
+              </span>
+            }
+            className="[&]:block"
+          >
+            <span data-testid="search-empty" data-cause={searchCause}>
+              {/* THE TERMS ARE ECHOED AS ESCAPED TEXT CHILDREN — never raw HTML. A surface that reflects
+                  user input back is exactly where an injection would land; JSX children are escaped by
+                  construction, which is why this is a rule about what NOT to reach for. */}
+              Nothing has been lost — every group is still here, and{" "}
+              {(terms ?? []).length === 1 ? "your term is" : "your terms are"} hiding{" "}
+              {groups.length === 1 ? "it" : "them"}:{" "}
+              {(terms ?? []).map((t, i) => (
+                <span key={t}>
+                  {i > 0 && ", "}
+                  <span className="font-semibold">&ldquo;{t}&rdquo;</span>
+                </span>
+              ))}
+              .{" "}
+              {searchCause === "search"
+                ? "No group's text contains those words, which is a finding about this run rather than a failed search — the detail is in the search box above."
+                : `Some groups do match, but the ${
+                    activeFilterCount(filters) === 1 ? "filter" : "filters"
+                  } you have on, or the tab you are viewing, exclude every one of them.`}
+            </span>
           </GateEmptyState>
         ) : filteredToNothing ? (
           /* A FILTER matching nothing — the reviewer's own doing, and clearing it is the fix. Different
