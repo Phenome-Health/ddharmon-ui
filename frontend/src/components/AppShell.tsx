@@ -1,8 +1,13 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Plus, ListChecks, BookOpen, Workflow, Gauge, Lightbulb, Sparkles, Boxes, Building2, Milestone, Network, Github } from "lucide-react";
+import { Plus, ListChecks, BookOpen, Workflow, Gauge, Lightbulb, Sparkles, Boxes, Building2, Milestone, Network, Github,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { UserButton } from "@clerk/react";
 import { cn } from "@/lib/utils";
+import { readNavCollapsed, writeNavCollapsed } from "@/lib/nav-collapse";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
@@ -15,27 +20,56 @@ import { GlobalStatusBanner } from "@/components/global-status-banner";
 // build is never mislabeled. Surfaced as a prominent badge so a dev build is never mistaken for prod.
 const IS_DEV_CHANNEL = (import.meta.env.VITE_APP_CHANNEL as string | undefined) === "dev";
 
-function NavLink({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
+function NavLink({
+  href,
+  icon,
+  label,
+  collapsed = false,
+}: {
+  href: string;
+  icon: ReactNode;
+  label: string;
+  /** Icon-rail form: the label is still the accessible name, it is just not drawn (08-16c Task 5). */
+  collapsed?: boolean;
+}) {
   const [loc] = useLocation();
   const active = loc === href || (href !== "/" && loc.startsWith(href));
   return (
     <Link
       href={href}
+      // The label survives collapsing as the accessible name and as the hover tooltip, so collapsing
+      // hides text — it does not remove a destination or its identification.
+      aria-label={collapsed ? label : undefined}
+      title={collapsed ? label : undefined}
+      data-nav-active={active ? "true" : "false"}
       className={cn(
-        "flex items-center gap-3 rounded px-3 py-2 text-sm transition-colors",
+        "flex items-center rounded text-sm transition-colors",
+        collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
         active
           ? "bg-on-chrome/12 font-semibold text-on-chrome"
           : "text-on-chrome-muted hover:bg-on-chrome/8 hover:text-on-chrome",
       )}
     >
       {icon}
-      {label}
+      {!collapsed && label}
     </Link>
   );
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { isGuest, exitGuest, email } = useAuthState();
+  /**
+   * Seeded from storage on FIRST RENDER, not in an effect (08-16c Task 5). An effect would paint the
+   * expanded nav and then snap it shut on every navigation for a reviewer who chose collapsed — a flash
+   * of the state they explicitly turned off.
+   */
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => readNavCollapsed());
+  const toggleNav = () => {
+    setNavCollapsed((cur) => {
+      writeNavCollapsed(!cur);
+      return !cur;
+    });
+  };
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface-chrome">
       {/* Site-wide "under active development" notice — every page, both prod + dev channels. */}
@@ -95,21 +129,60 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-h-0 flex-1">
         {/* Left sidebar nav. */}
-        <aside className="hidden w-60 shrink-0 flex-col border-r border-rule-on-chrome bg-surface-chrome px-3 py-4 lg:flex">
-          <nav className="space-y-1">
-            <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" />
-            <NavLink href="/methods" icon={<Workflow className="h-4 w-4" />} label="Methods" />
-            <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4" />} label="Benchmarks" />
-            <NavLink href="/design" icon={<Lightbulb className="h-4 w-4" />} label="Design" />
-            <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" />
-            <NavLink href="/new" icon={<Plus className="h-4 w-4" />} label="New run" />
-            <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" />
-            <NavLink href="/related" icon={<Boxes className="h-4 w-4" />} label="Related work" />
-            <NavLink href="/roadmap" icon={<Milestone className="h-4 w-4" />} label="Roadmap" />
-            <NavLink href="/architecture" icon={<Network className="h-4 w-4" />} label="Architecture" />
-            <NavLink href="/phenome" icon={<Building2 className="h-4 w-4" />} label="Phenome Health" />
+        <aside
+          data-testid="app-nav"
+          data-collapsed={navCollapsed ? "true" : "false"}
+          className={cn(
+            "hidden shrink-0 flex-col border-r border-rule-on-chrome bg-surface-chrome py-4 lg:flex",
+            // The icon rail keeps every destination reachable and the current one identifiable; only the
+            // labels go. Full removal would have made "which page am I on" unanswerable from the chrome.
+            navCollapsed ? "w-14 px-2" : "w-60 px-3",
+          )}
+        >
+          {/* Inside the aside, so below the `lg:` breakpoint — where the nav is already hidden — the
+              control neither appears nor occupies space. */}
+          <button
+            type="button"
+            data-testid="app-nav-toggle"
+            onClick={toggleNav}
+            aria-expanded={!navCollapsed}
+            aria-controls="app-nav-list"
+            // Names the ACTION, not the state: "Collapse navigation" is what pressing it does.
+            aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+            title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+            className={cn(
+              "mb-2 flex items-center gap-2 rounded px-2 py-1.5 text-xs text-on-chrome-muted transition-colors hover:bg-on-chrome/10 hover:text-on-chrome",
+              navCollapsed ? "justify-center" : "justify-start",
+            )}
+          >
+            {navCollapsed ? (
+              <PanelLeftOpen aria-hidden="true" className="h-4 w-4 shrink-0" />
+            ) : (
+              <PanelLeftClose aria-hidden="true" className="h-4 w-4 shrink-0" />
+            )}
+            {!navCollapsed && <span>Collapse</span>}
+          </button>
+          <nav id="app-nav-list" className="space-y-1">
+            <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" collapsed={navCollapsed} />
+            <NavLink href="/methods" icon={<Workflow className="h-4 w-4" />} label="Methods" collapsed={navCollapsed} />
+            <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4" />} label="Benchmarks" collapsed={navCollapsed} />
+            <NavLink href="/design" icon={<Lightbulb className="h-4 w-4" />} label="Design" collapsed={navCollapsed} />
+            <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" collapsed={navCollapsed} />
+            <NavLink href="/new" icon={<Plus className="h-4 w-4" />} label="New run" collapsed={navCollapsed} />
+            <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" collapsed={navCollapsed} />
+            <NavLink href="/related" icon={<Boxes className="h-4 w-4" />} label="Related work" collapsed={navCollapsed} />
+            <NavLink href="/roadmap" icon={<Milestone className="h-4 w-4" />} label="Roadmap" collapsed={navCollapsed} />
+            <NavLink href="/architecture" icon={<Network className="h-4 w-4" />} label="Architecture" collapsed={navCollapsed} />
+            <NavLink href="/phenome" icon={<Building2 className="h-4 w-4" />} label="Phenome Health" collapsed={navCollapsed} />
           </nav>
-          <div className="mt-auto space-y-1 border-t border-rule-on-chrome pt-3 text-xs">
+          <div
+            className={cn(
+              "mt-auto space-y-1 border-t border-rule-on-chrome pt-3 text-xs",
+              // The footer is prose + a mark. Collapsed there is no room for the words, so it goes rather
+              // than wrapping into an unreadable column.
+              navCollapsed && "hidden",
+            )}
+          >
             <a
               href={PH.org}
               target="_blank"

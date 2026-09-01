@@ -580,3 +580,95 @@ test.describe("the run-progress readout", () => {
     expect(rederived, "no gate screen may re-derive progress or elapsed").toEqual([]);
   });
 });
+
+/**
+ * The collapsible chrome sidebar (08-16c Task 5).
+ *
+ * Bhargav: *"make the UI sidebar collapsible so we have more space to work with."* The aside is a fixed
+ * `w-60` — 240px off every screen, including the two widest surfaces this phase has built.
+ */
+test.describe("app nav collapse", () => {
+  const NAV = "[data-testid='app-nav']";
+  const TOGGLE = "[data-testid='app-nav-toggle']";
+
+  test("@gates collapsing the nav gives the width to the content", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const nav = page.locator(NAV);
+    await expect(nav).toHaveAttribute("data-collapsed", "false");
+    const wide = (await nav.boundingBox())!.width;
+    const contentWide = (await page.locator("main").boundingBox())!.width;
+
+    await page.locator(TOGGLE).click();
+    await expect(nav).toHaveAttribute("data-collapsed", "true");
+    const narrow = (await nav.boundingBox())!.width;
+    const contentNarrow = (await page.locator("main").boundingBox())!.width;
+
+    expect(narrow).toBeLessThan(wide);
+    // The freed width goes to the content rather than to empty space.
+    expect(contentNarrow).toBeGreaterThan(contentWide);
+    expect(contentNarrow - contentWide).toBeCloseTo(wide - narrow, 0);
+  });
+
+  test("@gates collapsing hides labels but removes no destination", async ({ page }) => {
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    const links = page.locator(`${NAV} nav a`);
+    const before = await links.count();
+    await page.locator(TOGGLE).click();
+    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
+    expect(await links.count()).toBe(before);
+    // Every one still names itself, so the rail is navigable and announceable without its labels.
+    for (let i = 0; i < before; i++) {
+      expect(await links.nth(i).getAttribute("aria-label")).toBeTruthy();
+    }
+  });
+
+  test("@gates the current page is still identifiable with the labels gone", async ({ page }) => {
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    await page.locator(TOGGLE).click();
+    await expect(page.locator(`${NAV} a[data-nav-active='true']`)).toHaveCount(1);
+    expect(await page.locator(`${NAV} a[data-nav-active='true']`).getAttribute("aria-label")).toBe("Runs");
+  });
+
+  test("@gates the choice survives a move to another page and a reload", async ({ page }) => {
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    await page.locator(TOGGLE).click();
+    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
+
+    await page.goto("/methods");
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
+
+    // Restore, so this spec leaves no state behind for the next one.
+    await page.locator(TOGGLE).click();
+    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "false");
+  });
+
+  test("@gates the toggle states which ACTION it performs, not merely its state", async ({ page }) => {
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    const toggle = page.locator(TOGGLE);
+    await expect(toggle).toHaveAttribute("aria-label", "Collapse navigation");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-label", "Expand navigation");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+  });
+
+  test("@gates below the lg breakpoint the nav is hidden and the toggle takes no space", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 900 });
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    // The control lives INSIDE the aside, so it disappears with it rather than floating over the content.
+    await expect(page.locator(NAV)).toBeHidden();
+    await expect(page.locator(TOGGLE)).toBeHidden();
+  });
+});
