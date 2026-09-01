@@ -446,12 +446,56 @@ class JobStore:
         self._teardown_work_dir(job_id)
         return existed
 
-    def update(self, job_id: str, **fields: Any) -> None:
-        """Set attributes on a job (status/phase/completed/total/error_message/result)."""
+    def _live_or_hydrate_locked(self, job_id: str) -> Job | None:
+        """The in-memory job, else one hydrated from the DB AND REGISTERED. Caller must hold ``_lock``.
+
+        THE FIX FOR THE RESUME NO-OP (08-16c Task 11). :meth:`get` deliberately returns a DETACHED row for a
+        run that is not in memory — it never registers it — and :meth:`update` used to give up at exactly
+        that point with a bare ``return``. Every parked run is in that state, because parking evicts by
+        design (T-08-39), so ``resume_run``'s ``store.update(status="pending")`` wrote nothing, the route
+        returned 200 anyway, and the worker it spawned then had EVERY progress and cost write silently
+        discarded too. Measured on a real run: five Continue presses, five 200s, and status, gate, cost and
+        ``updated_at`` all unmoved.
+
+        WHY REGISTERING HERE DOES NOT DEFEAT EVICTION, which is the trap this fix has to avoid. This is
+        reached only from a WRITE, and a write is evidence the run is ACTIVE — which is precisely the case
+        eviction is not aimed at. :meth:`purge_expired` evicts on ``updated_at < cutoff`` AND a status in
+        ``TERMINAL_STATES | CHECKPOINT_STATES``; a run being resumed is ``pending``/``embedding``/… so it is
+        not evictable while it runs, and it becomes evictable again the moment it re-parks and ages out.
+        Reads are left alone on purpose: :meth:`get` is called on far more paths, and letting a read
+        repopulate memory is the thing that WOULD defeat eviction — a Runs listing or a checkpoint poll
+        would re-pin every parked run in RAM for the days a human review takes.
+
+        Registering also closes the hole for everything that follows the first write: the worker's own
+        ``progress()`` ticks go through :meth:`update`, so with the job back in memory they behave exactly
+        as they do for a run that was never evicted, and ``PERSISTED_STATES`` still decides what reaches
+        SQLite. Persisting every tick instead would have traded this bug for a write storm.
+        """
+        job = self._jobs.get(job_id)
+        if job is not None:
+            return job
+        if self.db is None:
+            return None
+        row = self.db.get(job_id)
+        if row is None:
+            return None
+        job = Job.from_db_row(row)
+        self._jobs[job_id] = job
+        return job
+
+    def update(self, job_id: str, **fields: Any) -> bool:
+        """Set attributes on a job (status/phase/completed/total/error_message/result).
+
+        Returns True when the write landed, False when there is no such run ANYWHERE — in memory or in the
+        durable store. The return value matters: this method used to be ``-> None`` and to return silently
+        for any run not held in memory, so ``resume_run`` could not tell that its write had been dropped
+        and answered 200 regardless. :meth:`checkpoint` already reported the same situation with a bool,
+        so the store was inconsistent with itself rather than merely incomplete.
+        """
         with self._lock:
-            job = self._jobs.get(job_id)
+            job = self._live_or_hydrate_locked(job_id)
             if job is None:
-                return
+                return False
             for key, value in fields.items():
                 setattr(job, key, value)
             # Stamp the first entry into each phase (incl. the terminal complete/error) so the run view can
@@ -471,6 +515,7 @@ class JobStore:
             persist = job.status in PERSISTED_STATES
         if persist:
             self._persist(job)
+        return True
 
     def checkpoint(
         self,
@@ -490,7 +535,10 @@ class JobStore:
         moves the token again, which costs one refetch and no money.
         """
         with self._lock:
-            job = self._jobs.get(job_id)
+            # Same hydrate-on-write as `update`, and for the same reason: the Gate 4 hop checkpoints a run
+            # the request only ever READ (so it was never registered), and this returned False while
+            # `resume_run` returned 200 — reproduced live before the fix.
+            job = self._live_or_hydrate_locked(job_id)
             if job is None:
                 return False
             job.status = AWAITING_REVIEW

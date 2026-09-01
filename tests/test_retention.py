@@ -273,3 +273,107 @@ def test_the_inflight_report_runs_as_a_command_and_exits_zero(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert "awaiting review" in proc.stdout.lower()
+
+
+# ── the resume no-op: a write to an evicted run must land (08-16c Task 11) ─────────────────────────
+#
+# THE DEFECT. `JobStore.get` hydrates a run that is not in memory and returns it DETACHED — it never
+# registers it — and `update` gave up at exactly that point with a bare `return`. Every parked run is in
+# that state, because parking evicts by design (the test directly above asserts the eviction). So
+# `resume_run`'s `store.update(status="pending")` wrote nothing, the route returned 200 anyway, and the
+# worker it spawned had every progress and cost write silently discarded too. Measured on a real run:
+# five Continue presses, five 200s, and status, gate, cost and updated_at all unmoved.
+
+
+def test_updating_a_run_that_was_evicted_from_memory_actually_writes(tmp_path):
+    """The resume path, reduced to its one broken instruction."""
+    db = JobDB(tmp_path / "jobs.db")
+    store = JobStore(ttl_seconds=-10, work_root=tmp_path, db=db)
+    _paused(store, "paused-3", work_root=tmp_path, cost=1.42)
+    store.purge_expired()
+    assert "paused-3" not in store._jobs, "precondition: the run must NOT be in memory"
+
+    assert store.update("paused-3", status="pending", phase="pending") is True
+
+    assert store.get("paused-3").status == "pending", "the write was silently dropped"
+    db.close()
+
+
+def test_a_write_to_a_run_that_exists_nowhere_reports_failure_instead_of_returning_silently(tmp_path):
+    """The silence WAS the bug: `update` returned None, so `resume_run` could not tell its write had been
+    dropped and answered 200 regardless. `checkpoint` already reported this with a bool."""
+    db = JobDB(tmp_path / "jobs.db")
+    store = JobStore(work_root=tmp_path, db=db)
+    assert store.update("no-such-run", status="pending") is False
+    assert store.checkpoint("no-such-run", gate="gate1", checkpoint_ref="x") is False
+    db.close()
+
+
+def test_the_worker_s_later_writes_land_too_not_just_the_first(tmp_path):
+    """A fix at the first write only would leave every subsequent progress and COST tick in the same hole —
+    which is the half that spends real money while the UI shows the run parked and idle at its old cost."""
+    db = JobDB(tmp_path / "jobs.db")
+    store = JobStore(ttl_seconds=-10, work_root=tmp_path, db=db)
+    _paused(store, "paused-4", work_root=tmp_path, cost=1.42)
+    store.purge_expired()
+
+    store.update("paused-4", status="pending", phase="pending")
+    for phase, cost in (("embedding", 1.42), ("splitting", 2.10), ("assigning", 3.05)):
+        assert store.update("paused-4", status=phase, phase=phase, cost_so_far=cost) is True
+
+    live = store.get("paused-4")
+    assert live.status == "assigning"
+    assert live.cost_so_far == 3.05, "a spending run reported its old cost"
+    db.close()
+
+
+def test_checkpointing_an_evicted_run_lands_the_gate_four_hop(tmp_path):
+    """Gate 4 spawns no worker: `resume_run` checkpoints the carried payload and returns. That went through
+    `store.checkpoint`, which had the identical memory-only hole — reproduced live before the fix, where
+    the route returned 200 with target gate4 and the row still read gate3."""
+    db = JobDB(tmp_path / "jobs.db")
+    store = JobStore(ttl_seconds=-10, work_root=tmp_path, db=db)
+    _paused(store, "paused-5", work_root=tmp_path, cost=1.42)
+    store.purge_expired()
+
+    assert store.checkpoint("paused-5", gate="gate4", checkpoint_ref="paused-5/checkpoint_gate4.json") is True
+    assert store.get("paused-5").gate_position == "gate4"
+    db.close()
+
+
+def test_a_write_does_not_defeat_eviction_it_only_defers_it(tmp_path):
+    """The trap this fix had to avoid. Hydrating on WRITE re-registers the run — which is correct, because a
+    write means the run is active — but it must not pin it in RAM forever. Once it re-parks and ages out,
+    the reaper takes it again exactly as before."""
+    db = JobDB(tmp_path / "jobs.db")
+    store = JobStore(ttl_seconds=-10, work_root=tmp_path, db=db)
+    _paused(store, "paused-6", work_root=tmp_path, cost=1.42)
+    store.purge_expired()
+
+    store.update("paused-6", status="pending", phase="pending")
+    assert "paused-6" in store._jobs, "the resumed run should be live in memory while it runs"
+    # A running run is NOT evictable, so the reaper leaves it alone mid-flight.
+    store.purge_expired()
+    assert "paused-6" in store._jobs, "the reaper evicted a run that was actively running"
+
+    # It re-parks, and becomes evictable again.
+    store.checkpoint("paused-6", gate="gate2", checkpoint_ref="paused-6/checkpoint_gate2.json")
+    store.purge_expired()
+    assert "paused-6" not in store._jobs, "a re-parked run was pinned in memory forever"
+    assert store.get("paused-6").gate_position == "gate2", "…and its checkpoint survived the eviction"
+    db.close()
+
+
+def test_reads_still_do_not_repopulate_memory(tmp_path):
+    """The rejected alternative, asserted so it stays rejected. Registering inside `get()` would have been
+    fewer lines, but `get` is on far more paths than `update` — a Runs listing or a checkpoint poll would
+    re-pin every parked run in RAM for the days a human review takes, which is the exact thing eviction
+    exists to prevent."""
+    db = JobDB(tmp_path / "jobs.db")
+    store = JobStore(ttl_seconds=-10, work_root=tmp_path, db=db)
+    _paused(store, "paused-7", work_root=tmp_path, cost=1.42)
+    store.purge_expired()
+
+    assert store.get("paused-7") is not None
+    assert "paused-7" not in store._jobs, "a READ repopulated memory and defeated eviction"
+    db.close()
