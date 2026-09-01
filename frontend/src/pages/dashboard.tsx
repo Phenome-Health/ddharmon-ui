@@ -40,7 +40,7 @@ import { isParked } from "@/lib/run-state";
 // Both LIFTED OUT OF THIS FILE by 08-14h Task 1, where they were module-local and therefore reachable only
 // from a screen 08-14f stopped routing anyone through. The gate chrome now renders the same readout from
 // the same code rather than growing a second answer to "how far has this run got".
-import { phasePercent } from "@/lib/run-progress";
+import { elapsedSeconds, etaSeconds, phasePercent } from "@/lib/run-progress";
 import { RunTimeline } from "@/components/gate/RunProgress";
 import { resumeGateOf } from "@/lib/gate-routes";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -327,9 +327,10 @@ export default function DashboardPage() {
   // it replaces had one parked run at 109 HOURS for 6.6 seconds of work.
   const parked = isParked(jobState.status);
   const parkedGate = resumeGateOf(jobState);
-  const elapsed = parked
-    ? Math.max(0, jobState.updatedAt - jobState.createdAt)
-    : Math.max(0, now - jobState.createdAt);
+  // COMPUTED BY `lib/run-progress.ts`, NOT HERE (08-14h Task 2). The freeze rule above is now needed by
+  // the gate chrome as well, and two copies of it is how the 109-hour figure came to differ per surface
+  // in the first place. The formula is unchanged; only its home is.
+  const elapsed = elapsedSeconds(jobState, now);
   // ONE SOURCE LINE PER SENTENCE: a number that stops moving with no explanation reads as a hung page.
   const elapsedLabel = parked
     ? `Paused at ${parkedGate ? GATE_LABELS[parkedGate] : "a review gate"} · ran for ${formatDuration(elapsed)}`
@@ -339,9 +340,18 @@ export default function DashboardPage() {
   // the first seconds or during batch's opaque LLM wait.
   const pct = phasePercent(jobState.phase, jobState.completed, jobState.total);
   // NOT MERELY USELESS OVER A FROZEN ELAPSED — a projected finish time is a claim that work is in
-  // progress, and for a parked run that claim is false.
-  const etaSecs =
-    running && !parked && elapsed > 3 && pct >= 12 && pct < 100 ? (elapsed * (100 - pct)) / pct : null;
+  // progress, and for a parked run that claim is false. That suppression, and the early-seconds and
+  // low-percentage ones, moved into `etaSeconds` with the rest of the arithmetic. It gained ONE
+  // condition on the way: a batch run sitting in the provider's queue is no longer projected either,
+  // because the percentage it would divide by is standing still. That was a defect here too, not just a
+  // gap in the new gate readout.
+  const etaSecs = etaSeconds({
+    status: jobState.status,
+    phase: jobState.phase,
+    config: jobState.config as Record<string, unknown>,
+    elapsed,
+    pct,
+  });
 
   return (
     <div className="space-y-6">

@@ -6,8 +6,10 @@ import { PhMark } from "@/components/ph-logo";
 import { StopRunAction } from "@/components/stop-run-action";
 import { GATE_LABELS, GATE_SEQUENCE, GateRail, type GateRailItem } from "@/components/gate/GateRail";
 import { HowToPanel } from "@/components/gate/HowToPanel";
+import { RunProgress } from "@/components/gate/RunProgress";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
 import { stopCostSplit } from "@/lib/estimate";
+import { isInFlight } from "@/lib/run-state";
 
 /**
  * The universal chrome every gate screen renders inside (UI-SPEC §7.1). One file, so no later screen plan
@@ -96,18 +98,19 @@ export interface GateShellProps {
 /**
  * Whether this run has a worker burning money right now.
  *
- * `awaiting_review` IS EXCLUDED, and that is the subtle one: it is non-terminal, so a naive
- * "not finished => stoppable" test would offer a stop there. But a pause is an EXIT (08 D-01) — the
- * worker is gone and nothing is accruing — so a stop control on a parked run would offer to save money
- * that is not being spent, which is a false claim about the run rather than a harmless extra button.
+ * MIGRATED TO `lib/run-state.ts` BY 08-14h. This file used to declare its own set —
+ * `["complete", "error", "cancelled", "awaiting_review"]` — and it was one of the FOUR copies of that
+ * predicate that existed on 2026-08-31, of which two were wrong. This one was right, which is why
+ * 08-14c deliberately left it alone: 08-15/16/17 were rendering this file in parallel and migrating a
+ * correct predicate for zero behaviour change would have bought a merge conflict. Those plans have
+ * landed and this one is already editing this file, so this is the "later, quieter moment" 08-14c
+ * named. The reasoning it carried is preserved on `isInFlight` itself.
  *
- * `pending` IS included: the worker has not started, so stopping avoids the whole cost.
+ * The subtlety worth keeping in view here: `awaiting_review` is EXCLUDED. It is non-terminal, so a
+ * naive "not finished => stoppable" test would offer a stop over a parked run — a false claim about
+ * the run, not a harmless extra button, because a pause is an EXIT (08 D-01) and nothing is accruing.
+ * `pending` is INCLUDED: the worker has not started, so a stop still avoids the whole cost.
  */
-const NOT_IN_FLIGHT = new Set(["complete", "error", "cancelled", "awaiting_review"]);
-
-function isInFlight(job: JobResult | null | undefined): boolean {
-  return !!job && !NOT_IN_FLIGHT.has(job.status);
-}
 
 export function GateShell({
   gate,
@@ -122,7 +125,7 @@ export function GateShell({
   onStop,
   children,
 }: GateShellProps) {
-  const inFlight = isInFlight(job);
+  const inFlight = isInFlight(job?.status);
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
@@ -194,6 +197,18 @@ export function GateShell({
 
       {/* (3) The rail, then (4) the how-to panel — both on the ground, above the working surface. */}
       <GateRail current={gate} items={rail} />
+
+      {/* THE RUN'S STATE, while it has one (08-14h). Placed HERE, between the rail and the how-to panel,
+          and the position is a judgement rather than an accident. The rail is the run's IDENTITY — where
+          it is in the flow and what each stage cost — and this is the run's temporary STATE, so the two
+          read together; putting it above the masthead would have made a transient strip the first thing
+          on a screen whose subject is the review. It renders NOTHING unless a worker is actually running,
+          so on a parked or finished gate the rail and the how-to panel simply sit adjacent as before.
+
+          ONE PLACEMENT, FIVE SCREENS. No gate page implements its own, and `gates.spec.ts` asserts that
+          single call site — the same rule and the same reason as the stop control above. */}
+      <RunProgress job={job} />
+
       <HowToPanel gate={gate} />
 
       {/* The working surface. */}

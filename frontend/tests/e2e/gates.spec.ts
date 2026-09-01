@@ -459,3 +459,124 @@ test.describe("the stop control", () => {
     });
   });
 });
+
+/**
+ * THE RUN-PROGRESS READOUT — shell chrome, and asserted from the shell's own spec (08-14h Task 2).
+ *
+ * WHY IT IS HERE AT ALL. Bhargav, watching a real run on 2026-08-31: *"there's no progress bar or real
+ * time population of stats on gate 1 screen while a run is going."* Every affordance already existed on
+ * `pages/dashboard.tsx` — the screen 08-14f stopped routing anyone through when Start began landing
+ * directly on Gate 1. So it was lifted (`lib/run-progress.ts` + `components/gate/RunProgress.tsx`) rather
+ * than rewritten, and placed ONCE, here, so all five screens inherit it.
+ *
+ * THE ARITHMETIC IS ASSERTED IN `run-progress.spec.ts`, WITHOUT A BROWSER. What is left for this file is
+ * the part only a render can show: that it appears while a run is in flight, that it disappears the
+ * moment the run stops being in flight, and that the batch queue wait reads as a wait.
+ */
+test.describe("the run-progress readout", () => {
+  /** Put the fixture into a genuinely in-flight state, with a run mode and phase the caller chooses. */
+  async function running(
+    page: import("@playwright/test").Page,
+    { phase, mode }: { phase: string; mode: string },
+  ) {
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: phase, phase, stopping: false });
+      const config = p.config as Record<string, unknown>;
+      config.run_mode = mode;
+      config.est_fields = 1000;
+      config.est_cohorts = 5;
+      delete config.demo;
+    });
+  }
+
+  test("@gates a run that is still running says so, with its stage, its progress and its elapsed time", async ({
+    page,
+  }) => {
+    await running(page, { phase: "clustering", mode: "sync" });
+    await gotoGate(page);
+
+    const readout = page.locator("[data-testid='run-progress']");
+    await expect(readout).toBeVisible();
+    // The stage REACHED, named as the stream names it — a new pipeline stage still displays.
+    await expect(page.locator("[data-testid='run-progress-stage']")).toContainText(/clustering/i);
+    // A progress indication carrying the percentage as DATA, so the assertion reads the number rather
+    // than eyeballing a width.
+    const bar = page.locator("[data-testid='run-progress-bar']");
+    await expect(bar).toBeVisible();
+    expect(Number(await bar.getAttribute("data-pct"))).toBeGreaterThan(0);
+    await expect(page.locator("[data-testid='run-progress-elapsed']")).toBeVisible();
+    // A sync run past the early noise CAN be projected, so it is.
+    await expect(page.locator("[data-testid='run-progress-eta']")).toBeVisible();
+  });
+
+  test("@gates a batch run in the provider's queue says what it is waiting on, and shows no bar", async ({
+    page,
+  }) => {
+    await running(page, { phase: "splitting", mode: "batch" });
+    await gotoGate(page);
+
+    await expect(page.locator("[data-testid='run-progress']")).toBeVisible();
+    // THE CASE THIS PLAN EXISTS TO GET RIGHT. The queue is most of a batch run's wall clock and the stage
+    // percentage does not move during it, so a bar that has not moved in twenty minutes reads as a hung
+    // product. Say what is being waited on instead of animating a stalled number.
+    const queue = page.locator("[data-testid='run-progress-queue']");
+    await expect(queue).toBeVisible();
+    await expect(queue).toContainText(/queue/i);
+    await expect(page.locator("[data-testid='run-progress-bar']")).toHaveCount(0);
+    // AND NO ETA. Projecting from a percentage that is standing still invents a number.
+    await expect(page.locator("[data-testid='run-progress-eta']")).toHaveCount(0);
+    // The elapsed figure is still real and still shown — it is measured, not projected.
+    await expect(page.locator("[data-testid='run-progress-elapsed']")).toBeVisible();
+  });
+
+  test("@gates the LOCAL leg of a batch run is real progress and is shown as such", async ({ page }) => {
+    // Embedding and clustering run on this machine even in batch mode. Suppressing the bar for the whole
+    // of a batch run would hide progress that genuinely is happening.
+    await running(page, { phase: "embedding", mode: "batch" });
+    await gotoGate(page);
+    await expect(page.locator("[data-testid='run-progress-bar']")).toBeVisible();
+    await expect(page.locator("[data-testid='run-progress-queue']")).toHaveCount(0);
+  });
+
+  test("@gates no progress readout over a run that has parked or finished, and that is not an error", async ({
+    page,
+  }) => {
+    // PARKED — the committed fixture's own state. The screen is about the review now, not the run, and a
+    // readout here would be chrome competing with the thing the reviewer came for.
+    await gotoGate(page);
+    await expect(page.getByRole("heading", { level: 1, name: "Concept groups" })).toBeVisible();
+    await expect(page.locator("[data-testid='run-progress']")).toHaveCount(0);
+
+    for (const status of ["complete", "error", "cancelled"]) {
+      await withPayload(page, (p) => Object.assign(p, { status, phase: status }));
+      await gotoGate(page);
+      await expect(page.locator("[data-testid='run-progress']"), status).toHaveCount(0);
+    }
+  });
+
+  test("@gates the progress readout is wired ONCE, in the shell, so every screen inherits it", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    const dirs = [resolve(here, "../../src/components/gate"), resolve(here, "../../src/pages/run")];
+    const placements: string[] = [];
+    const rederived: string[] = [];
+    for (const dir of dirs) {
+      for (const f of readdirSync(dir).filter((x) => x.endsWith(".tsx"))) {
+        if (f === "RunProgress.tsx") continue; // the component's own definition, not a placement
+        const src = readFileSync(resolve(dir, f), "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, " ")
+          .replace(/^\s*\/\/.*$/gm, " ");
+        for (const _ of src.matchAll(/<RunProgress\b/g)) placements.push(f);
+        // A gate page computing its own percentage or its own elapsed figure is the duplication this
+        // placement exists to prevent — four disagreeing copies of the in-flight predicate is what that
+        // cost last time (see lib/run-state.ts).
+        if (/function phasePercent|updatedAt\s*-\s*.*createdAt/.test(src)) rederived.push(f);
+      }
+    }
+    expect(placements, "one placement, in the shell — every screen inherits it").toEqual(["GateShell.tsx"]);
+    expect(rederived, "no gate screen may re-derive progress or elapsed").toEqual([]);
+  });
+});
