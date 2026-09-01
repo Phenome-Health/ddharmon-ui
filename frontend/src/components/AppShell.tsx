@@ -148,8 +148,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </aside>
 
-        {/* Scrolling content region. */}
-        <main className="min-w-0 flex-1 overflow-y-auto bg-surface-field text-on-field">
+        {/*
+          Scrolling content region — and the app's ONLY vertical scroll context.
+
+          `relative` IS LOAD-BEARING, NOT COSMETIC (08-14h Task 4). Without it this element is
+          `position: static`, so it is not a containing block, so an absolutely positioned descendant
+          with no positioned ancestor of its own is laid out against the INITIAL containing block —
+          escaping both this element's `overflow-y: auto` and the shell's `overflow: hidden`, and
+          extending the DOCUMENT's scrollable area instead.
+
+          That is not hypothetical. `sr-only` is `position: absolute` by definition, and Gate 1's ledger
+          renders one per row (the coherence judge's explanation, the "variables" unit): 58 on the
+          shipped fixture, 117 rows' worth on the live run it was found on. The last one landed 3,344px
+          down, which gave the page a SECOND vertical scrollbar — one that did not scroll the ledger but
+          dragged the whole application, sidebar and header included, up off the top of the window.
+          Measured 2026-08-31 at 1440x900 against a real parked run: Gate 1 reported a document scroll
+          height of 3,157px where Setup, Gate 2, /jobs and /methods all reported exactly 900.
+
+          So it was never a Gate 1 bug — Gate 1 was only the first screen with enough screen-reader text
+          far enough down to make a latent app-wide one visible. Fixing it here means Gate 2's ledger
+          growing cannot bring it back. `tests/e2e/gate1.spec.ts` asserts both the document scroll and
+          the containing-block property, the second so a future reader cannot "simplify" this word away.
+        */}
+        <main className="relative min-w-0 flex-1 overflow-y-auto bg-surface-field text-on-field">
           <div className="mx-auto max-w-screen-2xl px-6 py-6 lg:px-8">{children}</div>
         </main>
       </div>

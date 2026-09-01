@@ -1061,3 +1061,128 @@ test.describe("gate 1 waiting and error states", () => {
     expect(src).toMatch(/import \{[^}]*isInFlight[^}]*\} from "@\/lib\/run-state"/s);
   });
 });
+
+/**
+ * 08-14h TASK 4 — ONE vertical scrollbar at the pinned 1440x900 desktop viewport.
+ *
+ * WHAT WAS ACTUALLY WRONG, because it is not what it looked like. Gate 1 had TWO working vertical
+ * scroll contexts: `<main>` (the app's real content scroller, `AppShell.tsx:152`) and the DOCUMENT. The
+ * second one did not scroll the ledger — it dragged the entire application, sidebar and header and all,
+ * up off the top of the window, leaving bare page background below it.
+ *
+ * THE CAUSE IS `sr-only`, WHICH IS `position: absolute`. Gate 1's ledger renders a screen-reader-only
+ * span per row (the coherence judge's explanation on `CoherenceMark`, the "variables" unit on the member
+ * count) — 58 of them on the shipped fixture, 117 rows' worth on the run this was found on. Every
+ * ancestor up to `<html>` was `position: static`, so their containing block was the INITIAL containing
+ * block: they escaped `<main>`'s `overflow-y: auto` clip and `AppShell`'s `overflow: hidden`, and each
+ * one extended the DOCUMENT's scrollable area to wherever it landed — 3,344px on the fixture.
+ *
+ * It is Gate 1 only because Gate 1 is the only screen with enough of them far enough down the page;
+ * measured on the live run, Setup, Gate 2, /jobs and /methods all reported a document scroll height of
+ * exactly 900. The fix is therefore in `AppShell`, not here: `<main>` becomes the containing block, so
+ * the scroller that already owns vertical scrolling also clips what would otherwise escape it. Gate 1
+ * merely happens to be where a latent app-wide bug became visible, and fixing it on this page alone
+ * would leave the same bug waiting for Gate 2's ledger to grow.
+ *
+ * NOTE ON THE BOUNDED EVIDENCE GRID. `source-rows`'s `max-h-[28rem] overflow-auto` is untouched and is
+ * NOT this bug: it is a deliberately bounded widget inside an expanded row, its cap is what keeps the
+ * carve proposal below it reachable, its horizontal scrolling is required behaviour, and it is shared
+ * with the workbench. A contained widget that scrolls inside its own border is a different thing from a
+ * page that scrolls itself out of view.
+ */
+test.describe("gate 1 scrolling", () => {
+  /** Scroll the document and report whether it moved. `main` is asserted separately. */
+  async function scrollProbe(page: Page) {
+    return page.evaluate(async () => {
+      const de = document.documentElement;
+      const main = document.querySelector("main")!;
+      window.scrollTo(0, 0);
+      window.scrollBy(0, 300);
+      await new Promise((r) => setTimeout(r, 200));
+      const documentMoved = window.scrollY;
+      window.scrollTo(0, 0);
+      const m0 = main.scrollTop;
+      main.scrollBy(0, 300);
+      await new Promise((r) => setTimeout(r, 200));
+      const mainMoved = main.scrollTop - m0;
+      main.scrollTo(0, 0);
+      return {
+        documentMoved,
+        mainMoved,
+        documentScrollHeight: de.scrollHeight,
+        viewportHeight: de.clientHeight,
+      };
+    });
+  }
+
+  test("@gate1 the page has exactly one vertical scroll context, and it is the content area", async ({
+    page,
+  }) => {
+    // The pinned baseline viewport. This is a LAYOUT bug: measuring a different window size proves
+    // nothing about the size the visual contract is written against.
+    expect(page.viewportSize()).toEqual({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    // A ledger long enough for the question to mean something.
+    expect((await page.locator("[data-testid='ledger-row']").count())).toBeGreaterThan(10);
+
+    const probe = await scrollProbe(page);
+    // THE DEFECT, STATED AS A NUMBER: this was 300 (and the document 3,344px tall) before the fix.
+    expect(probe.documentMoved, "the document must not scroll — it drags the whole app off-screen").toBe(0);
+    expect(probe.documentScrollHeight, "the document may be no taller than the viewport").toBe(
+      probe.viewportHeight,
+    );
+    // ...and the ONE scroller that does exist is the content area, so scrolling the page scrolls the
+    // ledger. The reviewer never has to find the right container.
+    expect(probe.mainMoved, "the content area is the page's scroller").toBe(300);
+  });
+
+  test("@gate1 nothing absolutely positioned escapes the content scroller", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+
+    const escapees = await page.evaluate(() => {
+      const main = document.querySelector("main")!;
+      const out: string[] = [];
+      for (const el of main.querySelectorAll("*")) {
+        if (getComputedStyle(el).position !== "absolute") continue;
+        // Walk to the element's containing block: the nearest POSITIONED ancestor. If that walk leaves
+        // `main` entirely, this element is laid out against the initial containing block and its
+        // overflow lands on the document rather than on the scroller.
+        let a: HTMLElement | null = el.parentElement;
+        let contained = false;
+        while (a) {
+          // A STATIC ancestor is not a containing block — including `main` itself, which is exactly the
+          // detail the bug turned on. Only a positioned ancestor stops the walk.
+          if (getComputedStyle(a).position !== "static") {
+            contained = a === main || main.contains(a);
+            break;
+          }
+          a = a.parentElement;
+        }
+        if (!contained) out.push(`${el.tagName.toLowerCase()}.${String(el.className || "").slice(0, 40)}`);
+      }
+      // Report a sample: 58 identical `sr-only` spans is not 58 findings.
+      return out.slice(0, 5);
+    });
+    // `sr-only` IS `position: absolute` — that is the utility's definition, not a misuse — so the fix is
+    // to give the scroller a containing block rather than to hunt down every use of it.
+    expect(escapees, "an absolutely positioned descendant may not be laid out against the document").toEqual(
+      [],
+    );
+  });
+
+  test("@gate1 expanding a row does not bring the document scroll back", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const row = await expandRow(page, BIG);
+    // The evidence grid is a BOUNDED widget with its own scroll region, and that is deliberate: the cap
+    // is what keeps the carve proposal below it reachable, and the horizontal scrolling is required
+    // behaviour (asserted in "the expanded row carries the source rows" above). What must not happen is
+    // the page scrolling ITSELF out of view again.
+    await expect(row.locator("[data-testid='source-rows-scroll']")).toBeVisible();
+    const probe = await scrollProbe(page);
+    expect(probe.documentMoved, "an expanded row must not make the document scrollable").toBe(0);
+    expect(probe.documentScrollHeight).toBe(probe.viewportHeight);
+  });
+});
