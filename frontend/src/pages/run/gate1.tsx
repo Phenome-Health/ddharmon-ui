@@ -49,6 +49,7 @@ import {
 } from "@/lib/ledger";
 import { isInFlight, isParked, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
+import { cn } from "@/lib/utils";
 import type { ConceptGroup, FieldDetail, GatePosition, RunMode } from "@/types";
 
 /**
@@ -359,6 +360,73 @@ function MemberList({
 }
 
 /**
+ * The other groups, alongside an expanded one, as live drop destinations (08-16c Task 6).
+ *
+ * Bhargav: *"when a group is expanded, it's hard to see what other groups there are to drag vars to. the
+ * rest of the groups should show up on the right hand side of the screen in a sidebar (~1/3 of the screen)
+ * so it's easier to drag from the main group under consideration to any group in the scrollable sidebar."*
+ *
+ * THIS IS A SECOND SITE FOR DESTINATIONS THAT ALREADY EXIST, NOT A SECOND DRAG SYSTEM. Nothing about
+ * MOVING a variable was missing: `MemberDropZone` wraps every collapsed `LedgerRow` and is wired to
+ * `moveMember`. What was missing is that expanding one group pushes every other group's drop zone off the
+ * viewport, so the affordance was real and unreachable at the exact moment it was wanted. Each entry here
+ * is the SAME `MemberDropZone` taking the SAME handler the collapsed row takes — two drop paths is how
+ * "your moves are saved as you make them" quietly stops being true on one of them.
+ *
+ * IT SCROLLS ON ITS OWN. `max-h` + `overflow-y-auto` on this column only, so reaching a distant
+ * destination does not scroll the source grid out from under the drag.
+ *
+ * THE EXPANDED GROUP IS NOT IN THE LIST. Dropping a member into the group it is already in is not a move,
+ * and offering it would report one.
+ */
+function DestinationTray({
+  groups,
+  onMove,
+}: {
+  groups: ConceptGroup[];
+  onMove: (memberId: string, toGroupId: string) => void;
+}) {
+  return (
+    <aside
+      data-testid="destination-tray"
+      aria-label="Other groups — drop a variable to move it there"
+      className="flex min-w-0 flex-col gap-2"
+    >
+      <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+        Move to another group
+      </span>
+      <div className="flex max-h-[32rem] min-w-0 flex-col gap-1 overflow-y-auto pr-1">
+        {groups.map((g) => {
+          const label = groupLabel(g);
+          return (
+            <MemberDropZone
+              key={g.groupId}
+              groupId={g.groupId}
+              label={`Move into ${label.text}`}
+              onDropMember={(memberId) => onMove(memberId, g.groupId)}
+              className="flex-col items-start gap-0.5 bg-surface-inset py-2"
+            >
+              <span
+                data-testid="destination-entry"
+                data-group-id={g.groupId}
+                className="w-full truncate text-xs font-semibold text-on-inset"
+                title={label.text}
+              >
+                {label.text}
+              </span>
+              <span className="text-xs text-on-inset-muted">
+                {g.nMembers} {g.nMembers === 1 ? "variable" : "variables"}
+                {label.source === "judge" && " · judge's summary"}
+              </span>
+            </MemberDropZone>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+/**
  * The expanded row — the FULL membership, the evidence behind it, and the judge's proposal.
  *
  * DECLARED AT MODULE SCOPE, LIKE `MemberChip`, AND FOR THE SAME REASON. A component defined inside the
@@ -368,6 +436,7 @@ function MemberList({
  */
 function ExpandedGroup({
   group,
+  otherGroups,
   members,
   unassignedFromHere,
   fieldIndex,
@@ -382,6 +451,8 @@ function ExpandedGroup({
   accepting,
 }: {
   group: ConceptGroup;
+  /** Every OTHER group, as drop destinations beside this one (08-16c Task 6). */
+  otherGroups: ConceptGroup[];
   /** The group's membership AFTER the reviewer's moves — uncapped. */
   members: string[];
   /**
@@ -412,8 +483,21 @@ function ExpandedGroup({
   // with no visible members. Asked of the same expression the grid itself uses, so the two cannot drift.
   const gridCarriesMembers = hasSourceRows(members, undefined, fieldIndex);
 
+  const showTray = canRegroup && otherGroups.length > 0;
   return (
-    <>
+    /*
+      TWO COLUMNS ONLY WHEN THERE IS A TRAY, and only above `lg`. Below that the tray gives way and stacks
+      rather than squeezing the seven-column source grid — the grid is already at `min-width: 0` on its
+      track, so taking a third of a narrow viewport away from it is what would make the evidence
+      unreadable. `minmax(0,…)` on BOTH tracks is what stops the grid forcing horizontal overflow.
+    */
+    <div
+      className={cn(
+        "flex flex-col gap-3",
+        showTray && "lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-4",
+      )}
+    >
+      <div className="flex min-w-0 flex-col gap-3">
       {!canRegroup ? (
         /* T-08-89 MADE MECHANICAL. This run carries only a capped SAMPLE of this group's members, so the
            screen cannot see past the cap — and a move written against a partial list would silently drop
@@ -599,7 +683,9 @@ function ExpandedGroup({
           ignoring a proposal is not the same as resolving what it was about.
         </p>
       )}
-    </>
+      </div>
+      {showTray && <DestinationTray groups={otherGroups} onMove={onMove} />}
+    </div>
   );
 }
 
@@ -1366,6 +1452,10 @@ export default function Gate1Page() {
             >
               <ExpandedGroup
                 group={g}
+                /* Every other group in the CURRENT VIEW, so the destinations the tray offers are the ones
+                   the reviewer's bucket, search and filters have already narrowed to — the same set the
+                   collapsed rows would have shown. */
+                otherGroups={visible.filter((o) => o.groupId !== g.groupId)}
                 members={membership.byGroup[g.groupId] ?? []}
                 unassignedFromHere={membership.unassigned.filter((m) => originalGroupOf[m] === g.groupId)}
                 fieldIndex={fieldIndex}

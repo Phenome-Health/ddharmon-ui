@@ -2061,3 +2061,78 @@ test.describe("gate1 frozen", () => {
     await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
   });
 });
+
+/**
+ * The destination tray beside an expanded group (08-16c Task 6).
+ *
+ * Bhargav: *"when a group is expanded, it's hard to see what other groups there are to drag vars to."*
+ * Nothing about MOVING was missing — `MemberDropZone` already wrapped every collapsed row and was wired
+ * to `moveMember`. What was missing is that expanding one group pushed every other group's drop zone off
+ * the viewport, so the affordance was real and unreachable exactly when it was wanted.
+ */
+test.describe("gate1 destination tray", () => {
+  const TRAY = "[data-testid='destination-tray']";
+
+  test("@gate1 an expanded group shows the other groups without collapsing it first", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    await expect(row.locator(TRAY)).toBeVisible();
+    expect(await row.locator("[data-testid='destination-entry']").count()).toBeGreaterThan(0);
+    // The group is still expanded — the tray is not an alternative to seeing the members.
+    await expect(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']")).toBeVisible();
+  });
+
+  test("@gate1 the expanded group is not offered as a destination for its own members", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    await expect(row.locator(`[data-testid='destination-entry'][data-group-id='${BIG}']`)).toHaveCount(0);
+  });
+
+  test("@gate1 dragging onto a tray entry moves the variable into THAT group", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const target = row.locator("[data-testid='destination-entry']").first();
+    const targetId = await target.getAttribute("data-group-id");
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+
+    await member.dragTo(row.locator(`${TRAY} [data-testid='member-drop-zone'][data-group-id='${targetId}']`));
+
+    // The SAME outcome a drop on the collapsed row produces. The SOURCE row's spine is asserted; the
+    // DESTINATION's deliberately is not — `LedgerRow` lets "unresolved" (amber) outrank "changed", so a
+    // flagged destination legitimately keeps its amber spine and asserting "changed" there would convict
+    // working code the moment the drop happened to land on a flagged group.
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute("data-spine", "changed");
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const receiving = await expandRow(page, targetId!);
+    await expect(receiving.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
+  });
+
+  test("@gate1 the destinations scroll on their own, without moving the source grid", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const list = row.locator(`${TRAY} > div`);
+    const overflow = await list.evaluate((el) => getComputedStyle(el).overflowY);
+    expect(overflow).toBe("auto");
+    // It is bounded, so a long list cannot push the grid off the screen instead of scrolling.
+    const bounded = await list.evaluate((el) => el.scrollHeight > el.clientHeight || el.clientHeight <= 512);
+    expect(bounded).toBe(true);
+  });
+
+  test("@gate1 with nothing expanded the tray is not permanent chrome", async ({ page }) => {
+    await openGate1(page);
+    await expect(page.locator(TRAY)).toHaveCount(0);
+  });
+
+  test("@gate1 below the breakpoint the tray gives way rather than squeezing the grid", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const wide = await row.locator(TRAY).boundingBox();
+    await page.setViewportSize({ width: 900, height: 900 });
+    const narrow = await row.locator(TRAY).boundingBox();
+    // Stacked, not squeezed side-by-side: the tray is now as wide as the column, below the grid.
+    expect(narrow!.width).toBeGreaterThan(wide!.width);
+  });
+});
