@@ -29,6 +29,13 @@ export interface NotAvailableProps {
   claim: NotAvailableClaim;
   /** Why, in one sentence, and what the reviewer can do instead — or nothing. */
   children: React.ReactNode;
+  /**
+   * A stable slug for THIS tile, emitted as `data-thing`.
+   *
+   * Needed because a screen can carry several of these — Gate 2 has three — and addressing them by their
+   * prose would make a copy edit break a test that is about the tile's PRESENCE, not its wording.
+   */
+  slug?: string;
   className?: string;
 }
 
@@ -39,11 +46,12 @@ const STATUS: Record<NotAvailableClaim, string> = {
   "not-enabled": "not enabled for this run",
 };
 
-export function NotAvailable({ thing, claim, children, className }: NotAvailableProps) {
+export function NotAvailable({ thing, claim, children, slug, className }: NotAvailableProps) {
   return (
     <section
       data-testid="not-available"
       data-claim={claim}
+      data-thing={slug}
       className={cn(
         // Dashed, inner radius, no shadow: this is not a paper surface floating on the ground, it is a
         // stated gap in one. No destructive colour anywhere — see the docstring.

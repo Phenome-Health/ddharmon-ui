@@ -258,7 +258,9 @@ test.describe("gate2 screen", () => {
     });
     await openGate2(page);
     await page.locator("[data-testid='gate2-concept']").first().click();
-    const cards = page.locator("[data-testid='candidate-card']");
+    // Scoped to CATALOG cards. The concept also carries a generated element, which renders as its own
+    // pickable card — that is the point of the re-pick, and it is not a second retrieved candidate.
+    const cards = page.locator("[data-testid='candidate-card'][data-generated='false']");
     await expect(cards).toHaveCount(1);
     await expect(cards.first()).toHaveAttribute("data-chosen", "false");
     await expect(cards.first().locator("[data-testid='candidate-score']")).toBeVisible();

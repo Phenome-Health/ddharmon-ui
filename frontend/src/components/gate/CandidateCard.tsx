@@ -1,4 +1,6 @@
+import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { cdeDetailUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +22,8 @@ import { cn } from "@/lib/utils";
  */
 
 export interface CandidateCardProps {
+  /** The identifier this card is addressed by — what a pick records as `chosen`. */
+  id?: string;
   /** The element's name. */
   name: string;
   /** The identifier as the catalog spells it — mono, because the machine produced it. */
@@ -40,10 +44,13 @@ export interface CandidateCardProps {
   /** The model's suggestion — a suggestion, not a decision, and labelled as one. */
   suggested?: boolean;
   onChoose?: () => void;
+  /** The catalog's own page for this element — the honest substitute for graph context (UI-SPEC §9). */
+  link?: boolean;
   className?: string;
 }
 
 export function CandidateCard({
+  id,
   name,
   identifier,
   score,
@@ -55,16 +62,28 @@ export function CandidateCard({
   chosen = false,
   suggested = false,
   onChoose,
+  link = false,
   className,
 }: CandidateCardProps) {
   return (
-    <button
-      type="button"
+    <div
       data-testid="candidate-card"
+      data-candidate-id={id}
       data-chosen={chosen}
       data-generated={generated}
+      role="button"
+      tabIndex={0}
       aria-pressed={chosen}
       onClick={onChoose}
+      onKeyDown={(e) => {
+        // The card became a `div` so a catalog link can live inside it (a nested interactive element is
+        // invalid inside a `button` and browsers drop it). Keyboard operation is restored explicitly
+        // rather than lost with the tag.
+        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onChoose?.();
+        }
+      }}
       className={cn(
         "flex w-full flex-col gap-2 rounded-card border border-l-4 bg-surface-raised px-6 py-4 text-left",
         chosen
@@ -75,7 +94,10 @@ export function CandidateCard({
     >
       <div className="flex flex-wrap items-center gap-2">
         {score !== undefined && (
-          <span className="font-mono text-xs font-semibold tabular-nums text-on-raised-muted">
+          <span
+            data-testid="candidate-score"
+            className="font-mono text-xs font-semibold tabular-nums text-on-raised-muted"
+          >
             {score.toFixed(2)}
           </span>
         )}
@@ -87,12 +109,16 @@ export function CandidateCard({
         ) : (
           <>
             {collection && (
-              <Badge variant="outline" className="rounded-pill text-accent-2-on-raised">
+              <Badge
+                data-testid="candidate-collection"
+                variant="outline"
+                className="rounded-pill text-accent-2-on-raised"
+              >
                 {collection}
               </Badge>
             )}
             {endorsement && (
-              <Badge variant="secondary" className="rounded-pill">
+              <Badge data-testid="candidate-endorsement" variant="secondary" className="rounded-pill">
                 {endorsement}
               </Badge>
             )}
@@ -108,12 +134,25 @@ export function CandidateCard({
       <span className="text-sm font-semibold text-on-raised">{name}</span>
       {/* A generated element carries no identifier LINK: there is nothing outside this tool to link to. */}
       {identifier && !generated && (
-        <span className="font-mono text-xs text-on-raised-muted">{identifier}</span>
+        link ? (
+          <a
+            href={cdeDetailUrl(identifier)}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex w-fit items-center gap-1 font-mono text-xs text-on-raised-muted underline"
+          >
+            {identifier}
+            <ExternalLink aria-hidden="true" className="h-3 w-3" />
+          </a>
+        ) : (
+          <span className="font-mono text-xs text-on-raised-muted">{identifier}</span>
+        )
       )}
       {question && <span className="text-sm text-on-raised-muted">{question}</span>}
       {values.length > 0 && (
         <span className="font-mono text-xs text-on-raised-muted">{values.join(" · ")}</span>
       )}
-    </button>
+    </div>
   );
 }

@@ -72,3 +72,17 @@ export const REF = {
   bertopic: "https://maartengr.github.io/BERTopic/",
   hitl: "https://en.wikipedia.org/wiki/Human-in-the-loop",
 } as const;
+
+/**
+ * The NIH CDE Repository's detail page for one element, by its tinyId.
+ *
+ * THE ONLY OUTBOUND CLAIM GATE 2 MAKES ABOUT A CATALOG ELEMENT, and it is deliberately the fallback for a
+ * capability we do not have: with no query path into the knowledge graph, the honest substitute for
+ * "here is this element's context" is "here is the catalog's own page for it" (UI-SPEC §9 row 1).
+ *
+ * NEVER CALLED FOR A GENERATED ELEMENT. A GenCDE has no catalog page, so a link would resolve to nothing
+ * or — worse — to some unrelated element that happens to share an id shape.
+ */
+export function cdeDetailUrl(tinyId: string): string {
+  return `${REF.cde}deView?tinyId=${encodeURIComponent(tinyId)}`;
+}

@@ -8,14 +8,14 @@
 // Interactivity: branded tooltips with per-verdict breakdown + a legend on the bar charts; the overlap
 // heatmap cross-highlights the hovered row/column and reads out the pair. Palette from lib/chart.
 import { useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlotInfo } from "@/components/plot-info";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+// The bars and the histogram were EXTRACTED by 08-16 so Gate 2 could take the histogram alone. Imported
+// back here rather than kept as a private copy: one implementation, two call sites.
+import { StackedVerdictBars } from "@/components/stacked-verdict-bars";
+import { RetrievalHistogram } from "@/components/gate/RetrievalHistogram";
 import {
-  CHART_AXIS,
-  CHART_LABEL_SIZE,
-  CHART_GRID,
   CHART_TOOLTIP_CLASS,
   isVerdict,
   VERDICT_COLOR,
@@ -90,26 +90,6 @@ function sizeVerdictBars(records: UIRecord[]) {
   return TIER_ORDER.filter((t) => acc.has(t)).map((t) => ({ name: t, ...acc.get(t) }));
 }
 
-// ── 3. retrieval-score histogram (top1 cosine) stacked by verdict ─
-function scoreHistogram(records: UIRecord[]) {
-  const bins = Array.from({ length: 10 }, (_, i) => ({
-    name: `${(i / 10).toFixed(1)}`,
-    adopt: 0,
-    refine: 0,
-    novel: 0,
-    unclassified: 0,
-  }));
-  let any = false;
-  for (const r of records) {
-    const c = r.cosines.top1;
-    if (c == null) continue;
-    any = true;
-    const b = Math.min(9, Math.max(0, Math.floor(c * 10)));
-    bins[b][vkey(r)] += 1;
-  }
-  return any ? bins : [];
-}
-
 // ── 4. cross-cohort overlap (concept co-occurrence) ──────────────
 function cohortOverlap(records: UIRecord[]): { cohorts: string[]; matrix: number[][]; max: number } {
   const cohorts = [...new Set(records.flatMap((r) => r.cohorts))].sort();
@@ -129,110 +109,7 @@ function cohortOverlap(records: UIRecord[]): { cohorts: string[]; matrix: number
   return { cohorts, matrix, max: max || 1 };
 }
 
-// ── branded tooltip for the stacked bars ─────────────────────────
-interface BarTipItem {
-  dataKey?: string | number;
-  value?: number;
-  color?: string;
-}
-function makeBarTooltip(formatLabel: (name: string) => string) {
-  return function BarTooltip({
-    active,
-    payload,
-    label,
-  }: {
-    active?: boolean;
-    payload?: BarTipItem[];
-    label?: string | number;
-  }) {
-    if (!active || !payload?.length) return null;
-    const rows = payload.filter((p) => (p.value ?? 0) > 0);
-    if (!rows.length) return null;
-    const total = payload.reduce((s, p) => s + (p.value ?? 0), 0);
-    return (
-      <div className={CHART_TOOLTIP_CLASS}>
-        <div className="mb-1 font-semibold text-on-raised">{formatLabel(String(label))}</div>
-        {rows.map((p) => (
-          <div key={String(p.dataKey)} className="flex items-center justify-between gap-4">
-            <span className="flex items-center gap-1.5 text-on-raised">
-              <span className="inline-block h-2 w-2 rounded-sm" style={{ backgroundColor: p.color }} />
-              {VERDICT_LABEL[String(p.dataKey)] ?? String(p.dataKey)}
-            </span>
-            <span className="tabular-nums text-on-raised">{p.value}</span>
-          </div>
-        ))}
-        <div className="mt-1 flex items-center justify-between gap-4 border-t border-rule-quiet-on-raised pt-1 text-on-raised-muted">
-          <span>Total</span>
-          <span className="tabular-nums">{total}</span>
-        </div>
-      </div>
-    );
-  };
-}
-
-function StackedVerdictBars({
-  data,
-  formatLabel,
-  focus,
-  onFocus,
-  height = 224,
-}: {
-  data: Record<string, string | number>[];
-  formatLabel: (name: string) => string;
-  focus?: Focus;
-  onFocus?: (f: Focus) => void;
-  height?: number;
-}) {
-  const BarTooltip = useMemo(() => makeBarTooltip(formatLabel), [formatLabel]);
-  const dimmed = (v: Verdict) => focus?.kind === "verdict" && focus.value !== v;
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-        {/* `stroke` as well as `tick.fill`: recharts defaults the axis LINE to a mid-grey of its
-            own, which the token layer cannot reach — the rebrand drill found it as the one painted
-            colour in the whole app that did not move when the brand was replaced. */}
-        <XAxis dataKey="name" stroke={CHART_AXIS} tick={{ fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }} />
-        <YAxis
-          allowDecimals={false}
-          stroke={CHART_AXIS}
-          tick={{ fontSize: CHART_LABEL_SIZE, fill: CHART_AXIS }}
-          width={28}
-        />
-        <RTooltip content={<BarTooltip />} cursor={{ fill: "var(--surface-inset)" }} />
-        <Legend
-          iconType="square"
-          iconSize={9}
-          onClick={onFocus ? (e: { value?: string }) => e.value && onFocus({ kind: "verdict", value: e.value }) : undefined}
-          formatter={(v: string) => (
-            <span className="cursor-pointer text-on-raised-muted" style={{ opacity: dimmed(v as Verdict) ? 0.4 : 1 }}>
-              {VERDICT_LABEL[v] ?? v}
-            </span>
-          )}
-          wrapperStyle={{ fontSize: CHART_LABEL_SIZE, cursor: onFocus ? "pointer" : "default" }}
-        />
-        {VERDICTS.map((v) => (
-          <Bar
-            key={v}
-            dataKey={v}
-            stackId="s"
-            fill={VERDICT_COLOR[v]}
-            fillOpacity={dimmed(v) ? 0.28 : 1}
-            radius={v === "unclassified" ? [3, 3, 0, 0] : undefined}
-            cursor={onFocus ? "pointer" : undefined}
-            onClick={onFocus ? () => onFocus({ kind: "verdict", value: v }) : undefined}
-          />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
 const sizeLabel = (t: string) => `${t} variable${t === "1" ? "" : "s"} per concept`;
-const binLabel = (b: string) => {
-  const lo = Number(b);
-  return `cosine ${lo.toFixed(1)}–${(lo + 0.1).toFixed(1)}`;
-};
 
 export function Analytics({
   records,
@@ -247,7 +124,6 @@ export function Analytics({
 }) {
   const cohortRows = useMemo(() => coverageByCohort(records, cohortTotals), [records, cohortTotals]);
   const sizeBars = useMemo(() => sizeVerdictBars(records), [records]);
-  const hist = useMemo(() => scoreHistogram(records), [records]);
   const overlap = useMemo(() => cohortOverlap(records), [records]);
 
   return (
@@ -314,26 +190,8 @@ export function Analytics({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-sm">Retrieval score distribution</CardTitle>
-          <PlotInfo>
-            Distribution of each concept&apos;s cosine similarity to its nearest CDE (binned), stacked by verdict.
-            Adopts cluster at high similarity, novels at low — a quick read on match quality and where the
-            adopt/novel boundary falls. Click a bar to focus that verdict.
-          </PlotInfo>
-        </CardHeader>
-        <CardContent>
-          {hist.length ? (
-            <StackedVerdictBars data={hist} formatLabel={binLabel} focus={focus} onFocus={onFocus} />
-          ) : (
-            <p className="py-8 text-center text-sm text-on-raised-muted">No retrieval scores.</p>
-          )}
-          <p className="mt-1 text-xs text-on-raised-muted">
-            nearest-CDE cosine (binned) · adopts cluster high, novels low
-          </p>
-        </CardContent>
-      </Card>
+      {/* The same component Gate 2 renders — see `RetrievalHistogram`. */}
+      <RetrievalHistogram records={records} focus={focus} onFocus={onFocus} />
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-2 space-y-0">
