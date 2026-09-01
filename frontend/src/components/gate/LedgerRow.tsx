@@ -47,6 +47,12 @@ export interface LedgerRowProps {
   cost?: number;
   selected?: boolean;
   onSelectedChange?: (selected: boolean) => void;
+  /**
+   * The run has moved past this gate, so the row is a RECORD (08-16c Task 2). The decision stays VISIBLE
+   * — that is the whole point of looking back — but it cannot be re-made. Belt and braces: the write path
+   * refuses independently in `use-gate-decisions`, and this stops the control inviting the attempt.
+   */
+  readOnly?: boolean;
   /** True while the judge's verdict on this row is unresolved — the amber spine. */
   unresolved?: boolean;
   /** True once the reviewer has changed something on this row — the accent spine. */
@@ -78,6 +84,7 @@ export function LedgerRow({
   cost,
   selected = false,
   onSelectedChange,
+  readOnly = false,
   unresolved = false,
   changed = false,
   children,
@@ -128,8 +135,13 @@ export function LedgerRow({
         <div className={cn(LEDGER_GRID, "min-h-8 px-6 py-3")}>
           <Checkbox
             checked={selected}
+            disabled={readOnly}
             onCheckedChange={(v) => onSelectedChange?.(v === true)}
-            aria-label={`Include ${typeof title === "string" ? title : rowId} in the next gate`}
+            aria-label={
+              readOnly
+                ? `${typeof title === "string" ? title : rowId} — recorded decision, this gate is closed`
+                : `Include ${typeof title === "string" ? title : rowId} in the next gate`
+            }
             className="mt-1"
           />
           <div className="flex min-w-0 flex-col gap-1">

@@ -8,6 +8,7 @@ import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SpecEditor } from "@/components/gate/SpecEditor";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { isGatePast } from "@/lib/gate-routes";
 import {
   conceptMatchState,
   routesToReview,
@@ -16,7 +17,7 @@ import {
   type UnmappedOutcome,
 } from "@/lib/gate23";
 import { cn } from "@/lib/utils";
-import type { JobResult, UIRecord, UITransform } from "@/types";
+import type { JobResult, UIRecord, UITransform, GatePosition} from "@/types";
 
 /**
  * Gate 3 - Transform specs. Where the reviewer corrects how values get to the target.
@@ -62,8 +63,16 @@ export default function Gate3Page() {
   const records: UIRecord[] = useMemo(() => jobState?.result?.records ?? [], [jobState?.result?.records]);
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
-  const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned });
-  const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned });
+  /**
+   * The run has moved PAST this gate, so the screen is a record (08-16c Task 2).
+   *
+   * Passed into every decision hook below, where `write`/`clear` refuse outright. The refusal is at the
+   * WRITE PATH rather than only in the rendering, because a disabled-looking control that still submits is
+   * worse than an enabled one — and these decisions have already been consumed by the pipeline.
+   */
+  const frozen = isGatePast("gate3", (jobState?.gatePosition ?? null) as GatePosition | null);
+  const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned, frozen });
+  const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned, frozen });
 
   /**
    * Whether spec generation ran at all for this run.
@@ -102,7 +111,7 @@ export default function Gate3Page() {
 
   if (!anyRow) {
     return (
-      <Shell jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
+      <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
         <GateEmptyState
           heading="No transform specs to review"
           nextStep="Continue to Gate 4 to export what this run produced."
@@ -131,7 +140,7 @@ export default function Gate3Page() {
   }
 
   return (
-    <Shell jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
+    <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
       <div className="flex flex-col gap-6">
         <div className="flex flex-wrap items-center gap-3">
           {/* A STANDING FILTER, not a per-row chip: arithmetic is a category of risk, so the reviewer asks
@@ -379,11 +388,13 @@ export default function Gate3Page() {
 }
 
 function Shell({
+  jobId,
   jobState,
   cancel,
   costSoFar,
   children,
 }: {
+  jobId: string;
   jobState: JobResult | null;
   cancel: (mode: "keep" | "discard") => Promise<void> | void;
   costSoFar: number;
@@ -392,6 +403,8 @@ function Shell({
   return (
     <GateShell
       gate="gate3"
+      // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
+      jobId={jobId}
       subhead="One recode per source variable, grouped by concept. Arithmetic recodes always come to you for review."
       rail={railFor("gate3", { totalRealized: costSoFar })}
       runName={jobState?.displayName}

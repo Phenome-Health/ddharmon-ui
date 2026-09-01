@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { PARKED, countInFlight, isInFlight, isParked, isTerminal, justEnded, resumeTookEffect } from "@/lib/run-state";
-import { RETIRED_GATE, pathForGate, resumeGateOf, resumePathFor, setupPathFor } from "@/lib/gate-routes";
+import {
+  RAIL_SEQUENCE,
+  RETIRED_GATE,
+  isGatePast,
+  isGateReachable,
+  pathForGate,
+  resumeGateOf,
+  resumePathFor,
+  setupPathFor,
+} from "@/lib/gate-routes";
 import type { GatePosition } from "@/types";
 
 /**
@@ -287,5 +296,45 @@ test.describe("resumeTookEffect", () => {
 
   test("@runstate a finished run is not treated as still parked", () => {
     expect(resumeTookEffect({ status: "complete", gatePosition: "gate1" }, "gate2")).toBe(true);
+  });
+});
+
+/**
+ * Which gates a run may go BACK to, and which of those are records (08-16c Task 2).
+ *
+ * Bhargav: *"want to be able to click back on setup to see what the run parameters were, even if that
+ * means freezing the setup screen so no edits can be made (this applies for other gates too)."*
+ */
+test.describe("gate reachability and freezing", () => {
+  test("@runstate the rail sequence never offers the retired position", () => {
+    expect(RAIL_SEQUENCE).not.toContain(RETIRED_GATE);
+    expect(RAIL_SEQUENCE).toEqual(["setup", "gate1", "gate2", "gate3", "gate4"]);
+  });
+
+  test("@runstate every gate at or behind the run is reachable; everything ahead is not", () => {
+    expect(isGateReachable("setup", "gate2")).toBe(true);
+    expect(isGateReachable("gate1", "gate2")).toBe(true);
+    expect(isGateReachable("gate2", "gate2")).toBe(true);
+    expect(isGateReachable("gate3", "gate2")).toBe(false);
+    expect(isGateReachable("gate4", "gate2")).toBe(false);
+  });
+
+  test("@runstate a gate BEHIND the run is past; the run's own gate is not", () => {
+    expect(isGatePast("setup", "gate2")).toBe(true);
+    expect(isGatePast("gate1", "gate2")).toBe(true);
+    // The current gate must behave exactly as it does today — it is not a record.
+    expect(isGatePast("gate2", "gate2")).toBe(false);
+    expect(isGatePast("gate3", "gate2")).toBe(false);
+  });
+
+  /**
+   * The failure is taken in the RECOVERABLE direction. A screen wrongly frozen is unusable; a screen
+   * wrongly live is exactly as usable as it was before this task.
+   */
+  test("@runstate an unknown or absent run position freezes nothing and unlocks nothing", () => {
+    for (const pos of [null, undefined, RETIRED_GATE, "nonsense"]) {
+      expect(isGatePast("gate1", pos as never), `isGatePast(${pos})`).toBe(false);
+      expect(isGateReachable("gate1", pos as never), `isGateReachable(${pos})`).toBe(false);
+    }
   });
 });

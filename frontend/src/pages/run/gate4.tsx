@@ -21,6 +21,8 @@ export default function Gate4Page() {
   return (
     <GateShell
       gate="gate4"
+      // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
+      jobId={jobId}
       subhead="Choose what to take away, check it before it goes, and read the decision trail behind it. Downloading is free."
       rail={railFor("gate4", { totalRealized: costSoFar })}
       runName={jobState?.displayName}

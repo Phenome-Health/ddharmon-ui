@@ -121,3 +121,50 @@ export function pathForGate(jobId: string, gate: GatePosition | string): string 
   if (gate === "setup" || gate === RETIRED_GATE) return setupPathFor(jobId);
   return `/run/${jobId}/${gate}`;
 }
+
+/**
+ * The five screens the rail draws, in order. Mirrors `GATE_SEQUENCE` in `components/gate/GateRail.tsx`,
+ * and deliberately NOT `GATE_ORDER` — that constant is the WIRE order and still carries the retired
+ * position, so using it here would offer `gate0` as a sixth destination.
+ *
+ * It lives in this file as well as the component because these predicates must be assertable from a spec,
+ * and `GateRail.tsx` imports React. `gates.spec.ts` already asserts the two lists differ in exactly the
+ * retired position; `run-state.spec.ts` now asserts these two agree.
+ */
+export const RAIL_SEQUENCE: GatePosition[] = ["setup", "gate1", "gate2", "gate3", "gate4"];
+
+/**
+ * Has the run already PASSED this gate? — the question that decides whether a screen is a record or a
+ * working surface (08-16c Task 2).
+ *
+ * Bhargav: *"want to be able to click back on setup to see what the run parameters were, even if that
+ * means freezing the setup screen so no edits can be made (this applies for other gates too)."*
+ *
+ * FREEZING IS THE LOAD-BEARING HALF, not the navigation. A past gate that still renders live controls
+ * invites a reviewer to change a decision the pipeline has already consumed, and the write would either
+ * fail confusingly or silently corrupt a finished stage.
+ *
+ * AN UNKNOWN POSITION FREEZES NOTHING. If the run's position is absent or off the rail, this returns
+ * false: a screen wrongly frozen is unusable, while a screen wrongly live is exactly as usable as it is
+ * today. The failure is taken in the recoverable direction.
+ */
+export function isGatePast(gate: GatePosition, runPosition: GatePosition | null | undefined): boolean {
+  const here = RAIL_SEQUENCE.indexOf(gate);
+  const at = runPosition ? RAIL_SEQUENCE.indexOf(runPosition) : -1;
+  if (here < 0 || at < 0) return false;
+  return here < at;
+}
+
+/**
+ * May the reviewer NAVIGATE to this gate? — the run's current position and everything behind it.
+ *
+ * A gate the run has not reached is not reachable, and the rail says so rather than rendering a link that
+ * silently does nothing: "visibly not reachable" is the requirement, because an inert link is
+ * indistinguishable from a broken one.
+ */
+export function isGateReachable(gate: GatePosition, runPosition: GatePosition | null | undefined): boolean {
+  const here = RAIL_SEQUENCE.indexOf(gate);
+  const at = runPosition ? RAIL_SEQUENCE.indexOf(runPosition) : -1;
+  if (here < 0 || at < 0) return false;
+  return here <= at;
+}

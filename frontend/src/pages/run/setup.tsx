@@ -513,6 +513,23 @@ export default function SetupPage() {
       : "past";
 
   /**
+   * WHY A PAST SETUP'S CONTROLS ARE STILL INTERACTIVE — investigated under 08-16c Task 2, left as found.
+   *
+   * The rail now links BACK here, so a reviewer reaches this screen on purpose and the question "can a
+   * record still be edited?" became live. It cannot: in the `past` stage this screen offers NO submit
+   * path — Start belongs to `compose` and the first-charge control to `preflight` — so `cdeSet`,
+   * `runMode`, the key and the rest drive nothing but the local cost/duration read-out beside them. They
+   * are calculators here, not decisions, which is why the run genuinely cannot be changed from this screen
+   * and why disabling them was NOT done: seven existing specs steer exactly these controls on this route
+   * to assert the estimate's behaviour, and they are right to — the panel is where that behaviour lives.
+   *
+   * The freeze that IS enforced is the one that matters: every gate DECISION (`gate1_group_scope`,
+   * `gate1_regroup`, `gate2_*`, `gate3_spec_edit`) refuses at the write path in `use-gate-decisions` when
+   * its gate is past. Setup writes no decisions, so it has nothing to refuse.
+   */
+
+
+  /**
    * How far preparation has got — ONE derivation, read by the estimate above and by the control that
    * commits this run's first charge.
    *
@@ -1201,6 +1218,8 @@ export default function SetupPage() {
   return (
     <GateShell
       gate="setup"
+      // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
+      jobId={jobId}
       subhead={
         // THREE STATES, THREE SENTENCES, because two of them make a claim about money and the claim is
         // different in each. A run PAST this point has already been charged, so the compose subhead's
@@ -1259,22 +1278,15 @@ export default function SetupPage() {
               {streamError.message}
             </p>
           )}
-          {stage === "past" && (
-            /* A READ-BACK, and it says so. The run is past this boundary, so nothing on this screen is
-               still a decision — and nothing here offers to commit a charge that has already happened.
-               The link is the point of the note: a reviewer who lands here needs the way back in. */
-            <p data-testid="past-boundary-note" className="max-w-[68ch] text-sm text-on-field-muted">
-              <span className="font-semibold text-on-field">This run has moved on from here.</span> What
-              it was set up with is below, but it is a record now, not a decision — rejoin the run at{" "}
-              <Link
-                href={`/run/${jobId}/${resumeAt}`}
-                className="font-semibold text-link-on-field underline underline-offset-2"
-              >
-                {GATE_LABELS[resumeAt]}
-              </Link>
-              .
-            </p>
-          )}
+          {/*
+            THE "MOVED ON" NOTE LIVES IN `GateShell` NOW (08-16c Task 2), not here.
+            It was written here by 08-14f, when Setup was the only screen a reviewer could arrive at after
+            the run had passed it. The rail now links back to EVERY passed gate, so the same sentence is
+            needed on all five screens and the shell renders it once for all of them — including the link
+            onward, which is the part that stops a reviewer being stranded in the past.
+            Keeping this copy as well put the identical sentence on the screen TWICE, a few centimetres
+            apart, in two different wordings. One fact, stated once.
+          */}
           <PreparedExport jobId={jobId} cohorts={preparation.cohorts.map((c) => c.cohort)} />
         </div>
       )}
@@ -1513,7 +1525,7 @@ export default function SetupPage() {
                 id="allow-readjudication"
                 data-testid="allow-readjudication"
                 type="checkbox"
-                checked={allowReadjudication}
+                  checked={allowReadjudication}
                 onChange={(e) => setAllowReadjudication(e.target.checked)}
                 className="h-3.5 w-3.5 rounded border-rule-control-on-raised"
               />

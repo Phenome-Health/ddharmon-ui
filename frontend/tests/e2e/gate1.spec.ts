@@ -2009,3 +2009,55 @@ test.describe("gate1 column sort", () => {
     expect((await rowIds(page)).length).toBe(before);
   });
 });
+
+/**
+ * Gate 1 as a RECORD, once the run has moved past it (08-16c Task 2).
+ *
+ * THE ENFORCEMENT IS AT THE WRITE PATH, not in the rendering: `useGateDecisions` refuses `write` and
+ * `clear` outright when its gate is past, and it does so BEFORE the optimistic state update, so a frozen
+ * screen cannot even briefly show a change it will not keep. The disabled controls asserted here are the
+ * second layer — they stop the control inviting an attempt that would only raise an error.
+ */
+test.describe("gate1 frozen", () => {
+  /** Move the RUN to Gate 2, leaving this screen — Gate 1 — behind it. */
+  async function openPastGate1(page: Page): Promise<void> {
+    await serveRun(page, (run) => {
+      run.gatePosition = "gate2";
+      run.result!.gatePosition = "gate2";
+    });
+    await openGate1(page);
+  }
+
+  test("@gate1 a passed Gate 1 says it is a record and offers the way back", async ({ page }) => {
+    await openPastGate1(page);
+    await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();
+    await expect(page.locator("[data-testid='gate-frozen-back']")).toContainText(/Concepts/i);
+  });
+
+  test("@gate1 the decisions are still VISIBLE — that is what looking back is for", async ({ page }) => {
+    await openPastGate1(page);
+    await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+    expect(await page.locator("[data-testid='ledger-row']").count()).toBeGreaterThan(0);
+    await expect(page.locator("[data-testid='cohort-coverage']").first()).toBeVisible();
+  });
+
+  test("@gate1 no control on a passed gate offers to change a decision", async ({ page }) => {
+    await openPastGate1(page);
+    // The per-row scope checkbox...
+    const boxes = page.locator("[data-testid='ledger-row'] button[role='checkbox']");
+    expect(await boxes.count()).toBeGreaterThan(0);
+    await expect(boxes.first()).toBeDisabled();
+    // ...the bulk control...
+    await expect(page.locator("[data-testid='bulk-scope-in']")).toBeDisabled();
+    await expect(page.locator("[data-testid='bulk-scope-out']")).toBeDisabled();
+    // ...and Continue, which would buy work this run has already bought.
+    await expect(page.locator("[data-testid='commit-bar'] button")).toBeDisabled();
+  });
+
+  test("@gate1 the run's CURRENT gate is unaffected — it is not a record", async ({ page }) => {
+    await openGate1(page); // fixture parks AT gate1
+    await expect(page.locator("[data-testid='gate-frozen']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='ledger-row'] button[role='checkbox']").first()).toBeEnabled();
+    await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
+  });
+});

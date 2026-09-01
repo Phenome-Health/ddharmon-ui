@@ -672,3 +672,86 @@ test.describe("app nav collapse", () => {
     await expect(page.locator(TOGGLE)).toBeHidden();
   });
 });
+
+/**
+ * The rail navigates backwards, and a passed gate is a record (08-16c Task 2).
+ *
+ * The fixture run is parked at GATE 1, so Setup is behind it and Gates 2-4 are ahead — which makes this
+ * one page enough to exercise all three rail states.
+ */
+test.describe("rail navigation and frozen gates", () => {
+  test("@gates a gate the run has passed is a link back to it", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const back = page.locator("[data-testid='rail-link-setup']");
+    await expect(back).toBeVisible();
+    // It names its destination rather than announcing itself as "link".
+    expect(await back.getAttribute("aria-label")).toMatch(/Back to Set up/i);
+    await back.click();
+    await expect(page).toHaveURL(new RegExp(`/run/${PAUSED_JOB}/setup$`));
+  });
+
+  test("@gates a gate the run has NOT reached is visibly unreachable, not silently inert", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    for (const gate of ["gate2", "gate3", "gate4"]) {
+      const ahead = page.locator(`[data-testid='rail-ahead-${gate}']`);
+      await expect(ahead, gate).toBeVisible();
+      await expect(ahead).toHaveAttribute("aria-disabled", "true");
+      // Says WHY, rather than being a dead click.
+      expect(await ahead.getAttribute("title")).toMatch(/has not reached this gate/i);
+      // And it is not a link at all.
+      await expect(page.locator(`[data-testid='rail-link-${gate}']`)).toHaveCount(0);
+    }
+  });
+
+  test("@gates the current gate is neither a link nor marked unreachable", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='rail-link-gate1']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='rail-ahead-gate1']")).toHaveCount(0);
+    await expect(page.locator("[data-gate='gate1'][data-state='current']")).toHaveCount(1);
+    // And it is not frozen — the current gate behaves exactly as it does today.
+    await expect(page.locator("[data-testid='gate-frozen']")).toHaveCount(0);
+  });
+
+  test("@gates a passed gate says it is a record and offers the way back", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/setup`);
+    await page.waitForLoadState("networkidle");
+    const frozen = page.locator("[data-testid='gate-frozen']");
+    await expect(frozen).toBeVisible();
+    await expect(frozen).toContainText(/moved on from here/i);
+    // A reviewer must never be stranded in the past.
+    const back = page.locator("[data-testid='gate-frozen-back']");
+    await expect(back).toContainText(/Concept groups/i);
+    await back.click();
+    await expect(page).toHaveURL(new RegExp(`/run/${PAUSED_JOB}/gate1$`));
+  });
+
+  test("@gates from a passed gate, the gate the run is ON is still reachable", async ({ page }) => {
+    // The reviewer clicked back to Setup; Gate 1 must remain a live destination, or looking back is a
+    // one-way trip. This is why the rail asks the RUN's position, not the screen's.
+    await page.goto(`/run/${PAUSED_JOB}/setup`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='rail-link-gate1']")).toBeVisible();
+    await expect(page.locator("[data-testid='rail-ahead-gate2']")).toBeVisible();
+  });
+
+  /**
+   * WHAT "FROZEN" ACTUALLY GUARANTEES, stated precisely rather than as a blanket claim.
+   *
+   * On a past SETUP the run-configuration controls stay interactive, and that is correct: in the `past`
+   * stage the screen offers no submit path at all, so they drive nothing but the local cost read-out
+   * beside them. Nothing there can change the run. The freeze that is ENFORCED is on gate DECISIONS,
+   * which refuse at the write path — see the gate1 case below.
+   */
+  test("@gates a frozen Setup is a read-back: the parameters are visible and nothing commits", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/setup`);
+    await page.waitForLoadState("networkidle");
+    // The run's parameters are exactly what the reviewer came back to read.
+    await expect(page.getByTestId("cde-set")).toBeVisible();
+    // ...and the screen offers no way to commit anything: no Start, no first-charge control.
+    await expect(page.getByTestId("start-run")).toHaveCount(0);
+    await expect(page.getByTestId("gate-frozen")).toBeVisible();
+  });
+});

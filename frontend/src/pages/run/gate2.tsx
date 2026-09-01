@@ -13,6 +13,7 @@ import { RetrievalHistogram } from "@/components/gate/RetrievalHistogram";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { isGatePast } from "@/lib/gate-routes";
 import {
   affectedSpecCount,
   candidateAlternatives,
@@ -23,7 +24,7 @@ import {
   type SkosRelation,
 } from "@/lib/gate23";
 import { cn } from "@/lib/utils";
-import type { JobResult, UICandidate, UIRecord } from "@/types";
+import type { JobResult, UICandidate, UIRecord, GatePosition} from "@/types";
 
 /**
  * Gate 2 — Concepts to elements. Where the reviewer chooses the target for each concept.
@@ -80,8 +81,16 @@ export default function Gate2Page() {
   // run to sessionStorage - silently, with no error. That is the 08-15 bug, and it is not re-made here.
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
-  const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned });
-  const relations = useGateDecisions(jobId, "gate2_relation", { pinned });
+  /**
+   * The run has moved PAST this gate, so the screen is a record (08-16c Task 2).
+   *
+   * Passed into every decision hook below, where `write`/`clear` refuse outright. The refusal is at the
+   * WRITE PATH rather than only in the rendering, because a disabled-looking control that still submits is
+   * worse than an enabled one — and these decisions have already been consumed by the pipeline.
+   */
+  const frozen = isGatePast("gate2", (jobState?.gatePosition ?? null) as GatePosition | null);
+  const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned, frozen });
+  const relations = useGateDecisions(jobId, "gate2_relation", { pinned, frozen });
   // Read-only here: Gate 3's decisions are what a re-pick would invalidate, so the confirmation's count
   // comes from them. Writing them is Gate 3's job.
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned });
@@ -103,7 +112,7 @@ export default function Gate2Page() {
 
   if (!record) {
     return (
-      <Shell jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
+      <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
         <GateEmptyState
           heading="Nothing was sent to Gate 2"
           nextStep="Go back to Gate 1 and choose at least one group."
@@ -175,7 +184,7 @@ export default function Gate2Page() {
   const gencde = record.gencde;
 
   return (
-    <Shell jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
+    <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
       <GateTwoLayout
         masterLabel="Concepts in this run"
         detailLabel="The chosen target for this concept"
@@ -452,11 +461,13 @@ export default function Gate2Page() {
 
 /** The chrome, hoisted so the empty state and the built screen cannot drift apart. */
 function Shell({
+  jobId,
   jobState,
   cancel,
   costSoFar,
   children,
 }: {
+  jobId: string;
   jobState: JobResult | null;
   cancel: (mode: "keep" | "discard") => Promise<void> | void;
   costSoFar: number;
@@ -465,6 +476,8 @@ function Shell({
   return (
     <GateShell
       gate="gate2"
+      // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
+      jobId={jobId}
       subhead="One concept at a time: the target ddharmon generated for it, the ranked catalogue candidates it was judged against, and the one you choose."
       rail={railFor("gate2", { totalRealized: costSoFar })}
       runName={jobState?.displayName}

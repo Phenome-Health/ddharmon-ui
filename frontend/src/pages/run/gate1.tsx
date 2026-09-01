@@ -20,6 +20,7 @@ import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { TermSearch } from "@/components/gate/TermSearch";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { isGatePast } from "@/lib/gate-routes";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
 import { pathForGate } from "@/lib/gate-routes";
@@ -156,11 +157,14 @@ function BulkScopeControl({
   count,
   state,
   busy,
+  frozen = false,
   onBulk,
 }: {
   count: number;
   state: "all" | "none" | "some";
   busy: boolean;
+  /** The gate is a record — the control is shown so the state is readable, but it cannot act. */
+  frozen?: boolean;
   onBulk: (target: "in" | "out") => void;
 }) {
   const noun = count === 1 ? "group" : "groups";
@@ -182,7 +186,7 @@ function BulkScopeControl({
         variant="outline"
         size="sm"
         data-testid="bulk-scope-in"
-        disabled={busy || count === 0 || state === "all"}
+        disabled={busy || frozen || count === 0 || state === "all"}
         onClick={() => onBulk("in")}
       >
         Put all {count} shown in scope
@@ -192,7 +196,7 @@ function BulkScopeControl({
         variant="outline"
         size="sm"
         data-testid="bulk-scope-out"
-        disabled={busy || count === 0 || state === "none"}
+        disabled={busy || frozen || count === 0 || state === "none"}
         onClick={() => onBulk("out")}
       >
         Take all {count} shown out of scope
@@ -214,6 +218,7 @@ function GroupRow({
   inScope,
   onScopeChange,
   changed,
+  readOnly,
   onDropMember,
   children,
 }: {
@@ -225,6 +230,7 @@ function GroupRow({
   inScope: boolean;
   onScopeChange: (inScope: boolean) => void;
   changed: boolean;
+  readOnly: boolean;
   onDropMember: (memberId: string) => void;
   children: React.ReactNode;
 }) {
@@ -274,6 +280,7 @@ function GroupRow({
       }
       cost={price}
       selected={inScope}
+      readOnly={readOnly}
       onSelectedChange={onScopeChange}
       unresolved={isFlagged(group)}
       changed={changed}
@@ -698,8 +705,16 @@ export default function Gate1Page() {
    */
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
-  const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
-  const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
+  /**
+   * The run has moved PAST this gate, so the screen is a record (08-16c Task 2).
+   *
+   * Passed into every decision hook below, where `write`/`clear` refuse outright. The refusal is at the
+   * WRITE PATH rather than only in the rendering, because a disabled-looking control that still submits is
+   * worse than an enabled one — and these decisions have already been consumed by the pipeline.
+   */
+  const frozen = isGatePast("gate1", (jobState?.gatePosition ?? null) as GatePosition | null);
+  const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned, frozen });
+  const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned, frozen });
 
   // What Gate 2 is forecast to cost for THIS run, divided across its rows. `assign` runs once per
   // post-split group, so the row count is the call count and every row buys the same call.
@@ -1044,6 +1059,8 @@ export default function Gate1Page() {
   return (
     <GateShell
       gate="gate1"
+      // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
+      jobId={jobId}
       subhead="Each row is a group of variables that mean the same thing, with the name ddharmon generated for it. Choose which ones go on to be matched against common data elements."
       rail={railFor("gate1", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
@@ -1102,6 +1119,7 @@ export default function Gate1Page() {
           {/* Under the toolbar and the search, because "all" means the rows those two have left on
               screen — the control has to sit downstream of the things that decide what "all" is. */}
           <BulkScopeControl
+            frozen={frozen}
             count={visible.length}
             state={bulkScopeState(visible.map((g) => g.groupId), isInScope)}
             busy={bulkBusy}
@@ -1337,6 +1355,7 @@ export default function Gate1Page() {
               count={memberCount(g)}
               inScope={isInScope(g.groupId)}
               changed={isChanged(g.groupId)}
+              readOnly={frozen}
               onDropMember={(memberId) => void moveMember(memberId, g.groupId)}
               onScopeChange={(next) =>
                 void scope.write(
@@ -1420,7 +1439,8 @@ export default function Gate1Page() {
         busy={resuming}
         // Nothing gates Continue on a REVIEW count — how much to triage is the reviewer's call (D-09
         // revised). What does gate it is having something to buy at all.
-        disabled={inScopeGroups.length === 0}
+        // A closed gate buys nothing: the run is already past the charge this bar describes.
+        disabled={inScopeGroups.length === 0 || frozen}
       />
     </GateShell>
   );

@@ -1615,7 +1615,9 @@ test.describe("Setup — the boundary, with the report retired", () => {
     // screen reading as a live decision, and it must not offer a charge that has already happened.
     await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
-    const note = page.getByTestId("past-boundary-note");
+    // The note is the SHELL's now (08-16c Task 2): the rail links back to every passed gate, so the
+    // sentence is needed on all five screens and is rendered once for all of them instead of per screen.
+    const note = page.getByTestId("gate-frozen");
     await expect(note).toBeVisible();
     await expect(note).toContainText(/moved on/i);
     await expect(note.getByRole("link")).toBeVisible();

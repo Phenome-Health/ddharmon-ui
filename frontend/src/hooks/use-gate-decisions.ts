@@ -77,6 +77,10 @@ export interface WriteOptions {
   extra?: Record<string, unknown>;
 }
 
+/** What a refused write says. One sentence, so every screen reports the same reason. */
+export const FROZEN_GATE_MESSAGE =
+  "This gate is a record — the run has already moved past it, so its decisions can no longer be changed.";
+
 export interface UseGateDecisions {
   /** itemKey → decision, for the requested kind. */
   decisions: Record<string, GateDecision>;
@@ -91,6 +95,8 @@ export interface UseGateDecisions {
   loading: boolean;
   /** True when writes stay in the browser (a pinned demo, or a backend-less build). */
   local: boolean;
+  /** True when the run has moved past this gate: the screen is a record and every write refuses. */
+  frozen: boolean;
   write(fields: Record<string, unknown>, options: WriteOptions): Promise<void>;
   clear(fields: Record<string, unknown>): Promise<void>;
   conflict: GateDecisionConflict | null;
@@ -100,7 +106,24 @@ export interface UseGateDecisions {
 export function useGateDecisions(
   jobId: string,
   kind: GateDecisionKind,
-  { pinned, enabled = true }: { pinned?: boolean; enabled?: boolean } = {},
+  {
+    pinned,
+    enabled = true,
+    frozen = false,
+  }: {
+    pinned?: boolean;
+    enabled?: boolean;
+    /**
+     * The run has already PASSED this gate, so the screen is a RECORD (08-16c Task 2).
+     *
+     * ENFORCED HERE, not merely rendered as disabled controls. "A disabled-looking control that still
+     * submits is worse than an enabled one": a past gate's decisions have already been consumed by the
+     * pipeline, so a write that got through would either fail confusingly or silently corrupt a finished
+     * stage. This hook is the ONE path every gate decision takes, which makes it the one place the
+     * guarantee can be made once instead of re-asserted on each screen's every control.
+     */
+    frozen?: boolean;
+  } = {},
 ): UseGateDecisions {
   const local = writesGoToSandbox({ pinned, isStatic: IS_STATIC });
 
@@ -185,6 +208,9 @@ export function useGateDecisions(
 
   const write = useCallback(
     async (fields: Record<string, unknown>, { chosen, alternatives, upstream, extra }: WriteOptions) => {
+      // REFUSE BEFORE MUTATING ANYTHING — before the optimistic `setIndex`, so a frozen screen cannot even
+      // briefly show a change it will not keep.
+      if (frozen) throw new Error(FROZEN_GATE_MESSAGE);
       const itemKey = decisionItemKey(kind, fields);
       const upstreamPayload = upstream ? index[upstream.kind]?.[upstream.itemKey] : undefined;
       const payload: GateDecision = {
@@ -203,11 +229,12 @@ export function useGateDecisions(
       setIndex((prev) => ({ ...prev, [kind]: { ...(prev[kind] ?? {}), [itemKey]: payload } }));
       await persist(itemKey, payload, previous);
     },
-    [index, kind, persist],
+    [index, kind, persist, frozen],
   );
 
   const clear = useCallback(
     async (fields: Record<string, unknown>) => {
+      if (frozen) throw new Error(FROZEN_GATE_MESSAGE);
       const itemKey = decisionItemKey(kind, fields);
       const previous = index[kind]?.[itemKey];
       setIndex((prev) => {
@@ -217,7 +244,7 @@ export function useGateDecisions(
       });
       await persist(itemKey, null, previous);
     },
-    [index, kind, persist],
+    [index, kind, persist, frozen],
   );
 
   const decisions = useMemo(() => index[kind] ?? {}, [index, kind]);
@@ -232,6 +259,7 @@ export function useGateDecisions(
     touchedCount: Object.keys(decisions).length,
     loading: isLoading,
     local,
+    frozen,
     write,
     clear,
     conflict,

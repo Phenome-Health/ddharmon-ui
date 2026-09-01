@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import { Link } from "wouter";
+import { isGatePast, pathForGate } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult } from "@/types";
 import { PhMark } from "@/components/ph-logo";
@@ -92,6 +94,12 @@ export interface GateShellProps {
    * than a stated absence.
    */
   onStop?: (mode: "keep" | "discard") => Promise<void> | void;
+  /**
+   * The run id, so the rail can navigate backwards (08-16c Task 2). Omit it and the rail renders exactly
+   * as before — five columns of plain text — which is what keeps a rail with no run from offering dead
+   * links.
+   */
+  jobId?: string;
   children: ReactNode;
 }
 
@@ -123,9 +131,16 @@ export function GateShell({
   sandboxBanner,
   job,
   onStop,
+  jobId,
   children,
 }: GateShellProps) {
   const inFlight = isInFlight(job?.status);
+  /**
+   * Where the RUN is, which is not where this SCREEN is. A reviewer who has clicked back sits on a past
+   * gate while the run stays parked ahead of them, and every question below turns on the run's position.
+   */
+  const runPosition = (job?.gatePosition ?? null) as GatePosition | null;
+  const frozen = isGatePast(gate, runPosition);
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
@@ -196,7 +211,9 @@ export function GateShell({
       </header>
 
       {/* (3) The rail, then (4) the how-to panel — both on the ground, above the working surface. */}
-      <GateRail current={gate} items={rail} />
+      <GateRail current={gate} items={rail} jobId={jobId} runPosition={runPosition} />
+
+      {frozen && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
 
       {/* THE RUN'S STATE, while it has one (08-14h). Placed HERE, between the rail and the how-to panel,
           and the position is a judgement rather than an accident. The rail is the run's IDENTITY — where
@@ -229,6 +246,38 @@ export function GateShell({
  * "spent" with the run total, never to a forecast — quoting committed money as an estimate is the exact
  * confusion UI-SPEC §7.1.3 asks the rail to prevent.
  */
+/**
+ * The banner a PAST gate wears (08-16c Task 2).
+ *
+ * A reviewer must never be stranded in the past, so this does two things and both are required: it says
+ * plainly that the screen is a record rather than leaving the reader to infer it from controls that do
+ * not respond, and it offers the way back to where the run actually is.
+ */
+function FrozenNotice({ jobId, runPosition }: { jobId?: string; runPosition: GatePosition | null }) {
+  return (
+    <p
+      role="status"
+      data-testid="gate-frozen"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-card bg-surface-raised px-4 py-3 text-sm text-on-raised shadow-card"
+    >
+      <span className="font-semibold">This run has moved on from here.</span>
+      <span className="text-on-raised-muted">
+        What it decided at this gate is below, but it is a record now, not a decision — nothing on this
+        screen can be changed.
+      </span>
+      {jobId && runPosition && (
+        <Link
+          href={pathForGate(jobId, runPosition)}
+          data-testid="gate-frozen-back"
+          className="font-semibold text-link-on-raised underline underline-offset-2"
+        >
+          Back to {GATE_LABELS[runPosition]}
+        </Link>
+      )}
+    </p>
+  );
+}
+
 export function railFor(
   current: GatePosition,
   {

@@ -1,4 +1,6 @@
 import { Check } from "lucide-react";
+import { Link } from "wouter";
+import { isGateReachable, pathForGate } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import type { GatePosition } from "@/types";
 
@@ -62,15 +64,77 @@ export const GATE_LABELS: Record<GatePosition, string> = {
  */
 export const GATE_SEQUENCE: GatePosition[] = ["setup", "gate1", "gate2", "gate3", "gate4"];
 
+/**
+ * One column's contents, wrapped so the whole card is the hit target rather than just its label.
+ *
+ * THREE STATES, THREE ELEMENTS, and the distinction is deliberate. A REACHABLE past gate is a real
+ * `Link` — keyboard-focusable, announced as a link, and it names its destination so "Gate 2, Concepts →
+ * elements" is what a screen-reader user hears rather than "link". A gate the run has NOT reached is a
+ * `span` with `aria-disabled` and a reason on `title`: rendering it as a link that silently did nothing
+ * would be indistinguishable from a broken one, and the requirement is that it be VISIBLY unreachable.
+ * The CURRENT gate is neither — it is where you already are.
+ */
+function Inner({
+  linkable,
+  unreachable,
+  href,
+  label,
+  gate,
+  children,
+}: {
+  linkable: boolean;
+  unreachable: boolean;
+  href: string;
+  label: string;
+  gate: GatePosition;
+  children: React.ReactNode;
+}) {
+  const name = gate === "setup" ? `Set up, ${label}` : `Gate ${gate.slice(4)}, ${label}`;
+  if (linkable) {
+    return (
+      <Link
+        href={href}
+        data-testid={`rail-link-${gate}`}
+        aria-label={`Back to ${name}`}
+        className="flex flex-col gap-1 rounded-inner focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+      >
+        {children}
+      </Link>
+    );
+  }
+  if (unreachable) {
+    return (
+      <span
+        data-testid={`rail-ahead-${gate}`}
+        aria-disabled="true"
+        title={`${name} — this run has not reached this gate yet.`}
+        className="flex cursor-not-allowed flex-col gap-1 opacity-60"
+      >
+        {children}
+      </span>
+    );
+  }
+  return <span className="flex flex-col gap-1">{children}</span>;
+}
+
 export function GateRail({
   current,
   items,
   className,
+  jobId,
+  runPosition,
 }: {
   current: GatePosition;
   /** One entry per gate, in order. Exactly five; a short list is a bug, not a collapsed rail. */
   items: GateRailItem[];
   className?: string;
+  /**
+   * The run, so the rail can NAVIGATE (08-16c Task 2). Omit both and every column renders as plain text
+   * exactly as before — which is what keeps a rail with no run behind it from offering dead links.
+   */
+  jobId?: string;
+  /** Where the run actually is. Gates at or behind it are reachable; gates ahead of it are not. */
+  runPosition?: GatePosition | null;
 }) {
   const currentIndex = GATE_SEQUENCE.indexOf(current);
   return (
@@ -82,10 +146,19 @@ export function GateRail({
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
         const isDone = i < currentIndex;
+        /**
+         * REACHABLE means the run has got at least this far — not merely that this screen is past it.
+         * The two differ while a reviewer is standing on a PAST gate: from a frozen Gate 1 the run may be
+         * parked at Gate 3, and Gates 2 and 3 must stay reachable so the reviewer is not stranded in the
+         * past with only a one-way trip. That is why this asks the RUN's position, not `currentIndex`.
+         */
+        const linkable = !!jobId && !isCurrent && isGateReachable(item.gate, runPosition);
+        const unreachable = !!jobId && !isCurrent && !isGateReachable(item.gate, runPosition);
         return (
           <li
             key={item.gate}
             data-gate={item.gate}
+            data-reachable={jobId ? String(!unreachable) : undefined}
             data-state={isCurrent ? "current" : isDone ? "done" : "ahead"}
             // `aria-current="step"` on the CURRENT gate only. Without it the rail is five links and a
             // screen-reader user has no way to tell which screen they are on.
@@ -97,6 +170,13 @@ export function GateRail({
                 : "border border-rule-on-field bg-on-field/5 text-on-field",
             )}
           >
+            <Inner
+              linkable={linkable}
+              unreachable={unreachable}
+              href={jobId ? pathForGate(jobId, item.gate) : ""}
+              label={item.label}
+              gate={item.gate}
+            >
             <span
               className={cn(
                 "flex items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow",
@@ -118,6 +198,7 @@ export function GateRail({
             >
               {item.cost.text}
             </span>
+            </Inner>
           </li>
         );
       })}
