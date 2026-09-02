@@ -66,6 +66,13 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
     { text: "Search for the concepts you care about, one term per line." },
     { text: "Tick the groups you want to take to Gate 2." },
     { text: "Open a group to see every variable in it and any proposed division." },
+    // THE DRAG WAS MISSING (08-16c review). Bhargav read the list against the screen and the reshaping
+    // verb — the most powerful thing Gate 1 can do and the least discoverable, since nothing about a row
+    // announces that it can be picked up — was not in it. One line, in the same numbered register, placed
+    // where it happens: after the group is open, before the charge.
+    {
+      text: "Drag a variable out of an open group onto another group to move it there, or onto In no group to pull it out — moves save as you make them.",
+    },
     {
       text: "Press Continue to Gate 2. The naming, splitting and judging that produced this screen were already charged on Set up; this button buys the assignment step, and its amount is on it.",
       charge: true,

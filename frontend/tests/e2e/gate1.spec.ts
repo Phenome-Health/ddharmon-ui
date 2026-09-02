@@ -1457,12 +1457,24 @@ test.describe("gate1 toolbar labelling and explanations", () => {
     return page.evaluate(async () => {
       const el = document.activeElement as HTMLElement | null;
       if (!el) return false;
-      // Generous, because it also has to cover the SLOW case: under the full suite's parallel load the
-      // portal mount and the attribute commit compete with four other workers. It is paid only when the
-      // explanation is genuinely late or genuinely absent.
+      /**
+       * POLLED ON `setTimeout`, NOT `requestAnimationFrame` — and that is the whole bug this walk had.
+       *
+       * A rAF-driven loop does not advance in a page the browser is not painting, which is every page in
+       * a headless run — so it could spin out its whole deadline without re-reading the DOM, while React
+       * (whose scheduler uses MessageChannel and timers, not rAF) had long since committed the attribute.
+       * Timers keep running there.
+       *
+       * THIS ALONE DOES NOT MAKE THE WALK STABLE, and that was measured rather than assumed: with the
+       * timer poll and no keyboard retry above, four repeats still dropped a chip six times. The
+       * suppression is real; this only stops the poll adding a second, independent way to miss.
+       *
+       * The deadline is generous because the commit competes with the other workers; it is paid only
+       * when the explanation is genuinely late or genuinely absent.
+       */
       const deadline = Date.now() + 2500;
       while (!el.getAttribute("aria-describedby") && Date.now() < deadline) {
-        await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => setTimeout(r, 16));
       }
       return !!el.getAttribute("aria-describedby");
     });
@@ -2219,6 +2231,44 @@ test.describe("gate1 frozen", () => {
     await expect(page.locator("[data-testid='gate-frozen']")).toHaveCount(0);
     await expect(page.locator("[data-testid='ledger-row'] button[role='checkbox']").first()).toBeEnabled();
     await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
+  });
+});
+
+/**
+ * The numbered how-to has to describe the screen that EXISTS — the same contract 08-14g held Setup's list
+ * to, now applied to Gate 1's (08-16c review).
+ *
+ * Bhargav read the list against the screen: it covered the grouping strip, the search, the tick boxes and
+ * opening a group, and never said the reviewer can drag variables between groups. That is the screen's
+ * most powerful action and its least discoverable one — nothing about a row announces that it can be
+ * picked up — so a list that omits it is a confident wrong map rather than merely incomplete.
+ */
+test.describe("gate1 how-to", () => {
+  async function openHowTo(page: Page) {
+    const panel = page.getByTestId("how-to");
+    await panel.getByRole("button").first().click();
+    return panel;
+  }
+
+  test("@gate1 the how-to tells the reviewer they can drag variables between groups", async ({ page }) => {
+    await openGate1(page);
+    const panel = await openHowTo(page);
+    const text = await panel.innerText();
+    expect(text.toLowerCase()).toContain("drag");
+    // It names both destinations the gesture has, not just the neighbouring group.
+    expect(text.toLowerCase()).toContain("in no group");
+    // ...and it says the correction is not waiting on a save button, which is the other half of trusting it.
+    expect(text.toLowerCase()).toMatch(/save|saved/);
+  });
+
+  /** The same guard 08-14g put on Setup's list: this panel is orientation, and may not grow into a manual. */
+  test("@gate1 the how-to stays orientation, not documentation", async ({ page }) => {
+    await openGate1(page);
+    const panel = await openHowTo(page);
+    const n = await panel.locator("li").count();
+    expect(n, "the orientation list grew into a manual").toBeLessThanOrEqual(6);
+    const text = await panel.innerText();
+    expect(text.length, "the orientation panel is too long to read in one pass").toBeLessThan(700);
   });
 });
 
