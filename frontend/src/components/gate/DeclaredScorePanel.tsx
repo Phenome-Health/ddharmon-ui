@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, CircleDashed, FileText, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, FileText, Loader2, XCircle } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
@@ -21,11 +22,34 @@ import {
 import type { CompositeSpec } from "@/types";
 
 /**
- * The declared-score panel — a SECTION OF THE GATE 1 BODY.
+ * The declared-score panel — a COLLAPSED STRIP NEAR THE TOP OF THE GATE 1 BODY.
  *
  * NOT ITS OWN SCREEN, not a step between Setup and Gate 1, and not a modal. A pre-gate screen would
  * interrupt a purchase decision to pitch an add-on, which is the pattern this whole review has been
  * removing; the reviewer reaches this without leaving the ledger.
+ *
+ * MOVED UP AND CLOSED BY DEFAULT (08-16c review, item E). Bhargav: *"the placement is weird — it's below
+ * everything"*, settled as *"move score panel near top as a dropdown for now."* It used to render between
+ * the ledger and the commit bar, 3035px down the page, expanded — a 651px panel nobody scrolled to.
+ * PLACEMENT ONLY: "for now" is his word, and nothing inside the disclosure is redesigned here.
+ *
+ * IT STAYS ON GATE 1, and the two alternatives were closed rather than left open. SETUP was ruled out by
+ * the 08-25 amendment — with no run there are no concepts, so the verdict was hard-coded `indeterminate`.
+ * GATE 2 would add nothing: this panel matches components onto the run's own CONCEPTS, not onto common
+ * data elements ("Matched to a concept in this run"), so Gate 2's new information is information it never
+ * reads.
+ *
+ * THE CHARGE RIDES ON THE TRIGGER, and that is the constraint the collapse had to satisfy rather than a
+ * flourish. The free/paid split below is the SHAPE of this panel; on a screen whose whole job is deciding
+ * what to spend, hiding the paid half behind a disclosure would mean the reviewer meets the charge LATER
+ * than they did before. Naming it on the always-visible trigger — at the top of the screen, without
+ * opening anything — means they meet it EARLIER instead. The priced copy itself has not moved: it is
+ * still inline, immediately above the button it prices, and never behind a modal.
+ *
+ * ONE STRIP, IN THE HOW-TO'S REGISTER. It sits directly under `HowToPanel` and borrows its geometry
+ * exactly — ground surface, inner radius, the same eyebrow and chevron — because a fourth CARD at the top
+ * of Gate 1 would be competing with the ledger for the screen, which is a worse placement than the one
+ * being fixed.
  *
  * IT ADAPTS `pages/composite.tsx`, which already implemented this feature and which no plan in the phase
  * had ever named until the 2026-08-25 inherited-UI audit found it. Four rules are written into that file's
@@ -107,6 +131,8 @@ export function DeclaredScorePanel({
   className,
 }: DeclaredScorePanelProps) {
   const swaps = useGateDecisions(jobId, "composite_swap", { pinned });
+  /** Closed by default (08-16c item E) — the charge it carries is stated on the trigger, not behind it. */
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [scoreName, setScoreName] = useState("");
   const [reading, setReading] = useState(false);
@@ -199,13 +225,60 @@ export function DeclaredScorePanel({
   }
 
   return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      // Addressable on the ROOT, exactly as `HowToPanel` is, so a spec can measure the strip rather than
+      // reaching for it through the collapsible's markup — and so "is it the same height as the other
+      // strip?" compares a container with a container.
+      data-testid="score-strip"
+      // The how-to strip's geometry, verbatim: ground surface, inner radius, same padding. This is the
+      // difference between a second orientation strip and a fourth panel competing for the top of Gate 1.
+      className={cn("rounded-inner bg-on-field/5 px-4 py-3", className)}
+    >
+      <CollapsibleTrigger
+        data-testid="score-panel-toggle"
+        // An icon-only control names the ACTION and its OBJECT; this one is not icon-only, but the same
+        // rule governs what the name has to say.
+        aria-label={open ? "Hide the declared-score panel" : "Show the declared-score panel"}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        {/*
+          ONE LINE, AT THE HOW-TO STRIP'S EXACT HEIGHT. Stacking the title over the summary made this
+          strip 58px against the how-to's 40px, and every pixel here is spent from the ledger's own
+          budget: Gate 1's first row already begins 1155px down a 900px viewport before this panel
+          exists. A two-line header would be this change starting to compete with the data it sits above,
+          which is a worse placement than the one it is fixing.
+        */}
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
+            A score you want to build from this run
+          </span>
+          {/*
+            THE FREE/PAID SPLIT, ON THE CLOSED STRIP. Collapsing this panel must not make the reviewer
+            meet the charge later than they did when it was expanded at the foot of the page — so the
+            summary states both halves here, where it is visible without opening anything. The priced
+            copy inside is unchanged and still sits immediately above the control it prices.
+          */}
+          <span className="min-w-0 text-xs text-on-field-muted">
+            Reading a paper is free; matching its components against this run costs one model call.
+          </span>
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("h-4 w-4 shrink-0 text-on-field-muted transition-transform", open && "rotate-180")}
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
     <section
       data-testid="score-panel"
       aria-label="A published score you want this run to support"
-      className={cn("flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card", className)}
+      className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
     >
       <div className="flex flex-col gap-1">
-        <h2 className="text-sm font-semibold text-on-raised">A score you want to build from this run</h2>
+        {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
+            the title never carried — including `PRESENCE_IS_PER_DICTIONARY`, which is one of the four
+            rules this panel exists to keep saying. */}
         <p className="max-w-[80ch] text-sm text-on-raised-muted">
           Name the components of a published score — a frailty index, an intrinsic-capacity score, an SES
           index — and this run will say which of them its concepts can supply, and out of which.{" "}
@@ -357,5 +430,7 @@ export function DeclaredScorePanel({
         )}
       </div>
     </section>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

@@ -625,6 +625,18 @@ function pooled(memberId: string): string {
   return `[data-testid='unassigned-pool'] :is([data-testid='member-row'],[data-testid='member-chip'])[data-member-id='${memberId}']`;
 }
 
+/**
+ * Open the declared-score panel — a disclosure near the top of the screen since 08-16c's item E.
+ *
+ * It used to render expanded at the foot of the page. Bhargav: *"the placement is weird — it's below
+ * everything"* → *"move score panel near top as a dropdown for now."* What it CONTAINS is unchanged, so
+ * the specs below assert exactly what they did; they just have to open it first.
+ */
+async function openScorePanel(page: Page): Promise<void> {
+  await page.locator("[data-testid='score-panel-toggle']").click();
+  await expect(page.locator("[data-testid='score-panel']")).toBeVisible();
+}
+
 /** The two flagged (split) groups in the default view — the ones carrying a carve proposal. */
 const FLAGGED = "c45aa294f30f6#g1";
 /** A large, unflagged cross-cohort group — the one with the most members to drag. */
@@ -943,6 +955,7 @@ test.describe("gate1 score", () => {
 
   test("@gate1 the panel is a section of Gate 1, not a screen and not a modal", async ({ page }) => {
     await openGate1(page);
+    await openScorePanel(page);
     const panel = page.locator("[data-testid='score-panel']");
     await expect(panel).toBeVisible();
     // ON the ledger screen: the ledger is still there beside it, so reaching the panel never means
@@ -962,8 +975,12 @@ test.describe("gate1 score", () => {
 
   test("@gate1 declaring components renders indeterminate, and it survives a reload", async ({ page }) => {
     await openGate1(page);
+    await openScorePanel(page);
     await page.locator("[data-testid='score-components']").fill("Weak grip strength\nSlow walking speed");
-    await page.getByRole("button", { name: /declare/i }).click();
+    // NAMED EXACTLY. `/declare/i` also matches the disclosure's own "Hide the declared-score panel"
+    // now that the panel is a dropdown (08-16c item E), and a loose name in a strict-mode locator is a
+    // test that breaks on an unrelated label rather than on a behaviour.
+    await page.getByRole("button", { name: "Declare these components" }).click();
 
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
     const verdict = page.locator("[data-testid='score-verdict']");
@@ -976,6 +993,7 @@ test.describe("gate1 score", () => {
     // Written through the durable gate-decision layer, so it is still declared after a reload.
     await page.reload();
     await page.waitForLoadState("networkidle");
+    await openScorePanel(page);
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
     await expect(page.locator("[data-testid='score-verdict']")).toHaveAttribute("data-verdict", "indeterminate");
   });
@@ -984,6 +1002,7 @@ test.describe("gate1 score", () => {
     page,
   }) => {
     await openGate1(page);
+    await openScorePanel(page);
     const panel = page.locator("[data-testid='score-panel']");
     // The 08-11 extract route is $0 and job-independent. Nothing here makes reading cost money.
     await expect(panel.locator("[data-testid='score-upload']")).toContainText(/costs nothing|free|\$0/i);
@@ -1002,6 +1021,7 @@ test.describe("gate1 score", () => {
       if (r.url().includes("/composite")) requests.push(r.url());
     });
     await openGate1(page);
+    await openScorePanel(page);
     // A run PARKED at Gate 1 has produced concept groups but no assigned records, and matching components
     // onto concepts needs the latter. So the action is unavailable — and it says which, rather than being
     // hidden (the reviewer never learns it exists) or disabled (they cannot tell why).
@@ -1045,6 +1065,7 @@ test.describe("gate1 score", () => {
       ] as never;
     });
     await openGate1(page);
+    await openScorePanel(page);
     const verdict = page.locator("[data-testid='score-verdict']");
     await expect(verdict).toHaveAttribute("data-verdict", "partial");
     // PARTIAL IS NOT THE PUBLISHED SCORE, and it says so in words rather than leaving it to be inferred
@@ -3496,5 +3517,88 @@ test.describe("gate1 search in the toolbar", () => {
     // discover is a claim the screen is not really making.
     await expect(search).toContainText(/text of each group/i);
     await expect(search).not.toContainText(/semantic|understands|meaning of your term/i);
+  });
+});
+
+/**
+ * THE DECLARED-SCORE PANEL MOVES TO THE TOP, AS A DISCLOSURE (08-16c review, item E).
+ *
+ * Bhargav: *"I just dont like the way this is built… the placement is weird — it's below everything"*,
+ * settled as *"move score panel near top as a dropdown for now."* PLACEMENT ONLY — "for now" is his word,
+ * and the panel's internals are not redesigned here.
+ *
+ * WHAT THE COLLAPSE MUST NOT DO. The FREE/PAID SPLIT IS THE SHAPE OF THIS PANEL: reading the document is
+ * $0 and job-independent, while matching the components onto the run's concepts is ONE MODEL CALL AND
+ * COSTS MONEY. On a screen whose entire job is deciding what to spend, the reviewer must not meet that
+ * charge LATER than they do today. So the charge is named ON THE TRIGGER — visible without opening
+ * anything, at the top of the screen — which is strictly EARLIER than the old placement, where it was
+ * 3035px down the page. The priced copy itself stays exactly where it was, immediately above the button.
+ *
+ * IT STAYS ON GATE 1. Setup was ruled out by the 08-25 amendment (with no run there are no concepts, so
+ * the verdict was hard-coded `indeterminate`), and Gate 2 would add nothing — the panel matches components
+ * onto this run's CONCEPTS, not onto CDEs, so Gate 2's new information is information it never reads.
+ */
+test.describe("gate1 score panel placement", () => {
+  const PANEL = "[data-testid='score-panel']";
+  const TRIGGER = "[data-testid='score-panel-toggle']";
+
+  test("@gate1 the panel is above the ledger, not below everything", async ({ page }) => {
+    await openGate1(page);
+    const trigger = await page.locator(TRIGGER).boundingBox();
+    const ledger = await page.locator("[data-testid='ledger']").boundingBox();
+    expect(trigger!.y).toBeLessThan(ledger!.y);
+  });
+
+  test("@gate1 it is collapsed by default, and opens on demand", async ({ page }) => {
+    await openGate1(page);
+    await expect(page.locator(PANEL)).toHaveCount(0);
+    await page.locator(TRIGGER).click();
+    await expect(page.locator(PANEL)).toBeVisible();
+    // The declare control — the panel's own verb — is there, unchanged.
+    await expect(page.locator("[data-testid='score-components']")).toBeVisible();
+  });
+
+  test("@gate1 the charge is named on the trigger, so collapsing does not bury it", async ({ page }) => {
+    await openGate1(page);
+    // WITHOUT OPENING ANYTHING. This is the constraint the collapse had to satisfy: a reviewer must not
+    // meet the paid action later than they did when the panel was expanded at the foot of the page.
+    const trigger = page.locator(TRIGGER);
+    await expect(trigger).toContainText(/costs?/i);
+    await expect(trigger).toContainText(/free|costs nothing|no charge/i);
+  });
+
+  test("@gate1 opening it still shows the free half and the priced half, in that order", async ({ page }) => {
+    await openGate1(page);
+    await page.locator(TRIGGER).click();
+    // Reading the document is $0 and job-independent, and the copy says so.
+    await expect(page.locator("[data-testid='score-upload']")).toContainText(/costs nothing/i);
+    // Matching is one model call, priced inline and never behind a modal — still immediately above the
+    // paid control it prices.
+    const price = page.locator("[data-testid='score-match-price']");
+    await expect(price).toContainText(/costs money/i);
+
+    /**
+     * ON THIS RUN THE PAID CONTROL IS AN HONEST NOT-AVAILABLE, and that is the assertion rather than a
+     * concession. A run PARKED AT GATE 1 has no assigned records — `match_components` runs over the
+     * concepts the assign stage produces at Gate 2, and the backend's own derive route refuses a run
+     * without them. So the panel names the reason instead of offering a button that would 409, which is
+     * the rule it was built to keep. Moving the panel up must not turn that into a dead control.
+     */
+    const paid = page.locator("[data-testid='not-available']");
+    await expect(paid).toContainText(/Gate 2/i);
+    const priceBox = await price.boundingBox();
+    const paidBox = await paid.boundingBox();
+    expect(priceBox!.y).toBeLessThan(paidBox!.y);
+  });
+
+  test("@gate1 it does not compete with the ledger — it is one strip, like the how-to", async ({ page }) => {
+    await openGate1(page);
+    const howto = await page.locator("[data-testid='how-to']").boundingBox();
+    const strip = await page.locator("[data-testid='score-strip']").boundingBox();
+    // CONTAINER AGAINST CONTAINER. The same register and the same height as the other collapsed strip on
+    // this screen: a fourth CARD at the top would be exactly the "competing with the ledger" failure,
+    // and every pixel here is spent out of the ledger's own budget on a screen whose first row already
+    // starts below the fold.
+    expect(Math.abs(strip!.height - howto!.height)).toBeLessThanOrEqual(2);
   });
 });

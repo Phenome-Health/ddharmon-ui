@@ -1850,6 +1850,27 @@ export default function Gate1Page() {
         </p>
       )}
 
+      {/*
+        THE DECLARED-SCORE PANEL, NEAR THE TOP AND CLOSED (08-16c review, item E). Bhargav: *"the
+        placement is weird — it's below everything"*, settled as *"move score panel near top as a dropdown
+        for now."* It rendered between the ledger and the commit bar, 3035px down, expanded to 651px.
+
+        DIRECTLY UNDER THE HOW-TO STRIP that `GateShell` renders, and in that strip's own register, so the
+        two collapsed strips read as one band of things the reviewer can open rather than as a fourth
+        panel competing with the ledger for the top of the screen. It costs the ledger ~56px, on a screen
+        where the first row already begins 1155px down — see the SUMMARY, which reports that budget rather
+        than burying it.
+
+        Still never its own screen, a step before Gate 1, or a modal: a pre-gate screen would interrupt a
+        purchase decision to pitch an add-on.
+      */}
+      <DeclaredScorePanel
+        jobId={jobId}
+        pinned={pinned}
+        spec={jobState?.composites?.at(-1) ?? null}
+        matchRefusal={matchRefusal}
+      />
+
       {/* FOUR ZEROES ARE A CLAIM TOO. "0 concept groups · 0 parent clusters · 0 variables" reads as
           "this run measured nothing", which is the same lie as the empty ledger and just as loud, so the
           strip is withheld until the run has actually produced figures. */}
@@ -2207,18 +2228,6 @@ export default function Gate1Page() {
         // On a run that grouped NOTHING the pool is the whole screen, and the ledger's empty state has
         // just promised the reviewer that what fell out is "listed below".
         defaultOpen={groups.length === 0}
-      />
-
-      {/*
-        THE DECLARED-SCORE PANEL (the 2026-08-25 amendment). A SECTION of this screen's body — below the
-        ledger, above the commit bar — and never its own screen, a step before Gate 1, or a modal: a
-        pre-gate screen would interrupt a purchase decision to pitch an add-on.
-      */}
-      <DeclaredScorePanel
-        jobId={jobId}
-        pinned={pinned}
-        spec={jobState?.composites?.at(-1) ?? null}
-        matchRefusal={matchRefusal}
       />
 
       <CommitBar
