@@ -154,6 +154,19 @@ const REVIEW_COPY = {
 };
 
 export interface LedgerToolbarProps {
+  /**
+   * The concept search, rendered INSIDE this toolbar's card (08-16c review, item C).
+   *
+   * Bhargav: *"build this into the tray area like current prod UI."* Prod's Review queue puts its search
+   * in the card header beside the other narrowing controls, and Gate 1's sat in a headed card of its own.
+   * A SLOT rather than the control itself, for the same reason the column filter is one: this component
+   * knows what a narrowing control is and has no business owning the matching, the term list or the
+   * coverage findings — those stay in `TermSearch` and its caller.
+   *
+   * FIRST IN THE CARD, because it is the broadest narrowing on the screen and because a coverage finding
+   * is the most important thing this toolbar can be carrying when there is one.
+   */
+  search?: React.ReactNode;
   counts: Record<Bucket, number>;
   bucket: Bucket;
   onBucketChange: (bucket: Bucket) => void;
@@ -169,6 +182,7 @@ export interface LedgerToolbarProps {
 }
 
 export function LedgerToolbar({
+  search,
   counts,
   bucket,
   onBucketChange,
@@ -218,6 +232,8 @@ export function LedgerToolbar({
       </p>
 
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
+        {search}
+
         {/*
           THE PROGRESS READOUT. Both figures are derived from persisted decisions by the caller, never from
           component state — R6 requires a correction to be visible after a reload, and a counter in

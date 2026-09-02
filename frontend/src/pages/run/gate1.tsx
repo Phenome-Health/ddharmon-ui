@@ -1865,6 +1865,17 @@ export default function Gate1Page() {
       {groups.length > 0 && (
         <>
           <LedgerToolbar
+            /* IN THE TOOLBAR, prod-style (08-16c review, item C). Bhargav: *"build this into the tray
+               area like current prod UI."* It keeps the two things that make it not merely prod's box —
+               it takes a LIST of terms, and a term matching nothing is a COVERAGE FINDING about the run
+               rather than an empty state. */
+            search={
+              <TermSearch
+                onSearch={(next) => setTerms(next.length > 0 ? next : null)}
+                noMatches={search?.noMatches ?? []}
+                missingTokens={search?.missingTokens ?? {}}
+              />
+            }
             counts={bucketCounts}
             bucket={bucket}
             onBucketChange={setBucket}
@@ -1876,13 +1887,9 @@ export default function Gate1Page() {
             reviewed={reviewedCount}
             inScope={inScopeGroups.length}
           />
-          <TermSearch
-            onSearch={(next) => setTerms(next.length > 0 ? next : null)}
-            noMatches={search?.noMatches ?? []}
-            missingTokens={search?.missingTokens ?? {}}
-          />
-          {/* Under the toolbar and the search, because "all" means the rows those two have left on
-              screen — the control has to sit downstream of the things that decide what "all" is. */}
+          {/* Under the toolbar, which now holds the search too — "all" means the rows the bucket, the
+              filters and the search have left on screen, so the control has to sit downstream of every
+              one of them. */}
           <BulkScopeControl
             frozen={frozen}
             count={visible.length}

@@ -175,9 +175,22 @@ test.describe("gate component vocabulary", () => {
   test("@gate-components container geometry stays off instrument-level surfaces", () => {
     // Cards, panes, the ledger container, the commit bar and the drawer always take the container radius;
     // a ledger row, a table cell, a badge, a checkbox and an input never do (UI-SPEC §4).
-    for (const file of ["Ledger.tsx", "CommitBar.tsx", "CandidateCard.tsx", "TermSearch.tsx"]) {
+    for (const file of ["Ledger.tsx", "CommitBar.tsx", "CandidateCard.tsx"]) {
       expect(code(file), `${file} is a paper surface and takes the container radius`).toContain("rounded-card");
     }
+    /**
+     * `TermSearch.tsx` MOVED SIDES HERE, and the rule is what moved it (08-16c review, item C).
+     *
+     * It was a paper surface — its own headed card, floating on the ground — until Bhargav asked for it
+     * to sit in the toolbar like prod's: *"build this into the tray area like current prod UI."* It is
+     * now a control group rendered INSIDE `LedgerToolbar`'s card, and §4's rule cuts the other way for
+     * it: brand geometry at container level, instrument discipline at data level. A card radius on a
+     * control nested in a card is the violation, not the compliance. The toolbar card it lives in still
+     * carries the container radius, so nothing lost a paper surface — one stopped claiming to be two.
+     */
+    expect(code("TermSearch.tsx"), "the toolbar search is a control, not a paper surface").not.toContain(
+      "rounded-card",
+    );
     expect(code("LedgerRow.tsx"), "a ledger row must not take the container radius").not.toContain("rounded-card");
     expect(code("CohortCoverage.tsx"), "a coverage segment must not take the container radius").not.toContain(
       "rounded-card",

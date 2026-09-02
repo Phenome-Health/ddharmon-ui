@@ -7,6 +7,21 @@ import { cn } from "@/lib/utils";
 /**
  * Concept search that takes a LIST of terms — one per line, or pasted.
  *
+ * IN THE TOOLBAR, AND COMPACT, SINCE 08-16c's ITEM C. Bhargav: *"build this into the tray area like
+ * current prod UI."* Prod's Review queue (`dashboard.tsx`) puts its search in the card header beside the
+ * other narrowing controls as a single-line `h-8` input; this was its own full-width card with a heading
+ * of its own, which is what he was pointing at. The placement and the register are adopted — the
+ * component no longer draws a surface or a heading, and the caller renders it inside the toolbar.
+ *
+ * WHAT COMPACTNESS DID NOT COST, because these two are the reason this is not simply prod's box:
+ *
+ *   - IT STILL TAKES A LIST. The control is ONE LINE AT REST AND GROWS to whatever is pasted into it,
+ *     rather than being a fixed three-row block or a one-term input. A reviewer who pastes twelve terms
+ *     sees twelve terms; a reviewer with one term is not given a paragraph-sized box for it. Growing is
+ *     what makes "compact" and "a list" both true instead of one being traded for the other.
+ *   - A TERM THAT MATCHES NOTHING IS STILL A COVERAGE FINDING, rendered at full width below the row.
+ *     It is a claim about the corpus, so it is not shrunk to fit beside a control.
+ *
  * A LIST, NOT A BOX. A reviewer scoping a run has a list: the components of a score, the variables a
  * paper used, the twelve things this analysis needs. A one-term box makes them run twelve searches and
  * remember twelve answers.
@@ -52,6 +67,9 @@ export interface TermSearchProps {
   className?: string;
 }
 
+/** How many rows the input needs to show everything in it, without a scrollbar and without a wall. */
+const MAX_ROWS = 8;
+
 export function TermSearch({
   onSearch,
   noMatches = [],
@@ -65,21 +83,55 @@ export function TermSearch({
     .split(/[\n,]/)
     .map((t) => t.trim())
     .filter(Boolean);
+  /**
+   * THE GROWTH, and why it is counted from the LINES rather than measured from `scrollHeight`.
+   *
+   * A reviewer PASTES a list; they do not type it a line at a time. So the size has to be right on the
+   * render that receives the paste, and a measure-then-resize pass is a render late — the last term is
+   * clipped for a frame, which on a paste is the only frame the reviewer looks at. Counting newlines is
+   * exact for the case that matters and needs no layout read at all.
+   *
+   * CAPPED, so a pasted hundred-term list does not become the whole screen; past the cap the textarea
+   * scrolls, which is the honest behaviour for a list nobody can see at once anyway.
+   */
+  const rows = Math.min(MAX_ROWS, Math.max(1, text.split("\n").length));
 
   return (
-    <section
-      data-testid="term-search"
-      className={cn("flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card", className)}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <label htmlFor="term-search-input" className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+    <div data-testid="term-search" className={cn("flex flex-col gap-2", className)}>
+      <div className="flex flex-wrap items-start gap-2">
+        {/* THE LABEL IS THE PLACEHOLDER'S JOB VISUALLY, but not accessibly: a placeholder is not a name,
+            and it disappears exactly when the field has content. Prod's compact search does the same. */}
+        <label htmlFor="term-search-input" className="sr-only">
           Search concepts — one term per line
         </label>
+        <Textarea
+          id="term-search-input"
+          rows={rows}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            // ENTER SEARCHES; SHIFT+ENTER ADDS A TERM. The control is a list, so the newline has to stay
+            // reachable — but a one-term search is the common case and should not need the mouse.
+            if (e.key === "Enter" && !e.shiftKey && terms.length > 0) {
+              e.preventDefault();
+              onSearch(terms);
+            }
+          }}
+          // SHORT ENOUGH NOT TO CLIP at this width. "One term per line" is the load-bearing half of that
+          // sentence — it is the affordance that makes this a list rather than a box — so it moved to the
+          // description beside the control, where it is fully visible, rather than being truncated here.
+          placeholder="Search concepts…"
+          className="min-h-8 w-64 resize-none rounded-inner px-2 py-1.5 text-sm leading-5"
+        />
+        <Button type="button" size="sm" className="h-8" onClick={() => onSearch(terms)} disabled={terms.length === 0}>
+          Search {terms.length > 0 ? `${terms.length} ${terms.length === 1 ? "term" : "terms"}` : ""}
+        </Button>
         {text && (
           <Button
             type="button"
             variant="ghost"
             size="icon"
+            className="h-8 w-8"
             // Icon-only: the name states the action AND its object.
             aria-label="Clear the search terms"
             onClick={() => {
@@ -90,29 +142,19 @@ export function TermSearch({
             <X aria-hidden="true" className="h-4 w-4" />
           </Button>
         )}
-      </div>
-
-      <Textarea
-        id="term-search-input"
-        rows={3}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={"body mass index\nsmoking status\ngrip strength"}
-        className="rounded-inner"
-      />
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" onClick={() => onSearch(terms)} disabled={terms.length === 0}>
-          Search {terms.length > 0 ? `${terms.length} ${terms.length === 1 ? "term" : "terms"}` : ""}
-        </Button>
         {onUseScore && (
-          <Button type="button" variant="outline" onClick={onUseScore}>
+          <Button type="button" variant="outline" size="sm" className="h-8" onClick={onUseScore}>
             Use my declared score as the scope
           </Button>
         )}
-        <span className="text-xs text-on-raised-muted">
-          Each term is matched against the text of each group — its generated name, the description behind
-          it, and its variable names. It runs on this machine, so searching costs nothing.
+        {/* WHAT IT MATCHES, ON THE CONTROL AND NOT BEHIND A HOVER. Compactness is not a licence to hide
+            this: the claim "it is a text match" is the one 08-15 had to put back after the component
+            said "matching is semantic", and a claim a reviewer has to discover is not really being made.
+            Takes the remaining width, exactly as prod's own description line does. */}
+        <span className="min-w-[16rem] flex-1 text-xs text-on-raised-muted">
+          One term per line, or paste a list. Each term is matched against the text of each group — its
+          generated name, the description behind it, and its variable names. It runs on this machine, so
+          searching costs nothing.
         </span>
       </div>
 
@@ -156,6 +198,6 @@ export function TermSearch({
           })}
         </ul>
       )}
-    </section>
+    </div>
   );
 }

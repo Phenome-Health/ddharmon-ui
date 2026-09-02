@@ -3413,3 +3413,88 @@ test.describe("gate1 breadth on the header", () => {
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(singles.length);
   });
 });
+
+/**
+ * THE CONCEPT SEARCH MOVES INTO THE TOOLBAR (08-16c review, item C).
+ *
+ * Bhargav, on Gate 1's search: *"build this into the tray area like current prod UI."* Prod's Review
+ * queue (`dashboard.tsx`) puts its search in the card header beside the other narrowing controls, as a
+ * compact single-line input; Gate 1's was its own full-width card with a heading of its own.
+ *
+ * THE PLACEMENT IS ADOPTED. THE TWO BEHAVIOURS THAT MAKE IT DIFFERENT ARE NOT GIVEN UP, because they are
+ * the reason it exists rather than being a second copy of prod's box:
+ *
+ *  1. **IT TAKES A LIST.** A reviewer scoping a run has one — the components of a score, the variables a
+ *     paper used, the twelve things this analysis needs. A one-term box makes them run twelve searches and
+ *     remember twelve answers. So the control is compact at rest and GROWS to whatever is pasted into it.
+ *  2. **A TERM THAT MATCHES NOTHING IS A COVERAGE FINDING, NOT AN EMPTY STATE.** "No results" tells the
+ *     reviewer their search failed; "nothing in this run measures smoking" tells them something true about
+ *     their corpus, which is what they came to find out.
+ *
+ * And it still never claims to be semantic — no group vector reaches the browser, so the match is lexical
+ * and the copy says which text it is over. That claim was removed once already (08-15) and compactness is
+ * not a reason to let it back in.
+ */
+test.describe("gate1 search in the toolbar", () => {
+  const SEARCH = "[data-testid='term-search']";
+
+  test("@gate1 the search lives in the toolbar, not in a section of its own", async ({ page }) => {
+    await openGate1(page);
+    const inToolbar = page.locator(`[data-testid='ledger-toolbar'] ${SEARCH}`);
+    await expect(inToolbar).toBeVisible();
+    // Exactly one, and it is the one in the toolbar — not a second copy left behind below it.
+    await expect(page.locator(SEARCH)).toHaveCount(1);
+  });
+
+  test("@gate1 it is compact at rest — prod's single-line register, not a block", async ({ page }) => {
+    await openGate1(page);
+    const box = await page.locator("#term-search-input").boundingBox();
+    // Prod's is `h-8`. The old Gate 1 control was a three-row textarea inside its own headed card, which
+    // is what "build this into the tray area" was about.
+    expect(box!.height).toBeLessThan(44);
+  });
+
+  test("@gate1 it still takes a LIST, and grows to hold one rather than clipping it", async ({ page }) => {
+    await openGate1(page);
+    const input = page.locator("#term-search-input");
+    const atRest = (await input.boundingBox())!.height;
+
+    await input.fill("body mass index\nsmoking status\ngrip strength\nwaist circumference");
+    const filled = (await input.boundingBox())!.height;
+    // GROWN, not scrolled: a reviewer who pasted twelve terms must be able to see what they pasted.
+    expect(filled).toBeGreaterThan(atRest);
+    const clipped = await input.evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(clipped).toBeLessThanOrEqual(2);
+
+    // And the list is read as a list — four terms, not one string.
+    await expect(page.getByRole("button", { name: /^Search 4 terms/ })).toBeVisible();
+    // AND THE CONTROL SAYS IT TAKES ONE. A compact input that accepts a list but looks like a one-term
+    // box is a feature nobody finds, so the affordance is stated in visible copy rather than left to a
+    // placeholder that has to be truncated to fit.
+    await expect(page.locator(SEARCH)).toContainText(/one term per line|paste a list/i);
+  });
+
+  test("@gate1 a term matching nothing is still a coverage finding about the run", async ({ page }) => {
+    await openGate1(page);
+    await page.locator("#term-search-input").fill("gait speed\nblood pressure");
+    await page.getByRole("button", { name: /^Search/ }).click();
+
+    const findings = page.locator("[data-testid='coverage-findings'] li");
+    await expect(findings).toHaveCount(1);
+    // A CLAIM ABOUT THE CORPUS, not a failed search — and settled here, because it will not resurface.
+    await expect(findings.first()).toContainText("gait speed");
+    await expect(findings.first()).toContainText(/no cohort here measures it|never formed such a group/i);
+    await expect(findings.first()).toContainText(/will not resurface/i);
+    // The term that DID match narrows the ledger rather than reporting nothing.
+    await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
+  });
+
+  test("@gate1 compactness did not smuggle the semantic claim back in", async ({ page }) => {
+    await openGate1(page);
+    const search = page.locator(SEARCH);
+    // The honest description stays ON the control, not behind a hover — a claim a reviewer has to
+    // discover is a claim the screen is not really making.
+    await expect(search).toContainText(/text of each group/i);
+    await expect(search).not.toContainText(/semantic|understands|meaning of your term/i);
+  });
+});
