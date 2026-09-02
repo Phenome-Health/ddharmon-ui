@@ -737,6 +737,38 @@ test.describe("gate1 carve", () => {
     await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${FLAGGED}']`)).toBeVisible();
   });
 
+  /**
+   * LIGHTENED, BUT THE STATE CLAIM SURVIVES (08-16c review). Bhargav: *"this box is heavy handed. re-write
+   * along the lines of 'LLM judgement proposes splitting this group' / 'rationale: ____'."*
+   *
+   * The assertion is about what the lightening may NOT drop. "Nothing has been changed" is a claim about
+   * the run, not a caption: the pipeline flags an over-merge and never resolves it, and that sentence is
+   * why a reviewer can walk past this panel safely. Copy trimming is the standing pressure on it, so it
+   * is pinned here rather than left to survive on judgement.
+   */
+  test("@gate1 the carve proposal states its proposer, its rationale, and that nothing was applied", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const carve = (await expandRow(page, FLAGGED)).locator("[data-testid='carve-proposal']");
+
+    // One line naming who proposed it — in the register the Coherence column already uses.
+    await expect(carve.getByRole("heading", { level: 4 })).toHaveText(
+      "The coherence judge proposes splitting this group",
+    );
+    // The rationale is LABELLED, not left as loose prose the reviewer has to classify.
+    await expect(carve).toContainText("Rationale:");
+    // ...and the state of the run is stated outright.
+    await expect(carve.locator("[data-testid='carve-unapplied']")).toHaveText(
+      "Nothing has been changed — this is a proposal.",
+    );
+
+    // The three verbs are the CONTROLS, and are no longer also spelled out as a sentence above them.
+    for (const verb of [/accept|turn it on|enable/i, /edit/i, /ignore/i]) {
+      await expect(carve.getByText(verb).first()).toBeVisible();
+    }
+  });
+
   test("@gate1 an unflagged group carries no carve proposal", async ({ page }) => {
     await openGate1(page);
     const row = await expandRow(page, BIG);

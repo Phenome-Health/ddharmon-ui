@@ -69,6 +69,16 @@ export function CarveProposal({
   onIgnore,
   className,
 }: CarveProposalProps) {
+  /**
+   * ONE rationale line out of the judge's two fields, rather than two stacked paragraphs.
+   *
+   * `axis` is what it reads the group as differing ALONG; `summary` is its theme sentence for the group's
+   * core. Both are its own words about why it flagged this, so both belong under "Rationale" — and a run
+   * carries either, both, or neither. Joined rather than dropped: `summary` is only shown elsewhere on the
+   * row when it has been BORROWED as the group's label (Task 1), so on a group that has a generated name
+   * this is the only place it appears at all.
+   */
+  const rationale = [axis, summary].filter(Boolean).join(" — ");
   return (
     <section
       data-testid="carve-proposal"
@@ -81,13 +91,35 @@ export function CarveProposal({
       )}
     >
       <div className="flex flex-col gap-1">
-        <h4 className="text-sm font-semibold text-on-warn">The judge proposes dividing this group</h4>
-        <p className="max-w-[68ch] text-xs text-on-warn">
-          {axis
-            ? `It reads the members as differing along: ${axis}. Nothing has been changed — this is a proposal.`
-            : "Nothing has been changed — this is a proposal. Accept it, edit it by moving variables yourself, or ignore it."}
+        {/*
+          A CLAIM, A RATIONALE, AND THE STATE — in that order, one line each (08-16c review).
+
+          Bhargav: *"this box is heavy handed. re-write along the lines of 'LLM judgement proposes
+          splitting this group' / 'rationale: ____'."* It had spent three sentences saying what the three
+          buttons underneath already say: "Accept it, edit it by moving variables yourself, or ignore it"
+          is a caption for controls the reviewer can read.
+
+          WHAT DID NOT GO IS "NOTHING HAS BEEN CHANGED". That is not decoration — it is a truth claim
+          about the state of the run, and it is the whole reason this box is safe to ignore. The pipeline
+          FLAGS and never re-groups, so the amber panel has to say, in its own words, that it has not
+          already done the thing it is proposing.
+
+          THE PROPOSER IS STILL "THE COHERENCE JUDGE" rather than the "LLM judgement" of Bhargav's
+          sketch, and that is the one place this departs from his wording. It is the name the Coherence
+          column, the four filter chips, `COHERENCE_COPY` and the borrowed-label pill all already use for
+          this one component; a second name for it here is exactly what 08-14h's "written ONCE" test
+          exists to prevent. The shape he asked for — a claim naming the proposer, then a labelled
+          rationale — is what is built.
+        */}
+        <h4 className="text-sm font-semibold text-on-warn">The coherence judge proposes splitting this group</h4>
+        {rationale && (
+          <p className="max-w-[68ch] text-xs text-on-warn">
+            <span className="font-semibold">Rationale:</span> {rationale}
+          </p>
+        )}
+        <p data-testid="carve-unapplied" className="max-w-[68ch] text-xs text-on-warn">
+          Nothing has been changed — this is a proposal.
         </p>
-        {summary && <p className="max-w-[68ch] text-xs text-on-warn">{summary}</p>}
       </div>
 
       {subConcepts.length > 0 ? (
