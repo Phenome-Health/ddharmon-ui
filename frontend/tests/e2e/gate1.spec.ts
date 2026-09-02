@@ -1894,6 +1894,34 @@ test.describe("gate1 bulk scope", () => {
     await expect(bulk.locator("[data-testid='bulk-scope-in']")).toContainText(`${rows}`);
   });
 
+  /**
+   * PLAIN LANGUAGE, WITHOUT LOSING THE SCOPE (08-16c review). Bhargav: *"this wording is confusing. just
+   * use simple 'select all' 'deselect all' language."*
+   *
+   * The simplification is the easy half; the assertion is about what it may NOT cost. Every string here
+   * has to keep saying SHOWN, because the control acts on the rows the bucket, search and filters have
+   * left on screen — a "Select all" that silently reached filtered-out rows is precisely the trap Task 7
+   * was written to avoid, and it would be invisible in a screenshot.
+   */
+  test("@gate1 the bulk control reads as select/deselect and still says it acts on the SHOWN rows", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const bulk = page.locator("[data-testid='bulk-scope']");
+    const rows = await page.locator("[data-testid='ledger-row']").count();
+
+    await expect(bulk.locator("[data-testid='bulk-scope-in']")).toHaveText(`Select all ${rows} shown`);
+    await expect(bulk.locator("[data-testid='bulk-scope-out']")).toHaveText(`Deselect all ${rows} shown`);
+    await expect(bulk).toContainText(`${rows} groups shown are selected`);
+
+    // ...and it keeps saying so once a filter has narrowed what "all" means.
+    await page.locator("[data-testid='filter-verdict'][data-verdict='split']").click();
+    const narrowed = await page.locator("[data-testid='ledger-row']").count();
+    expect(narrowed).toBeLessThan(rows);
+    await expect(bulk.locator("[data-testid='bulk-scope-in']")).toHaveText(`Select all ${narrowed} shown`);
+    await expect(bulk.locator("[data-testid='bulk-scope-out']")).toHaveText(`Deselect all ${narrowed} shown`);
+  });
+
   test("@gate1 taking all out drops the price by exactly the rows it affected, and no more", async ({ page }) => {
     await openGate1(page);
     const bar = page.locator("[data-testid='commit-bar']");

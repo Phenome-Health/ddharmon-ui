@@ -156,11 +156,19 @@ function BorrowedMark() {
 }
 
 /**
- * Put every VISIBLE group in or out of scope in one action (08-16c Task 7).
+ * Select or deselect every VISIBLE group in one action (08-16c Task 7).
  *
- * IT NAMES ITS OWN SCOPE. "All 117" is a different promise from "all 12 in this filter", and the reviewer
- * has to read which one before pressing, not discover it after — so the count of what will be affected is
- * in the label, and it is the count of the rows currently on screen.
+ * PLAIN SELECT/DESELECT LANGUAGE, and that is the 08-16c review talking. This read "All 28 groups shown
+ * are in scope." / "Put all 28 shown in scope", and Bhargav: *"this wording is confusing. just use simple
+ * 'select all' 'deselect all' language."* The rows carry CHECKBOXES, so select is the verb the control
+ * already has; "in scope" is what the selection MEANS and it is still said where the meaning is needed —
+ * the "Going forward" filter, the sum block, the Continue bar. It is not a second vocabulary, it is the
+ * plain name for the gesture. This spec's own tests had been calling it select-all all along.
+ *
+ * IT STILL NAMES ITS OWN SCOPE — the word SHOWN, in every string, and the count beside it. "All 117" is a
+ * different promise from "all 12 in this filter", and the reviewer has to read which one before pressing
+ * rather than discover it after. Simplifying the register may not cost that distinction: a control that
+ * silently acted on filtered-out rows is the trap this was written to avoid.
  *
  * IT REPORTS A REAL TRI-STATE. Claiming "all" over a partially-selected set is the same class of lie as
  * a checkbox that submits while looking disabled.
@@ -192,10 +200,10 @@ function BulkScopeControl({
     >
       <span>
         {state === "all"
-          ? `All ${count} ${noun} shown are in scope.`
+          ? `All ${count} ${noun} shown are selected.`
           : state === "none"
-            ? `None of the ${count} ${noun} shown are in scope.`
-            : `Some of the ${count} ${noun} shown are in scope.`}
+            ? `None of the ${count} ${noun} shown are selected.`
+            : `Some of the ${count} ${noun} shown are selected.`}
       </span>
       <Button
         type="button"
@@ -205,7 +213,7 @@ function BulkScopeControl({
         disabled={busy || frozen || count === 0 || state === "all"}
         onClick={() => onBulk("in")}
       >
-        Put all {count} shown in scope
+        Select all {count} shown
       </Button>
       <Button
         type="button"
@@ -215,7 +223,7 @@ function BulkScopeControl({
         disabled={busy || frozen || count === 0 || state === "none"}
         onClick={() => onBulk("out")}
       >
-        Take all {count} shown out of scope
+        Deselect all {count} shown
       </Button>
       {busy && (
         <span role="status" data-testid="bulk-scope-busy">
