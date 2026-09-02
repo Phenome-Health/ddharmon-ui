@@ -2459,6 +2459,75 @@ test.describe("gate1 destination tray", () => {
     expect(await entry.evaluate((el) => el.closest("[draggable='true']") !== null)).toBe(false);
   });
 
+  /**
+   * THE TRAY GETS ITS OWN SEARCH (08-16c review). Bhargav: *"mini search bar here so user doesnt have to
+   * scroll if there are a lot of groups to pick from."* With 54 groups the destination list is a long
+   * scroll at exactly the moment the reviewer is holding a variable.
+   *
+   * IT IS NOT `TermSearch`, AND THE TWO MAY NOT BE ENTANGLED. The ledger's search takes a LIST of terms
+   * and reports a term matching nothing as a coverage finding about the run — "nothing here measures
+   * smoking". This one is a plain substring filter over destination names, answering "where is the group
+   * I want to drop this into". Sharing them would make one of the two lie about what it found, so the
+   * last assertion here is that filtering the tray leaves the ledger alone.
+   */
+  test("@gate1 the tray's search narrows the destinations, and leaves the ledger untouched", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const entries = row.locator("[data-testid='destination-entry']");
+    const all = await entries.count();
+    expect(all).toBeGreaterThan(3);
+    const ledgerBefore = await page.locator("[data-testid='ledger-row']").count();
+
+    await row.locator("[data-testid='tray-search']").fill("blood pressure");
+    const narrowed = await entries.count();
+    expect(narrowed).toBeGreaterThan(0);
+    expect(narrowed).toBeLessThan(all);
+    for (const text of await entries.allInnerTexts()) {
+      expect(text.toLowerCase()).toContain("blood pressure");
+    }
+
+    // The LEDGER is untouched — this is the tray's filter, not the run's search.
+    expect(await page.locator("[data-testid='ledger-row']").count()).toBe(ledgerBefore);
+
+    // Clearing it puts every destination back.
+    await row.locator("[data-testid='tray-search']").fill("");
+    expect(await entries.count()).toBe(all);
+  });
+
+  /** A filtered list must still be a working list: what survives the filter still takes a drop. */
+  test("@gate1 a destination that survives the tray search still accepts a drop", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    await row.locator("[data-testid='tray-search']").fill("blood pressure");
+    const target = row.locator("[data-testid='destination-entry']").first();
+    const targetId = await target.getAttribute("data-group-id");
+
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    await member.dragTo(
+      row.locator(`[data-testid='destination-tray'] [data-testid='member-drop-zone'][data-group-id='${targetId}']`),
+    );
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const receiving = await expandRow(page, targetId!);
+    await expect(receiving.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
+  });
+
+  /**
+   * A SEARCH THAT MATCHES NOTHING SAYS SO. An empty box under a heading reading "Move to another group"
+   * is indistinguishable from "there are no other groups", which is the state Task 6 exists to deny.
+   */
+  test("@gate1 a tray search matching nothing says so rather than emptying silently", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    await row.locator("[data-testid='tray-search']").fill("zzzzz-no-such-group");
+    await expect(row.locator("[data-testid='destination-entry']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='tray-search-empty']")).toBeVisible();
+  });
+
   test("@gate1 below the breakpoint the tray gives way rather than squeezing the grid", async ({ page }) => {
     await openGate1(page);
     const row = await expandRow(page, BIG);

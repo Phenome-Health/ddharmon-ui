@@ -622,6 +622,19 @@ function DestinationEntry({
  * IT SCROLLS ON ITS OWN. `max-h` + `overflow-y-auto` on this column only, so reaching a distant
  * destination does not scroll the source grid out from under the drag.
  *
+ * AND IT HAS ITS OWN SEARCH (08-16c review). Bhargav: *"mini search bar here so user doesnt have to
+ * scroll if there are a lot of groups to pick from."* A real run carries 54 groups, so the destination
+ * list is a long scroll at exactly the moment the reviewer is holding a variable.
+ *
+ * IT IS NOT `TermSearch`, AND THE TWO ARE NOT SHARED. The ledger's search takes a LIST of terms and
+ * reports a term that matches nothing as a COVERAGE FINDING about the run — "nothing here measures
+ * smoking" — which is a claim about the corpus. This one answers "where is the group I want to drop this
+ * into", and a miss here means the reviewer typed a name that is not among the destinations, which is not
+ * a finding about anything. One control serving both questions would have to lie about one of them.
+ *
+ * A PLAIN SUBSTRING MATCH over the label already on screen, deliberately: the reviewer is reading these
+ * entries as they type, so the rule has to be the one they can see working.
+ *
  * THE EXPANDED GROUP IS NOT IN THE LIST. Dropping a member into the group it is already in is not a move,
  * and offering it would report one.
  */
@@ -640,6 +653,15 @@ function DestinationTray({
   fieldIndex: Record<string, FieldDetail>;
   onMove: (memberId: string, toGroupId: string) => void;
 }) {
+  // LOCAL STATE, AND THAT IS CORRECT HERE. R6's "derive, never remember" governs DECISIONS — a scope, a
+  // rename, a move — because those have to survive a reload. A filter over a list is not a decision; it is
+  // where the reviewer is looking right now, and persisting it would restore a narrowed tray to someone
+  // who had forgotten they narrowed it. Same reasoning as `TermSearch`'s own state.
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  // Matched against the label the entry actually SHOWS, so the rule is the one the reviewer can see
+  // working. `groupLabel` is the same function the entry renders with, so the two cannot disagree.
+  const shown = needle ? groups.filter((g) => groupLabel(g).text.toLowerCase().includes(needle)) : groups;
   return (
     <aside
       data-testid="destination-tray"
@@ -649,8 +671,27 @@ function DestinationTray({
       <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
         Move to another group
       </span>
+      <input
+        type="search"
+        data-testid="tray-search"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder={`Filter ${groups.length} destinations`}
+        aria-label="Filter the destination groups by name"
+        className="min-h-8 w-full rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-xs text-on-raised"
+      />
       <div className="flex max-h-[32rem] min-w-0 flex-col gap-1 overflow-y-auto pr-1">
-        {groups.map((g) => (
+        {/* A FILTER THAT MATCHES NOTHING SAYS SO. An empty box under a heading reading "Move to another
+            group" is indistinguishable from "there are no other groups" — which is the state Task 6
+            exists to deny — so the reason is stated and the way out is named. */}
+        {shown.length === 0 && (
+          <p data-testid="tray-search-empty" className="text-xs text-on-raised-muted">
+            No destination matches &ldquo;{filter.trim()}&rdquo;. Clear the filter to see all{" "}
+            {groups.length} {groups.length === 1 ? "group" : "groups"} again — they are all still there,
+            and all still take a drop.
+          </p>
+        )}
+        {shown.map((g) => (
           <DestinationEntry
             key={g.groupId}
             group={g}
