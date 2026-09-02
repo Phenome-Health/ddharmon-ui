@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ChevronDown, Grid3x3, Pencil, Quote } from "lucide-react";
+import { ChevronDown, Grid3x3, Pencil, Quote, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -41,6 +41,7 @@ import {
   partitionByBreadth,
   pricePerGroup,
   sortDestinations,
+  unplacedFields,
   sortGroupsByColumn,
   type Bucket,
   type LedgerFilters,
@@ -49,7 +50,7 @@ import {
 import { isInFlight, isParked, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { cn } from "@/lib/utils";
-import type { ConceptGroup, FieldDetail, GatePosition, RunMode } from "@/types";
+import type { ConceptGroup, FieldDetail, GatePosition, RunMode, UnassignedField } from "@/types";
 
 /**
  * Gate 1 — the ledger. The load-bearing screen: where the reviewer scopes and reshapes before the BULK of
@@ -708,6 +709,172 @@ function DestinationTray({
 }
 
 /**
+ * THE ONE POOL OF UNPLACED VARIABLES (08-16c review, option b).
+ *
+ * Bhargav asked for the "IN NO GROUP" idea to be centralised, and the state it replaces is worth naming
+ * because it was two half-answers rather than one:
+ *
+ *  1. Each EXPANDED GROUP had its own list, filtered to the variables that had STARTED in that group. So
+ *     one conceptual place had 54 renderings, and a variable pulled out of group A could not be seen —
+ *     let alone recovered — from group B.
+ *  2. The clustering's OWN leftovers (`result.unassignedFields`) were rendered once, in a section gated
+ *     on `groups.length === 0`. On every run that produced groups they were simply unreachable.
+ *
+ * ONE SECTION NOW HOLDS BOTH, and it is a HOLDING AREA rather than a bin: every entry is draggable back
+ * into any group, so nothing here is a one-way exclusion. The copy says that instead of the old flat
+ * "it will not be matched against a common data element", which described a finality the screen never had.
+ *
+ * THE TWO ORIGINS ARE LABELLED AND NEVER MERGED. This is the load-bearing constraint, not presentation:
+ * "you took this out" is the reviewer's own decision, "the clustering never placed this" is a property of
+ * the run. One undifferentiated list would report the pipeline's leftovers as the reviewer's doing — and
+ * on a run where the clustering dropped 300 variables it would read as 300 corrections nobody made. They
+ * are two lists, each counted, each saying whose doing it is. `data-moved` on the chips carries the same
+ * distinction to anything reading the DOM.
+ *
+ * IT IS ITSELF A DROP TARGET, on the same `UNASSIGNED_GROUP_ID` as the in-row door, so the two are one
+ * destination reached from two places rather than two code paths that could drift.
+ */
+function UnassignedPool({
+  reviewerRemoved,
+  fromPipeline,
+  fieldIndex,
+  onMove,
+  onRestoreMember,
+  readOnly = false,
+}: {
+  /** Variables the REVIEWER took out of a group — reversible by putting them back. */
+  reviewerRemoved: string[];
+  /** Variables the CLUSTERING never placed, minus any the reviewer has since placed. */
+  fromPipeline: UnassignedField[];
+  fieldIndex: Record<string, FieldDetail>;
+  onMove: (memberId: string, toGroupId: string) => void;
+  /** Undo ONE reviewer removal, returning that variable to the group it came from. */
+  onRestoreMember: (memberId: string) => void;
+  /** A passed gate is a record: the pool is still readable, but nothing here can be moved. */
+  readOnly?: boolean;
+}) {
+  const total = reviewerRemoved.length + fromPipeline.length;
+  if (total === 0) return null;
+  return (
+    <MemberDropZone
+      groupId={UNASSIGNED_GROUP_ID}
+      label="Variables in no group"
+      onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
+      className="flex-col items-start gap-3 rounded-card border-none bg-surface-raised px-6 py-4 shadow-card"
+    >
+      <div data-testid="unassigned-pool" className="flex w-full flex-col gap-3">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            In no group
+          </h2>
+          {/* THE COUNT, where a reviewer meets it on the way to Continue — what is parked outside every
+              group is part of what they are deciding when they buy assignment for the rest. */}
+          <span data-testid="pool-count" className="font-mono text-xs tabular-nums text-on-raised">
+            {total}
+          </span>
+          <span className="text-xs text-on-raised-muted">
+            {total === 1 ? "variable is" : "variables are"} in no group, so nothing will be matched for
+            {total === 1 ? " it" : " them"} at Gate 2. Drag any of them onto a group to put
+            {total === 1 ? " it" : " them"} back.
+          </span>
+        </div>
+
+        {reviewerRemoved.length > 0 && (
+          <section data-testid="pool-reviewer" className="flex flex-col gap-1">
+            <h3 className="text-xs font-semibold text-on-raised">
+              You took these out{" "}
+              <span className="font-mono font-normal tabular-nums text-on-raised-muted">
+                {reviewerRemoved.length}
+              </span>
+            </h3>
+            <div className="flex flex-wrap gap-1">
+              {reviewerRemoved.map((memberId) => {
+                const { cohort, variable } = memberParts(memberId, fieldIndex);
+                return (
+                  <span key={memberId} className="inline-flex max-w-full items-center gap-1">
+                    <MemberChip
+                      memberId={memberId}
+                      cohort={cohort}
+                      variable={variable}
+                      draggable={!readOnly}
+                      moved
+                    />
+                    {/*
+                      THE KEYBOARD PATH, and it is required rather than a courtesy. This screen already
+                      holds that "a drag with no keyboard equivalent is a regression, not a
+                      simplification" — the × beside each row exists for exactly that reason. Putting a
+                      variable BACK is a new drag, so it needs the same.
+
+                      It is also the answer to a real ergonomic problem, measured rather than assumed: the
+                      pool sits below the ledger, and with a group expanded the chip is outside a 1440x900
+                      viewport while the rows are above it. A native HTML5 drag cannot even START from an
+                      off-screen source, so the long drag is not merely awkward — the browser will not
+                      begin it. The drag remains for a nearby row; this is how the common case is done.
+
+                      IT UNDOES, rather than choosing a destination: `clear` removes the regroup decision,
+                      so the variable returns to the group it came from. No picker, and nothing invented —
+                      the origin is the one destination that needs no decision from the reviewer.
+                    */}
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        data-testid="pool-put-back"
+                        data-member-id={memberId}
+                        aria-label={`Put ${variable} back in the group it came from`}
+                        title="Put this back in the group it came from"
+                        onClick={() => onRestoreMember(memberId)}
+                        className="shrink-0 rounded p-1 text-on-raised-muted hover:text-accent-on-raised"
+                      >
+                        <Undo2 aria-hidden="true" className="h-3 w-3" />
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {fromPipeline.length > 0 && (
+          <section data-testid="pool-pipeline" className="flex flex-col gap-1">
+            <h3 className="text-xs font-semibold text-on-raised">
+              The clustering never placed these{" "}
+              <span className="font-mono font-normal tabular-nums text-on-raised-muted">
+                {fromPipeline.length}
+              </span>
+            </h3>
+            {/* NOT the reviewer's doing, and said so: these fell out of the clustering, which is a fact
+                about the run. `data-moved="false"` on each chip carries the same distinction in the DOM.
+
+                NO "put back" HERE, and the asymmetry is the honest one: these were never in a group, so
+                there is nowhere to put them back TO. They are placed by dragging them onto a group, which
+                is a choice only the reviewer can make. */}
+            <ul className="flex flex-col gap-1">
+              {fromPipeline.map((f) => {
+                const memberId = `${f.cohort}:${f.variable}`;
+                return (
+                  <li key={memberId} className="flex min-w-0 flex-wrap items-baseline gap-2">
+                    <MemberChip
+                      memberId={memberId}
+                      cohort={f.cohort}
+                      variable={f.variable}
+                      draggable={!readOnly}
+                    />
+                    {/* The run's own text for the variable — the only place it is shown, and what makes
+                        "should this have been grouped?" answerable without leaving the screen. */}
+                    <span className="min-w-0 text-xs text-on-raised-muted">{f.text}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+      </div>
+    </MemberDropZone>
+  );
+}
+
+/**
  * The expanded row — the FULL membership, the evidence behind it, and the judge's proposal.
  *
  * DECLARED AT MODULE SCOPE, LIKE `MemberChip`, AND FOR THE SAME REASON. A component defined inside the
@@ -721,7 +888,7 @@ function ExpandedGroup({
   membersOf,
   sampleOnly,
   members,
-  unassignedFromHere,
+  poolCount,
   fieldIndex,
   movedMembers,
   onMove,
@@ -742,14 +909,8 @@ function ExpandedGroup({
   sampleOnly: (group: ConceptGroup) => boolean;
   /** The group's membership AFTER the reviewer's moves — uncapped. */
   members: string[];
-  /**
-   * Variables that STARTED in this group and are now in no group.
-   *
-   * The tray has to show them. Without this the drop destination accepted a chip and then rendered
-   * nothing, so a variable dragged out simply vanished — a correction with no visible consequence, which
-   * is the same defect as a row that disappears when it is emptied.
-   */
-  unassignedFromHere: string[];
+  /** How many variables are in the shared pool — what the door reports, not a per-group slice. */
+  poolCount: number;
   fieldIndex: Record<string, FieldDetail>;
   /** Member ids the reviewer has moved, so a chip can say so. */
   movedMembers: Set<string>;
@@ -864,33 +1025,33 @@ function ExpandedGroup({
         </p>
       )}
 
-      {/* The no-group tray. A REAL DESTINATION with its own identifier, not a sentinel special-cased at
-          each call site — which is what lets "take this out of every group" be the same verb as "put it in
-          that one" rather than a second code path. */}
+      {/*
+        THE DOOR ONTO THE POOL — a real destination with its own identifier, not a sentinel special-cased
+        at each call site, which is what lets "take this out of every group" be the same verb as "put it
+        in that one" rather than a second code path.
+
+        IT NO LONGER LISTS ANYTHING (08-16c review). It used to render the variables that had started in
+        THIS group and were now out, which made one conceptual place have 54 renderings — a variable
+        pulled out of group A was invisible from group B, and the clustering's own leftovers appeared in
+        none of them. The list now lives once, in `UnassignedPool` below the ledger; this stays because
+        the GESTURE needs a target within reach while a group is open. So it reports the shared pool's
+        size rather than a per-group slice of it.
+      */}
       {canRegroup && (
         <MemberDropZone
           groupId={UNASSIGNED_GROUP_ID}
-          label="Variables in no group"
+          label="Take a variable out of every group"
           onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
           className="bg-surface-inset"
         >
           <span className="w-full text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
             In no group
-            {unassignedFromHere.length > 0 && (
-              <span className="ml-2 font-mono normal-case tracking-normal">{unassignedFromHere.length}</span>
-            )}
+            {poolCount > 0 && <span className="ml-2 font-mono normal-case tracking-normal">{poolCount}</span>}
           </span>
-          {unassignedFromHere.length === 0 ? (
-            <span className="text-xs text-on-inset-muted">
-              Drop a variable here to take it out of every group. It will not be matched against a common
-              data element.
-            </span>
-          ) : (
-            unassignedFromHere.map((memberId) => {
-              const { cohort, variable } = memberParts(memberId, fieldIndex);
-              return <MemberChip key={memberId} memberId={memberId} cohort={cohort} variable={variable} moved />;
-            })
-          )}
+          <span className="text-xs text-on-inset-muted">
+            Drop a variable here to take it out of every group. It goes to the pool below the ledger, where
+            you can read it and drag it back into any group.
+          </span>
         </MemberDropZone>
       )}
 
@@ -1244,11 +1405,36 @@ export default function Gate1Page() {
     );
   }
 
+  /**
+   * Undo ONE move — the pool's keyboard path back into the group a variable came from.
+   *
+   * `clear` rather than a write, which is what makes it an UNDO: the regroup decision is removed, so the
+   * variable returns to its original membership and the row stops being marked as changed on its account.
+   * Writing "back to where it started" instead would leave a stored decision saying a move happened.
+   */
+  async function restoreMember(memberId: string) {
+    await regroups.clear({ memberId });
+  }
+
   /** Undo every move out of one group — the "put them back" the emptied state offers. */
   async function restoreGroup(groupId: string) {
     const strayed = Object.entries(moves).filter(([memberId]) => originalGroupOf[memberId] === groupId);
     await Promise.all(strayed.map(([memberId]) => regroups.clear({ memberId })));
   }
+
+  /**
+   * THE POOL'S TWO HALVES, derived (08-16c review). Both come off the same persisted decisions the rest of
+   * this screen reads, so the pool survives a reload exactly as the moves do (R6).
+   *
+   * `membership.unassigned` is every variable that STARTED in some group and is now out — the reviewer's
+   * own doing, across ALL groups rather than the expanded one. `unplacedFields` is the clustering's
+   * leftovers minus any the reviewer has since dragged into a real group, so nothing is listed twice.
+   */
+  const poolFromPipeline = useMemo(
+    () => unplacedFields(unassigned, moves, groups.map((g) => g.groupId)),
+    [unassigned, moves, groups],
+  );
+  const poolCount = membership.unassigned.length + poolFromPipeline.length;
 
   /** Member ids the reviewer has moved — what makes a chip render in the you-changed-it register. */
   const movedMemberIds = useMemo(() => new Set(Object.keys(moves)), [moves]);
@@ -1804,7 +1990,7 @@ export default function Gate1Page() {
                 membersOf={(id) => membership.byGroup[id] ?? []}
                 sampleOnly={(o) => !hasFullMembership(o)}
                 members={membership.byGroup[g.groupId] ?? []}
-                unassignedFromHere={membership.unassigned.filter((m) => originalGroupOf[m] === g.groupId)}
+                poolCount={poolCount}
                 fieldIndex={fieldIndex}
                 movedMembers={movedMemberIds}
                 onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
@@ -1827,29 +2013,19 @@ export default function Gate1Page() {
         )}
       </Ledger>
 
-      {groups.length === 0 && unassigned.length > 0 && (
-        <section
-          aria-label="Variables the clustering left unassigned"
-          className="flex flex-col gap-2 rounded-card bg-surface-raised px-6 py-4 shadow-card"
-        >
-          <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            Left unassigned
-          </h2>
-          <ul className="flex flex-col gap-1">
-            {unassigned.map((f) => (
-              <li
-                key={`${f.cohort}:${f.variable}`}
-                data-testid="unassigned-variable"
-                className="flex flex-wrap items-baseline gap-2 text-sm"
-              >
-                <span className="font-mono text-xs font-semibold text-accent-2-on-raised">{f.cohort}</span>
-                <span className="font-mono text-xs text-on-raised">{f.variable}</span>
-                <span className="min-w-0 text-on-raised-muted">{f.text}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {/*
+        ONE POOL, BELOW THE LEDGER AND ABOVE THE COMMIT BAR (08-16c review). Rendered on every run that
+        has anything in it — not only, as before, on a run that produced no groups at all, which is the
+        one case where it was of least use.
+      */}
+      <UnassignedPool
+        reviewerRemoved={membership.unassigned}
+        fromPipeline={poolFromPipeline}
+        fieldIndex={fieldIndex}
+        onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+        onRestoreMember={(memberId) => void restoreMember(memberId)}
+        readOnly={frozen}
+      />
 
       {/*
         THE DECLARED-SCORE PANEL (the 2026-08-25 amendment). A SECTION of this screen's body — below the

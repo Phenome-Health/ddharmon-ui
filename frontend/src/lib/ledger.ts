@@ -323,18 +323,57 @@ export function effectiveMembers(
 ): { byGroup: Record<string, string[]>; unassigned: string[] } {
   const byGroup: Record<string, string[]> = {};
   const unassigned: string[] = [];
+  const known = new Set<string>();
   for (const g of groups) byGroup[g.groupId] = [];
   for (const g of groups) {
     // The UNCAPPED list when the run carries one; the collapsed sample only as a last resort, and a move
     // written against a partial sample is exactly what T-08-89 forbids — which is why the expanded row
     // reads this and never `memberVariableNames` directly.
     for (const memberId of membersByGroup[g.groupId] ?? g.memberVariableNames) {
+      known.add(memberId);
       const destination = moves[memberId] ?? g.groupId;
       if (destination in byGroup) byGroup[destination].push(memberId);
       else unassigned.push(memberId);
     }
   }
+  /**
+   * VARIABLES THAT BELONG TO NO GROUP AT ALL, placed by the reviewer (08-16c review).
+   *
+   * The clustering's own leftovers (`result.unassignedFields`) are in no group's membership, so the loops
+   * above cannot see them — before the pool centralised them they were unreachable on any run that
+   * produced groups, and a drag from the pool into a group would have recorded a decision that changed
+   * nothing on screen. A silent no-op is worse than a withheld verb.
+   *
+   * A SECOND PASS, so it can never shadow a real member: anything the loops already accounted for is
+   * skipped. And only into a REAL group — a leftover "moved" to the pool is already where it is, and
+   * pushing it onto `unassigned` here would list it twice, once from each source.
+   */
+  for (const [memberId, destination] of Object.entries(moves)) {
+    if (known.has(memberId)) continue;
+    if (destination in byGroup) byGroup[destination].push(memberId);
+  }
   return { byGroup, unassigned };
+}
+
+/**
+ * The clustering's OWN leftovers that are still unplaced — the pipeline half of the pool (08-16c review).
+ *
+ * A field the reviewer has since dragged into a real group is NOT unplaced any more and must stop being
+ * listed, or the pool would report it in two places at once. A field moved to the POOL is a no-op: that is
+ * where it already was, and treating it as a placement would silently drop it from the only list it has.
+ *
+ * Pure, and separate from `effectiveMembers`, because the two answer different questions: that one is
+ * about group membership, this one is about a list the run shipped. Folding them together would make the
+ * membership function depend on a field it has no other reason to know about.
+ */
+export function unplacedFields<T extends { cohort: string; variable: string }>(
+  fields: readonly T[],
+  moves: Record<string, string>,
+  /** The ids of the run's real groups — the only destinations that count as a placement. */
+  groupIds: readonly string[],
+): T[] {
+  const real = new Set(groupIds);
+  return fields.filter((f) => !real.has(moves[`${f.cohort}:${f.variable}`] ?? ""));
 }
 
 /**

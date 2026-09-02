@@ -3,6 +3,8 @@ import {
   COHERENCE_ORDER,
   sortGroupsByColumn,
   sortDestinations,
+  unplacedFields,
+  effectiveMembers,
   bulkScopePlan,
   bulkScopeState,
   cohortRoster,
@@ -354,9 +356,18 @@ test.describe("gate1 empty", () => {
     await expect(empty).toContainText("Nothing grouped above the threshold");
     await expect(empty).not.toContainText("No groups formed");
     // …and it lists them, because "nothing can be scoped" is only actionable if you can see what.
-    const listed = page.locator("[data-testid='unassigned-variable']");
+    //
+    // RE-POINTED at the ONE pool (08-16c review). This used to be its own `unassigned-variable` list,
+    // rendered only when the run produced no groups — so a run WITH groups showed the clustering's
+    // leftovers nowhere at all. They now live in the shared pool on every run, under the origin label
+    // that says the clustering, not the reviewer, left them out.
+    const pool = page.locator("[data-testid='unassigned-pool']");
+    const listed = pool.locator("[data-testid='pool-pipeline'] [data-testid='member-chip']");
     await expect(listed).toHaveCount(2);
     await expect(listed.first()).toContainText("21001");
+    await expect(pool.locator("[data-testid='pool-pipeline']")).toContainText("Body mass index (BMI)");
+    // Nothing is attributed to the reviewer, who has done nothing on this run.
+    await expect(pool.locator("[data-testid='pool-reviewer']")).toHaveCount(0);
   });
 });
 
@@ -611,13 +622,15 @@ test.describe("gate1 expanded row", () => {
     const chip = row.locator("[data-testid='member-row']").first();
     const memberId = await chip.getAttribute("data-member-id");
 
-    // The no-group tray is a REAL destination with its own identifier, not a sentinel special-cased at
-    // every call site.
+    // The no-group zone is a REAL destination with its own identifier, not a sentinel special-cased at
+    // every call site. Since 08-16c's review it is a DOOR onto the shared pool rather than a list of its
+    // own, so the variable is asserted where it now lands: the one pool below the ledger.
     const tray = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
     await expect(tray).toBeVisible();
     await chip.dragTo(tray);
 
-    await expect(tray.locator("[data-testid='member-chip']")).toHaveCount(1);
+    const pooled = page.locator("[data-testid='unassigned-pool'] [data-testid='pool-reviewer'] [data-testid='member-chip']");
+    await expect(pooled).toHaveCount(1);
     await expect(
       page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`),
     ).toHaveAttribute("data-spine", "changed");
@@ -627,13 +640,13 @@ test.describe("gate1 expanded row", () => {
     await page.reload();
     await page.waitForLoadState("networkidle");
     const after = await expandRow(page, BIG);
-    await expect(after.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__'] [data-testid='member-chip']")).toHaveCount(1);
-    // The moved variable now lives in the tray, where a chip is still the right rendering: it belongs to
-    // no group, so there is no grid for it to be a row of.
-    await expect(after.locator(`[data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveAttribute(
-      "data-moved",
-      "true",
-    );
+    await expect(pooled).toHaveCount(1);
+    // A chip is still the right rendering in the pool: the variable belongs to no group, so there is no
+    // grid for it to be a row of. And it is marked as the REVIEWER'S doing.
+    await expect(
+      page.locator(`[data-testid='unassigned-pool'] [data-testid='member-chip'][data-member-id='${memberId}']`),
+    ).toHaveAttribute("data-moved", "true");
+    expect(await after.count()).toBeGreaterThan(0);
     await expect(
       page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`),
     ).toHaveAttribute("data-spine", "changed");
@@ -1305,17 +1318,16 @@ test.describe("gate1 the row IS the variable", () => {
     await target.dragTo(tray);
 
     // The behaviour 08-15 built is unchanged: keyed per variable, persisted, and the row says it changed.
-    await expect(tray.locator("[data-testid='member-chip']")).toHaveCount(1);
+    // Only WHERE the result is read has moved — into the one pool (08-16c review).
+    const pooledChip = `[data-testid='unassigned-pool'] [data-testid='member-chip'][data-member-id='${memberId}']`;
+    await expect(page.locator(pooledChip)).toHaveCount(1);
     await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
       "data-spine",
       "changed",
     );
     await page.reload();
     await page.waitForLoadState("networkidle");
-    const after = await expandRow(page, BIG);
-    await expect(
-      after.locator(`[data-testid='member-drop-zone'][data-group-id='__unassigned__'] [data-member-id='${memberId}']`),
-    ).toHaveCount(1);
+    await expect(page.locator(pooledChip)).toHaveCount(1);
   });
 
   test("@gate1 regrouping is reachable WITHOUT a mouse", async ({ page }) => {
@@ -1335,8 +1347,9 @@ test.describe("gate1 the row IS the variable", () => {
     await expect(remove).toHaveAttribute("aria-label", /take .+ out of this group/i);
     await page.keyboard.press("Enter");
 
-    const tray = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
-    await expect(tray.locator(`[data-member-id='${memberId}']`)).toHaveCount(1);
+    await expect(
+      page.locator(`[data-testid='unassigned-pool'] [data-testid='member-chip'][data-member-id='${memberId}']`),
+    ).toHaveCount(1);
     // Same persisted path as the drag — not a second, weaker code path.
     await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
       "data-spine",
@@ -2270,6 +2283,208 @@ test.describe("gate1 how-to", () => {
     expect(n, "the orientation list grew into a manual").toBeLessThanOrEqual(6);
     const text = await panel.innerText();
     expect(text.length, "the orientation panel is too long to read in one pass").toBeLessThan(700);
+  });
+});
+
+/**
+ * ONE POOL OF UNPLACED VARIABLES, NOT ONE PER GROUP (08-16c review, option b).
+ *
+ * Before this there were two disjoint things, and neither was the pool a reviewer needs. Each EXPANDED
+ * GROUP carried its own "In no group" list filtered to the variables that had started in THAT group — so
+ * the same conceptual place had 54 renderings, and a variable pulled out of group A was invisible from
+ * group B. Separately, the clustering's OWN leftovers (`result.unassignedFields`) were rendered once, in a
+ * section that only appeared when the run had produced NO groups at all — so on every real run they were
+ * unreachable.
+ *
+ * WHAT REPLACES IT: one pool, rendered once, holding both. The in-row drop zone stays, because it is the
+ * DOOR the gesture needs while a group is open — but it is a door onto the shared pool rather than a pool
+ * of its own, and it no longer lists anything.
+ *
+ * THE TWO ORIGINS ARE LABELLED AND NEVER MERGED, which is the load-bearing part. "You took this out" and
+ * "the clustering never placed this" are different facts about a variable — one is the reviewer's own
+ * decision, the other is a property of the run — and a single undifferentiated list would report the
+ * pipeline's leftovers as the reviewer's doing.
+ */
+test.describe("gate1 unassigned pool", () => {
+  const POOL = "[data-testid='unassigned-pool']";
+  /** Two pipeline leftovers, which the shipped fixture does not have (it carries zero). */
+  const LEFTOVERS = [
+    { cohort: "ukbb", variable: "zz_never_clustered_a", text: "A variable the clustering never placed" },
+    { cohort: "aou", variable: "zz_never_clustered_b", text: "Another one the clustering never placed" },
+  ];
+
+  test("@gate1 a variable moved into a group from the pool actually lands there", () => {
+    const groups = fixtureGroups().slice(0, 2);
+    const byGroup = { [groups[0].groupId]: ["c:one"], [groups[1].groupId]: ["c:two"] };
+    const out = effectiveMembers(groups, byGroup, { "ukbb:loose": groups[1].groupId });
+    expect(out.byGroup[groups[1].groupId]).toContain("ukbb:loose");
+    expect(out.unassigned).not.toContain("ukbb:loose");
+  });
+
+  test("@gate1 a pipeline leftover the reviewer has placed stops being listed as unplaced", () => {
+    const ids = ["g1", "g2"];
+    expect(unplacedFields(LEFTOVERS, {}, ids).map((f) => f.variable)).toEqual([
+      "zz_never_clustered_a",
+      "zz_never_clustered_b",
+    ]);
+    expect(unplacedFields(LEFTOVERS, { "ukbb:zz_never_clustered_a": "g1" }, ids).map((f) => f.variable)).toEqual([
+      "zz_never_clustered_b",
+    ]);
+    // Moved to the pool is NOT a placement — it is where it already was.
+    expect(
+      unplacedFields(LEFTOVERS, { "ukbb:zz_never_clustered_a": "__unassigned__" }, ids).map((f) => f.variable),
+    ).toEqual(["zz_never_clustered_a", "zz_never_clustered_b"]);
+  });
+
+  test("@gate1 there is exactly ONE pool on the screen, expanded or not", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.result!.unassignedFields = LEFTOVERS;
+    });
+    await openGate1(page);
+    await expect(page.locator(POOL)).toHaveCount(1);
+    await expandRow(page, BIG);
+    await expect(page.locator(POOL)).toHaveCount(1);
+  });
+
+  test("@gate1 the two origins are shown together but labelled, and never merged", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.result!.unassignedFields = LEFTOVERS;
+    });
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+
+    const fromPipeline = page.locator(`${POOL} [data-testid='pool-pipeline'] [data-testid='member-chip']`);
+    await expect(fromPipeline).toHaveCount(2);
+
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    await member.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
+
+    const fromReviewer = page.locator(`${POOL} [data-testid='pool-reviewer'] [data-testid='member-chip']`);
+    await expect(fromReviewer).toHaveCount(1);
+    await expect(fromReviewer.first()).toHaveAttribute("data-member-id", memberId!);
+    await expect(fromPipeline).toHaveCount(2);
+    await expect(page.locator(`${POOL} [data-testid='pool-reviewer']`)).toContainText(/you took/i);
+    await expect(page.locator(`${POOL} [data-testid='pool-pipeline']`)).toContainText(/clustering/i);
+  });
+
+  test("@gate1 the pool survives a reload, because it is derived from the decisions", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    await member.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
+    await expect(page.locator(`${POOL} [data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveCount(1);
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(`${POOL} [data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveCount(1);
+  });
+
+  /**
+   * The pool is a HOLDING AREA, not a bin: what went in can come back out, into ANY group — not only the
+   * one it came from.
+   *
+   * THE LEDGER IS NARROWED FIRST, and that is a statement about the product rather than test staging. A
+   * native HTML5 drag cannot BEGIN from a source outside the viewport, and the pool sits below the
+   * ledger: with 28 rows on screen the chip is off-screen while the rows are above it, so the browser
+   * never fires `dragstart` (measured — zero drag events, `elementFromPoint` at the chip's centre returns
+   * null). Filtering to two rows puts the pool beside them and the whole gesture fires as it should.
+   * That limit is exactly why the keyboard path below exists rather than being a nicety.
+   */
+  test("@gate1 a variable in the pool can be dragged back into a group", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    await member.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
+    await expect(page.locator(`${POOL} [data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveCount(1);
+
+    // Collapse the source and narrow the ledger, so the pool sits within a startable drag of a row.
+    await row.getByRole("button", { name: /^Collapse / }).click();
+    await page.locator("[data-testid='filter-verdict'][data-verdict='split']").click();
+    const target = page.locator("[data-testid='ledger-row']").first();
+    const targetId = await target.getAttribute("data-row-id");
+    expect(targetId).not.toBe(BIG); // a DIFFERENT group — "any group", not merely undo
+
+    await page.locator(`${POOL} [data-testid='member-chip'][data-member-id='${memberId}']`).dragTo(target);
+
+    await expect(page.locator(`${POOL} [data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveCount(0);
+    const receiving = await expandRow(page, targetId!);
+    await expect(receiving.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
+  });
+
+  /**
+   * PUTTING A VARIABLE BACK IS REACHABLE WITHOUT A MOUSE.
+   *
+   * This screen already holds that "a drag with no keyboard equivalent is a regression, not a
+   * simplification" — the × beside each row exists for that reason. The pool introduces a new drag, so it
+   * needs the same, and here it is load-bearing twice over: the browser will not start a drag from an
+   * off-screen source, which is the pool's ordinary position on a full ledger.
+   */
+  test("@gate1 a variable can be put back without a mouse, and the row stops being marked changed", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    await member.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
+      "data-spine",
+      "changed",
+    );
+
+    const back = page.locator(`${POOL} [data-testid='pool-put-back'][data-member-id='${memberId}']`);
+    await back.focus();
+    await expect(back).toBeFocused();
+    // NAMED for the variable it acts on, not "undo".
+    await expect(back).toHaveAttribute("aria-label", /put .+ back in the group/i);
+    await page.keyboard.press("Enter");
+
+    // It returned to the group it came from, and the pool no longer holds it.
+    await expect(page.locator(`${POOL} [data-testid='member-chip'][data-member-id='${memberId}']`)).toHaveCount(0);
+    await expect(row.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
+    // A CLEARED decision, not a written one: the row is no longer marked as changed on its account.
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).not.toHaveAttribute(
+      "data-spine",
+      "changed",
+    );
+  });
+
+  /** A pipeline leftover has no origin to return to, so it is not offered a put-back it cannot honour. */
+  test("@gate1 a variable the clustering never placed is offered no put-back", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.result!.unassignedFields = LEFTOVERS;
+    });
+    await openGate1(page);
+    await expect(page.locator(`${POOL} [data-testid='pool-pipeline'] [data-testid='pool-put-back']`)).toHaveCount(0);
+  });
+
+  test("@gate1 the pool states its count, above the Continue bar", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.result!.unassignedFields = LEFTOVERS;
+    });
+    await openGate1(page);
+    await expect(page.locator(POOL)).toContainText("2");
+
+    const order = await page.evaluate(() => {
+      const p = document.querySelector("[data-testid='unassigned-pool']");
+      const bar = document.querySelector("[data-testid='commit-bar']");
+      if (!p || !bar) return "missing";
+      return p.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING ? "before" : "after";
+    });
+    expect(order).toBe("before");
+  });
+
+  test("@gate1 the pool does not describe itself as a one-way exclusion", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.result!.unassignedFields = LEFTOVERS;
+    });
+    await openGate1(page);
+    const text = (await page.locator(POOL).innerText()).toLowerCase();
+    expect(text).toMatch(/gate 2|assigned|matched/);
+    expect(text).toMatch(/back|any group|put/);
   });
 });
 
