@@ -1450,7 +1450,10 @@ test.describe("gate1 toolbar labelling and explanations", () => {
     return page.evaluate(async () => {
       const el = document.activeElement as HTMLElement | null;
       if (!el) return false;
-      const deadline = Date.now() + 600;
+      // Generous, because it also has to cover the SLOW case: under the full suite's parallel load the
+      // portal mount and the attribute commit compete with four other workers. It is paid only when the
+      // explanation is genuinely late or genuinely absent.
+      const deadline = Date.now() + 2500;
       while (!el.getAttribute("aria-describedby") && Date.now() < deadline) {
         await new Promise((r) => requestAnimationFrame(r));
       }
@@ -1477,9 +1480,14 @@ test.describe("gate1 toolbar labelling and explanations", () => {
        * SHIFT+TAB THEN TAB IS A REAL KEYBOARD ARRIVAL — the same event a reviewer generates by tabbing
        * back and forth — so the retry does not weaken the claim being made. It cannot manufacture a
        * passing result either: a control with no explanation wired has nothing to open, arrives
-       * `describedBy: false` twice, and still fails the assertions below.
+       * `describedBy: false` on every attempt, and still fails the assertions below.
+       *
+       * BOUNDED AT THREE because one was not enough under the full suite's parallel load, where the
+       * commit this is waiting on competes with four other workers: one re-arrival held at
+       * `--workers 1` and still dropped a chip once across the whole gate. The loop exits on the first
+       * success, so a healthy walk pays nothing for the headroom.
        */
-      if (!(await isDescribed(page))) {
+      for (let attempt = 0; attempt < 3 && !(await isDescribed(page)); attempt++) {
         await page.keyboard.press("Shift+Tab");
         await page.keyboard.press("Tab");
       }
@@ -2249,6 +2257,129 @@ test.describe("gate1 destination tray", () => {
   test("@gate1 with nothing expanded the tray is not permanent chrome", async ({ page }) => {
     await openGate1(page);
     await expect(page.locator(TRAY)).toHaveCount(0);
+  });
+
+  /**
+   * A TRAY ENTRY CAN BE OPENED TO SEE WHAT IS ALREADY IN IT (08-16c review).
+   *
+   * Bhargav: *"clicking on one of these should open a mini drop down of its members or take you to the
+   * group in the main view."* Two designs were offered and only ONE of them is built.
+   *
+   * WHY THE DROPDOWN AND NOT THE NAVIGATION. The tray exists to support a drag OUT OF the group that is
+   * open right now — that is the whole reason Task 6 put it there, because expanding one group pushed
+   * every other group's drop zone off the viewport. Navigating to the destination would collapse the
+   * source and scroll it away, destroying exactly the context the tray was built to serve, and the
+   * reviewer would arrive at the target having lost the variable they were holding. A popover answers
+   * the question they actually have — "is this the right target?" — without them losing their place.
+   */
+  test("@gate1 opening a tray entry shows that group's members, and does not navigate away", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const url = page.url();
+
+    const entry = row.locator("[data-testid='destination-members-toggle']").first();
+    const targetId = await entry.getAttribute("data-group-id");
+    await expect(entry).toHaveAttribute("aria-expanded", "false");
+    await entry.click();
+    await expect(entry).toHaveAttribute("aria-expanded", "true");
+
+    // The DESTINATION's own members, read from the same effective membership the ledger uses.
+    const list = row.locator(`[data-testid='destination-members'][data-group-id='${targetId}']`);
+    await expect(list).toBeVisible();
+    const expected = gate1Fixture().result!.conceptGroupMembers![targetId!];
+    expect(expected.length).toBeGreaterThan(0);
+    await expect(list.locator("[data-testid='destination-member']").first()).toBeVisible();
+    for (const memberId of expected.slice(0, 3)) {
+      await expect(list.locator(`[data-member-id='${memberId}']`)).toHaveCount(1);
+    }
+
+    // NOTHING WAS LEFT. Same URL, and the source group is still expanded with its drop zone in reach.
+    expect(page.url()).toBe(url);
+    await expect(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']")).toBeVisible();
+  });
+
+  test("@gate1 the members list is reachable and operable from the keyboard", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const entry = row.locator("[data-testid='destination-members-toggle']").first();
+    await entry.focus();
+    await expect(entry).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(entry).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Enter");
+    await expect(entry).toHaveAttribute("aria-expanded", "false");
+  });
+
+  /**
+   * THE POPOVER MAY NOT EAT THE DROP. An open members list covers the destination it belongs to, so a
+   * reviewer mid-drag will aim at it — and a panel that accepted the chip and did nothing would lose the
+   * move silently, which is the same defect Task 6's own `stopPropagation` note records.
+   */
+  test("@gate1 dropping onto an OPEN members list still moves the variable into that group", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const entry = row.locator("[data-testid='destination-members-toggle']").first();
+    const targetId = await entry.getAttribute("data-group-id");
+    await entry.click();
+    const list = row.locator(`[data-testid='destination-members'][data-group-id='${targetId}']`);
+    await expect(list).toBeVisible();
+
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    await member.dragTo(list);
+
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
+      "data-spine",
+      "changed",
+    );
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const receiving = await expandRow(page, targetId!);
+    await expect(receiving.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
+  });
+
+  /**
+   * T-08-89 REACHES THE TRAY TOO. Where the run recorded only a capped SAMPLE of a group, the members
+   * list is not that group's membership — and a list presented as complete is how a reviewer concludes a
+   * destination holds four variables when it holds forty. The count stays the contract's true figure and
+   * the list says which of the two is on screen.
+   */
+  test("@gate1 a destination whose members are a capped sample says so rather than reading as complete", async ({
+    page,
+  }) => {
+    await serveRun(page, (run) => {
+      for (const g of run.result!.conceptGroups ?? []) {
+        if (g.groupId === BIG) continue; // the SOURCE keeps its full membership, or it cannot be dragged from
+        g.membersTruncated = true;
+        g.memberVariableNames = g.memberVariableNames.slice(0, 2);
+        delete run.result!.conceptGroupMembers![g.groupId];
+      }
+    });
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const entry = row.locator("[data-testid='destination-members-toggle']").first();
+    const targetId = await entry.getAttribute("data-group-id");
+    const group = fixtureGroups().find((g) => g.groupId === targetId)!;
+
+    // The COUNT is the contract's true figure, not the sample's length.
+    await expect(entry).toContainText(`${group.nMembers}`);
+    await entry.click();
+    const list = row.locator(`[data-testid='destination-members'][data-group-id='${targetId}']`);
+    await expect(list.locator("[data-testid='destination-member']")).toHaveCount(2);
+    await expect(list.locator("[data-testid='destination-members-partial']")).toBeVisible();
+  });
+
+  /** The toggle is a control, not a drag handle: it must not itself become a source of drags. */
+  test("@gate1 the members toggle is not draggable, so a click cannot start a drag", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const entry = row.locator("[data-testid='destination-members-toggle']").first();
+    expect(await entry.evaluate((el) => (el as HTMLElement).draggable)).toBe(false);
+    expect(await entry.evaluate((el) => el.closest("[draggable='true']") !== null)).toBe(false);
   });
 
   test("@gate1 below the breakpoint the tray gives way rather than squeezing the grid", async ({ page }) => {

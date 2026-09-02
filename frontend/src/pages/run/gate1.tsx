@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { Grid3x3, Pencil, Quote, Sparkles } from "lucide-react";
+import { ChevronDown, Grid3x3, Pencil, Quote, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -477,6 +477,130 @@ function MemberList({
 }
 
 /**
+ * A member id split into the two things a reader needs, in ONE place.
+ *
+ * A member id is `cohort:variable`. `fieldIndex` carries the variable's dictionary NAME but not its
+ * cohort, so the cohort comes from the id — which is where it came from in the first place — and the name
+ * from the index when the run has one. This was written out inline at each site that renders a member;
+ * the tray's members list (08-16c review) would have been the fourth copy, so it is one function now.
+ */
+function memberParts(memberId: string, fieldIndex: Record<string, FieldDetail>): { cohort: string; variable: string } {
+  const separator = memberId.indexOf(":");
+  const cohort = separator > 0 ? memberId.slice(0, separator) : "";
+  const raw = separator > 0 ? memberId.slice(separator + 1) : memberId;
+  return { cohort, variable: fieldIndex[memberId]?.name || raw };
+}
+
+/**
+ * ONE TRAY ENTRY: a live drop destination that can also be OPENED to show what is already in it
+ * (08-16c review).
+ *
+ * Bhargav: *"clicking on one of these should open a mini drop down of its members or take you to the
+ * group in the main view."* Two designs, and only the first is built.
+ *
+ * WHY NOT THE NAVIGATION. The tray exists to support a drag out of the group that is open RIGHT NOW —
+ * that is the whole reason Task 6 put it here, since expanding one group pushes every other group's drop
+ * zone off the viewport. Navigating to the destination would collapse the source and scroll it away,
+ * destroying exactly the context the tray was built to serve. The question a reviewer has while holding a
+ * variable is "is this the right target?", and a list of what is already in the group answers it without
+ * them losing their place.
+ *
+ * THE DISCLOSURE IS INSIDE THE DROP ZONE, NOT IN A PORTAL, and that is load-bearing rather than
+ * incidental. An open list COVERS the destination it describes, so a reviewer mid-drag will aim at it; a
+ * portalled popover renders outside the zone, so that drop would land on nothing and the move would be
+ * lost silently — the same defect the `stopPropagation` note on `MemberDropZone` records. Rendered inside,
+ * a drop anywhere on the list bubbles to the zone's own handler and means what it looks like it means.
+ *
+ * A `<button>`, so it is keyboard-reachable for free, and explicitly NOT draggable: a control that could
+ * also start a drag is a control that fights the gesture it sits inside.
+ */
+function DestinationEntry({
+  group,
+  members,
+  sampleOnly,
+  fieldIndex,
+  onMove,
+}: {
+  group: ConceptGroup;
+  /** The destination's membership AFTER the reviewer's moves — the same list the ledger counts. */
+  members: string[];
+  /** True when the run recorded only a capped sample of this group, so the list below is partial. */
+  sampleOnly: boolean;
+  fieldIndex: Record<string, FieldDetail>;
+  onMove: (memberId: string, toGroupId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = groupLabel(group);
+  const listId = `destination-members-${group.groupId}`;
+  const count = sampleOnly ? group.nMembers : members.length;
+  return (
+    <MemberDropZone
+      groupId={group.groupId}
+      label={`Move into ${label.text}`}
+      onDropMember={(memberId) => onMove(memberId, group.groupId)}
+      className="flex-col items-start gap-0.5 bg-surface-inset py-2"
+    >
+      <button
+        type="button"
+        data-testid="destination-members-toggle"
+        data-group-id={group.groupId}
+        draggable={false}
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full min-w-0 flex-col items-start gap-0.5 text-left"
+      >
+        <span
+          data-testid="destination-entry"
+          data-group-id={group.groupId}
+          className="w-full truncate text-xs font-semibold text-on-inset"
+          title={label.text}
+        >
+          {label.text}
+        </span>
+        <span className="flex items-center gap-1 text-xs text-on-inset-muted">
+          {count} {count === 1 ? "variable" : "variables"}
+          {label.source === "judge" && " · judge's summary"}
+          <ChevronDown aria-hidden="true" className={cn("h-3 w-3", open && "rotate-180")} />
+        </span>
+      </button>
+      {open && (
+        <ul id={listId} data-testid="destination-members" data-group-id={group.groupId} className="flex w-full flex-col gap-0.5 pt-1">
+          {members.map((memberId) => {
+            const { cohort, variable } = memberParts(memberId, fieldIndex);
+            return (
+              <li
+                key={memberId}
+                data-testid="destination-member"
+                data-member-id={memberId}
+                className="flex min-w-0 items-baseline gap-1"
+              >
+                <span className="shrink-0 font-mono text-xs font-semibold text-accent-2-on-inset">{cohort}</span>
+                <span className="truncate text-xs text-on-inset-muted" title={variable}>
+                  {variable}
+                </span>
+              </li>
+            );
+          })}
+          {/* T-08-89 AGAIN, AND FOR THE SAME REASON. Where the run recorded a capped sample, the list
+              cannot be presented as the group's membership — the count above is the contract's true
+              figure and this says which of the two the reviewer is looking at. */}
+          {sampleOnly && (
+            <li data-testid="destination-members-partial" className="pt-1 text-xs text-on-inset-muted">
+              This run recorded only these {members.length} of the group&rsquo;s {group.nMembers} variables,
+              so the rest are not listed here.
+            </li>
+          )}
+          {members.length === 0 && (
+            <li className="text-xs text-on-inset-muted">Nothing is in this group right now.</li>
+          )}
+        </ul>
+      )}
+    </MemberDropZone>
+  );
+}
+
+/**
  * The other groups, alongside an expanded one, as live drop destinations (08-16c Task 6).
  *
  * Bhargav: *"when a group is expanded, it's hard to see what other groups there are to drag vars to. the
@@ -498,9 +622,17 @@ function MemberList({
  */
 function DestinationTray({
   groups,
+  membersOf,
+  sampleOnly,
+  fieldIndex,
   onMove,
 }: {
   groups: ConceptGroup[];
+  /** A destination's membership after the reviewer's moves — read, never recomputed here. */
+  membersOf: (groupId: string) => string[];
+  /** Whether that membership is only the capped sample this run recorded. */
+  sampleOnly: (group: ConceptGroup) => boolean;
+  fieldIndex: Record<string, FieldDetail>;
   onMove: (memberId: string, toGroupId: string) => void;
 }) {
   return (
@@ -513,31 +645,16 @@ function DestinationTray({
         Move to another group
       </span>
       <div className="flex max-h-[32rem] min-w-0 flex-col gap-1 overflow-y-auto pr-1">
-        {groups.map((g) => {
-          const label = groupLabel(g);
-          return (
-            <MemberDropZone
-              key={g.groupId}
-              groupId={g.groupId}
-              label={`Move into ${label.text}`}
-              onDropMember={(memberId) => onMove(memberId, g.groupId)}
-              className="flex-col items-start gap-0.5 bg-surface-inset py-2"
-            >
-              <span
-                data-testid="destination-entry"
-                data-group-id={g.groupId}
-                className="w-full truncate text-xs font-semibold text-on-inset"
-                title={label.text}
-              >
-                {label.text}
-              </span>
-              <span className="text-xs text-on-inset-muted">
-                {g.nMembers} {g.nMembers === 1 ? "variable" : "variables"}
-                {label.source === "judge" && " · judge's summary"}
-              </span>
-            </MemberDropZone>
-          );
-        })}
+        {groups.map((g) => (
+          <DestinationEntry
+            key={g.groupId}
+            group={g}
+            members={membersOf(g.groupId)}
+            sampleOnly={sampleOnly(g)}
+            fieldIndex={fieldIndex}
+            onMove={onMove}
+          />
+        ))}
       </div>
     </aside>
   );
@@ -554,6 +671,8 @@ function DestinationTray({
 function ExpandedGroup({
   group,
   otherGroups,
+  membersOf,
+  sampleOnly,
   members,
   unassignedFromHere,
   fieldIndex,
@@ -570,6 +689,10 @@ function ExpandedGroup({
   group: ConceptGroup;
   /** Every OTHER group, as drop destinations beside this one (08-16c Task 6). */
   otherGroups: ConceptGroup[];
+  /** A destination group's membership after the reviewer's moves — for the tray's members list. */
+  membersOf: (groupId: string) => string[];
+  /** Whether a destination group's membership is only the capped sample this run recorded. */
+  sampleOnly: (group: ConceptGroup) => boolean;
   /** The group's membership AFTER the reviewer's moves — uncapped. */
   members: string[];
   /**
@@ -670,18 +793,13 @@ function ExpandedGroup({
           onDropMember={canRegroup ? (memberId) => onMove(memberId, group.groupId) : undefined}
         >
           {members.map((memberId) => {
-            // A member id is `cohort:variable`. `fieldIndex` carries the variable's dictionary NAME but
-            // not its cohort, so the cohort comes from the id — which is where it came from in the first
-            // place — and the name from the index when the run has one.
-            const separator = memberId.indexOf(":");
-            const cohort = separator > 0 ? memberId.slice(0, separator) : "";
-            const variable = separator > 0 ? memberId.slice(separator + 1) : memberId;
+            const { cohort, variable } = memberParts(memberId, fieldIndex);
             return (
               <MemberChip
                 key={memberId}
                 memberId={memberId}
                 cohort={cohort}
-                variable={fieldIndex[memberId]?.name || variable}
+                variable={variable}
                 moved={movedMembers.has(memberId)}
                 draggable={canRegroup}
               />
@@ -722,19 +840,8 @@ function ExpandedGroup({
             </span>
           ) : (
             unassignedFromHere.map((memberId) => {
-              const separator = memberId.indexOf(":");
-              return (
-                <MemberChip
-                  key={memberId}
-                  memberId={memberId}
-                  cohort={separator > 0 ? memberId.slice(0, separator) : ""}
-                  variable={
-                    fieldIndex[memberId]?.name ||
-                    (separator > 0 ? memberId.slice(separator + 1) : memberId)
-                  }
-                  moved
-                />
-              );
+              const { cohort, variable } = memberParts(memberId, fieldIndex);
+              return <MemberChip key={memberId} memberId={memberId} cohort={cohort} variable={variable} moved />;
             })
           )}
         </MemberDropZone>
@@ -801,7 +908,15 @@ function ExpandedGroup({
         </p>
       )}
       </div>
-      {showTray && <DestinationTray groups={otherGroups} onMove={onMove} />}
+      {showTray && (
+        <DestinationTray
+          groups={otherGroups}
+          membersOf={membersOf}
+          sampleOnly={sampleOnly}
+          fieldIndex={fieldIndex}
+          onMove={onMove}
+        />
+      )}
     </div>
   );
 }
@@ -1610,6 +1725,8 @@ export default function Gate1Page() {
                    the reviewer's bucket, search and filters have already narrowed to — the same set the
                    collapsed rows would have shown. */
                 otherGroups={visible.filter((o) => o.groupId !== g.groupId)}
+                membersOf={(id) => membership.byGroup[id] ?? []}
+                sampleOnly={(o) => !hasFullMembership(o)}
                 members={membership.byGroup[g.groupId] ?? []}
                 unassignedFromHere={membership.unassigned.filter((m) => originalGroupOf[m] === g.groupId)}
                 fieldIndex={fieldIndex}
