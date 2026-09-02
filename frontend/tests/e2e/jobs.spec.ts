@@ -128,7 +128,7 @@ test.describe("Runs page — a parked run is not a running run", () => {
     // The reviewer-facing word is "awaiting review", never "running" and never "stopped" (which would
     // read as cancelled). Naming the gate is what makes the row actionable rather than merely honest.
     await expect(status).toHaveText(/awaiting review/i);
-    await expect(status).toHaveText(/Concepts → elements/i);
+    await expect(status).toHaveText(/Concepts → CDEs/i);
     await expect(status).not.toHaveText(/awaiting_review/);
   });
 
@@ -196,7 +196,7 @@ test.describe("Dashboard — elapsed freezes at the park", () => {
     // A number that stops moving with no explanation reads as a hung page; naming the gate makes the
     // frozen figure legible as a fact rather than a failure.
     await expect(readout).toHaveText(/Paused/i);
-    await expect(readout).toHaveText(/Concepts → elements/i);
+    await expect(readout).toHaveText(/Concepts → CDEs/i);
     await expect(readout).not.toHaveText(/Elapsed/);
   });
 

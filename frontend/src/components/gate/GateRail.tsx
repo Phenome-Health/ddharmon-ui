@@ -48,7 +48,12 @@ export const GATE_LABELS: Record<GatePosition, string> = {
   setup: "Set up",
   gate0: "Load & prepare",
   gate1: "Concept groups",
-  gate2: "Concepts → elements",
+  // "CDEs", not "elements" (08-16c review). Bhargav asked for the term the field actually uses; the rail
+  // is a compact step label, and "element" on its own names nothing in particular. The acronym is
+  // expanded where a first-time reader meets it — `GateShell`'s tagline, "Harmonize data dictionaries
+  // against common data elements", sits above this rail on every gate screen — so the short form here is
+  // read against the long form rather than instead of it. No sibling label used "elements".
+  gate2: "Concepts → CDEs",
   gate3: "Transform specs",
   gate4: "Export",
 };
