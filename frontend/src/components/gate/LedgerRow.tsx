@@ -28,8 +28,15 @@ import { useDropHighlight } from "@/hooks/use-drop-highlight";
  * expandable rows does not justify one (UI-SPEC §11).
  */
 
-/** The normalised grid tracks (UI-SPEC §2): checkbox · concept · coherence · cohorts · vars · money · chevron. */
-export const LEDGER_GRID = "grid grid-cols-[24px_1fr_92px_76px_64px_80px_24px] items-start gap-2";
+/**
+ * The normalised grid tracks (UI-SPEC §2): checkbox · concept · coherence · cohorts · vars · money · chevron.
+ *
+ * THE COHORTS TRACK IS 96px, NOT 76px, SINCE 08-16c's ITEM B. Its header now carries two controls rather
+ * than one — the sort it always had, and the breadth filter the bucket tabs folded into — and 76px was
+ * exactly the width of the label plus a single sort caret. Widening the TRACK rather than shrinking the
+ * type is UI-SPEC §3.1's rule; the coverage strip in the same column simply gets the extra room.
+ */
+export const LEDGER_GRID = "grid grid-cols-[24px_1fr_92px_96px_64px_80px_24px] items-start gap-2";
 
 export interface LedgerRowProps {
   /** Stable row id, surfaced so a test names a row rather than a position. */

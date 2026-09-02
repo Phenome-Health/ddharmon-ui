@@ -402,15 +402,20 @@ test.describe("gate1 partition", () => {
 
     // The harmonization subset leads, because a single-cohort group is CDE-mapping rather than pooling
     // and the two are scored separately, never blended.
+    //
+    // RE-POINTED at the COLUMN HEADER (08-16c review, item B). The tab strip is gone; the partition and
+    // its default are not. What the assertion is about is unchanged — which set leads, and that the other
+    // is a counted, one-click destination — so only the control it presses has moved.
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(cross.length);
-    await expect(page.locator("[data-testid='bucket-tab'][aria-pressed='true']")).toHaveAttribute(
-      "data-bucket",
-      "cross-cohort",
-    );
+    await expect(page.locator("[data-testid='breadth-filter']")).toHaveAttribute("data-bucket", "cross-cohort");
 
     // NOT HIDDEN. A labelled, counted, one-click destination naming what it holds — 87% of the corpus
-    // lives there on a real run, and a view that silently dropped it would be a coverage lie.
-    const other = page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']");
+    // lives there on a real run, and a view that silently dropped it would be a coverage lie. The count
+    // is on screen in the note WITHOUT opening the control, which is what keeps that true now that the
+    // control is an icon on a header.
+    const note = page.locator("[data-testid='bucket-note']");
+    await expect(note).toContainText(String(single.length));
+    const other = page.locator("[data-testid='bucket-switch']");
     await expect(other).toBeVisible();
     await expect(other).toContainText(String(single.length));
     await other.click();
@@ -642,7 +647,7 @@ test.describe("gate1 expanded row", () => {
     const singles = fixtureGroups().filter((g) => g.nMembers === 1);
     await openGate1(page);
     // Single-member groups are single-cohort by construction, so they live in the other bucket.
-    await page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']").click();
+    await page.locator("[data-testid='bucket-switch']").click();
     const row = await expandRow(page, singles[0].groupId);
     await expect(row.locator("[data-testid='member-row']")).toHaveCount(1);
     await expect(row.locator("[data-testid='member-row']")).toHaveAttribute("draggable", "true");
@@ -690,7 +695,7 @@ test.describe("gate1 expanded row", () => {
     // A one-member group, so one drag empties it.
     const single = fixtureGroups().filter((g) => g.nMembers === 1)[0];
     await openGate1(page);
-    await page.locator("[data-testid='bucket-tab'][data-bucket='single-cohort']").click();
+    await page.locator("[data-testid='bucket-switch']").click();
     const row = await expandRow(page, single.groupId);
     await row
       .locator("[data-testid='member-row']")
@@ -1530,7 +1535,12 @@ test.describe("gate1 toolbar labelling and explanations", () => {
 
   async function tabThroughToolbar(page: Page): Promise<Map<string, { describedBy: boolean; tip: string }>> {
     const seen = new Map<string, { describedBy: boolean; tip: string }>();
-    await page.locator("[data-testid='bucket-tab']").first().focus();
+    // STARTS AT THE WAY-ACROSS LINK IN THE BUCKET NOTE — the toolbar's first focusable control now that
+    // the bucket tabs are gone (08-16c item B; the partition's control moved to the Cohorts column
+    // header, outside this toolbar, and has its own describe). It has to be a REAL focusable: the
+    // toolbar `<section>` itself takes no focus, so focusing it leaves `document.activeElement` on
+    // `<body>` and the walk sets off from the top of the document instead of from the toolbar.
+    await page.locator("[data-testid='bucket-switch']").focus();
     for (let i = 0; i < 24; i++) {
       await page.keyboard.press("Tab");
       /**
@@ -3284,5 +3294,122 @@ test.describe("gate1 pool as a group", () => {
     // But nothing offers to change a decision the pipeline has already consumed.
     await expect(page.locator(`${POOL} [data-testid='destination-tray']`)).toHaveCount(0);
     await expect(page.locator(`${POOL} [data-testid='pool-put-back']`)).toHaveCount(0);
+  });
+});
+
+/**
+ * THE PARTITION MOVES ONTO THE COLUMN HEADER (08-16c review, item B).
+ *
+ * Bhargav, on the "Across cohorts 28 / Within one cohort 26" strip: *"all this should be part of the
+ * column header sort/filter functionality."* Consistent with his earlier call to delete the ORDER select:
+ * he is consolidating the ledger's controls onto the headers it already sorts by.
+ *
+ * WHAT MOVED IS THE CONTROL. WHAT DID NOT MOVE IS THE PARTITION, and the distinction is the whole of this
+ * change. `lib/ledger.ts::partitionByBreadth` records a MEASUREMENT: on the full-5 artifact the judge
+ * flags 351 of 1901 groups and 237 of those are single-cohort, so flag-first ordering ALONE spends 68% of
+ * the reviewer's first attention on rows that are not harmonization at all. The judge is well aimed — it
+ * fires on 45% of cross-cohort groups against 14% of single-cohort ones — which makes its verdict a good
+ * SIGNAL and a bad PARTITION. So the ledger still partitions on the structural fact FIRST and orders
+ * flag-first inside it, and cross-cohort still leads by default. Folding that into `LedgerFilters` would
+ * have made it one more thing a reviewer can clear to nothing, and would have collapsed the two empty
+ * states below into one.
+ *
+ * AND THE OTHER HALF IS STILL NEVER HIDDEN. It is 87% of the corpus on a real run and it holds real work.
+ * A control that disappeared into a menu would leave the reviewer looking at 28 rows of 54 with nothing on
+ * screen saying so — which is the coverage lie the tab strip existed to prevent, arrived at by a different
+ * route. Both counts stay visible without opening anything, and the other half is one click away.
+ */
+test.describe("gate1 breadth on the header", () => {
+  test("@gate1 the bucket tab strip is gone, and the control is on the Cohorts header", async ({ page }) => {
+    await openGate1(page);
+    await expect(page.locator("[data-testid='bucket-tab']")).toHaveCount(0);
+    // ON the header, beside the sort control it now shares a column with.
+    const head = page.locator("[data-testid='ledger-column-cohorts']");
+    await expect(head.locator("[data-testid='ledger-sort-cohorts']")).toBeVisible();
+    await expect(head.locator("[data-testid='breadth-filter']")).toBeVisible();
+  });
+
+  test("@gate1 the default is still the cross-cohort half, and it is still exactly that set", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const { "cross-cohort": cross } = partitionByBreadth(fixtureGroups());
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(cross.length);
+    await expect(page.locator("[data-testid='breadth-filter']")).toHaveAttribute("data-bucket", "cross-cohort");
+  });
+
+  test("@gate1 both halves are counted on screen without opening anything", async ({ page }) => {
+    await openGate1(page);
+    const { "cross-cohort": cross, "single-cohort": single } = partitionByBreadth(fixtureGroups());
+    expect(single.length).toBeGreaterThan(0);
+    // 87% of a real corpus lives in the other half. A reviewer looking at 28 of 54 rows must be able to
+    // see that from the screen, not by opening a menu — that is the coverage lie the partition prevents.
+    const note = page.locator("[data-testid='bucket-note']");
+    await expect(note).toBeVisible();
+    await expect(note).toContainText(String(cross.length));
+    await expect(note).toContainText(String(single.length));
+    // …and it is never described as a failure, an error or an outlier. It is a different job.
+    await expect(note).not.toContainText(/fail|error|outlier|reject|problem/i);
+  });
+
+  test("@gate1 the header filter switches the half, and says which one is showing", async ({ page }) => {
+    await openGate1(page);
+    const { "single-cohort": single } = partitionByBreadth(fixtureGroups());
+
+    await page.locator("[data-testid='breadth-filter']").click();
+    const option = page.locator("[data-testid='breadth-option'][data-bucket='single-cohort']");
+    await expect(option).toBeVisible();
+    // COUNTED IN THE MENU TOO, so the choice is made against a number rather than a name.
+    await expect(option).toContainText(String(single.length));
+    await option.click();
+
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(single.length);
+    await expect(page.locator("[data-testid='breadth-filter']")).toHaveAttribute("data-bucket", "single-cohort");
+  });
+
+  test("@gate1 the other half is one click away from the note as well as from the header", async ({ page }) => {
+    await openGate1(page);
+    const { "single-cohort": single } = partitionByBreadth(fixtureGroups());
+    await page.locator("[data-testid='bucket-switch']").click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(single.length);
+  });
+
+  test("@gate1 the header control is reachable and operable from the keyboard", async ({ page }) => {
+    // It sits in the ledger's head, which used to be marked presentational — and a focusable control
+    // inside an `aria-hidden` subtree is a control no assistive technology can reach at all.
+    await openGate1(page);
+    const trigger = page.locator("[data-testid='breadth-filter']");
+    await trigger.focus();
+    await expect(trigger).toBeFocused();
+    await expect(trigger).toHaveAttribute("aria-label", /cohort|across|within|breadth/i);
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-testid='breadth-option'][data-bucket='single-cohort']")).toBeVisible();
+  });
+
+  test("@gate1 the partition still happens BEFORE the sort — sorting cannot widen the set", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const { "cross-cohort": cross } = partitionByBreadth(fixtureGroups());
+    await page.locator("[data-testid='ledger-sort-vars']").click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(cross.length);
+    // Sorting by the very column the filter now shares must not widen it either.
+    await page.locator("[data-testid='ledger-sort-cohorts']").click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(cross.length);
+  });
+
+  test("@gate1 an all-single-cohort run still does not read as 'no rows at all'", async ({ page }) => {
+    // The empty-state finding this screen already carries: the default half leads on purpose, so a run
+    // whose groups are ALL single-cohort opens on an empty view — and "no rows here" is indistinguishable
+    // from "no rows at all" unless the screen says which. Moving the control must not lose that.
+    const singles = fixtureGroups().filter((g) => !g.crossCohort);
+    expect(singles.length).toBeGreaterThan(0);
+    await serveRun(page, (run) => {
+      run.result!.conceptGroups = singles;
+    });
+    await openGate1(page);
+    await expect(page.locator("[data-testid='gate-empty-state']")).toContainText(/other|single cohort/i);
+    await page.locator("[data-testid='go-to-other-bucket']").click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(singles.length);
   });
 });

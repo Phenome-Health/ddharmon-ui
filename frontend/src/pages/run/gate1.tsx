@@ -15,6 +15,7 @@ import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CarveProposal } from "@/components/gate/CarveProposal";
 import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
 import { GroupingStrip } from "@/components/gate/GroupingStrip";
+import { BreadthFilter } from "@/components/gate/BreadthFilter";
 import { MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } from "@/components/gate/MemberChip";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
@@ -1893,7 +1894,17 @@ export default function Gate1Page() {
       )}
 
       <Ledger
-        columns={GATE1_LEDGER_COLUMNS}
+        /*
+          THE PARTITION'S CONTROL RIDES ON THE COHORTS HEADER (08-16c review, item B). Bhargav: *"all this
+          should be part of the column header sort/filter functionality."* Injected here rather than baked
+          into `GATE1_LEDGER_COLUMNS`, because the control needs this page's live bucket and counts — and
+          because `Ledger` has no business knowing what cohort breadth is.
+        */
+        columns={GATE1_LEDGER_COLUMNS.map((c) =>
+          c.sortKey === "cohorts"
+            ? { ...c, filter: <BreadthFilter bucket={bucket} counts={bucketCounts} onChange={setBucket} /> }
+            : c,
+        )}
         caption="Concept groups"
         sort={colSort}
         onSort={(key) => setColSort((cur) => toggleSort(cur, key as LedgerSortKey))}

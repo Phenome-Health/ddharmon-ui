@@ -3,32 +3,33 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InfoTip } from "@/components/ui/info-tip";
 import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
+import { BUCKET_COPY } from "@/components/gate/BreadthFilter";
 import { cn } from "@/lib/utils";
-import { BUCKETS, activeFilterCount, type Bucket, type LedgerFilters } from "@/lib/ledger";
+import { activeFilterCount, type Bucket, type LedgerFilters } from "@/lib/ledger";
 import type { CoherenceState } from "@/types";
 
 /**
- * What makes a large flagged set tractable: the BUCKET TABS, four filters, and a progress readout that
- * survives the reviewer leaving.
+ * What makes a large flagged set tractable: four filters, a progress readout that survives the reviewer
+ * leaving, and the line that says which half of the run is on screen.
  *
- * ORDERING IS NOT IN HERE ANY MORE. This toolbar carried an ORDER select — "Flagged first / Most cohorts
- * first / Most variables first" — until Bhargav read it beside the sortable headers Task 10 added:
- * *"concept groups are sortable below so this is redundant."* Every preset it named is a header the
- * reviewer can click (`sortGroupsByColumn`), so the control named orders that were already one click away
- * while being a SECOND writer of the one sort state. The ledger's own default order is unchanged and
- * still arrives without anyone choosing it. Sorting belongs to the column headers now; do not put a
- * second control for it back here.
+ * NEITHER ORDERING NOR THE PARTITION IS A CONTROL IN HERE ANY MORE. Both went to the column headers, in
+ * the same direction and on the same reasoning.
  *
- * THE BUCKET TABS ARE THE STRUCTURAL IDEA, not a convenience. The ledger partitions on cohort breadth
- * BEFORE it sorts (see `partitionByBreadth`), because flag-first ordering alone spends 68% of the
- * reviewer's first attention on single-cohort rows — which are not harmonization at all. The default is
- * the cross-cohort bucket.
+ *  - The ORDER select — "Flagged first / Most cohorts first / Most variables first" — went when Bhargav
+ *    read it beside the sortable headers Task 10 added: *"concept groups are sortable below so this is
+ *    redundant."* Every preset it named is a header the reviewer can click.
+ *  - The BUCKET TABS went at his next reading, on the strip itself: *"all this should be part of the
+ *    column header sort/filter functionality."* The control is now `BreadthFilter`, on the Cohorts header.
  *
- * AND THE OTHER BUCKET IS NEVER HIDDEN. It is 87% of the corpus on a real run and it holds real work: a
- * variable-to-CDE mapping is a result, just not a POOLING result. So it is a labelled, counted, one-click
- * destination that names what it holds — never a filtered-away default, and never described as failed,
- * erroneous or outlying. Presenting the cross-cohort rows as if they were the whole run is the failure
- * mode this tab exists to prevent.
+ * WHAT REMAINS HERE IS THE STATEMENT, AND IT IS LOAD-BEARING RATHER THAN DECORATIVE. The partition itself
+ * has NOT moved and has not weakened: the ledger still partitions on cohort breadth BEFORE it sorts (see
+ * `partitionByBreadth`, which records the measurement — flag-first ordering alone spends 68% of the
+ * reviewer's first attention on single-cohort rows, which are not harmonization at all), and the
+ * cross-cohort half still leads by default. But a partition whose only sign was a control folded into a
+ * header would leave a reviewer reading 28 rows of 54 with nothing on screen saying so — which is exactly
+ * the coverage lie the tabs existed to prevent, arrived at from the other direction. So both counts stay
+ * visible without opening anything, the other half is one click away, and neither is described as failed,
+ * erroneous or outlying. It is 87% of the corpus on a real run and it holds real work.
  *
  * NO COMPLETION GATE ANYWHERE IN HERE. The progress readout REPORTS; it does not withhold. How much to
  * review is the reviewer's judgement call (D-09 revised), so nothing in this component can disable
@@ -38,22 +39,6 @@ import type { CoherenceState } from "@/types";
  * filtering on the state is in scope; a gradient, a percentage or a confidence meter is not, because no
  * such number is computed and the calibration to justify one does not exist yet.
  */
-
-const BUCKET_COPY: Record<Bucket, { label: string; note: string }> = {
-  "cross-cohort": {
-    label: "Across cohorts",
-    note:
-      "Groups drawing on two or more of your dictionaries. This is pooling — the thing harmonization is " +
-      "for — and it is where the coherence judge raises most of what it raises.",
-  },
-  "single-cohort": {
-    label: "Within one cohort",
-    note:
-      "Groups whose variables all come from one dictionary. These are still results — each is a variable " +
-      "mapped to a common data element — but they are a different job from pooling, and the two are " +
-      "counted separately rather than blended.",
-  },
-};
 
 /**
  * The four states, in the TRIAGE ORDER the ledger sorts by — which is this file's only claim about them.
@@ -195,6 +180,7 @@ export function LedgerToolbar({
   className,
 }: LedgerToolbarProps) {
   const nActive = activeFilterCount(filters);
+  const otherBucket: Bucket = bucket === "cross-cohort" ? "single-cohort" : "cross-cohort";
   const toggle = <T,>(list: T[], value: T): T[] =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
@@ -204,35 +190,31 @@ export function LedgerToolbar({
       aria-label="Narrow and order the concept groups"
       className={cn("flex flex-col gap-4", className)}
     >
-      {/* The partition. Both buckets are always present and always counted. */}
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Which groups to show">
-        {BUCKETS.map((b) => (
-          <button
-            key={b}
-            type="button"
-            data-testid="bucket-tab"
-            data-bucket={b}
-            aria-pressed={b === bucket}
-            onClick={() => onBucketChange(b)}
-            className={cn(
-              "flex min-h-10 items-center gap-2 rounded-inner border px-4 py-2 text-sm font-semibold",
-              b === bucket
-                ? "border-accent-on-field bg-surface-raised text-on-raised shadow-card"
-                : "border-rule-on-field text-on-field-muted",
-            )}
-          >
-            {BUCKET_COPY[b].label}
-            <span className="font-mono text-xs tabular-nums">{counts[b]}</span>
-          </button>
-        ))}
-        {/* Derived, so the two counts can never be presented as if one were the whole run. */}
-        <span className="text-xs text-on-field-muted">
-          {counts["cross-cohort"] + counts["single-cohort"]} groups in total
-        </span>
-      </div>
+      {/*
+        WHICH HALF IS ON SCREEN — a statement, and the one place both counts are visible without opening
+        anything. The CONTROL is on the Cohorts column header now (`BreadthFilter`); this is what stops
+        that control's move turning the partition into something a reviewer has to go looking for.
 
+        The way across is a link inside the sentence rather than a second tab: it names the other half and
+        its size, so pressing it is a choice rather than a discovery. Both counts are rendered from the
+        same `counts` the control reads, so the two can never disagree.
+      */}
       <p data-testid="bucket-note" className="max-w-[80ch] text-sm text-on-field-muted">
-        {BUCKET_COPY[bucket].note}
+        Showing the <span className="font-mono tabular-nums text-on-field">{counts[bucket]}</span>{" "}
+        {counts[bucket] === 1 ? "group" : "groups"} {BUCKET_COPY[bucket].short}, of{" "}
+        <span className="font-mono tabular-nums text-on-field">
+          {counts["cross-cohort"] + counts["single-cohort"]}
+        </span>{" "}
+        in this run. {BUCKET_COPY[bucket].note}{" "}
+        <button
+          type="button"
+          data-testid="bucket-switch"
+          onClick={() => onBucketChange(otherBucket)}
+          className="font-semibold text-link-on-field underline underline-offset-2"
+        >
+          Show the {counts[otherBucket]} {counts[otherBucket] === 1 ? "group" : "groups"}{" "}
+          {BUCKET_COPY[otherBucket].short} instead.
+        </button>
       </p>
 
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">

@@ -29,6 +29,15 @@ export interface LedgerColumn {
    * control that visibly does nothing.
    */
   sortKey?: string;
+  /**
+   * A FILTER CONTROL BESIDE THE SORT, on the columns that have one (08-16c review, item B).
+   *
+   * Bhargav, on Gate 1's bucket tabs: *"all this should be part of the column header sort/filter
+   * functionality."* It is a SLOT rather than a filter model, deliberately: this component knows what a
+   * ledger column is and has no business knowing what cohort breadth is. Gate 1 passes its own control;
+   * the three gates that render a ledger without one pass nothing and are unchanged.
+   */
+  filter?: React.ReactNode;
 }
 
 /** Gate 1's head: `Concept · Coherence · Cohorts · Vars · Gate 2+` (UI-SPEC §7.3.3). */
@@ -69,10 +78,22 @@ export function Ledger({
       aria-label={caption}
       className={cn("flex flex-col rounded-card bg-surface-raised shadow-card", className)}
     >
-      {/* The head is presentational: the rows carry their own accessible content, and announcing five
-          column labels before every row would bury it. */}
+      {/*
+        THE HEAD IS NOT PRESENTATIONAL ANY MORE, and the `aria-hidden` it carried is gone (08-16c review,
+        item B).
+
+        It was marked hidden when it was five words of static text, on the reasoning that announcing the
+        column labels before every row would bury the rows' own content. That reasoning stopped holding
+        the moment Task 10 put SORT BUTTONS in here, and it fails outright now that the breadth filter
+        joins them: a focusable control inside an `aria-hidden` subtree is a control no assistive
+        technology can reach at all — the labels stay drawn, the buttons become unusable, and nothing on
+        screen says so. This screen already holds that a verb with no keyboard path is a regression; a
+        verb with no ACCESSIBLE path is the same defect one step further on.
+
+        The cost is the one the original note named — a screen reader now meets five column labels once,
+        in reading order, before the list. Once, ahead of a list, is what a column header is for.
+      */}
       <div
-        aria-hidden="true"
         className={cn(
           LEDGER_GRID,
           "border-b border-rule-on-raised px-6 py-3 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted",
@@ -87,11 +108,15 @@ export function Ledger({
           return (
             <span
               key={c.label}
+              data-testid={`ledger-column-${c.sortKey ?? c.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
               // Announced, not merely drawn: a screen-reader user is told which column is sorting and
               // which way, on the header itself.
               role={sortable ? "columnheader" : undefined}
               aria-sort={sortable ? ariaSortFor(sort, c.sortKey!) : undefined}
-              className={c.align === "right" ? "text-right" : undefined}
+              className={cn(
+                "flex min-w-0 items-center gap-1",
+                c.align === "right" && "justify-end",
+              )}
             >
               {sortable ? (
                 <button
@@ -100,19 +125,22 @@ export function Ledger({
                   data-active={active ? "true" : "false"}
                   onClick={() => onSort(c.sortKey!)}
                   className={cn(
-                    "inline-flex items-center gap-1 font-semibold hover:text-accent-on-raised",
+                    "inline-flex min-w-0 items-center gap-1 font-semibold hover:text-accent-on-raised",
                     c.align === "right" && "flex-row-reverse",
                   )}
                 >
-                  {c.label}
+                  <span className="truncate">{c.label}</span>
                   <Icon
                     aria-hidden="true"
-                    className={cn("h-3 w-3", active ? "text-accent-on-raised" : "text-on-raised-muted")}
+                    className={cn("h-3 w-3 shrink-0", active ? "text-accent-on-raised" : "text-on-raised-muted")}
                   />
                 </button>
               ) : (
                 c.label
               )}
+              {/* The column's own filter, where it has one — a sibling of the sort rather than a second
+                  meaning loaded onto it, so one click still sorts and nothing has to be discovered. */}
+              {c.filter}
             </span>
           );
         })}
