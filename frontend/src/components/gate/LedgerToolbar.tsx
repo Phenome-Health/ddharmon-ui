@@ -4,19 +4,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { InfoTip } from "@/components/ui/info-tip";
 import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
 import { cn } from "@/lib/utils";
-import {
-  BUCKETS,
-  SORTS,
-  activeFilterCount,
-  type Bucket,
-  type LedgerFilters,
-  type SortKey,
-} from "@/lib/ledger";
+import { BUCKETS, activeFilterCount, type Bucket, type LedgerFilters } from "@/lib/ledger";
 import type { CoherenceState } from "@/types";
 
 /**
- * What makes a large flagged set tractable: the BUCKET TABS, a sort, four filters, and a progress readout
- * that survives the reviewer leaving.
+ * What makes a large flagged set tractable: the BUCKET TABS, four filters, and a progress readout that
+ * survives the reviewer leaving.
+ *
+ * ORDERING IS NOT IN HERE ANY MORE. This toolbar carried an ORDER select — "Flagged first / Most cohorts
+ * first / Most variables first" — until Bhargav read it beside the sortable headers Task 10 added:
+ * *"concept groups are sortable below so this is redundant."* Every preset it named is a header the
+ * reviewer can click (`sortGroupsByColumn`), so the control named orders that were already one click away
+ * while being a SECOND writer of the one sort state. The ledger's own default order is unchanged and
+ * still arrives without anyone choosing it. Sorting belongs to the column headers now; do not put a
+ * second control for it back here.
  *
  * THE BUCKET TABS ARE THE STRUCTURAL IDEA, not a convenience. The ledger partitions on cohort breadth
  * BEFORE it sorts (see `partitionByBreadth`), because flag-first ordering alone spends 68% of the
@@ -171,9 +172,6 @@ export interface LedgerToolbarProps {
   counts: Record<Bucket, number>;
   bucket: Bucket;
   onBucketChange: (bucket: Bucket) => void;
-  /** The active preset, or `"column"` when a header sort no preset names is active. */
-  sort: SortKey | "column";
-  onSortChange: (sort: SortKey) => void;
   filters: LedgerFilters;
   onFiltersChange: (filters: LedgerFilters) => void;
   /** Every cohort in the run, in a stable order — the cohort filter's option list. */
@@ -189,8 +187,6 @@ export function LedgerToolbar({
   counts,
   bucket,
   onBucketChange,
-  sort,
-  onSortChange,
   filters,
   onFiltersChange,
   allCohorts,
@@ -240,55 +236,17 @@ export function LedgerToolbar({
       </p>
 
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <label
-              htmlFor="ledger-sort"
-              className="flex items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-            >
-              Order
-              {/* A SELECT CANNOT CLEANLY BE ITS OWN TOOLTIP TRIGGER — opening a tooltip on the control
-                  that is about to open a listbox fights itself — so this one uses the shipped `InfoTip`
-                  hung off the label, which is the pattern it was extracted for. */}
-              <InfoTip
-                text="What does the order change? Only the sequence the rows are read in, never which rows are shown. Flagged first leads with the groups the coherence judge raised something about, so the work that needs a human comes before the work that does not."
-                label="What does the order change?"
-              />
-            </label>
-            <select
-              id="ledger-sort"
-              value={sort}
-              onChange={(e) => onSortChange(e.target.value as SortKey)}
-              className="min-h-8 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-xs text-on-raised"
-            >
-              {SORTS.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
-              ))}
-              {/* Shown only while a clicked column owns the order. Disabled because it is a REPORT of the
-                  current state, not an order the reviewer can pick from here — they pick it by clicking a
-                  header. Without it the select would sit on a preset that is not what the ledger is doing. */}
-              {sort === "column" && (
-                <option value="column" disabled>
-                  Sorted by a column
-                </option>
-              )}
-            </select>
-          </div>
-
-          {/*
-            THE PROGRESS READOUT. Both figures are derived from persisted decisions by the caller, never
-            from component state — R6 requires a correction to be visible after a reload, and a counter in
-            `useState` is gone the moment the page reloads. It reports and never withholds: no number here
-            gates anything.
-          */}
-          <p data-testid="triage-progress" className="text-xs text-on-raised-muted">
-            <span className="font-mono tabular-nums text-on-raised">{reviewed}</span> reviewed ·{" "}
-            <span className="font-mono tabular-nums text-on-raised">{inScope}</span> in scope. Come back to
-            the rest whenever — nothing expires, and nothing is waiting on a count.
-          </p>
-        </div>
+        {/*
+          THE PROGRESS READOUT. Both figures are derived from persisted decisions by the caller, never from
+          component state — R6 requires a correction to be visible after a reload, and a counter in
+          `useState` is gone the moment the page reloads. It reports and never withholds: no number here
+          gates anything.
+        */}
+        <p data-testid="triage-progress" className="text-xs text-on-raised-muted">
+          <span className="font-mono tabular-nums text-on-raised">{reviewed}</span> reviewed ·{" "}
+          <span className="font-mono tabular-nums text-on-raised">{inScope}</span> in scope. Come back to
+          the rest whenever — nothing expires, and nothing is waiting on a count.
+        </p>
 
         <FilterGroup
           id="coherence"

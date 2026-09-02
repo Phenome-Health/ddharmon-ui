@@ -1,8 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   COHERENCE_ORDER,
-  COLUMN_SORT_FOR_PRESET,
-  presetForColumnSort,
   sortGroupsByColumn,
   bulkScopePlan,
   bulkScopeState,
@@ -1402,13 +1400,57 @@ test.describe("gate1 toolbar labelling and explanations", () => {
    * about: "an explanation is available on hover AND on keyboard focus" is a claim about traversal.
    *
    * The FIRST Tab after the initial programmatic focus is the one exception — Radix does not open on it
-   * — so the walk starts at the order select, whose next stop is a heading tip rather than a control.
+   * — so the walk has to START on a control whose next stop is not one being asserted. That used to be the
+   * order select; with the select removed (08-16c review) it is the LAST BUCKET TAB, whose next stop is
+   * the Coherence heading's `InfoTip`. The tip carries no `data-testid`, so the probe below skips it
+   * outright and the first chip asserted is reached by a Tab that does open its tooltip.
    */
+  /**
+   * Has the focused control's explanation been wired yet? Waits for it, PINNED to the element that holds
+   * focus right now.
+   *
+   * The pin is the point. Radix sets `aria-describedby` on the trigger when the tooltip opens and React
+   * commits that a frame or two after the focus event, so an immediate read is a race — but a page-level
+   * wait for "the focused element is described" is satisfied by the PREVIOUS trigger, whose attribute
+   * outlives the blur by a frame. Capturing the element first is what makes the answer about this stop.
+   */
+  async function isDescribed(page: Page): Promise<boolean> {
+    return page.evaluate(async () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      const deadline = Date.now() + 600;
+      while (!el.getAttribute("aria-describedby") && Date.now() < deadline) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return !!el.getAttribute("aria-describedby");
+    });
+  }
+
   async function tabThroughToolbar(page: Page): Promise<Map<string, { describedBy: boolean; tip: string }>> {
     const seen = new Map<string, { describedBy: boolean; tip: string }>();
-    await page.locator("#ledger-sort").focus();
+    await page.locator("[data-testid='bucket-tab']").first().focus();
     for (let i = 0; i < 24; i++) {
       await page.keyboard.press("Tab");
+      /**
+       * ONE KEYBOARD RETRY PER STOP, and it is the difference between this walk measuring the product and
+       * measuring Radix.
+       *
+       * MEASURED. Radix opens a tooltip on focus with no delay (`onFocus` calls `onOpen` directly), but
+       * the FIRST trigger focused after a programmatic `.focus()` reliably stays `data-state="closed"` —
+       * the exception the docstring above records — and with the order select gone the walk now starts one
+       * stop earlier, which pushed that suppression from a heading ⓘ (skipped, so invisible) onto the
+       * first coherence chip. A dwell does not cure it: at 400ms and at 1000ms on the preceding stop the
+       * chip was still closed, so it is not a race that waiting longer wins.
+       *
+       * SHIFT+TAB THEN TAB IS A REAL KEYBOARD ARRIVAL — the same event a reviewer generates by tabbing
+       * back and forth — so the retry does not weaken the claim being made. It cannot manufacture a
+       * passing result either: a control with no explanation wired has nothing to open, arrives
+       * `describedBy: false` twice, and still fails the assertions below.
+       */
+      if (!(await isDescribed(page))) {
+        await page.keyboard.press("Shift+Tab");
+        await page.keyboard.press("Tab");
+      }
       const probe = await page.evaluate(() => {
         const el = document.activeElement as HTMLElement | null;
         if (!el) return null;
@@ -1459,11 +1501,11 @@ test.describe("gate1 toolbar labelling and explanations", () => {
       expect(got.tip.length, `${key}'s explanation must say something`).toBeGreaterThan(20);
     }
 
-    // The order select is not a tooltip trigger — opening a tooltip on the control that is about to open
-    // a listbox fights itself — so its explanation hangs off its label as the shipped `InfoTip`.
+    // AND THE ORDER EXPLANATION IS GONE WITH THE ORDER CONTROL. It hung off the select's label; leaving
+    // it behind would be a tooltip explaining a control that is no longer on the screen.
     await expect(
       page.locator("[data-testid='ledger-toolbar']").getByRole("button", { name: /what does the order/i }),
-    ).toBeVisible();
+    ).toHaveCount(0);
   });
 
   test("@gate1 each coherence state is explained in the JUDGE'S OWN words, not a re-gloss", async ({
@@ -1958,12 +2000,35 @@ test.describe("gate1 column sort", () => {
     expect(once).toEqual(again);
   });
 
-  test("@gate1 the select and the headers cannot disagree — they are one state", () => {
-    expect(presetForColumnSort(null)).toBe("verdict");
-    expect(presetForColumnSort(COLUMN_SORT_FOR_PRESET.breadth)).toBe("breadth");
-    expect(presetForColumnSort(COLUMN_SORT_FOR_PRESET.size)).toBe("size");
-    // A header sort no preset names reports itself as such rather than showing a preset it is not doing.
-    expect(presetForColumnSort({ key: "concept", dir: "asc" })).toBe("column");
+  /**
+   * THE ORDER SELECT IS GONE (08-16c review). Bhargav: *"concept groups are sortable below so this is
+   * redundant."*
+   *
+   * The assertion that matters is NOT that the control vanished — it is that nothing it named went with
+   * it. The select offered three orders; each is asserted below to still be reachable by clicking a
+   * header, which is what makes the removal a de-duplication rather than a lost capability.
+   */
+  test("@gate1 the order select is gone, and no order it named went with it", async ({ page }) => {
+    await openGate1(page);
+    await expect(page.locator("#ledger-sort")).toHaveCount(0);
+    await expect(page.locator("[data-testid='ledger-toolbar'] select")).toHaveCount(0);
+
+    // "Flagged first" — the ledger's own default order, arriving with no control touched at all.
+    const cross = partitionByBreadth(fixtureGroups())["cross-cohort"];
+    expect(await rowIds(page)).toEqual(sortGroupsByColumn(cross, null).map((g) => g.groupId));
+
+    // ...and each of the other two, by clicking the header that owns it. One click sorts ascending, a
+    // second reverses — which is the descending order the preset named.
+    for (const [head, key] of [
+      ["ledger-sort-cohorts", "cohorts"],
+      ["ledger-sort-vars", "vars"],
+    ] as const) {
+      await page.locator(`[data-testid='${head}']`).click();
+      await page.locator(`[data-testid='${head}']`).click();
+      const shown = await rowIds(page);
+      const expected = sortGroupsByColumn(cross, { key, dir: "desc" }).map((g) => g.groupId);
+      expect(shown, `the ${key} header must reach the order the select called a preset`).toEqual(expected);
+    }
   });
 
   test("@gate1 clicking a header sorts the rows and says so, and clicking again reverses", async ({ page }) => {

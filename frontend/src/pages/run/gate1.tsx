@@ -30,7 +30,6 @@ import {
   NO_FILTERS,
   applyFilters,
   activeFilterCount,
-  COLUMN_SORT_FOR_PRESET,
   bulkScopePlan,
   bulkScopeState,
   cohortRoster,
@@ -40,7 +39,6 @@ import {
   readjudicationRequest,
   matchTerms,
   partitionByBreadth,
-  presetForColumnSort,
   pricePerGroup,
   sortGroupsByColumn,
   type Bucket,
@@ -1335,8 +1333,6 @@ export default function Gate1Page() {
             counts={bucketCounts}
             bucket={bucket}
             onBucketChange={setBucket}
-            sort={presetForColumnSort(colSort)}
-            onSortChange={(preset) => setColSort(COLUMN_SORT_FOR_PRESET[preset])}
             filters={filters}
             onFiltersChange={setFilters}
             allCohorts={allCohorts}

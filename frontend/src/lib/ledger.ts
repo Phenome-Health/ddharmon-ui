@@ -148,29 +148,14 @@ export function partitionByBreadth(groups: readonly ConceptGroup[]): Record<Buck
   return out;
 }
 
-// --- the sort control ------------------------------------------------------------------------------------
+// --- the id tiebreak ---------------------------------------------------------------------------------------
 
 /**
- * The orders a reviewer can choose between. Every one of them ENDS IN GROUP ID, so every one is total and
- * no reload can reorder the screen under someone who left mid-triage.
+ * The LAST component of every order on this screen, and the reason each of them is TOTAL: no two rows can
+ * tie, so a reload cannot reorder the ledger under a reviewer who left mid-triage. `compareGroups` states
+ * the guarantee; this is the shared expression `sortGroupsByColumn` tiebreaks on.
  */
-export type SortKey = "verdict" | "breadth" | "size";
-
-export const SORTS: { key: SortKey; label: string }[] = [
-  { key: "verdict", label: "Flagged first" },
-  { key: "breadth", label: "Most cohorts first" },
-  { key: "size", label: "Most variables first" },
-];
-
 const byId = (a: ConceptGroup, b: ConceptGroup) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0);
-
-export function sortGroupsBy(groups: readonly ConceptGroup[], key: SortKey): ConceptGroup[] {
-  if (key === "verdict") return sortGroups(groups);
-  if (key === "breadth") {
-    return [...groups].sort((a, b) => b.cohorts.length - a.cohorts.length || b.nMembers - a.nMembers || byId(a, b));
-  }
-  return [...groups].sort((a, b) => b.nMembers - a.nMembers || b.cohorts.length - a.cohorts.length || byId(a, b));
-}
 
 // --- the filters -------------------------------------------------------------------------------------------
 
@@ -520,6 +505,17 @@ export type LedgerSortKey = "concept" | "verdict" | "cohorts" | "vars";
  *
  * THE ORDER STAYS TOTAL. Every branch tiebreaks down to the group id, so no two rows can tie and a reload
  * cannot reorder the screen under a reviewer who left mid-triage — the guarantee `compareGroups` records.
+ *
+ * THIS IS NOW THE ONLY WAY TO REORDER THE LEDGER, and the ORDER SELECT THAT SAT BESIDE IT IS GONE —
+ * Bhargav, reviewing Gate 1: *"concept groups are sortable below so this is redundant."* Task 10 shipped
+ * the select alongside the headers and left "does it survive?" as an open call; this is that call, made.
+ *
+ * NOTHING WAS ORPHANED, which is the check that had to pass before the control could go. Each of its three
+ * presets is still reachable: "Flagged first" is `verdict` ascending AND the `null` default below, "Most
+ * cohorts first" is `cohorts` descending, "Most variables first" is `vars` descending — every one of them
+ * a header the reviewer can click. What went with it is the second writer of a single state, and the
+ * disabled "Sorted by a column" placeholder that existed only so the select could not misreport what the
+ * ledger was actually doing. Do not reintroduce it: a preset list is a second name for these four columns.
  */
 export function sortGroupsByColumn(
   groups: readonly ConceptGroup[],
@@ -551,34 +547,4 @@ export function sortGroupsByColumn(
       typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
     return sign * c || byId(a, b);
   });
-}
-
-/**
- * The toolbar's three preset orders, expressed as COLUMN SORTS (08-16c Task 10).
- *
- * WHY THE SELECT SURVIVED click-to-sort, which the plan left as a judgement call. Every preset is now
- * reachable by clicking a header, so the control is redundant in capability — but it is not redundant in
- * USE: it names the orders in the reviewer's language ("Flagged first"), and removing a control Bhargav
- * may be steering by is a bigger change than keeping one. What could NOT stand is two controls owning two
- * states: the failure mode is a select reading "Most cohorts first" over a ledger sorted by Vars. So they
- * were collapsed onto ONE state — the presets are just named points in the column-sort space, the select
- * writes it and the headers write it, and neither can disagree because there is nothing to disagree with.
- */
-export const COLUMN_SORT_FOR_PRESET: Record<SortKey, ColumnSort<LedgerSortKey>> = {
-  verdict: { key: "verdict", dir: "asc" },
-  breadth: { key: "cohorts", dir: "desc" },
-  size: { key: "vars", dir: "desc" },
-};
-
-/**
- * Which preset the select should show for the active column sort, or `"column"` when the reviewer has
- * sorted by a header that no preset names. The select renders that as a disabled "Sorted by a column"
- * entry rather than silently displaying a preset that is not what the ledger is doing.
- */
-export function presetForColumnSort(sort: ColumnSort<LedgerSortKey> | null): SortKey | "column" {
-  if (!sort) return "verdict";
-  for (const [preset, cs] of Object.entries(COLUMN_SORT_FOR_PRESET) as [SortKey, ColumnSort<LedgerSortKey>][]) {
-    if (cs.key === sort.key && cs.dir === sort.dir) return preset;
-  }
-  return "column";
 }
