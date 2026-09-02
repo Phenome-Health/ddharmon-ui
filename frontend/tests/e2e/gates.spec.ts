@@ -45,11 +45,17 @@ test.describe("staged review", () => {
       "gate1",
     );
 
-    // Rows are POST-SPLIT CONCEPT GROUPS, each carrying its parent cluster as provenance and its
-    // generated name marked as generated — no catalog badge, no identifier link, no endorsement.
+    // Rows are POST-SPLIT CONCEPT GROUPS, each carrying its parent cluster as provenance — no catalog
+    // badge, no identifier link, no endorsement.
+    //
+    // The generated name is no longer marked with a VISIBLE "generated" pill (08-16c review): generated
+    // is the default, so the pill was on every row and said nothing. The provenance is still on the row
+    // as `data-label-source`, which is what this now reads.
     const before = await conceptGroupIds(page);
     expect(before.length).toBeGreaterThan(0);
-    await expect(page.locator("[data-testid='ledger-row']").first().getByText("generated")).toBeVisible();
+    await expect(
+      page.locator("[data-testid='ledger-row']").first().locator("[data-label-source='generated']"),
+    ).toBeVisible();
     await expect(page.locator("[data-testid='ledger-row']").first()).toContainText("from cluster");
 
     // A run rejoined at a gate says so, and its banner carries NO countdown: retention is indefinite

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ChevronDown, Grid3x3, Pencil, Quote, Sparkles } from "lucide-react";
+import { ChevronDown, Grid3x3, Pencil, Quote } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -103,22 +103,27 @@ function TemplateSuspicion() {
   );
 }
 
-/** The generated-name marker. Icon PLUS text: an icon-only provenance claim is not a claim. */
-function GeneratedMark() {
-  return (
-    <span
-      data-testid="generated-mark"
-      title="ddharmon wrote this name from the variables in the group. It is not an entry in the NIH catalog, and no catalog element has been chosen yet."
-      className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
-    >
-      <Sparkles aria-hidden="true" className="h-3 w-3" />
-      generated
-    </span>
-  );
-}
+/**
+ * THE PROVENANCE PILLS MARK THE EXCEPTIONS, NOT THE RULE (08-16c review).
+ *
+ * There used to be a third one, `GeneratedMark`, reading "generated" — and Bhargav, looking at a real
+ * run: *"if everything has this generated tag then it has no value, right?"* He is right, and the reason
+ * is mechanical: a generated name is the DEFAULT, so on an untouched run every single row carried the
+ * pill, and a column whose value is the same on every row carries no information. It is the same test
+ * `source-rows.tsx` applies with `showDesc`.
+ *
+ * So a pill now appears only where the name is NOT what the pipeline produced: BORROWED from the judge,
+ * or given by the REVIEWER. A generated name shows nothing, which is what "nothing to report" should
+ * look like.
+ *
+ * THE GENERATED STATE ITSELF IS UNTOUCHED. `groupLabel` still returns `source: "generated"`, the row
+ * still exposes it as `data-label-source`, and a renamed row still shows "ddharmon called it <name>"
+ * beneath the reviewer's — Task 3 keeps the original recoverable and that is a different requirement
+ * from labelling the default.
+ */
 
 /**
- * The counterpart to {@link GeneratedMark} for a label the group did NOT produce (08-16c Task 1).
+ * A label the group did NOT produce (08-16c Task 1).
  *
  * A reviewer must never mistake the two. "generated" says ddharmon wrote this name FROM the group; this
  * one says the group has no name and what is standing in its place is the coherence judge's description
@@ -299,10 +304,10 @@ function GroupTitle({
         {label.text}
       </span>
       {label.source === "reviewer" && <RenamedMark />}
-      {label.source === "generated" && <GeneratedMark />}
       {label.source === "judge" && <BorrowedMark />}
-      {/* `source === "none"` carries NO mark on purpose: "generated" beside "Unnamed group" would
-          claim the pipeline produced that string, which it did not. */}
+      {/* `generated` and `none` carry NO mark. `generated` is the default and a pill on every row says
+          nothing (08-16c review); `none` never had one, because "generated" beside "Unnamed group"
+          would claim the pipeline produced that string, which it did not. */}
       {label.source === "reviewer" && (
         <span data-testid="generated-name-kept" className="truncate text-xs text-on-raised-muted">
           ddharmon called it {generated}

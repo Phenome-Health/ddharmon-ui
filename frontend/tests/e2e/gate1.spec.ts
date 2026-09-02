@@ -112,9 +112,16 @@ test.describe("gate1 ledger", () => {
     await expect(rows.first()).toBeVisible();
 
     const first = rows.first();
-    // The label is the GENERATED concept name, and the row says so — icon PLUS text, because an
-    // icon-only provenance claim is not a claim.
-    await expect(first.locator("[data-testid='generated-mark']")).toHaveText(/generated/i);
+    /**
+     * The label is the GENERATED concept name, and the row marks that by saying NOTHING (08-16c review).
+     *
+     * Bhargav: *"if everything has this generated tag then it has no value, right?"* Generated is the
+     * default, so the pill was on every row of an untouched run and carried no signal. The provenance
+     * the row still states is the machine-readable one, which is what a screen-reader user and this
+     * spec both read; the PILLS are reserved for the two exceptions, asserted below.
+     */
+    await expect(first.locator("[data-label-source='generated']")).toBeVisible();
+    await expect(first.locator("[data-testid='generated-mark']")).toHaveCount(0);
     // Provenance is the group's OWN cluster id, and it is always visible rather than in a tooltip.
     const provenance = first.locator("[data-testid='row-provenance']");
     await expect(provenance).toBeVisible();
@@ -1856,10 +1863,30 @@ test.describe("gate1 group label", () => {
     // The sentence is shown, attributed to the judge, and NOT dressed as a generated name.
     await expect(row.locator("[data-label-source='judge']")).toContainText("Self-reported cigarette smoking");
     await expect(row.locator("[data-testid='borrowed-mark']")).toBeVisible();
-    await expect(row.locator("[data-testid='generated-mark']")).toHaveCount(0);
     // The full sentence stays reachable even though the line is truncated.
     expect(await row.locator("[data-label-source='judge']").getAttribute("title"))
       .toBe("Self-reported cigarette smoking across the cohorts");
+  });
+
+  /**
+   * A PILL MARKS THE EXCEPTION, NOT THE RULE (08-16c review). Bhargav: *"if everything has this
+   * generated tag then it has no value, right?"*
+   *
+   * Asserted over the WHOLE default view rather than on one row, because the defect was a property of the
+   * set: every row carrying the same pill. The two informative pills are asserted to still work in the
+   * tests around this one.
+   */
+  test("@gate1 no row on an untouched run wears a provenance pill, because none is an exception yet", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const rows = page.locator("[data-testid='ledger-row']");
+    expect(await rows.count()).toBeGreaterThan(0);
+    // Generated is the default and the fixture is untouched, so there is nothing to report on any row.
+    expect(await page.locator("[data-testid='generated-mark']").count()).toBe(0);
+    expect(await page.locator("[data-testid='renamed-mark']").count()).toBe(0);
+    // ...and the provenance is still on the row for anything that needs to read it.
+    expect(await page.locator("[data-label-source='generated']").count()).toBeGreaterThan(0);
   });
 
   test("@gate1 an unnamed, unjudged row carries NO provenance mark at all", async ({ page }) => {
@@ -1875,8 +1902,8 @@ test.describe("gate1 group label", () => {
     const row = page.locator(`[data-testid='ledger-row'][data-row-id="${id}"]`);
     await expect(row).toBeVisible();
     await expect(row.locator("[data-label-source='none']")).toContainText("Unnamed group");
-    await expect(row.locator("[data-testid='generated-mark']")).toHaveCount(0);
     await expect(row.locator("[data-testid='borrowed-mark']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='renamed-mark']")).toHaveCount(0);
   });
 });
 
@@ -2421,7 +2448,6 @@ test.describe("gate1 rename", () => {
     await openGate1(page);
     await rename(page, "My label");
     await expect(page.locator(`${BIGROW} [data-testid='renamed-mark']`)).toBeVisible();
-    await expect(page.locator(`${BIGROW} [data-testid='generated-mark']`)).toHaveCount(0);
   });
 
   test("@gate1 the pipeline's own name remains recoverable beside it", async ({ page }) => {
