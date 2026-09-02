@@ -40,6 +40,7 @@ import {
   matchTerms,
   partitionByBreadth,
   pricePerGroup,
+  sortDestinations,
   sortGroupsByColumn,
   type Bucket,
   type LedgerFilters,
@@ -1153,6 +1154,24 @@ export default function Gate1Page() {
     return out;
   }, [regroups.decisions]);
 
+  /**
+   * When the reviewer last moved a variable INTO each group — the tray's order (08-16c review).
+   *
+   * Read straight off the persisted decisions beside `moves` itself, so it survives a reload exactly as
+   * the moves do (R6). A decision written before `movedAt` existed contributes nothing rather than
+   * counting as the epoch.
+   */
+  const lastMovedInto = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const d of Object.values(regroups.decisions)) {
+      const to = typeof d.chosen === "string" ? d.chosen : "";
+      const at = typeof d.movedAt === "number" ? d.movedAt : 0;
+      if (!to || !at) continue;
+      if (at > (out[to] ?? 0)) out[to] = at;
+    }
+    return out;
+  }, [regroups.decisions]);
+
   const membersByGroup = jobState?.result?.conceptGroupMembers ?? {};
   const membership = useMemo(
     () => effectiveMembers(groups, membersByGroup, moves),
@@ -1210,6 +1229,11 @@ export default function Gate1Page() {
       { memberId, fromGroupId: from },
       {
         chosen: toGroupId,
+        // WHEN, so the tray can lead with the groups just filled (08-16c review) WITHOUT remembering it in
+        // component state. It goes through `extra` because the decision payload carried no timestamp and
+        // the server's `updatedAt` is not served back on read — see `sortDestinations`. Clearing a move
+        // removes the row, so a reverted move stops counting as recency on its own.
+        extra: { movedAt: Date.now() },
         // The destinations offered FOR THIS VARIABLE at the moment of the move: where it was, the no-group
         // tray, and where it went. Deliberately NOT every group in the run — that would be honest about
         // the option space but would mark every regroup decision stale the moment any group id changed,
@@ -1769,8 +1793,14 @@ export default function Gate1Page() {
                 group={g}
                 /* Every other group in the CURRENT VIEW, so the destinations the tray offers are the ones
                    the reviewer's bucket, search and filters have already narrowed to — the same set the
-                   collapsed rows would have shown. */
-                otherGroups={visible.filter((o) => o.groupId !== g.groupId)}
+                   collapsed rows would have shown.
+
+                   ORDERED BY WHAT THE REVIEWER HAS JUST BEEN FILLING (08-16c review). The set is the
+                   visible one; only the ORDER changes, and only for groups actually moved into. */
+                otherGroups={sortDestinations(
+                  visible.filter((o) => o.groupId !== g.groupId),
+                  lastMovedInto,
+                )}
                 membersOf={(id) => membership.byGroup[id] ?? []}
                 sampleOnly={(o) => !hasFullMembership(o)}
                 members={membership.byGroup[g.groupId] ?? []}

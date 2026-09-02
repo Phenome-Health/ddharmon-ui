@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   COHERENCE_ORDER,
   sortGroupsByColumn,
+  sortDestinations,
   bulkScopePlan,
   bulkScopeState,
   cohortRoster,
@@ -17,7 +18,7 @@ import {
 import { componentVerdictFor, missingReason, scopeVerdictFor } from "@/lib/score-scope";
 import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
 import { toggleSort } from "@/lib/column-sort";
-import type { CoherenceState } from "@/types";
+import type { CoherenceState, ConceptGroup } from "@/types";
 import { PAUSED_JOB, fixtureGroups, gate1Fixture, serveRun } from "./gate1-fixture";
 
 /**
@@ -2269,6 +2270,71 @@ test.describe("gate1 how-to", () => {
     expect(n, "the orientation list grew into a manual").toBeLessThanOrEqual(6);
     const text = await panel.innerText();
     expect(text.length, "the orientation panel is too long to read in one pass").toBeLessThan(700);
+  });
+});
+
+/**
+ * THE TRAY LEADS WITH THE GROUPS YOU HAVE JUST BEEN FILLING (08-16c review).
+ *
+ * Bhargav: *"these should be ordered by 'most recently added to' groups at the top."* Recency of the
+ * REVIEWER'S OWN moves, not of anything the pipeline did — a reviewer carving one concept out of several
+ * groups goes back to the same destination repeatedly, and it should not have scrolled away.
+ *
+ * DERIVED FROM PERSISTED DECISIONS, NEVER REMEMBERED. R6, and the same rule that shaped Task 7: an order
+ * held in component state is gone on reload, and this one has to survive it or it is a convenience that
+ * disappears exactly when a reviewer comes back to finish.
+ */
+test.describe("gate1 tray recency", () => {
+  const g = (id: string): ConceptGroup => fixtureGroups().find((x) => x.groupId === id)!;
+
+  test("@gate1 a group moved into most recently leads, and the rest keep their order", () => {
+    const ids = fixtureGroups().slice(0, 5).map((x) => x.groupId);
+    const groups = ids.map(g);
+    const sorted = sortDestinations(groups, { [ids[3]]: 200, [ids[1]]: 100 });
+    // Most recent first, then the next most recent, then the untouched ones in the order given.
+    expect(sorted.map((x) => x.groupId)).toEqual([ids[3], ids[1], ids[0], ids[2], ids[4]]);
+  });
+
+  test("@gate1 with no moves at all the tray order is exactly the order it was given", () => {
+    const groups = fixtureGroups().slice(0, 6);
+    expect(sortDestinations(groups, {}).map((x) => x.groupId)).toEqual(groups.map((x) => x.groupId));
+  });
+
+  /** A move OUT of a group is not a move INTO it, so it may not promote the group it left. */
+  test("@gate1 only the destination is promoted, never the origin", () => {
+    const ids = fixtureGroups().slice(0, 3).map((x) => x.groupId);
+    const groups = ids.map(g);
+    // `lastMovedInto` is keyed on the DESTINATION, so an origin simply never appears in it.
+    expect(sortDestinations(groups, { [ids[2]]: 50 }).map((x) => x.groupId)).toEqual([ids[2], ids[0], ids[1]]);
+  });
+
+  test("@gate1 the recency order survives a reload, because it is read off the decisions", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const entries = row.locator("[data-testid='destination-entry']");
+    const before = await entries.first().getAttribute("data-group-id");
+
+    // Move a variable into a destination that is NOT already at the top, so promotion is observable.
+    const target = entries.nth(3);
+    const targetId = await target.getAttribute("data-group-id");
+    expect(targetId).not.toBe(before);
+    const member = row.locator("[data-testid='member-row']").first();
+    await member.dragTo(
+      row.locator(`[data-testid='destination-tray'] [data-testid='member-drop-zone'][data-group-id='${targetId}']`),
+    );
+
+    await expect(entries.first()).toHaveAttribute("data-group-id", targetId!);
+
+    // THE CLAIM THAT MATTERS: it is still there after a reload, so it was never component state.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const again = await expandRow(page, BIG);
+    await expect(again.locator("[data-testid='destination-entry']").first()).toHaveAttribute(
+      "data-group-id",
+      targetId!,
+    );
   });
 });
 

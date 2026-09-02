@@ -338,6 +338,42 @@ export function effectiveMembers(
 }
 
 /**
+ * The destination tray's order: the groups the REVIEWER has most recently moved a variable into, first
+ * (08-16c review).
+ *
+ * Bhargav: *"these should be ordered by 'most recently added to' groups at the top."* Carving one concept
+ * out of a fused group means going back to the same destination several times in a row, and having it
+ * scroll away between drops is the friction he is naming.
+ *
+ * RECENCY OF THE REVIEWER'S OWN MOVES, not of anything the pipeline did — so the key is the DESTINATION of
+ * a `gate1_regroup` decision. A move OUT of a group is therefore not a move INTO it and cannot promote the
+ * group it left, which falls out of the shape rather than needing a rule.
+ *
+ * WHERE THE TIME COMES FROM, stated because it is not what it looks like. The persisted decision did NOT
+ * carry a timestamp: `use-gate-decisions` writes `{...fields, ...extra, chosen, alternatives,
+ * optionSetKey}`, and the server's own `updatedAt` is explicitly NOT served back on read (see the conflict
+ * type's docstring — which is why a first write after a reload always looks blind). So `moveMember` now
+ * records `movedAt` through `extra`, which rides in the payload and comes back with it. That is what makes
+ * this order DERIVED from persisted decisions rather than remembered in component state — R6, and the same
+ * rule that shaped Task 7. An order held in `useState` is gone on reload, which is exactly when a reviewer
+ * returning to finish would want it.
+ *
+ * A DECISION WRITTEN BEFORE THIS EXISTED HAS NO `movedAt`, and is treated as no recency at all rather than
+ * as time zero being meaningful. It falls back into the caller's order.
+ *
+ * THE FALLBACK IS THE CALLER'S ORDER, kept by a STABLE sort (guaranteed since ES2019). The tray is handed
+ * the visible ledger order, so a group nobody has moved into sits exactly where the ledger put it — this
+ * re-ranks the touched groups and leaves every other row's position alone.
+ */
+export function sortDestinations(
+  groups: readonly ConceptGroup[],
+  /** Destination group id → when the reviewer last moved something into it. Absent means never. */
+  lastMovedInto: Record<string, number>,
+): ConceptGroup[] {
+  return [...groups].sort((a, b) => (lastMovedInto[b.groupId] ?? 0) - (lastMovedInto[a.groupId] ?? 0));
+}
+
+/**
  * The re-adjudication request for ONE accepted carve.
  *
  * A FUNCTION, RATHER THAN AN INLINE OBJECT LITERAL AT THE CALL SITE, because "exactly one id, never an
