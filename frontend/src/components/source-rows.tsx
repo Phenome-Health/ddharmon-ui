@@ -23,6 +23,7 @@ import { GripVertical, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { MEMBER_DRAG_TYPE } from "@/components/gate/MemberChip";
+import { useDropHighlight } from "@/hooks/use-drop-highlight";
 import type { FieldDetail, UIMember } from "@/types";
 
 // Bound a pathological over-merge so the grid stays a bounded widget, never a page-blowing dump. The
@@ -173,6 +174,9 @@ export function SourceRows({
   /** Present only where regrouping is offered (Gate 1). The workbench passes nothing and is unchanged. */
   drag?: SourceRowsDrag;
 }) {
+  // BEFORE THE EARLY RETURN, because a hook cannot be called conditionally. `over` is read only where
+  // `drag` is present; the workbench's call site passes none and is unchanged.
+  const { over, cue } = useDropHighlight();
   const rows = buildRows(memberIds, memberDetails, fieldIndex);
   if (!hasSourceRows(memberIds, memberDetails, fieldIndex)) return null;
 
@@ -203,11 +207,25 @@ export function SourceRows({
         // on DROP rather than on dragover — the payload is not readable during dragover in every browser,
         // so a target that inspected it there would reject legitimate drags (the rule `MemberDropZone`
         // already records). `stopPropagation` keeps a drop landing on the innermost destination.
+        //
+        // AND IT SAYS WHEN IT IS THE TARGET (08-16c review, item D). Same `useDropHighlight` every other
+        // drop zone on this screen uses, driven by enter/leave GEOMETRY for the very reason recorded
+        // above: the payload cannot be read before the drop, so the cue cannot depend on it.
         {...(drag
           ? {
               "data-group-id": drag.groupId,
+              "data-drop-over": over ? "true" : undefined,
               role: "group",
               "aria-label": drag.label,
+              onDragEnter: (e: React.DragEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+                cue("enter");
+              },
+              onDragLeave: (e: React.DragEvent) => {
+                e.stopPropagation();
+                cue("leave");
+              },
               onDragOver: (e: React.DragEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -216,12 +234,16 @@ export function SourceRows({
               onDrop: (e: React.DragEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
+                cue("drop");
                 const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
                 if (memberId) drag.onDropMember(memberId);
               },
             }
           : {})}
-        className="max-h-[28rem] overflow-auto rounded-md border border-rule-on-raised"
+        className={cn(
+          "max-h-[28rem] overflow-auto rounded-md border border-rule-on-raised",
+          drag && over && "ring-2 ring-inset ring-rule-info",
+        )}
       >
         <table className="w-full border-collapse text-xs">
           {/* sticky on the <thead> section (with border-collapse) is the combination that actually pins in

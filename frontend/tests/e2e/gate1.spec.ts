@@ -20,6 +20,7 @@ import {
 import { componentVerdictFor, missingReason, scopeVerdictFor } from "@/lib/score-scope";
 import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
 import { toggleSort } from "@/lib/column-sort";
+import { isOver, nextDepth } from "@/lib/drop-highlight";
 import type { CoherenceState, ConceptGroup } from "@/types";
 import { PAUSED_JOB, fixtureGroups, gate1Fixture, serveRun } from "./gate1-fixture";
 
@@ -2913,5 +2914,154 @@ test.describe("gate1 rename", () => {
     });
     await openGate1(page);
     await expect(page.locator("[data-testid='rename-group']")).toHaveCount(0);
+  });
+});
+
+/**
+ * LIVE DROP-TARGET HIGHLIGHTING (08-16c review, item D).
+ *
+ * Bhargav, annotating the live Gate 1: *"the drag drop behavior should have dynamic highlighting of which
+ * group is being dragged onto (including no group area) so user knows that theyre dropping their var in
+ * the intended place."*
+ *
+ * WHAT MAKES THIS HARDER THAN A `:hover` RULE, and why the algebra below is asserted in node rather than
+ * only eyeballed in the browser:
+ *
+ *  1. **THE PAYLOAD IS NOT READABLE DURING `dragover`** in every browser — the rule already recorded on
+ *     `MemberDropZone` and at `source-rows.tsx`'s grid handler. So a target cannot decide whether to light
+ *     up by INSPECTING what is being dragged; it has to light up on ENTER/LEAVE GEOMETRY alone.
+ *  2. **`dragleave` FIRES WHEN THE POINTER CROSSES INTO A CHILD.** A naive boolean therefore extinguishes
+ *     the highlight the moment the cursor passes over any text or chip inside the zone it is over —
+ *     the target flickers off exactly while the reviewer is aiming at it. A DEPTH COUNTER survives that,
+ *     because the child's `dragenter` and the parent's `dragleave` are one balanced pair.
+ *  3. **A DRAG CAN END WITHOUT A DROP** — released over nothing, or cancelled. No `dragleave` is
+ *     guaranteed then, so a counter alone can strand a zone lit for the rest of the session, pointing at
+ *     a destination nobody is aiming at. `end` is the reset that closes it.
+ */
+test.describe("gate1 drop highlighting", () => {
+  const OVER = "[data-drop-over='true']";
+
+  /** The centre of an element, for a mouse-driven drag that has to be observed mid-flight. */
+  async function centre(l: Locator): Promise<{ x: number; y: number }> {
+    const box = await l.boundingBox();
+    if (!box) throw new Error("no bounding box — the element is not laid out");
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  }
+
+  /** Press on `from` and hold the pointer over `to`, WITHOUT releasing — the state item D is about. */
+  async function dragOver(page: Page, from: Locator, to: Locator): Promise<void> {
+    const a = await centre(from);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    const b = await centre(to);
+    await page.mouse.move(b.x, b.y, { steps: 12 });
+    await page.mouse.move(b.x, b.y);
+  }
+
+  test("@gate1 crossing a child does not extinguish the highlight — enter and leave are a balanced pair", () => {
+    // The defect a boolean has: `dragleave` fires on the parent as the pointer moves onto a child, so a
+    // zone containing so much as a label would flicker off under the cursor aiming at it.
+    let d = 0;
+    d = nextDepth(d, "enter"); // onto the zone
+    expect(isOver(d)).toBe(true);
+    d = nextDepth(d, "enter"); // onto a child of it
+    d = nextDepth(d, "leave"); // ...and the parent's matching leave
+    expect(isOver(d)).toBe(true);
+    d = nextDepth(d, "leave"); // off the zone for real
+    expect(isOver(d)).toBe(false);
+  });
+
+  test("@gate1 the depth never goes negative, so a stray leave cannot bank a debt", () => {
+    // A `dragleave` with no matching `dragenter` is ordinary (the drag began inside the zone). If it
+    // banked -1, the NEXT genuine enter would land on 0 and the zone would refuse to light at all.
+    let d = nextDepth(0, "leave");
+    expect(d).toBe(0);
+    d = nextDepth(d, "enter");
+    expect(isOver(d)).toBe(true);
+  });
+
+  test("@gate1 a drop clears the highlight outright, however deep the pointer was", () => {
+    const deep = ["enter", "enter", "enter"].reduce<number>((d, c) => nextDepth(d, c as "enter"), 0);
+    expect(isOver(deep)).toBe(true);
+    expect(isOver(nextDepth(deep, "drop"))).toBe(false);
+  });
+
+  test("@gate1 a drag that ends WITHOUT a drop clears it too — the stuck-highlight guard", () => {
+    // Released over nothing, or cancelled: no `dragleave` is guaranteed, so without this reset a zone
+    // stays lit for the rest of the session, pointing at a destination nobody is aiming at.
+    const deep = nextDepth(nextDepth(0, "enter"), "enter");
+    expect(isOver(nextDepth(deep, "end"))).toBe(false);
+  });
+
+  test("@gate1 the no-group area lights up while a variable is held over it", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const door = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
+    await dragOver(page, row.locator("[data-testid='member-row']").first(), door);
+    // Bhargav named this one explicitly: "including no group area".
+    await expect(door).toHaveAttribute("data-drop-over", "true");
+    await page.mouse.up();
+  });
+
+  test("@gate1 exactly ONE target is lit, and it is the innermost one under the cursor", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const door = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
+    await dragOver(page, row.locator("[data-testid='member-row']").first(), door);
+
+    await expect(door).toHaveAttribute("data-drop-over", "true");
+    // The ROW encloses the door. Two lit targets is the ambiguity this feature exists to remove, so the
+    // enclosing row must go dark while the thing inside it is the destination.
+    await expect(row).not.toHaveAttribute("data-drop-over", "true");
+    await expect(page.locator(OVER)).toHaveCount(1);
+    await page.mouse.up();
+  });
+
+  test("@gate1 a tray destination lights up while a variable is over it", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const entry = row
+      .locator("[data-testid='destination-tray'] [data-testid='member-drop-zone']")
+      .first();
+    await dragOver(page, row.locator("[data-testid='member-row']").first(), entry);
+    await expect(entry).toHaveAttribute("data-drop-over", "true");
+    await page.mouse.up();
+  });
+
+  test("@gate1 the highlight does not interfere with the drop — the move still lands", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const member = row.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    const door = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
+    await dragOver(page, member, door);
+    await page.mouse.up();
+
+    // The cue is decoration; the verb is not. A highlight that swallowed the drop would be a regression
+    // dressed as an affordance.
+    await expect(
+      page.locator(`[data-testid='unassigned-pool'] [data-member-id='${memberId}']`).first(),
+    ).toBeVisible();
+    // …and nothing is left lit once the pointer has gone.
+    await expect(page.locator(OVER)).toHaveCount(0);
+  });
+
+  test("@gate1 a drag abandoned over a target leaves no stuck highlight", async ({ page }) => {
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const door = row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']");
+
+    /**
+     * DISPATCHED, NOT MOUSE-DRIVEN, and that is the point of this one. The state under test is a drag
+     * that ends with NO `dragleave` and NO `drop` — released over nothing, or cancelled — which a mouse
+     * script cannot reliably produce. Dispatching the two events directly reproduces it exactly.
+     *
+     * It also asserts the constraint the browser imposes: these events carry NO `dataTransfer` here, so a
+     * target that lit up by INSPECTING the payload would never light at all. Geometry only.
+     */
+    await door.evaluate((el) => el.dispatchEvent(new DragEvent("dragenter", { bubbles: true })));
+    await expect(door).toHaveAttribute("data-drop-over", "true");
+    await door.evaluate(() => window.dispatchEvent(new DragEvent("dragend", { bubbles: true })));
+    await expect(page.locator(OVER)).toHaveCount(0);
   });
 });

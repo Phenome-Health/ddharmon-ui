@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { formatUsd } from "@/lib/estimate";
 import { MEMBER_DRAG_TYPE } from "@/components/gate/MemberChip";
+import { useDropHighlight } from "@/hooks/use-drop-highlight";
 
 /**
  * One ledger row — an expandable ruled grid row, NOT a table row.
@@ -92,7 +93,19 @@ export function LedgerRow({
   className,
 }: LedgerRowProps) {
   const [open, setOpen] = useState(false);
-  const [over, setOver] = useState(false);
+  /**
+   * THE ROW'S OWN "you are over me" CUE, now the shared one (08-16c review, item D).
+   *
+   * It was a plain boolean set true on `dragover` and false on `dragleave`, which had two defects the
+   * counter fixes. It went DARK whenever the pointer crossed onto anything inside the row — a chip, a
+   * cell, the expanded body — because `dragleave` fires on that transition; and a drag ABANDONED over the
+   * row (released on nothing, or cancelled) left it lit permanently, since no `dragleave` ever arrived.
+   *
+   * It is the OUTERMOST zone, so unlike `MemberDropZone` it does not stop the pair propagating: there is
+   * nothing above it to shield. The zones INSIDE it do, which is what makes this row go dark while the
+   * tray or the no-group door inside it is the destination.
+   */
+  const { over, cue } = useDropHighlight();
   // Amber outranks the accent. Both, and amber wins — see the docstring.
   const spine = unresolved ? "border-l-status-warn" : changed ? "border-l-accent-action" : "border-l-transparent";
   return (
@@ -107,15 +120,18 @@ export function LedgerRow({
         data-spine={unresolved ? "unresolved" : changed ? "changed" : "none"}
         data-drop-over={over ? "true" : undefined}
         {...(onDropMember && {
+          onDragEnter: (e: React.DragEvent) => {
+            e.preventDefault();
+            cue("enter");
+          },
+          onDragLeave: () => cue("leave"),
           onDragOver: (e: React.DragEvent) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
-            setOver(true);
           },
-          onDragLeave: () => setOver(false),
           onDrop: (e: React.DragEvent) => {
             e.preventDefault();
-            setOver(false);
+            cue("drop");
             const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
             if (memberId) onDropMember(memberId);
           },
