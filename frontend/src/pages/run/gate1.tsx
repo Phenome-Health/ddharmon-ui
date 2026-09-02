@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { ChevronDown, Grid3x3, Pencil, Quote, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
@@ -646,8 +647,18 @@ function DestinationTray({
   sampleOnly,
   fieldIndex,
   onMove,
+  heading = "Move to another group",
+  label = "Other groups — drop a variable to move it there",
 }: {
   groups: ConceptGroup[];
+  /**
+   * The tray's own eyebrow, and its accessible name. NAMEABLE SINCE 08-16c's ITEM A, because the pool
+   * renders the same tray and "another group" would be false there: a variable in the pool is in NO
+   * group, so there is no other one for it to move to. The component is shared and the WORD is not —
+   * copying the component to change three words is how two drag paths start to drift.
+   */
+  heading?: string;
+  label?: string;
   /** A destination's membership after the reviewer's moves — read, never recomputed here. */
   membersOf: (groupId: string) => string[];
   /** Whether that membership is only the capped sample this run recorded. */
@@ -665,14 +676,8 @@ function DestinationTray({
   // working. `groupLabel` is the same function the entry renders with, so the two cannot disagree.
   const shown = needle ? groups.filter((g) => groupLabel(g).text.toLowerCase().includes(needle)) : groups;
   return (
-    <aside
-      data-testid="destination-tray"
-      aria-label="Other groups — drop a variable to move it there"
-      className="flex min-w-0 flex-col gap-2"
-    >
-      <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-        Move to another group
-      </span>
+    <aside data-testid="destination-tray" aria-label={label} className="flex min-w-0 flex-col gap-2">
+      <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">{heading}</span>
       <input
         type="search"
         data-testid="tray-search"
@@ -709,7 +714,7 @@ function DestinationTray({
 }
 
 /**
- * THE ONE POOL OF UNPLACED VARIABLES (08-16c review, option b).
+ * THE ONE POOL OF UNPLACED VARIABLES — and, since 08-16c's item A, A GROUP LIKE ANY OTHER.
  *
  * Bhargav asked for the "IN NO GROUP" idea to be centralised, and the state it replaces is worth naming
  * because it was two half-answers rather than one:
@@ -724,12 +729,31 @@ function DestinationTray({
  * into any group, so nothing here is a one-way exclusion. The copy says that instead of the old flat
  * "it will not be matched against a common data element", which described a finality the screen never had.
  *
+ * IT OPENS LIKE A LEDGER ROW, AND THAT IS A FIX RATHER THAN A PREFERENCE (item A). Bhargav: *"this should
+ * operate the same way as any other group - dropdown with full rows and sidebar with groups to be dragged
+ * to."* The flat chip list it replaces had a MEASURED defect: a native HTML5 drag CANNOT BEGIN FROM AN
+ * OFF-VIEWPORT SOURCE, and with a group expanded the pool sat below the whole ledger — zero drag events
+ * fired and `elementFromPoint` at a chip's centre returned `null`. The only destinations were the ledger
+ * rows, a scroll-length away. Giving the pool a group's own shape — a disclosure onto the evidence grid,
+ * and its own `DestinationTray` beside it — makes dragging out an ORDINARY between-groups drag over a few
+ * hundred pixels, so the limitation dissolves rather than being worked around.
+ *
+ * THE KEYBOARD PATH STAYS REGARDLESS. This screen holds that a drag with no keyboard equivalent is a
+ * regression, not a simplification, and that does not stop being true because the drag got easier. It is
+ * now the grid's own row verb (`SourceRowsDrag.action`, kind `restore`) rather than a button beside a
+ * chip, which is the same place a group's row verb lives.
+ *
+ * THE COUNT DOES NOT GO BEHIND THE DISCLOSURE. What is parked outside every group is part of what the
+ * reviewer is deciding when they buy assignment for the rest, so the total and both origin counts stay on
+ * screen closed; only the LISTING is what opening reveals.
+ *
  * THE TWO ORIGINS ARE LABELLED AND NEVER MERGED. This is the load-bearing constraint, not presentation:
  * "you took this out" is the reviewer's own decision, "the clustering never placed this" is a property of
  * the run. One undifferentiated list would report the pipeline's leftovers as the reviewer's doing — and
  * on a run where the clustering dropped 300 variables it would read as 300 corrections nobody made. They
- * are two lists, each counted, each saying whose doing it is. `data-moved` on the chips carries the same
- * distinction to anything reading the DOM.
+ * are two sections, each counted, each saying whose doing it is. `data-moved` on the rows and chips
+ * carries the same distinction to anything reading the DOM. It is also why the leftovers get NO put-back:
+ * they were never in a group, so there is nowhere to put them back TO.
  *
  * IT IS ITSELF A DROP TARGET, on the same `UNASSIGNED_GROUP_ID` as the in-row door, so the two are one
  * destination reached from two places rather than two code paths that could drift.
@@ -737,23 +761,80 @@ function DestinationTray({
 function UnassignedPool({
   reviewerRemoved,
   fromPipeline,
+  destinations,
+  membersOf,
+  sampleOnly,
   fieldIndex,
   onMove,
   onRestoreMember,
   readOnly = false,
+  defaultOpen = false,
 }: {
   /** Variables the REVIEWER took out of a group — reversible by putting them back. */
   reviewerRemoved: string[];
   /** Variables the CLUSTERING never placed, minus any the reviewer has since placed. */
   fromPipeline: UnassignedField[];
+  /** The groups a variable here can be dragged into — the same visible, ordered set a group's tray gets. */
+  destinations: ConceptGroup[];
+  /** A destination's membership after the reviewer's moves — read, never recomputed here. */
+  membersOf: (groupId: string) => string[];
+  /** Whether that membership is only the capped sample this run recorded. */
+  sampleOnly: (group: ConceptGroup) => boolean;
   fieldIndex: Record<string, FieldDetail>;
   onMove: (memberId: string, toGroupId: string) => void;
   /** Undo ONE reviewer removal, returning that variable to the group it came from. */
   onRestoreMember: (memberId: string) => void;
   /** A passed gate is a record: the pool is still readable, but nothing here can be moved. */
   readOnly?: boolean;
+  /**
+   * OPEN FROM THE START, on a run where this is the only thing on the screen.
+   *
+   * Found by a test the disclosure broke, and it is a real one rather than a fixture detail. On a run
+   * where the clustering placed NOTHING, the ledger's empty state says *"Every variable was left
+   * unassigned by the clustering — N variables, listed below"* — a promise the screen then has to keep.
+   * A collapsed pool makes that copy false, and it hides the only evidence the reviewer has for the
+   * finding it is reporting. With groups on screen the pool is one section among many, exactly like a
+   * ledger row, and closed is right; with no groups it IS the screen.
+   */
+  defaultOpen?: boolean;
 }) {
+  /**
+   * THE REVIEWER'S CHOICE, OR — UNTIL THEY MAKE ONE — THE DEFAULT, RE-READ EVERY RENDER.
+   *
+   * `useState(defaultOpen)` is what this was, and it was WRONG in a way only a test caught. The initial
+   * value of `useState` is captured at MOUNT, and this component mounts on the stream's opening frame —
+   * when the run has delivered no groups yet, so `defaultOpen` is momentarily true for every run. It
+   * latched open and stayed open once the 54 groups arrived. (The early `return null` below does not save
+   * it: a component returning null is still mounted, and its hooks have already run.)
+   *
+   * A THIRD STATE FIXES IT HONESTLY. `null` means "the reviewer has not said", and the default is then
+   * derived from the data on every render rather than remembered from the worst possible moment. The
+   * moment they open or close it, their choice outranks the default and keeps outranking it.
+   */
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const open = chosen ?? defaultOpen;
   const total = reviewerRemoved.length + fromPipeline.length;
+  /**
+   * The leftovers as the grid's own shape. `UnassignedField` carries the run's text for a variable the
+   * clustering dropped, and `SourceRows` already accepts that as `memberDetails` — so a run whose
+   * `fieldIndex` covers these rows renders them as full evidence, and one whose does not falls back to
+   * chips by the grid's OWN test rather than by a second guess here.
+   */
+  const pipelineIds = fromPipeline.map((f) => `${f.cohort}:${f.variable}`);
+  const pipelineDetails = fromPipeline.map((f) => ({
+    id: `${f.cohort}:${f.variable}`,
+    cohort: f.cohort,
+    name: f.variable,
+    text: f.text,
+  }));
+  // Every variable in the reviewer's half is there BECAUSE they moved it — the you-changed-it register is
+  // the whole half, not a subset of it.
+  const movedHere = new Set(reviewerRemoved);
+  // Asked of the same expression the grid itself uses, so the two cannot drift — the rule `ExpandedGroup`
+  // already follows. A grid that declines to render would otherwise leave a section with no members in it.
+  const reviewerGrid = hasSourceRows(reviewerRemoved, undefined, fieldIndex);
+  const pipelineGrid = hasSourceRows(pipelineIds, pipelineDetails, fieldIndex);
+  const showTray = !readOnly && destinations.length > 0;
   if (total === 0) return null;
   return (
     <MemberDropZone
@@ -762,117 +843,189 @@ function UnassignedPool({
       onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
       className="flex-col items-start gap-3 rounded-card border-none bg-surface-raised px-6 py-4 shadow-card"
     >
-      <div data-testid="unassigned-pool" className="flex w-full flex-col gap-3">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            In no group
-          </h2>
-          {/* THE COUNT, where a reviewer meets it on the way to Continue — what is parked outside every
-              group is part of what they are deciding when they buy assignment for the rest. */}
-          <span data-testid="pool-count" className="font-mono text-xs tabular-nums text-on-raised">
-            {total}
-          </span>
-          <span className="text-xs text-on-raised-muted">
-            {total === 1 ? "variable is" : "variables are"} in no group, so nothing will be matched for
-            {total === 1 ? " it" : " them"} at Gate 2. Drag any of them onto a group to put
-            {total === 1 ? " it" : " them"} back.
-          </span>
-        </div>
+      <Collapsible open={open} onOpenChange={setChosen} asChild>
+        <div data-testid="unassigned-pool" className="flex w-full flex-col gap-3">
+          <div className="flex w-full flex-wrap items-baseline gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+              In no group
+            </h2>
+            {/* THE COUNT, where a reviewer meets it on the way to Continue — what is parked outside every
+                group is part of what they are deciding when they buy assignment for the rest. It stays
+                OUTSIDE the disclosure for that reason: closing the pool must not close the figure. */}
+            <span data-testid="pool-count" className="font-mono text-xs tabular-nums text-on-raised">
+              {total}
+            </span>
+            <span className="text-xs text-on-raised-muted">
+              {total === 1 ? "variable is" : "variables are"} in no group, so nothing will be matched for
+              {total === 1 ? " it" : " them"} at Gate 2. Open this to read
+              {total === 1 ? " it" : " them"} and drag
+              {total === 1 ? " it" : " them"} back onto a group.
+            </span>
+            <CollapsibleTrigger
+              // An icon-only control names the ACTION AND ITS OBJECT, exactly as a ledger row's does.
+              aria-label={`${open ? "Collapse" : "Expand"} the variables in no group`}
+              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-on-raised-muted"
+            >
+              <ChevronDown aria-hidden="true" className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+            </CollapsibleTrigger>
+          </div>
 
-        {reviewerRemoved.length > 0 && (
-          <section data-testid="pool-reviewer" className="flex flex-col gap-1">
-            <h3 className="text-xs font-semibold text-on-raised">
-              You took these out{" "}
-              <span className="font-mono font-normal tabular-nums text-on-raised-muted">
-                {reviewerRemoved.length}
-              </span>
-            </h3>
-            <div className="flex flex-wrap gap-1">
-              {reviewerRemoved.map((memberId) => {
-                const { cohort, variable } = memberParts(memberId, fieldIndex);
-                return (
-                  <span key={memberId} className="inline-flex max-w-full items-center gap-1">
-                    <MemberChip
-                      memberId={memberId}
-                      cohort={cohort}
-                      variable={variable}
-                      draggable={!readOnly}
-                      moved
-                    />
-                    {/*
-                      THE KEYBOARD PATH, and it is required rather than a courtesy. This screen already
-                      holds that "a drag with no keyboard equivalent is a regression, not a
-                      simplification" — the × beside each row exists for exactly that reason. Putting a
-                      variable BACK is a new drag, so it needs the same.
-
-                      It is also the answer to a real ergonomic problem, measured rather than assumed: the
-                      pool sits below the ledger, and with a group expanded the chip is outside a 1440x900
-                      viewport while the rows are above it. A native HTML5 drag cannot even START from an
-                      off-screen source, so the long drag is not merely awkward — the browser will not
-                      begin it. The drag remains for a nearby row; this is how the common case is done.
-
-                      IT UNDOES, rather than choosing a destination: `clear` removes the regroup decision,
-                      so the variable returns to the group it came from. No picker, and nothing invented —
-                      the origin is the one destination that needs no decision from the reviewer.
-                    */}
-                    {!readOnly && (
-                      <button
-                        type="button"
-                        data-testid="pool-put-back"
-                        data-member-id={memberId}
-                        aria-label={`Put ${variable} back in the group it came from`}
-                        title="Put this back in the group it came from"
-                        onClick={() => onRestoreMember(memberId)}
-                        className="shrink-0 rounded p-1 text-on-raised-muted hover:text-accent-on-raised"
-                      >
-                        <Undo2 aria-hidden="true" className="h-3 w-3" />
-                      </button>
+          <CollapsibleContent>
+            {/*
+              TWO COLUMNS ONLY WHEN THERE IS A TRAY, and only above `lg` — the same rule, and the same
+              tracks, as an expanded group's body. `minmax(0,…)` on BOTH is what stops the evidence grid
+              forcing the page into horizontal overflow.
+            */}
+            <div
+              data-testid="pool-body"
+              className={cn(
+                "flex w-full flex-col gap-3",
+                showTray && "lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-4",
+              )}
+            >
+              <div className="flex min-w-0 flex-col gap-3">
+                {reviewerRemoved.length > 0 && (
+                  <section data-testid="pool-reviewer" className="flex min-w-0 flex-col gap-1">
+                    <h3 className="text-xs font-semibold text-on-raised">
+                      You took these out{" "}
+                      <span className="font-mono font-normal tabular-nums text-on-raised-muted">
+                        {reviewerRemoved.length}
+                      </span>
+                    </h3>
+                    {reviewerGrid ? (
+                      <SourceRows
+                        memberIds={reviewerRemoved}
+                        fieldIndex={fieldIndex}
+                        drag={
+                          readOnly
+                            ? undefined
+                            : {
+                                groupId: UNASSIGNED_GROUP_ID,
+                                label: "Variables you took out of a group",
+                                onDropMember: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID),
+                                // THE ROW VERB HERE IS THE OPPOSITE ONE. It UNDOES rather than choosing a
+                                // destination: the regroup decision is cleared, so the variable returns to
+                                // the group it came from. No picker, and nothing invented — the origin is
+                                // the one destination that needs no decision from the reviewer.
+                                action: { kind: "restore", onAct: onRestoreMember },
+                                movedMembers: movedHere,
+                              }
+                        }
+                      />
+                    ) : (
+                      /* The grid declined — this run carries no descriptive field for these variables — so
+                         the chips are the whole membership view, and the put-back comes back with them. */
+                      <div className="flex flex-wrap gap-1">
+                        {reviewerRemoved.map((memberId) => {
+                          const { cohort, variable } = memberParts(memberId, fieldIndex);
+                          return (
+                            <span key={memberId} className="inline-flex max-w-full items-center gap-1">
+                              <MemberChip
+                                memberId={memberId}
+                                cohort={cohort}
+                                variable={variable}
+                                draggable={!readOnly}
+                                moved
+                              />
+                              {!readOnly && (
+                                <button
+                                  type="button"
+                                  data-testid="pool-put-back"
+                                  data-member-id={memberId}
+                                  aria-label={`Put ${variable} back in the group it came from`}
+                                  title="Put this back in the group it came from"
+                                  onClick={() => onRestoreMember(memberId)}
+                                  className="shrink-0 rounded p-1 text-on-raised-muted hover:text-accent-on-raised"
+                                >
+                                  <Undo2 aria-hidden="true" className="h-3 w-3" />
+                                </button>
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
                     )}
-                  </span>
-                );
-              })}
+                  </section>
+                )}
+
+                {fromPipeline.length > 0 && (
+                  <section data-testid="pool-pipeline" className="flex min-w-0 flex-col gap-1">
+                    <h3 className="text-xs font-semibold text-on-raised">
+                      The clustering never placed these{" "}
+                      <span className="font-mono font-normal tabular-nums text-on-raised-muted">
+                        {fromPipeline.length}
+                      </span>
+                    </h3>
+                    {/* NOT the reviewer's doing, and said so: these fell out of the clustering, which is a
+                        fact about the run. `data-moved="false"` on each row carries the same distinction
+                        in the DOM.
+
+                        NO ROW VERB HERE, and the asymmetry is the honest one: these were never in a group,
+                        so there is nowhere to put them back TO. They are placed by dragging them onto a
+                        group, which is a choice only the reviewer can make. */}
+                    {pipelineGrid ? (
+                      <SourceRows
+                        memberIds={pipelineIds}
+                        memberDetails={pipelineDetails}
+                        fieldIndex={fieldIndex}
+                        drag={
+                          readOnly
+                            ? undefined
+                            : {
+                                groupId: UNASSIGNED_GROUP_ID,
+                                label: "Variables the clustering never placed",
+                                onDropMember: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID),
+                                movedMembers: EMPTY_MEMBERS,
+                              }
+                        }
+                      />
+                    ) : (
+                      <ul className="flex flex-col gap-1">
+                        {fromPipeline.map((f) => {
+                          const memberId = `${f.cohort}:${f.variable}`;
+                          return (
+                            <li key={memberId} className="flex min-w-0 flex-wrap items-baseline gap-2">
+                              <MemberChip
+                                memberId={memberId}
+                                cohort={f.cohort}
+                                variable={f.variable}
+                                draggable={!readOnly}
+                              />
+                              {/* The run's own text for the variable — what makes "should this have been
+                                  grouped?" answerable without leaving the screen. */}
+                              <span className="min-w-0 text-xs text-on-raised-muted">{f.text}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </section>
+                )}
+              </div>
+
+              {showTray && (
+                <DestinationTray
+                  groups={destinations}
+                  membersOf={membersOf}
+                  sampleOnly={sampleOnly}
+                  fieldIndex={fieldIndex}
+                  onMove={onMove}
+                  // "ANOTHER group" would be false here: a variable in the pool is in no group at all.
+                  heading="Put it in a group"
+                  label="Groups — drop a variable to put it in one"
+                />
+              )}
             </div>
-          </section>
-        )}
-
-        {fromPipeline.length > 0 && (
-          <section data-testid="pool-pipeline" className="flex flex-col gap-1">
-            <h3 className="text-xs font-semibold text-on-raised">
-              The clustering never placed these{" "}
-              <span className="font-mono font-normal tabular-nums text-on-raised-muted">
-                {fromPipeline.length}
-              </span>
-            </h3>
-            {/* NOT the reviewer's doing, and said so: these fell out of the clustering, which is a fact
-                about the run. `data-moved="false"` on each chip carries the same distinction in the DOM.
-
-                NO "put back" HERE, and the asymmetry is the honest one: these were never in a group, so
-                there is nowhere to put them back TO. They are placed by dragging them onto a group, which
-                is a choice only the reviewer can make. */}
-            <ul className="flex flex-col gap-1">
-              {fromPipeline.map((f) => {
-                const memberId = `${f.cohort}:${f.variable}`;
-                return (
-                  <li key={memberId} className="flex min-w-0 flex-wrap items-baseline gap-2">
-                    <MemberChip
-                      memberId={memberId}
-                      cohort={f.cohort}
-                      variable={f.variable}
-                      draggable={!readOnly}
-                    />
-                    {/* The run's own text for the variable — the only place it is shown, and what makes
-                        "should this have been grouped?" answerable without leaving the screen. */}
-                    <span className="min-w-0 text-xs text-on-raised-muted">{f.text}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
-      </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
     </MemberDropZone>
   );
 }
+
+/** No row in the pipeline half is the reviewer's doing, so the moved register there is empty — and one
+ *  frozen Set is allocated once rather than on every render. */
+const EMPTY_MEMBERS: ReadonlySet<string> = new Set<string>();
 
 /**
  * The expanded row — the FULL membership, the evidence behind it, and the judge's proposal.
@@ -1072,7 +1225,9 @@ function ExpandedGroup({
                 groupId: group.groupId,
                 label: `Variables in ${group.concept || group.groupId}`,
                 onDropMember: (memberId) => onMove(memberId, group.groupId),
-                onRemoveMember: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID),
+                // In a GROUP the row verb takes the variable OUT of it. The pool's own grid names the
+                // opposite verb from the same register — see `SourceRowsDrag.action`.
+                action: { kind: "remove", onAct: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID) },
                 movedMembers,
               }
             : undefined
@@ -2021,10 +2176,19 @@ export default function Gate1Page() {
       <UnassignedPool
         reviewerRemoved={membership.unassigned}
         fromPipeline={poolFromPipeline}
+        /* THE SAME DESTINATION SET AN EXPANDED GROUP GETS (item A) — the rows the reviewer's bucket,
+           search and filters have already narrowed to, ordered by what they have most recently been
+           filling. Every group is offered, because a variable in the pool is in none of them. */
+        destinations={sortDestinations(visible, lastMovedInto)}
+        membersOf={(id) => membership.byGroup[id] ?? []}
+        sampleOnly={(o) => !hasFullMembership(o)}
         fieldIndex={fieldIndex}
         onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
         onRestoreMember={(memberId) => void restoreMember(memberId)}
         readOnly={frozen}
+        // On a run that grouped NOTHING the pool is the whole screen, and the ledger's empty state has
+        // just promised the reviewer that what fell out is "listed below".
+        defaultOpen={groups.length === 0}
       />
 
       {/*

@@ -19,7 +19,7 @@
 // whose row is a `ConceptGroup`. So it now takes the two things it ever read: the member ids and the
 // optional per-member detail. Both call sites pass what they hold, and there is still ONE grid — building
 // a second for Gate 1 is the duplication the audit exists to catch.
-import { GripVertical, X } from "lucide-react";
+import { GripVertical, Undo2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { MEMBER_DRAG_TYPE } from "@/components/gate/MemberChip";
@@ -125,11 +125,47 @@ export interface SourceRowsDrag {
   /** Accessible name for the drop destination. */
   label: string;
   onDropMember: (memberId: string) => void;
-  /** Take one variable out of every group. The KEYBOARD path — see the button below. */
-  onRemoveMember: (memberId: string) => void;
+  /**
+   * The row's own verb — THE KEYBOARD PATH, and the reason it is a discriminated kind rather than one
+   * callback (08-16c review, item A).
+   *
+   * Native HTML5 drag and drop has NO keyboard equivalent, so a grid whose only verb is a drag is a
+   * regression on this screen. But the verb is not the same everywhere the grid now renders: in a GROUP it
+   * takes a variable out ("this does not belong here"), while in the reviewer's half of the pool it PUTS
+   * ONE BACK. Two different actions with two different names, so the kind is named and the copy is
+   * derived from it, rather than one `onRemoveMember` being labelled differently by each caller.
+   *
+   * OPTIONAL, because one place genuinely has no verb: the clustering's own leftovers were never in a
+   * group, so there is nowhere to put them back TO. They are still draggable — placing one is a choice
+   * only the reviewer can make — but a button offering an action that cannot be honoured is worse than
+   * none. The workbench passes no `drag` at all and is unaffected either way.
+   */
+  action?: {
+    kind: "remove" | "restore";
+    onAct: (memberId: string) => void;
+  };
   /** Member ids the reviewer has already moved, so a row can say so. */
   movedMembers: ReadonlySet<string>;
 }
+
+/** What each row verb is called and drawn as. One register, so no call site re-spells it. */
+const ROW_ACTION = {
+  remove: {
+    testId: "member-remove",
+    Icon: X,
+    /** Names the ACTION AND ITS OBJECT — "remove" alone tells a screen-reader user nothing about which row. */
+    name: (variable: string, cohort: string) => `Take ${variable} from ${cohort} out of this group`,
+    title: (variable: string) => `Take ${variable} out of this group`,
+    column: "Move or remove this variable",
+  },
+  restore: {
+    testId: "pool-put-back",
+    Icon: Undo2,
+    name: (variable: string, cohort: string) => `Put ${variable} from ${cohort} back in the group it came from`,
+    title: () => "Put this back in the group it came from",
+    column: "Move this variable, or put it back",
+  },
+} as const;
 
 function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
@@ -260,7 +296,9 @@ export function SourceRows({
                   sideways scroll. Both live at the row's start, where they are always in view. */}
               {drag && (
                 <Th className="w-14">
-                  <span className="sr-only">Move or remove this variable</span>
+                  <span className="sr-only">
+                    {drag.action ? ROW_ACTION[drag.action.kind].column : "Move this variable"}
+                  </span>
                 </Th>
               )}
               <Th className="whitespace-nowrap">Cohort</Th>
@@ -309,21 +347,28 @@ export function SourceRows({
                           keyboard equivalent, so before this the only way to correct an over-merged group
                           was with a mouse — a drag with no keyboard path is a regression, not a
                           simplification. A real button: focusable in row order, named for the variable it
-                          acts on, performing the correction this screen exists for ("this variable does
-                          not belong in this group"). Moving a variable DIRECTLY from one group into
-                          another is still drag-only, and the SUMMARY records that gap rather than
+                          acts on, performing the row's verb. WHICH verb depends on where the grid is
+                          rendered — see `SourceRowsDrag.action`. Moving a variable DIRECTLY from one group
+                          into another is still drag-only, and the SUMMARY records that gap rather than
                           implying it is covered. */}
-                      <button
-                        type="button"
-                        data-testid="member-remove"
-                        data-member-id={r.id}
-                        onClick={() => drag.onRemoveMember(r.id)}
-                        aria-label={`Take ${r.name} from ${r.cohort} out of this group`}
-                        title={`Take ${r.name} out of this group`}
-                        className="shrink-0 rounded-inner p-0.5 text-on-raised-faint hover:bg-surface-inset hover:text-on-raised"
-                      >
-                        <X aria-hidden="true" className="h-3.5 w-3.5" />
-                      </button>
+                      {drag.action &&
+                        (() => {
+                          const verb = ROW_ACTION[drag.action!.kind];
+                          const act = drag.action!.onAct;
+                          return (
+                            <button
+                              type="button"
+                              data-testid={verb.testId}
+                              data-member-id={r.id}
+                              onClick={() => act(r.id)}
+                              aria-label={verb.name(r.name, r.cohort)}
+                              title={verb.title(r.name)}
+                              className="shrink-0 rounded-inner p-0.5 text-on-raised-faint hover:bg-surface-inset hover:text-on-raised"
+                            >
+                              <verb.Icon aria-hidden="true" className="h-3.5 w-3.5" />
+                            </button>
+                          );
+                        })()}
                     </span>
                   </td>
                 )}
