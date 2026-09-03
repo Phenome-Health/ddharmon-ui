@@ -1578,7 +1578,7 @@ function GroupDetail({
               membership.
             </p>
           )}
-          <p className="px-4 py-3 text-sm leading-relaxed text-on-raised-muted">{group.idealCde}</p>
+          <p className="max-w-[90ch] px-4 py-3 text-sm leading-relaxed text-on-raised-muted">{group.idealCde}</p>
         </details>
       )}
 

@@ -145,7 +145,7 @@ export function GateShell({
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
   return (
-    <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-8">
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-8">
       {/* (1) The gate app bar: the tagline and the run chip. The lockup and wordmark come from AppShell. */}
       <div className="flex h-8 items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-2">
