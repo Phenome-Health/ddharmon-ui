@@ -327,6 +327,21 @@ export function SourceRows({
                     ? (e) => {
                         e.dataTransfer.setData(MEMBER_DRAG_TYPE, r.id);
                         e.dataTransfer.effectAllowed = "move";
+                        // COMPACT DRAG IMAGE (Bhargav, 2026-09-03). The default ghost is the whole seven-
+                        // column row, which covers the drop target the reviewer is aiming at. Replace it
+                        // with a small pill carrying just the cohort + variable name. Built off-screen,
+                        // snapshotted synchronously by setDragImage, removed on the next frame.
+                        const ghost = document.createElement("div");
+                        ghost.textContent = `${r.cohort} · ${r.name}`;
+                        ghost.setAttribute(
+                          "style",
+                          "position:fixed;top:-1000px;left:-1000px;padding:4px 10px;border-radius:8px;" +
+                            "background:var(--brand-navy-deep,#00063D);color:#fff;white-space:nowrap;" +
+                            "font:600 12px/1.2 Inter,ui-sans-serif,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);",
+                        );
+                        document.body.appendChild(ghost);
+                        e.dataTransfer.setDragImage(ghost, 12, 12);
+                        requestAnimationFrame(() => ghost.remove());
                       }
                     : undefined
                 }
