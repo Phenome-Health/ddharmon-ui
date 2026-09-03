@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { ChevronDown, Grid3x3, Pencil, Quote, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell, railFor } from "@/components/gate/GateShell";
@@ -1375,8 +1376,10 @@ function QueueRow({
     <div
       role="button"
       tabIndex={0}
-      data-testid="queue-row"
+      data-testid="ledger-row"
       data-group-id={group.groupId}
+      data-row-id={group.groupId}
+      data-spine={isFlagged(group) ? "unresolved" : changed ? "changed" : "none"}
       aria-current={selected}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -1411,33 +1414,34 @@ function QueueRow({
             }
       }
       className={cn(
-        "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 px-4 py-2.5 text-left",
+        "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 border-l-4 px-4 py-2.5 text-left",
+        isFlagged(group) ? "border-l-status-warn" : changed ? "border-l-accent-action" : "border-l-transparent",
         selected ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]" : "hover:bg-surface-inset",
         over && "ring-2 ring-inset ring-rule-info",
       )}
     >
-      <input
-        type="checkbox"
-        data-testid="queue-scope"
-        checked={inScope}
-        disabled={readOnly}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onScopeChange(e.target.checked)}
-        aria-label={`Send ${label.text} to Gate 2`}
-        className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
-      />
+      <div className="mt-0.5" onClick={(e) => e.stopPropagation()}>
+        <Checkbox
+          data-testid="queue-scope"
+          checked={inScope}
+          disabled={readOnly}
+          onCheckedChange={(v) => onScopeChange(v === true)}
+          aria-label={`Send ${label.text} to Gate 2`}
+        />
+      </div>
       <div className="min-w-0">
         <div
           className={cn("line-clamp-2 text-[13px] font-medium leading-snug", selected ? "text-accent-on-raised" : "text-on-raised")}
           title={label.text}
         >
-          {label.text}
+          <span data-label-source={label.source}>{label.text}</span>
           {label.source === "reviewer" && <RenamedMark />}
           {label.source === "judge" && <BorrowedMark />}
           {changed && <span className="ml-1 text-xs font-normal text-status-warn">· edited</span>}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <CoherenceMark state={group.coherence} />
+          {group.coherence === "not_judged" && group.matrixSuspect && <TemplateSuspicion />}
           <span className="flex flex-wrap gap-1">
             {group.cohorts.map((c) => (
               <span key={c} className="rounded bg-surface-inset px-1 text-[9px] font-semibold uppercase tracking-wide text-on-inset-muted">
@@ -1577,8 +1581,7 @@ function GroupDetail({
           </div>
           <p className="mt-1.5 text-xs text-on-raised-muted">
             <span className="font-semibold text-on-raised">{count}</span>{" "}
-            {count === 1 ? "variable" : "variables"} · {group.cohorts.join(", ")} · cluster{" "}
-            <span className="font-mono">{group.clusterId || "—"}</span>
+            {count === 1 ? "variable" : "variables"} · {group.cohorts.join(", ")} · <span data-testid="row-provenance">from cluster <span className="font-mono">{group.clusterId || "—"}</span></span>
           </p>
         </div>
         <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-raised-muted">
@@ -2265,7 +2268,7 @@ export default function Gate1Page() {
           own columns and controls into this same frame — Gate 2 the CDE candidates, Gate 3 the specs.
         */
         <div
-          data-testid="gate1-workbench"
+          data-testid="ledger"
           className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(340px,384px)_minmax(0,1fr)] lg:items-start"
         >
           <aside
