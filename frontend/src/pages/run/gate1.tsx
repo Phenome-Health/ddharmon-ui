@@ -52,7 +52,7 @@ import {
 import { isInFlight, isParked, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { cn } from "@/lib/utils";
-import type { ConceptGroup, FieldDetail, GatePosition, RunMode, UnassignedField } from "@/types";
+import type { CoherenceState, ConceptGroup, FieldDetail, GatePosition, RunMode, UnassignedField } from "@/types";
 
 /**
  * Gate 1 — the ledger. The load-bearing screen: where the reviewer scopes and reshapes before the BULK of
@@ -1335,13 +1335,271 @@ function SumBlock({
   );
 }
 
+/**
+ * ONE ROW IN THE QUEUE (the left sidebar of the unified Gate 1 layout).
+ *
+ * The scannable half of the workbench+queue synthesis: name, coherence state, cohorts, size and price on
+ * one compact two-line row, selectable to open its depth on the right. It is NOT a `LedgerRow` — that was
+ * the table cell of the old single-column ledger; this is the master list of a master-detail.
+ */
+function QueueRow({
+  group,
+  price,
+  count,
+  inScope,
+  changed,
+  selected,
+  readOnly,
+  renamedTo,
+  onSelect,
+  onScopeChange,
+}: {
+  group: ConceptGroup;
+  price: number;
+  count: number;
+  inScope: boolean;
+  changed: boolean;
+  selected: boolean;
+  readOnly: boolean;
+  renamedTo?: string;
+  onSelect: () => void;
+  onScopeChange: (inScope: boolean) => void;
+}) {
+  const label = groupLabel(group, renamedTo);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-testid="queue-row"
+      data-group-id={group.groupId}
+      aria-current={selected}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      className={cn(
+        "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 px-4 py-2.5 text-left",
+        selected ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]" : "hover:bg-surface-inset",
+      )}
+    >
+      <input
+        type="checkbox"
+        data-testid="queue-scope"
+        checked={inScope}
+        disabled={readOnly}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => onScopeChange(e.target.checked)}
+        aria-label={`Send ${label.text} to Gate 2`}
+        className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+      />
+      <div className="min-w-0">
+        <div
+          className={cn("line-clamp-2 text-[13px] font-medium leading-snug", selected ? "text-accent-on-raised" : "text-on-raised")}
+          title={label.text}
+        >
+          {label.text}
+          {label.source === "reviewer" && <RenamedMark />}
+          {label.source === "judge" && <BorrowedMark />}
+          {changed && <span className="ml-1 text-xs font-normal text-status-warn">· edited</span>}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <CoherenceMark state={group.coherence} />
+          <span className="flex flex-wrap gap-1">
+            {group.cohorts.map((c) => (
+              <span key={c} className="rounded bg-surface-inset px-1 text-[9px] font-semibold uppercase tracking-wide text-on-inset-muted">
+                {c}
+              </span>
+            ))}
+          </span>
+          <span className="text-xs text-on-raised-faint">
+            {count} {count === 1 ? "var" : "vars"}
+          </span>
+        </div>
+      </div>
+      <span className="whitespace-nowrap pt-0.5 font-mono text-xs tabular-nums text-on-raised-muted">{formatUsd(price)}</span>
+    </div>
+  );
+}
+
+/**
+ * The queue's sort control — the review-queue's sortable columns, condensed to a header strip above a card
+ * list. Same shared `ColumnSort`/`toggleSort` the old ledger headers used, so the two surfaces order a
+ * group the same way.
+ */
+function QueueSortHeader({
+  sort,
+  onSort,
+}: {
+  sort: ColumnSort<LedgerSortKey> | null;
+  onSort: (key: LedgerSortKey) => void;
+}) {
+  const cols: { k: LedgerSortKey; label: string }[] = [
+    { k: "concept", label: "Concept" },
+    { k: "verdict", label: "State" },
+    { k: "cohorts", label: "# cohorts" },
+    { k: "vars", label: "Vars" },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-faint">
+      <span className="mr-auto">Sort</span>
+      {cols.map((c) => (
+        <button
+          key={c.k}
+          type="button"
+          data-testid={`sort-${c.k}`}
+          onClick={() => onSort(c.k)}
+          className={cn("hover:text-accent-on-raised", sort?.key === c.k && "text-accent-on-raised")}
+        >
+          {c.label}
+          {sort?.key === c.k ? (sort.dir === "asc" ? " ↑" : " ↓") : " ⇅"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The detail-pane WRAPPER around a selected group: its header (name, rename pencil, coherence, scope) and
+ * the demoted generated ideal, above the reused `ExpandedGroup` (members, source rows, carve, drag).
+ *
+ * THE IDEAL IS DEMOTED AND STALE-AWARE. `generate(ideal)` runs once, before the split, and is never
+ * regenerated on a membership move — so a description presented as the group's live definition would lie
+ * the moment a variable is dragged out. It sits collapsed, labelled "from the original grouping", and
+ * opens with a stale warning once the reviewer has edited this group.
+ */
+function GroupDetail({
+  group,
+  readOnly,
+  renamedTo,
+  onRename,
+  inScope,
+  onScopeChange,
+  stale,
+  children,
+}: {
+  group: ConceptGroup;
+  readOnly: boolean;
+  renamedTo?: string;
+  onRename: (next: string) => void;
+  inScope: boolean;
+  onScopeChange: (inScope: boolean) => void;
+  /** True when the reviewer has changed this group's membership, so the generated ideal is out of date. */
+  stale: boolean;
+  children: React.ReactNode;
+}) {
+  const label = groupLabel(group, renamedTo);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-rule-on-raised pb-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            {editing ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onRename(draft);
+                    setEditing(false);
+                  }
+                  if (e.key === "Escape") setEditing(false);
+                }}
+                onBlur={() => {
+                  onRename(draft);
+                  setEditing(false);
+                }}
+                aria-label="Rename group"
+                className="min-w-[18rem] rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-lg font-semibold text-on-raised"
+              />
+            ) : (
+              <h2 className="text-lg font-semibold leading-tight text-on-raised" title={label.text}>
+                {label.text}
+              </h2>
+            )}
+            {label.source === "reviewer" && !editing && <RenamedMark />}
+            {label.source === "judge" && !editing && <BorrowedMark />}
+            {!readOnly && !editing && (
+              <button
+                type="button"
+                data-testid="rename-group"
+                aria-label={`Rename ${label.text}`}
+                title="Rename this group"
+                onClick={() => {
+                  setDraft(label.source === "reviewer" ? label.text : "");
+                  setEditing(true);
+                }}
+                className="shrink-0 rounded p-1 text-on-raised-muted hover:text-accent-on-raised"
+              >
+                <Pencil aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+            <CoherenceMark state={group.coherence} />
+          </div>
+          <p className="mt-1.5 text-xs text-on-raised-muted">
+            <span className="font-semibold text-on-raised">{group.nMembers}</span>{" "}
+            {group.nMembers === 1 ? "variable" : "variables"} · {group.cohorts.join(", ")} · cluster{" "}
+            <span className="font-mono">{group.clusterId || "—"}</span>
+          </p>
+        </div>
+        <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-raised-muted">
+          <input
+            type="checkbox"
+            checked={inScope}
+            disabled={readOnly}
+            onChange={(e) => onScopeChange(e.target.checked)}
+            className="h-4 w-4 accent-[var(--accent)]"
+          />
+          Send to Gate 2
+        </label>
+      </div>
+
+      {group.idealCde && (
+        <details className="rounded-inner border border-rule-on-raised" open={stale}>
+          <summary className="cursor-pointer px-4 py-2.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            Generated ideal CDE{" "}
+            <span className="font-normal normal-case tracking-normal text-on-raised-faint">— from the original grouping</span>
+            {stale && (
+              <span className="ml-2 rounded-pill border border-status-warn px-2 py-0.5 text-[10px] normal-case tracking-normal text-status-warn">
+                stale — membership changed
+              </span>
+            )}
+          </summary>
+          {stale && (
+            <p className="px-4 pt-2 text-xs leading-relaxed text-status-warn">
+              You changed this group&rsquo;s membership. The description below was generated once, before the
+              split, and is not updated by reassignment — it now describes a grouping that no longer exists.
+              It is regenerated only when the group is re-adjudicated (paid) or at Gate 2 on the finalized
+              membership.
+            </p>
+          )}
+          <p className="px-4 py-3 text-sm leading-relaxed text-on-raised-muted">{group.idealCde}</p>
+        </details>
+      )}
+
+      {children}
+    </div>
+  );
+}
+
+
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
   const [, navigate] = useLocation();
   const [resuming, setResuming] = useState(false);
 
-  const [bucket, setBucket] = useState<Bucket>(DEFAULT_BUCKET);
+  // Cross-cohort-only replaces the bucket partition: on = the harmonization subset, off = every group.
+  const [xcOnly, setXcOnly] = useState(false);
+  // Master-detail selection. `selectedId` names the group in the detail pane; `poolSelected` swaps the
+  // pane to the "In no group" holding area instead.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [poolSelected, setPoolSelected] = useState(false);
   /**
    * ONE sort state for both controls (08-16c Task 10). `null` = the ledger's own documented order
    * (verdict, breadth, size, id) — click-to-sort is opted into on top of the default, never instead of it.
@@ -1670,13 +1928,13 @@ export default function Gate1Page() {
   );
 
   const visible = useMemo(() => {
-    let rows = buckets[bucket];
+    let rows = xcOnly ? buckets["cross-cohort"] : groups;
     if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
     rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
     return sortGroupsByColumn(rows, colSort, renamedOf);
     // `isChanged`/`isInScope` close over the decision maps, which is what the two entries below track.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buckets, bucket, search, filters, colSort, scope.decisions, touchedByRegroup, renames.decisions]);
+  }, [buckets, xcOnly, groups, search, filters, colSort, scope.decisions, touchedByRegroup, renames.decisions]);
 
   /**
    * Apply a bulk scope change to the VISIBLE rows, one request at a time.
@@ -1737,9 +1995,8 @@ export default function Gate1Page() {
    * NOT changed (the cross-cohort bucket leads on purpose); the empty view names the other bucket, says
    * what it holds, and goes there in one click.
    */
-  const otherBucket: Bucket = bucket === "cross-cohort" ? "single-cohort" : "cross-cohort";
-  const emptyBucket =
-    visible.length === 0 && groups.length > 0 && activeFilterCount(filters) === 0 && !search;
+  // The group whose depth is in the detail pane — the selected one, or the first visible as default.
+  const detailGroup = visible.find((g) => g.groupId === selectedId) ?? visible[0] ?? null;
 
   /**
    * HAS THIS RUN EVEN REACHED GATE 1 YET? (08-14h Task 3)
@@ -1883,352 +2140,306 @@ export default function Gate1Page() {
         />
       )}
 
-      {groups.length > 0 && (
-        <>
-          <LedgerToolbar
-            /* IN THE TOOLBAR, prod-style (08-16c review, item C). Bhargav: *"build this into the tray
-               area like current prod UI."* It keeps the two things that make it not merely prod's box —
-               it takes a LIST of terms, and a term matching nothing is a COVERAGE FINDING about the run
-               rather than an empty state. */
-            search={
-              <TermSearch
-                onSearch={(next) => setTerms(next.length > 0 ? next : null)}
-                noMatches={search?.noMatches ?? []}
-                missingTokens={search?.missingTokens ?? {}}
-              />
-            }
-            counts={bucketCounts}
-            bucket={bucket}
-            onBucketChange={setBucket}
-            filters={filters}
-            onFiltersChange={setFilters}
-            allCohorts={allCohorts}
-            // Across BOTH buckets: a reviewer who has worked the single-cohort tab has reviewed those
-            // groups, and a readout that reset when they switched tabs would report the wrong thing.
-            reviewed={reviewedCount}
-            inScope={inScopeGroups.length}
-          />
-          {/* Under the toolbar, which now holds the search too — "all" means the rows the bucket, the
-              filters and the search have left on screen, so the control has to sit downstream of every
-              one of them. */}
-          <BulkScopeControl
-            frozen={frozen}
-            count={visible.length}
-            state={bulkScopeState(visible.map((g) => g.groupId), isInScope)}
-            busy={bulkBusy}
-            onBulk={(t) => void onBulkScope(t)}
-          />
-        </>
-      )}
-
-      <Ledger
-        /*
-          THE PARTITION'S CONTROL RIDES ON THE COHORTS HEADER (08-16c review, item B). Bhargav: *"all this
-          should be part of the column header sort/filter functionality."* Injected here rather than baked
-          into `GATE1_LEDGER_COLUMNS`, because the control needs this page's live bucket and counts — and
-          because `Ledger` has no business knowing what cohort breadth is.
-        */
-        columns={GATE1_LEDGER_COLUMNS.map((c) =>
-          c.sortKey === "cohorts"
-            ? { ...c, filter: <BreadthFilter bucket={bucket} counts={bucketCounts} onChange={setBucket} /> }
-            : c,
-        )}
-        caption="Concept groups"
-        sort={colSort}
-        onSort={(key) => setColSort((cur) => toggleSort(cur, key as LedgerSortKey))}
-        sum={
-          groups.length > 0 ? (
-            <SumBlock
-              realized={costSoFar}
-              inScopeTotal={price * inScopeGroups.length}
-              wholeCorpus={price * groups.length}
-              nInScope={inScopeGroups.length}
-              nGroups={groups.length}
-            />
-          ) : undefined
-        }
-      >
-        {awaitingRun ? (
-          /* WAITING — the run has not got here yet, so the screen says so and names what it is waiting
-             for. The stage comes verbatim from the stream, and the list below it is what has to finish
-             before a single row can exist: it is exactly what reaching Gate 1 pays for (`lib/estimate.ts`
-             — generate-ideal, split, and the coherence judge). */
-          <GateEmptyState
-            heading="Waiting for this run to reach Gate 1"
-            nextStep={
-              <span data-testid="gate1-waiting-next">
-                Nothing to do yet — the groups appear here on their own as soon as the run gets to them,
-                with no need to reload. You can close this tab; the run keeps going and will be waiting
-                at this gate when you come back.
-              </span>
-            }
-            className="[&]:block"
-          >
-            <span data-testid="gate1-waiting">
-              This run is {jobState?.phase ? <span className="font-semibold">{jobState.phase}</span> : "still working"}.
-              Concept groups are formed after three stages finish: ddharmon describes the ideal element
-              for each cluster, splits clusters that hold more than one concept, and runs the coherence
-              judge over the result. The first rows land here when the third one does.
+      {/* No groups to lay out — waiting, stopped, or an all-outliers run. Full width, not a pane. */}
+      {awaitingRun ? (
+        <GateEmptyState
+          heading="Waiting for this run to reach Gate 1"
+          nextStep={
+            <span data-testid="gate1-waiting-next">
+              Nothing to do yet — the groups appear here on their own as soon as the run gets to them, with
+              no need to reload. You can close this tab; the run keeps going and will be waiting at this gate
+              when you come back.
             </span>
-          </GateEmptyState>
-        ) : stoppedBeforeGate ? (
-          /* THE RUN DIED. Without this, a failed run leaves the gate waiting for groups that are never
-             coming — the failure mode that makes a waiting state worse than an empty one. */
+          }
+          className="[&]:block"
+        >
+          <span data-testid="gate1-waiting">
+            This run is {jobState?.phase ? <span className="font-semibold">{jobState.phase}</span> : "still working"}.
+            Concept groups are formed after three stages finish: ddharmon describes the ideal element for each
+            cluster, splits clusters that hold more than one concept, and runs the coherence judge over the
+            result. The first rows land here when the third one does.
+          </span>
+        </GateEmptyState>
+      ) : stoppedBeforeGate ? (
+        <GateEmptyState
+          heading={
+            jobState?.status === "cancelled"
+              ? "This run was stopped before it reached Gate 1"
+              : "This run failed before it reached Gate 1"
+          }
+          nextStep={
+            <>
+              Start again from{" "}
+              <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">
+                Set up
+              </Link>
+              , or open{" "}
+              <Link href="/jobs" className="font-semibold text-link-on-raised underline underline-offset-2">
+                Runs
+              </Link>{" "}
+              to pick up a different one.
+            </>
+          }
+          className="[&]:block"
+        >
+          <span data-testid="gate1-run-stopped">
+            No concept groups were produced, so there is nothing to review here. This is not a finding about
+            your dictionaries — the run ended before it got far enough to have one.
+          </span>
+        </GateEmptyState>
+      ) : groups.length === 0 ? (
+        unassigned.length > 0 ? (
           <GateEmptyState
-            heading={
-              jobState?.status === "cancelled"
-                ? "This run was stopped before it reached Gate 1"
-                : "This run failed before it reached Gate 1"
-            }
+            heading="Nothing grouped above the threshold"
             nextStep={
               <>
-                Start again from{" "}
-                <Link
-                  href={`/run/${jobId}/setup`}
-                  className="font-semibold text-link-on-raised underline underline-offset-2"
-                >
+                Nothing can be scoped until at least one group forms. Go back to{" "}
+                <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">
                   Set up
-                </Link>
-                , or open <Link href="/jobs" className="font-semibold text-link-on-raised underline underline-offset-2">Runs</Link>{" "}
-                to pick up a different one.
+                </Link>{" "}
+                and check that the description column is mapped, or add a dictionary that overlaps these.
               </>
             }
-            className="[&]:block"
           >
-            <span data-testid="gate1-run-stopped">
-              No concept groups were produced, so there is nothing to review here. This is not a finding
-              about your dictionaries — the run ended before it got far enough to have one.
-            </span>
+            Every variable was left unassigned by the clustering — {unassigned.length}{" "}
+            {unassigned.length === 1 ? "variable" : "variables"}, listed below.
           </GateEmptyState>
-        ) : groups.length === 0 ? (
-          unassigned.length > 0 ? (
-            /* ALL OUTLIERS — a different finding from "no groups formed". The clustering ran; everything
-               fell out of it. Listing what fell out is what makes "nothing can be scoped" actionable. */
-            <GateEmptyState
-              heading="Nothing grouped above the threshold"
-              nextStep={
-                <>
-                  Nothing can be scoped until at least one group forms. Go back to{" "}
-                  <Link
-                    href={`/run/${jobId}/setup`}
-                    className="font-semibold text-link-on-raised underline underline-offset-2"
-                  >
-                    Set up
-                  </Link>{" "}
-                  and check that the description column is mapped, or add a dictionary that overlaps these.
-                </>
-              }
-            >
-              Every variable was left unassigned by the clustering — {unassigned.length}{" "}
-              {unassigned.length === 1 ? "variable" : "variables"}, listed below.
-            </GateEmptyState>
-          ) : (
-            <GateEmptyState
-              heading="No groups formed"
-              nextStep={
-                <>
-                  Go back to{" "}
-                  <Link
-                    href={`/run/${jobId}/setup`}
-                    className="font-semibold text-link-on-raised underline underline-offset-2"
-                  >
-                    Set up
-                  </Link>{" "}
-                  and check the column mapping, or add a dictionary.
-                </>
-              }
-            >
-              Every variable was left unassigned. That usually means the dictionaries share too little text
-              to group.
-            </GateEmptyState>
-          )
-        ) : emptyBucket ? (
+        ) : (
           <GateEmptyState
-            heading={
-              bucket === "cross-cohort"
-                ? "No group in this run spans more than one cohort"
-                : "Every group in this run spans more than one cohort"
-            }
+            heading="No groups formed"
             nextStep={
-              <button
-                type="button"
-                data-testid="go-to-other-bucket"
-                onClick={() => setBucket(otherBucket)}
-                className="text-left font-semibold text-link-on-raised underline underline-offset-2"
-              >
-                Show the {bucketCounts[otherBucket]}{" "}
-                {bucketCounts[otherBucket] === 1 ? "group" : "groups"}{" "}
-                {otherBucket === "cross-cohort" ? "that span two or more cohorts" : "from a single cohort"}.
-              </button>
+              <>
+                Go back to{" "}
+                <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">
+                  Set up
+                </Link>{" "}
+                and check the column mapping, or add a dictionary.
+              </>
             }
           >
-            {bucket === "cross-cohort"
-              ? "Nothing pooled across your dictionaries this time. The run still produced results — every group maps variables from one cohort to a common data element — and they are on the other tab."
-              : "Every group here draws on two or more of your dictionaries, so there is nothing in the single-cohort view."}
+            Every variable was left unassigned. That usually means the dictionaries share too little text to
+            group.
           </GateEmptyState>
-        ) : searchEmptied ? (
-          /* A SEARCH THAT HID EVERYTHING. Say the term, say it matched nothing, say the groups are still
-             here, and give the way back — the four things whose absence let a reviewer doubt whether his
-             concepts had been destroyed. */
-          <GateEmptyState
-            heading={
-              searchCause === "search"
-                ? "Your search matched no group in this run"
-                : "Your search matched groups, but a filter is hiding them"
-            }
-            nextStep={
-              <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <button
-                  type="button"
-                  data-testid="clear-search-inline"
-                  onClick={() => setTerms(null)}
-                  className="text-left font-semibold text-link-on-raised underline underline-offset-2"
-                >
-                  Clear the search to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
-                </button>
-                {/* BOTH WAYS BACK when both are responsible: either one alone may be the one the
-                    reviewer wants kept, and choosing for them is how a recovery becomes a second
-                    surprise. */}
-                {searchCause === "both" && activeFilterCount(filters) > 0 && (
+        )
+      ) : (
+        /*
+          THE UNIFIED GATE-1 LAYOUT (08-16f). The prod master-detail (workbench) frame with the sidebar on
+          the LEFT: the left aside is the scannable / filterable / sortable queue (review-queue), and the
+          right section is the depth for the selected group (review-workbench). Each later gate slots its
+          own columns and controls into this same frame — Gate 2 the CDE candidates, Gate 3 the specs.
+        */
+        <div
+          data-testid="gate1-workbench"
+          className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(340px,384px)_minmax(0,1fr)] lg:items-start"
+        >
+          <aside
+            data-testid="gate1-queue"
+            className="flex flex-col gap-3 overflow-hidden rounded-card bg-surface-raised py-4 shadow-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)]"
+          >
+            <div className="px-4">
+              <LedgerToolbar
+                search={
+                  <TermSearch
+                    onSearch={(next) => setTerms(next.length > 0 ? next : null)}
+                    noMatches={search?.noMatches ?? []}
+                    missingTokens={search?.missingTokens ?? {}}
+                  />
+                }
+                count={visible.length}
+                crossCohortOnly={xcOnly}
+                onCrossCohortOnlyChange={setXcOnly}
+                verdict={(filters.verdicts[0] ?? "all") as CoherenceState | "all"}
+                onVerdictChange={(v) => setFilters({ ...filters, verdicts: v === "all" ? [] : [v] })}
+              />
+            </div>
+            <QueueSortHeader sort={colSort} onSort={(key) => setColSort((cur) => toggleSort(cur, key))} />
+            <div className="px-4">
+              <BulkScopeControl
+                frozen={frozen}
+                count={visible.length}
+                state={bulkScopeState(visible.map((g) => g.groupId), isInScope)}
+                busy={bulkBusy}
+                onBulk={(t) => void onBulkScope(t)}
+              />
+            </div>
+            <div
+              data-testid="gate1-rows"
+              className="flex-1 divide-y divide-rule-quiet-on-raised overflow-y-auto border-y border-rule-quiet-on-raised"
+            >
+              {searchEmptied ? (
+                <p data-testid="search-empty" data-cause={searchCause} className="px-4 py-6 text-sm text-on-raised-muted">
+                  {searchCause === "search"
+                    ? "Your search matched no group in this run. "
+                    : "Your search matched groups, but the filters or Cross-cohort only are hiding them. "}
+                  <button
+                    type="button"
+                    data-testid="clear-search-inline"
+                    onClick={() => setTerms(null)}
+                    className="font-semibold text-link-on-raised underline underline-offset-2"
+                  >
+                    Clear the search to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
+                  </button>
+                </p>
+              ) : filteredToNothing ? (
+                <p data-testid="filter-empty" className="px-4 py-6 text-sm text-on-raised-muted">
+                  No group matches this filter.{" "}
                   <button
                     type="button"
                     data-testid="clear-filters-inline"
                     onClick={() => setFilters(NO_FILTERS)}
-                    className="text-left font-semibold text-link-on-raised underline underline-offset-2"
+                    className="font-semibold text-link-on-raised underline underline-offset-2"
                   >
-                    Or clear the {activeFilterCount(filters) === 1 ? "filter" : "filters"} and keep the
-                    search.
-                  </button>
-                )}
-              </span>
-            }
-            className="[&]:block"
-          >
-            <span data-testid="search-empty" data-cause={searchCause}>
-              {/* THE TERMS ARE ECHOED AS ESCAPED TEXT CHILDREN — never raw HTML. A surface that reflects
-                  user input back is exactly where an injection would land; JSX children are escaped by
-                  construction, which is why this is a rule about what NOT to reach for. */}
-              Nothing has been lost — every group is still here, and{" "}
-              {(terms ?? []).length === 1 ? "your term is" : "your terms are"} hiding{" "}
-              {groups.length === 1 ? "it" : "them"}:{" "}
-              {(terms ?? []).map((t, i) => (
-                <span key={t}>
-                  {i > 0 && ", "}
-                  <span className="font-semibold">&ldquo;{t}&rdquo;</span>
-                </span>
-              ))}
-              .{" "}
-              {searchCause === "search"
-                ? "No group's text contains those words, which is a finding about this run rather than a failed search — the detail is in the search box above."
-                : `Some groups do match, but the ${
-                    activeFilterCount(filters) === 1 ? "filter" : "filters"
-                  } you have on, or the tab you are viewing, exclude every one of them.`}
-            </span>
-          </GateEmptyState>
-        ) : filteredToNothing ? (
-          /* A FILTER matching nothing — the reviewer's own doing, and clearing it is the fix. Different
-             copy from a search term that matched nothing, which is a finding about the corpus and is
-             reported above by `TermSearch`. */
-          <GateEmptyState
-            heading="No group matches this filter"
-            nextStep={
-              <button
-                type="button"
-                data-testid="clear-filters-inline"
-                onClick={() => setFilters(NO_FILTERS)}
-                className="text-left font-semibold text-link-on-raised underline underline-offset-2"
-              >
-                Clear the filter to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
-              </button>
-            }
-            className="[&]:block"
-          >
-            <span data-testid="filter-empty">
-              Clear the filter to see all {groups.length} {groups.length === 1 ? "group" : "groups"} in
-              this run.
-            </span>
-          </GateEmptyState>
-        ) : (
-          visible.map((g) => (
-            <GroupRow
-              key={g.groupId}
-              group={g}
-              allCohorts={allCohorts}
-              price={price}
-              count={memberCount(g)}
-              inScope={isInScope(g.groupId)}
-              changed={isChanged(g.groupId)}
-              readOnly={frozen}
-              renamedTo={renamedOf(g.groupId)}
-              onRename={(next) => void onRename(g, next)}
-              onDropMember={(memberId) => void moveMember(memberId, g.groupId)}
-              onScopeChange={(next) =>
-                void scope.write(
-                  { groupId: g.groupId },
-                  { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
-                )
-              }
+                    Clear it
+                  </button>{" "}
+                  to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
+                </p>
+              ) : visible.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-on-raised-muted">
+                  {xcOnly ? (
+                    <>
+                      No cross-cohort groups.{" "}
+                      <button
+                        type="button"
+                        onClick={() => setXcOnly(false)}
+                        className="font-semibold text-link-on-raised underline underline-offset-2"
+                      >
+                        Show all {groups.length}
+                      </button>
+                      .
+                    </>
+                  ) : (
+                    "No groups to show."
+                  )}
+                </p>
+              ) : (
+                visible.map((g) => (
+                  <QueueRow
+                    key={g.groupId}
+                    group={g}
+                    price={price}
+                    count={memberCount(g)}
+                    inScope={isInScope(g.groupId)}
+                    changed={isChanged(g.groupId)}
+                    selected={!poolSelected && g.groupId === (detailGroup?.groupId ?? null)}
+                    readOnly={frozen}
+                    renamedTo={renamedOf(g.groupId)}
+                    onSelect={() => {
+                      setSelectedId(g.groupId);
+                      setPoolSelected(false);
+                    }}
+                    onScopeChange={(next) =>
+                      void scope.write(
+                        { groupId: g.groupId },
+                        { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+                      )
+                    }
+                  />
+                ))
+              )}
+            </div>
+            <button
+              type="button"
+              data-testid="gate1-pool-entry"
+              aria-current={poolSelected}
+              onClick={() => setPoolSelected(true)}
+              className={cn(
+                "flex items-center justify-between gap-2 border-t border-rule-on-raised px-4 pt-3 text-left text-xs font-semibold uppercase tracking-eyebrow",
+                poolSelected ? "text-accent-on-raised" : "text-on-raised-muted hover:text-accent-on-raised",
+              )}
             >
-              <ExpandedGroup
-                group={g}
-                /* Every other group in the CURRENT VIEW, so the destinations the tray offers are the ones
-                   the reviewer's bucket, search and filters have already narrowed to — the same set the
-                   collapsed rows would have shown.
+              <span>In no group</span>
+              <span className="font-mono tabular-nums">{poolCount}</span>
+            </button>
+            <div className="px-4">
+              <SumBlock
+                realized={costSoFar}
+                inScopeTotal={price * inScopeGroups.length}
+                wholeCorpus={price * groups.length}
+                nInScope={inScopeGroups.length}
+                nGroups={groups.length}
+              />
+            </div>
+          </aside>
 
-                   ORDERED BY WHAT THE REVIEWER HAS JUST BEEN FILLING (08-16c review). The set is the
-                   visible one; only the ORDER changes, and only for groups actually moved into. */
-                otherGroups={sortDestinations(
-                  visible.filter((o) => o.groupId !== g.groupId),
-                  lastMovedInto,
-                )}
+          <section data-testid="gate1-detail" className="min-w-0 rounded-card bg-surface-raised p-5 shadow-card lg:p-6">
+            {poolSelected ? (
+              <UnassignedPool
+                reviewerRemoved={membership.unassigned}
+                fromPipeline={poolFromPipeline}
+                destinations={sortDestinations(visible, lastMovedInto)}
                 membersOf={(id) => membership.byGroup[id] ?? []}
                 sampleOnly={(o) => !hasFullMembership(o)}
-                members={membership.byGroup[g.groupId] ?? []}
-                poolCount={poolCount}
                 fieldIndex={fieldIndex}
-                movedMembers={movedMemberIds}
                 onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
-                onRestore={() => void restoreGroup(g.groupId)}
-                canRegroup={hasFullMembership(g)}
-                refusal={refusalFor}
-                carvePrice={
-                  <>
-                    This costs money. Re-splitting this group and re-assigning its parts is paid work —
-                    about {formatUsd(price * 2)} for a group this size — and it starts as soon as you press
-                    the button. Your spend so far updates when it finishes.
-                  </>
-                }
-                accepting={accepting === g.groupId}
-                onAcceptCarve={() => void acceptCarve(g.groupId)}
-                onIgnoreCarve={() => undefined}
+                onRestoreMember={(memberId) => void restoreMember(memberId)}
+                readOnly={frozen}
+                defaultOpen
               />
-            </GroupRow>
-          ))
-        )}
-      </Ledger>
+            ) : detailGroup ? (
+              <GroupDetail
+                group={detailGroup}
+                readOnly={frozen}
+                renamedTo={renamedOf(detailGroup.groupId)}
+                onRename={(next) => void onRename(detailGroup, next)}
+                inScope={isInScope(detailGroup.groupId)}
+                onScopeChange={(next) =>
+                  void scope.write(
+                    { groupId: detailGroup.groupId },
+                    { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+                  )
+                }
+                stale={touchedByRegroup.has(detailGroup.groupId)}
+              >
+                <ExpandedGroup
+                  group={detailGroup}
+                  otherGroups={sortDestinations(
+                    visible.filter((o) => o.groupId !== detailGroup.groupId),
+                    lastMovedInto,
+                  )}
+                  membersOf={(id) => membership.byGroup[id] ?? []}
+                  sampleOnly={(o) => !hasFullMembership(o)}
+                  members={membership.byGroup[detailGroup.groupId] ?? []}
+                  poolCount={poolCount}
+                  fieldIndex={fieldIndex}
+                  movedMembers={movedMemberIds}
+                  onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+                  onRestore={() => void restoreGroup(detailGroup.groupId)}
+                  canRegroup={hasFullMembership(detailGroup)}
+                  refusal={refusalFor}
+                  carvePrice={
+                    <>
+                      This costs money. Re-splitting this group and re-assigning its parts is paid work —
+                      about {formatUsd(price * 2)} for a group this size — and it starts as soon as you press
+                      the button. Your spend so far updates when it finishes.
+                    </>
+                  }
+                  accepting={accepting === detailGroup.groupId}
+                  onAcceptCarve={() => void acceptCarve(detailGroup.groupId)}
+                  onIgnoreCarve={() => undefined}
+                />
+              </GroupDetail>
+            ) : (
+              <p className="py-16 text-center text-sm text-on-raised-muted">Select a concept group on the left.</p>
+            )}
+          </section>
+        </div>
+      )}
 
-      {/*
-        ONE POOL, BELOW THE LEDGER AND ABOVE THE COMMIT BAR (08-16c review). Rendered on every run that
-        has anything in it — not only, as before, on a run that produced no groups at all, which is the
-        one case where it was of least use.
-      */}
-      <UnassignedPool
-        reviewerRemoved={membership.unassigned}
-        fromPipeline={poolFromPipeline}
-        /* THE SAME DESTINATION SET AN EXPANDED GROUP GETS (item A) — the rows the reviewer's bucket,
-           search and filters have already narrowed to, ordered by what they have most recently been
-           filling. Every group is offered, because a variable in the pool is in none of them. */
-        destinations={sortDestinations(visible, lastMovedInto)}
-        membersOf={(id) => membership.byGroup[id] ?? []}
-        sampleOnly={(o) => !hasFullMembership(o)}
-        fieldIndex={fieldIndex}
-        onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
-        onRestoreMember={(memberId) => void restoreMember(memberId)}
-        readOnly={frozen}
-        // On a run that grouped NOTHING the pool is the whole screen, and the ledger's empty state has
-        // just promised the reviewer that what fell out is "listed below".
-        defaultOpen={groups.length === 0}
-      />
+      {/* The pool renders full-width when the run grouped nothing — there is no sidebar to host it then. */}
+      {groups.length === 0 && (
+        <UnassignedPool
+          reviewerRemoved={membership.unassigned}
+          fromPipeline={poolFromPipeline}
+          destinations={sortDestinations(visible, lastMovedInto)}
+          membersOf={(id) => membership.byGroup[id] ?? []}
+          sampleOnly={(o) => !hasFullMembership(o)}
+          fieldIndex={fieldIndex}
+          onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+          onRestoreMember={(memberId) => void restoreMember(memberId)}
+          readOnly={frozen}
+          defaultOpen
+        />
+      )}
 
       <CommitBar
         action="Continue to Gate 2"
