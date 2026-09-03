@@ -16,7 +16,7 @@ import { CarveProposal } from "@/components/gate/CarveProposal";
 import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
 import { GroupingStrip } from "@/components/gate/GroupingStrip";
 import { BreadthFilter } from "@/components/gate/BreadthFilter";
-import { MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } from "@/components/gate/MemberChip";
+import { MEMBER_DRAG_TYPE, MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } from "@/components/gate/MemberChip";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
@@ -1172,8 +1172,8 @@ function ExpandedGroup({
 
       {canRegroup && (
         <p className="text-xs text-on-raised-muted">
-          Drag a {gridCarriesMembers ? "row" : "variable"} onto another group to move it there, or onto the
-          tray below to take it out of every group.
+          Drag a {gridCarriesMembers ? "row" : "variable"} onto a group in the list on the left to move it
+          there, or onto &ldquo;In no group&rdquo; to take it out of every group.
           {gridCarriesMembers && " Without a mouse, use the × beside a row's drag handle to take that variable out of this group."}{" "}
           Your moves are saved as you make them.
         </p>
@@ -1353,6 +1353,7 @@ function QueueRow({
   renamedTo,
   onSelect,
   onScopeChange,
+  onDropMember,
 }: {
   group: ConceptGroup;
   price: number;
@@ -1364,8 +1365,12 @@ function QueueRow({
   renamedTo?: string;
   onSelect: () => void;
   onScopeChange: (inScope: boolean) => void;
+  /** Drop a dragged source-row variable onto this row to reassign it into this group (the sidebar IS the
+   *  destination list now — the old in-detail "move to another group" tray was removed). */
+  onDropMember: (memberId: string) => void;
 }) {
   const label = groupLabel(group, renamedTo);
+  const [over, setOver] = useState(false);
   return (
     <div
       role="button"
@@ -1380,9 +1385,35 @@ function QueueRow({
           onSelect();
         }
       }}
+      data-drop-over={over ? "true" : undefined}
+      onDragOver={
+        readOnly
+          ? undefined
+          : (e) => {
+              if (!e.dataTransfer.types.includes(MEMBER_DRAG_TYPE)) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setOver(true);
+            }
+      }
+      onDragLeave={(e) => {
+        // Only clear when the cursor actually leaves the row, not on every child crossing.
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false);
+      }}
+      onDrop={
+        readOnly
+          ? undefined
+          : (e) => {
+              e.preventDefault();
+              setOver(false);
+              const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
+              if (memberId) onDropMember(memberId);
+            }
+      }
       className={cn(
         "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 px-4 py-2.5 text-left",
         selected ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]" : "hover:bg-surface-inset",
+        over && "ring-2 ring-inset ring-rule-info",
       )}
     >
       <input
@@ -1472,6 +1503,7 @@ function QueueSortHeader({
  */
 function GroupDetail({
   group,
+  count,
   readOnly,
   renamedTo,
   onRename,
@@ -1481,6 +1513,8 @@ function GroupDetail({
   children,
 }: {
   group: ConceptGroup;
+  /** Effective member count after the reviewer's moves (the sidebar row's number). */
+  count: number;
   readOnly: boolean;
   renamedTo?: string;
   onRename: (next: string) => void;
@@ -1542,8 +1576,8 @@ function GroupDetail({
             <CoherenceMark state={group.coherence} />
           </div>
           <p className="mt-1.5 text-xs text-on-raised-muted">
-            <span className="font-semibold text-on-raised">{group.nMembers}</span>{" "}
-            {group.nMembers === 1 ? "variable" : "variables"} · {group.cohorts.join(", ")} · cluster{" "}
+            <span className="font-semibold text-on-raised">{count}</span>{" "}
+            {count === 1 ? "variable" : "variables"} · {group.cohorts.join(", ")} · cluster{" "}
             <span className="font-mono">{group.clusterId || "—"}</span>
           </p>
         </div>
@@ -1600,6 +1634,8 @@ export default function Gate1Page() {
   // pane to the "In no group" holding area instead.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [poolSelected, setPoolSelected] = useState(false);
+  // Drag-over cue for the sidebar's "In no group" drop target.
+  const [poolOver, setPoolOver] = useState(false);
   /**
    * ONE sort state for both controls (08-16c Task 10). `null` = the ledger's own documented order
    * (verdict, breadth, size, id) — click-to-sort is opted into on top of the default, never instead of it.
@@ -2333,6 +2369,7 @@ export default function Gate1Page() {
                         { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
                       )
                     }
+                    onDropMember={(memberId) => void moveMember(memberId, g.groupId)}
                   />
                 ))
               )}
@@ -2342,9 +2379,34 @@ export default function Gate1Page() {
               data-testid="gate1-pool-entry"
               aria-current={poolSelected}
               onClick={() => setPoolSelected(true)}
+              data-drop-over={poolOver ? "true" : undefined}
+              onDragOver={
+                frozen
+                  ? undefined
+                  : (e) => {
+                      if (!e.dataTransfer.types.includes(MEMBER_DRAG_TYPE)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setPoolOver(true);
+                    }
+              }
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setPoolOver(false);
+              }}
+              onDrop={
+                frozen
+                  ? undefined
+                  : (e) => {
+                      e.preventDefault();
+                      setPoolOver(false);
+                      const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
+                      if (memberId) void moveMember(memberId, UNASSIGNED_GROUP_ID);
+                    }
+              }
               className={cn(
                 "flex items-center justify-between gap-2 border-t border-rule-on-raised px-4 pt-3 text-left text-xs font-semibold uppercase tracking-eyebrow",
                 poolSelected ? "text-accent-on-raised" : "text-on-raised-muted hover:text-accent-on-raised",
+                poolOver && "ring-2 ring-inset ring-rule-info",
               )}
             >
               <span>In no group</span>
@@ -2366,7 +2428,7 @@ export default function Gate1Page() {
               <UnassignedPool
                 reviewerRemoved={membership.unassigned}
                 fromPipeline={poolFromPipeline}
-                destinations={sortDestinations(visible, lastMovedInto)}
+                destinations={[]}
                 membersOf={(id) => membership.byGroup[id] ?? []}
                 sampleOnly={(o) => !hasFullMembership(o)}
                 fieldIndex={fieldIndex}
@@ -2378,6 +2440,7 @@ export default function Gate1Page() {
             ) : detailGroup ? (
               <GroupDetail
                 group={detailGroup}
+                count={memberCount(detailGroup)}
                 readOnly={frozen}
                 renamedTo={renamedOf(detailGroup.groupId)}
                 onRename={(next) => void onRename(detailGroup, next)}
@@ -2392,10 +2455,7 @@ export default function Gate1Page() {
               >
                 <ExpandedGroup
                   group={detailGroup}
-                  otherGroups={sortDestinations(
-                    visible.filter((o) => o.groupId !== detailGroup.groupId),
-                    lastMovedInto,
-                  )}
+                  otherGroups={[]}
                   membersOf={(id) => membership.byGroup[id] ?? []}
                   sampleOnly={(o) => !hasFullMembership(o)}
                   members={membership.byGroup[detailGroup.groupId] ?? []}
@@ -2430,7 +2490,7 @@ export default function Gate1Page() {
         <UnassignedPool
           reviewerRemoved={membership.unassigned}
           fromPipeline={poolFromPipeline}
-          destinations={sortDestinations(visible, lastMovedInto)}
+          destinations={[]}
           membersOf={(id) => membership.byGroup[id] ?? []}
           sampleOnly={(o) => !hasFullMembership(o)}
           fieldIndex={fieldIndex}
