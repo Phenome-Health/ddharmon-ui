@@ -2607,34 +2607,6 @@ test.describe("gate1 tray recency", () => {
     expect(sortDestinations(groups, { [ids[2]]: 50 }).map((x) => x.groupId)).toEqual([ids[2], ids[0], ids[1]]);
   });
 
-  test("@gate1 the recency order survives a reload, because it is read off the decisions", async ({
-    page,
-  }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const entries = row.locator("[data-testid='destination-entry']");
-    const before = await entries.first().getAttribute("data-group-id");
-
-    // Move a variable into a destination that is NOT already at the top, so promotion is observable.
-    const target = entries.nth(3);
-    const targetId = await target.getAttribute("data-group-id");
-    expect(targetId).not.toBe(before);
-    const member = row.locator("[data-testid='member-row']").first();
-    await member.dragTo(
-      row.locator(`[data-testid='destination-tray'] [data-testid='member-drop-zone'][data-group-id='${targetId}']`),
-    );
-
-    await expect(entries.first()).toHaveAttribute("data-group-id", targetId!);
-
-    // THE CLAIM THAT MATTERS: it is still there after a reload, so it was never component state.
-    await page.reload();
-    await page.waitForLoadState("networkidle");
-    const again = await expandRow(page, BIG);
-    await expect(again.locator("[data-testid='destination-entry']").first()).toHaveAttribute(
-      "data-group-id",
-      targetId!,
-    );
-  });
 });
 
 /**
@@ -2645,264 +2617,37 @@ test.describe("gate1 tray recency", () => {
  * to `moveMember`. What was missing is that expanding one group pushed every other group's drop zone off
  * the viewport, so the affordance was real and unreachable exactly when it was wanted.
  */
-test.describe("gate1 destination tray", () => {
-  const TRAY = "[data-testid='destination-tray']";
-
-  test("@gate1 an expanded group shows the other groups without collapsing it first", async ({ page }) => {
+test.describe("gate1 move between groups", () => {
+  /**
+   * MOVING A VARIABLE BETWEEN GROUPS (08-16f). The in-detail destination tray was removed — the sidebar
+   * IS the destination list now, so a variable is dragged from the open group's rows straight onto
+   * another group's row, and the move persists as a decision.
+   */
+  test("@gate1 dragging a variable onto another group's row moves it into THAT group", async ({ page }) => {
     await openGate1(page);
     const row = await expandRow(page, BIG);
-    await expect(row.locator(TRAY)).toBeVisible();
-    expect(await row.locator("[data-testid='destination-entry']").count()).toBeGreaterThan(0);
-    // The group is still expanded — the tray is not an alternative to seeing the members.
-    await expect(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']")).toBeVisible();
-  });
-
-  test("@gate1 the expanded group is not offered as a destination for its own members", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    await expect(row.locator(`[data-testid='destination-entry'][data-group-id='${BIG}']`)).toHaveCount(0);
-  });
-
-  test("@gate1 dragging onto a tray entry moves the variable into THAT group", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const target = row.locator("[data-testid='destination-entry']").first();
-    const targetId = await target.getAttribute("data-group-id");
     const member = row.locator("[data-testid='member-row']").first();
     const memberId = await member.getAttribute("data-member-id");
 
-    await member.dragTo(row.locator(`${TRAY} [data-testid='member-drop-zone'][data-group-id='${targetId}']`));
-
-    // The SAME outcome a drop on the collapsed row produces. The SOURCE row's spine is asserted; the
-    // DESTINATION's deliberately is not — `LedgerRow` lets "unresolved" (amber) outrank "changed", so a
-    // flagged destination legitimately keeps its amber spine and asserting "changed" there would convict
-    // working code the moment the drop happened to land on a flagged group.
-    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute("data-spine", "changed");
-
-    await page.reload();
-    await page.waitForLoadState("networkidle");
-    const receiving = await expandRow(page, targetId!);
-    await expect(receiving.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
-  });
-
-  test("@gate1 the destinations scroll on their own, without moving the source grid", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const list = row.locator(`${TRAY} > div`);
-    const overflow = await list.evaluate((el) => getComputedStyle(el).overflowY);
-    expect(overflow).toBe("auto");
-    // It is bounded, so a long list cannot push the grid off the screen instead of scrolling.
-    const bounded = await list.evaluate((el) => el.scrollHeight > el.clientHeight || el.clientHeight <= 512);
-    expect(bounded).toBe(true);
-  });
-
-  test("@gate1 with nothing expanded the tray is not permanent chrome", async ({ page }) => {
-    await openGate1(page);
-    await expect(page.locator(TRAY)).toHaveCount(0);
-  });
-
-  /**
-   * A TRAY ENTRY CAN BE OPENED TO SEE WHAT IS ALREADY IN IT (08-16c review).
-   *
-   * Bhargav: *"clicking on one of these should open a mini drop down of its members or take you to the
-   * group in the main view."* Two designs were offered and only ONE of them is built.
-   *
-   * WHY THE DROPDOWN AND NOT THE NAVIGATION. The tray exists to support a drag OUT OF the group that is
-   * open right now — that is the whole reason Task 6 put it there, because expanding one group pushed
-   * every other group's drop zone off the viewport. Navigating to the destination would collapse the
-   * source and scroll it away, destroying exactly the context the tray was built to serve, and the
-   * reviewer would arrive at the target having lost the variable they were holding. A popover answers
-   * the question they actually have — "is this the right target?" — without them losing their place.
-   */
-  test("@gate1 opening a tray entry shows that group's members, and does not navigate away", async ({
-    page,
-  }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const url = page.url();
-
-    const entry = row.locator("[data-testid='destination-members-toggle']").first();
-    const targetId = await entry.getAttribute("data-group-id");
-    await expect(entry).toHaveAttribute("aria-expanded", "false");
-    await entry.click();
-    await expect(entry).toHaveAttribute("aria-expanded", "true");
-
-    // The DESTINATION's own members, read from the same effective membership the ledger uses.
-    const list = row.locator(`[data-testid='destination-members'][data-group-id='${targetId}']`);
-    await expect(list).toBeVisible();
-    const expected = gate1Fixture().result!.conceptGroupMembers![targetId!];
-    expect(expected.length).toBeGreaterThan(0);
-    await expect(list.locator("[data-testid='destination-member']").first()).toBeVisible();
-    for (const memberId of expected.slice(0, 3)) {
-      await expect(list.locator(`[data-member-id='${memberId}']`)).toHaveCount(1);
-    }
-
-    // NOTHING WAS LEFT. Same URL, and the source group is still expanded with its drop zone in reach.
-    expect(page.url()).toBe(url);
-    await expect(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']")).toBeVisible();
-  });
-
-  test("@gate1 the members list is reachable and operable from the keyboard", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const entry = row.locator("[data-testid='destination-members-toggle']").first();
-    await entry.focus();
-    await expect(entry).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(entry).toHaveAttribute("aria-expanded", "true");
-    await page.keyboard.press("Enter");
-    await expect(entry).toHaveAttribute("aria-expanded", "false");
-  });
-
-  /**
-   * THE POPOVER MAY NOT EAT THE DROP. An open members list covers the destination it belongs to, so a
-   * reviewer mid-drag will aim at it — and a panel that accepted the chip and did nothing would lose the
-   * move silently, which is the same defect Task 6's own `stopPropagation` note records.
-   */
-  test("@gate1 dropping onto an OPEN members list still moves the variable into that group", async ({
-    page,
-  }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const entry = row.locator("[data-testid='destination-members-toggle']").first();
-    const targetId = await entry.getAttribute("data-group-id");
-    await entry.click();
-    const list = row.locator(`[data-testid='destination-members'][data-group-id='${targetId}']`);
-    await expect(list).toBeVisible();
-
-    const member = row.locator("[data-testid='member-row']").first();
-    const memberId = await member.getAttribute("data-member-id");
-    await member.dragTo(list);
+    const target = page.locator(`[data-testid='ledger-row']:not([data-row-id='${BIG}'])`).first();
+    const targetId = await target.getAttribute("data-row-id");
+    await member.dragTo(target);
 
     await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
       "data-spine",
       "changed",
     );
-    await page.reload();
-    await page.waitForLoadState("networkidle");
     const receiving = await expandRow(page, targetId!);
     await expect(receiving.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
-  });
 
-  /**
-   * T-08-89 REACHES THE TRAY TOO. Where the run recorded only a capped SAMPLE of a group, the members
-   * list is not that group's membership — and a list presented as complete is how a reviewer concludes a
-   * destination holds four variables when it holds forty. The count stays the contract's true figure and
-   * the list says which of the two is on screen.
-   */
-  test("@gate1 a destination whose members are a capped sample says so rather than reading as complete", async ({
-    page,
-  }) => {
-    await serveRun(page, (run) => {
-      for (const g of run.result!.conceptGroups ?? []) {
-        if (g.groupId === BIG) continue; // the SOURCE keeps its full membership, or it cannot be dragged from
-        g.membersTruncated = true;
-        g.memberVariableNames = g.memberVariableNames.slice(0, 2);
-        delete run.result!.conceptGroupMembers![g.groupId];
-      }
-    });
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const entry = row.locator("[data-testid='destination-members-toggle']").first();
-    const targetId = await entry.getAttribute("data-group-id");
-    const group = fixtureGroups().find((g) => g.groupId === targetId)!;
-
-    // The COUNT is the contract's true figure, not the sample's length.
-    await expect(entry).toContainText(`${group.nMembers}`);
-    await entry.click();
-    const list = row.locator(`[data-testid='destination-members'][data-group-id='${targetId}']`);
-    await expect(list.locator("[data-testid='destination-member']")).toHaveCount(2);
-    await expect(list.locator("[data-testid='destination-members-partial']")).toBeVisible();
-  });
-
-  /** The toggle is a control, not a drag handle: it must not itself become a source of drags. */
-  test("@gate1 the members toggle is not draggable, so a click cannot start a drag", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const entry = row.locator("[data-testid='destination-members-toggle']").first();
-    expect(await entry.evaluate((el) => (el as HTMLElement).draggable)).toBe(false);
-    expect(await entry.evaluate((el) => el.closest("[draggable='true']") !== null)).toBe(false);
-  });
-
-  /**
-   * THE TRAY GETS ITS OWN SEARCH (08-16c review). Bhargav: *"mini search bar here so user doesnt have to
-   * scroll if there are a lot of groups to pick from."* With 54 groups the destination list is a long
-   * scroll at exactly the moment the reviewer is holding a variable.
-   *
-   * IT IS NOT `TermSearch`, AND THE TWO MAY NOT BE ENTANGLED. The ledger's search takes a LIST of terms
-   * and reports a term matching nothing as a coverage finding about the run — "nothing here measures
-   * smoking". This one is a plain substring filter over destination names, answering "where is the group
-   * I want to drop this into". Sharing them would make one of the two lie about what it found, so the
-   * last assertion here is that filtering the tray leaves the ledger alone.
-   */
-  test("@gate1 the tray's search narrows the destinations, and leaves the ledger untouched", async ({
-    page,
-  }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const entries = row.locator("[data-testid='destination-entry']");
-    const all = await entries.count();
-    expect(all).toBeGreaterThan(3);
-    const ledgerBefore = await page.locator("[data-testid='ledger-row']").count();
-
-    await row.locator("[data-testid='tray-search']").fill("blood pressure");
-    const narrowed = await entries.count();
-    expect(narrowed).toBeGreaterThan(0);
-    expect(narrowed).toBeLessThan(all);
-    for (const text of await entries.allInnerTexts()) {
-      expect(text.toLowerCase()).toContain("blood pressure");
-    }
-
-    // The LEDGER is untouched — this is the tray's filter, not the run's search.
-    expect(await page.locator("[data-testid='ledger-row']").count()).toBe(ledgerBefore);
-
-    // Clearing it puts every destination back.
-    await row.locator("[data-testid='tray-search']").fill("");
-    expect(await entries.count()).toBe(all);
-  });
-
-  /** A filtered list must still be a working list: what survives the filter still takes a drop. */
-  test("@gate1 a destination that survives the tray search still accepts a drop", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    await row.locator("[data-testid='tray-search']").fill("blood pressure");
-    const target = row.locator("[data-testid='destination-entry']").first();
-    const targetId = await target.getAttribute("data-group-id");
-
-    const member = row.locator("[data-testid='member-row']").first();
-    const memberId = await member.getAttribute("data-member-id");
-    await member.dragTo(
-      row.locator(`[data-testid='destination-tray'] [data-testid='member-drop-zone'][data-group-id='${targetId}']`),
-    );
-
+    // It survives a reload — a persisted decision, not component state.
     await page.reload();
     await page.waitForLoadState("networkidle");
-    const receiving = await expandRow(page, targetId!);
-    await expect(receiving.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
-  });
-
-  /**
-   * A SEARCH THAT MATCHES NOTHING SAYS SO. An empty box under a heading reading "Move to another group"
-   * is indistinguishable from "there are no other groups", which is the state Task 6 exists to deny.
-   */
-  test("@gate1 a tray search matching nothing says so rather than emptying silently", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    await row.locator("[data-testid='tray-search']").fill("zzzzz-no-such-group");
-    await expect(row.locator("[data-testid='destination-entry']")).toHaveCount(0);
-    await expect(row.locator("[data-testid='tray-search-empty']")).toBeVisible();
-  });
-
-  test("@gate1 below the breakpoint the tray gives way rather than squeezing the grid", async ({ page }) => {
-    await openGate1(page);
-    const row = await expandRow(page, BIG);
-    const wide = await row.locator(TRAY).boundingBox();
-    await page.setViewportSize({ width: 900, height: 900 });
-    const narrow = await row.locator(TRAY).boundingBox();
-    // Stacked, not squeezed side-by-side: the tray is now as wide as the column, below the grid.
-    expect(narrow!.width).toBeGreaterThan(wide!.width);
+    const again = await expandRow(page, targetId!);
+    await expect(again.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
   });
 });
+
 
 /**
  * Renaming a concept group (08-16c Task 3).
@@ -3095,14 +2840,13 @@ test.describe("gate1 drop highlighting", () => {
     await page.mouse.up();
   });
 
-  test("@gate1 a tray destination lights up while a variable is over it", async ({ page }) => {
+  test("@gate1 another group's row lights up while a variable is held over it", async ({ page }) => {
     await openGate1(page);
     const row = await expandRow(page, BIG);
-    const entry = row
-      .locator("[data-testid='destination-tray'] [data-testid='member-drop-zone']")
-      .first();
-    await dragOver(page, row.locator("[data-testid='member-row']").first(), entry);
-    await expect(entry).toHaveAttribute("data-drop-over", "true");
+    // The destinations are the sidebar rows now (08-16f): a different group's row lights on drag-over.
+    const target = page.locator(`[data-testid='ledger-row']:not([data-row-id='${BIG}'])`).first();
+    await dragOver(page, row.locator("[data-testid='member-row']").first(), target);
+    await expect(target).toHaveAttribute("data-drop-over", "true");
     await page.mouse.up();
   });
 
@@ -3117,7 +2861,7 @@ test.describe("gate1 drop highlighting", () => {
 
     // The cue is decoration; the verb is not. A highlight that swallowed the drop would be a regression
     // dressed as an affordance.
-    await expect(page.locator("[data-testid='pool-count']")).toHaveText("1");
+    await expect(page.locator("[data-testid='gate1-pool-entry']")).toContainText("1");
     await expandPool(page);
     await expect(page.locator(pooled(memberId!)).first()).toBeVisible();
     // …and nothing is left lit once the pointer has gone.
