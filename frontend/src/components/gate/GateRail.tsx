@@ -146,7 +146,7 @@ export function GateRail({
     <ol
       aria-label="Review gates"
       data-testid="gate-rail"
-      className={cn("grid grid-cols-5 gap-2", className)}
+      className={cn("grid grid-cols-5 gap-1 rounded-card bg-surface-chrome p-2", className)}
     >
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
@@ -170,9 +170,11 @@ export function GateRail({
             aria-current={isCurrent ? "step" : undefined}
             className={cn(
               "flex min-h-8 flex-col gap-1 rounded-inner px-3 py-2",
-              isCurrent
-                ? "bg-surface-raised text-on-raised shadow-card"
-                : "border border-rule-on-field bg-on-field/5 text-on-field",
+              // Navy rail (mockup parity): the active gate is a solid blue pill; the rest are plain columns
+              // ON the navy bar. The per-gate cost stays — the mockup dropped it, but a reviewer standing
+              // downstream of real spend needs the realized-vs-forecast split (UI-SPEC §7.1.3), so it is
+              // kept and re-toned for the dark ground rather than removed.
+              isCurrent ? "bg-surface-accent text-on-accent shadow-card" : "text-on-chrome",
             )}
           >
             <Inner
@@ -185,7 +187,7 @@ export function GateRail({
             <span
               className={cn(
                 "flex items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow",
-                isCurrent ? "text-on-raised-muted" : "text-on-field-muted",
+                isCurrent ? "text-on-accent" : isDone ? "text-on-chrome" : "text-on-chrome-muted",
               )}
             >
               {isDone && <Check aria-hidden="true" className="h-3 w-3" />}
@@ -198,7 +200,7 @@ export function GateRail({
               className={cn(
                 "text-xs",
                 item.cost.kind === "realized" ? "font-semibold" : "font-normal",
-                isCurrent ? "text-on-raised-muted" : "text-on-field-muted",
+                isCurrent ? "text-on-accent" : "text-on-chrome-muted",
               )}
             >
               {item.cost.text}
