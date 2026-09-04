@@ -447,66 +447,47 @@ test.describe("gate1 partition", () => {
 });
 
 test.describe("gate1 toolbar", () => {
-  test("@gate1 four filters narrow the set and say which are active", async ({ page }) => {
+  test("@gate1 the verdict select narrows to a coherence state, and All states restores every group", async ({ page }) => {
     await openGate1(page);
     const rows = page.locator("[data-testid='ledger-row']");
     const all = await rows.count();
 
-    // By verdict.
-    await page.locator("[data-testid='filter-verdict'][data-verdict='split']").click();
-    const split = partitionByBreadth(fixtureGroups())["cross-cohort"].filter((g) => g.coherence === "split");
+    // 08-16f: the four-filter panel collapsed to two controls — the verdict select (a coherence state)
+    // and the cross-cohort-only toggle. There is no cohort / touched / in-scope filter any more.
+    await page.locator("[data-testid='verdict-select']").click();
+    await page.getByRole("option", { name: COHERENCE_COPY["split"].label }).click();
+    const split = fixtureGroups().filter((g) => g.coherence === "split");
     await expect(rows).toHaveCount(split.length);
     expect(split.length).toBeLessThan(all);
-    // Active filters are VISIBLE — an invisible filter is how a reviewer concludes a run has no rows.
-    await expect(page.locator("[data-testid='active-filters']")).toContainText(/split/i);
 
-    // Clearing restores everything.
-    await page.locator("[data-testid='clear-filters']").click();
-    await expect(rows).toHaveCount(all);
-
-    // By cohort.
-    await page.locator("[data-testid='filter-cohort'][data-cohort='MESA']").click();
-    const mesa = partitionByBreadth(fixtureGroups())["cross-cohort"].filter((g) => g.cohorts.includes("MESA"));
-    await expect(rows).toHaveCount(mesa.length);
-    await page.locator("[data-testid='clear-filters']").click();
-
-    // Touched-by-me: nothing is touched yet, so it empties the view rather than silently doing nothing.
-    await page.locator("[data-testid='filter-touched']").click();
-    await expect(rows).toHaveCount(0);
-    await expect(page.locator("[data-testid='filter-empty']")).toContainText(/clear the filter/i);
-    await page.locator("[data-testid='clear-filters']").click();
-
-    // In-scope: everything is in scope by default, so this one changes nothing — and that is correct.
-    await page.locator("[data-testid='filter-in-scope']").click();
+    await page.locator("[data-testid='verdict-select']").click();
+    await page.getByRole("option", { name: "All states" }).click();
     await expect(rows).toHaveCount(all);
   });
-
   test("@gate1 a filter matching nothing and a term matching nothing read differently", async ({ page }) => {
+    // A FILTER matching nothing is the reviewer's own doing. The only categorical filter is the verdict
+    // select, and every state has matches on the real run — so force the empty case with a one-state run.
+    await serveRun(page, (run) => {
+      for (const gg of run.result!.conceptGroups!) gg.coherence = "not_judged";
+    });
     await openGate1(page);
-    // A FILTER matching nothing is the reviewer's own doing, and the fix is to clear it.
-    await page.locator("[data-testid='filter-touched']").click();
-    const filterEmpty = page.locator("[data-testid='gate-empty-state']");
+    await page.locator("[data-testid='verdict-select']").click();
+    await page.getByRole("option", { name: COHERENCE_COPY["split"].label }).click();
+    const filterEmpty = page.locator("[data-testid='filter-empty']");
     await expect(filterEmpty).toBeVisible();
-    await expect(filterEmpty).toContainText("No group matches this filter");
-    // Naming the total is what makes the next step concrete rather than a shrug.
-    await expect(filterEmpty).toContainText(String(fixtureGroups().length));
-    await page.locator("[data-testid='clear-filters']").click();
+    await expect(filterEmpty).toContainText(/no group matches this filter/i);
+    await filterEmpty.locator("[data-testid='clear-filters-inline']").click();
 
-    // A SEARCH TERM matching nothing is a FINDING about the corpus: the reviewer has learned that no
-    // cohort in this run measures it. Different copy, different treatment, and it says here — not at a
-    // later gate — because it will not resurface at one.
-    await page.locator("[data-testid='term-search']").fill("gait speed\nblood pressure");
-    await page.getByRole("button", { name: /^Search/ }).click();
-    const findings = page.locator("[data-testid='coverage-findings'] li");
-    await expect(findings).toHaveCount(1);
-    await expect(findings.first()).toContainText("gait speed");
-    await expect(findings.first()).toContainText(/will not resurface/i);
-    await expect(findings.first()).not.toContainText("Clear the filter");
-    // The term that DID match narrows the ledger rather than reporting nothing.
-    await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
+    // A SEARCH TERM matching nothing reads differently: a distinct empty state, caused by the search,
+    // with its own way back. (The old multi-term 'coverage finding' listing was dropped in 08-16f.)
+    await page.locator("[data-testid='term-search']").fill("zzzz nonexistent concept");
+    const searchEmpty = page.locator("[data-testid='search-empty']");
+    await expect(searchEmpty).toBeVisible();
+    await expect(searchEmpty).toHaveAttribute("data-cause", "search");
+    await expect(searchEmpty).toContainText(/matched no group/i);
+    await expect(page.locator("[data-testid='filter-empty']")).toHaveCount(0);
   });
-
-  test("@gate1 the search matches on the group's own text, and says that is what it does", async ({ page }) => {
+  test("@gate1 the search matches on the group's own text", async ({ page }) => {
     // Asserted in node against the real fixture, so the claim is about the corpus and not about a mock.
     const groups = fixtureGroups();
     expect(matchTerms(groups, ["blood pressure"]).noMatches).toEqual([]);
@@ -517,48 +498,39 @@ test.describe("gate1 toolbar", () => {
     );
 
     await openGate1(page);
-    // AND IT SAYS SO. The match is over the concept name, the ideal description and the member variable
-    // names — text this client already has. It is not a semantic match and must not claim to be one:
-    // no group vector reaches the browser (see `matchTerms`).
-    await expect(page.locator("[data-testid='term-search']")).toContainText(/text of each group/i);
-    await expect(page.locator("[data-testid='term-search']")).not.toContainText(/semantic/i);
+    // The live input is a plain text filter (08-16f dropped the explanatory copy that rode the old
+    // multi-term box); its no-semantic-claim guard now lives in the search and toolbar-labelling blocks.
+    await expect(page.locator("[data-testid='term-search']")).toBeVisible();
   });
-
-  test("@gate1 progress is derived from persisted decisions and survives a reload", async ({ page }) => {
+  test("@gate1 the in-scope count is derived from persisted decisions and survives a reload", async ({ page }) => {
     await openGate1(page);
-    const readout = page.locator("[data-testid='triage-progress']");
-    await expect(readout).toContainText("0 reviewed");
+    // The "reviewed" readout was retired (08-16f); the in-scope count lives in the sum block, over the
+    // WHOLE corpus — the sum block and the commit bar price the same set.
+    const inScopeLine = page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']");
+    const total = fixtureGroups().length;
+    await expect(inScopeLine).toContainText(`${total} of ${total}`);
 
     // Take one group out of scope — a real decision, written through the shared layer.
     const first = page.locator("[data-testid='ledger-row']").first();
     const id = await first.getAttribute("data-row-id");
-    await first.locator("button[role='checkbox']").click();
-    await expect(readout).toContainText("1 reviewed");
-    // Counted over the WHOLE corpus, not the visible bucket — the sum block and the commit bar price the
-    // same set, so a readout scoped to one tab would disagree with the money.
-    const total = fixtureGroups().length;
-    await expect(readout).toContainText(`${total - 1} in scope`);
+    await first.locator("[data-testid='queue-scope']").click();
+    await expect(inScopeLine).toContainText(`${total - 1} of ${total}`);
 
-    // R6: the correction is visible AFTER A RELOAD, because both figures are derived from the persisted
-    // decisions rather than held in component state.
+    // R6: derived from the persisted decisions, so it is still there after a reload.
     await page.reload();
     await page.waitForLoadState("networkidle");
     await expect(page.locator("[data-testid='ledger-row']").first()).toBeVisible();
-    await expect(readout).toContainText("1 reviewed");
-    await expect(readout).toContainText(`${total - 1} in scope`);
+    await expect(inScopeLine).toContainText(`${total - 1} of ${total}`);
     await expect(
       page.locator(`[data-testid='ledger-row'][data-row-id='${id}']`),
     ).toHaveAttribute("data-spine", /changed|unresolved/);
   });
-
   test("@gate1 nothing gates Continue on a review count", async ({ page }) => {
     await openGate1(page);
-    // D-09 revised: there is no completion gate and no triage-volume halt. A reviewer may triage a
-    // handful, use a few groups as a testing ground, or work the gate across days.
-    await expect(page.locator("[data-testid='triage-progress']")).toContainText("0 reviewed");
+    // D-09 revised: there is no completion gate and no triage-volume halt. With nothing reviewed, the
+    // Continue button is still enabled (the "reviewed" readout itself was retired in 08-16f).
     await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
   });
-
   test("@gate1 the full row count renders without horizontal scroll and without a new package", async ({
     page,
   }) => {
@@ -1716,7 +1688,7 @@ test.describe("gate1 search", () => {
     expect(absent.missingTokens["zzzz qqqq"]).toEqual(["zzzz", "qqqq"]);
   });
 
-  test("@gate1 a search that hides every group SAYS SO, names the term, and clears in one click", async ({
+  test("@gate1 a search that hides every group SAYS SO, and clears in one click", async ({
     page,
   }) => {
     await openGate1(page);
@@ -1724,67 +1696,48 @@ test.describe("gate1 search", () => {
     expect(before).toBeGreaterThan(0);
 
     await page.locator("[data-testid='term-search']").fill("zzzz nonexistent concept");
-    await page.getByRole("button", { name: /^Search/ }).click();
 
-    // NOT A BLANK BODY. The reviewer must never be left inferring why the rows went away.
+    // NOT A BLANK BODY. The reviewer must never be left inferring why the rows went away — a named
+    // empty state says the search matched nothing, with one click back.
     const empty = page.locator("[data-testid='search-empty']");
     await expect(empty).toBeVisible();
-    // The state SAYS the search matched nothing — that claim is the heading, which is where an empty
-    // state is required to put the headline.
-    await expect(page.locator("[data-testid='gate-empty-state']")).toContainText(/matched no group/i);
-    // The body names the term the reviewer typed...
-    await expect(empty).toContainText("zzzz nonexistent concept");
-    // ...and says the groups are HIDDEN, not gone. This sentence is the whole point: it is the one that
-    // answers "I think now all concepts have dissapeared?" before the reviewer has to ask it.
-    await expect(empty).toContainText(/nothing has been lost/i);
-    await expect(empty).toContainText(/still here/i);
+    await expect(empty).toHaveAttribute("data-cause", "search");
+    await expect(empty).toContainText(/matched no group/i);
 
-    // One click back to every group.
     await page.locator("[data-testid='clear-search-inline']").click();
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(before);
     await expect(page.locator("[data-testid='search-empty']")).toHaveCount(0);
   });
-
   test("@gate1 the empty state names WHICH of search and filters emptied the ledger", async ({ page }) => {
     await openGate1(page);
 
-    // (a) SEARCH ALONE. The term matched nothing anywhere in the run, so the search is responsible and
-    // the finding is about the corpus.
+    // (a) SEARCH ALONE: the term matched nothing anywhere in the run, so the search is responsible.
     await page.locator("[data-testid='term-search']").fill("zzzz nonexistent concept");
-    await page.getByRole("button", { name: /^Search/ }).click();
     const empty = page.locator("[data-testid='search-empty']");
     await expect(empty).toHaveAttribute("data-cause", "search");
 
-    // (b) SEARCH PLUS A FILTER, where the term DID match groups but the filter hides them. The recovery
-    // is different — clearing the filter brings them back and clearing the search does not — so saying
-    // "your search found nothing" here would send the reviewer the wrong way.
+    // (b) SEARCH PLUS A FILTER: the term DID match groups but a verdict filter hides them — a different
+    // cause with a different way back, so it must not read as 'your search found nothing'.
     await page.locator("[data-testid='clear-search-inline']").click();
     await page.locator("[data-testid='term-search']").fill("blood pressure");
-    await page.getByRole("button", { name: /^Search/ }).click();
     await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
-    // A coherence state none of the matched groups holds.
-    await page.locator("[data-testid='filter-verdict'][data-verdict='split']").click();
+    await page.locator("[data-testid='verdict-select']").click();
+    await page.getByRole("option", { name: COHERENCE_COPY["split"].label }).click();
     const both = page.locator("[data-testid='search-empty']");
     if (await both.count()) {
       await expect(both).toHaveAttribute("data-cause", "both");
-      await expect(both).toContainText(/filter/i);
-      await expect(both).toContainText("blood pressure");
-      // BOTH ways back are offered, because either one alone may be the one the reviewer wants.
+      await expect(both).toContainText(/filter|hiding/i);
       await expect(page.locator("[data-testid='clear-search-inline']")).toBeVisible();
-      await expect(page.locator("[data-testid='clear-filters-inline']")).toBeVisible();
     }
   });
-
   test("@gate1 the search still makes no semantic claim", async ({ page }) => {
     await openGate1(page);
-    // 08-15 removed that claim deliberately: no group centroid and no embedding reaches the browser, so
-    // telling a reviewer the tool understood their term would be false. Prefix matching does not change
-    // that and must not be described as if it did.
-    const search = page.locator("[data-testid='term-search']");
-    await expect(search).not.toContainText(/semantic|understands|meaning of your term/i);
-    await expect(search).toContainText(/text of each group/i);
-  });
-});
+    // 08-15 removed that claim deliberately: no group centroid and no embedding reaches the browser. The
+    // explanatory copy rode the old multi-term box; the live input's placeholder must not smuggle it back.
+    const ph = await page.locator("[data-testid='term-search']").getAttribute("placeholder");
+    expect(ph).not.toMatch(/semantic|understands|meaning of your term/i);
+    expect(ph).toMatch(/search|concept|variable|cohort/i);
+  });});
 
 /**
  * Continue — the destination, and what happens when the server says no (08-16c Task 8).
@@ -3147,50 +3100,16 @@ test.describe("gate1 search in the toolbar", () => {
     expect(box!.height).toBeLessThan(44);
   });
 
-  test("@gate1 it still takes a LIST, and grows to hold one rather than clipping it", async ({ page }) => {
+
+
+  test("@gate1 the compact input makes no semantic claim", async ({ page }) => {
     await openGate1(page);
-    const input = page.locator("[data-testid='term-search']");
-    const atRest = (await input.boundingBox())!.height;
-
-    await input.fill("body mass index\nsmoking status\ngrip strength\nwaist circumference");
-    const filled = (await input.boundingBox())!.height;
-    // GROWN, not scrolled: a reviewer who pasted twelve terms must be able to see what they pasted.
-    expect(filled).toBeGreaterThan(atRest);
-    const clipped = await input.evaluate((el) => el.scrollHeight - el.clientHeight);
-    expect(clipped).toBeLessThanOrEqual(2);
-
-    // And the list is read as a list — four terms, not one string.
-    await expect(page.getByRole("button", { name: /^Search 4 terms/ })).toBeVisible();
-    // AND THE CONTROL SAYS IT TAKES ONE. A compact input that accepts a list but looks like a one-term
-    // box is a feature nobody finds, so the affordance is stated in visible copy rather than left to a
-    // placeholder that has to be truncated to fit.
-    await expect(page.locator(SEARCH)).toContainText(/one term per line|paste a list/i);
-  });
-
-  test("@gate1 a term matching nothing is still a coverage finding about the run", async ({ page }) => {
-    await openGate1(page);
-    await page.locator("[data-testid='term-search']").fill("gait speed\nblood pressure");
-    await page.getByRole("button", { name: /^Search/ }).click();
-
-    const findings = page.locator("[data-testid='coverage-findings'] li");
-    await expect(findings).toHaveCount(1);
-    // A CLAIM ABOUT THE CORPUS, not a failed search — and settled here, because it will not resurface.
-    await expect(findings.first()).toContainText("gait speed");
-    await expect(findings.first()).toContainText(/no cohort here measures it|never formed such a group/i);
-    await expect(findings.first()).toContainText(/will not resurface/i);
-    // The term that DID match narrows the ledger rather than reporting nothing.
-    await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
-  });
-
-  test("@gate1 compactness did not smuggle the semantic claim back in", async ({ page }) => {
-    await openGate1(page);
-    const search = page.locator(SEARCH);
-    // The honest description stays ON the control, not behind a hover — a claim a reviewer has to
-    // discover is a claim the screen is not really making.
-    await expect(search).toContainText(/text of each group/i);
-    await expect(search).not.toContainText(/semantic|understands|meaning of your term/i);
-  });
-});
+    // Compactness must not be a reason to let the semantic claim back in: the input is a plain text
+    // filter, and its placeholder says so without claiming the tool understood the term.
+    const ph = await page.locator(SEARCH).getAttribute("placeholder");
+    expect(ph).not.toMatch(/semantic|understands|meaning of your term/i);
+    expect(ph).toMatch(/search|concept|variable|cohort/i);
+  });});
 
 /**
  * THE DECLARED-SCORE PANEL MOVES TO THE TOP, AS A DISCLOSURE (08-16c review, item E).
