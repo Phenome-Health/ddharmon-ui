@@ -174,7 +174,7 @@ export function GateRail({
               // ON the navy bar. The per-gate cost stays — the mockup dropped it, but a reviewer standing
               // downstream of real spend needs the realized-vs-forecast split (UI-SPEC §7.1.3), so it is
               // kept and re-toned for the dark ground rather than removed.
-              isCurrent ? "bg-surface-accent text-on-accent shadow-card" : "text-on-chrome",
+              isCurrent ? "bg-surface-accent text-on-accent-surface shadow-card" : "text-on-chrome",
             )}
           >
             <Inner
@@ -187,7 +187,7 @@ export function GateRail({
             <span
               className={cn(
                 "flex items-center gap-1 text-xs font-semibold uppercase tracking-eyebrow",
-                isCurrent ? "text-on-accent" : isDone ? "text-on-chrome" : "text-on-chrome-muted",
+                isCurrent ? "text-on-accent-surface" : isDone ? "text-on-chrome" : "text-on-chrome-muted",
               )}
             >
               {isDone && <Check aria-hidden="true" className="h-3 w-3" />}
@@ -200,7 +200,7 @@ export function GateRail({
               className={cn(
                 "text-xs",
                 item.cost.kind === "realized" ? "font-semibold" : "font-normal",
-                isCurrent ? "text-on-accent" : "text-on-chrome-muted",
+                isCurrent ? "text-on-accent-surface" : "text-on-chrome-muted",
               )}
             >
               {item.cost.text}
