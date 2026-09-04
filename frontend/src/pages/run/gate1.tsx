@@ -129,7 +129,7 @@ function LargeGroupMark({ count }: { count: number }) {
     <span
       data-testid="large-group-mark"
       title={`${count} variables — a large group. These usually need at least one re-split before they resolve cleanly at Gate 2; a good candidate for "Accept this division" or an auto-refine pass before hand-editing.`}
-      className="inline-flex items-center gap-1 rounded-pill bg-surface-warn px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-on-warn"
+      className="inline-flex items-center gap-1 rounded-pill bg-surface-warn px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-warn"
     >
       <Scissors aria-hidden="true" className="h-3 w-3 shrink-0" />
       large
@@ -1531,7 +1531,7 @@ function QueueRow({
           {count >= BIG_GROUP_MIN && <LargeGroupMark count={count} />}
           <span className="flex flex-wrap gap-1">
             {group.cohorts.map((c) => (
-              <span key={c} className="rounded bg-surface-inset px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-on-inset-muted">
+              <span key={c} className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-inset-muted">
                 {c}
               </span>
             ))}
@@ -1565,7 +1565,7 @@ function QueueSortHeader({
     { k: "vars", label: "Vars" },
   ];
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-faint">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-faint">
       <span className="mr-auto">Sort</span>
       {cols.map((c) => (
         <button
@@ -1694,7 +1694,7 @@ function GroupDetail({
             Generated ideal CDE{" "}
             <span className="font-normal normal-case tracking-normal text-on-raised-faint">— from the original grouping</span>
             {stale && (
-              <span className="ml-2 rounded-pill border border-status-warn px-2 py-0.5 text-[10px] normal-case tracking-normal text-status-warn">
+              <span className="ml-2 rounded-pill border border-status-warn px-2 py-0.5 text-xs normal-case tracking-normal text-status-warn">
                 stale — membership changed
               </span>
             )}
