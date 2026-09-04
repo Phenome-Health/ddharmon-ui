@@ -132,12 +132,13 @@ test.describe("gate component vocabulary", () => {
 
   test("@gate-components the unjudged coherence state differs by FORM, not by dimness", () => {
     const src = read("CoherenceMark.tsx");
-    // A hollow DASHED marker…
-    expect(src).toMatch(/not_judged:\s*"border border-dashed/);
-    // …at the same muted colour as a judged label, and never the faint role or an opacity step. Rendering
-    // it dimmer reads as "less important, therefore fine", which is the prohibited misread.
-    expect(src).toMatch(/not_judged:\s*"text-on-raised-muted"/);
-    expect(src).not.toMatch(/not_judged[^\n]*(?:faint|opacity-)/);
+    // A hollow DASHED dot on the pill (08-16f made the mark a filled pill; not_judged keeps the hollow
+    // dashed dot), never a filled one…
+    expect(src).toContain('dot: "border border-dashed border-rule-control-on-raised bg-transparent"');
+    // …at a muted colour like the others, and never the faint role or an opacity step. Rendering it
+    // dimmer reads as "less important, therefore fine", which is the prohibited misread.
+    expect(src).toContain('text: "text-on-inset-muted"');
+    expect(src).not.toMatch(/not_judged:\s*\{[^}]*(?:faint|opacity-)/);
     // The copy that makes the state unmistakable must travel with it.
     expect(src).toContain("Silence from a judge that was never asked is not a pass.");
   });

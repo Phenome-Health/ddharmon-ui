@@ -56,7 +56,9 @@ test.describe("staged review", () => {
     await expect(
       page.locator("[data-testid='ledger-row']").first().locator("[data-label-source='generated']"),
     ).toBeVisible();
-    await expect(page.locator("[data-testid='ledger-row']").first()).toContainText("from cluster");
+    // Provenance ("from cluster") moved to the detail pane in the workbench (08-16f); the first group's
+    // detail is shown by default, so it is read there rather than on the queue row.
+    await expect(page.locator("[data-testid='gate1-detail']")).toContainText("from cluster");
 
     // A run rejoined at a gate says so, and its banner carries NO countdown: retention is indefinite
     // until the reviewer deletes the run, so a timer would be a threat the product never carries out.
