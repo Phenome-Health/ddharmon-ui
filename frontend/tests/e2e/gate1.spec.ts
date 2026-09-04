@@ -661,8 +661,7 @@ test.describe("gate1 expanded row", () => {
   test("@gate1 a single-member group's one chip is still draggable", async ({ page }) => {
     const singles = fixtureGroups().filter((g) => g.nMembers === 1);
     await openGate1(page);
-    // Single-member groups are single-cohort by construction, so they live in the other bucket.
-    await page.locator("[data-testid='bucket-switch']").click();
+    // Single-member groups are single-cohort — visible in the default all-groups view (08-16f: no bucket tabs).
     const row = await expandRow(page, singles[0].groupId);
     await expect(row.locator("[data-testid='member-row']")).toHaveCount(1);
     await expect(row.locator("[data-testid='member-row']")).toHaveAttribute("draggable", "true");
@@ -710,7 +709,6 @@ test.describe("gate1 expanded row", () => {
     // A one-member group, so one drag empties it.
     const single = fixtureGroups().filter((g) => g.nMembers === 1)[0];
     await openGate1(page);
-    await page.locator("[data-testid='bucket-switch']").click();
     const row = await expandRow(page, single.groupId);
     await row
       .locator("[data-testid='member-row']")
@@ -2409,8 +2407,13 @@ test.describe("gate1 unassigned pool", () => {
       run.result!.unassignedFields = LEFTOVERS;
     });
     await openGate1(page);
-    await expect(page.locator(POOL)).toHaveCount(1);
+    // MASTER-DETAIL (08-16f): the pool is one sidebar entry always, and one detail panel when opened.
+    const entry = page.locator("[data-testid='gate1-pool-entry']");
+    await expect(entry).toHaveCount(1);
     await expandRow(page, BIG);
+    await expect(entry).toHaveCount(1);
+    await expect(page.locator(POOL)).toHaveCount(0);
+    await expandPool(page);
     await expect(page.locator(POOL)).toHaveCount(1);
   });
 
@@ -2419,18 +2422,18 @@ test.describe("gate1 unassigned pool", () => {
       run.result!.unassignedFields = LEFTOVERS;
     });
     await openGate1(page);
+    // The move happens while the GROUP is selected (its pool door is in the group detail); only then do
+    // we open the pool — the detail pane shows a group OR the pool, never both (08-16f).
     const row = await expandRow(page, BIG);
-    await expandPool(page);
-
-    const fromPipeline = page.locator(
-      `${POOL} [data-testid='pool-pipeline'] :is([data-testid='member-row'],[data-testid='member-chip'])`,
-    );
-    await expect(fromPipeline).toHaveCount(2);
-
     const member = row.locator("[data-testid='member-row']").first();
     const memberId = await member.getAttribute("data-member-id");
     await member.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
 
+    await expandPool(page);
+    const fromPipeline = page.locator(
+      `${POOL} [data-testid='pool-pipeline'] :is([data-testid='member-row'],[data-testid='member-chip'])`,
+    );
+    await expect(fromPipeline).toHaveCount(2);
     const fromReviewer = page.locator(
       `${POOL} [data-testid='pool-reviewer'] :is([data-testid='member-row'],[data-testid='member-chip'])`,
     );
@@ -2474,11 +2477,8 @@ test.describe("gate1 unassigned pool", () => {
     const memberId = await member.getAttribute("data-member-id");
     await member.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
 
-    // Collapse the source and narrow the ledger, so the pool sits within a startable drag of a LEDGER ROW.
-    // The row is still a destination — that path is unchanged — and this is the one that needs the
-    // staging. Dragging onto the pool's OWN tray needs none of it; see "gate1 pool as a group".
-    await row.getByRole("button", { name: /^Collapse / }).click();
-    await page.locator("[data-testid='filter-verdict'][data-verdict='split']").click();
+    // The pool opens in the detail pane; the sidebar rows stay on screen beside it, so a pooled variable
+    // drags straight onto a LEDGER ROW with none of the old narrow-the-ledger staging (08-16f).
     await expandPool(page);
     await expect(page.locator(pooled(memberId!))).toHaveCount(1);
     const target = page.locator("[data-testid='ledger-row']").first();
@@ -2523,7 +2523,8 @@ test.describe("gate1 unassigned pool", () => {
 
     // It returned to the group it came from, and the pool no longer holds it.
     await expect(page.locator(pooled(memberId!))).toHaveCount(0);
-    await expect(row.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
+    const backInGroup = await expandRow(page, BIG);
+    await expect(backInGroup.locator(`[data-member-id='${memberId}']`).first()).toBeVisible();
     // A CLEARED decision, not a written one: the row is no longer marked as changed on its account.
     await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).not.toHaveAttribute(
       "data-spine",
@@ -2546,10 +2547,11 @@ test.describe("gate1 unassigned pool", () => {
       run.result!.unassignedFields = LEFTOVERS;
     });
     await openGate1(page);
-    await expect(page.locator(POOL)).toContainText("2");
+    // The count is on the sidebar pool entry, visible without opening it, and above the Continue bar.
+    await expect(page.locator("[data-testid='gate1-pool-entry']")).toContainText("2");
 
     const order = await page.evaluate(() => {
-      const p = document.querySelector("[data-testid='unassigned-pool']");
+      const p = document.querySelector("[data-testid='gate1-pool-entry']");
       const bar = document.querySelector("[data-testid='commit-bar']");
       if (!p || !bar) return "missing";
       return p.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING ? "before" : "after";
@@ -2562,9 +2564,8 @@ test.describe("gate1 unassigned pool", () => {
       run.result!.unassignedFields = LEFTOVERS;
     });
     await openGate1(page);
-    // CLOSED, deliberately: the copy that says what being in no group costs — and that it is reversible —
-    // is what the reviewer meets on the way to Continue, so it must not go behind the disclosure with
-    // the listing.
+    await expandPool(page);
+    // The copy that says what being in no group costs — and that it is reversible — is in the pool panel.
     const text = (await page.locator(POOL).innerText()).toLowerCase();
     expect(text).toMatch(/gate 2|assigned|matched/);
     expect(text).toMatch(/back|any group|put/);
@@ -2914,8 +2915,11 @@ test.describe("gate1 rename", () => {
   const BIGROW = `[data-testid='ledger-row'][data-row-id='${BIG}']`;
 
   async function rename(page: Page, to: string) {
-    await page.locator(`${BIGROW} [data-testid='rename-group']`).click();
-    const input = page.locator(`${BIGROW} [data-testid='rename-input']`);
+    // MASTER-DETAIL (08-16f): rename lives in the detail pane. Select the row, then edit there.
+    await page.locator(BIGROW).click();
+    const detail = page.locator("[data-testid='gate1-detail']");
+    await detail.locator("[data-testid='rename-group']").click();
+    const input = detail.getByRole("textbox", { name: "Rename group" });
     await expect(input).toBeVisible();
     await input.fill(to);
     await input.press("Enter");
@@ -2931,13 +2935,6 @@ test.describe("gate1 rename", () => {
     await openGate1(page);
     await rename(page, "My label");
     await expect(page.locator(`${BIGROW} [data-testid='renamed-mark']`)).toBeVisible();
-  });
-
-  test("@gate1 the pipeline's own name remains recoverable beside it", async ({ page }) => {
-    await openGate1(page);
-    const generated = fixtureGroups().find((g) => g.groupId === BIG)!.concept;
-    await rename(page, "My label");
-    await expect(page.locator(`${BIGROW} [data-testid='generated-name-kept']`)).toContainText(generated);
   });
 
   test("@gate1 a rename survives a reload — it is a decision, not component state", async ({ page }) => {
@@ -2963,7 +2960,6 @@ test.describe("gate1 rename", () => {
     await openGate1(page);
     await rename(page, "Zzyzx");
     await page.locator("[data-testid='term-search']").fill("Zzyzx");
-    await page.getByRole("button", { name: /^Search/ }).click();
     await expect(page.locator(BIGROW)).toBeVisible();
     expect(await page.locator("[data-testid='ledger-row']").count()).toBe(1);
   });
@@ -3183,10 +3179,11 @@ test.describe("gate1 pool as a group", () => {
     const member = row.locator("[data-testid='member-row']").first();
     const memberId = (await member.getAttribute("data-member-id"))!;
     await member.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
-    // The COLLAPSED pool does not render its listing, so the landing signal is the row's own spine —
-    // which is derived from the persisted decision and is exactly what the move wrote.
-    await expect(row).toHaveAttribute("data-spine", "changed");
-    await row.getByRole("button", { name: /^Collapse / }).click();
+    // The move wrote a persisted decision; the BIG sidebar row reflects it (the detail pane is `row`).
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`)).toHaveAttribute(
+      "data-spine",
+      "changed",
+    );
     return memberId;
   }
 
@@ -3196,32 +3193,16 @@ test.describe("gate1 pool as a group", () => {
     });
     await openGate1(page);
 
-    // COLLAPSED IS STILL A STATEMENT. The count is what a reviewer meets on the way to Continue, so it
-    // does not go behind the disclosure with the listing.
-    await expect(page.locator("[data-testid='pool-count']")).toHaveText("2");
-    await expect(page.locator(`${POOL} [data-testid='pool-body']`)).toHaveCount(0);
-
+    // The pool opens into the detail pane and its body is open there; its own toggle collapses the body
+    // while the count stays put (the count is what a reviewer meets on the way to Continue).
     await expandPool(page);
+    await expect(page.locator("[data-testid='pool-count']")).toHaveText("2");
     await expect(page.locator(`${POOL} [data-testid='pool-body']`)).toBeVisible();
     await page.getByRole("button", { name: /^Collapse the variables in no group/i }).click();
     await expect(page.locator(`${POOL} [data-testid='pool-body']`)).toHaveCount(0);
-  });
-
-  test("@gate1 an expanded pool offers the same destination tray an expanded group does", async ({ page }) => {
-    await serveRun(page, (run) => {
-      run.result!.unassignedFields = LEFTOVERS;
-    });
-    await openGate1(page);
-    await expandPool(page);
-
-    // The SAME component, so a drop into it is the same verb reached from a second place — never a second
-    // drag system that could drift from the first.
-    const tray = page.locator(`${POOL} [data-testid='destination-tray']`);
-    await expect(tray).toBeVisible();
-    await expect(tray.locator("[data-testid='destination-entry']").first()).toBeVisible();
-    // …and with the pool CLOSED it is not permanent chrome, exactly as the group tray is not.
-    await page.getByRole("button", { name: /^Collapse the variables in no group/i }).click();
-    await expect(page.locator(`${POOL} [data-testid='destination-tray']`)).toHaveCount(0);
+    await expect(page.locator("[data-testid='pool-count']")).toHaveText("2");
+    await page.getByRole("button", { name: /^Expand the variables in no group/i }).click();
+    await expect(page.locator(`${POOL} [data-testid='pool-body']`)).toBeVisible();
   });
 
   /**
@@ -3237,11 +3218,12 @@ test.describe("gate1 pool as a group", () => {
     const memberId = await removeOne(page);
     await expandPool(page);
 
-    const entry = page.locator(`${POOL} [data-testid='destination-tray'] [data-testid='member-drop-zone']`).first();
-    const targetId = await entry.getAttribute("data-group-id");
+    // The destinations are the sidebar rows now (08-16f); they stay on screen beside the pool detail.
+    const target = page.locator("[data-testid='ledger-row']").first();
+    const targetId = await target.getAttribute("data-row-id");
     expect(targetId).not.toBe(BIG); // a DIFFERENT group — "any group", not merely an undo
 
-    await page.locator(`${POOL} [data-member-id='${memberId}']`).first().dragTo(entry);
+    await page.locator(`${POOL} [data-member-id='${memberId}']`).first().dragTo(target);
 
     await expect(page.locator(`${POOL} [data-member-id='${memberId}']`)).toHaveCount(0);
     const receiving = await expandRow(page, targetId!);
