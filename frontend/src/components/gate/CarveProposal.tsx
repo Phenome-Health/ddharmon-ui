@@ -1,6 +1,21 @@
 import { Button } from "@/components/ui/button";
 import { NotAvailable } from "@/components/gate/NotAvailable";
+import { COHERENCE_COPY } from "@/components/gate/CoherenceMark";
 import { cn } from "@/lib/utils";
+import type { CoherenceState } from "@/types";
+
+/**
+ * The finding block's tint, keyed on the judge's state (Bhargav, on the mockup: show the split KINDS and
+ * the qualify axis, and colour them the mockup's way). `split` is amber — a real over-merge to resolve;
+ * `qualify` is blue — an advisory modifier, not a defect. The other two states never reach this component
+ * (only flagged groups do), but are mapped so the record is total.
+ */
+const FINDING_STYLE: Record<CoherenceState, { border: string; surface: string; ink: string }> = {
+  split: { border: "border-l-status-warn", surface: "bg-surface-warn", ink: "text-on-warn" },
+  qualify: { border: "border-l-status-info", surface: "bg-surface-info", ink: "text-on-info" },
+  single: { border: "border-l-status-ok", surface: "bg-surface-ok", ink: "text-on-ok" },
+  not_judged: { border: "border-l-rule-on-inset", surface: "bg-surface-inset", ink: "text-on-inset-muted" },
+};
 
 /**
  * The judge's proposed division of an over-merged group — a PROPOSAL, never an action already taken.
@@ -22,6 +37,15 @@ import { cn } from "@/lib/utils";
  */
 
 export interface CarveProposalProps {
+  /** The judge's state for this group — `split` (amber) or `qualify` (blue). Sets the finding's tint and label. */
+  state: CoherenceState;
+  /**
+   * ADVISORY mode (qualify): render the finding — eyebrow, theme sentence, axis, KIND pills — but NONE of
+   * the split machinery: no "nothing has been changed" truth-claim, no price, no accept/edit/ignore. A
+   * `qualify` is one concept with a modifier, advisory not a defect (`isFlagged` excludes it), so there is
+   * no proposed division to accept — only the judge's read to show. Off by default: a `split` is a proposal.
+   */
+  advisory?: boolean;
   /**
    * The judge's proposed sub-concepts, in the order it proposed them.
    *
@@ -56,6 +80,8 @@ export interface CarveProposalProps {
 }
 
 export function CarveProposal({
+  state,
+  advisory = false,
   subConcepts,
   axis,
   summary,
@@ -78,81 +104,77 @@ export function CarveProposal({
    * row when it has been BORROWED as the group's label (Task 1), so on a group that has a generated name
    * this is the only place it appears at all.
    */
-  const rationale = [axis, summary].filter(Boolean).join(" — ");
+  const style = FINDING_STYLE[state];
+  const label = COHERENCE_COPY[state].label;
   return (
     <section
       data-testid="carve-proposal"
-      aria-label="Proposed division of this group"
+      data-coherence={state}
+      aria-label={`Coherence finding — ${label}`}
       className={cn(
-        // An amber LEFT RULE, not an amber fill: the proposal is an unresolved judgment, and the row's
-        // spine already says so — a second full amber surface inside it would double the alarm.
-        "flex flex-col gap-3 rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-6 py-4",
+        // A LEFT RULE + soft tint keyed on the judge's STATE, not one amber for both: split is an
+        // over-merge to resolve (amber), qualify an advisory modifier (blue). The row's spine already
+        // carries the alarm, so this is a tint, not a full surface.
+        "flex flex-col gap-3 rounded-inner border-l-4 px-6 py-4",
+        style.border,
+        style.surface,
         className,
       )}
     >
-      <div className="flex flex-col gap-1">
-        {/*
-          A CLAIM, A RATIONALE, AND THE STATE — in that order, one line each (08-16c review).
-
-          Bhargav: *"this box is heavy handed. re-write along the lines of 'LLM judgement proposes
-          splitting this group' / 'rationale: ____'."* It had spent three sentences saying what the three
-          buttons underneath already say: "Accept it, edit it by moving variables yourself, or ignore it"
-          is a caption for controls the reviewer can read.
-
-          WHAT DID NOT GO IS "NOTHING HAS BEEN CHANGED". That is not decoration — it is a truth claim
-          about the state of the run, and it is the whole reason this box is safe to ignore. The pipeline
-          FLAGS and never re-groups, so the amber panel has to say, in its own words, that it has not
-          already done the thing it is proposing.
-
-          THE PROPOSER IS STILL "THE COHERENCE JUDGE" rather than the "LLM judgement" of Bhargav's
-          sketch, and that is the one place this departs from his wording. It is the name the Coherence
-          column, the four filter chips, `COHERENCE_COPY` and the borrowed-label pill all already use for
-          this one component; a second name for it here is exactly what 08-14h's "written ONCE" test
-          exists to prevent. The shape he asked for — a claim naming the proposer, then a labelled
-          rationale — is what is built.
-        */}
-        <h4 className="text-sm font-semibold text-on-warn">The coherence judge proposes splitting this group</h4>
-        {rationale && (
-          <p className="max-w-[68ch] text-xs text-on-warn">
-            <span className="font-semibold">Rationale:</span> {rationale}
+      <div className="flex flex-col gap-1.5">
+        {/* THE EYEBROW + THE JUDGE'S OWN THEME SENTENCE + THE AXIS — the mockup's clean finding, not the
+            old heavy proposal box. The proposer stays "the coherence judge" (via COHERENCE_COPY's label),
+            the one name the column, the filter and the borrowed-label pill also use. */}
+        <p className={cn("text-xs font-bold uppercase tracking-eyebrow", style.ink)}>Coherence finding — {label}</p>
+        {summary && <p className={cn("max-w-[68ch] text-sm font-medium", style.ink)}>{summary}</p>}
+        {axis && (
+          <p className={cn("text-xs", style.ink)}>
+            Axis of difference: <span className="font-semibold">{axis}</span>
           </p>
         )}
-        <p data-testid="carve-unapplied" className="max-w-[68ch] text-xs text-on-warn">
-          Nothing has been changed — this is a proposal.
-        </p>
       </div>
 
+      {/* THE DISTINCT VALUES AS PILLS (mockup parity) — the KINDS the judge read the group as spanning. A
+          count is never invented beside them: core does not attribute members to values (see props). */}
       {subConcepts.length > 0 ? (
-        <ul className="flex flex-col gap-2">
+        <div className="flex flex-wrap gap-2">
           {subConcepts.map((sub) => (
-            <li key={sub.id} className="flex flex-col gap-1 rounded-inner bg-surface-raised px-3 py-2">
-              <span className="text-sm font-semibold text-on-raised">{sub.label}</span>
-              {sub.memberIds && (
-                <span className="font-mono text-xs tabular-nums text-on-raised-muted">
-                  {sub.memberIds.length} {sub.memberIds.length === 1 ? "variable" : "variables"}
-                </span>
-              )}
-            </li>
+            <span
+              key={sub.id}
+              className="rounded-pill border border-rule-on-raised bg-surface-raised px-2.5 py-0.5 text-xs font-semibold text-on-raised"
+            >
+              {sub.label}
+            </span>
           ))}
-        </ul>
-      ) : (
+        </div>
+      ) : advisory ? null : (
         /* THE JUDGE FLAGGED THE FUSION WITHOUT NAMING THE DIVISION. Said plainly rather than papered over:
            an invented sub-concept list would be the screen fabricating the very finding it is asking the
            reviewer to check. Accepting still works — the division is computed by the re-split itself. */
-        <p data-testid="carve-no-division" className="max-w-[68ch] text-xs text-on-warn">
+        <p data-testid="carve-no-division" className={cn("max-w-[68ch] text-xs", style.ink)}>
           It did not name the sub-concepts it would divide this into. Accepting works out the division as
           part of the re-split; editing by hand lets you decide it yourself.
         </p>
       )}
 
+      {/* THE TRUTH CLAIM (split only): the pipeline FLAGS and never re-groups, so the panel says, in its
+          own words, that it has not already done what it proposes. A qualify is advisory — nothing is
+          proposed, so there is nothing to un-apply. */}
+      {!advisory && (
+        <p data-testid="carve-unapplied" className={cn("max-w-[68ch] text-xs", style.ink)}>
+          Nothing has been changed — this is a proposal.
+        </p>
+      )}
+
       {/* PRICED INLINE, BEFORE IT RUNS, NEVER BEHIND A MODAL — the same register as the commit bar's
           irreversible-spend statement. A modal on a paid action trains the reviewer to dismiss it. */}
-      {readjudicationEnabled && acceptPrice && (
-        <p data-testid="carve-price" className="max-w-[68ch] text-xs font-semibold text-on-warn">
+      {!advisory && readjudicationEnabled && acceptPrice && (
+        <p data-testid="carve-price" className={cn("max-w-[68ch] text-xs font-semibold", style.ink)}>
           {acceptPrice}
         </p>
       )}
 
+      {!advisory && (
       <div className="flex flex-wrap items-center gap-2">
         {readjudicationEnabled ? (
           <Button
@@ -182,6 +204,7 @@ export function CarveProposal({
           Ignore the proposal
         </Button>
       </div>
+      )}
     </section>
   );
 }

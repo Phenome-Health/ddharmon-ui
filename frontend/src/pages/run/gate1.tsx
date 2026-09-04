@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ChevronDown, Grid3x3, Pencil, Quote, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Grid3x3, Pencil, Quote, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -21,7 +21,6 @@ import { MEMBER_DRAG_TYPE, MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } fro
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
-import { TermSearch } from "@/components/gate/TermSearch";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
@@ -1133,6 +1132,79 @@ function ExpandedGroup({
         </div>
       ) : null}
 
+      {/* THE COHERENCE JUDGEMENT — ABOVE the evidence rows (mockup parity). For a flagged group this is the
+          judge's carve proposal with its accept / edit / ignore action; for the rest it is the judge's read,
+          stated plainly so an unjudged group never reads as one the judge approved. */}
+      {isFlagged(group) && !ignored && (
+        <div className="flex flex-col gap-2">
+          <CarveProposal
+            state={group.coherence}
+            subConcepts={group.coherenceDistinctValues.map((label, i) => ({
+              id: `${group.groupId}#sub${i}`,
+              label,
+            }))}
+            axis={group.coherenceAxis || undefined}
+            summary={group.coherenceSummary || undefined}
+            readjudicationEnabled={refusal === null}
+            notAvailable={
+              refusal && (
+                <NotAvailable thing="Accepting the division" claim={refusal.claim} className="bg-surface-raised">
+                  {refusal.reason}
+                </NotAvailable>
+              )
+            }
+            acceptPrice={carvePrice}
+            accepting={accepting}
+            acceptGroupIds={readjudicationRequest(group.groupId).groupIds}
+            onAccept={onAcceptCarve}
+            onIgnore={() => {
+              setIgnored(true);
+              onIgnoreCarve();
+            }}
+          />
+        </div>
+      )}
+      {isFlagged(group) && ignored && (
+        <p className="text-sm text-on-raised-muted">
+          Proposal ignored — the grouping is unchanged. The judge&rsquo;s flag stays on the row, because
+          ignoring a proposal is not the same as resolving what it was about.
+        </p>
+      )}
+      {/* QUALIFY is advisory, not flagged — so it never reached CarveProposal and its axis/KINDS went
+          unshown (the gap Bhargav caught). It gets the SAME finding block, in advisory mode: the blue
+          eyebrow, the theme sentence, the "Axis of difference" line and the KIND pills, but none of the
+          split's accept/edit/ignore machinery, because there is no proposed division to act on. */}
+      {!isFlagged(group) && group.coherence === "qualify" && (
+        <CarveProposal
+          state={group.coherence}
+          advisory
+          subConcepts={group.coherenceDistinctValues.map((label, i) => ({
+            id: `${group.groupId}#sub${i}`,
+            label,
+          }))}
+          axis={group.coherenceAxis || undefined}
+          summary={group.coherenceSummary || undefined}
+          readjudicationEnabled={false}
+        />
+      )}
+      {!isFlagged(group) && group.coherence === "not_judged" && (
+        <div data-testid="coherence-finding" className="rounded-inner border-l-4 border-l-rule-on-inset bg-surface-inset px-4 py-3">
+          <p className="text-sm font-semibold text-on-inset">Not judged</p>
+          <p className="mt-0.5 max-w-[80ch] text-sm text-on-inset-muted">
+            Groups under six variables are not sent to the coherence judge — silence here is &ldquo;not
+            asked&rdquo;, not &ldquo;passed&rdquo;.
+          </p>
+        </div>
+      )}
+      {!isFlagged(group) && group.coherence === "single" && (
+        <div data-testid="coherence-finding" className="rounded-inner border-l-4 border-l-status-ok bg-surface-ok px-4 py-3">
+          <p className="text-sm font-semibold text-on-ok">Checked</p>
+          <p className="mt-0.5 max-w-[80ch] text-sm text-on-ok">
+            The judge read this group&rsquo;s variables together and found a single coherent concept.
+          </p>
+        </div>
+      )}
+
       {/*
         THE TILE STRIP IS NOW A FALLBACK, NOT THE PRIMARY VIEW (08-14h Task 5).
 
@@ -1236,42 +1308,8 @@ function ExpandedGroup({
         }
       />
 
-      {/* The carve proposal, ONLY where the judge flagged an over-merge. The pipeline flags and never
-          re-groups, so nothing here is applied until the reviewer acts. */}
-      {isFlagged(group) && !ignored && (
-        <div className="flex flex-col gap-2">
-          <CarveProposal
-            subConcepts={group.coherenceDistinctValues.map((label, i) => ({
-              id: `${group.groupId}#sub${i}`,
-              label,
-            }))}
-            axis={group.coherenceAxis || undefined}
-            summary={group.coherenceSummary || undefined}
-            readjudicationEnabled={refusal === null}
-            notAvailable={
-              refusal && (
-                <NotAvailable thing="Accepting the division" claim={refusal.claim} className="bg-surface-raised">
-                  {refusal.reason}
-                </NotAvailable>
-              )
-            }
-            acceptPrice={carvePrice}
-            accepting={accepting}
-            acceptGroupIds={readjudicationRequest(group.groupId).groupIds}
-            onAccept={onAcceptCarve}
-            onIgnore={() => {
-              setIgnored(true);
-              onIgnoreCarve();
-            }}
-          />
-        </div>
-      )}
-      {isFlagged(group) && ignored && (
-        <p className="text-sm text-on-raised-muted">
-          Proposal ignored — the grouping is unchanged. The judge&rsquo;s flag stays on the row, because
-          ignoring a proposal is not the same as resolving what it was about.
-        </p>
-      )}
+      {/* The coherence finding used to render HERE, below the rows; it now leads the pane (above the rows),
+          see the CoherenceFinding block near the top of this column. */}
       </div>
       {showTray && (
         <DestinationTray
@@ -1417,7 +1455,7 @@ function QueueRow({
         "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 border-l-4 px-4 py-2.5 text-left",
         isFlagged(group) ? "border-l-status-warn" : changed ? "border-l-accent-action" : "border-l-transparent",
         selected ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]" : "hover:bg-surface-inset",
-        over && "ring-2 ring-inset ring-rule-info",
+        over && "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
       )}
     >
       <div className="mt-0.5" onClick={(e) => e.stopPropagation()}>
@@ -1431,7 +1469,7 @@ function QueueRow({
       </div>
       <div className="min-w-0">
         <div
-          className={cn("line-clamp-2 text-[13px] font-medium leading-snug", selected ? "text-accent-on-raised" : "text-on-raised")}
+          className={cn("line-clamp-2 text-sm font-semibold leading-snug", selected ? "text-accent-on-raised" : "text-on-raised")}
           title={label.text}
         >
           <span data-label-source={label.source}>{label.text}</span>
@@ -1444,7 +1482,7 @@ function QueueRow({
           {group.coherence === "not_judged" && group.matrixSuspect && <TemplateSuspicion />}
           <span className="flex flex-wrap gap-1">
             {group.cohorts.map((c) => (
-              <span key={c} className="rounded bg-surface-inset px-1 text-[9px] font-semibold uppercase tracking-wide text-on-inset-muted">
+              <span key={c} className="rounded bg-surface-inset px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-on-inset-muted">
                 {c}
               </span>
             ))}
@@ -1553,10 +1591,10 @@ function GroupDetail({
                   setEditing(false);
                 }}
                 aria-label="Rename group"
-                className="min-w-[18rem] rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-lg font-semibold text-on-raised"
+                className="min-w-[18rem] rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-xl font-semibold text-on-raised"
               />
             ) : (
-              <h2 className="text-lg font-semibold leading-tight text-on-raised" title={label.text}>
+              <h2 className="text-xl font-semibold leading-tight text-on-raised" title={label.text}>
                 {label.text}
               </h2>
             )}
@@ -1596,6 +1634,11 @@ function GroupDetail({
         </label>
       </div>
 
+      {/* THE COHERENCE FINDING SITS ABOVE THE ROWS AND THE GENERATED IDEAL BELOW THEM (mockup parity): the
+          judge's read frames the evidence you are about to scan, and the ideal — a pre-split artefact — is
+          demoted beneath it. `children` (the ExpandedGroup) leads with the finding and carries the rows. */}
+      {children}
+
       {group.idealCde && (
         <details className="rounded-inner border border-rule-on-raised" open={stale}>
           <summary className="cursor-pointer px-4 py-2.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
@@ -1619,7 +1662,14 @@ function GroupDetail({
         </details>
       )}
 
-      {children}
+      {/* SAME FRAME, LATER GATES (mockup parity). The queue on the left and this detail pane are the shell
+          every gate reuses; naming what slots in here next is the mockup's own note, kept verbatim in tone. */}
+      <div className="rounded-inner border border-dashed border-rule-on-raised bg-surface-inset px-4 py-3 text-xs text-on-inset-muted">
+        <span className="font-semibold text-on-inset">Same layout, later gates:</span> Gate 2 slots a ranked
+        CDE-candidate panel into this pane (score · collection · endorsement · select) plus the cosine to the
+        chosen element; Gate 3 adds a transform spec per source row. The left queue and this detail frame do
+        not change.
+      </div>
     </div>
   );
 }
@@ -1647,6 +1697,8 @@ export default function Gate1Page() {
   const [filters, setFilters] = useState<LedgerFilters>(NO_FILTERS);
   /** The terms the reviewer last searched. `null` means they have not searched — not "searched and got 0". */
   const [terms, setTerms] = useState<string[] | null>(null);
+  /** The live search text — filters the queue AS THE REVIEWER TYPES (mockup parity), driving `terms`. */
+  const [query, setQuery] = useState("");
 
   const groups: ConceptGroup[] = useMemo(
     () => jobState?.result?.conceptGroups ?? [],
@@ -1856,6 +1908,17 @@ export default function Gate1Page() {
         alternatives: [...new Set([from, UNASSIGNED_GROUP_ID, toGroupId].filter(Boolean))],
       },
     );
+    // Confirm the move (mockup parity) — a drag has no other acknowledgement, and a member that lands in a
+    // collapsed group off-screen is otherwise a change with no visible consequence.
+    const { variable } = memberParts(memberId, fieldIndex);
+    const destGroup = groups.find((g) => g.groupId === toGroupId);
+    const dest =
+      toGroupId === UNASSIGNED_GROUP_ID
+        ? "In no group"
+        : destGroup
+          ? groupLabel(destGroup, renamedOf(toGroupId)).text
+          : "another group";
+    toast.success(`Moved ${variable} → ${dest.length > 44 ? dest.slice(0, 44) + "…" : dest}`);
   }
 
   /**
@@ -2278,13 +2341,22 @@ export default function Gate1Page() {
             <div className="px-4">
               <LedgerToolbar
                 search={
-                  <TermSearch
-                    onSearch={(next) => setTerms(next.length > 0 ? next : null)}
-                    noMatches={search?.noMatches ?? []}
-                    missingTokens={search?.missingTokens ?? {}}
+                  <input
+                    type="search"
+                    data-testid="term-search"
+                    value={query}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setQuery(v);
+                      setTerms(v.trim() ? [v.trim()] : null);
+                    }}
+                    placeholder="Search concept, variable, cohort…"
+                    aria-label="Filter concept groups"
+                    className="h-8 min-w-[11rem] flex-1 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2.5 text-sm text-on-raised placeholder:text-on-raised-faint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   />
                 }
                 count={visible.length}
+                total={groups.length}
                 crossCohortOnly={xcOnly}
                 onCrossCohortOnlyChange={setXcOnly}
                 verdict={(filters.verdicts[0] ?? "all") as CoherenceState | "all"}
@@ -2407,13 +2479,26 @@ export default function Gate1Page() {
                     }
               }
               className={cn(
-                "flex items-center justify-between gap-2 border-t border-rule-on-raised px-4 pt-3 text-left text-xs font-semibold uppercase tracking-eyebrow",
-                poolSelected ? "text-accent-on-raised" : "text-on-raised-muted hover:text-accent-on-raised",
-                poolOver && "ring-2 ring-inset ring-rule-info",
+                // A CARD, not a section label (Bhargav: "not clear this is clickable"). It reads as a
+                // control — bordered, hover-fills, a chevron that says "opens a view" — and its dual role
+                // (click to review / drop to unassign) is spelled out on the second line rather than guessed.
+                "mx-4 mt-2 flex flex-col gap-0.5 rounded-inner border px-3 py-2.5 text-left transition-colors",
+                poolSelected
+                  ? "border-rule-info bg-surface-info text-accent-on-raised"
+                  : "border-rule-on-raised bg-surface-inset text-on-raised hover:border-rule-info hover:bg-surface-info",
+                poolOver && "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
               )}
             >
-              <span>In no group</span>
-              <span className="font-mono tabular-nums">{poolCount}</span>
+              <span className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold uppercase tracking-eyebrow">In no group</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="font-mono text-sm font-semibold tabular-nums">{poolCount}</span>
+                  <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 opacity-70" />
+                </span>
+              </span>
+              <span className="text-xs font-normal normal-case tracking-normal text-on-raised-muted">
+                Click to review · or drop a variable here
+              </span>
             </button>
             <div className="px-4">
               <SumBlock

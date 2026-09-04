@@ -49,34 +49,46 @@ export const COHERENCE_COPY: Record<CoherenceState, { label: string; explain: st
   },
 };
 
-/** Marker shape and colour per state. `not_judged` shares the muted colour and adds a dashed ring. */
-const MARKER: Record<CoherenceState, string> = {
-  split: "bg-status-warn",
-  qualify: "bg-status-warn",
-  single: "bg-status-ok",
-  // Hollow AND dashed, at the same colour as the label. Form, not dimness.
-  not_judged: "border border-dashed border-rule-control-on-raised bg-transparent",
-};
-
-const LABEL_TONE: Record<CoherenceState, string> = {
-  split: "text-on-warn",
-  qualify: "text-on-warn",
-  single: "text-on-ok",
-  not_judged: "text-on-raised-muted",
+/**
+ * A FILLED, STATE-TINTED PILL (Bhargav, on the mockup: "I prefer the styling of the judgement verdict").
+ *
+ * Each state gets a soft-tinted pill + a coloured dot, the way the mockup badges read, rather than a bare
+ * dot beside muted text. `qualify` moves to the BLUE (info) register here — the mockup differentiates it
+ * from `split`'s amber (split is a real over-merge to resolve; qualify is an advisory modifier), and that
+ * distinction is exactly what the colour is carrying.
+ *
+ * `not_judged` STILL DIFFERS BY FORM, NOT DIMNESS: it takes the neutral pill but keeps the HOLLOW DASHED
+ * dot, so "the judge was never asked" never reads as a quiet pass.
+ */
+const PILL: Record<CoherenceState, { surface: string; text: string; dot: string }> = {
+  split: { surface: "bg-surface-warn", text: "text-on-warn", dot: "bg-status-warn" },
+  qualify: { surface: "bg-surface-info", text: "text-on-info", dot: "bg-status-info" },
+  single: { surface: "bg-surface-ok", text: "text-on-ok", dot: "bg-status-ok" },
+  not_judged: {
+    surface: "bg-surface-inset",
+    text: "text-on-inset-muted",
+    dot: "border border-dashed border-rule-control-on-raised bg-transparent",
+  },
 };
 
 export function CoherenceMark({ state, className }: { state: CoherenceState; className?: string }) {
   const copy = COHERENCE_COPY[state];
+  const pill = PILL[state];
   return (
     <span
       data-testid="coherence-mark"
       data-coherence={state}
       title={copy.explain}
-      className={cn("flex items-center gap-1 text-xs font-semibold", LABEL_TONE[state], className)}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-pill px-2 py-0.5 text-xs font-bold capitalize",
+        pill.surface,
+        pill.text,
+        className,
+      )}
     >
       {/* The marker is decorative: the state is already in the text beside it, so announcing the dot
           twice would only add noise for a screen reader. */}
-      <span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", MARKER[state])} />
+      <span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", pill.dot)} />
       {copy.label}
       <span className="sr-only">. {copy.explain}</span>
     </span>
