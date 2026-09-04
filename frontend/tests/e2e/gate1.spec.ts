@@ -508,7 +508,7 @@ test.describe("gate1 toolbar", () => {
     // A SEARCH TERM matching nothing is a FINDING about the corpus: the reviewer has learned that no
     // cohort in this run measures it. Different copy, different treatment, and it says here — not at a
     // later gate — because it will not resurface at one.
-    await page.locator("#term-search-input").fill("gait speed\nblood pressure");
+    await page.locator("[data-testid='term-search']").fill("gait speed\nblood pressure");
     await page.getByRole("button", { name: /^Search/ }).click();
     const findings = page.locator("[data-testid='coverage-findings'] li");
     await expect(findings).toHaveCount(1);
@@ -596,9 +596,11 @@ test.describe("gate1 toolbar", () => {
 async function expandRow(page: Page, groupId: string) {
   const row = page.locator(`[data-testid='ledger-row'][data-row-id='${groupId}']`);
   await expect(row).toBeVisible();
-  await row.locator("[data-state] >> nth=-1").first().waitFor({ state: "attached" });
-  await row.getByRole("button", { name: /^Expand /i }).click();
-  return row;
+  // MASTER-DETAIL (08-16f): selecting a queue row renders its depth in the detail pane, not inline.
+  await row.click();
+  const detail = page.locator("[data-testid='gate1-detail']");
+  await expect(detail).toBeVisible();
+  return detail;
 }
 
 /**
@@ -608,9 +610,10 @@ async function expandRow(page: Page, groupId: string) {
  * the gesture reaching into any other group takes.
  */
 async function expandPool(page: Page): Promise<void> {
-  const toggle = page.getByRole("button", { name: /^Expand the variables in no group/i });
-  await toggle.scrollIntoViewIfNeeded();
-  await toggle.click();
+  // The pool is a sidebar entry selected into the detail pane now (08-16f), not an inline chevron.
+  const entry = page.locator("[data-testid='gate1-pool-entry']");
+  await entry.scrollIntoViewIfNeeded();
+  await entry.click();
 }
 
 /**
@@ -1735,7 +1738,7 @@ test.describe("gate1 search", () => {
     const before = await page.locator("[data-testid='ledger-row']").count();
     expect(before).toBeGreaterThan(0);
 
-    await page.locator("#term-search-input").fill("zzzz nonexistent concept");
+    await page.locator("[data-testid='term-search']").fill("zzzz nonexistent concept");
     await page.getByRole("button", { name: /^Search/ }).click();
 
     // NOT A BLANK BODY. The reviewer must never be left inferring why the rows went away.
@@ -1762,7 +1765,7 @@ test.describe("gate1 search", () => {
 
     // (a) SEARCH ALONE. The term matched nothing anywhere in the run, so the search is responsible and
     // the finding is about the corpus.
-    await page.locator("#term-search-input").fill("zzzz nonexistent concept");
+    await page.locator("[data-testid='term-search']").fill("zzzz nonexistent concept");
     await page.getByRole("button", { name: /^Search/ }).click();
     const empty = page.locator("[data-testid='search-empty']");
     await expect(empty).toHaveAttribute("data-cause", "search");
@@ -1771,7 +1774,7 @@ test.describe("gate1 search", () => {
     // is different — clearing the filter brings them back and clearing the search does not — so saying
     // "your search found nothing" here would send the reviewer the wrong way.
     await page.locator("[data-testid='clear-search-inline']").click();
-    await page.locator("#term-search-input").fill("blood pressure");
+    await page.locator("[data-testid='term-search']").fill("blood pressure");
     await page.getByRole("button", { name: /^Search/ }).click();
     await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
     // A coherence state none of the matched groups holds.
@@ -2206,8 +2209,8 @@ test.describe("gate1 column sort", () => {
     // ...and each of the other two, by clicking the header that owns it. One click sorts ascending, a
     // second reverses — which is the descending order the preset named.
     for (const [head, key] of [
-      ["ledger-sort-cohorts", "cohorts"],
-      ["ledger-sort-vars", "vars"],
+      ["sort-cohorts", "cohorts"],
+      ["sort-vars", "vars"],
     ] as const) {
       await page.locator(`[data-testid='${head}']`).click();
       await page.locator(`[data-testid='${head}']`).click();
@@ -2219,7 +2222,7 @@ test.describe("gate1 column sort", () => {
 
   test("@gate1 clicking a header sorts the rows and says so, and clicking again reverses", async ({ page }) => {
     await openGate1(page);
-    const head = page.locator("[data-testid='ledger-sort-vars']");
+    const head = page.locator("[data-testid='sort-vars']");
     await expect(head).toBeVisible();
 
     await head.click();
@@ -2248,15 +2251,15 @@ test.describe("gate1 column sort", () => {
 
   test("@gate1 the price column is not offered as a sort — every row carries the same figure", async ({ page }) => {
     await openGate1(page);
-    await expect(page.locator("[data-testid='ledger-sort-concept']")).toBeVisible();
+    await expect(page.locator("[data-testid='sort-concept']")).toBeVisible();
     // "Gate 2+" has no sortKey, so no button is rendered for it.
-    await expect(page.locator("[data-testid='ledger-sort-cost']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='sort-cost']")).toHaveCount(0);
   });
 
   test("@gate1 sorting composes with the bucket and filters rather than widening them", async ({ page }) => {
     await openGate1(page);
     const before = (await rowIds(page)).length;
-    await page.locator("[data-testid='ledger-sort-concept']").click();
+    await page.locator("[data-testid='sort-concept']").click();
     expect((await rowIds(page)).length).toBe(before);
   });
 });
@@ -2959,7 +2962,7 @@ test.describe("gate1 rename", () => {
   test("@gate1 the reviewer can find the group again by the name they gave it", async ({ page }) => {
     await openGate1(page);
     await rename(page, "Zzyzx");
-    await page.locator("#term-search-input").fill("Zzyzx");
+    await page.locator("[data-testid='term-search']").fill("Zzyzx");
     await page.getByRole("button", { name: /^Search/ }).click();
     await expect(page.locator(BIGROW)).toBeVisible();
     expect(await page.locator("[data-testid='ledger-row']").count()).toBe(1);
@@ -3346,7 +3349,7 @@ test.describe("gate1 breadth on the header", () => {
     await expect(page.locator("[data-testid='bucket-tab']")).toHaveCount(0);
     // ON the header, beside the sort control it now shares a column with.
     const head = page.locator("[data-testid='ledger-column-cohorts']");
-    await expect(head.locator("[data-testid='ledger-sort-cohorts']")).toBeVisible();
+    await expect(head.locator("[data-testid='sort-cohorts']")).toBeVisible();
     await expect(head.locator("[data-testid='breadth-filter']")).toBeVisible();
   });
 
@@ -3412,10 +3415,10 @@ test.describe("gate1 breadth on the header", () => {
   }) => {
     await openGate1(page);
     const { "cross-cohort": cross } = partitionByBreadth(fixtureGroups());
-    await page.locator("[data-testid='ledger-sort-vars']").click();
+    await page.locator("[data-testid='sort-vars']").click();
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(cross.length);
     // Sorting by the very column the filter now shares must not widen it either.
-    await page.locator("[data-testid='ledger-sort-cohorts']").click();
+    await page.locator("[data-testid='sort-cohorts']").click();
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(cross.length);
   });
 
@@ -3469,7 +3472,7 @@ test.describe("gate1 search in the toolbar", () => {
 
   test("@gate1 it is compact at rest — prod's single-line register, not a block", async ({ page }) => {
     await openGate1(page);
-    const box = await page.locator("#term-search-input").boundingBox();
+    const box = await page.locator("[data-testid='term-search']").boundingBox();
     // Prod's is `h-8`. The old Gate 1 control was a three-row textarea inside its own headed card, which
     // is what "build this into the tray area" was about.
     expect(box!.height).toBeLessThan(44);
@@ -3477,7 +3480,7 @@ test.describe("gate1 search in the toolbar", () => {
 
   test("@gate1 it still takes a LIST, and grows to hold one rather than clipping it", async ({ page }) => {
     await openGate1(page);
-    const input = page.locator("#term-search-input");
+    const input = page.locator("[data-testid='term-search']");
     const atRest = (await input.boundingBox())!.height;
 
     await input.fill("body mass index\nsmoking status\ngrip strength\nwaist circumference");
@@ -3497,7 +3500,7 @@ test.describe("gate1 search in the toolbar", () => {
 
   test("@gate1 a term matching nothing is still a coverage finding about the run", async ({ page }) => {
     await openGate1(page);
-    await page.locator("#term-search-input").fill("gait speed\nblood pressure");
+    await page.locator("[data-testid='term-search']").fill("gait speed\nblood pressure");
     await page.getByRole("button", { name: /^Search/ }).click();
 
     const findings = page.locator("[data-testid='coverage-findings'] li");
