@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ChevronDown, ChevronRight, Grid3x3, Pencil, Quote, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Grid3x3, Pencil, Quote, Scissors, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -93,16 +93,46 @@ const SCOPE_OPTIONS = [IN_SCOPE, OUT_OF_SCOPE];
  * finding. It earns its place because it fires from 2 members up — exactly the range the judge skips,
  * where a row would otherwise carry no signal at all.
  */
-function TemplateSuspicion() {
+function TemplateSuspicion({ judged = false }: { judged?: boolean }) {
   return (
     <span
       data-testid="template-suspicion"
       data-signal="deterministic"
-      title="A cheap, local check noticed these variables share one question template with different fillers. That often means a matrix of separate items rather than one concept — but it is a pattern, not a judgement, and the coherence judge was not asked about this group."
+      // ELEVATED ONTO JUDGED GROUPS (Bhargav: coherent ≠ harmonizable). The original constraint kept this
+      // off scored rows so it could never be read as a verdict; that intent is preserved by the copy —
+      // when `judged`, it states plainly that the judge DID call it one concept and that this is a separate
+      // $0 pattern check, not a second adjudication — while still surfacing the battery risk the judge misses.
+      title={
+        judged
+          ? "The coherence judge called this one concept — and along one axis it is. But a cheap, local check sees a repeating question template with different fillers, which usually means a multi-item battery (a symptom scale, say), not a single variable. A battery rarely collapses to one CDE. This is a $0 pattern check, not the judge."
+          : "A cheap, local check noticed these variables share one question template with different fillers. That often means a matrix of separate items rather than one concept — but it is a pattern, not a judgement, and the coherence judge was not asked about this group."
+      }
       className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
     >
       <Grid3x3 aria-hidden="true" className="h-3 w-3 shrink-0" />
       repeating template
+    </span>
+  );
+}
+
+/** At or above this many variables, a group is hard to review by hand without at least one re-split. */
+const BIG_GROUP_MIN = 10;
+
+/**
+ * A "large group" nudge (Bhargav: a 10+-variable group is hard to tackle without at least one re-split, so
+ * mark them especially). PURELY LOCAL — member count, no model call — so it is a prioritisation hint, not a
+ * judgement: it marks the groups worth spending an "Accept this division" / auto-refine pass on before the
+ * manual work begins.
+ */
+function LargeGroupMark({ count }: { count: number }) {
+  return (
+    <span
+      data-testid="large-group-mark"
+      title={`${count} variables — a large group. These usually need at least one re-split before they resolve cleanly at Gate 2; a good candidate for "Accept this division" or an auto-refine pass before hand-editing.`}
+      className="inline-flex items-center gap-1 rounded-pill bg-surface-warn px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-on-warn"
+    >
+      <Scissors aria-hidden="true" className="h-3 w-3 shrink-0" />
+      large
     </span>
   );
 }
@@ -1196,7 +1226,23 @@ function ExpandedGroup({
           </p>
         </div>
       )}
-      {!isFlagged(group) && group.coherence === "single" && (
+      {/* A CHECKED group that trips the $0 template detector is COHERENT BUT PROBABLY A BATTERY (Bhargav:
+          coherent ≠ harmonizable — a symptom scale is one concept but many items, and won't collapse to one
+          CDE). Show the amber caution instead of the reassuring green, so it is not waved through to Gate 2.
+          The copy keeps the judge's verdict honest and marks this as a separate pattern check. */}
+      {!isFlagged(group) && group.coherence === "single" && group.matrixSuspect && (
+        <div data-testid="coherence-finding" data-battery-suspect="true" className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-4 py-3">
+          <p className="text-xs font-bold uppercase tracking-eyebrow text-on-warn">Checked — but likely a battery</p>
+          <p className="mt-1 max-w-[80ch] text-sm text-on-warn">
+            The judge read these variables together and called them one coherent concept — and along one axis
+            they are. But a separate $0 check sees a repeating question template with different fillers, which
+            usually means a multi-item battery (a symptom scale, say), not a single variable. A battery rarely
+            collapses to one CDE: split it into items, or route it to a scale/composite at Gate 2. This is a
+            pattern check, not the coherence judge.
+          </p>
+        </div>
+      )}
+      {!isFlagged(group) && group.coherence === "single" && !group.matrixSuspect && (
         <div data-testid="coherence-finding" className="rounded-inner border-l-4 border-l-status-ok bg-surface-ok px-4 py-3">
           <p className="text-sm font-semibold text-on-ok">Checked</p>
           <p className="mt-0.5 max-w-[80ch] text-sm text-on-ok">
@@ -1479,7 +1525,10 @@ function QueueRow({
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <CoherenceMark state={group.coherence} />
-          {group.coherence === "not_judged" && group.matrixSuspect && <TemplateSuspicion />}
+          {group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single") && (
+            <TemplateSuspicion judged={group.coherence === "single"} />
+          )}
+          {count >= BIG_GROUP_MIN && <LargeGroupMark count={count} />}
           <span className="flex flex-wrap gap-1">
             {group.cohorts.map((c) => (
               <span key={c} className="rounded bg-surface-inset px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-on-inset-muted">
