@@ -12,19 +12,13 @@ import {
 } from "@/components/gate/ConceptWorkbench";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
-import { SpecEditor } from "@/components/gate/SpecEditor";
 import { RecodeDetail, transformSummary } from "@/components/gate/RecodeDetail";
+import { SpecMappingEditor, seedRecommendedMapping, codeMapToBuckets } from "@/components/gate/SpecMappingEditor";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
-import {
-  conceptMatchState,
-  routesToReview,
-  specForm,
-  specRowsFor,
-  type UnmappedOutcome,
-} from "@/lib/gate23";
+import { conceptMatchState, routesToReview, specForm, specRowsFor } from "@/lib/gate23";
 import { cn } from "@/lib/utils";
 import { permissibleValueLabels, sourceValueLabels } from "@/types";
 import type { JobResult, UIRecord, GatePosition } from "@/types";
@@ -142,6 +136,28 @@ export default function Gate3Page() {
     setDraft(null);
   }
 
+  // A value-mapping edit persists immediately, the way a Gate 1 move does — the reviewer's mapping survives
+  // a reload (R6). The existing note/unmapped on the decision are preserved.
+  async function saveMapping(
+    record: UIRecord,
+    sourceVariable: string,
+    mapping: Record<string, string>,
+    prev: Record<string, unknown> | undefined,
+  ) {
+    await specs.write(
+      { sourceVariable },
+      {
+        chosen: sourceVariable,
+        alternatives: [sourceVariable],
+        upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
+        extra: {
+          ...(typeof prev?.note === "string" ? { note: prev.note } : {}),
+          mapping,
+        },
+      },
+    );
+  }
+
   return (
     <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
       <ConceptWorkbench
@@ -234,6 +250,13 @@ export default function Gate3Page() {
               const targetDef = targetIsOwn
                 ? gencdeEdit?.definition ?? record.gencde?.definition ?? ""
                 : chosenCandidate?.definition ?? "";
+              // The target's value domain (08-16g) — carried into Gate 3 so recodes can be built and judged
+              // against it. Adopt -> the chosen catalog candidate's enriched metadata; own/novel -> the GenCDE.
+              const targetPVs: string[] = targetIsOwn
+                ? record.gencde?.permissibleValues?.map((v) => v.label || v.code) ?? []
+                : chosenCandidate?.permissibleValues ?? [];
+              const targetDataType = targetIsOwn ? record.gencde?.dataType : chosenCandidate?.dataType;
+              const targetUnits = targetIsOwn ? record.gencde?.units : chosenCandidate?.units;
               return (
                 <div className="flex flex-col gap-4">
                   <ConceptDetailHeader
@@ -298,6 +321,28 @@ export default function Gate3Page() {
                           <VerdictPill verdict={record.verdict} />
                         </div>
                         {targetDef && <p className="max-w-[80ch] text-sm text-on-raised-muted">{targetDef}</p>}
+                        <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-on-raised-muted">
+                          {targetDataType && (
+                            <div><dt className="inline font-semibold">Data type: </dt><dd className="inline">{targetDataType}</dd></div>
+                          )}
+                          {targetUnits && (
+                            <div><dt className="inline font-semibold">Units: </dt><dd className="inline">{targetUnits}</dd></div>
+                          )}
+                        </dl>
+                        {targetPVs.length > 0 && (
+                          <div data-testid="target-permissible-values">
+                            <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
+                              Permissible values ({targetPVs.length})
+                            </span>
+                            <div className="mt-1 flex max-h-28 flex-wrap gap-1 overflow-y-auto">
+                              {targetPVs.map((v, i) => (
+                                <span key={i} className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-on-raised">
+                                  {v}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                       {record.idealCde && (
                         <div className="flex flex-col gap-1 border-t border-rule-quiet-on-raised pt-2">
@@ -327,6 +372,18 @@ export default function Gate3Page() {
                             : "";
                       const srcLabels = sourceValueLabels(fieldIndex[sourceVariable]);
                       const toGenCDE = !!record.gencde && transform?.targetCdeId === record.gencde.gencdeId;
+                      // The editable mapping: source response options -> target permissible values. Built even
+                      // when generation FAILED, from the source options + the target's PVs, seeded with the
+                      // model's code map where it produced one. Persisted edits win over the recommendation.
+                      const sourceOptions = Object.entries(srcLabels).map(([code, label]) => ({ code, label }));
+                      const hasOptions = sourceOptions.length > 0;
+                      const recommendedMapping = seedRecommendedMapping(
+                        sourceOptions,
+                        targetPVs,
+                        codeMapToBuckets(transform?.codeMap, targetPVs),
+                      );
+                      const persistedMapping = decision?.mapping as Record<string, string> | undefined;
+                      const mappingValue = persistedMapping ?? recommendedMapping;
                       return (
                         <div
                           key={sourceVariable}
@@ -410,33 +467,23 @@ export default function Gate3Page() {
                             </p>
                           )}
 
-                          {transform && state === "ok" && (
-                            <>
-                              <RecodeDetail t={transform} srcLabels={srcLabels} tgtLabels={tgtLabels} />
-                              <SpecEditor
-                                transform={transform}
-                                unmappedChoice={
-                                  (decision?.unmapped as Record<string, UnmappedOutcome> | undefined) ?? undefined
-                                }
-                                onUnmappedChoice={(code, outcome) =>
-                                  void specs.write(
-                                    { sourceVariable },
-                                    {
-                                      chosen: sourceVariable,
-                                      alternatives: [sourceVariable],
-                                      upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
-                                      extra: {
-                                        ...(typeof decision?.note === "string" ? { note: decision.note } : {}),
-                                        unmapped: {
-                                          ...((decision?.unmapped as Record<string, string> | undefined) ?? {}),
-                                          [code]: outcome,
-                                        },
-                                      },
-                                    },
-                                  )
-                                }
-                              />
-                            </>
+                          {/* Editable drag-and-drop mapping whenever the source has enumerated values — for an
+                          OK spec (seeded from the model's code map) AND a FAILED one (seeded from a $0
+                          heuristic), so a reviewer fixes the recode rather than only annotating it. A unit /
+                          arithmetic / data-dependent spec has no value list to sort, so it keeps its
+                          read-only detail. */}
+                          {hasOptions ? (
+                            <SpecMappingEditor
+                              sourceOptions={sourceOptions}
+                              targetValues={targetPVs}
+                              value={mappingValue}
+                              recommended={recommendedMapping}
+                              readOnly={frozen}
+                              onChange={(m) => void saveMapping(record, sourceVariable, m, decision)}
+                            />
+                          ) : (
+                            transform &&
+                            state === "ok" && <RecodeDetail t={transform} srcLabels={srcLabels} tgtLabels={tgtLabels} />
                           )}
 
                           <div className="flex flex-wrap items-center gap-2">
