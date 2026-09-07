@@ -67,6 +67,15 @@ export interface UICandidate {
   cosine: number;
   isChosen: boolean;
   llmSuggested: boolean;
+  // Catalog metadata (08-16g) — OPTIONAL because older runs / the current core contract do not emit it.
+  // Populated by the candidate-enrichment join (tinyId -> CDE catalog). Absent fields render as "view on
+  // the repo", present ones render inline so richness + harmonizability are judgeable without leaving the app.
+  questionText?: string;
+  dataType?: string;
+  units?: string;
+  permissibleValues?: string[]; // value labels, catalog order
+  stewardOrg?: string;
+  endorsed?: boolean;
 }
 
 export interface AtlasPoint {

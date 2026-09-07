@@ -1,11 +1,19 @@
 import { useMemo, useState } from "react";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GateShell, railFor } from "@/components/gate/GateShell";
-import { GateTwoLayout } from "@/components/gate/GateTwoLayout";
-import { CandidateCard } from "@/components/gate/CandidateCard";
+import {
+  ConceptWorkbench,
+  ConceptQueueRow,
+  ConceptSortHeader,
+  ConceptDetailHeader,
+  VerdictPill,
+  InheritedPanel,
+} from "@/components/gate/ConceptWorkbench";
+import { CandidateTable } from "@/components/gate/CandidateTable";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RelationControl } from "@/components/gate/RelationControl";
@@ -14,6 +22,7 @@ import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
+import { type ColumnSort, toggleSort } from "@/lib/column-sort";
 import {
   affectedSpecCount,
   candidateAlternatives,
@@ -23,49 +32,63 @@ import {
   suggestedRelation,
   type SkosRelation,
 } from "@/lib/gate23";
-import { cn } from "@/lib/utils";
-import type { JobResult, UICandidate, UIRecord, GatePosition} from "@/types";
+import type { JobResult, UIRecord, GatePosition } from "@/types";
 
 /**
- * Gate 2 — Concepts to elements. Where the reviewer chooses the target for each concept.
+ * Gate 2 — Concepts to elements. Where the reviewer chooses the target for each concept the run passed on.
+ *
+ * -- IT INHERITS GATE 1's SCOPE ------------------------------------------------------------------------
+ *
+ * Gate 1 records a pass/skip per group as `gate1_group_scope` (`in`/`out`). This screen shows ONLY the
+ * in-scope groups — a group the reviewer skipped was never sent to assign, so matching it here would offer
+ * a decision the run cannot honour. A group with no scope decision defaults to in, matching Gate 1.
+ *
+ * -- THE SAME MASTER-DETAIL FRAME AS GATE 1 (08-16g) ---------------------------------------------------
+ *
+ * The queue on the left and the detail on the right are `ConceptWorkbench`, the shell extracted from Gate 1.
+ * Gate 2 slots the ranked CDE-candidate table into the detail pane; the frame does not change.
+ *
+ * -- THE REVIEWER IS NOT BOUND TO THE MODEL's PICK -----------------------------------------------------
+ *
+ * Bhargav: *"gate 2 should allow for user to repick CDE from list at will, edit genCDE, or even forgo a
+ * good CDE match to make up their own CDE. all edits should persist and be tracked."* So: every candidate
+ * row is re-pickable; the generated anchor is fully editable (name, definition, units, values); and a
+ * "None fit — use my own CDE" control forgoes the catalogue entirely. Each writes a tracked
+ * `gate2_candidate_pick` — `chosen: ""` is the schema's "none of these", the generated element's id is
+ * "my own". No edit lives only in component state.
+ *
+ * -- THE ANCHOR CAN LAG THE MEMBERSHIP ------------------------------------------------------------------
+ *
+ * The generated ideal/GenCDE is produced before Gate 1, on the ORIGINAL grouping. If the reviewer moved
+ * variables at Gate 1 (`gate1_regroup`), the anchor describes a grouping that no longer exists. That is
+ * flagged here, and — per the 08-16g decision — the backend regenerates the anchor for changed groups when
+ * the reviewer continues. Until it lands, the reviewer can also correct the anchor by hand below.
  *
  * TWO PANES, ADAPTED FROM CDEMapper (Wang et al., JAMIA 2025;32:1130-1139, doi:10.1093/jamia/ocaf064,
- * Fig. 4) AND CREDITED ON SCREEN. The credit is a requirement, not a courtesy, and its WORDING is the part
- * that matters: we do not beat CDEMapper on recall and the credit must not read as though we do. Convergent
- * method, extended scope.
- *
- * -- THE RE-PICK, AND WHY THE SHIPPED WORKBENCH DOES NOT HAVE ONE ---------------------------------------
- *
- * `workbench.tsx:1-5` states that candidate alternatives are read-only "since our backend records one
- * decision per group rather than a free re-pick". THAT WAS TRUE OF THE WORKBENCH AND IS NO LONGER TRUE OF
- * THE PRODUCT. It describes the `verdict` artifact kind, which validates to approve|refine|reject and has
- * no field naming a different element - so under it, "choose a different CDE" was genuinely unrepresentable.
- *
- * 08-12 added `gate2_candidate_pick`, whose payload REQUIRES `chosen` (the identifier taken) alongside
- * `alternatives` and `optionSetKey`. A free re-pick is exactly what that shape records, the generic
- * `PUT /artifacts/{kind}` route persists it, and three backend tests already pin the behaviour
- * (`test_repick_makes_no_llm_call`, `..._leaves_it_finished_and_derives_stale_specs`, and the
- * nothing-downstream case). The constraint is lifted; the workbench's comment is stale documentation of
- * its own kind, not of this one.
- *
- * -- WHAT THE WIRE DOES NOT CARRY, SAID OUT LOUD --------------------------------------------------------
- *
- * `UICandidate` is `{rank, cdeId, cdeExternalId, definition, cosine, isChosen, llmSuggested}` and NOTHING
- * ELSE - no collection, no endorsement level, no question text, no permissible values. The plan asks for
- * all four on the card; adding them means extending the contract, which is a backend change and out of
- * scope here. So they are rendered as a NAMED ABSENCE rather than quietly dropped: a reviewer who cannot
- * see an endorsement badge must be able to tell whether this element is unendorsed or whether the badge
- * simply is not on the wire. Those are different facts and only one of them is about the element.
+ * Fig. 4) AND CREDITED ON SCREEN. The framing is fixed: convergent method, extended scope — never a recall
+ * claim. `UICandidate` carries only rank/id/definition/cosine, so catalog collection, endorsement, question
+ * text and permissible values are a NAMED absence, not a silent one.
  */
 
-/** UI-SPEC 7.4. The framing is fixed: convergent method, extended scope - never a recall claim. */
 const CDEMAPPER_CREDIT =
-  "Two-pane layout adapted from CDEMapper (Wang et al., JAMIA 2025;32:1130-1139, doi:10.1093/jamia/ocaf064, Fig. 4). " +
+  "Ranked-candidate layout adapted from CDEMapper (Wang et al., JAMIA 2025;32:1130-1139, doi:10.1093/jamia/ocaf064, Fig. 4). " +
   "A convergent method applied to a different scope - cross-cohort dictionary harmonization rather than " +
   "single-study element lookup. We do not report stronger retrieval than CDEMapper and this adaptation makes no such claim.";
 
+type Gate2SortKey = "concept" | "verdict" | "vars";
+
 function conceptLabel(r: UIRecord): string {
   return r.gencde?.preferredName || r.concept || r.idealCde || r.groupId;
+}
+
+/** The reviewer's in-progress edit to the anchor, tagged with the concept it belongs to (Gate 2/3 pattern:
+ *  no effect, so no reset to mis-order the draft when the selection changes). */
+interface AnchorDraft {
+  id: string;
+  name: string;
+  definition: string;
+  units: string;
+  values: string;
 }
 
 export default function Gate2Page() {
@@ -73,314 +96,407 @@ export default function Gate2Page() {
   const { jobState, cancel } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
-  const records: UIRecord[] = useMemo(() => jobState?.result?.records ?? [], [jobState?.result?.records]);
+  const allRecords: UIRecord[] = useMemo(() => jobState?.result?.records ?? [], [jobState?.result?.records]);
   const fieldIndex = jobState?.result?.fieldIndex ?? {};
 
-  // Resolved through the SHARED helper, never `config.demo`. A real run's config carries no `demo` key, so
-  // reading the flag directly leaves `pinned` undefined forever and confines every decision on every real
-  // run to sessionStorage - silently, with no error. That is the 08-15 bug, and it is not re-made here.
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
-  /**
-   * The run has moved PAST this gate, so the screen is a record (08-16c Task 2).
-   *
-   * Passed into every decision hook below, where `write`/`clear` refuse outright. The refusal is at the
-   * WRITE PATH rather than only in the rendering, because a disabled-looking control that still submits is
-   * worse than an enabled one — and these decisions have already been consumed by the pipeline.
-   */
   const frozen = isGatePast("gate2", (jobState?.gatePosition ?? null) as GatePosition | null);
+
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned, frozen });
   const relations = useGateDecisions(jobId, "gate2_relation", { pinned, frozen });
   // Read-only here: Gate 3's decisions are what a re-pick would invalidate, so the confirmation's count
   // comes from them. Writing them is Gate 3's job.
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned });
+  // Read-only inheritance from Gate 1: scope decides which groups reach this screen; regroups decide which
+  // groups' anchors lag their membership. Neither is written here.
+  const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
+  const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
+
+  const inScope = (groupId: string) => scope.decisions[groupId]?.chosen !== "out";
+  const touchedAtGate1 = useMemo(() => {
+    const byGroup = new Set<string>();
+    for (const d of Object.values(regroups.decisions)) {
+      if (typeof d.chosen === "string" && d.chosen) byGroup.add(d.chosen);
+      if (typeof d.fromGroupId === "string" && d.fromGroupId) byGroup.add(d.fromGroupId);
+    }
+    return byGroup;
+  }, [regroups.decisions]);
+
+  const records = useMemo(
+    () => allRecords.filter((r) => inScope(r.groupId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allRecords, scope.decisions],
+  );
 
   const [selectedId, setSelectedId] = useState<string>("");
-  /**
-   * The reviewer's in-progress edit to a generated element, TAGGED WITH THE CONCEPT IT BELONGS TO.
-   *
-   * THE TAG IS THE FIX, and it is why there is no `useEffect` here. The recorded bug is a detail card whose
-   * effect re-seeds its draft from the prop when the selected id changes, so switching away and back
-   * repaints the stale original over the reviewer's edit. Keying the draft to a concept makes a draft for
-   * another concept simply not apply - there is no reset to mis-order, because there is no reset.
-   */
-  const [draft, setDraft] = useState<{ id: string; value: string } | null>(null);
-  /** A pending re-pick held while the reviewer reads the confirmation. */
-  const [pendingPick, setPendingPick] = useState<{ candidate: UICandidate; affected: number } | null>(null);
+  const [query, setQuery] = useState("");
+  const [verdictFilter, setVerdictFilter] = useState<"all" | "adopt" | "refine" | "novel">("all");
+  const [colSort, setColSort] = useState<ColumnSort<Gate2SortKey> | null>(null);
+  const [draft, setDraft] = useState<AnchorDraft | null>(null);
+  const [pendingPick, setPendingPick] = useState<{ chosenId: string; affected: number } | null>(null);
 
-  const record = records.find((r) => r.groupId === selectedId) ?? records[0];
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let rows = records;
+    if (q) {
+      rows = rows.filter((r) => {
+        const hay = `${conceptLabel(r)} ${r.cohorts?.join(" ") ?? ""} ${r.members?.join(" ") ?? ""}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    if (verdictFilter !== "all") rows = rows.filter((r) => r.verdict === verdictFilter);
+    if (colSort) {
+      const dir = colSort.dir === "asc" ? 1 : -1;
+      rows = [...rows].sort((a, b) => {
+        if (colSort.key === "vars") return (a.nMembers - b.nMembers) * dir;
+        if (colSort.key === "verdict") return (a.verdict ?? "").localeCompare(b.verdict ?? "") * dir;
+        return conceptLabel(a).localeCompare(conceptLabel(b)) * dir;
+      });
+    }
+    return rows;
+  }, [records, query, verdictFilter, colSort]);
 
-  if (!record) {
+  const record = visible.find((r) => r.groupId === selectedId) ?? visible[0] ?? records[0];
+
+  if (records.length === 0) {
     return (
       <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
         <GateEmptyState
-          heading="Nothing was sent to Gate 2"
-          nextStep="Go back to Gate 1 and choose at least one group."
+          heading="Nothing was passed from Gate 1"
+          nextStep="Go back to Gate 1 and tick at least one group to send on."
         >
-          No group was ticked at Gate 1, so the assign stage had nothing to match. This screen has nothing
-          to show rather than nothing to say.
+          Every group was left out of scope at Gate 1, so the assign stage had nothing to match. This screen
+          has nothing to show rather than nothing to say.
         </GateEmptyState>
       </Shell>
     );
   }
 
   const groupId = record.groupId;
+  const gencde = record.gencde;
   const listState = candidateListState(record);
   const alternatives = candidateAlternatives(record.candidates);
   const pick = picks.decisions[groupId];
   const chosenId =
-    (typeof pick?.chosen === "string" && pick.chosen) ||
-    record.candidates.find((c) => c.isChosen)?.cdeId ||
+    (typeof pick?.chosen === "string" ? pick.chosen : undefined) ??
+    record.candidates.find((c) => c.isChosen)?.cdeId ??
     "";
+  const targetIsOwn = chosenId === "" || (!!gencde && chosenId === gencde.gencdeId);
+  const anchorLags = touchedAtGate1.has(groupId);
 
-  const persistedDefinition = typeof pick?.gencdeDefinition === "string" ? pick.gencdeDefinition : undefined;
-  const definitionValue =
-    draft?.id === groupId ? draft.value : (persistedDefinition ?? record.gencde?.definition ?? "");
+  const gencdeEdit = (pick?.gencdeEdit as Partial<AnchorDraft> | undefined) ?? undefined;
+  const anchor: Omit<AnchorDraft, "id"> = {
+    name:
+      draft?.id === groupId ? draft.name : (gencdeEdit?.name ?? gencde?.preferredName ?? gencde?.title ?? ""),
+    definition:
+      draft?.id === groupId
+        ? draft.definition
+        : (gencdeEdit?.definition ?? gencde?.definition ?? record.idealCde ?? ""),
+    units: draft?.id === groupId ? draft.units : (gencdeEdit?.units ?? gencde?.units ?? ""),
+    values:
+      draft?.id === groupId
+        ? draft.values
+        : (gencdeEdit?.values ?? gencde?.permissibleValues?.map((v) => `${v.code}=${v.label}`).join(" / ") ?? ""),
+  };
+  const editAnchor = (patch: Partial<Omit<AnchorDraft, "id">>) => setDraft({ id: groupId, ...anchor, ...patch });
 
   const relationKey = relations.itemKey({ groupId, targetId: chosenId || "none" });
   const storedRelation = relations.decisions[relationKey]?.chosen;
   const relation = typeof storedRelation === "string" ? (storedRelation as SkosRelation) : undefined;
 
-  async function writePick(candidate: UICandidate, extra?: Record<string, unknown>) {
+  async function writePick(nextChosen: string, extra?: Record<string, unknown>) {
     await picks.write(
       { groupId },
       {
-        chosen: candidate.cdeId,
+        chosen: nextChosen,
         alternatives,
-        // Carried on the pick rather than in a kind of its own: the edit is part of what this group's
-        // decision IS, and a separate row would have to be kept in step with the pick by hand.
         extra: {
-          ...(persistedDefinition !== undefined ? { gencdeDefinition: persistedDefinition } : {}),
+          ...(gencdeEdit ? { gencdeEdit } : {}),
           ...extra,
         },
       },
     );
   }
 
-  function onChoose(candidate: UICandidate) {
-    if (candidate.cdeId === chosenId) return;
+  function choose(nextChosen: string) {
+    if (nextChosen === chosenId) return;
     const affected = affectedSpecCount(
       specs.decisions as Record<string, { upstream?: { kind: string; itemKey: string } }>,
       groupId,
     );
-    // Nothing downstream => no confirmation and no regeneration step. Offering to regenerate zero specs is
-    // a dead control, and a confirmation reading "0 specs" teaches the reviewer the number is noise.
     if (!needsRepickConfirmation(affected)) {
-      void writePick(candidate);
+      void writePick(nextChosen);
       return;
     }
-    setPendingPick({ candidate, affected });
+    setPendingPick({ chosenId: nextChosen, affected });
   }
 
-  async function saveDefinition() {
-    const current = record.candidates.find((c) => c.cdeId === chosenId) ?? record.candidates[0];
-    if (!current) return;
-    await writePick(current, { gencdeDefinition: definitionValue });
-    // The draft is dropped only AFTER the write, so the displayed value falls through to the persisted one
-    // rather than blinking back to the original.
+  async function saveAnchor() {
+    // Keep the current target (the generated element / "my own"), and persist the edited fields on the pick.
+    const keepChosen = targetIsOwn ? chosenId : gencde?.gencdeId ?? "";
+    await writePick(keepChosen, { gencdeEdit: { ...anchor } });
     setDraft(null);
   }
 
-  const gencde = record.gencde;
-
   return (
     <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
-      <GateTwoLayout
-        masterLabel="Concepts in this run"
-        detailLabel="The chosen target for this concept"
-        master={
-          <ul className="flex flex-col">
-            {records.map((r) => {
-              const active = r.groupId === groupId;
-              return (
-                <li key={r.groupId}>
-                  <button
-                    type="button"
-                    data-testid="gate2-concept"
-                    data-concept-id={r.groupId}
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => setSelectedId(r.groupId)}
-                    className={cn(
-                      "flex w-full flex-col gap-0.5 border-l-4 px-6 py-3 text-left",
-                      active ? "border-l-accent-action bg-surface-inset" : "border-l-transparent",
-                    )}
-                  >
-                    <span className="text-sm font-semibold text-on-raised">{conceptLabel(r)}</span>
-                    <span className="text-xs text-on-raised-muted">
-                      {r.verdict} - {r.nMembers} variable{r.nMembers === 1 ? "" : "s"}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+      <ConceptWorkbench
+        gate="gate2"
+        toolbar={
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              data-testid="term-search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search concept, variable, cohort…"
+              aria-label="Filter concepts"
+              className="h-8 min-w-[11rem] flex-1 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2.5 text-sm text-on-raised placeholder:text-on-raised-faint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            />
+            <Select value={verdictFilter} onValueChange={(v) => setVerdictFilter(v as typeof verdictFilter)}>
+              <SelectTrigger className="h-8 w-36" data-testid="verdict-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All verdicts</SelectItem>
+                <SelectItem value="adopt">adopt</SelectItem>
+                <SelectItem value="refine">refine</SelectItem>
+                <SelectItem value="novel">novel</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="ml-auto text-xs text-on-raised-muted">
+              <span className="font-mono tabular-nums text-on-raised">{records.length}</span>{" "}
+              {records.length === 1 ? "concept" : "concepts"}
+              {visible.length < records.length && (
+                <span className="text-on-raised-faint">
+                  {" · "}
+                  <span className="font-mono tabular-nums">{visible.length}</span> shown
+                </span>
+              )}
+            </span>
+          </div>
+        }
+        sortHeader={
+          <ConceptSortHeader<Gate2SortKey>
+            cols={[
+              { k: "concept", label: "Concept" },
+              { k: "verdict", label: "Verdict" },
+              { k: "vars", label: "Vars" },
+            ]}
+            sort={colSort}
+            onSort={(key) => setColSort((cur) => toggleSort(cur, key))}
+          />
+        }
+        rows={
+          visible.length === 0 ? (
+            <p data-testid="search-empty" className="px-4 py-6 text-sm text-on-raised-muted">
+              No concept matches your search or filter.{" "}
+              <button
+                type="button"
+                data-testid="clear-search-inline"
+                onClick={() => {
+                  setQuery("");
+                  setVerdictFilter("all");
+                }}
+                className="font-semibold text-link-on-raised underline underline-offset-2"
+              >
+                Clear it
+              </button>{" "}
+              to see all {records.length}.
+            </p>
+          ) : (
+            visible.map((r) => (
+              <ConceptQueueRow
+                key={r.groupId}
+                id={r.groupId}
+                testid="gate2-concept"
+                label={conceptLabel(r)}
+                badges={<VerdictPill verdict={r.verdict} />}
+                cohorts={r.cohorts}
+                count={r.nMembers}
+                selected={r.groupId === groupId}
+                onSelect={() => setSelectedId(r.groupId)}
+              />
+            ))
+          )
         }
         detail={
-          <>
+          <div className="flex flex-col gap-4">
+            <ConceptDetailHeader
+              title={conceptLabel(record)}
+              badges={<VerdictPill verdict={record.verdict} />}
+              meta={
+                <>
+                  <span className="font-semibold text-on-raised">{record.nMembers}</span>{" "}
+                  {record.nMembers === 1 ? "variable" : "variables"} · {record.cohorts?.join(", ")}
+                  {record.route ? <> · route {record.route}</> : null} ·{" "}
+                  <span data-testid="current-target">
+                    target: {targetIsOwn ? "your own CDE" : chosenId || "none chosen"}
+                  </span>
+                </>
+              }
+            />
+
+            {/* INHERITED FROM GATE 1: the variables this concept pooled — the evidence the CDE choice is
+                judged against. Read-only here; regrouping is Gate 1's job. Open by default because it is the
+                context for the active decision below. */}
+            <InheritedPanel
+              from="Gate 1"
+              label="source variables"
+              detail={`${record.nMembers} ${record.nMembers === 1 ? "variable" : "variables"} · ${record.cohorts?.join(", ")}`}
+              defaultOpen
+              testid="inherited-source-rows"
+            >
+              <SourceRows memberIds={record.members} memberDetails={record.memberDetails} fieldIndex={fieldIndex} />
+            </InheritedPanel>
+
             {/* The credit leads the pane: an adaptation states its source before it shows its work. */}
             <aside
               data-testid="cdemapper-credit"
-              className="border-l-2 border-accent-2-on-raised bg-surface-raised px-6 py-3 text-xs text-on-raised-muted"
+              className="border-l-2 border-accent-2-on-raised bg-surface-inset px-4 py-2 text-xs text-on-raised-muted"
             >
               {CDEMAPPER_CREDIT}
             </aside>
 
-            {/* THE ANCHOR, FIRST. It is the target the candidates are judged against; rendering it after
-                them inverts the reasoning. Already generated before Gate 1 (UI-SPEC 0.1) and its name is
-                the Gate 1 row label - this is the SAME artifact in more depth, and nothing here re-pays
-                for it. */}
+            {/* THE ANCHOR, FIRST — the target the candidates are judged against. Fully editable, and it says
+                out loud when it predates the reviewer's Gate 1 edits. */}
             <section
               data-testid="ideal-anchor"
-              className="flex flex-col gap-2 rounded-card bg-surface-raised px-6 py-4 shadow-card"
+              className="flex flex-col gap-3 rounded-card border border-rule-on-raised bg-surface-inset px-5 py-4"
             >
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-semibold text-on-raised">
-                  What this concept needs: {conceptLabel(record)}
-                </h2>
+                <h3 className="text-sm font-semibold text-on-raised">
+                  {targetIsOwn ? "Your target for this concept" : "What this concept needs (the anchor)"}
+                </h3>
                 <span className="rounded-pill border border-rule-on-raised px-2 py-0.5 text-xs text-on-raised-muted">
-                  generated by ddharmon - the target, not a catalog element
+                  generated by ddharmon — the target, not a catalog element
                 </span>
               </div>
-              <p className="max-w-[68ch] text-sm text-on-raised-muted">
-                {gencde?.definition || record.idealCde || "No anchor description was produced for this concept."}
-              </p>
-              {gencde && (
-                <dl className="flex flex-wrap gap-x-8 gap-y-1 text-xs text-on-raised-muted">
-                  <div>
-                    <dt className="inline font-semibold">Value structure: </dt>
-                    <dd className="inline">{gencde.dataType || "unstated"}</dd>
-                  </div>
-                  {gencde.units && (
-                    <div>
-                      <dt className="inline font-semibold">Units: </dt>
-                      <dd className="inline">{gencde.units}</dd>
-                    </div>
-                  )}
-                  {gencde.permissibleValues?.length > 0 && (
-                    <div className="w-full">
-                      <dt className="inline font-semibold">Permissible values: </dt>
-                      {/* Scrolls WITHIN the card. A long value list must not grow the page (T-08-99). */}
-                      <dd className="mt-1 max-h-32 overflow-y-auto font-mono">
-                        {gencde.permissibleValues.map((v) => `${v.code}=${v.label}`).join(" / ")}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
+
+              {anchorLags && (
+                <p
+                  data-testid="anchor-refresh-pending"
+                  className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
+                >
+                  This target was built on the original grouping. You changed this concept&apos;s members at
+                  Gate 1, so it is regenerated when you continue — or correct it yourself below.
+                </p>
               )}
-              {gencde && (
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="gencde-definition" className="text-xs font-semibold text-on-raised">
-                    Correct this definition
+
+              <div className="flex flex-col gap-1">
+                <label htmlFor="gencde-name" className="text-xs font-semibold text-on-raised">
+                  Name
+                </label>
+                <Input
+                  id="gencde-name"
+                  data-testid="gencde-name-input"
+                  value={anchor.name}
+                  disabled={frozen}
+                  onChange={(e) => editAnchor({ name: e.target.value })}
+                  className="text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="gencde-definition" className="text-xs font-semibold text-on-raised">
+                  Definition
+                </label>
+                <Textarea
+                  id="gencde-definition"
+                  data-testid="gencde-definition-input"
+                  value={anchor.definition}
+                  disabled={frozen}
+                  onChange={(e) => editAnchor({ definition: e.target.value })}
+                  className="min-h-20 text-sm"
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="gencde-units" className="text-xs font-semibold text-on-raised">
+                    Units
                   </label>
-                  <Textarea
-                    id="gencde-definition"
-                    data-testid="gencde-definition-input"
-                    value={definitionValue}
-                    onChange={(e) => setDraft({ id: groupId, value: e.target.value })}
-                    className="min-h-20 text-sm"
+                  <Input
+                    id="gencde-units"
+                    data-testid="gencde-units-input"
+                    value={anchor.units}
+                    disabled={frozen}
+                    onChange={(e) => editAnchor({ units: e.target.value })}
+                    placeholder="unstated"
+                    className="text-sm"
                   />
-                  <Button
-                    data-testid="gencde-save"
-                    variant="outline"
-                    size="sm"
-                    className="w-fit"
-                    onClick={() => void saveDefinition()}
-                  >
-                    Save definition
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="gencde-values" className="text-xs font-semibold text-on-raised">
+                    Permissible values
+                  </label>
+                  <Input
+                    id="gencde-values"
+                    data-testid="gencde-values-input"
+                    value={anchor.values}
+                    disabled={frozen}
+                    onChange={(e) => editAnchor({ values: e.target.value })}
+                    placeholder="code=label / code=label"
+                    className="font-mono text-xs"
+                  />
+                </div>
+              </div>
+              {!frozen && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button data-testid="gencde-save" variant="outline" size="sm" onClick={() => void saveAnchor()}>
+                    Save anchor edits
                   </Button>
+                  {!targetIsOwn && (
+                    <Button
+                      data-testid="author-own-cde"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => choose(gencde?.gencdeId ?? "")}
+                    >
+                      None fit — use my own CDE
+                    </Button>
+                  )}
                 </div>
               )}
             </section>
 
-            {/* THE THREE CANDIDATE-LIST STATES. A blank pane is never acceptable for any of them, and the
-                two empty ones are OPPOSITE claims: one says retrieval ran and nothing fit, the other says
-                we never got an answer. */}
+            {/* THE RANKED CANDIDATES. Re-pickable per row. Its three states are opposite claims and none may
+                render as a blank pane. */}
             {listState === "ranked" && (
-              <section data-testid="candidate-list" className="flex flex-col gap-3">
+              <section data-testid="candidate-list" className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-on-raised">
+                  <h3 className="text-sm font-semibold text-on-raised">
                     Ranked candidates ({record.candidates.length})
-                  </h2>
+                  </h3>
                   {(record.floored || record.candidates.length === 1) && (
                     <span data-testid="adopt-floor-note" className="text-xs text-on-raised-muted">
-                      The adopt floor still applies - a candidate is not adopted just because it is the only
-                      one retrieved.
+                      The adopt floor still applies — a candidate is not adopted just because it is the only one
+                      retrieved.
                     </span>
                   )}
                 </div>
-
-                {/* The generated element sits IN the list because it is one of the things the reviewer may
-                    choose - but it is marked so it can never be read as a catalog element. */}
-                {gencde && (
-                  <CandidateCard
-                    id={gencde.gencdeId}
-                    name={gencde.preferredName || gencde.title}
-                    question={gencde.questionText}
-                    values={gencde.permissibleValues?.map((v) => `${v.code}=${v.label}`)}
-                    generated
-                    chosen={chosenId === gencde.gencdeId}
-                    onChoose={() =>
-                      onChoose({
-                        rank: 0,
-                        cdeId: gencde.gencdeId,
-                        cdeExternalId: "",
-                        definition: gencde.definition,
-                        cosine: 0,
-                        isChosen: false,
-                        llmSuggested: false,
-                      })
-                    }
-                  />
-                )}
-
-                <ScrollArea className="max-h-[42vh]">
-                  <div className="flex flex-col gap-3">
-                    {record.candidates.map((c) => (
-                      <CandidateCard
-                        key={c.cdeId}
-                        id={c.cdeId}
-                        name={c.definition || c.cdeId}
-                        identifier={c.cdeExternalId || undefined}
-                        link={!!c.cdeExternalId}
-                        score={c.cosine}
-                        chosen={chosenId === c.cdeId}
-                        suggested={c.llmSuggested}
-                        onChoose={() => onChoose(c)}
-                      />
-                    ))}
-                  </div>
-                </ScrollArea>
-
-                {/* A named absence, not a silent one: four catalog attributes the plan asks for are simply
-                    not on the wire, and a missing endorsement badge must not read as "unendorsed". */}
-                <NotAvailable
-                  slug="candidate-attributes"
-                  thing="Catalog collection, endorsement, question text and permissible values"
-                  claim="deferred"
-                >
-                  The run contract carries a candidate&apos;s rank, identifier, definition and retrieval score
-                  and no other catalog attribute, so those four cannot be shown per candidate. The identifier
-                  links out to the catalog&apos;s own page for the element instead.
-                </NotAvailable>
+                <CandidateTable
+                  candidates={record.candidates}
+                  chosenId={chosenId}
+                  onPick={(c) => choose(c.cdeId)}
+                  readOnly={frozen}
+                />
               </section>
             )}
 
             {listState === "novel" && (
               <section
                 data-testid="novel-path"
-                className="flex flex-col gap-2 rounded-card bg-surface-raised px-6 py-4 shadow-card"
+                className="flex flex-col gap-2 rounded-card border border-rule-on-raised bg-surface-inset px-5 py-4"
               >
-                <h2 className="text-sm font-semibold text-on-raised">No catalog element fits - the novel path</h2>
+                <h3 className="text-sm font-semibold text-on-raised">No catalog element fits — the novel path</h3>
                 <p className="max-w-[68ch] text-sm text-on-raised-muted">
                   Retrieval ran for this concept and nothing cleared the floor, so ddharmon generated a target
-                  for it instead. The generated element above is what this concept maps to.
+                  for it instead. The anchor above is what this concept maps to — edit it if it is not right.
                 </p>
               </section>
             )}
 
             {listState === "failed" && (
-              // NOT "no match exists". Retrieval never returned an assessment for this concept, so the one
-              // claim this state must never make is the one an empty list looks like.
               <div data-testid="retrieval-failed">
                 <NotAvailable slug="retrieval" thing="Retrieval for this concept" claim="failed">
                   Nothing came back and the pipeline recorded no verdict, so this concept was never assessed.
@@ -401,25 +517,17 @@ export default function Gate2Page() {
               }
             />
 
-            {/* UI-SPEC 9 row 1 - a permanent absence, stated rather than omitted. */}
             <NotAvailable slug="knowledge-graph" thing="Knowledge-graph context" claim="deferred">
               ddharmon has no query path into KRAKEN yet, so node presence, same-as clique size and assesses
               edge counts cannot be shown. The element&apos;s identifier links out instead.
             </NotAvailable>
 
-            {/* The concept-match decision the 08-24 amendment moved here. It renders as an ABSENCE and not
-                as a control, because no route can add a paid stage to a run that already exists - see the
-                plan summary's blocker. A button here would 409. */}
             <NotAvailable slug="concept-gate" thing="Concept-match check" claim="not-enabled">
-              A second model pass can check whether an assigned element measures the same concept, not just
-              the same values. This run did not include it, and it cannot be added to a run that has already
-              started - start a new run with it enabled to get the check.
+              A second model pass can check whether an assigned element measures the same concept, not just the
+              same values. This run did not include it, and it cannot be added to a run that has already
+              started — start a new run with it enabled to get the check.
             </NotAvailable>
 
-            {/* The evidence layer under every derived claim on this screen - the SAME grid Gate 1 renders. */}
-            <SourceRows memberIds={record.members} memberDetails={record.memberDetails} fieldIndex={fieldIndex} />
-
-            {/* Where the retrieval floor is cutting - the one analytics view this screen's decision needs. */}
             <RetrievalHistogram records={records} />
 
             {pendingPick && (
@@ -427,7 +535,7 @@ export default function Gate2Page() {
                 data-testid="repick-confirm"
                 role="alertdialog"
                 aria-label="Change the target for this concept"
-                className="flex flex-col gap-3 rounded-card border border-rule-on-raised bg-surface-raised px-6 py-4"
+                className="flex flex-col gap-3 rounded-card border border-rule-on-raised bg-surface-raised px-5 py-4"
               >
                 <p className="max-w-[68ch] text-sm text-on-raised">{repickConfirmation(pendingPick.affected)}</p>
                 <div className="flex gap-2">
@@ -435,24 +543,19 @@ export default function Gate2Page() {
                     data-testid="repick-accept"
                     size="sm"
                     onClick={() => {
-                      void writePick(pendingPick.candidate);
+                      void writePick(pendingPick.chosenId);
                       setPendingPick(null);
                     }}
                   >
                     Change target
                   </Button>
-                  <Button
-                    data-testid="repick-cancel"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setPendingPick(null)}
-                  >
+                  <Button data-testid="repick-cancel" size="sm" variant="outline" onClick={() => setPendingPick(null)}>
                     Cancel
                   </Button>
                 </div>
               </div>
             )}
-          </>
+          </div>
         }
       />
     </Shell>
@@ -476,9 +579,8 @@ function Shell({
   return (
     <GateShell
       gate="gate2"
-      // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
       jobId={jobId}
-      subhead="One concept at a time: the target ddharmon generated for it, the ranked catalogue candidates it was judged against, and the one you choose."
+      subhead="One concept at a time: the target ddharmon generated for it, the ranked catalogue candidates it was judged against, and the one you choose — or your own."
       rail={railFor("gate2", { totalRealized: costSoFar })}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
@@ -486,8 +588,6 @@ function Shell({
       onStop={cancel}
       resumed={jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate2"}
     >
-      {/* Re-deciding never changes the run's status. Rendered so the invariant is observable rather than
-          only asserted: buying more work is a later phase and is not reachable from this screen. */}
       <span data-testid="run-status" data-status={jobState?.status ?? "unknown"} className="sr-only">
         Run status: {jobState?.status ?? "unknown"}
       </span>
