@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useParams } from "wouter";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,8 +17,6 @@ import {
 import { CandidateTable } from "@/components/gate/CandidateTable";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
-import { RelationControl } from "@/components/gate/RelationControl";
-import { RetrievalHistogram } from "@/components/gate/RetrievalHistogram";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
@@ -29,8 +28,6 @@ import {
   candidateListState,
   needsRepickConfirmation,
   repickConfirmation,
-  suggestedRelation,
-  type SkosRelation,
 } from "@/lib/gate23";
 import type { JobResult, UIRecord, GatePosition } from "@/types";
 
@@ -70,11 +67,6 @@ import type { JobResult, UIRecord, GatePosition } from "@/types";
  * text and permissible values are a NAMED absence, not a silent one.
  */
 
-const CDEMAPPER_CREDIT =
-  "Ranked-candidate layout adapted from CDEMapper (Wang et al., JAMIA 2025;32:1130-1139, doi:10.1093/jamia/ocaf064, Fig. 4). " +
-  "A convergent method applied to a different scope - cross-cohort dictionary harmonization rather than " +
-  "single-study element lookup. We do not report stronger retrieval than CDEMapper and this adaptation makes no such claim.";
-
 type Gate2SortKey = "concept" | "verdict" | "vars";
 
 function conceptLabel(r: UIRecord): string {
@@ -104,7 +96,6 @@ export default function Gate2Page() {
   const frozen = isGatePast("gate2", (jobState?.gatePosition ?? null) as GatePosition | null);
 
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned, frozen });
-  const relations = useGateDecisions(jobId, "gate2_relation", { pinned, frozen });
   // Read-only here: Gate 3's decisions are what a re-pick would invalidate, so the confirmation's count
   // comes from them. Writing them is Gate 3's job.
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned });
@@ -185,14 +176,20 @@ export default function Gate2Page() {
   const targetIsOwn = chosenId === "" || (!!gencde && chosenId === gencde.gencdeId);
   const anchorLags = touchedAtGate1.has(groupId);
 
+  // Prod parity: the model's pick is pre-selected (chosenId falls back to the isChosen candidate), and the
+  // rerank note fires when that pick is NOT the highest-cosine one — concept fit over raw similarity.
+  const chosenCand = record.candidates.find((c) => c.cdeId === chosenId);
+  const bestCos = record.candidates.reduce((m, c) => Math.max(m, c.cosine), -Infinity);
+  const reranked = !!chosenCand && Number.isFinite(bestCos) && chosenCand.cosine < bestCos - 1e-9;
+
   const gencdeEdit = (pick?.gencdeEdit as Partial<AnchorDraft> | undefined) ?? undefined;
   const anchor: Omit<AnchorDraft, "id"> = {
     name:
       draft?.id === groupId ? draft.name : (gencdeEdit?.name ?? gencde?.preferredName ?? gencde?.title ?? ""),
-    definition:
-      draft?.id === groupId
-        ? draft.definition
-        : (gencdeEdit?.definition ?? gencde?.definition ?? record.idealCde ?? ""),
+    // No `idealCde` fallback: that string is the CLUSTER-level pre-split ideal and describes concepts not
+    // in this group (a polluted anchor). Until the backend regenerates a per-group ideal (todo), the anchor
+    // is the GenCDE for a novel/own target, else empty for the reviewer to author.
+    definition: draft?.id === groupId ? draft.definition : (gencdeEdit?.definition ?? gencde?.definition ?? ""),
     units: draft?.id === groupId ? draft.units : (gencdeEdit?.units ?? gencde?.units ?? ""),
     values:
       draft?.id === groupId
@@ -200,10 +197,6 @@ export default function Gate2Page() {
         : (gencdeEdit?.values ?? gencde?.permissibleValues?.map((v) => `${v.code}=${v.label}`).join(" / ") ?? ""),
   };
   const editAnchor = (patch: Partial<Omit<AnchorDraft, "id">>) => setDraft({ id: groupId, ...anchor, ...patch });
-
-  const relationKey = relations.itemKey({ groupId, targetId: chosenId || "none" });
-  const storedRelation = relations.decisions[relationKey]?.chosen;
-  const relation = typeof storedRelation === "string" ? (storedRelation as SkosRelation) : undefined;
 
   async function writePick(nextChosen: string, extra?: Record<string, unknown>) {
     await picks.write(
@@ -351,23 +344,90 @@ export default function Gate2Page() {
               <SourceRows memberIds={record.members} memberDetails={record.memberDetails} fieldIndex={fieldIndex} />
             </InheritedPanel>
 
-            {/* The credit leads the pane: an adaptation states its source before it shows its work. */}
-            <aside
-              data-testid="cdemapper-credit"
-              className="border-l-2 border-accent-2-on-raised bg-surface-inset px-4 py-2 text-xs text-on-raised-muted"
-            >
-              {CDEMAPPER_CREDIT}
-            </aside>
+            {/* WHY THIS CDE — the model's rationale (prod parity). The pick is PRE-SELECTED: `chosenId` falls
+                back to the isChosen candidate, so the model's choice is the default target, re-pickable below. */}
+            {record.rationale && (
+              <div data-testid="model-rationale" className="flex flex-col gap-1">
+                <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                  Why this CDE — model rationale
+                </span>
+                <p className="border-l-2 border-rule-control-on-raised pl-3 text-sm italic text-on-raised">
+                  {record.rationale}
+                </p>
+              </div>
+            )}
+            {listState === "ranked" && reranked && chosenCand && (
+              <div
+                data-testid="rerank-note"
+                className="flex items-start gap-2 rounded-inner border border-rule-info bg-surface-info px-3 py-2 text-xs text-on-raised"
+              >
+                <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-on-raised" />
+                <span>
+                  The model chose a candidate at cos{" "}
+                  <span className="tabular-nums">{chosenCand.cosine.toFixed(3)}</span> over a higher-cosine one
+                  at <span className="tabular-nums">{bestCos.toFixed(3)}</span> — it ranks concept fit above raw
+                  embedding similarity (see the rationale above).
+                </span>
+              </div>
+            )}
 
-            {/* THE ANCHOR, FIRST — the target the candidates are judged against. Fully editable, and it says
-                out loud when it predates the reviewer's Gate 1 edits. */}
+            {/* THE RANKED CANDIDATES — the model's best is pre-selected; click a row to inspect its metadata,
+                Select to change the pick. Its three states are opposite claims; none may render as a blank pane. */}
+            {listState === "ranked" && (
+              <section data-testid="candidate-list" className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-on-raised">
+                    Ranked candidates ({record.candidates.length})
+                  </h3>
+                  {(record.floored || record.candidates.length === 1) && (
+                    <span data-testid="adopt-floor-note" className="text-xs text-on-raised-muted">
+                      The adopt floor still applies — a candidate is not adopted just because it is the only one
+                      retrieved.
+                    </span>
+                  )}
+                </div>
+                <CandidateTable
+                  candidates={record.candidates}
+                  chosenId={chosenId}
+                  onPick={(c) => choose(c.cdeId)}
+                  readOnly={frozen}
+                />
+              </section>
+            )}
+
+            {listState === "novel" && (
+              <section
+                data-testid="novel-path"
+                className="flex flex-col gap-2 rounded-card border border-rule-on-raised bg-surface-inset px-5 py-4"
+              >
+                <h3 className="text-sm font-semibold text-on-raised">No catalog element fits — the novel path</h3>
+                <p className="max-w-[68ch] text-sm text-on-raised-muted">
+                  Retrieval ran for this concept and nothing cleared the floor, so ddharmon generated a target
+                  for it instead. The generated CDE below is what this concept maps to — edit it if it is not right.
+                </p>
+              </section>
+            )}
+
+            {listState === "failed" && (
+              <div data-testid="retrieval-failed">
+                <NotAvailable slug="retrieval" thing="Retrieval for this concept" claim="failed">
+                  Nothing came back and the pipeline recorded no verdict, so this concept was never assessed.
+                  That is a different thing from a concept the catalogue has nothing for. Re-run the assign
+                  stage for this run to get an answer.
+                </NotAvailable>
+              </div>
+            )}
+
+            {/* AUTHOR / EDIT THE TARGET — for a NOVEL concept this IS the target; for adopt/refine it is the
+                escape hatch when no catalogue element fits. No cluster-level ideal is shown as an anchor (#66):
+                that string describes the whole pre-split cluster, not this group. */}
             <section
               data-testid="ideal-anchor"
               className="flex flex-col gap-3 rounded-card border border-rule-on-raised bg-surface-inset px-5 py-4"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-semibold text-on-raised">
-                  {targetIsOwn ? "Your target for this concept" : "What this concept needs (the anchor)"}
+                  {targetIsOwn ? "Your target — generated CDE (editable)" : "None of these fit? Author your own CDE"}
                 </h3>
                 <span className="rounded-pill border border-rule-on-raised px-2 py-0.5 text-xs text-on-raised-muted">
                   generated by ddharmon — the target, not a catalog element
@@ -459,76 +519,11 @@ export default function Gate2Page() {
               )}
             </section>
 
-            {/* THE RANKED CANDIDATES. Re-pickable per row. Its three states are opposite claims and none may
-                render as a blank pane. */}
-            {listState === "ranked" && (
-              <section data-testid="candidate-list" className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-on-raised">
-                    Ranked candidates ({record.candidates.length})
-                  </h3>
-                  {(record.floored || record.candidates.length === 1) && (
-                    <span data-testid="adopt-floor-note" className="text-xs text-on-raised-muted">
-                      The adopt floor still applies — a candidate is not adopted just because it is the only one
-                      retrieved.
-                    </span>
-                  )}
-                </div>
-                <CandidateTable
-                  candidates={record.candidates}
-                  chosenId={chosenId}
-                  onPick={(c) => choose(c.cdeId)}
-                  readOnly={frozen}
-                />
-              </section>
-            )}
-
-            {listState === "novel" && (
-              <section
-                data-testid="novel-path"
-                className="flex flex-col gap-2 rounded-card border border-rule-on-raised bg-surface-inset px-5 py-4"
-              >
-                <h3 className="text-sm font-semibold text-on-raised">No catalog element fits — the novel path</h3>
-                <p className="max-w-[68ch] text-sm text-on-raised-muted">
-                  Retrieval ran for this concept and nothing cleared the floor, so ddharmon generated a target
-                  for it instead. The anchor above is what this concept maps to — edit it if it is not right.
-                </p>
-              </section>
-            )}
-
-            {listState === "failed" && (
-              <div data-testid="retrieval-failed">
-                <NotAvailable slug="retrieval" thing="Retrieval for this concept" claim="failed">
-                  Nothing came back and the pipeline recorded no verdict, so this concept was never assessed.
-                  That is a different thing from a concept the catalogue has nothing for. Re-run the assign
-                  stage for this run to get an answer.
-                </NotAvailable>
-              </div>
-            )}
-
-            <RelationControl
-              value={relation}
-              suggested={suggestedRelation(record)}
-              onChange={(r) =>
-                void relations.write(
-                  { groupId, targetId: chosenId || "none" },
-                  { chosen: r, alternatives: [...(relation ? [relation] : []), r] },
-                )
-              }
-            />
-
-            <NotAvailable slug="knowledge-graph" thing="Knowledge-graph context" claim="deferred">
-              ddharmon has no query path into KRAKEN yet, so node presence, same-as clique size and assesses
-              edge counts cannot be shown. The element&apos;s identifier links out instead.
-            </NotAvailable>
-
             <NotAvailable slug="concept-gate" thing="Concept-match check" claim="not-enabled">
               A second model pass can check whether an assigned element measures the same concept, not just the
               same values. This run did not include it, and it cannot be added to a run that has already
               started — start a new run with it enabled to get the check.
             </NotAvailable>
-
-            <RetrievalHistogram records={records} />
 
             {pendingPick && (
               <div

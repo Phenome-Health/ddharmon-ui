@@ -344,14 +344,6 @@ export default function Gate3Page() {
                           </div>
                         )}
                       </div>
-                      {record.idealCde && (
-                        <div className="flex flex-col gap-1 border-t border-rule-quiet-on-raised pt-2">
-                          <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
-                            Generated ideal (the anchor)
-                          </span>
-                          <p className="max-w-[80ch] text-sm text-on-raised-muted">{record.idealCde}</p>
-                        </div>
-                      )}
                     </div>
                   </InheritedPanel>
 

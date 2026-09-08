@@ -106,8 +106,28 @@ export function CandidateTable({
       <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-3 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-faint">
         <span>#</span>
         <span>CDE</span>
-        <span className="text-right">Fields</span>
-        <span className="text-right">cos</span>
+        <span className="text-right" title="How many of the 5 catalog metadata fields this CDE has (question, data type, units, permissible values, steward)">
+          Fields
+        </span>
+        <span className="text-right" title="Embedding cosine similarity — the retrieval signal, which can differ from the model's concept-fit pick">
+          cos
+        </span>
+      </div>
+      {/* Icon/column key — so the glyphs are legible without hovering each one. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-xs text-on-raised-faint">
+        <span className="inline-flex items-center gap-1">
+          <Star className="h-3 w-3 fill-accent text-accent" /> model&apos;s pick
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Sparkles className="h-3 w-3 text-accent-on-raised" /> LLM-suggested
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <RichnessMeter score={3} /> metadata richness
+        </span>
+        <span>
+          <b className="font-semibold text-on-raised-muted">N PV</b> = permissible values
+        </span>
+        <span>click a row for full metadata</span>
       </div>
       <div className="max-h-[30rem] overflow-y-auto rounded-inner border border-rule-quiet-on-raised divide-y divide-rule-quiet-on-raised">
         {ordered.map((c, i) => {
@@ -122,6 +142,7 @@ export function CandidateTable({
                 type="button"
                 data-testid="candidate-expand"
                 aria-expanded={open}
+                title={open ? "Hide this CDE's metadata" : "Show this CDE's metadata (permissible values, data type, steward…)"}
                 onClick={() => setExpandedId(open ? "" : c.cdeId)}
                 className={cn(
                   "grid w-full grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-3 py-2 text-left",
@@ -136,11 +157,26 @@ export function CandidateTable({
                       className={cn("h-3.5 w-3.5 shrink-0 text-on-raised-faint transition-transform", open && "rotate-90")}
                     />
                     <span className="truncate text-sm font-semibold text-on-raised">{c.cdeId}</span>
-                    {chosen && <Check className="h-3.5 w-3.5 shrink-0 text-status-ok" data-testid="candidate-chosen-mark" />}
-                    {c.isChosen && !chosen && <Star className="h-3.5 w-3.5 shrink-0 fill-accent text-accent" />}
-                    {c.llmSuggested && <Sparkles className="h-3.5 w-3.5 shrink-0 text-accent-on-raised" />}
+                    {chosen && (
+                      <span title="Your selected target">
+                        <Check className="h-3.5 w-3.5 shrink-0 text-status-ok" data-testid="candidate-chosen-mark" />
+                      </span>
+                    )}
+                    {c.isChosen && !chosen && (
+                      <span title="The model's pick — ranked best on concept fit">
+                        <Star className="h-3.5 w-3.5 shrink-0 fill-accent text-accent" />
+                      </span>
+                    )}
+                    {c.llmSuggested && (
+                      <span title="LLM-suggested — the model flagged this candidate">
+                        <Sparkles className="h-3.5 w-3.5 shrink-0 text-accent-on-raised" />
+                      </span>
+                    )}
                     {c.rank === bestRank && !c.isChosen && (
-                      <span className="shrink-0 rounded bg-surface-inset px-1 py-0.5 text-xs font-semibold text-on-inset-muted">
+                      <span
+                        title="Strongest embedding similarity — but not the model's concept-fit pick"
+                        className="shrink-0 rounded bg-surface-inset px-1 py-0.5 text-xs font-semibold text-on-inset-muted"
+                      >
                         highest cos
                       </span>
                     )}
