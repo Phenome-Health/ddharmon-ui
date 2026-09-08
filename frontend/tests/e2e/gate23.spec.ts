@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { JobResult } from "@/types";
 import {
   SKOS_RELATIONS,
   affectedSpecCount,
@@ -52,6 +53,36 @@ async function openGate2(page: Page, job = FINISHED_JOB): Promise<void> {
 async function openGate3(page: Page, job = FINISHED_JOB): Promise<void> {
   await page.goto(`/run/${job}/gate3`);
   await page.waitForLoadState("networkidle");
+}
+
+/**
+ * Reduce a served run to a SINGLE adopt concept that carries ranked candidates and at least one source
+ * member. The gates are master-detail and auto-select the first visible concept, so trimming to one makes
+ * the candidate / re-pick / spec assertions deterministic instead of depending on which concept sorts to
+ * the top — the demo's real first record is a novel (no candidates), which is the wrong subject for them.
+ */
+function oneRankedConcept(run: JobResult): void {
+  const recs = run.result?.records ?? [];
+  const r = recs.find(
+    (x) =>
+      x.verdict === "adopt" &&
+      x.candidates.length >= 2 &&
+      x.members.length >= 1,
+  );
+  if (r && run.result) run.result.records = [r];
+}
+
+/** Re-pick a candidate that is not currently chosen: expand its row, then click its select button. The
+ *  chosen row auto-expands and shows `candidate-selected` instead of a select button, so a re-pick is
+ *  always driven through a different, collapsed row. */
+async function pickCandidate(page: Page, row: Locator): Promise<void> {
+  await row.locator("[data-testid='candidate-expand']").click();
+  await row.locator("[data-testid='candidate-select']").click();
+}
+
+/** The candidate rows for the auto-selected concept, once the detail pane has rendered them. */
+function candidateRows(page: Page): Locator {
+  return page.locator("[data-testid='candidate-row']");
 }
 
 // --- the algebra, asserted in node ---------------------------------------------------------------------
@@ -311,67 +342,66 @@ test.describe("gate23 algebra", () => {
 // --- Gate 2, rendered ----------------------------------------------------------------------------------
 
 test.describe("gate2 screen", () => {
-  test("@gate2 the anchor renders BEFORE the ranked candidates", async ({
+  test("@gate2 the author-your-own anchor renders AFTER the ranked candidates", async ({
     page,
   }) => {
-    await serveFinished(page);
+    await serveFinished(page, oneRankedConcept);
     await openGate2(page);
-    const anchor = page.locator("[data-testid='ideal-anchor']");
     const list = page.locator("[data-testid='candidate-list']");
-    await expect(anchor).toBeVisible();
+    const anchor = page.locator("[data-testid='ideal-anchor']");
     await expect(list).toBeVisible();
-    // Document order, not styling: the anchor is the target the candidates are judged against, and
-    // showing it after them inverts the reasoning.
-    const anchorFirst = await page.evaluate(() => {
-      const a = document.querySelector("[data-testid='ideal-anchor']");
+    await expect(anchor).toBeVisible();
+    // Document order, not styling: the cluster-level ideal was dropped as a group anchor (#66) because it
+    // described the whole pre-split cluster, not this group. The anchor is now the "author your own" escape
+    // hatch BELOW the retrieved candidates, so the candidates lead and the anchor follows.
+    const listFirst = await page.evaluate(() => {
       const l = document.querySelector("[data-testid='candidate-list']");
+      const a = document.querySelector("[data-testid='ideal-anchor']");
       if (!a || !l) return false;
       return !!(
-        a.compareDocumentPosition(l) & Node.DOCUMENT_POSITION_FOLLOWING
+        l.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING
       );
     });
-    expect(anchorFirst).toBe(true);
+    expect(listFirst).toBe(true);
   });
 
   test("@gate2 a re-pick moves the chosen marker and survives a reload", async ({
     page,
   }) => {
-    await serveFinished(page);
+    await serveFinished(page, oneRankedConcept);
     await openGate2(page);
-    const cards = page.locator("[data-testid='candidate-card']");
-    await expect(cards.first()).toBeVisible();
-    const target = cards.nth(2);
-    const id = await target.getAttribute("data-candidate-id");
-    await target.click();
-    await expect(page.locator(`[data-candidate-id='${id}']`)).toHaveAttribute(
-      "data-chosen",
-      "true",
-    );
+    await expect(candidateRows(page).first()).toBeVisible();
+    // The model's pick is pre-chosen; re-pick a DIFFERENT candidate through its own (collapsed) row, then
+    // read the chosen cde-id off the DOM (not via an attribute-value selector — a cdeId is a question string
+    // that can carry quotes/spaces).
+    const target = page
+      .locator("[data-testid='candidate-row']:not([data-chosen='true'])")
+      .first();
+    const id = await target.getAttribute("data-cde-id");
+    await pickCandidate(page, target);
+    const chosenId = () =>
+      page.evaluate(() =>
+        document
+          .querySelector("[data-testid='candidate-row'][data-chosen='true']")
+          ?.getAttribute("data-cde-id"),
+      );
+    await expect.poll(chosenId).toBe(id);
     await page.reload();
     await page.waitForLoadState("networkidle");
-    await expect(page.locator(`[data-candidate-id='${id}']`)).toHaveAttribute(
-      "data-chosen",
-      "true",
-    );
+    await expect.poll(chosenId).toBe(id);
   });
 
-  test("@gate2 a generated element carries no catalog badge, no identifier link and no endorsement", async ({
+  test("@gate2 the authored target is labelled generated and wears no catalog endorsement", async ({
     page,
   }) => {
+    // The novel path's target is authored, not retrieved (the demo's first concept is a novel), so its
+    // anchor must say it is generated and must never carry a catalog element's NIH-endorsed badge.
     await serveFinished(page);
     await openGate2(page);
-    const gen = page
-      .locator("[data-testid='candidate-card'][data-generated='true']")
-      .first();
-    await expect(gen).toBeVisible();
-    await expect(gen).toContainText("generated by ddharmon");
-    await expect(
-      gen.locator("[data-testid='candidate-collection']"),
-    ).toHaveCount(0);
-    await expect(
-      gen.locator("[data-testid='candidate-endorsement']"),
-    ).toHaveCount(0);
-    await expect(gen.locator("a")).toHaveCount(0);
+    const anchor = page.locator("[data-testid='ideal-anchor']");
+    await expect(anchor).toBeVisible();
+    await expect(anchor).toContainText("generated by ddharmon");
+    await expect(anchor).not.toContainText("NIH-endorsed");
   });
 
   test("@gate2 the retired third abbreviation appears nowhere on the surface", async ({
@@ -416,74 +446,28 @@ test.describe("gate2 screen", () => {
     ).not.toContainText("no match");
   });
 
-  test("@gate2 a single candidate shows its score and is not marked chosen automatically", async ({
+  test("@gate2 a single candidate is not adopted automatically, and the floor is stated", async ({
     page,
   }) => {
     await serveFinished(page, (run) => {
+      oneRankedConcept(run);
       const rec = run.result!.records![0];
       rec.candidates = [{ ...rec.candidates[0], isChosen: false, rank: 1 }];
       rec.floored = true;
     });
     await openGate2(page);
-    await page.locator("[data-testid='gate2-concept']").first().click();
-    // Scoped to CATALOG cards. The concept also carries a generated element, which renders as its own
-    // pickable card — that is the point of the re-pick, and it is not a second retrieved candidate.
-    const cards = page.locator(
-      "[data-testid='candidate-card'][data-generated='false']",
-    );
-    await expect(cards).toHaveCount(1);
-    await expect(cards.first()).toHaveAttribute("data-chosen", "false");
-    await expect(
-      cards.first().locator("[data-testid='candidate-score']"),
-    ).toBeVisible();
+    const rows = candidateRows(page);
+    await expect(rows).toHaveCount(1);
+    // "Only one option" is not evidence it fits (autoAdoptsSingleCandidate) — the lone row is not chosen.
+    await expect(rows.first()).not.toHaveAttribute("data-chosen", "true");
     await expect(
       page.locator("[data-testid='adopt-floor-note']"),
     ).toBeVisible();
   });
 
-  test("@gate2 the knowledge-graph tile renders with its stated copy and no destructive colour", async ({
-    page,
-  }) => {
-    await serveFinished(page);
-    await openGate2(page);
-    const tile = page.locator(
-      "[data-testid='not-available'][data-thing='knowledge-graph']",
-    );
-    await expect(tile).toBeVisible();
-    await expect(tile).toContainText(
-      "Knowledge-graph context — not available.",
-    );
-    await expect(tile).toContainText("no query path into KRAKEN");
-    // Deferred by design and failed to build are different claims and must not look alike.
-    const destructive = await tile.evaluate((el) => {
-      const seen: string[] = [];
-      for (const node of [el, ...Array.from(el.querySelectorAll("*"))]) {
-        const s = getComputedStyle(node as Element);
-        seen.push(s.color, s.borderTopColor, s.backgroundColor);
-      }
-      const bad = getComputedStyle(document.documentElement)
-        .getPropertyValue("--status-destructive")
-        .trim();
-      return { seen, bad };
-    });
-    expect(destructive.seen.join(" ")).not.toContain(destructive.bad);
-  });
-
-  test("@gate2 the CDEMapper credit cites the paper and claims no better recall", async ({
-    page,
-  }) => {
-    await serveFinished(page);
-    await openGate2(page);
-    const credit = page.locator("[data-testid='cdemapper-credit']");
-    await expect(credit).toBeVisible();
-    await expect(credit).toContainText("JAMIA");
-    await expect(credit).toContainText("10.1093/jamia/ocaf064");
-    await expect(credit).toContainText("convergent method");
-    // The standing framing constraint, asserted as an absence: we do not beat CDEMapper on recall.
-    await expect(credit).not.toContainText(
-      /better recall|outperform|beats|higher recall/i,
-    );
-  });
+  // Removed 08-16g (#72, #74): the knowledge-graph NotAvailable tile and the on-screen CDEMapper credit
+  // were dropped from Gate 2 — the KG tile with the deferred knowledge-graph views, the CDEMapper
+  // acknowledgment to the Related-work page. Their tests are retired with them.
 
   test("@gate2 an edit to a generated element survives a CONCEPT SWITCH, not only a reload", async ({
     page,
@@ -511,7 +495,7 @@ test.describe("gate2 screen", () => {
     await openGate2(page, PAUSED_JOB);
     const empty = page.locator("[data-testid='gate-empty-state']");
     await expect(empty).toBeVisible();
-    await expect(empty).toContainText("Nothing was sent to Gate 2");
+    await expect(empty).toContainText("Nothing was passed from Gate 1");
   });
 
   test("@gate2 the source rows are the shared component, themed from role tokens", async ({
@@ -540,43 +524,9 @@ test.describe("gate2 screen", () => {
     }
   });
 
-  test("@gate2 the retrieval-score histogram is present and the deferred views are not", async ({
-    page,
-  }) => {
-    await serveFinished(page);
-    await openGate2(page);
-    // Taken from `analytics.tsx` because it shows where the retrieval floor is cutting, which is the
-    // decision this screen makes. The other three views belong to Gate 4 and must not appear here.
-    await expect(
-      page.locator("[data-testid='retrieval-histogram']"),
-    ).toBeVisible();
-    await expect(page.locator("[data-testid='match-sankey']")).toHaveCount(0);
-    await expect(
-      page.locator("[data-testid='cohort-coverage-chart']"),
-    ).toHaveCount(0);
-    await expect(page.locator("[data-testid='overlap-heatmap']")).toHaveCount(
-      0,
-    );
-  });
-
-  test("@gate2 the relation control persists a relation for the chosen target", async ({
-    page,
-  }) => {
-    await serveFinished(page);
-    await openGate2(page);
-    const control = page.locator("[data-testid='relation-control']");
-    await expect(control).toBeVisible();
-    const option = control.locator("[data-relation='skos:narrowMatch']");
-    await option.click();
-    await expect(option).toHaveAttribute("data-state", "on");
-    await page.reload();
-    await page.waitForLoadState("networkidle");
-    await expect(
-      page.locator(
-        "[data-testid='relation-control'] [data-relation='skos:narrowMatch']",
-      ),
-    ).toHaveAttribute("data-state", "on");
-  });
+  // Removed 08-16g (#72, #74): the retrieval-score histogram and the SKOS relation control were dropped
+  // from Gate 2 in the declutter. Their tests are retired with them. (The `suggestedRelation` algebra
+  // stays covered above; only the on-screen control is gone.)
 
   test("@gate2 the concept-match decision renders as an honest absence, not a dead control", async ({
     page,
@@ -598,13 +548,37 @@ test.describe("gate2 screen", () => {
 // --- Gate 3, rendered ----------------------------------------------------------------------------------
 
 test.describe("gate3 screen", () => {
-  test("@gate3 specs group by concept and the three forms render distinctly", async ({
+  test("@gate3 a concept's detail renders one spec row per member with the form named", async ({
     page,
   }) => {
-    await serveFinished(page);
+    // Master-detail now: a concept's specs live in its detail pane (no flat spec-group), one row per source
+    // member with `data-form` naming the surface. Constructed on a single ≥2-member concept so both a
+    // categorical and a unit form are present in the one auto-selected detail.
+    await serveFinished(page, (run) => {
+      const recs = run.result!.records!;
+      const r = recs.find((x) => x.members.length >= 2)!;
+      r.transforms = [
+        {
+          ...r.transforms[0],
+          kind: "categorical",
+          sourceVariable: r.members[0],
+          codeMap: { "1": "Yes" },
+          unmappedSourceCodes: [],
+        },
+        {
+          ...r.transforms[0],
+          kind: "unit",
+          sourceVariable: r.members[1],
+          factor: 2.54,
+          sourceUnit: "in",
+          targetUnit: "cm",
+        },
+      ];
+      run.result!.records = [r];
+    });
     await openGate3(page);
     await expect(
-      page.locator("[data-testid='spec-group']").first(),
+      page.locator("[data-testid='spec-row']").first(),
     ).toBeVisible();
     const forms = await page
       .locator("[data-testid='spec-row']")
@@ -638,72 +612,9 @@ test.describe("gate3 screen", () => {
     ).toBe(true);
   });
 
-  test("@gate3 zero, one and many unmapped values render distinct text", async ({
-    page,
-  }) => {
-    await serveFinished(page, (run) => {
-      const recs = run.result!.records!;
-      recs[0].transforms = [
-        {
-          ...recs[0].transforms[0],
-          kind: "categorical",
-          sourceVariable: recs[0].members[0],
-          unmappedSourceCodes: [],
-        },
-      ];
-      recs[1].transforms = [
-        {
-          ...recs[1].transforms[0],
-          kind: "categorical",
-          sourceVariable: recs[1].members[0],
-          unmappedSourceCodes: ["9"],
-        },
-      ];
-      recs[2].transforms = [
-        {
-          ...recs[2].transforms[0],
-          kind: "categorical",
-          sourceVariable: recs[2].members[0],
-          unmappedSourceCodes: ["9", "8", "7"],
-        },
-      ];
-    });
-    await openGate3(page);
-    const texts = await page
-      .locator("[data-testid='unmapped']")
-      .evaluateAll((els) => els.map((e) => e.textContent ?? ""));
-    // Singular is not a plural with a 1 in front of it.
-    expect(texts.some((t) => /1 source value/.test(t))).toBe(true);
-    expect(texts.some((t) => /3 source values/.test(t))).toBe(true);
-    await expect(
-      page.locator("[data-testid='unmapped'][data-state='none']").first(),
-    ).toBeVisible();
-  });
-
-  test("@gate3 an unmapped value offers all three explicit outcomes", async ({
-    page,
-  }) => {
-    await serveFinished(page, (run) => {
-      const rec = run.result!.records![0];
-      rec.transforms = [
-        {
-          ...rec.transforms[0],
-          kind: "categorical",
-          sourceVariable: rec.members[0],
-          unmappedSourceCodes: ["9"],
-        },
-      ];
-    });
-    await openGate3(page);
-    const decision = page.locator("[data-testid='unmapped-decision']").first();
-    await expect(decision).toBeVisible();
-    // Silently dropping the value is how a harmonization quietly loses data, so the loss is a CHOICE.
-    for (const outcome of ["add", "missing", "accept-loss"]) {
-      await expect(
-        decision.locator(`[data-outcome='${outcome}']`),
-      ).toBeVisible();
-    }
-  });
+  // Removed 08-16g: the standalone `unmapped-decision` control (SpecEditor) is retired — an unmapped source
+  // value is now handled INSIDE the editable recode surfaces (a chip left in SpecMappingEditor's "Unmapped"
+  // bucket; a code defaulting to Missing in SpecNumberMap). The `unmappedState` algebra stays asserted above.
 
   test("@gate3 a failed spec renders as failed, routes to review, and is present in the list", async ({
     page,
@@ -813,12 +724,12 @@ test.describe("gate3 screen", () => {
     // toasting, and the detail card does not re-seed its draft from a stale prop on id change.
     await serveFinished(page);
     await openGate3(page);
-    const first = page.locator("[data-testid='spec-concept']").first();
+    const first = page.locator("[data-testid='gate3-concept']").first();
     await first.click();
     const input = page.locator("[data-testid='spec-note-input']").first();
     await input.fill("A reviewer's note that must survive.");
     await page.locator("[data-testid='spec-save']").first().click();
-    await page.locator("[data-testid='spec-concept']").nth(1).click();
+    await page.locator("[data-testid='gate3-concept']").nth(1).click();
     await first.click();
     await expect(
       page.locator("[data-testid='spec-note-input']").first(),
@@ -847,6 +758,105 @@ test.describe("gate3 screen", () => {
     await expect(empty).toBeVisible();
     await expect(empty).toContainText("No transform specs to review");
   });
+
+  test("@gate3 ② a coded source on a numeric target gets a code→number table, not chips", async ({
+    page,
+  }) => {
+    // AI-READI susmkstoage ("years smoked") maps to a Number CDE. The drag-drop chip editor could not
+    // express this — a numeric target has no permissible-value buckets to drop into — so it must render
+    // SpecNumberMap: a standing pass-through row for the numeric body, and each coded value as an editable
+    // Number / Missing / Drop decision, defaulting to Missing.
+    await serveFinished(page, (run) => {
+      const recs = run.result!.records!;
+      const r = recs.find((x) =>
+        x.members.some((m) => m.includes("susmkstoage")),
+      );
+      if (r) run.result!.records = [r];
+    });
+    await openGate3(page);
+    const editor = page.locator("[data-testid='spec-number-map']").first();
+    await expect(editor).toBeVisible();
+    // The drag-drop value map is the wrong instrument for a numeric target and must not appear.
+    await expect(
+      page.locator("[data-testid='spec-mapping-editor']"),
+    ).toHaveCount(0);
+    await expect(
+      editor.locator("[data-testid='number-passthrough']"),
+    ).toBeVisible();
+    const rows = editor.locator("[data-testid='number-row']");
+    await expect(rows.first()).toBeVisible();
+    const actions = await rows.evaluateAll((els) =>
+      els.map((e) => e.getAttribute("data-action")),
+    );
+    expect(actions.length).toBeGreaterThan(0);
+    // Never a silently fabricated number: every coded value opens at Missing.
+    expect(actions.every((a) => a === "missing")).toBe(true);
+    // A representative number is a deliberate upgrade, and it persists across a reload (R6).
+    const first = rows.first();
+    await first
+      .locator("[data-testid='number-action'][data-action='number']")
+      .click();
+    await first.locator("[data-testid='number-value']").fill("60");
+    await expect(first).toHaveAttribute("data-action", "number");
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(
+      page
+        .locator("[data-testid='spec-number-map'] [data-testid='number-row']")
+        .first(),
+    ).toHaveAttribute("data-action", "number");
+  });
+
+  test("@gate3 ③ a numeric source on a banded categorical target gets an editable range table", async ({
+    page,
+  }) => {
+    // The mirror of ②: a numeric source with a categorical (banded) target has no source chips to sort, so
+    // it needs a range→band table. Built from the demo's novel record (a source with no response options)
+    // by giving its generated target range-labelled bands.
+    await serveFinished(page, (run) => {
+      const recs = run.result!.records!;
+      const r = recs.find((x) =>
+        x.members.some((m) => m.includes("viaocmpyn")),
+      )!;
+      r.verdict = "novel";
+      r.candidates = [];
+      r.gencde = {
+        ...(r.gencde ?? {}),
+        dataType: "categorical",
+        permissibleValues: [
+          { code: "1", label: "18-29" },
+          { code: "2", label: "30-44" },
+          { code: "3", label: "65+" },
+        ],
+      } as never;
+      r.transforms = [];
+      run.result!.records = [r];
+    });
+    await openGate3(page);
+    const editor = page.locator("[data-testid='spec-binning']").first();
+    await expect(editor).toBeVisible();
+    await expect(editor.locator("[data-testid='bin-row']")).toHaveCount(3);
+    // A range-labelled band pre-fills its boundaries (parseBandRange), so the reviewer edits rather than
+    // starts blank.
+    const firstBand = editor.locator(
+      "[data-testid='bin-row'][data-band='18-29']",
+    );
+    await expect(firstBand.locator("[data-testid='bin-min']")).toHaveValue(
+      "18",
+    );
+    await expect(firstBand.locator("[data-testid='bin-max']")).toHaveValue(
+      "29",
+    );
+    // Editing a boundary persists across a reload.
+    await firstBand.locator("[data-testid='bin-min']").fill("21");
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(
+      page.locator(
+        "[data-testid='bin-row'][data-band='18-29'] [data-testid='bin-min']",
+      ),
+    ).toHaveValue("21");
+  });
 });
 
 // --- R13: re-deciding a run that has already finished ---------------------------------------------------
@@ -855,10 +865,17 @@ test.describe("re-decide finished run", () => {
   test("re-decide finished run — the confirmation shows the real count and the zero-cost statement", async ({
     page,
   }) => {
-    await serveFinished(page);
+    await serveFinished(page, oneRankedConcept);
+    // A gate2 pick for this concept must be HELD first: the gate3 spec's upstream link is recorded only
+    // when the pick it points at actually exists (`write` stamps `upstream` iff the upstream decision is
+    // held), so without an initial pick the re-pick has no downstream spec to count.
     await openGate2(page);
-    // Make a spec decision downstream of this concept's pick first, so the count is non-zero and REAL.
-    await page.locator("[data-testid='candidate-card']").nth(1).click();
+    await pickCandidate(
+      page,
+      page
+        .locator("[data-testid='candidate-row']:not([data-chosen='true'])")
+        .first(),
+    );
     await openGate3(page);
     await page
       .locator("[data-testid='spec-note-input']")
@@ -867,7 +884,13 @@ test.describe("re-decide finished run", () => {
     await page.locator("[data-testid='spec-save']").first().click();
 
     await openGate2(page);
-    await page.locator("[data-testid='candidate-card']").nth(3).click();
+    // Re-pick again — now there is a downstream spec linked to this concept, so the confirmation appears.
+    await pickCandidate(
+      page,
+      page
+        .locator("[data-testid='candidate-row']:not([data-chosen='true'])")
+        .first(),
+    );
     const confirm = page.locator("[data-testid='repick-confirm']");
     await expect(confirm).toBeVisible();
     await expect(confirm).toContainText(
@@ -880,9 +903,14 @@ test.describe("re-decide finished run", () => {
   test("re-decide finished run — the run stays finished and no scope-reopening control is reachable", async ({
     page,
   }) => {
-    await serveFinished(page);
+    await serveFinished(page, oneRankedConcept);
     await openGate2(page);
-    await page.locator("[data-testid='candidate-card']").nth(2).click();
+    await pickCandidate(
+      page,
+      page
+        .locator("[data-testid='candidate-row']:not([data-chosen='true'])")
+        .first(),
+    );
     // Buying more work is a later phase and must not become reachable from here.
     await expect(page.locator("[data-testid='reopen-scope']")).toHaveCount(0);
     await expect(page.locator("[data-testid='readjudicate']")).toHaveCount(0);
@@ -895,9 +923,16 @@ test.describe("re-decide finished run", () => {
   test("re-decide finished run — affected specs render stale after the change", async ({
     page,
   }) => {
-    await serveFinished(page);
+    await serveFinished(page, oneRankedConcept);
+    // Hold a gate2 pick for this concept first, so the gate3 spec below records its upstream link (see the
+    // confirmation test) — otherwise the re-pick has nothing to mark stale.
     await openGate2(page);
-    await page.locator("[data-testid='candidate-card']").nth(1).click();
+    await pickCandidate(
+      page,
+      page
+        .locator("[data-testid='candidate-row']:not([data-chosen='true'])")
+        .first(),
+    );
     await openGate3(page);
     await page
       .locator("[data-testid='spec-note-input']")
@@ -909,7 +944,12 @@ test.describe("re-decide finished run", () => {
     ).toHaveCount(0);
 
     await openGate2(page);
-    await page.locator("[data-testid='candidate-card']").nth(4).click();
+    await pickCandidate(
+      page,
+      page
+        .locator("[data-testid='candidate-row']:not([data-chosen='true'])")
+        .first(),
+    );
     const confirm = page.locator("[data-testid='repick-confirm']");
     if (await confirm.isVisible())
       await page.locator("[data-testid='repick-accept']").click();
@@ -924,9 +964,14 @@ test.describe("re-decide finished run", () => {
   test("re-decide finished run — with nothing downstream, no regeneration step is offered", async ({
     page,
   }) => {
-    await serveFinished(page);
+    await serveFinished(page, oneRankedConcept);
     await openGate2(page);
-    await page.locator("[data-testid='candidate-card']").nth(2).click();
+    await pickCandidate(
+      page,
+      page
+        .locator("[data-testid='candidate-row']:not([data-chosen='true'])")
+        .first(),
+    );
     // No spec decision exists, so there is nothing to regenerate and no confirmation to show.
     await expect(page.locator("[data-testid='repick-confirm']")).toHaveCount(0);
     await expect(page.locator("[data-testid='regenerate-specs']")).toHaveCount(
@@ -937,7 +982,7 @@ test.describe("re-decide finished run", () => {
   test("re-decide finished run — staleness never cascades backwards from Gate 3 to Gate 2", async ({
     page,
   }) => {
-    await serveFinished(page);
+    await serveFinished(page, oneRankedConcept);
     await openGate3(page);
     await page
       .locator("[data-testid='spec-note-input']")
@@ -948,7 +993,7 @@ test.describe("re-decide finished run", () => {
     // A downstream edit says nothing about the upstream choice; marking Gate 2 stale for it would be a
     // notice reviewers learn to ignore.
     await expect(
-      page.locator("[data-testid='candidate-card'][data-stale='true']"),
+      page.locator("[data-testid='candidate-row'][data-stale='true']"),
     ).toHaveCount(0);
   });
 });

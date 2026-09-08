@@ -104,7 +104,7 @@ export function ConceptQueueRow({
       className={cn(
         "grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-2.5 border-l-4 px-4 py-2.5 text-left",
         selected
-          ? "border-l-accent-action bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]"
+          ? "border-l-accent-action bg-surface-info"
           : "border-l-transparent hover:bg-surface-inset",
       )}
     >
@@ -139,7 +139,11 @@ export function ConceptQueueRow({
           )}
         </div>
       </div>
-      {right && <span className="whitespace-nowrap pt-0.5 text-xs text-on-raised-muted">{right}</span>}
+      {right && (
+        <span className="whitespace-nowrap pt-0.5 text-xs text-on-raised-muted">
+          {right}
+        </span>
+      )}
     </div>
   );
 }
@@ -166,7 +170,10 @@ export function ConceptSortHeader<K extends string>({
           type="button"
           data-testid={`sort-${c.k}`}
           onClick={() => onSort(c.k)}
-          className={cn("hover:text-accent-on-raised", sort?.key === c.k && "text-accent-on-raised")}
+          className={cn(
+            "hover:text-accent-on-raised",
+            sort?.key === c.k && "text-accent-on-raised",
+          )}
         >
           {c.label}
           {sort?.key === c.k ? (sort.dir === "asc" ? " ↑" : " ↓") : " ⇅"}
@@ -195,14 +202,19 @@ export function ConceptDetailHeader({
     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-rule-on-raised pb-4">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-xl font-semibold leading-tight text-on-raised" title={title}>
+          <h2
+            className="text-xl font-semibold leading-tight text-on-raised"
+            title={title}
+          >
             {title}
           </h2>
           {badges}
         </div>
         {meta && <p className="mt-1.5 text-xs text-on-raised-muted">{meta}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
+      {actions && (
+        <div className="flex shrink-0 items-center gap-1">{actions}</div>
+      )}
     </div>
   );
 }
@@ -211,8 +223,14 @@ export function ConceptDetailHeader({
  *  Gate 1's coherence states). One closed vocabulary so the queue row and the detail header read alike. */
 const VERDICT_PILL: Record<string, { label: string; cls: string }> = {
   adopt: { label: "adopt", cls: "border-status-ok text-on-ok bg-surface-ok" },
-  refine: { label: "refine", cls: "border-status-warn text-on-warn bg-surface-warn" },
-  novel: { label: "novel", cls: "border-rule-info text-accent-on-raised bg-surface-info" },
+  refine: {
+    label: "refine",
+    cls: "border-status-warn text-on-warn bg-surface-warn",
+  },
+  novel: {
+    label: "novel",
+    cls: "border-rule-info text-accent-on-raised bg-surface-info",
+  },
 };
 
 export function VerdictPill({ verdict }: { verdict?: string }) {
@@ -222,7 +240,10 @@ export function VerdictPill({ verdict }: { verdict?: string }) {
     <span
       data-testid="verdict-pill"
       data-verdict={verdict}
-      className={cn("rounded-pill border px-2 py-0.5 text-xs font-semibold", v.cls)}
+      className={cn(
+        "rounded-pill border px-2 py-0.5 text-xs font-semibold",
+        v.cls,
+      )}
     >
       {v.label}
     </span>
@@ -269,13 +290,24 @@ export function InheritedPanel({
         />
         <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
           From {from}
-          <span className="font-normal normal-case tracking-normal text-on-inset-faint"> · {label} · read-only</span>
+          <span className="font-normal normal-case tracking-normal text-on-inset-faint">
+            {" "}
+            · {label} · read-only
+          </span>
         </span>
-        {detail && <span className="text-xs text-on-inset-muted">{detail}</span>}
-        <span className="ml-auto text-xs font-semibold text-on-inset-muted group-open:hidden">Show</span>
-        <span className="ml-auto hidden text-xs font-semibold text-on-inset-muted group-open:inline">Hide</span>
+        {detail && (
+          <span className="text-xs text-on-inset-muted">{detail}</span>
+        )}
+        <span className="ml-auto text-xs font-semibold text-on-inset-muted group-open:hidden">
+          Show
+        </span>
+        <span className="ml-auto hidden text-xs font-semibold text-on-inset-muted group-open:inline">
+          Hide
+        </span>
       </summary>
-      <div className="border-t border-rule-quiet-on-raised px-4 py-3">{children}</div>
+      <div className="border-t border-rule-quiet-on-raised px-4 py-3">
+        {children}
+      </div>
     </details>
   );
 }
