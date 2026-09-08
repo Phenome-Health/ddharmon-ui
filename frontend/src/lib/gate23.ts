@@ -36,7 +36,9 @@ import type { UICandidate, UIRecord, UITransform } from "@/types";
  */
 export type CandidateListState = "ranked" | "novel" | "failed";
 
-export function candidateListState(record: Pick<UIRecord, "candidates" | "verdict" | "gencde">): CandidateListState {
+export function candidateListState(
+  record: Pick<UIRecord, "candidates" | "verdict" | "gencde">,
+): CandidateListState {
   if ((record.candidates?.length ?? 0) > 0) return "ranked";
   if (record.verdict === "novel" || record.gencde) return "novel";
   return "failed";
@@ -94,17 +96,21 @@ export const SKOS_RELATION_LABEL: Record<SkosRelation, string> = {
  * A SUGGESTION, NEVER A RECORDED DECISION. Nothing is persisted until the reviewer picks, so a run the
  * reviewer never touched carries no relation assertion — which is the truth about it.
  */
-export function suggestedRelation(record: Pick<UIRecord, "verdict" | "gencde">): SkosRelation {
+export function suggestedRelation(
+  record: Pick<UIRecord, "verdict" | "gencde">,
+): SkosRelation {
   if (record.verdict === "adopt") return "skos:exactMatch";
   const stamped = record.gencde?.relation;
-  if (stamped && (SKOS_RELATIONS as readonly string[]).includes(stamped)) return stamped as SkosRelation;
+  if (stamped && (SKOS_RELATIONS as readonly string[]).includes(stamped))
+    return stamped as SkosRelation;
   return "skos:closeMatch";
 }
 
 // --- Gate 3: what one transform spec is ----------------------------------------------------------------
 
 /** The editing surfaces Gate 3 offers. Everything else renders read-only with its kind named. */
-export type SpecForm = "categorical" | "unit" | "arithmetic" | "passthrough" | "other";
+export type SpecForm =
+  "categorical" | "unit" | "arithmetic" | "passthrough" | "other";
 
 export function specForm(kind: string): SpecForm {
   if (kind === "categorical") return "categorical";
@@ -115,11 +121,160 @@ export function specForm(kind: string): SpecForm {
 }
 
 /**
+ * Whether the harmonization TARGET is a number rather than an enumerated category.
+ *
+ * ENUMERATED VALUES DECIDE IT, NOT THE DECLARED TYPE. A target the reviewer can map values INTO is one that
+ * has permissible values; a target that is "a number" has none. So the presence of a permissible-value list
+ * is the primary signal, and the declared `dataType` is only a tiebreaker for the no-PV case — where an
+ * explicitly non-numeric type (categorical / binary / text / date) still means "not a number", and anything
+ * else (Number / numeric / integer / an absent type) means "a number to pass values through as".
+ */
+export function targetIsNumeric(
+  dataType: string | undefined,
+  permissibleValues: string[],
+): boolean {
+  if (permissibleValues.length > 0) return false;
+  const t = (dataType ?? "").trim().toLowerCase();
+  return t !== "categorical" && t !== "binary" && t !== "text" && t !== "date";
+}
+
+/**
+ * The four value-recode surfaces, and the ONE rule for choosing between them: the surface follows the
+ * TARGET's type, not the source's coded options and not the pipeline's transform kind.
+ *
+ * WHY TARGET-DRIVEN. A source variable that carries coded response options is not necessarily categorical —
+ * AI-READI `susmkstoage` ("years smoked") codes 98 = "more than 60" and 999 = "prefer not to say" over a
+ * numeric body, so its source reads "categorical" only because it HAS codes. What settles the surface is
+ * where the values must LAND: a Number target has no permissible-value buckets to drop chips into, and a
+ * categorical target has no single number to pass a source integer through as. Keying off the source type
+ * is what put a chip-and-bucket editor on a numeric target and left it with nowhere to place a value.
+ *
+ *   - `value-map`      ① target categorical + source has options → chips into target-value buckets.
+ *   - `code-to-number` ② target numeric     + source has options → each code → a number / Missing / Drop.
+ *   - `binning`        ③ target categorical + source numeric     → source ranges → target bands.
+ *   - `recode-detail`  ④ unit / arithmetic / data-dependent, or numeric→numeric with no value list → read-only.
+ */
+export type RecodeShape =
+  "value-map" | "code-to-number" | "binning" | "recode-detail";
+
+export function recodeShape(args: {
+  targetDataType?: string;
+  /** The target's permissible values (labels), catalog order; empty for a numeric target. */
+  targetValues: string[];
+  /** Whether the source variable carries enumerated response options. */
+  hasSourceOptions: boolean;
+  /** The pipeline transform kind, when one was generated. */
+  kind?: string;
+}): RecodeShape {
+  // A method with no value list to sort keeps its read-only detail — these are numeric↔numeric conversions.
+  if (
+    args.kind === "unit" ||
+    args.kind === "arithmetic" ||
+    args.kind === "data_dependent"
+  )
+    return "recode-detail";
+  const numericTarget = targetIsNumeric(args.targetDataType, args.targetValues);
+  if (args.hasSourceOptions)
+    return numericTarget ? "code-to-number" : "value-map";
+  if (!numericTarget) return "binning";
+  return "recode-detail";
+}
+
+// --- ② code → number (categorical source, numeric target) ---------------------------------------------
+
+/**
+ * What a single source code becomes on a numeric target. `number` carries a value; `missing` and `drop`
+ * do not. The numeric BODY of the variable is not a code — it passes through as-is and is rendered as a
+ * standing row, so it never appears in this map.
+ *
+ * NO `censored` YET, DELIBERATELY. A top-code like 98 = "more than 60" is honestly a censored value
+ * (≥ 60), but recording that needs the run contract to carry a censored flag downstream, which it does not
+ * yet. Until it does, the safe default is `missing` and a representative `number` is the deliberate upgrade —
+ * never a silently fabricated point value.
+ */
+export type NumberAction = "number" | "missing" | "drop";
+export const NUMBER_ACTIONS = ["number", "missing", "drop"] as const;
+export const NUMBER_ACTION_LABEL: Record<NumberAction, string> = {
+  number: "Number",
+  missing: "Missing",
+  drop: "Drop",
+};
+export interface NumberMapEntry {
+  action: NumberAction;
+  value: number | null;
+}
+
+/**
+ * Seed the code→number map. Every coded value defaults to `missing` — on a numeric target a code has no
+ * natural number, so the honest starting point is "not collected", which the reviewer upgrades to a
+ * representative number where one exists. Persisted edits win.
+ */
+export function seedNumberMap(
+  sourceOptions: { code: string }[],
+  existing?: Record<string, NumberMapEntry>,
+): Record<string, NumberMapEntry> {
+  const out: Record<string, NumberMapEntry> = {};
+  for (const o of sourceOptions)
+    out[o.code] = { action: "missing", value: null };
+  if (existing)
+    for (const [k, v] of Object.entries(existing)) if (v) out[k] = v;
+  return out;
+}
+
+// --- ③ binning (numeric source, categorical target) ---------------------------------------------------
+
+export interface BinRule {
+  band: string; // the target permissible value this range maps onto
+  min: number | null; // inclusive lower bound; null = open below
+  max: number | null; // inclusive upper bound; null = open above
+}
+
+/**
+ * Parse a numeric range out of a band LABEL so the reviewer opens with proposed boundaries instead of a
+ * blank grid: "18-29" / "18–29" / "18 to 29" → [18, 29]; "65+" / "65 or older" / "≥65" → [65, ∞);
+ * "<18" / "under 18" → (−∞, 18). Returns null when the label carries no range (a named category the
+ * reviewer must bound by hand).
+ */
+export function parseBandRange(
+  label: string,
+): { min: number | null; max: number | null } | null {
+  const s = label.trim();
+  let m =
+    s.match(/^(\d+(?:\.\d+)?)\s*\+$/) ||
+    s.match(
+      /^(\d+(?:\.\d+)?)\s*(?:or older|and older|and up|or more|and over)$/i,
+    ) ||
+    s.match(/^(?:>=?|≥)\s*(\d+(?:\.\d+)?)$/);
+  if (m) return { min: Number(m[1]), max: null };
+  m = s.match(/^(?:<=?|≤|under|up to|less than)\s*(\d+(?:\.\d+)?)$/i);
+  if (m) return { min: null, max: Number(m[1]) };
+  m = s.match(/^(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)$/i);
+  if (m) return { min: Number(m[1]), max: Number(m[2]) };
+  return null;
+}
+
+/** One bin per target band, pre-proposed from the band labels; persisted boundaries win. */
+export function seedBinning(
+  targetValues: string[],
+  existing?: BinRule[],
+): BinRule[] {
+  const byBand = new Map((existing ?? []).map((b) => [b.band, b]));
+  return targetValues.map((band) => {
+    const prev = byBand.get(band);
+    if (prev) return prev;
+    const parsed = parseBandRange(band);
+    return { band, min: parsed?.min ?? null, max: parsed?.max ?? null };
+  });
+}
+
+/**
  * ARITHMETIC ALWAYS GOES TO REVIEW — unconditionally, not because a confidence score happened to be low.
  * It is a property of the CATEGORY: an arithmetic recode silently produces plausible numbers when it is
  * wrong, so there is no value of `needsReview` from the pipeline that should be able to turn this off.
  */
-export function routesToReview(t: Pick<UITransform, "kind" | "needsReview">): boolean {
+export function routesToReview(
+  t: Pick<UITransform, "kind" | "needsReview">,
+): boolean {
   return t.kind === "arithmetic" || t.needsReview;
 }
 
@@ -134,7 +289,9 @@ export function routesToReview(t: Pick<UITransform, "kind" | "needsReview">): bo
  */
 export type UnmappedState = "none" | "one" | "many";
 
-export function unmappedState(t: Pick<UITransform, "unmappedSourceCodes">): UnmappedState {
+export function unmappedState(
+  t: Pick<UITransform, "unmappedSourceCodes">,
+): UnmappedState {
   const n = t.unmappedSourceCodes?.length ?? 0;
   if (n === 0) return "none";
   return n === 1 ? "one" : "many";
@@ -183,10 +340,16 @@ export function specRowsFor(
   record: Pick<UIRecord, "members" | "transforms">,
   { specsGenerated }: { specsGenerated: boolean },
 ): { sourceVariable: string; transform?: UITransform; state: SpecState }[] {
-  const bySource = new Map((record.transforms ?? []).map((t) => [t.sourceVariable, t]));
+  const bySource = new Map(
+    (record.transforms ?? []).map((t) => [t.sourceVariable, t]),
+  );
   return (record.members ?? []).map((sourceVariable) => {
     const transform = bySource.get(sourceVariable);
-    return { sourceVariable, transform, state: specState(transform, { specsGenerated }) };
+    return {
+      sourceVariable,
+      transform,
+      state: specState(transform, { specsGenerated }),
+    };
   });
 }
 
@@ -221,11 +384,16 @@ export function conceptMatchState(
  * on the one control whose whole promise is that it costs nothing.
  */
 export function affectedSpecCount(
-  specDecisions: Record<string, { upstream?: { kind: string; itemKey: string } }>,
+  specDecisions: Record<
+    string,
+    { upstream?: { kind: string; itemKey: string } }
+  >,
   groupId: string,
 ): number {
   return Object.values(specDecisions).filter(
-    (d) => d.upstream?.kind === "gate2_candidate_pick" && d.upstream.itemKey === groupId,
+    (d) =>
+      d.upstream?.kind === "gate2_candidate_pick" &&
+      d.upstream.itemKey === groupId,
   ).length;
 }
 

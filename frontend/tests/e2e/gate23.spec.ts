@@ -6,12 +6,17 @@ import {
   candidateListState,
   conceptMatchState,
   needsRepickConfirmation,
+  parseBandRange,
+  recodeShape,
   repickConfirmation,
   routesToReview,
+  seedBinning,
+  seedNumberMap,
   specForm,
   specRowsFor,
   specState,
   suggestedRelation,
+  targetIsNumeric,
   unmappedState,
 } from "@/lib/gate23";
 import {
@@ -56,10 +61,22 @@ test.describe("gate23 algebra", () => {
     // The pair the contract carries no flag for, and the reason this function is derived rather than read.
     // An ASSESSED absence is a decision; an UNASSESSED one is silence, and rendering silence as "no match
     // exists" is the tool vouching for a conclusion no stage reached.
-    expect(candidateListState({ candidates: [], verdict: "novel", gencde: null })).toBe("novel");
-    expect(candidateListState({ candidates: [], verdict: "unclassified", gencde: null })).toBe("failed");
     expect(
-      candidateListState({ candidates: [{ rank: 1 } as never], verdict: "adopt", gencde: null }),
+      candidateListState({ candidates: [], verdict: "novel", gencde: null }),
+    ).toBe("novel");
+    expect(
+      candidateListState({
+        candidates: [],
+        verdict: "unclassified",
+        gencde: null,
+      }),
+    ).toBe("failed");
+    expect(
+      candidateListState({
+        candidates: [{ rank: 1 } as never],
+        verdict: "adopt",
+        gencde: null,
+      }),
     ).toBe("ranked");
   });
 
@@ -71,20 +88,31 @@ test.describe("gate23 algebra", () => {
 
   test("@gate2 the relation vocabulary is SKOS and the suggestion follows the verdict", () => {
     expect(SKOS_RELATIONS).toContain("skos:exactMatch");
-    expect(suggestedRelation({ verdict: "adopt", gencde: null })).toBe("skos:exactMatch");
+    expect(suggestedRelation({ verdict: "adopt", gencde: null })).toBe(
+      "skos:exactMatch",
+    );
     // A refined element carries core's own stamped predicate, so the browser proposes what core wrote
     // rather than a second opinion.
     expect(
-      suggestedRelation({ verdict: "refine", gencde: { relation: "skos:narrowMatch" } as never }),
+      suggestedRelation({
+        verdict: "refine",
+        gencde: { relation: "skos:narrowMatch" } as never,
+      }),
     ).toBe("skos:narrowMatch");
   });
 
   test("@gate3 arithmetic always routes to review, regardless of the pipeline's own flag", () => {
     // A category of risk, not a property of one row: an arithmetic recode produces plausible numbers when
     // it is wrong, so no value of `needsReview` may switch this off.
-    expect(routesToReview({ kind: "arithmetic", needsReview: false })).toBe(true);
-    expect(routesToReview({ kind: "categorical", needsReview: false })).toBe(false);
-    expect(routesToReview({ kind: "categorical", needsReview: true })).toBe(true);
+    expect(routesToReview({ kind: "arithmetic", needsReview: false })).toBe(
+      true,
+    );
+    expect(routesToReview({ kind: "categorical", needsReview: false })).toBe(
+      false,
+    );
+    expect(routesToReview({ kind: "categorical", needsReview: true })).toBe(
+      true,
+    );
   });
 
   test("@gate3 zero, one and many unmapped values are three states", () => {
@@ -96,10 +124,16 @@ test.describe("gate23 algebra", () => {
   test("@gate3 a failed spec, a no-transform spec and a not-generated run are three states", () => {
     // The pair that matters: `failed` means the stage ran and produced nothing for this variable;
     // `not-generated` means the run never bought the stage. Opposite claims, identical emptiness.
-    expect(specState({ kind: "categorical" }, { specsGenerated: true })).toBe("ok");
-    expect(specState({ kind: "none" }, { specsGenerated: true })).toBe("no-transform");
+    expect(specState({ kind: "categorical" }, { specsGenerated: true })).toBe(
+      "ok",
+    );
+    expect(specState({ kind: "none" }, { specsGenerated: true })).toBe(
+      "no-transform",
+    );
     expect(specState(undefined, { specsGenerated: true })).toBe("failed");
-    expect(specState(undefined, { specsGenerated: false })).toBe("not-generated");
+    expect(specState(undefined, { specsGenerated: false })).toBe(
+      "not-generated",
+    );
   });
 
   test("@gate3 spec rows are driven by the MEMBERS so a failed spec still gets a row", () => {
@@ -119,10 +153,18 @@ test.describe("gate23 algebra", () => {
   test("@gate3 an absent concept-match verdict is NOT a pass", () => {
     // `conceptMismatch` is absent, not false, on a run that did not opt in. Reading absence as `false`
     // turns "nobody checked" into "checked, and fine".
-    expect(conceptMatchState({ conceptMismatch: undefined }, { optedIn: false })).toBe("not-enabled");
-    expect(conceptMatchState({ conceptMismatch: undefined }, { optedIn: true })).toBe("not-enabled");
-    expect(conceptMatchState({ conceptMismatch: false }, { optedIn: true })).toBe("clear");
-    expect(conceptMatchState({ conceptMismatch: true }, { optedIn: true })).toBe("flagged");
+    expect(
+      conceptMatchState({ conceptMismatch: undefined }, { optedIn: false }),
+    ).toBe("not-enabled");
+    expect(
+      conceptMatchState({ conceptMismatch: undefined }, { optedIn: true }),
+    ).toBe("not-enabled");
+    expect(
+      conceptMatchState({ conceptMismatch: false }, { optedIn: true }),
+    ).toBe("clear");
+    expect(
+      conceptMatchState({ conceptMismatch: true }, { optedIn: true }),
+    ).toBe("flagged");
   });
 
   test("@gate3 specForm maps the contract's kinds onto the three editing surfaces", () => {
@@ -132,6 +174,104 @@ test.describe("gate23 algebra", () => {
     expect(specForm("none")).toBe("passthrough");
     expect(specForm("identity")).toBe("passthrough");
     expect(specForm("wide_to_long")).toBe("other");
+  });
+
+  test("@gate3 a target is numeric when it has no enumerated permissible values", () => {
+    expect(targetIsNumeric("Number", [])).toBe(true);
+    expect(targetIsNumeric(undefined, [])).toBe(true); // no PVs, no declared type -> nothing to map INTO
+    expect(targetIsNumeric("categorical", ["Yes", "No"])).toBe(false);
+    expect(targetIsNumeric("categorical", [])).toBe(false); // explicit categorical wins the no-PV tiebreak
+    expect(targetIsNumeric("text", [])).toBe(false);
+    expect(targetIsNumeric("date", [])).toBe(false);
+  });
+
+  test("@gate3 the recode surface follows the TARGET type, not the source's coded options", () => {
+    // susmkstoage: source carries coded options (98='more than 60', 999='prefer not') but the target is a
+    // Number -> a code->number table, NOT chips-into-buckets (there are no buckets on a numeric target).
+    expect(
+      recodeShape({
+        targetDataType: "Number",
+        targetValues: [],
+        hasSourceOptions: true,
+      }),
+    ).toBe("code-to-number");
+    // a genuine categorical target with source options -> the drag-drop value map (unchanged).
+    expect(
+      recodeShape({
+        targetDataType: "categorical",
+        targetValues: ["Yes", "No"],
+        hasSourceOptions: true,
+      }),
+    ).toBe("value-map");
+    // a numeric source (no options) with a banded categorical target -> binning.
+    expect(
+      recodeShape({
+        targetDataType: "categorical",
+        targetValues: ["18-29", "30-44"],
+        hasSourceOptions: false,
+      }),
+    ).toBe("binning");
+    // unit / arithmetic / data-dependent keep read-only detail regardless of the value lists.
+    expect(
+      recodeShape({
+        kind: "unit",
+        targetDataType: "Number",
+        targetValues: [],
+        hasSourceOptions: false,
+      }),
+    ).toBe("recode-detail");
+    expect(
+      recodeShape({
+        kind: "arithmetic",
+        targetValues: [],
+        hasSourceOptions: true,
+      }),
+    ).toBe("recode-detail");
+    // numeric -> numeric with no method and no value list: nothing to sort, read-only.
+    expect(
+      recodeShape({
+        targetDataType: "Number",
+        targetValues: [],
+        hasSourceOptions: false,
+      }),
+    ).toBe("recode-detail");
+  });
+
+  test("@gate3 ② the code→number map defaults every code to Missing, never a fabricated number", () => {
+    const seeded = seedNumberMap([{ code: "98" }, { code: "999" }]);
+    expect(seeded["98"]).toEqual({ action: "missing", value: null });
+    expect(seeded["999"]).toEqual({ action: "missing", value: null });
+    // a persisted edit (a deliberate representative number) wins over the default.
+    const edited = seedNumberMap([{ code: "98" }, { code: "999" }], {
+      "98": { action: "number", value: 60 },
+    });
+    expect(edited["98"]).toEqual({ action: "number", value: 60 });
+    expect(edited["999"]).toEqual({ action: "missing", value: null });
+  });
+
+  test("@gate3 ③ band labels parse into proposed ranges; open-ended and named bands are handled", () => {
+    expect(parseBandRange("18-29")).toEqual({ min: 18, max: 29 });
+    expect(parseBandRange("18–29")).toEqual({ min: 18, max: 29 }); // en dash
+    expect(parseBandRange("18 to 29")).toEqual({ min: 18, max: 29 });
+    expect(parseBandRange("65+")).toEqual({ min: 65, max: null });
+    expect(parseBandRange("65 or older")).toEqual({ min: 65, max: null });
+    expect(parseBandRange("under 18")).toEqual({ min: null, max: 18 });
+    expect(parseBandRange("adult")).toBeNull(); // a named band the reviewer must bound by hand
+  });
+
+  test("@gate3 ③ binning seeds one bin per band from the labels; persisted boundaries win", () => {
+    const seeded = seedBinning(["18-29", "30-44", "65+"]);
+    expect(seeded).toEqual([
+      { band: "18-29", min: 18, max: 29 },
+      { band: "30-44", min: 30, max: 44 },
+      { band: "65+", min: 65, max: null },
+    ]);
+    const edited = seedBinning(
+      ["18-29", "30-44"],
+      [{ band: "18-29", min: 21, max: 29 }],
+    );
+    expect(edited[0]).toEqual({ band: "18-29", min: 21, max: 29 });
+    expect(edited[1]).toEqual({ band: "30-44", min: 30, max: 44 });
   });
 
   test("re-decide finished run — the confirmation counts real affected specs and states the zero cost", () => {
@@ -144,7 +284,9 @@ test.describe("gate23 algebra", () => {
     expect(affectedSpecCount(decisions, "g9")).toBe(0);
     expect(repickConfirmation(2)).toContain("2 transform specs");
     expect(repickConfirmation(1)).toContain("1 transform spec at Gate 3 stale");
-    expect(repickConfirmation(2)).toContain("costs nothing — the candidates were already retrieved");
+    expect(repickConfirmation(2)).toContain(
+      "costs nothing — the candidates were already retrieved",
+    );
     // Nothing downstream means no confirmation and no regeneration step — a dead control otherwise.
     expect(needsRepickConfirmation(0)).toBe(false);
     expect(needsRepickConfirmation(1)).toBe(true);
@@ -169,7 +311,9 @@ test.describe("gate23 algebra", () => {
 // --- Gate 2, rendered ----------------------------------------------------------------------------------
 
 test.describe("gate2 screen", () => {
-  test("@gate2 the anchor renders BEFORE the ranked candidates", async ({ page }) => {
+  test("@gate2 the anchor renders BEFORE the ranked candidates", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate2(page);
     const anchor = page.locator("[data-testid='ideal-anchor']");
@@ -182,12 +326,16 @@ test.describe("gate2 screen", () => {
       const a = document.querySelector("[data-testid='ideal-anchor']");
       const l = document.querySelector("[data-testid='candidate-list']");
       if (!a || !l) return false;
-      return !!(a.compareDocumentPosition(l) & Node.DOCUMENT_POSITION_FOLLOWING);
+      return !!(
+        a.compareDocumentPosition(l) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
     });
     expect(anchorFirst).toBe(true);
   });
 
-  test("@gate2 a re-pick moves the chosen marker and survives a reload", async ({ page }) => {
+  test("@gate2 a re-pick moves the chosen marker and survives a reload", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate2(page);
     const cards = page.locator("[data-testid='candidate-card']");
@@ -195,10 +343,16 @@ test.describe("gate2 screen", () => {
     const target = cards.nth(2);
     const id = await target.getAttribute("data-candidate-id");
     await target.click();
-    await expect(page.locator(`[data-candidate-id='${id}']`)).toHaveAttribute("data-chosen", "true");
+    await expect(page.locator(`[data-candidate-id='${id}']`)).toHaveAttribute(
+      "data-chosen",
+      "true",
+    );
     await page.reload();
     await page.waitForLoadState("networkidle");
-    await expect(page.locator(`[data-candidate-id='${id}']`)).toHaveAttribute("data-chosen", "true");
+    await expect(page.locator(`[data-candidate-id='${id}']`)).toHaveAttribute(
+      "data-chosen",
+      "true",
+    );
   });
 
   test("@gate2 a generated element carries no catalog badge, no identifier link and no endorsement", async ({
@@ -206,15 +360,23 @@ test.describe("gate2 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate2(page);
-    const gen = page.locator("[data-testid='candidate-card'][data-generated='true']").first();
+    const gen = page
+      .locator("[data-testid='candidate-card'][data-generated='true']")
+      .first();
     await expect(gen).toBeVisible();
     await expect(gen).toContainText("generated by ddharmon");
-    await expect(gen.locator("[data-testid='candidate-collection']")).toHaveCount(0);
-    await expect(gen.locator("[data-testid='candidate-endorsement']")).toHaveCount(0);
+    await expect(
+      gen.locator("[data-testid='candidate-collection']"),
+    ).toHaveCount(0);
+    await expect(
+      gen.locator("[data-testid='candidate-endorsement']"),
+    ).toHaveCount(0);
     await expect(gen.locator("a")).toHaveCount(0);
   });
 
-  test("@gate2 the retired third abbreviation appears nowhere on the surface", async ({ page }) => {
+  test("@gate2 the retired third abbreviation appears nowhere on the surface", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate2(page);
     // CDE = existing, GenCDE = generated. The third abbreviation is retired and must not resurface.
@@ -239,13 +401,19 @@ test.describe("gate2 screen", () => {
 
     await page.locator("[data-testid='gate2-concept']").first().click();
     await expect(page.locator("[data-testid='novel-path']")).toBeVisible();
-    await expect(page.locator("[data-testid='retrieval-failed']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='retrieval-failed']")).toHaveCount(
+      0,
+    );
 
     await page.locator("[data-testid='gate2-concept']").nth(1).click();
-    await expect(page.locator("[data-testid='retrieval-failed']")).toBeVisible();
+    await expect(
+      page.locator("[data-testid='retrieval-failed']"),
+    ).toBeVisible();
     await expect(page.locator("[data-testid='novel-path']")).toHaveCount(0);
     // A failure must not claim no match exists — that is the whole distinction.
-    await expect(page.locator("[data-testid='retrieval-failed']")).not.toContainText("no match");
+    await expect(
+      page.locator("[data-testid='retrieval-failed']"),
+    ).not.toContainText("no match");
   });
 
   test("@gate2 a single candidate shows its score and is not marked chosen automatically", async ({
@@ -260,11 +428,17 @@ test.describe("gate2 screen", () => {
     await page.locator("[data-testid='gate2-concept']").first().click();
     // Scoped to CATALOG cards. The concept also carries a generated element, which renders as its own
     // pickable card — that is the point of the re-pick, and it is not a second retrieved candidate.
-    const cards = page.locator("[data-testid='candidate-card'][data-generated='false']");
+    const cards = page.locator(
+      "[data-testid='candidate-card'][data-generated='false']",
+    );
     await expect(cards).toHaveCount(1);
     await expect(cards.first()).toHaveAttribute("data-chosen", "false");
-    await expect(cards.first().locator("[data-testid='candidate-score']")).toBeVisible();
-    await expect(page.locator("[data-testid='adopt-floor-note']")).toBeVisible();
+    await expect(
+      cards.first().locator("[data-testid='candidate-score']"),
+    ).toBeVisible();
+    await expect(
+      page.locator("[data-testid='adopt-floor-note']"),
+    ).toBeVisible();
   });
 
   test("@gate2 the knowledge-graph tile renders with its stated copy and no destructive colour", async ({
@@ -272,9 +446,13 @@ test.describe("gate2 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate2(page);
-    const tile = page.locator("[data-testid='not-available'][data-thing='knowledge-graph']");
+    const tile = page.locator(
+      "[data-testid='not-available'][data-thing='knowledge-graph']",
+    );
     await expect(tile).toBeVisible();
-    await expect(tile).toContainText("Knowledge-graph context — not available.");
+    await expect(tile).toContainText(
+      "Knowledge-graph context — not available.",
+    );
     await expect(tile).toContainText("no query path into KRAKEN");
     // Deferred by design and failed to build are different claims and must not look alike.
     const destructive = await tile.evaluate((el) => {
@@ -291,7 +469,9 @@ test.describe("gate2 screen", () => {
     expect(destructive.seen.join(" ")).not.toContain(destructive.bad);
   });
 
-  test("@gate2 the CDEMapper credit cites the paper and claims no better recall", async ({ page }) => {
+  test("@gate2 the CDEMapper credit cites the paper and claims no better recall", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate2(page);
     const credit = page.locator("[data-testid='cdemapper-credit']");
@@ -300,7 +480,9 @@ test.describe("gate2 screen", () => {
     await expect(credit).toContainText("10.1093/jamia/ocaf064");
     await expect(credit).toContainText("convergent method");
     // The standing framing constraint, asserted as an absence: we do not beat CDEMapper on recall.
-    await expect(credit).not.toContainText(/better recall|outperform|beats|higher recall/i);
+    await expect(credit).not.toContainText(
+      /better recall|outperform|beats|higher recall/i,
+    );
   });
 
   test("@gate2 an edit to a generated element survives a CONCEPT SWITCH, not only a reload", async ({
@@ -317,12 +499,14 @@ test.describe("gate2 screen", () => {
     await page.locator("[data-testid='gencde-save']").click();
     await page.locator("[data-testid='gate2-concept']").nth(1).click();
     await page.locator("[data-testid='gate2-concept']").first().click();
-    await expect(page.locator("[data-testid='gencde-definition-input']")).toHaveValue(
-      "A reviewer-corrected definition.",
-    );
+    await expect(
+      page.locator("[data-testid='gencde-definition-input']"),
+    ).toHaveValue("A reviewer-corrected definition.");
   });
 
-  test("@gate2 nothing sent to this gate renders the empty state, never a blank pane", async ({ page }) => {
+  test("@gate2 nothing sent to this gate renders the empty state, never a blank pane", async ({
+    page,
+  }) => {
     await servePaused(page);
     await openGate2(page, PAUSED_JOB);
     const empty = page.locator("[data-testid='gate-empty-state']");
@@ -330,7 +514,9 @@ test.describe("gate2 screen", () => {
     await expect(empty).toContainText("Nothing was sent to Gate 2");
   });
 
-  test("@gate2 the source rows are the shared component, themed from role tokens", async ({ page }) => {
+  test("@gate2 the source rows are the shared component, themed from role tokens", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate2(page);
     const grid = page.locator("[data-testid='source-rows']");
@@ -361,13 +547,21 @@ test.describe("gate2 screen", () => {
     await openGate2(page);
     // Taken from `analytics.tsx` because it shows where the retrieval floor is cutting, which is the
     // decision this screen makes. The other three views belong to Gate 4 and must not appear here.
-    await expect(page.locator("[data-testid='retrieval-histogram']")).toBeVisible();
+    await expect(
+      page.locator("[data-testid='retrieval-histogram']"),
+    ).toBeVisible();
     await expect(page.locator("[data-testid='match-sankey']")).toHaveCount(0);
-    await expect(page.locator("[data-testid='cohort-coverage-chart']")).toHaveCount(0);
-    await expect(page.locator("[data-testid='overlap-heatmap']")).toHaveCount(0);
+    await expect(
+      page.locator("[data-testid='cohort-coverage-chart']"),
+    ).toHaveCount(0);
+    await expect(page.locator("[data-testid='overlap-heatmap']")).toHaveCount(
+      0,
+    );
   });
 
-  test("@gate2 the relation control persists a relation for the chosen target", async ({ page }) => {
+  test("@gate2 the relation control persists a relation for the chosen target", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate2(page);
     const control = page.locator("[data-testid='relation-control']");
@@ -378,7 +572,9 @@ test.describe("gate2 screen", () => {
     await page.reload();
     await page.waitForLoadState("networkidle");
     await expect(
-      page.locator("[data-testid='relation-control'] [data-relation='skos:narrowMatch']"),
+      page.locator(
+        "[data-testid='relation-control'] [data-relation='skos:narrowMatch']",
+      ),
     ).toHaveAttribute("data-state", "on");
   });
 
@@ -387,7 +583,9 @@ test.describe("gate2 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate2(page);
-    const tile = page.locator("[data-testid='not-available'][data-thing='concept-gate']");
+    const tile = page.locator(
+      "[data-testid='not-available'][data-thing='concept-gate']",
+    );
     await expect(tile).toBeVisible();
     // It names the option and does NOT read as a permanent product gap — the capability exists.
     await expect(tile).toContainText("Concept-match check");
@@ -400,13 +598,19 @@ test.describe("gate2 screen", () => {
 // --- Gate 3, rendered ----------------------------------------------------------------------------------
 
 test.describe("gate3 screen", () => {
-  test("@gate3 specs group by concept and the three forms render distinctly", async ({ page }) => {
+  test("@gate3 specs group by concept and the three forms render distinctly", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate3(page);
-    await expect(page.locator("[data-testid='spec-group']").first()).toBeVisible();
+    await expect(
+      page.locator("[data-testid='spec-group']").first(),
+    ).toBeVisible();
     const forms = await page
       .locator("[data-testid='spec-row']")
-      .evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute("data-form")))]);
+      .evaluateAll((els) => [
+        ...new Set(els.map((e) => e.getAttribute("data-form"))),
+      ]);
     expect(forms).toContain("categorical");
     expect(forms).toContain("unit");
   });
@@ -422,21 +626,38 @@ test.describe("gate3 screen", () => {
     const rows = page.locator("[data-testid='spec-row']");
     await expect(rows.first()).toBeVisible();
     const all = await rows.evaluateAll((els) =>
-      els.map((e) => ({ form: e.getAttribute("data-form"), review: e.getAttribute("data-review") })),
+      els.map((e) => ({
+        form: e.getAttribute("data-form"),
+        review: e.getAttribute("data-review"),
+      })),
     );
     expect(all.length).toBeGreaterThan(0);
     // A category of risk, not a property of one row.
-    expect(all.every((r) => r.form === "arithmetic" && r.review === "true")).toBe(true);
+    expect(
+      all.every((r) => r.form === "arithmetic" && r.review === "true"),
+    ).toBe(true);
   });
 
-  test("@gate3 zero, one and many unmapped values render distinct text", async ({ page }) => {
+  test("@gate3 zero, one and many unmapped values render distinct text", async ({
+    page,
+  }) => {
     await serveFinished(page, (run) => {
       const recs = run.result!.records!;
       recs[0].transforms = [
-        { ...recs[0].transforms[0], kind: "categorical", sourceVariable: recs[0].members[0], unmappedSourceCodes: [] },
+        {
+          ...recs[0].transforms[0],
+          kind: "categorical",
+          sourceVariable: recs[0].members[0],
+          unmappedSourceCodes: [],
+        },
       ];
       recs[1].transforms = [
-        { ...recs[1].transforms[0], kind: "categorical", sourceVariable: recs[1].members[0], unmappedSourceCodes: ["9"] },
+        {
+          ...recs[1].transforms[0],
+          kind: "categorical",
+          sourceVariable: recs[1].members[0],
+          unmappedSourceCodes: ["9"],
+        },
       ];
       recs[2].transforms = [
         {
@@ -454,14 +675,23 @@ test.describe("gate3 screen", () => {
     // Singular is not a plural with a 1 in front of it.
     expect(texts.some((t) => /1 source value/.test(t))).toBe(true);
     expect(texts.some((t) => /3 source values/.test(t))).toBe(true);
-    await expect(page.locator("[data-testid='unmapped'][data-state='none']").first()).toBeVisible();
+    await expect(
+      page.locator("[data-testid='unmapped'][data-state='none']").first(),
+    ).toBeVisible();
   });
 
-  test("@gate3 an unmapped value offers all three explicit outcomes", async ({ page }) => {
+  test("@gate3 an unmapped value offers all three explicit outcomes", async ({
+    page,
+  }) => {
     await serveFinished(page, (run) => {
       const rec = run.result!.records![0];
       rec.transforms = [
-        { ...rec.transforms[0], kind: "categorical", sourceVariable: rec.members[0], unmappedSourceCodes: ["9"] },
+        {
+          ...rec.transforms[0],
+          kind: "categorical",
+          sourceVariable: rec.members[0],
+          unmappedSourceCodes: ["9"],
+        },
       ];
     });
     await openGate3(page);
@@ -469,7 +699,9 @@ test.describe("gate3 screen", () => {
     await expect(decision).toBeVisible();
     // Silently dropping the value is how a harmonization quietly loses data, so the loss is a CHOICE.
     for (const outcome of ["add", "missing", "accept-loss"]) {
-      await expect(decision.locator(`[data-outcome='${outcome}']`)).toBeVisible();
+      await expect(
+        decision.locator(`[data-outcome='${outcome}']`),
+      ).toBeVisible();
     }
   });
 
@@ -480,22 +712,32 @@ test.describe("gate3 screen", () => {
       const rec = run.result!.records![0];
       // The stage ran for this run and produced nothing for this variable. Omitting the row would delete
       // the only evidence the variable was ever in scope.
-      rec.transforms = rec.transforms.filter((t) => t.sourceVariable !== rec.members[0]);
+      rec.transforms = rec.transforms.filter(
+        (t) => t.sourceVariable !== rec.members[0],
+      );
     });
     await openGate3(page);
-    const failed = page.locator("[data-testid='spec-row'][data-state='failed']").first();
+    const failed = page
+      .locator("[data-testid='spec-row'][data-state='failed']")
+      .first();
     await expect(failed).toBeVisible();
     await expect(failed).toHaveAttribute("data-review", "true");
     await expect(failed).toContainText("did not generate");
   });
 
-  test("@gate3 no-transform-required is distinct from not-generated", async ({ page }) => {
+  test("@gate3 no-transform-required is distinct from not-generated", async ({
+    page,
+  }) => {
     await serveFinished(page, (run) => {
       const rec = run.result!.records![0];
-      rec.transforms = [{ ...rec.transforms[0], kind: "none", sourceVariable: rec.members[0] }];
+      rec.transforms = [
+        { ...rec.transforms[0], kind: "none", sourceVariable: rec.members[0] },
+      ];
     });
     await openGate3(page);
-    const none = page.locator("[data-testid='spec-row'][data-state='no-transform']").first();
+    const none = page
+      .locator("[data-testid='spec-row'][data-state='no-transform']")
+      .first();
     await expect(none).toBeVisible();
     await expect(none).toContainText("No transform required");
     await expect(none).not.toContainText("did not generate");
@@ -506,30 +748,48 @@ test.describe("gate3 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate3(page);
-    const tile = page.locator("[data-testid='not-available'][data-thing='concept-gate']");
+    const tile = page.locator(
+      "[data-testid='not-available'][data-thing='concept-gate']",
+    );
     await expect(tile).toBeVisible();
     await expect(tile).toHaveAttribute("data-claim", "not-enabled");
-    await expect(tile).toContainText("Concept-match check — not enabled for this run.");
+    await expect(tile).toContainText(
+      "Concept-match check — not enabled for this run.",
+    );
     // Never a silent pass, and never a permanent product gap: the capability exists, this run did not buy it.
-    await expect(page.locator("[data-testid='concept-match-flag']")).toHaveCount(0);
+    await expect(
+      page.locator("[data-testid='concept-match-flag']"),
+    ).toHaveCount(0);
     await expect(tile).not.toContainText(/not supported|cannot|never/i);
   });
 
-  test("@gate3 on an opted-in run a flagged spec shows the flag and routes to review", async ({ page }) => {
+  test("@gate3 on an opted-in run a flagged spec shows the flag and routes to review", async ({
+    page,
+  }) => {
     await serveFinished(page, (run) => {
       run.config = { ...(run.config as object), conceptGate: true };
       const rec = run.result!.records![0];
       rec.conceptMismatch = true;
-      rec.transforms = [{ ...rec.transforms[0], kind: "categorical", sourceVariable: rec.members[0] }];
+      rec.transforms = [
+        {
+          ...rec.transforms[0],
+          kind: "categorical",
+          sourceVariable: rec.members[0],
+        },
+      ];
       run.result!.records![1].conceptMismatch = false;
     });
     await openGate3(page);
     const flag = page.locator("[data-testid='concept-match-flag']").first();
     await expect(flag).toBeVisible();
     // Right values, wrong concept — the failure the coherence gate structurally cannot see.
-    const row = page.locator("[data-testid='spec-row'][data-concept-mismatch='true']").first();
+    const row = page
+      .locator("[data-testid='spec-row'][data-concept-mismatch='true']")
+      .first();
     await expect(row).toHaveAttribute("data-review", "true");
-    await expect(page.locator("[data-testid='not-available'][data-thing='concept-gate']")).toHaveCount(0);
+    await expect(
+      page.locator("[data-testid='not-available'][data-thing='concept-gate']"),
+    ).toHaveCount(0);
   });
 
   test("@gate3 a spec edit survives a reload", async ({ page }) => {
@@ -541,12 +801,14 @@ test.describe("gate3 screen", () => {
     await page.locator("[data-testid='spec-save']").first().click();
     await page.reload();
     await page.waitForLoadState("networkidle");
-    await expect(page.locator("[data-testid='spec-note-input']").first()).toHaveValue(
-      "Checked against the source dictionary.",
-    );
+    await expect(
+      page.locator("[data-testid='spec-note-input']").first(),
+    ).toHaveValue("Checked against the source dictionary.");
   });
 
-  test("@gate3 a spec edit survives a CONCEPT SWITCH with no reload", async ({ page }) => {
+  test("@gate3 a spec edit survives a CONCEPT SWITCH with no reload", async ({
+    page,
+  }) => {
     // The distinct failure mode: the client patches its local record on a successful write instead of only
     // toasting, and the detail card does not re-seed its draft from a stale prop on id change.
     await serveFinished(page);
@@ -558,12 +820,14 @@ test.describe("gate3 screen", () => {
     await page.locator("[data-testid='spec-save']").first().click();
     await page.locator("[data-testid='spec-concept']").nth(1).click();
     await first.click();
-    await expect(page.locator("[data-testid='spec-note-input']").first()).toHaveValue(
-      "A reviewer's note that must survive.",
-    );
+    await expect(
+      page.locator("[data-testid='spec-note-input']").first(),
+    ).toHaveValue("A reviewer's note that must survive.");
   });
 
-  test("@gate3 rejecting a recode states exactly what rejection means", async ({ page }) => {
+  test("@gate3 rejecting a recode states exactly what rejection means", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate3(page);
     await page.locator("[data-testid='spec-reject']").first().click();
@@ -574,7 +838,9 @@ test.describe("gate3 screen", () => {
     );
   });
 
-  test("@gate3 zero specs renders the empty state with its stated copy", async ({ page }) => {
+  test("@gate3 zero specs renders the empty state with its stated copy", async ({
+    page,
+  }) => {
     await servePaused(page);
     await openGate3(page, PAUSED_JOB);
     const empty = page.locator("[data-testid='gate-empty-state']");
@@ -594,14 +860,19 @@ test.describe("re-decide finished run", () => {
     // Make a spec decision downstream of this concept's pick first, so the count is non-zero and REAL.
     await page.locator("[data-testid='candidate-card']").nth(1).click();
     await openGate3(page);
-    await page.locator("[data-testid='spec-note-input']").first().fill("downstream");
+    await page
+      .locator("[data-testid='spec-note-input']")
+      .first()
+      .fill("downstream");
     await page.locator("[data-testid='spec-save']").first().click();
 
     await openGate2(page);
     await page.locator("[data-testid='candidate-card']").nth(3).click();
     const confirm = page.locator("[data-testid='repick-confirm']");
     await expect(confirm).toBeVisible();
-    await expect(confirm).toContainText("Regenerating them costs nothing — the candidates were already retrieved.");
+    await expect(confirm).toContainText(
+      "Regenerating them costs nothing — the candidates were already retrieved.",
+    );
     await expect(confirm).not.toContainText("{N}");
     await expect(confirm).toContainText(/marks [1-9]\d* transform spec/);
   });
@@ -615,26 +886,39 @@ test.describe("re-decide finished run", () => {
     // Buying more work is a later phase and must not become reachable from here.
     await expect(page.locator("[data-testid='reopen-scope']")).toHaveCount(0);
     await expect(page.locator("[data-testid='readjudicate']")).toHaveCount(0);
-    await expect(page.locator("[data-testid='run-status']")).toHaveAttribute("data-status", "complete");
+    await expect(page.locator("[data-testid='run-status']")).toHaveAttribute(
+      "data-status",
+      "complete",
+    );
   });
 
-  test("re-decide finished run — affected specs render stale after the change", async ({ page }) => {
+  test("re-decide finished run — affected specs render stale after the change", async ({
+    page,
+  }) => {
     await serveFinished(page);
     await openGate2(page);
     await page.locator("[data-testid='candidate-card']").nth(1).click();
     await openGate3(page);
-    await page.locator("[data-testid='spec-note-input']").first().fill("downstream");
+    await page
+      .locator("[data-testid='spec-note-input']")
+      .first()
+      .fill("downstream");
     await page.locator("[data-testid='spec-save']").first().click();
-    await expect(page.locator("[data-testid='spec-row'][data-stale='true']")).toHaveCount(0);
+    await expect(
+      page.locator("[data-testid='spec-row'][data-stale='true']"),
+    ).toHaveCount(0);
 
     await openGate2(page);
     await page.locator("[data-testid='candidate-card']").nth(4).click();
     const confirm = page.locator("[data-testid='repick-confirm']");
-    if (await confirm.isVisible()) await page.locator("[data-testid='repick-accept']").click();
+    if (await confirm.isVisible())
+      await page.locator("[data-testid='repick-accept']").click();
 
     await openGate3(page);
     // Staleness is DERIVED on read from the persisted upstream key, so it is here after a full navigation.
-    await expect(page.locator("[data-testid='spec-row'][data-stale='true']").first()).toBeVisible();
+    await expect(
+      page.locator("[data-testid='spec-row'][data-stale='true']").first(),
+    ).toBeVisible();
   });
 
   test("re-decide finished run — with nothing downstream, no regeneration step is offered", async ({
@@ -645,7 +929,9 @@ test.describe("re-decide finished run", () => {
     await page.locator("[data-testid='candidate-card']").nth(2).click();
     // No spec decision exists, so there is nothing to regenerate and no confirmation to show.
     await expect(page.locator("[data-testid='repick-confirm']")).toHaveCount(0);
-    await expect(page.locator("[data-testid='regenerate-specs']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='regenerate-specs']")).toHaveCount(
+      0,
+    );
   });
 
   test("re-decide finished run — staleness never cascades backwards from Gate 3 to Gate 2", async ({
@@ -653,11 +939,16 @@ test.describe("re-decide finished run", () => {
   }) => {
     await serveFinished(page);
     await openGate3(page);
-    await page.locator("[data-testid='spec-note-input']").first().fill("an edit at gate 3");
+    await page
+      .locator("[data-testid='spec-note-input']")
+      .first()
+      .fill("an edit at gate 3");
     await page.locator("[data-testid='spec-save']").first().click();
     await openGate2(page);
     // A downstream edit says nothing about the upstream choice; marking Gate 2 stale for it would be a
     // notice reviewers learn to ignore.
-    await expect(page.locator("[data-testid='candidate-card'][data-stale='true']")).toHaveCount(0);
+    await expect(
+      page.locator("[data-testid='candidate-card'][data-stale='true']"),
+    ).toHaveCount(0);
   });
 });
