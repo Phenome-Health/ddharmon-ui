@@ -1,6 +1,18 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, FileText, Loader2, XCircle } from "lucide-react";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  CircleDashed,
+  FileText,
+  Loader2,
+  XCircle,
+} from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
@@ -19,7 +31,12 @@ import {
   type ComponentEvidence,
   type ScopeVerdict,
 } from "@/lib/score-scope";
-import type { CompositeSpec } from "@/types";
+import type {
+  CompositeSpec,
+  ComponentCoding,
+  ComponentMatch,
+  ConceptGroup,
+} from "@/types";
 
 /**
  * The declared-score panel — a COLLAPSED STRIP NEAR THE TOP OF THE GATE 1 BODY.
@@ -82,8 +99,15 @@ import type { CompositeSpec } from "@/types";
 /** Used when the reviewer declares components without naming the score. A key needs a non-empty value. */
 const UNNAMED_SCORE = "Declared score";
 
-const VERDICT_STYLE: Record<ScopeVerdict, { label: string; className: string; Icon: typeof CheckCircle2 }> = {
-  full: { label: "Every component is present", className: "border-rule-ok bg-surface-ok text-on-ok", Icon: CheckCircle2 },
+const VERDICT_STYLE: Record<
+  ScopeVerdict,
+  { label: string; className: string; Icon: typeof CheckCircle2 }
+> = {
+  full: {
+    label: "Every component is present",
+    className: "border-rule-ok bg-surface-ok text-on-ok",
+    Icon: CheckCircle2,
+  },
   partial: {
     label: "Some components are present",
     className: "border-rule-warn bg-surface-warn text-on-warn",
@@ -115,9 +139,19 @@ export interface DeclaredScorePanelProps {
    */
   spec?: CompositeSpec | null;
   /** Why matching cannot run on this run, or `null` when it can. */
-  matchRefusal: { claim: "deferred" | "failed" | "not-enabled"; reason: React.ReactNode } | null;
+  matchRefusal: {
+    claim: "deferred" | "failed" | "not-enabled";
+    reason: React.ReactNode;
+  } | null;
   onMatch?: () => void;
   matching?: boolean;
+  /**
+   * groupId → its Gate 1 group, so a match (or a retrieved-but-rejected candidate) can name its concept
+   * group and link into the detail pane. Absent where the run has no groups (the demo's empty Gate 1).
+   */
+  groupsById?: Map<string, ConceptGroup>;
+  /** Select a group in Gate 1's detail pane (the drag-drop screen) and scroll it into view. */
+  onOpenGroup?: (groupId: string) => void;
   className?: string;
 }
 
@@ -128,6 +162,8 @@ export function DeclaredScorePanel({
   matchRefusal,
   onMatch,
   matching = false,
+  groupsById,
+  onOpenGroup,
   className,
 }: DeclaredScorePanelProps) {
   const swaps = useGateDecisions(jobId, "composite_swap", { pinned });
@@ -137,7 +173,10 @@ export function DeclaredScorePanel({
   const [scoreName, setScoreName] = useState("");
   const [reading, setReading] = useState(false);
   const [readError, setReadError] = useState("");
-  const [document, setDocument] = useState<{ provenance: string; nChars: number } | null>(null);
+  const [document, setDocument] = useState<{
+    provenance: string;
+    nChars: number;
+  } | null>(null);
 
   /**
    * The declared components — from the persisted rows, and from any spec this run has already derived.
@@ -160,7 +199,10 @@ export function DeclaredScorePanel({
     for (const c of spec?.definition.components ?? []) {
       if (c.name && !seen.has(c.name.toLowerCase())) {
         seen.add(c.name.toLowerCase());
-        out.push({ scoreName: spec?.definition.name || UNNAMED_SCORE, name: c.name });
+        out.push({
+          scoreName: spec?.definition.name || UNNAMED_SCORE,
+          name: c.name,
+        });
       }
     }
     return out;
@@ -173,7 +215,9 @@ export function DeclaredScorePanel({
    * spec's `matches`. Nothing else sets it, which is what keeps `infeasible` unreachable by default.
    */
   const evidence: ComponentEvidence[] = useMemo(() => {
-    const byComponent = new Map((spec?.matches ?? []).map((m) => [m.component, m]));
+    const byComponent = new Map(
+      (spec?.matches ?? []).map((m) => [m.component, m]),
+    );
     return declared.map(({ name }) => {
       const match = byComponent.get(name);
       return {
@@ -187,7 +231,12 @@ export function DeclaredScorePanel({
 
   const verdict = scopeVerdictFor(evidence);
   const style = VERDICT_STYLE[verdict];
-  const codingFor = (name: string) => spec?.definition.components.find((c) => c.name === name)?.coding;
+  const codingFor = (name: string) =>
+    spec?.definition.components.find((c) => c.name === name)?.coding;
+  const matchByComponent = useMemo(
+    () => new Map((spec?.matches ?? []).map((m) => [m.component, m])),
+    [spec],
+  );
 
   async function onDocument(file: File) {
     setReading(true);
@@ -240,7 +289,11 @@ export function DeclaredScorePanel({
         data-testid="score-panel-toggle"
         // An icon-only control names the ACTION and its OBJECT; this one is not icon-only, but the same
         // rule governs what the name has to say.
-        aria-label={open ? "Hide the declared-score panel" : "Show the declared-score panel"}
+        aria-label={
+          open
+            ? "Hide the declared-score panel"
+            : "Show the declared-score panel"
+        }
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         {/*
@@ -261,176 +314,385 @@ export function DeclaredScorePanel({
             copy inside is unchanged and still sits immediately above the control it prices.
           */}
           <span className="min-w-0 text-xs text-on-field-muted">
-            Reading a paper is free; matching its components against this run costs one model call.
+            Reading a paper is free; matching its components against this run
+            costs one model call.
           </span>
         </span>
         <ChevronDown
           aria-hidden="true"
-          className={cn("h-4 w-4 shrink-0 text-on-field-muted transition-transform", open && "rotate-180")}
+          className={cn(
+            "h-4 w-4 shrink-0 text-on-field-muted transition-transform",
+            open && "rotate-180",
+          )}
         />
       </CollapsibleTrigger>
       <CollapsibleContent>
-    <section
-      data-testid="score-panel"
-      aria-label="A published score you want this run to support"
-      className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
-    >
-      <div className="flex flex-col gap-1">
-        {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
+        <section
+          data-testid="score-panel"
+          aria-label="A published score you want this run to support"
+          className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
+        >
+          <div className="flex flex-col gap-1">
+            {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
             the title never carried — including `PRESENCE_IS_PER_DICTIONARY`, which is one of the four
             rules this panel exists to keep saying. */}
-        <p className="max-w-[80ch] text-sm text-on-raised-muted">
-          Name the components of a published score — a frailty index, an intrinsic-capacity score, an SES
-          index — and this run will say which of them its concepts can supply, and out of which.{" "}
-          {PRESENCE_IS_PER_DICTIONARY}
-        </p>
-      </div>
-
-      {/* THE FREE HALF. Reading a document costs nothing and the copy says so. */}
-      <div data-testid="score-upload" className="flex flex-col gap-2">
-        <label className="flex w-fit cursor-pointer items-center gap-2 rounded-inner border border-rule-control-on-raised px-3 py-2 text-xs font-semibold text-on-raised">
-          {reading ? (
-            <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <FileText aria-hidden="true" className="h-3.5 w-3.5" />
-          )}
-          Read a paper or supplement (PDF or Word)
-          <input
-            type="file"
-            accept=".pdf,.docx"
-            className="sr-only"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void onDocument(file);
-            }}
-          />
-        </label>
-        <p className="max-w-[80ch] text-xs text-on-raised-muted">
-          Reading the document costs nothing — no model is called. It pulls the text out so you can see
-          whether the component table survived extraction before anything is spent on it.
-        </p>
-        {document && (
-          <p data-testid="score-doc-read" className="text-xs text-on-raised">
-            Read {document.nChars.toLocaleString()} characters from {document.provenance}. Copy the
-            component names out of it below.
-          </p>
-        )}
-        {readError && (
-          <p data-testid="score-doc-error" role="alert" className="text-xs font-semibold text-status-danger">
-            {readError}
-          </p>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="score-name" className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-          Score name
-        </label>
-        <input
-          id="score-name"
-          value={scoreName}
-          onChange={(e) => setScoreName(e.target.value)}
-          placeholder={UNNAMED_SCORE}
-          className="min-h-8 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-sm text-on-raised"
-        />
-        <label htmlFor="score-components" className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-          Its components, one per line
-        </label>
-        <Textarea
-          id="score-components"
-          data-testid="score-components"
-          rows={4}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={"Weak grip strength\nSlow walking speed\nUnintentional weight loss"}
-          className="rounded-inner"
-        />
-        <div>
-          <Button type="button" onClick={() => void onDeclare()} disabled={draft.trim().length === 0}>
-            Declare these components
-          </Button>
-        </div>
-      </div>
-
-      {declared.length > 0 && (
-        <>
-          <div
-            data-testid="score-verdict"
-            data-verdict={verdict}
-            className={cn("flex flex-col gap-1 rounded-inner border px-4 py-3", style.className)}
-          >
-            <span className="flex items-center gap-2 text-sm font-semibold">
-              <style.Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
-              {style.label}
-              <span className="font-mono text-xs tabular-nums">
-                {evidence.filter((e) => e.matched).length}/{evidence.length}
-              </span>
-            </span>
-            <span className="max-w-[80ch] text-xs">{SCOPE_VERDICT_COPY[verdict]}</span>
-            {/* Rule 3: this is what stops `partial` reading as a qualified yes. */}
-            {verdict === "partial" && <span className="max-w-[80ch] text-xs">{PARTIAL_IS_NOT_THE_SCORE}</span>}
+            <p className="max-w-[80ch] text-sm text-on-raised-muted">
+              Name the components of a published score — a frailty index, an
+              intrinsic-capacity score, an SES index — and this run will say
+              which of them its concepts can supply, and out of which.{" "}
+              {PRESENCE_IS_PER_DICTIONARY}
+            </p>
           </div>
 
-          <ul className="flex flex-col gap-2">
-            {evidence.map((e) => {
-              const componentVerdict = componentVerdictFor(e);
-              const coding = codingFor(e.name);
-              return (
-                <li
-                  key={e.name}
-                  data-testid="score-component"
-                  data-verdict={componentVerdict}
-                  className="flex flex-col gap-1 rounded-inner border border-rule-on-raised px-3 py-2"
-                >
-                  <span className="text-sm font-semibold text-on-raised">{e.name}</span>
-                  <span className="max-w-[80ch] text-xs text-on-raised-muted">
-                    {e.matched
-                      ? `Matched to a concept in this run: ${
-                          spec?.matches.find((m) => m.component === e.name)?.concept ?? "—"
-                        }`
-                      : missingReason(e)}
+          {/* THE FREE HALF. Reading a document costs nothing and the copy says so. */}
+          <div data-testid="score-upload" className="flex flex-col gap-2">
+            <label className="flex w-fit cursor-pointer items-center gap-2 rounded-inner border border-rule-control-on-raised px-3 py-2 text-xs font-semibold text-on-raised">
+              {reading ? (
+                <Loader2
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 animate-spin"
+                />
+              ) : (
+                <FileText aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+              Read a paper or supplement (PDF or Word)
+              <input
+                type="file"
+                accept=".pdf,.docx"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void onDocument(file);
+                }}
+              />
+            </label>
+            <p className="max-w-[80ch] text-xs text-on-raised-muted">
+              Reading the document costs nothing — no model is called. It pulls
+              the text out so you can see whether the component table survived
+              extraction before anything is spent on it.
+            </p>
+            {document && (
+              <p
+                data-testid="score-doc-read"
+                className="text-xs text-on-raised"
+              >
+                Read {document.nChars.toLocaleString()} characters from{" "}
+                {document.provenance}. Copy the component names out of it below.
+              </p>
+            )}
+            {readError && (
+              <p
+                data-testid="score-doc-error"
+                role="alert"
+                className="text-xs font-semibold text-status-danger"
+              >
+                {readError}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="score-name"
+              className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+            >
+              Score name
+            </label>
+            <input
+              id="score-name"
+              value={scoreName}
+              onChange={(e) => setScoreName(e.target.value)}
+              placeholder={UNNAMED_SCORE}
+              className="min-h-8 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-sm text-on-raised"
+            />
+            <label
+              htmlFor="score-components"
+              className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+            >
+              Its components, one per line
+            </label>
+            <Textarea
+              id="score-components"
+              data-testid="score-components"
+              rows={4}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={
+                "Weak grip strength\nSlow walking speed\nUnintentional weight loss"
+              }
+              className="rounded-inner"
+            />
+            <div>
+              <Button
+                type="button"
+                onClick={() => void onDeclare()}
+                disabled={draft.trim().length === 0}
+              >
+                Declare these components
+              </Button>
+            </div>
+          </div>
+
+          {declared.length > 0 && (
+            <>
+              <div
+                data-testid="score-verdict"
+                data-verdict={verdict}
+                className={cn(
+                  "flex flex-col gap-1 rounded-inner border px-4 py-3",
+                  style.className,
+                )}
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  <style.Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
+                  {style.label}
+                  <span className="font-mono text-xs tabular-nums">
+                    {evidence.filter((e) => e.matched).length}/{evidence.length}
                   </span>
-                  {/* Rule 2: a cutoff the source did not state is flagged, never derived. */}
-                  {coding && !coding.cutoff && !coding.referenceRange && (
-                    <span data-testid="score-cutoff-unstated" className="max-w-[80ch] text-xs text-on-warn">
-                      {CUTOFF_UNSTATED}
-                    </span>
-                  )}
-                  {coding && (coding.cutoff || coding.referenceRange) && (
-                    <span className="text-xs text-on-raised-muted">
-                      As stated in the source:{" "}
-                      <span className="font-mono">{coding.cutoff || coding.referenceRange}</span>
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
+                </span>
+                <span className="max-w-[80ch] text-xs">
+                  {SCOPE_VERDICT_COPY[verdict]}
+                </span>
+                {/* Rule 3: this is what stops `partial` reading as a qualified yes. */}
+                {verdict === "partial" && (
+                  <span className="max-w-[80ch] text-xs">
+                    {PARTIAL_IS_NOT_THE_SCORE}
+                  </span>
+                )}
+              </div>
 
-      {/* THE PAID BOUNDARY, priced inline and never behind a modal. */}
-      <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
-        <p data-testid="score-match-price" className="max-w-[80ch] text-xs font-semibold text-on-raised">
-          Matching these components onto this run&rsquo;s concepts costs money: it is one model call over
-          the concepts, and it is what turns a declaration into a verdict. Nothing is charged until you
-          press it.
-        </p>
-        {matchRefusal ? (
-          <NotAvailable thing="Matching the components" claim={matchRefusal.claim}>
-            {matchRefusal.reason}
-          </NotAvailable>
-        ) : (
-          <div>
-            <Button type="button" onClick={onMatch} disabled={matching || declared.length === 0}>
-              {matching && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
-              Match them against this run
-            </Button>
+              <ul className="flex flex-col gap-2">
+                {evidence.map((e) => (
+                  <ScoreComponentRow
+                    key={e.name}
+                    evidence={e}
+                    match={matchByComponent.get(e.name)}
+                    coding={codingFor(e.name)}
+                    groupsById={groupsById}
+                    onOpenGroup={onOpenGroup}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+
+          {/* THE PAID BOUNDARY, priced inline and never behind a modal. */}
+          <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
+            <p
+              data-testid="score-match-price"
+              className="max-w-[80ch] text-xs font-semibold text-on-raised"
+            >
+              Matching these components onto this run&rsquo;s concepts costs
+              money: it is one model call over the concepts, and it is what
+              turns a declaration into a verdict. Nothing is charged until you
+              press it.
+            </p>
+            {matchRefusal ? (
+              <NotAvailable
+                thing="Matching the components"
+                claim={matchRefusal.claim}
+              >
+                {matchRefusal.reason}
+              </NotAvailable>
+            ) : (
+              <div>
+                <Button
+                  type="button"
+                  onClick={onMatch}
+                  disabled={matching || declared.length === 0}
+                >
+                  {matching && (
+                    <Loader2
+                      aria-hidden="true"
+                      className="mr-2 h-4 w-4 animate-spin"
+                    />
+                  )}
+                  Match them against this run
+                </Button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </section>
+        </section>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+/**
+ * One declared component, expandable to the evidence behind its verdict (08-16g follow-on): the concept
+ * GROUP ddharmon matched it to, that group's cohorts and the source variables under it, and the candidate
+ * groups retrieval offered — each a click-through into that group's drag-drop detail on Gate 1.
+ *
+ * IT SHOWS ONLY WHAT A MATCH RECORDED. The vars and cohorts come off `ComponentMatch`; the group names come
+ * off the run's own groups (`groupsById`). A component with no match and no shortlist has nothing to reveal,
+ * so it does not expand — the summary line already says why. This never infers a match the spec did not make.
+ */
+function ScoreComponentRow({
+  evidence,
+  match,
+  coding,
+  groupsById,
+  onOpenGroup,
+}: {
+  evidence: ComponentEvidence;
+  match: ComponentMatch | undefined;
+  coding: ComponentCoding | undefined;
+  groupsById?: Map<string, ConceptGroup>;
+  onOpenGroup?: (groupId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const componentVerdict = componentVerdictFor(evidence);
+  const matchedGroup = match?.conceptId
+    ? groupsById?.get(match.conceptId)
+    : undefined;
+  // The candidates retrieval offered, minus the one that was chosen — the "also considered" for a match,
+  // the "retrieved and rejected" for a miss. Only those we can name (present in `groupsById`) are shown.
+  const otherCandidates = (match?.shortlist ?? [])
+    .filter((id) => id !== match?.conceptId)
+    .map((id) => ({ id, group: groupsById?.get(id) }))
+    .filter((c): c is { id: string; group: ConceptGroup } => !!c.group);
+  const hasDetail = !!matchedGroup || otherCandidates.length > 0;
+
+  return (
+    <li
+      data-testid="score-component"
+      data-component={evidence.name}
+      data-verdict={componentVerdict}
+      className="flex flex-col gap-1 rounded-inner border border-rule-on-raised px-3 py-2"
+    >
+      {hasDetail ? (
+        <button
+          type="button"
+          data-testid="score-component-expand"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex w-full items-center justify-between gap-2 text-left"
+        >
+          <span className="text-sm font-semibold text-on-raised">
+            {evidence.name}
+          </span>
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              "h-4 w-4 shrink-0 text-on-raised-muted transition-transform",
+              open && "rotate-180",
+            )}
+          />
+        </button>
+      ) : (
+        <span className="text-sm font-semibold text-on-raised">
+          {evidence.name}
+        </span>
+      )}
+
+      <span className="max-w-[80ch] text-xs text-on-raised-muted">
+        {evidence.matched
+          ? `Matched to a concept in this run: ${match?.concept ?? "—"}`
+          : missingReason(evidence)}
+      </span>
+
+      {/* Rule 2: a cutoff the source did not state is flagged, never derived. */}
+      {coding && !coding.cutoff && !coding.referenceRange && (
+        <span
+          data-testid="score-cutoff-unstated"
+          className="max-w-[80ch] text-xs text-on-warn"
+        >
+          {CUTOFF_UNSTATED}
+        </span>
+      )}
+      {coding && (coding.cutoff || coding.referenceRange) && (
+        <span className="text-xs text-on-raised-muted">
+          As stated in the source:{" "}
+          <span className="font-mono">
+            {coding.cutoff || coding.referenceRange}
+          </span>
+        </span>
+      )}
+
+      {open && hasDetail && (
+        <div
+          data-testid="score-component-detail"
+          data-component={evidence.name}
+          className="mt-1 flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-2"
+        >
+          {matchedGroup && match && (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                  Matched group
+                </span>
+                <span className="font-mono text-xs tabular-nums text-on-raised-muted">
+                  confidence {match.confidence.toFixed(2)}
+                </span>
+              </div>
+              <button
+                type="button"
+                data-testid="score-open-group"
+                data-group={match.conceptId ?? undefined}
+                onClick={() =>
+                  match.conceptId && onOpenGroup?.(match.conceptId)
+                }
+                className="w-fit text-left text-sm font-semibold text-link-on-raised underline underline-offset-2"
+                title="Open this group's members on Gate 1"
+              >
+                {matchedGroup.concept}
+              </button>
+              <div className="flex flex-wrap items-center gap-1">
+                {matchedGroup.cohorts.map((c) => (
+                  <span
+                    key={c}
+                    data-testid="score-detail-cohort"
+                    className="rounded border border-rule-on-raised px-1.5 py-0.5 font-mono text-[11px] text-on-raised-muted"
+                  >
+                    {c}
+                  </span>
+                ))}
+              </div>
+              {match.sourceVariables.length > 0 && (
+                <ul className="flex flex-col gap-0.5 pl-1">
+                  {match.sourceVariables.map((v) => (
+                    <li
+                      key={v}
+                      data-testid="score-detail-var"
+                      className="break-all font-mono text-xs text-on-raised-muted"
+                    >
+                      {v}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {otherCandidates.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                {matchedGroup
+                  ? "Other concepts retrieved"
+                  : "Concepts retrieved — none measured this"}
+              </span>
+              {otherCandidates.map(({ id, group }) => (
+                <button
+                  key={id}
+                  type="button"
+                  data-testid="score-candidate-group"
+                  data-group={id}
+                  onClick={() => onOpenGroup?.(id)}
+                  className="flex w-full items-baseline justify-between gap-2 text-left"
+                  title="Open this group's members on Gate 1"
+                >
+                  <span className="line-clamp-1 text-xs text-link-on-raised underline underline-offset-2">
+                    {group.concept}
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-on-raised-muted">
+                    {group.cohorts.join(" · ")}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
