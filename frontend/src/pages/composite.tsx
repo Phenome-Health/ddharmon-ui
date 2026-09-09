@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   Calculator,
   CheckCircle2,
+  ChevronDown,
   FileText,
   Link2,
   Loader2,
@@ -26,10 +27,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
 type Mode = "paste" | "ref" | "pdf";
@@ -253,13 +256,16 @@ export default function CompositePage() {
   );
 }
 
-function SpecView({
+export function SpecView({
   spec,
   conceptById,
   records,
   onEdit,
   busy,
   jobId,
+  hideDerivation = false,
+  onOpenGroup,
+  resolveConcept,
 }: {
   spec: CompositeSpec;
   conceptById: Record<string, UIRecord>;
@@ -267,6 +273,9 @@ function SpecView({
   onEdit: (component: string, conceptId: string | null) => void;
   busy: boolean;
   jobId: string;
+  hideDerivation?: boolean;
+  onOpenGroup?: (conceptId: string) => void;
+  resolveConcept?: (id: string) => { concept: string; cohorts: string[] } | undefined;
 }) {
   const { definition, feasibility, derivation } = spec;
   // An unrecognized verdict falls back to INDETERMINATE, never to the negative one. The previous
@@ -276,6 +285,37 @@ function SpecView({
   const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.indeterminate;
   const codingFor = (name: string): ScoreComponent | undefined =>
     definition.components.find((c) => c.name === name);
+  // Two buckets, per the reviewer ask: concepts this run FOUND for a component (sorted most-confident
+  // first, since that is the order a reviewer audits) and the ones it did NOT.
+  const foundMatches = spec.matches
+    .filter((m) => m.conceptId != null)
+    .sort((a, b) => b.confidence - a.confidence);
+  const notFoundMatches = spec.matches.filter((m) => m.conceptId == null);
+  // Resolve a concept id to a name + cohorts for the swap dropdown. Callers may pass a resolver (the gate
+  // strip resolves against the run's concept groups); otherwise fall back to this run's records.
+  const recordById = useMemo(
+    () => Object.fromEntries(records.map((r) => [r.id, r])),
+    [records],
+  );
+  const resolve =
+    resolveConcept ??
+    ((id: string) => {
+      const r = conceptById[id] ?? recordById[id];
+      return r ? { concept: r.concept ?? "", cohorts: r.cohorts ?? [] } : undefined;
+    });
+  const renderRow = (m: typeof spec.matches[number]) => (
+    <MatchRow
+      key={m.component}
+      match={m}
+      component={codingFor(m.component)}
+      concept={m.conceptId ? conceptById[m.conceptId] : undefined}
+      onEdit={onEdit}
+      busy={busy}
+      jobId={jobId}
+      onOpenGroup={onOpenGroup}
+      resolveConcept={resolve}
+    />
+  );
 
   return (
     <div className="space-y-4">
@@ -344,19 +384,31 @@ function SpecView({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Components → this run's concepts</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
-          {spec.matches.map((m) => (
-            <MatchRow
-              key={m.component}
-              match={m}
-              component={codingFor(m.component)}
-              concept={m.conceptId ? conceptById[m.conceptId] : undefined}
-              records={records}
-              onEdit={onEdit}
-              busy={busy}
-              jobId={jobId}
-            />
-          ))}
+        <CardContent className="space-y-3">
+          <Collapsible defaultOpen>
+            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-status-ok" /> Found · {foundMatches.length}
+              </span>
+              <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2 space-y-2">
+              {foundMatches.map(renderRow)}
+            </CollapsibleContent>
+          </Collapsible>
+          {notFoundMatches.length > 0 && (
+            <Collapsible defaultOpen>
+              <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                <span className="flex items-center gap-1.5">
+                  <XCircle className="h-3.5 w-3.5 text-on-raised-muted" /> Not found · {notFoundMatches.length}
+                </span>
+                <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2 space-y-2">
+                {notFoundMatches.map(renderRow)}
+              </CollapsibleContent>
+            </Collapsible>
+          )}
         </CardContent>
       </Card>
 
@@ -370,27 +422,57 @@ function SpecView({
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-on-raised-muted">
-                  <th className="py-1.5 pr-3 font-semibold">Cohort</th>
-                  <th className="py-1.5 pr-3 font-semibold">Present</th>
-                  <th className="py-1.5 pr-3 font-semibold">Missing (required)</th>
-                  <th className="py-1.5 font-semibold">Computable</th>
+                  <th className="py-1.5 pr-3 font-semibold">Component</th>
+                  {feasibility.perCohort.map((c) => (
+                    <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
+                      {c.cohort}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {feasibility.perCohort.map((c) => (
-                  <tr key={c.cohort} className="border-b border-border/60 last:border-0">
-                    <td className="py-1.5 pr-3 font-semibold text-on-raised">{c.cohort}</td>
-                    <td className="py-1.5 pr-3 text-on-raised">{c.present.length}</td>
-                    <td className="py-1.5 pr-3 text-on-raised-muted">{c.missing.join(", ") || "—"}</td>
-                    <td className="py-1.5">
+                {spec.matches.map((m) => (
+                  <tr key={m.component} className="border-b border-border/60 last:border-0">
+                    <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
+                    {feasibility.perCohort.map((c) => {
+                      const present =
+                        m.conceptId != null && m.cohorts.includes(c.cohort);
+                      return (
+                        <td key={c.cohort} className="px-2 py-1.5 text-center">
+                          {present ? (
+                            <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
+                          ) : (
+                            <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+                <tr className="border-t border-border font-semibold">
+                  <td className="py-1.5 pr-3 text-on-raised">Present</td>
+                  {feasibility.perCohort.map((c) => (
+                    <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
+                      {
+                        spec.matches.filter(
+                          (m) => m.conceptId != null && m.cohorts.includes(c.cohort),
+                        ).length
+                      }
+                    </td>
+                  ))}
+                </tr>
+                <tr className="font-semibold">
+                  <td className="py-1.5 pr-3 text-on-raised">Computable</td>
+                  {feasibility.perCohort.map((c) => (
+                    <td key={c.cohort} className="px-2 py-1.5 text-center">
                       {c.computable ? (
                         <span className="text-status-ok">yes</span>
                       ) : (
                         <span className="text-on-raised-muted">no</span>
                       )}
                     </td>
-                  </tr>
-                ))}
+                  ))}
+                </tr>
               </tbody>
             </table>
           </div>
@@ -403,6 +485,7 @@ function SpecView({
       </Card>
 
       {/* --- derivation --- */}
+      {!hideDerivation && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Derivation</CardTitle>
@@ -437,6 +520,7 @@ function SpecView({
           )}
         </CardContent>
       </Card>
+      )}
 
       {feasibility.caveats.length > 0 && (
         <Card>
@@ -470,87 +554,156 @@ function MatchRow({
   match,
   component,
   concept,
-  records,
   onEdit,
   busy,
   jobId,
+  onOpenGroup,
+  resolveConcept,
 }: {
   match: ComponentMatch;
   component?: ScoreComponent;
   concept?: UIRecord;
-  records: UIRecord[];
   onEdit: (component: string, conceptId: string | null) => void;
   busy: boolean;
   jobId: string;
+  onOpenGroup?: (conceptId: string) => void;
+  resolveConcept?: (id: string) => { concept: string; cohorts: string[] } | undefined;
 }) {
+  const [open, setOpen] = useState(false);
   const [swapping, setSwapping] = useState(false);
   const coding = component?.coding;
-  const lowConfidence = match.conceptId != null && match.confidence > 0 && match.confidence < 0.6;
+  const lowConfidence =
+    match.conceptId != null && match.confidence > 0 && match.confidence < 0.6;
+  // The swap targets are the concepts retrieval SHORTLISTED for THIS component (the top-k the judge saw),
+  // not the whole run — that is what a reviewer wants to choose among, and it is the same set whether the
+  // component matched or not. The current pick is folded in and de-duplicated.
+  const candidateIds = Array.from(
+    new Set([
+      ...(match.shortlist ?? []),
+      ...(match.conceptId ? [match.conceptId] : []),
+    ]),
+  );
 
   return (
-    <div className="rounded-md border border-border px-3 py-2.5">
-      <div className="flex flex-wrap items-start gap-2">
+    <div className="rounded-md border border-border">
+      {/* Collapsed by default so a reviewer can scan the list and open ONE component at a time. */}
+      <button
+        type="button"
+        data-testid="score-component-expand"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
         {match.conceptId ? (
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-status-ok" />
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-status-ok" />
         ) : (
-          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-on-raised-muted" />
+          <XCircle className="h-4 w-4 shrink-0 text-on-raised-muted" />
         )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-semibold text-on-raised">{match.component}</span>
-            {!match.required && <Badge variant="neutral" className="text-xs">optional</Badge>}
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm font-semibold text-on-raised">
+              {match.component}
+            </span>
+            {!match.required && (
+              <Badge variant="neutral" className="text-xs">optional</Badge>
+            )}
             {match.pinned && (
               <Badge variant="neutral" className="gap-1 text-xs">
                 <Pin className="h-2.5 w-2.5" /> pinned
               </Badge>
             )}
-            {coding?.needsReview && (
-              <Badge className="border-rule-warn bg-surface-warn text-xs text-on-warn">
-                {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
-              </Badge>
-            )}
-          </div>
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-on-raised-muted">
+            {match.conceptId
+              ? `${match.concept || match.conceptId} · confidence ${match.confidence.toFixed(2)}`
+              : match.shortlist.length > 0
+                ? `Missing · ${match.shortlist.length} retrieved, none fit`
+                : "Missing · nothing retrieved"}
+          </span>
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            "h-4 w-4 shrink-0 text-on-raised-muted transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
 
-          {component?.definition && <p className="mt-0.5 text-xs text-on-raised-muted">{component.definition}</p>}
+      {open && (
+        <div className="border-t border-border/60 px-3 py-2.5 pl-9 text-xs">
+          {coding?.needsReview && (
+            <Badge className="mb-1.5 border-rule-warn bg-surface-warn text-xs text-on-warn">
+              {coding.kind === "unstated"
+                ? "no coding rule in source"
+                : `${coding.kind.replace(/_/g, " ")} — review`}
+            </Badge>
+          )}
+          {component?.definition && (
+            <p className="text-on-raised-muted">{component.definition}</p>
+          )}
 
           {match.conceptId ? (
-            <div className="mt-1.5 text-xs">
-              <Link
-                href={`/job/${jobId}/workbench?c=${encodeURIComponent(match.conceptId)}`}
-                className="text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
-                title="Open this concept in the review workbench"
-              >
-                {match.concept || concept?.concept || match.conceptId}
-              </Link>
+            <div className="mt-1.5">
+              {onOpenGroup ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenGroup(match.conceptId!)}
+                  className="text-left text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
+                  title="Show this concept group on Gate 1"
+                >
+                  {match.concept || concept?.concept || match.conceptId}
+                </button>
+              ) : (
+                <Link
+                  href={`/job/${jobId}/workbench?c=${encodeURIComponent(match.conceptId)}`}
+                  className="text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
+                  title="Open this concept in the review workbench"
+                >
+                  {match.concept || concept?.concept || match.conceptId}
+                </Link>
+              )}
               <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-on-raised-muted">
                 <span>{match.cohorts.join(", ") || "—"}</span>
                 <span className={lowConfidence ? "text-status-warn" : ""}>
                   confidence {match.confidence.toFixed(2)}
                   {lowConfidence && " — review"}
                 </span>
-                {match.column && <span className="font-mono text-xs">{match.column}</span>}
+                {match.column && (
+                  <span className="font-mono text-xs">{match.column}</span>
+                )}
               </div>
-              {match.rationale && <p className="mt-1 text-on-raised-muted">{match.rationale}</p>}
+              {match.rationale && (
+                <p className="mt-1 text-on-raised-muted">{match.rationale}</p>
+              )}
             </div>
           ) : (
-            <p className="mt-1.5 text-xs text-on-raised-muted">
+            <p className="mt-1.5 text-on-raised-muted">
               <span className="font-semibold text-on-raised">Missing.</span>{" "}
               {match.shortlist.length > 0
-                ? `${match.shortlist.length} candidate concept${match.shortlist.length === 1 ? "" : "s"} were retrieved and none measures this component.`
+                ? `${match.shortlist.length} candidate concept${match.shortlist.length === 1 ? "" : "s"} were retrieved and none measures this component — pick one below if it fits.`
                 : "Nothing in this run retrieved for it."}
             </p>
           )}
 
           {coding && (coding.cutoff || coding.referenceRange) && (
-            <p className="mt-1 text-xs text-on-raised-muted">
+            <p className="mt-1 text-on-raised-muted">
               <span className="font-semibold">As stated: </span>
-              <span className="font-mono text-xs">{coding.cutoff || coding.referenceRange}</span>
+              <span className="font-mono text-xs">
+                {coding.cutoff || coding.referenceRange}
+              </span>
             </p>
           )}
 
           {/* accept / swap / drop — every re-derive is free (all other matches are pinned) */}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => setSwapping((s) => !s)} className="h-6 px-2 text-xs">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || candidateIds.length === 0}
+              onClick={() => setSwapping((sw) => !sw)}
+              className="h-6 px-2 text-xs"
+            >
               {match.conceptId ? "Swap" : "Choose concept"}
             </Button>
             {match.conceptId && (
@@ -577,15 +730,21 @@ function MatchRow({
               }}
             >
               <option value="">— none (report as missing) —</option>
-              {records.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.concept?.slice(0, 110) || r.id} · {r.cohorts.join(", ")}
-                </option>
-              ))}
+              {candidateIds.map((id) => {
+                const c = resolveConcept?.(id);
+                const label = (c?.concept || id).slice(0, 90);
+                const co = c?.cohorts?.length ? ` · ${c.cohorts.join(", ")}` : "";
+                return (
+                  <option key={id} value={id}>
+                    {label}
+                    {co}
+                  </option>
+                );
+              })}
             </select>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }

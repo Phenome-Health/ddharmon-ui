@@ -17,7 +17,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { useGateDecisions } from "@/hooks/use-gate-decisions";
-import { extractScoreDocument } from "@/lib/api";
+import { deriveComposite, extractScoreDocument, IS_STATIC } from "@/lib/api";
+import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
 import {
   CUTOFF_UNSTATED,
@@ -33,6 +34,7 @@ import {
 } from "@/lib/score-scope";
 import type {
   CompositeSpec,
+  UIRecord,
   ComponentCoding,
   ComponentMatch,
   ConceptGroup,
@@ -155,6 +157,64 @@ export interface DeclaredScorePanelProps {
   className?: string;
 }
 
+// Apply a swap/drop to a spec CLIENT-SIDE — the optimistic preview shown immediately, and the only
+// result on an immutable demo or the static build (both refuse the backend write). On an owned run the
+// backend's authoritative re-derive replaces this (it fills confidence + rationale the client cannot).
+// The backend (backend/composite.py::assess_feasibility) remains the authority; this mirrors its verdict
+// rule closely enough to keep the readout honest between the click and the server's answer.
+function applyEditLocally(
+  spec: CompositeSpec,
+  component: string,
+  conceptId: string | null,
+  groupsById?: Map<string, ConceptGroup>,
+): CompositeSpec {
+  const matches = spec.matches.map((m) => {
+    if (m.component !== component) return m;
+    if (conceptId == null) {
+      return { ...m, conceptId: null, concept: "", cohorts: [], sourceVariables: [], confidence: 0, column: "", rationale: "", pinned: false };
+    }
+    const g = groupsById?.get(conceptId);
+    return {
+      ...m,
+      conceptId,
+      concept: g?.concept || conceptId,
+      cohorts: g?.cohorts ?? [],
+      sourceVariables: g?.memberVariableNames ?? [],
+      column: "",
+      rationale: "Manually re-pointed to this concept (pending the run's own re-derive).",
+      pinned: true,
+    };
+  });
+  const requiredNames = new Set(spec.definition.components.filter((c) => c.required).map((c) => c.name));
+  const anyRequired = requiredNames.size > 0;
+  const required = matches.filter((m) => !anyRequired || requiredNames.has(m.component));
+  const matchedRequired = required.filter((m) => m.conceptId != null);
+  const verdict =
+    required.length > 0 && matchedRequired.length === required.length
+      ? "full"
+      : matchedRequired.length > 0
+        ? "partial"
+        : "infeasible";
+  const perCohort = spec.feasibility.perCohort.map((c) => {
+    const present = matches.filter((m) => m.conceptId != null && m.cohorts.includes(c.cohort)).map((m) => m.component);
+    const missing = required.filter((m) => !(m.conceptId != null && m.cohorts.includes(c.cohort))).map((m) => m.component);
+    return { ...c, present, missing, computable: missing.length === 0 && required.length > 0 };
+  });
+  return {
+    ...spec,
+    matches,
+    feasibility: {
+      ...spec.feasibility,
+      verdict,
+      nRequired: required.length,
+      nRequiredMatched: matchedRequired.length,
+      matched: matches.filter((m) => m.conceptId != null).map((m) => m.component),
+      missing: matches.filter((m) => m.conceptId == null).map((m) => m.component),
+      perCohort,
+    },
+  };
+}
+
 export function DeclaredScorePanel({
   jobId,
   pinned,
@@ -177,6 +237,47 @@ export function DeclaredScorePanel({
     provenance: string;
     nChars: number;
   } | null>(null);
+  const [showDeclareForm, setShowDeclareForm] = useState(false);
+  const [localSpec, setLocalSpec] = useState<CompositeSpec | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  // A swap/drop re-derives with every OTHER match pinned, so the recompute costs no model call; the
+  // result is held locally so the panel updates without a round-trip to the run's stored spec.
+  const shownSpec = localSpec ?? spec;
+  // The Swap dropdown's targets: this run's concept groups, shaped as the minimal record the row reads
+  // (id + concept + cohorts). Without these, Swap can only drop a match; with them it can re-point it.
+  const swapRecords = useMemo(
+    () =>
+      [...(groupsById?.values() ?? [])].map((g) => ({
+        id: g.groupId,
+        concept: g.concept,
+        cohorts: g.cohorts,
+      })) as unknown as UIRecord[],
+    [groupsById],
+  );
+  async function handleEdit(component: string, conceptId: string | null) {
+    if (!shownSpec) return;
+    // Optimistic: show the edit immediately. On an immutable demo or the static build this is the result.
+    const optimistic = applyEditLocally(shownSpec, component, conceptId, groupsById);
+    setLocalSpec(optimistic);
+    if (IS_STATIC) return;
+    // Reconcile with the run's own re-derive (owned run: fills confidence + rationale; every other match
+    // is pinned so it costs no model call). A 403 means this is a read-only demo — keep the optimistic view.
+    const overrides: Record<string, string | null> = {};
+    for (const m of optimistic.matches) overrides[m.component] = m.conceptId;
+    setEditBusy(true);
+    try {
+      setLocalSpec(
+        await deriveComposite(jobId, {
+          definition: shownSpec.definition,
+          overrides,
+        }),
+      );
+    } catch {
+      // Read-only demo (403) or a transient failure — the optimistic edit stands.
+    } finally {
+      setEditBusy(false);
+    }
+  }
 
   /**
    * The declared components — from the persisted rows, and from any spec this run has already derived.
@@ -332,6 +433,8 @@ export function DeclaredScorePanel({
           aria-label="A published score you want this run to support"
           className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
         >
+          {(!shownSpec || showDeclareForm) && (
+            <>
           <div className="flex flex-col gap-1">
             {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
             the title never carried — including `PRESENCE_IS_PER_DICTIONARY`, which is one of the four
@@ -432,8 +535,30 @@ export function DeclaredScorePanel({
               </Button>
             </div>
           </div>
+            </>
+          )}
+          {shownSpec && (
+            <button
+              type="button"
+              onClick={() => setShowDeclareForm((v) => !v)}
+              className="w-fit text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
+            >
+              {showDeclareForm ? "Hide" : "Declare a different score"}
+            </button>
+          )}
 
-          {declared.length > 0 && (
+          {shownSpec ? (
+            <SpecView
+              spec={shownSpec}
+              conceptById={{}}
+              records={swapRecords}
+              onEdit={handleEdit}
+              busy={editBusy}
+              jobId={jobId}
+              onOpenGroup={onOpenGroup}
+              hideDerivation
+            />
+          ) : declared.length > 0 ? (
             <>
               <div
                 data-testid="score-verdict"
@@ -474,9 +599,10 @@ export function DeclaredScorePanel({
                 ))}
               </ul>
             </>
-          )}
+          ) : null}
 
           {/* THE PAID BOUNDARY, priced inline and never behind a modal. */}
+          {!shownSpec && (
           <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
             <p
               data-testid="score-match-price"
@@ -512,6 +638,7 @@ export function DeclaredScorePanel({
               </div>
             )}
           </div>
+          )}
         </section>
       </CollapsibleContent>
     </Collapsible>
