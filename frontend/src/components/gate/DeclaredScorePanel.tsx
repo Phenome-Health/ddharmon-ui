@@ -20,6 +20,7 @@ import { useGateDecisions } from "@/hooks/use-gate-decisions";
 import { deriveComposite, extractScoreDocument, IS_STATIC } from "@/lib/api";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
+import { groupLabel } from "@/lib/ledger";
 import {
   CUTOFF_UNSTATED,
   PARTIAL_IS_NOT_THE_SCORE,
@@ -181,7 +182,7 @@ function applyEditLocally(
     return {
       ...m,
       conceptId,
-      concept: g?.concept || conceptId,
+      concept: g ? groupLabel(g).text : conceptId,
       cohorts: g?.cohorts ?? [],
       sourceVariables: g?.memberVariableNames ?? [],
       column: "",
@@ -265,7 +266,7 @@ export function DeclaredScorePanel({
   const resolveConcept = useMemo(
     () => (id: string) => {
       const g = groupsById?.get(id);
-      if (g) return { concept: g.concept, cohorts: g.cohorts };
+      if (g) return { concept: groupLabel(g).text, cohorts: g.cohorts };
       const fd = fieldIndex?.[id];
       if (fd)
         return {
@@ -735,11 +736,24 @@ function ScoreComponentRow({
         </span>
       )}
 
-      <span className="max-w-[80ch] text-xs text-on-raised-muted">
-        {evidence.matched
-          ? `Matched to a concept in this run: ${match?.concept ?? "—"}`
-          : missingReason(evidence)}
-      </span>
+      {(() => {
+        // Simplified row copy (08-16g review #3): the wordy "Matched to a concept in this run:" prefix is
+        // trimmed to "Matched:", and the full sentence — the matched concept's name, or the long "why not"
+        // reason — is relegated to a tooltip and clamped to two lines, so a long name/reason never bloats
+        // the row. The name resolves through groupLabel (#1) so an unnamed residual reads "Unnamed group",
+        // never a raw group id.
+        const summary = evidence.matched
+          ? `Matched: ${matchedGroup ? groupLabel(matchedGroup).text : match?.concept?.trim() || "—"}`
+          : missingReason(evidence);
+        return (
+          <span
+            className="line-clamp-2 max-w-[80ch] text-xs text-on-raised-muted"
+            title={summary}
+          >
+            {summary}
+          </span>
+        );
+      })()}
 
       {/* Rule 2: a cutoff the source did not state is flagged, never derived. */}
       {coding && !coding.cutoff && !coding.referenceRange && (
@@ -785,7 +799,7 @@ function ScoreComponentRow({
                 className="w-fit text-left text-sm font-semibold text-link-on-raised underline underline-offset-2"
                 title="Open this group's members on Gate 1"
               >
-                {matchedGroup.concept}
+                {groupLabel(matchedGroup).text}
               </button>
               <div className="flex flex-wrap items-center gap-1">
                 {matchedGroup.cohorts.map((c) => (
@@ -832,7 +846,7 @@ function ScoreComponentRow({
                   title="Open this group's members on Gate 1"
                 >
                   <span className="line-clamp-1 text-xs text-link-on-raised underline underline-offset-2">
-                    {group.concept}
+                    {groupLabel(group).text}
                   </span>
                   <span className="shrink-0 font-mono text-[11px] text-on-raised-muted">
                     {group.cohorts.join(" · ")}

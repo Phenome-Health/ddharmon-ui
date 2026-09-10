@@ -2645,16 +2645,25 @@ export default function Gate1Page() {
         groupsById={groupsById}
         fieldIndex={jobState?.result?.fieldIndex}
         onOpenGroup={(groupId) => {
-          // Select the matched group in the detail pane, then bring the pane into view — the score panel
-          // sits at the top of Gate 1 and the detail is a full scroll below it.
+          // Select the matched group in the detail pane, bring the sidebar QUEUE row for it into view
+          // (08-16g review #6 — selecting the detail alone left the row scrolled off in the queue), then
+          // bring the detail pane itself into view — the score panel sits at the top of Gate 1 and the
+          // detail is a full scroll below it.
           setPoolSelected(false);
           setSelectedId(groupId);
-          requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            // Match by dataset value (not a selector) so a group id containing "#" needs no escaping.
+            const row = Array.from(
+              window.document.querySelectorAll(
+                '[data-testid="gate1-rows"] [data-group-id]',
+              ),
+            ).find((el) => (el as HTMLElement).dataset.groupId === groupId);
+            row?.scrollIntoView({ block: "nearest" });
             detailPaneRef.current?.scrollIntoView({
               behavior: "smooth",
               block: "start",
-            }),
-          );
+            });
+          });
         }}
       />
 
