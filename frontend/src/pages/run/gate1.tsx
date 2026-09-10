@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import {
+  Calculator,
   ChevronDown,
   ChevronRight,
   Grid3x3,
@@ -1623,6 +1624,7 @@ function SumBlock({
  */
 function QueueRow({
   group,
+  scoreTag,
   price,
   count,
   inScope,
@@ -1635,6 +1637,9 @@ function QueueRow({
   onDropMember,
 }: {
   group: ConceptGroup;
+  /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
+   *  as a tag and the reason this row is pinned to the top of the queue. */
+  scoreTag?: string[];
   price: number;
   count: number;
   inScope: boolean;
@@ -1717,6 +1722,21 @@ function QueueRow({
         />
       </div>
       <div className="min-w-0">
+        {scoreTag && scoreTag.length > 0 && (
+          <div className="mb-1 flex flex-wrap gap-1">
+            {scoreTag.map((name) => (
+              <span
+                key={name}
+                data-testid="queue-score-tag"
+                className="inline-flex max-w-full items-center gap-1 rounded-pill border border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
+                title={`Matched to the “${name}” component of a declared score`}
+              >
+                <Calculator className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{name}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div
           className={cn(
             "line-clamp-2 text-sm font-semibold leading-snug",
@@ -2004,6 +2024,19 @@ export default function Gate1Page() {
     () => new Map(groups.map((g) => [g.groupId, g])),
     [groups],
   );
+  // groupId → the declared-score component(s) this run matched onto it, from the latest derived spec. Drives
+  // the queue's "pinned to the top + tagged" treatment: a reviewer building a score wants its groups first
+  // and named. Empty when the run has no composite, so the queue's order and rows are unchanged without one.
+  const scoreTagByGroup = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const match of jobState?.composites?.at(-1)?.matches ?? []) {
+      if (!match.conceptId) continue;
+      const arr = m.get(match.conceptId) ?? [];
+      arr.push(match.component);
+      m.set(match.conceptId, arr);
+    }
+    return m;
+  }, [jobState?.composites]);
   /**
    * The coverage column's denominator. `summary.cohorts` is EMPTY at a Gate 1 park on a real run, so
    * reading it directly drew a column of nothing — see `cohortRoster` for the measurement and the
@@ -2374,7 +2407,13 @@ export default function Gate1Page() {
     let rows = xcOnly ? buckets["cross-cohort"] : groups;
     if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
     rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
-    return sortGroupsByColumn(rows, colSort, renamedOf);
+    const sorted = sortGroupsByColumn(rows, colSort, renamedOf);
+    // Pin the score-linked groups to the top (stable — the column sort still orders within each partition),
+    // so a reviewer following a declared score meets its concept groups first. No composite → no reorder.
+    if (scoreTagByGroup.size === 0) return sorted;
+    const linked = sorted.filter((g) => scoreTagByGroup.has(g.groupId));
+    const rest = sorted.filter((g) => !scoreTagByGroup.has(g.groupId));
+    return [...linked, ...rest];
     // `isChanged`/`isInScope` close over the decision maps, which is what the two entries below track.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -2387,6 +2426,7 @@ export default function Gate1Page() {
     scope.decisions,
     touchedByRegroup,
     renames.decisions,
+    scoreTagByGroup,
   ]);
 
   /**
@@ -2603,6 +2643,7 @@ export default function Gate1Page() {
         spec={jobState?.composites?.at(-1) ?? null}
         matchRefusal={matchRefusal}
         groupsById={groupsById}
+        fieldIndex={jobState?.result?.fieldIndex}
         onOpenGroup={(groupId) => {
           // Select the matched group in the detail pane, then bring the pane into view — the score panel
           // sits at the top of Gate 1 and the detail is a full scroll below it.
@@ -2855,6 +2896,7 @@ export default function Gate1Page() {
                   <QueueRow
                     key={g.groupId}
                     group={g}
+                    scoreTag={scoreTagByGroup.get(g.groupId)}
                     price={price}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}

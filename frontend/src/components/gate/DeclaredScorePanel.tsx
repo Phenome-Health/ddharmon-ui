@@ -38,6 +38,7 @@ import type {
   ComponentCoding,
   ComponentMatch,
   ConceptGroup,
+  FieldDetail,
 } from "@/types";
 
 /**
@@ -152,6 +153,9 @@ export interface DeclaredScorePanelProps {
    * group and link into the detail pane. Absent where the run has no groups (the demo's empty Gate 1).
    */
   groupsById?: Map<string, ConceptGroup>;
+  /** cohort:var → its FieldDetail, so a variable-level match/candidate resolves to its name (not a raw id)
+   *  in the Swap dropdown. From the run's `fieldIndex`. */
+  fieldIndex?: Record<string, FieldDetail>;
   /** Select a group in Gate 1's detail pane (the drag-drop screen) and scroll it into view. */
   onOpenGroup?: (groupId: string) => void;
   className?: string;
@@ -223,6 +227,7 @@ export function DeclaredScorePanel({
   onMatch,
   matching = false,
   groupsById,
+  fieldIndex,
   onOpenGroup,
   className,
 }: DeclaredScorePanelProps) {
@@ -253,6 +258,23 @@ export function DeclaredScorePanel({
         cohorts: g.cohorts,
       })) as unknown as UIRecord[],
     [groupsById],
+  );
+  // Resolve a candidate id to a name + cohorts for the Swap dropdown — a GROUP id via `groupsById`, OR a
+  // variable-level candidate id ("cohort:var") via the run's `fieldIndex`. Without the fieldIndex branch a
+  // variable candidate would render as a raw "Cohort:var" id.
+  const resolveConcept = useMemo(
+    () => (id: string) => {
+      const g = groupsById?.get(id);
+      if (g) return { concept: g.concept, cohorts: g.cohorts };
+      const fd = fieldIndex?.[id];
+      if (fd)
+        return {
+          concept: fd.questionText || fd.text || fd.name || id,
+          cohorts: id.includes(":") ? [id.slice(0, id.indexOf(":"))] : [],
+        };
+      return undefined;
+    },
+    [groupsById, fieldIndex],
   );
   async function handleEdit(component: string, conceptId: string | null) {
     if (!shownSpec) return;
@@ -556,6 +578,7 @@ export function DeclaredScorePanel({
               busy={editBusy}
               jobId={jobId}
               onOpenGroup={onOpenGroup}
+              resolveConcept={resolveConcept}
               hideDerivation
             />
           ) : declared.length > 0 ? (

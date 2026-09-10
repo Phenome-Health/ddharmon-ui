@@ -107,6 +107,7 @@ def derive(
     overrides: dict[str, str | None] | None = None,
     hybrid: bool = False,
     top_k: int = 8,
+    field_index: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Derive one composite spec for ``records`` (the run's UIResult records) and return it JSON-ready.
 
@@ -123,6 +124,7 @@ def derive(
         embed=_embedder() if hybrid else None,
         top_k=top_k,
         overrides=overrides or None,
+        field_index=field_index or None,
     )
     payload = spec_to_dict(result.spec)
     # The verdict the user is shown, which is not always the verdict core computed. See

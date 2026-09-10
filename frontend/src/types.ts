@@ -599,6 +599,12 @@ export interface ScoreComponent {
   required: boolean;
   weight: number | null;
   coding: ComponentCoding;
+  /**
+   * The component's domain / sub-scale, when the source groups its items (e.g. a frailty index's
+   * "type of deficit"). GENERIC and OPTIONAL: extraction populates it when the source states it,
+   * and the coverage view groups by it only when present — never a code-side, score-specific grouping.
+   */
+  domain?: string;
 }
 
 export interface ScoreDefinition {
@@ -631,6 +637,7 @@ export interface ComponentMatch {
   required: boolean;
   pinned: boolean; // set by a reviewer override rather than the judge
   shortlist: string[]; // the ids retrieval offered — distinguishes "nothing found" from "all rejected"
+  isVariable?: boolean; // the match/candidate is a single source variable, not a harmonized concept group
 }
 
 export interface CohortCoverage {

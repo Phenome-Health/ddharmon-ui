@@ -8,7 +8,7 @@
 //   3. Partial coverage is NOT the published score. The verdict and the caveats say so in those words.
 //
 // Metadata-only: the output is a recipe the analyst runs on their own rows. ddharmon never computes it.
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import {
   AlertTriangle,
@@ -317,6 +317,50 @@ export function SpecView({
     />
   );
 
+  // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
+  // groups only when components actually carry a `domain`; with none, the flat table below renders
+  // unchanged — never a code-side, score-specific grouping. Domains appear in the order their first
+  // component appears in the definition.
+  const hasDomains = definition.components.some((c) => c.domain);
+  const coverageDomains = useMemo(() => {
+    if (!hasDomains) return [] as { domain: string; matches: ComponentMatch[] }[];
+    const domainByComponent = new Map(
+      definition.components.map((c) => [c.name, c.domain || "Other"] as const),
+    );
+    const order: string[] = [];
+    const byDomain = new Map<string, ComponentMatch[]>();
+    for (const m of spec.matches) {
+      const d = domainByComponent.get(m.component) ?? "Other";
+      if (!byDomain.has(d)) {
+        byDomain.set(d, []);
+        order.push(d);
+      }
+      byDomain.get(d)!.push(m);
+    }
+    return order.map((d) => ({ domain: d, matches: byDomain.get(d)! }));
+  }, [spec.matches, definition.components, hasDomains]);
+  // A cohort "covers" a domain when at least one of its components is present in that cohort.
+  const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
+    matches.some((m) => m.conceptId != null && m.cohorts.includes(cohort));
+  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables.
+  const coverageComponentRow = (m: ComponentMatch) => (
+    <tr key={m.component} className="border-b border-border/60 last:border-0">
+      <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
+      {feasibility.perCohort.map((c) => {
+        const present = m.conceptId != null && m.cohorts.includes(c.cohort);
+        return (
+          <td key={c.cohort} className="px-2 py-1.5 text-center">
+            {present ? (
+              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
+            ) : (
+              <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+
   return (
     <div className="space-y-4">
       {/* --- verdict --- */}
@@ -414,74 +458,105 @@ export function SpecView({
 
       {/* --- per-cohort coverage --- */}
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Per-cohort coverage</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border text-left text-on-raised-muted">
-                  <th className="py-1.5 pr-3 font-semibold">Component</th>
-                  {feasibility.perCohort.map((c) => (
-                    <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
-                      {c.cohort}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {spec.matches.map((m) => (
-                  <tr key={m.component} className="border-b border-border/60 last:border-0">
-                    <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
-                    {feasibility.perCohort.map((c) => {
-                      const present =
-                        m.conceptId != null && m.cohorts.includes(c.cohort);
-                      return (
+        <Collapsible defaultOpen>
+          <CardHeader className="pb-2">
+            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
+              <CardTitle className="text-sm">
+                Per-cohort coverage
+                {hasDomains && (
+                  <span className="ml-2 font-normal text-xs text-on-raised-muted">
+                    by {coverageDomains.length} domains
+                  </span>
+                )}
+              </CardTitle>
+              <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+          </CardHeader>
+          <CollapsibleContent>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-left text-on-raised-muted">
+                      <th className="py-1.5 pr-3 font-semibold">Component</th>
+                      {feasibility.perCohort.map((c) => (
+                        <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
+                          {c.cohort}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hasDomains
+                      ? coverageDomains.map(({ domain, matches }) => (
+                          <Fragment key={domain}>
+                            <tr className="border-b border-border bg-muted/40">
+                              <td
+                                colSpan={feasibility.perCohort.length + 1}
+                                className="px-1 py-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+                              >
+                                {domain}
+                              </td>
+                            </tr>
+                            {matches.map(coverageComponentRow)}
+                            {/* The domain-level readout the reviewer asked for: a cohort need only supply
+                                ONE item in a sub-scale for that domain to be represented in it. */}
+                            <tr
+                              data-testid="coverage-domain-covers"
+                              data-domain={domain}
+                              className="border-b border-border/60 text-on-raised-muted"
+                            >
+                              <td className="py-1 pl-3 pr-3 italic">covers ≥1</td>
+                              {feasibility.perCohort.map((c) => (
+                                <td key={c.cohort} className="px-2 py-1 text-center">
+                                  {cohortCoversDomain(matches, c.cohort) ? (
+                                    <CheckCircle2 className="mx-auto h-3 w-3 text-status-ok" />
+                                  ) : (
+                                    <XCircle className="mx-auto h-3 w-3 text-on-raised-muted/40" />
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                          </Fragment>
+                        ))
+                      : spec.matches.map(coverageComponentRow)}
+                    <tr className="border-t border-border font-semibold">
+                      <td className="py-1.5 pr-3 text-on-raised">Present</td>
+                      {feasibility.perCohort.map((c) => (
+                        <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
+                          {
+                            spec.matches.filter(
+                              (m) => m.conceptId != null && m.cohorts.includes(c.cohort),
+                            ).length
+                          }
+                        </td>
+                      ))}
+                    </tr>
+                    <tr className="font-semibold">
+                      <td className="py-1.5 pr-3 text-on-raised">Computable</td>
+                      {feasibility.perCohort.map((c) => (
                         <td key={c.cohort} className="px-2 py-1.5 text-center">
-                          {present ? (
-                            <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
+                          {c.computable ? (
+                            <span className="text-status-ok">yes</span>
                           ) : (
-                            <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
+                            <span className="text-on-raised-muted">no</span>
                           )}
                         </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-                <tr className="border-t border-border font-semibold">
-                  <td className="py-1.5 pr-3 text-on-raised">Present</td>
-                  {feasibility.perCohort.map((c) => (
-                    <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
-                      {
-                        spec.matches.filter(
-                          (m) => m.conceptId != null && m.cohorts.includes(c.cohort),
-                        ).length
-                      }
-                    </td>
-                  ))}
-                </tr>
-                <tr className="font-semibold">
-                  <td className="py-1.5 pr-3 text-on-raised">Computable</td>
-                  {feasibility.perCohort.map((c) => (
-                    <td key={c.cohort} className="px-2 py-1.5 text-center">
-                      {c.computable ? (
-                        <span className="text-status-ok">yes</span>
-                      ) : (
-                        <span className="text-on-raised-muted">no</span>
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-xs text-on-raised-muted">
-            A cohort is computable only when every required component is present in it. Presence is per data
-            dictionary — participant-level missingness, and therefore effective N, cannot be derived from
-            metadata.
-          </p>
-        </CardContent>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-on-raised-muted">
+                A cohort is computable only when every required component is present in it.
+                {hasDomains &&
+                  " “covers ≥1” is looser — it asks only whether a cohort supplies any item in a domain."}{" "}
+                Presence is per data dictionary — participant-level missingness, and therefore effective N,
+                cannot be derived from metadata.
+              </p>
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
       </Card>
 
       {/* --- derivation --- */}
@@ -612,6 +687,11 @@ function MatchRow({
                 <Pin className="h-2.5 w-2.5" /> pinned
               </Badge>
             )}
+            {match.isVariable && (
+              <Badge variant="neutral" className="text-xs" title="Matched to a single source variable, not a concept group">
+                variable
+              </Badge>
+            )}
           </span>
           <span className="mt-0.5 block truncate text-xs text-on-raised-muted">
             {match.conceptId
@@ -720,28 +800,79 @@ function MatchRow({
           </div>
 
           {swapping && (
-            <select
-              className="mt-1.5 w-full rounded-md border border-border bg-surface-raised px-2 py-1 text-xs text-on-raised"
-              defaultValue={match.conceptId ?? ""}
-              disabled={busy}
-              onChange={(e) => {
-                setSwapping(false);
-                onEdit(match.component, e.target.value || null);
-              }}
+            <div
+              data-testid="swap-candidates"
+              className="mt-1.5 flex flex-col gap-1 rounded-md border border-border bg-surface-raised p-1.5"
             >
-              <option value="">— none (report as missing) —</option>
+              {/* Each retrieved candidate is a link into its Gate 1 group — inspect the members BEFORE
+                  selecting — with an explicit Select so opening a group is not the same act as choosing it. */}
+              <p className="px-1 pb-0.5 text-[11px] text-on-raised-muted">
+                Open a candidate to inspect its group on Gate 1, then select the one that fits.
+              </p>
               {candidateIds.map((id) => {
                 const c = resolveConcept?.(id);
-                const label = (c?.concept || id).slice(0, 90);
-                const co = c?.cohorts?.length ? ` · ${c.cohorts.join(", ")}` : "";
+                const label = c?.concept || id;
+                const co = c?.cohorts?.length ? c.cohorts.join(", ") : "";
+                const isCurrent = id === match.conceptId;
                 return (
-                  <option key={id} value={id}>
-                    {label}
-                    {co}
-                  </option>
+                  <div
+                    key={id}
+                    data-testid="swap-candidate"
+                    data-group={id}
+                    className="flex items-center gap-2 rounded px-1 py-0.5"
+                  >
+                    {onOpenGroup ? (
+                      <button
+                        type="button"
+                        data-testid="swap-candidate-open"
+                        onClick={() => onOpenGroup(id)}
+                        className="min-w-0 flex-1 text-left text-xs text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
+                        title="Open this concept group on Gate 1"
+                      >
+                        <span className="line-clamp-1">{label}</span>
+                        {co && <span className="text-on-raised-muted"> · {co}</span>}
+                      </button>
+                    ) : (
+                      <span className="min-w-0 flex-1 text-xs text-on-raised">
+                        <span className="line-clamp-1">{label}</span>
+                        {co && <span className="text-on-raised-muted"> · {co}</span>}
+                      </span>
+                    )}
+                    {isCurrent ? (
+                      <Badge variant="neutral" className="shrink-0 gap-1 text-[11px]">
+                        <Pin className="h-2.5 w-2.5" /> current
+                      </Badge>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid="swap-candidate-select"
+                        disabled={busy}
+                        onClick={() => {
+                          setSwapping(false);
+                          onEdit(match.component, id);
+                        }}
+                        className="h-5 shrink-0 px-2 text-[11px]"
+                      >
+                        Select
+                      </Button>
+                    )}
+                  </div>
                 );
               })}
-            </select>
+              <button
+                type="button"
+                data-testid="swap-candidate-none"
+                disabled={busy}
+                onClick={() => {
+                  setSwapping(false);
+                  onEdit(match.component, null);
+                }}
+                className="mt-0.5 border-t border-border/60 px-1 pt-1 text-left text-[11px] text-on-raised-muted hover:text-on-raised"
+              >
+                — none (report as missing) —
+              </button>
+            </div>
           )}
         </div>
       )}
