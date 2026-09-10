@@ -22,18 +22,74 @@ from ddharmon.harmonization.composite import derive_composite, records_from_payl
 from ddharmon.harmonization.score_sources import ScoreSource, fetch_source, from_text, from_url
 
 # Cache the encoder across requests: hybrid retrieval is opt-in per call, and cold-loading BioLORD (768d)
-# per request would dominate the response time.
-_embed_fn: Any | None = None
+# per request would dominate the response time. The provider (the 440MB model) is a process-wide singleton;
+# the SQLite embedding cache is opened PER CALL in the calling thread — uvicorn serves derives on threadpool
+# threads and sqlite3 connections are thread-affine — persisting vectors to disk across derives regardless.
+_provider: Any | None = None
+
+
+def _get_provider() -> Any:
+    """The process-wide BioLORD provider (model loaded once, on first opt-in)."""
+    global _provider
+    if _provider is None:
+        from ddharmon.embedding.provider import SentenceTransformerProvider
+
+        _provider = SentenceTransformerProvider()
+    return _provider
+
+
+def _cache_db_path() -> Any:
+    """The shared embedding-cache DB — the same root embed_dictionary() uses ($DDHARMON_CACHE, else ~/.ddharmon)."""
+    import os
+    from pathlib import Path
+
+    root = os.environ.get("DDHARMON_CACHE")
+    return (Path(root) if root else Path.home() / ".ddharmon") / "embeddings.db"
 
 
 def _embedder() -> Any:
-    """The process-wide embedding callable for hybrid retrieval (loaded once, on first opt-in)."""
-    global _embed_fn
-    if _embed_fn is None:
-        from ddharmon.embedding.provider import SentenceTransformerProvider
+    """A cache-backed hybrid-retrieval embedder: embed the corpus once, hit the cache on every derive after.
 
-        _embed_fn = SentenceTransformerProvider().embed
-    return _embed_fn
+    A bare ``provider.embed`` re-encodes the whole retrieval corpus (~10.7k concepts + variables, ~27s) on
+    EVERY derive because nothing persists the vectors between calls. This wraps the provider with
+    :class:`~ddharmon.embedding.cache.EmbeddingCache` (the same ``~/.ddharmon/embeddings.db`` the run's
+    ``embed_dictionary`` writes), keyed on ``sha256(text)[:16]`` — the exact string embedded — under the
+    provider's model_name and the ``'semantic'`` vector type. Self-consistent: the first derive is cold and
+    every derive after it, over the same corpus, is a pure cache hit.
+
+    It does NOT warm the FIRST derive from the run's per-variable rows: those were hashed over
+    ``compose_embedding_text`` (variable_name + category + parent context), while retrieval scores against
+    ``ConceptEntry.retrieval_text`` (concept + CDE name + ideal slice) — different text, different hash. The
+    win is removing the per-derive re-embed, not a warm first derive.
+    """
+
+    def embed(texts: list[str]) -> Any:
+        import hashlib
+
+        import numpy as np
+
+        from ddharmon.embedding.cache import EmbeddingCache
+
+        provider = _get_provider()
+        hashes = [hashlib.sha256(t.encode()).hexdigest()[:16] for t in texts]
+        wanted = list(dict.fromkeys(hashes))  # unique, order-preserving
+
+        cache = EmbeddingCache(_cache_db_path(), provider.dimension)
+        try:
+            vecs = cache.get_many(provider.model_name, wanted, vector_type="semantic")
+            missing = [h for h in wanted if h not in vecs]
+            if missing:
+                by_hash = dict(zip(hashes, texts))  # a hash maps back to its (identical) text
+                fresh = provider.embed([by_hash[h] for h in missing])
+                cache.put_many(provider.model_name, list(zip(missing, fresh)), vector_type="semantic")
+                for h, v in zip(missing, fresh):
+                    vecs[h] = v
+        finally:
+            cache.close()
+
+        return np.asarray([vecs[h] for h in hashes], dtype=np.float32)
+
+    return embed
 
 
 def resolve_source(
