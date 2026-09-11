@@ -260,13 +260,15 @@ export function DeclaredScorePanel({
       })) as unknown as UIRecord[],
     [groupsById],
   );
-  // Resolve a candidate id to a name + cohorts for the Swap dropdown — a GROUP id via `groupsById`, OR a
-  // variable-level candidate id ("cohort:var") via the run's `fieldIndex`. Without the fieldIndex branch a
-  // variable candidate would render as a raw "Cohort:var" id.
+  // Resolve a candidate id to a name + cohorts (+ the group's TRUE size, for the coverage line) for the
+  // Swap dropdown and the matched-group render — a GROUP id via `groupsById`, OR a variable-level candidate
+  // id ("cohort:var") via the run's `fieldIndex`. Without the fieldIndex branch a variable candidate would
+  // render as a raw "Cohort:var" id. `nMembers` is the denominator of "N of M members matched"; a variable
+  // candidate has no group so it stays undefined and the coverage line degrades to "N members matched".
   const resolveConcept = useMemo(
     () => (id: string) => {
       const g = groupsById?.get(id);
-      if (g) return { concept: groupLabel(g).text, cohorts: g.cohorts };
+      if (g) return { concept: groupLabel(g).text, cohorts: g.cohorts, nMembers: g.nMembers };
       const fd = fieldIndex?.[id];
       if (fd)
         return {

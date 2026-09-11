@@ -275,7 +275,9 @@ export function SpecView({
   jobId: string;
   hideDerivation?: boolean;
   onOpenGroup?: (conceptId: string) => void;
-  resolveConcept?: (id: string) => { concept: string; cohorts: string[] } | undefined;
+  resolveConcept?: (
+    id: string,
+  ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
 }) {
   const { definition, feasibility, derivation } = spec;
   // An unrecognized verdict falls back to INDETERMINATE, never to the negative one. The previous
@@ -642,22 +644,58 @@ function MatchRow({
   busy: boolean;
   jobId: string;
   onOpenGroup?: (conceptId: string) => void;
-  resolveConcept?: (id: string) => { concept: string; cohorts: string[] } | undefined;
+  resolveConcept?: (
+    id: string,
+  ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [swapping, setSwapping] = useState(false);
   const coding = component?.coding;
   const lowConfidence =
     match.conceptId != null && match.confidence > 0 && match.confidence < 0.6;
-  // The swap targets are the concepts retrieval SHORTLISTED for THIS component (the top-k the judge saw),
-  // not the whole run — that is what a reviewer wants to choose among, and it is the same set whether the
-  // component matched or not. The current pick is folded in and de-duplicated.
-  const candidateIds = Array.from(
-    new Set([
-      ...(match.shortlist ?? []),
-      ...(match.conceptId ? [match.conceptId] : []),
-    ]),
+
+  // Variable-only matching (08-16g): the match is now a concept GROUP the component's rated source
+  // variables rolled up to. Resolve it so the row shows the group's own name (never a raw id) and its
+  // true size — the denominator of the coverage line below.
+  const resolved = match.conceptId ? resolveConcept?.(match.conceptId) : undefined;
+  const groupName =
+    resolved?.concept?.trim() || match.concept?.trim() || "Unnamed group";
+
+  // COVERAGE is the over-merge tell. A component maps to a group, but the group may hold many unrelated
+  // variables (an over-merged cluster); how many of them actually measure this component is what separates
+  // a clean match (all members on-topic) from a subset match (1 of 16 — the group is bloated). The
+  // aggregate confidence does NOT show this — the judge only rates on-topic members, so a group's score
+  // equals its best member whether coverage is 100% or 6% (proven on the FI re-derive, median gap 0.00).
+  // `n` = matched members; `m` = the group's true size. When the group did not resolve (m unknown) the
+  // line degrades to "N members matched" rather than inventing a denominator.
+  const matchedMembers = match.matchedMembers ?? [];
+  const nMatched = matchedMembers.length;
+  const groupSize = resolved?.nMembers;
+  const coverage =
+    match.conceptId != null && nMatched > 0
+      ? {
+          n: nMatched,
+          m: groupSize,
+          // A minority of a real group's members = a subset match worth a reviewer's eye. Only flag when
+          // the denominator is known AND more than one member exists (a 1-of-1 group is not "over-merged").
+          partial: groupSize != null && groupSize > 1 && nMatched < groupSize,
+        }
+      : null;
+
+  // The swap targets are the GROUPS the component's rated variables reached (`groupCandidates`, deduped
+  // and best-first, current pick folded in), with the per-group confidence to hand. Falls back to the
+  // legacy `shortlist` when a run predates variable-only matching.
+  const candidateConfidence = new Map(
+    (match.groupCandidates ?? []).map((g) => [g.groupId, g.confidence] as const),
   );
+  const candidateIds = match.groupCandidates?.length
+    ? Array.from(new Set(match.groupCandidates.map((g) => g.groupId)))
+    : Array.from(
+        new Set([
+          ...(match.shortlist ?? []),
+          ...(match.conceptId ? [match.conceptId] : []),
+        ]),
+      );
 
   return (
     <div className="rounded-md border border-border">
@@ -687,20 +725,27 @@ function MatchRow({
                 <Pin className="h-2.5 w-2.5" /> pinned
               </Badge>
             )}
-            {match.isVariable && (
-              <Badge variant="neutral" className="text-xs" title="Matched to a single source variable, not a concept group">
-                variable
-              </Badge>
-            )}
+            {/* The name-vs-member "variable" tag was dropped in the variable-only rework: every match is now
+                variable-surfaced, so the tag was always-on and told a reviewer nothing. */}
           </span>
           <span className="mt-0.5 block truncate text-xs text-on-raised-muted">
             {match.conceptId
-              ? `${match.concept || match.conceptId} · confidence ${match.confidence.toFixed(2)}`
+              ? groupName
               : match.shortlist.length > 0
                 ? `Missing · ${match.shortlist.length} retrieved, none fit`
                 : "Missing · nothing retrieved"}
           </span>
         </span>
+        {/* Confidence lives in its own fixed slot, NOT appended to the name — an over-merged group's name is
+            the full idealCde paragraph, which would truncate the number off the line entirely. */}
+        {match.conceptId != null && (
+          <span
+            data-testid="score-confidence"
+            className="shrink-0 font-mono text-xs tabular-nums text-on-raised-muted"
+          >
+            {match.confidence.toFixed(2)}
+          </span>
+        )}
         <ChevronDown
           aria-hidden="true"
           className={cn(
@@ -728,11 +773,12 @@ function MatchRow({
               {onOpenGroup ? (
                 <button
                   type="button"
+                  data-testid="score-open-group"
                   onClick={() => onOpenGroup(match.conceptId!)}
                   className="text-left text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
                   title="Show this concept group on Gate 1"
                 >
-                  {match.concept || concept?.concept || match.conceptId}
+                  {groupName}
                 </button>
               ) : (
                 <Link
@@ -740,7 +786,7 @@ function MatchRow({
                   className="text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
                   title="Open this concept in the review workbench"
                 >
-                  {match.concept || concept?.concept || match.conceptId}
+                  {groupName}
                 </Link>
               )}
               <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-on-raised-muted">
@@ -754,6 +800,50 @@ function MatchRow({
                   <span className="font-mono text-xs">{match.column}</span>
                 )}
               </div>
+
+              {/* COVERAGE — the over-merge tell. "N of M members matched" when the group's size is known,
+                  a warn tint when only a minority of a multi-member group is on-topic (the group is
+                  over-merged and this component maps to a subset of it). */}
+              {coverage && (
+                <p
+                  data-testid="score-coverage"
+                  data-partial={coverage.partial ? "true" : "false"}
+                  className={cn(
+                    "mt-1 font-medium",
+                    coverage.partial ? "text-status-warn" : "text-on-raised-muted",
+                  )}
+                >
+                  {coverage.m != null
+                    ? `${coverage.n} of ${coverage.m} group member${coverage.m === 1 ? "" : "s"} matched`
+                    : `${coverage.n} member${coverage.n === 1 ? "" : "s"} matched`}
+                </p>
+              )}
+
+              {/* The matched members, indented under the group with each one's own confidence — the ground
+                  truth the group's aggregate rolled up from. */}
+              {matchedMembers.length > 0 && (
+                <ul
+                  data-testid="score-matched-members"
+                  className="mt-1 flex flex-col gap-0.5 border-l border-border/60 pl-2.5"
+                >
+                  {matchedMembers.map((mm) => (
+                    <li
+                      key={mm.variableId}
+                      data-testid="score-matched-member"
+                      data-variable={mm.variableId}
+                      className="flex items-baseline justify-between gap-2"
+                    >
+                      <span className="min-w-0 break-all font-mono text-on-raised-muted">
+                        {mm.variableId}
+                      </span>
+                      <span className="shrink-0 font-mono tabular-nums text-on-raised-muted">
+                        {mm.confidence.toFixed(2)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
               {match.rationale && (
                 <p className="mt-1 text-on-raised-muted">{match.rationale}</p>
               )}
@@ -816,6 +906,7 @@ function MatchRow({
                 // "ca5ae18069d83#g0"); an unnameable group reads "Unnamed group".
                 const label = c?.concept?.trim() || "Unnamed group";
                 const co = c?.cohorts?.length ? c.cohorts.join(", ") : "";
+                const conf = candidateConfidence.get(id);
                 const isCurrent = id === match.conceptId;
                 return (
                   <div
@@ -839,6 +930,11 @@ function MatchRow({
                       <span className="min-w-0 flex-1 text-xs text-on-raised">
                         <span className="line-clamp-1">{label}</span>
                         {co && <span className="text-on-raised-muted"> · {co}</span>}
+                      </span>
+                    )}
+                    {conf != null && (
+                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-on-raised-muted">
+                        {conf.toFixed(2)}
                       </span>
                     )}
                     {isCurrent ? (
