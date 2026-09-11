@@ -494,6 +494,11 @@ export function groupLabel(
   const renamed = (renamedTo ?? "").trim();
   if (renamed) return { text: renamed, source: "reviewer" };
   if (group.concept) return { text: group.concept, source: "generated" };
+  // An over-merged group often has no `concept` but does carry a generated `idealCde` — a far cleaner name
+  // than the coherence-axis summary below it (which describes the SPLIT, not the group). Prefer it, so an
+  // unnamed group reads "Bone fracture or break history…", never a raw id or a split-axis sentence.
+  const ideal = (group.idealCde ?? "").trim();
+  if (ideal) return { text: ideal, source: "generated" };
   const judged = group.coherence !== "not_judged";
   const summary = (group.coherenceSummary ?? "").trim();
   if (judged && summary) return { text: summary, source: "judge" };

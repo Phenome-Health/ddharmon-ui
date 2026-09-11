@@ -638,6 +638,12 @@ export interface ComponentMatch {
   pinned: boolean; // set by a reviewer override rather than the judge
   shortlist: string[]; // the ids retrieval offered — distinguishes "nothing found" from "all rejected"
   isVariable?: boolean; // the match/candidate is a single source variable, not a harmonized concept group
+  // Variable-only matching: `conceptId` is a concept GROUP reached by rolling up the source variables the
+  // judge rated; `confidence` above is then the group AGGREGATE. `matchedMembers` are those variables
+  // (id + confidence), shown indented under the group; `groupCandidates` is the deduped Swap list — every
+  // group the component's rated variables reached, best-first. Absent on the legacy group-concept path.
+  matchedMembers?: { variableId: string; confidence: number }[];
+  groupCandidates?: { groupId: string; confidence: number }[];
 }
 
 export interface CohortCoverage {
