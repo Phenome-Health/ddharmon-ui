@@ -266,6 +266,7 @@ export function SpecView({
   hideDerivation = false,
   onOpenGroup,
   resolveConcept,
+  resolveGroupId,
 }: {
   spec: CompositeSpec;
   conceptById: Record<string, UIRecord>;
@@ -278,6 +279,7 @@ export function SpecView({
   resolveConcept?: (
     id: string,
   ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
+  resolveGroupId?: (id: string) => string | undefined;
 }) {
   const { definition, feasibility, derivation } = spec;
   // An unrecognized verdict falls back to INDETERMINATE, never to the negative one. The previous
@@ -316,6 +318,7 @@ export function SpecView({
       jobId={jobId}
       onOpenGroup={onOpenGroup}
       resolveConcept={resolve}
+      resolveGroupId={resolveGroupId}
     />
   );
 
@@ -636,6 +639,7 @@ function MatchRow({
   jobId,
   onOpenGroup,
   resolveConcept,
+  resolveGroupId,
 }: {
   match: ComponentMatch;
   component?: ScoreComponent;
@@ -647,6 +651,7 @@ function MatchRow({
   resolveConcept?: (
     id: string,
   ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
+  resolveGroupId?: (id: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [swapping, setSwapping] = useState(false);
@@ -684,18 +689,29 @@ function MatchRow({
 
   // The swap targets are the GROUPS the component's rated variables reached (`groupCandidates`, deduped
   // and best-first, current pick folded in), with the per-group confidence to hand. Falls back to the
-  // legacy `shortlist` when a run predates variable-only matching.
+  // legacy `shortlist` when a run predates variable-only matching OR when the component is MISSING (its
+  // groupCandidates are empty and the shortlist is variable-level).
   const candidateConfidence = new Map(
     (match.groupCandidates ?? []).map((g) => [g.groupId, g.confidence] as const),
   );
-  const candidateIds = match.groupCandidates?.length
-    ? Array.from(new Set(match.groupCandidates.map((g) => g.groupId)))
-    : Array.from(
-        new Set([
-          ...(match.shortlist ?? []),
-          ...(match.conceptId ? [match.conceptId] : []),
-        ]),
-      );
+  const rawCandidateIds = match.groupCandidates?.length
+    ? match.groupCandidates.map((g) => g.groupId)
+    : [...(match.shortlist ?? []), ...(match.conceptId ? [match.conceptId] : [])];
+  // Roll each raw candidate up to the GROUP it opens (a group id → itself; a variable id → its concept
+  // group), then dedupe by group. A missing component's shortlist is variable-level, and many variables
+  // share one group (eight "what type of cancer" variables → one group), so without this the list is a
+  // wall of look-alike rows that cannot link. A candidate with no group mapping is kept only if it is the
+  // current pick, so a selected non-group id never silently vanishes. Without a resolver (other callers),
+  // fall back to the raw ids unchanged.
+  const candidateIds = resolveGroupId
+    ? Array.from(
+        new Set(
+          rawCandidateIds
+            .map((id) => resolveGroupId(id) ?? (id === match.conceptId ? id : undefined))
+            .filter((id): id is string => !!id),
+        ),
+      )
+    : Array.from(new Set(rawCandidateIds));
 
   return (
     <div className="rounded-md border border-border">

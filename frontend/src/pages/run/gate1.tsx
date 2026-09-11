@@ -2024,6 +2024,19 @@ export default function Gate1Page() {
     () => new Map(groups.map((g) => [g.groupId, g])),
     [groups],
   );
+  // variableId ("cohort:var") → its concept groupId, from the run's FULL membership lists. Lets the score
+  // panel roll a variable-level retrieval candidate (a missing component's shortlist is variable-level) up
+  // to the ONE group it belongs to — so eight look-alike cancer-type variables collapse to a single group
+  // that links, instead of eight dead rows that don't. Uses conceptGroupMembers (untruncated), not the
+  // group rows' capped memberVariableNames sample.
+  const groupByVariable = useMemo(() => {
+    const m = new Map<string, string>();
+    const members = jobState?.result?.conceptGroupMembers ?? {};
+    for (const [groupId, vars] of Object.entries(members)) {
+      for (const v of vars) if (!m.has(v)) m.set(v, groupId);
+    }
+    return m;
+  }, [jobState?.result?.conceptGroupMembers]);
   // groupId → the declared-score component(s) this run matched onto it, from the latest derived spec. Drives
   // the queue's "pinned to the top + tagged" treatment: a reviewer building a score wants its groups first
   // and named. Empty when the run has no composite, so the queue's order and rows are unchanged without one.
@@ -2643,6 +2656,7 @@ export default function Gate1Page() {
         spec={jobState?.composites?.at(-1) ?? null}
         matchRefusal={matchRefusal}
         groupsById={groupsById}
+        groupByVariable={groupByVariable}
         fieldIndex={jobState?.result?.fieldIndex}
         onOpenGroup={(groupId) => {
           // Select the matched group in the detail pane, bring the sidebar QUEUE row for it into view

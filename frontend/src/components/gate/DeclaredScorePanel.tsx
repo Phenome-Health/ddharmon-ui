@@ -154,6 +154,10 @@ export interface DeclaredScorePanelProps {
    * group and link into the detail pane. Absent where the run has no groups (the demo's empty Gate 1).
    */
   groupsById?: Map<string, ConceptGroup>;
+  /** variableId ("cohort:var") → its concept groupId, so a variable-level retrieval candidate (a missing
+   *  component's shortlist is variable-level) can be rolled up to the ONE group it belongs to — deduped and
+   *  linkable — instead of listing many look-alike raw variables that cannot open a group. */
+  groupByVariable?: Map<string, string>;
   /** cohort:var → its FieldDetail, so a variable-level match/candidate resolves to its name (not a raw id)
    *  in the Swap dropdown. From the run's `fieldIndex`. */
   fieldIndex?: Record<string, FieldDetail>;
@@ -228,6 +232,7 @@ export function DeclaredScorePanel({
   onMatch,
   matching = false,
   groupsById,
+  groupByVariable,
   fieldIndex,
   onOpenGroup,
   className,
@@ -278,6 +283,17 @@ export function DeclaredScorePanel({
       return undefined;
     },
     [groupsById, fieldIndex],
+  );
+  // Map any candidate id to the GROUP it should open: a group id resolves to itself; a variable id ("cohort:var")
+  // rolls up to its concept group. This is what lets the Swap list dedupe by group and link — a missing
+  // component's shortlist is variable-level (eight look-alike cancer-type variables all belong to one group),
+  // and without the roll-up they render as eight dead, unlinkable rows.
+  const resolveGroupId = useMemo(
+    () => (id: string) => {
+      if (groupsById?.has(id)) return id;
+      return groupByVariable?.get(id);
+    },
+    [groupsById, groupByVariable],
   );
   async function handleEdit(component: string, conceptId: string | null) {
     if (!shownSpec) return;
@@ -582,6 +598,7 @@ export function DeclaredScorePanel({
               jobId={jobId}
               onOpenGroup={onOpenGroup}
               resolveConcept={resolveConcept}
+              resolveGroupId={resolveGroupId}
               hideDerivation
             />
           ) : declared.length > 0 ? (
