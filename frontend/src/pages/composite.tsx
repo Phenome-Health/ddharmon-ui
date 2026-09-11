@@ -745,10 +745,11 @@ function MatchRow({
               )}
               <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-on-raised-muted">
                 <span>{match.cohorts.join(", ") || "—"}</span>
-                <span className={lowConfidence ? "text-status-warn" : ""}>
-                  confidence {match.confidence.toFixed(2)}
-                  {lowConfidence && " — review"}
-                </span>
+                {/* Confidence is already on the collapsed summary line above (08-16g review #7 — it read
+                    twice once expanded); here keep only the low-confidence review flag, not the number. */}
+                {lowConfidence && (
+                  <span className="text-status-warn">low confidence — review</span>
+                )}
                 {match.column && (
                   <span className="font-mono text-xs">{match.column}</span>
                 )}
@@ -811,7 +812,9 @@ function MatchRow({
               </p>
               {candidateIds.map((id) => {
                 const c = resolveConcept?.(id);
-                const label = c?.concept || id;
+                // Never fall back to the raw internal id (08-16g review #5 — an unresolved candidate read
+                // "ca5ae18069d83#g0"); an unnameable group reads "Unnamed group".
+                const label = c?.concept?.trim() || "Unnamed group";
                 const co = c?.cohorts?.length ? c.cohorts.join(", ") : "";
                 const isCurrent = id === match.conceptId;
                 return (
