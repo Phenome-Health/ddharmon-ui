@@ -1,10 +1,23 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { ChevronDown, ChevronRight, Grid3x3, Pencil, Quote, Scissors, Undo2 } from "lucide-react";
+import {
+  Calculator,
+  ChevronDown,
+  ChevronRight,
+  Grid3x3,
+  Pencil,
+  Quote,
+  Scissors,
+  Undo2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell, railFor } from "@/components/gate/GateShell";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
@@ -17,7 +30,12 @@ import { CarveProposal } from "@/components/gate/CarveProposal";
 import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
 import { GroupingStrip } from "@/components/gate/GroupingStrip";
 import { BreadthFilter } from "@/components/gate/BreadthFilter";
-import { MEMBER_DRAG_TYPE, MemberChip, MemberDropZone, UNASSIGNED_GROUP_ID } from "@/components/gate/MemberChip";
+import {
+  MEMBER_DRAG_TYPE,
+  MemberChip,
+  MemberDropZone,
+  UNASSIGNED_GROUP_ID,
+} from "@/components/gate/MemberChip";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
@@ -49,10 +67,22 @@ import {
   type LedgerFilters,
   type LedgerSortKey,
 } from "@/lib/ledger";
-import { isInFlight, isParked, isTerminal, resumeTookEffect } from "@/lib/run-state";
+import {
+  isInFlight,
+  isParked,
+  isTerminal,
+  resumeTookEffect,
+} from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { cn } from "@/lib/utils";
-import type { CoherenceState, ConceptGroup, FieldDetail, GatePosition, RunMode, UnassignedField } from "@/types";
+import type {
+  CoherenceState,
+  ConceptGroup,
+  FieldDetail,
+  GatePosition,
+  RunMode,
+  UnassignedField,
+} from "@/types";
 
 /**
  * Gate 1 — the ledger. The load-bearing screen: where the reviewer scopes and reshapes before the BULK of
@@ -334,7 +364,11 @@ function GroupTitle({
     <span className="flex min-w-0 items-center gap-2">
       {/* `truncate` keeps a long judge sentence from breaking the row; the full text stays reachable
           through the title attribute, so nothing is lost — only folded. */}
-      <span className="truncate" data-label-source={label.source} title={label.text}>
+      <span
+        className="truncate"
+        data-label-source={label.source}
+        title={label.text}
+      >
         {label.text}
       </span>
       {label.source === "reviewer" && <RenamedMark />}
@@ -343,7 +377,10 @@ function GroupTitle({
           nothing (08-16c review); `none` never had one, because "generated" beside "Unnamed group"
           would claim the pipeline produced that string, which it did not. */}
       {label.source === "reviewer" && (
-        <span data-testid="generated-name-kept" className="truncate text-xs text-on-raised-muted">
+        <span
+          data-testid="generated-name-kept"
+          className="truncate text-xs text-on-raised-muted"
+        >
           ddharmon called it {generated}
         </span>
       )}
@@ -410,7 +447,10 @@ function GroupRow({
         />
       }
       subtitle={
-        <span data-testid="row-provenance" className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span
+          data-testid="row-provenance"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
           {/* Provenance is the group's OWN cluster id — never the preview-cluster field. */}
           <span>from cluster {group.clusterId || "—"}</span>
           {/* Only where the judge did NOT score the group: a verdict always leads on its own. */}
@@ -423,7 +463,9 @@ function GroupRow({
         </span>
       }
       coherence={<CoherenceMark state={group.coherence} />}
-      coverage={<CohortCoverage cohorts={group.cohorts} allCohorts={allCohorts} />}
+      coverage={
+        <CohortCoverage cohorts={group.cohorts} allCohorts={allCohorts} />
+      }
       count={
         <>
           {/* The TRUE member count, even when the collapsed sample is capped — regrouping against a
@@ -432,7 +474,10 @@ function GroupRow({
           {count}
           {/* The column header is `Vars`, which a reviewer reads once and a screen-reader user hears
               never: the row announces its own unit so the number is not a bare digit. */}
-          <span className="sr-only"> {count === 1 ? "variable" : "variables"}</span>
+          <span className="sr-only">
+            {" "}
+            {count === 1 ? "variable" : "variables"}
+          </span>
         </>
       }
       cost={price}
@@ -458,9 +503,13 @@ function GroupRow({
  * than as a hidden control or a bare disabled button: hiding it means the reviewer never learns the
  * capability exists, and a disabled button tells them they cannot do something without telling them why.
  */
-function readjudicationRefusal(
-  { pinned, optedIn }: { pinned: boolean; optedIn: boolean },
-): { claim: "failed" | "not-enabled"; reason: React.ReactNode } | null {
+function readjudicationRefusal({
+  pinned,
+  optedIn,
+}: {
+  pinned: boolean;
+  optedIn: boolean;
+}): { claim: "failed" | "not-enabled"; reason: React.ReactNode } | null {
   if (pinned) {
     return {
       claim: "not-enabled",
@@ -503,13 +552,21 @@ function MemberList({
 }) {
   if (!onDropMember) {
     return (
-      <div role="group" aria-label={label} className="flex flex-wrap gap-1 rounded-inner border border-rule-on-raised p-3">
+      <div
+        role="group"
+        aria-label={label}
+        className="flex flex-wrap gap-1 rounded-inner border border-rule-on-raised p-3"
+      >
         {children}
       </div>
     );
   }
   return (
-    <MemberDropZone groupId={groupId} label={label} onDropMember={(memberId) => onDropMember(memberId)}>
+    <MemberDropZone
+      groupId={groupId}
+      label={label}
+      onDropMember={(memberId) => onDropMember(memberId)}
+    >
       {children}
     </MemberDropZone>
   );
@@ -523,7 +580,10 @@ function MemberList({
  * from the index when the run has one. This was written out inline at each site that renders a member;
  * the tray's members list (08-16c review) would have been the fourth copy, so it is one function now.
  */
-function memberParts(memberId: string, fieldIndex: Record<string, FieldDetail>): { cohort: string; variable: string } {
+function memberParts(
+  memberId: string,
+  fieldIndex: Record<string, FieldDetail>,
+): { cohort: string; variable: string } {
   const separator = memberId.indexOf(":");
   const cohort = separator > 0 ? memberId.slice(0, separator) : "";
   const raw = separator > 0 ? memberId.slice(separator + 1) : memberId;
@@ -600,11 +660,19 @@ function DestinationEntry({
         <span className="flex items-center gap-1 text-xs text-on-inset-muted">
           {count} {count === 1 ? "variable" : "variables"}
           {label.source === "judge" && " · judge's summary"}
-          <ChevronDown aria-hidden="true" className={cn("h-3 w-3", open && "rotate-180")} />
+          <ChevronDown
+            aria-hidden="true"
+            className={cn("h-3 w-3", open && "rotate-180")}
+          />
         </span>
       </button>
       {open && (
-        <ul id={listId} data-testid="destination-members" data-group-id={group.groupId} className="flex w-full flex-col gap-0.5 pt-1">
+        <ul
+          id={listId}
+          data-testid="destination-members"
+          data-group-id={group.groupId}
+          className="flex w-full flex-col gap-0.5 pt-1"
+        >
           {members.map((memberId) => {
             const { cohort, variable } = memberParts(memberId, fieldIndex);
             return (
@@ -614,8 +682,13 @@ function DestinationEntry({
                 data-member-id={memberId}
                 className="flex min-w-0 items-baseline gap-1"
               >
-                <span className="shrink-0 font-mono text-xs font-semibold text-accent-2-on-inset">{cohort}</span>
-                <span className="truncate text-xs text-on-inset-muted" title={variable}>
+                <span className="shrink-0 font-mono text-xs font-semibold text-accent-2-on-inset">
+                  {cohort}
+                </span>
+                <span
+                  className="truncate text-xs text-on-inset-muted"
+                  title={variable}
+                >
                   {variable}
                 </span>
               </li>
@@ -625,13 +698,18 @@ function DestinationEntry({
               cannot be presented as the group's membership — the count above is the contract's true
               figure and this says which of the two the reviewer is looking at. */}
           {sampleOnly && (
-            <li data-testid="destination-members-partial" className="pt-1 text-xs text-on-inset-muted">
-              This run recorded only these {members.length} of the group&rsquo;s {group.nMembers} variables,
-              so the rest are not listed here.
+            <li
+              data-testid="destination-members-partial"
+              className="pt-1 text-xs text-on-inset-muted"
+            >
+              This run recorded only these {members.length} of the group&rsquo;s{" "}
+              {group.nMembers} variables, so the rest are not listed here.
             </li>
           )}
           {members.length === 0 && (
-            <li className="text-xs text-on-inset-muted">Nothing is in this group right now.</li>
+            <li className="text-xs text-on-inset-muted">
+              Nothing is in this group right now.
+            </li>
           )}
         </ul>
       )}
@@ -705,10 +783,18 @@ function DestinationTray({
   const needle = filter.trim().toLowerCase();
   // Matched against the label the entry actually SHOWS, so the rule is the one the reviewer can see
   // working. `groupLabel` is the same function the entry renders with, so the two cannot disagree.
-  const shown = needle ? groups.filter((g) => groupLabel(g).text.toLowerCase().includes(needle)) : groups;
+  const shown = needle
+    ? groups.filter((g) => groupLabel(g).text.toLowerCase().includes(needle))
+    : groups;
   return (
-    <aside data-testid="destination-tray" aria-label={label} className="flex min-w-0 flex-col gap-2">
-      <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">{heading}</span>
+    <aside
+      data-testid="destination-tray"
+      aria-label={label}
+      className="flex min-w-0 flex-col gap-2"
+    >
+      <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+        {heading}
+      </span>
       <input
         type="search"
         data-testid="tray-search"
@@ -723,10 +809,14 @@ function DestinationTray({
             group" is indistinguishable from "there are no other groups" — which is the state Task 6
             exists to deny — so the reason is stated and the way out is named. */}
         {shown.length === 0 && (
-          <p data-testid="tray-search-empty" className="text-xs text-on-raised-muted">
-            No destination matches &ldquo;{filter.trim()}&rdquo;. Clear the filter to see all{" "}
-            {groups.length} {groups.length === 1 ? "group" : "groups"} again — they are all still there,
-            and all still take a drop.
+          <p
+            data-testid="tray-search-empty"
+            className="text-xs text-on-raised-muted"
+          >
+            No destination matches &ldquo;{filter.trim()}&rdquo;. Clear the
+            filter to see all {groups.length}{" "}
+            {groups.length === 1 ? "group" : "groups"} again — they are all
+            still there, and all still take a drop.
           </p>
         )}
         {shown.map((g) => (
@@ -875,7 +965,10 @@ function UnassignedPool({
       className="flex-col items-start gap-3 rounded-card border-none bg-surface-raised px-6 py-4 shadow-card"
     >
       <Collapsible open={open} onOpenChange={setChosen} asChild>
-        <div data-testid="unassigned-pool" className="flex w-full flex-col gap-3">
+        <div
+          data-testid="unassigned-pool"
+          className="flex w-full flex-col gap-3"
+        >
           <div className="flex w-full flex-wrap items-baseline gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
               In no group
@@ -883,11 +976,15 @@ function UnassignedPool({
             {/* THE COUNT, where a reviewer meets it on the way to Continue — what is parked outside every
                 group is part of what they are deciding when they buy assignment for the rest. It stays
                 OUTSIDE the disclosure for that reason: closing the pool must not close the figure. */}
-            <span data-testid="pool-count" className="font-mono text-xs tabular-nums text-on-raised">
+            <span
+              data-testid="pool-count"
+              className="font-mono text-xs tabular-nums text-on-raised"
+            >
               {total}
             </span>
             <span className="text-xs text-on-raised-muted">
-              {total === 1 ? "variable is" : "variables are"} in no group, so nothing will be matched for
+              {total === 1 ? "variable is" : "variables are"} in no group, so
+              nothing will be matched for
               {total === 1 ? " it" : " them"} at Gate 2. Open this to read
               {total === 1 ? " it" : " them"} and drag
               {total === 1 ? " it" : " them"} back onto a group.
@@ -897,7 +994,13 @@ function UnassignedPool({
               aria-label={`${open ? "Collapse" : "Expand"} the variables in no group`}
               className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-on-raised-muted"
             >
-              <ChevronDown aria-hidden="true" className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  "h-4 w-4 transition-transform",
+                  open && "rotate-180",
+                )}
+              />
             </CollapsibleTrigger>
           </div>
 
@@ -911,12 +1014,16 @@ function UnassignedPool({
               data-testid="pool-body"
               className={cn(
                 "flex w-full flex-col gap-3",
-                showTray && "lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-4",
+                showTray &&
+                  "lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-4",
               )}
             >
               <div className="flex min-w-0 flex-col gap-3">
                 {reviewerRemoved.length > 0 && (
-                  <section data-testid="pool-reviewer" className="flex min-w-0 flex-col gap-1">
+                  <section
+                    data-testid="pool-reviewer"
+                    className="flex min-w-0 flex-col gap-1"
+                  >
                     <h3 className="text-xs font-semibold text-on-raised">
                       You took these out{" "}
                       <span className="font-mono font-normal tabular-nums text-on-raised-muted">
@@ -933,12 +1040,16 @@ function UnassignedPool({
                             : {
                                 groupId: UNASSIGNED_GROUP_ID,
                                 label: "Variables you took out of a group",
-                                onDropMember: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID),
+                                onDropMember: (memberId) =>
+                                  onMove(memberId, UNASSIGNED_GROUP_ID),
                                 // THE ROW VERB HERE IS THE OPPOSITE ONE. It UNDOES rather than choosing a
                                 // destination: the regroup decision is cleared, so the variable returns to
                                 // the group it came from. No picker, and nothing invented — the origin is
                                 // the one destination that needs no decision from the reviewer.
-                                action: { kind: "restore", onAct: onRestoreMember },
+                                action: {
+                                  kind: "restore",
+                                  onAct: onRestoreMember,
+                                },
                                 movedMembers: movedHere,
                               }
                         }
@@ -948,9 +1059,15 @@ function UnassignedPool({
                          the chips are the whole membership view, and the put-back comes back with them. */
                       <div className="flex flex-wrap gap-1">
                         {reviewerRemoved.map((memberId) => {
-                          const { cohort, variable } = memberParts(memberId, fieldIndex);
+                          const { cohort, variable } = memberParts(
+                            memberId,
+                            fieldIndex,
+                          );
                           return (
-                            <span key={memberId} className="inline-flex max-w-full items-center gap-1">
+                            <span
+                              key={memberId}
+                              className="inline-flex max-w-full items-center gap-1"
+                            >
                               <MemberChip
                                 memberId={memberId}
                                 cohort={cohort}
@@ -968,7 +1085,10 @@ function UnassignedPool({
                                   onClick={() => onRestoreMember(memberId)}
                                   className="shrink-0 rounded p-1 text-on-raised-muted hover:text-accent-on-raised"
                                 >
-                                  <Undo2 aria-hidden="true" className="h-3 w-3" />
+                                  <Undo2
+                                    aria-hidden="true"
+                                    className="h-3 w-3"
+                                  />
                                 </button>
                               )}
                             </span>
@@ -980,7 +1100,10 @@ function UnassignedPool({
                 )}
 
                 {fromPipeline.length > 0 && (
-                  <section data-testid="pool-pipeline" className="flex min-w-0 flex-col gap-1">
+                  <section
+                    data-testid="pool-pipeline"
+                    className="flex min-w-0 flex-col gap-1"
+                  >
                     <h3 className="text-xs font-semibold text-on-raised">
                       The clustering never placed these{" "}
                       <span className="font-mono font-normal tabular-nums text-on-raised-muted">
@@ -1005,7 +1128,8 @@ function UnassignedPool({
                             : {
                                 groupId: UNASSIGNED_GROUP_ID,
                                 label: "Variables the clustering never placed",
-                                onDropMember: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID),
+                                onDropMember: (memberId) =>
+                                  onMove(memberId, UNASSIGNED_GROUP_ID),
                                 movedMembers: EMPTY_MEMBERS,
                               }
                         }
@@ -1015,7 +1139,10 @@ function UnassignedPool({
                         {fromPipeline.map((f) => {
                           const memberId = `${f.cohort}:${f.variable}`;
                           return (
-                            <li key={memberId} className="flex min-w-0 flex-wrap items-baseline gap-2">
+                            <li
+                              key={memberId}
+                              className="flex min-w-0 flex-wrap items-baseline gap-2"
+                            >
                               <MemberChip
                                 memberId={memberId}
                                 cohort={f.cohort}
@@ -1024,7 +1151,9 @@ function UnassignedPool({
                               />
                               {/* The run's own text for the variable — what makes "should this have been
                                   grouped?" answerable without leaving the screen. */}
-                              <span className="min-w-0 text-xs text-on-raised-muted">{f.text}</span>
+                              <span className="min-w-0 text-xs text-on-raised-muted">
+                                {f.text}
+                              </span>
                             </li>
                           );
                         })}
@@ -1126,132 +1255,167 @@ function ExpandedGroup({
     <div
       className={cn(
         "flex flex-col gap-3",
-        showTray && "lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-4",
+        showTray &&
+          "lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-4",
       )}
     >
       <div className="flex min-w-0 flex-col gap-3">
-      {!canRegroup ? (
-        /* T-08-89 MADE MECHANICAL. This run carries only a capped SAMPLE of this group's members, so the
+        {!canRegroup ? (
+          /* T-08-89 MADE MECHANICAL. This run carries only a capped SAMPLE of this group's members, so the
            screen cannot see past the cap — and a move written against a partial list would silently drop
            every member it never showed. The verb is withdrawn and the reason is stated, rather than the
            move being offered over an incomplete list. */
-        <NotAvailable thing="Moving variables in this group" claim="failed">
-          This run recorded only the first {members.length} of its {" "}
-          {group.nMembers} variables for this group, so the rest are not on this screen. Moving one now
-          would quietly drop the ones you cannot see, so the move is withheld rather than offered over a
-          partial list. The variables below are the sample that was recorded.
-        </NotAvailable>
-      ) : emptied ? (
-        /* THE LAST VARIABLE LEFT. The row must NOT silently vanish — a reviewer has to be able to see what
+          <NotAvailable thing="Moving variables in this group" claim="failed">
+            This run recorded only the first {members.length} of its{" "}
+            {group.nMembers} variables for this group, so the rest are not on
+            this screen. Moving one now would quietly drop the ones you cannot
+            see, so the move is withheld rather than offered over a partial
+            list. The variables below are the sample that was recorded.
+          </NotAvailable>
+        ) : emptied ? (
+          /* THE LAST VARIABLE LEFT. The row must NOT silently vanish — a reviewer has to be able to see what
            they did and undo it, and a group that disappeared on the move it was emptied by is a change
            with no visible consequence. */
-        <div
-          data-testid="group-emptied"
-          className="flex flex-col gap-2 rounded-inner border-l-4 border-l-accent-action bg-surface-inset px-4 py-3"
-        >
-          <p className="text-sm font-semibold text-on-inset">You moved every variable out of this group.</p>
-          <p className="max-w-[80ch] text-sm text-on-inset-muted">
-            It is empty, so it will not go on to Gate 2 and nothing will be matched for it. The row stays
-            here so you can see the change and undo it.
-          </p>
-          <div>
-            <Button type="button" variant="outline" size="sm" onClick={onRestore}>
-              Put them back
-            </Button>
+          <div
+            data-testid="group-emptied"
+            className="flex flex-col gap-2 rounded-inner border-l-4 border-l-accent-action bg-surface-inset px-4 py-3"
+          >
+            <p className="text-sm font-semibold text-on-inset">
+              You moved every variable out of this group.
+            </p>
+            <p className="max-w-[80ch] text-sm text-on-inset-muted">
+              It is empty, so it will not go on to Gate 2 and nothing will be
+              matched for it. The row stays here so you can see the change and
+              undo it.
+            </p>
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onRestore}
+              >
+                Put them back
+              </Button>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {/* THE COHERENCE JUDGEMENT — ABOVE the evidence rows (mockup parity). For a flagged group this is the
+        {/* THE COHERENCE JUDGEMENT — ABOVE the evidence rows (mockup parity). For a flagged group this is the
           judge's carve proposal with its accept / edit / ignore action; for the rest it is the judge's read,
           stated plainly so an unjudged group never reads as one the judge approved. */}
-      {isFlagged(group) && !ignored && (
-        <div className="flex flex-col gap-2">
+        {isFlagged(group) && !ignored && (
+          <div className="flex flex-col gap-2">
+            <CarveProposal
+              state={group.coherence}
+              subConcepts={group.coherenceDistinctValues.map((label, i) => ({
+                id: `${group.groupId}#sub${i}`,
+                label,
+              }))}
+              axis={group.coherenceAxis || undefined}
+              summary={group.coherenceSummary || undefined}
+              readjudicationEnabled={refusal === null}
+              notAvailable={
+                refusal && (
+                  <NotAvailable
+                    thing="Accepting the division"
+                    claim={refusal.claim}
+                    className="bg-surface-raised"
+                  >
+                    {refusal.reason}
+                  </NotAvailable>
+                )
+              }
+              acceptPrice={carvePrice}
+              accepting={accepting}
+              acceptGroupIds={readjudicationRequest(group.groupId).groupIds}
+              onAccept={onAcceptCarve}
+              onIgnore={() => {
+                setIgnored(true);
+                onIgnoreCarve();
+              }}
+            />
+          </div>
+        )}
+        {isFlagged(group) && ignored && (
+          <p className="text-sm text-on-raised-muted">
+            Proposal ignored — the grouping is unchanged. The judge&rsquo;s flag
+            stays on the row, because ignoring a proposal is not the same as
+            resolving what it was about.
+          </p>
+        )}
+        {/* QUALIFY is advisory, not flagged — so it never reached CarveProposal and its axis/KINDS went
+          unshown (the gap Bhargav caught). It gets the SAME finding block, in advisory mode: the blue
+          eyebrow, the theme sentence, the "Axis of difference" line and the KIND pills, but none of the
+          split's accept/edit/ignore machinery, because there is no proposed division to act on. */}
+        {!isFlagged(group) && group.coherence === "qualify" && (
           <CarveProposal
             state={group.coherence}
+            advisory
             subConcepts={group.coherenceDistinctValues.map((label, i) => ({
               id: `${group.groupId}#sub${i}`,
               label,
             }))}
             axis={group.coherenceAxis || undefined}
             summary={group.coherenceSummary || undefined}
-            readjudicationEnabled={refusal === null}
-            notAvailable={
-              refusal && (
-                <NotAvailable thing="Accepting the division" claim={refusal.claim} className="bg-surface-raised">
-                  {refusal.reason}
-                </NotAvailable>
-              )
-            }
-            acceptPrice={carvePrice}
-            accepting={accepting}
-            acceptGroupIds={readjudicationRequest(group.groupId).groupIds}
-            onAccept={onAcceptCarve}
-            onIgnore={() => {
-              setIgnored(true);
-              onIgnoreCarve();
-            }}
+            readjudicationEnabled={false}
           />
-        </div>
-      )}
-      {isFlagged(group) && ignored && (
-        <p className="text-sm text-on-raised-muted">
-          Proposal ignored — the grouping is unchanged. The judge&rsquo;s flag stays on the row, because
-          ignoring a proposal is not the same as resolving what it was about.
-        </p>
-      )}
-      {/* QUALIFY is advisory, not flagged — so it never reached CarveProposal and its axis/KINDS went
-          unshown (the gap Bhargav caught). It gets the SAME finding block, in advisory mode: the blue
-          eyebrow, the theme sentence, the "Axis of difference" line and the KIND pills, but none of the
-          split's accept/edit/ignore machinery, because there is no proposed division to act on. */}
-      {!isFlagged(group) && group.coherence === "qualify" && (
-        <CarveProposal
-          state={group.coherence}
-          advisory
-          subConcepts={group.coherenceDistinctValues.map((label, i) => ({
-            id: `${group.groupId}#sub${i}`,
-            label,
-          }))}
-          axis={group.coherenceAxis || undefined}
-          summary={group.coherenceSummary || undefined}
-          readjudicationEnabled={false}
-        />
-      )}
-      {!isFlagged(group) && group.coherence === "not_judged" && (
-        <div data-testid="coherence-finding" className="rounded-inner border-l-4 border-l-rule-on-inset bg-surface-inset px-4 py-3">
-          <p className="text-sm font-semibold text-on-inset">Not judged</p>
-          <p className="mt-0.5 max-w-[80ch] text-sm text-on-inset-muted">
-            Groups under six variables are not sent to the coherence judge — silence here is &ldquo;not
-            asked&rdquo;, not &ldquo;passed&rdquo;.
-          </p>
-        </div>
-      )}
-      {/* A CHECKED group that trips the $0 template detector is COHERENT BUT PROBABLY A BATTERY (Bhargav:
+        )}
+        {!isFlagged(group) && group.coherence === "not_judged" && (
+          <div
+            data-testid="coherence-finding"
+            className="rounded-inner border-l-4 border-l-rule-on-inset bg-surface-inset px-4 py-3"
+          >
+            <p className="text-sm font-semibold text-on-inset">Not judged</p>
+            <p className="mt-0.5 max-w-[80ch] text-sm text-on-inset-muted">
+              Groups under six variables are not sent to the coherence judge —
+              silence here is &ldquo;not asked&rdquo;, not &ldquo;passed&rdquo;.
+            </p>
+          </div>
+        )}
+        {/* A CHECKED group that trips the $0 template detector is COHERENT BUT PROBABLY A BATTERY (Bhargav:
           coherent ≠ harmonizable — a symptom scale is one concept but many items, and won't collapse to one
           CDE). Show the amber caution instead of the reassuring green, so it is not waved through to Gate 2.
           The copy keeps the judge's verdict honest and marks this as a separate pattern check. */}
-      {!isFlagged(group) && group.coherence === "single" && group.matrixSuspect && (
-        <div data-testid="coherence-finding" data-battery-suspect="true" className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-4 py-3">
-          <p className="text-xs font-bold uppercase tracking-eyebrow text-on-warn">Checked — but likely a battery</p>
-          <p className="mt-1 max-w-[80ch] text-sm text-on-warn">
-            The judge read these variables together and called them one coherent concept — and along one axis
-            they are. But a separate $0 check sees a repeating question template with different fillers, which
-            usually means a multi-item battery (a symptom scale, say), not a single variable. A battery rarely
-            collapses to one CDE: split it into items, or route it to a scale/composite at Gate 2. This is a
-            pattern check, not the coherence judge.
-          </p>
-        </div>
-      )}
-      {!isFlagged(group) && group.coherence === "single" && !group.matrixSuspect && (
-        <div data-testid="coherence-finding" className="rounded-inner border-l-4 border-l-status-ok bg-surface-ok px-4 py-3">
-          <p className="text-sm font-semibold text-on-ok">Checked</p>
-          <p className="mt-0.5 max-w-[80ch] text-sm text-on-ok">
-            The judge read this group&rsquo;s variables together and found a single coherent concept.
-          </p>
-        </div>
-      )}
+        {!isFlagged(group) &&
+          group.coherence === "single" &&
+          group.matrixSuspect && (
+            <div
+              data-testid="coherence-finding"
+              data-battery-suspect="true"
+              className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-4 py-3"
+            >
+              <p className="text-xs font-bold uppercase tracking-eyebrow text-on-warn">
+                Checked — but likely a battery
+              </p>
+              <p className="mt-1 max-w-[80ch] text-sm text-on-warn">
+                The judge read these variables together and called them one
+                coherent concept — and along one axis they are. But a separate
+                $0 check sees a repeating question template with different
+                fillers, which usually means a multi-item battery (a symptom
+                scale, say), not a single variable. A battery rarely collapses
+                to one CDE: split it into items, or route it to a
+                scale/composite at Gate 2. This is a pattern check, not the
+                coherence judge.
+              </p>
+            </div>
+          )}
+        {!isFlagged(group) &&
+          group.coherence === "single" &&
+          !group.matrixSuspect && (
+            <div
+              data-testid="coherence-finding"
+              className="rounded-inner border-l-4 border-l-status-ok bg-surface-ok px-4 py-3"
+            >
+              <p className="text-sm font-semibold text-on-ok">Checked</p>
+              <p className="mt-0.5 max-w-[80ch] text-sm text-on-ok">
+                The judge read this group&rsquo;s variables together and found a
+                single coherent concept.
+              </p>
+            </div>
+          )}
 
-      {/*
+        {/*
         THE TILE STRIP IS NOW A FALLBACK, NOT THE PRIMARY VIEW (08-14h Task 5).
 
         Bhargav, on the live run: *"the draggable var tiles + the spreadsheet style rows are redundant…
@@ -1265,40 +1429,46 @@ function ExpandedGroup({
         members carry no descriptive field. Without that fallback such a group would show no members at
         all, which is why `hasSourceRows` is asked here rather than inferred from a null render.
       */}
-      {(canRegroup ? !emptied : true) && !gridCarriesMembers && (
-        <MemberList
-          groupId={group.groupId}
-          label={`Variables in ${group.concept || group.groupId}`}
-          // A drop DESTINATION only where a drop can be honoured. A zone that announced itself as a
-          // destination and then rejected everything is a dead control with an accessible name.
-          onDropMember={canRegroup ? (memberId) => onMove(memberId, group.groupId) : undefined}
-        >
-          {members.map((memberId) => {
-            const { cohort, variable } = memberParts(memberId, fieldIndex);
-            return (
-              <MemberChip
-                key={memberId}
-                memberId={memberId}
-                cohort={cohort}
-                variable={variable}
-                moved={movedMembers.has(memberId)}
-                draggable={canRegroup}
-              />
-            );
-          })}
-        </MemberList>
-      )}
+        {(canRegroup ? !emptied : true) && !gridCarriesMembers && (
+          <MemberList
+            groupId={group.groupId}
+            label={`Variables in ${group.concept || group.groupId}`}
+            // A drop DESTINATION only where a drop can be honoured. A zone that announced itself as a
+            // destination and then rejected everything is a dead control with an accessible name.
+            onDropMember={
+              canRegroup
+                ? (memberId) => onMove(memberId, group.groupId)
+                : undefined
+            }
+          >
+            {members.map((memberId) => {
+              const { cohort, variable } = memberParts(memberId, fieldIndex);
+              return (
+                <MemberChip
+                  key={memberId}
+                  memberId={memberId}
+                  cohort={cohort}
+                  variable={variable}
+                  moved={movedMembers.has(memberId)}
+                  draggable={canRegroup}
+                />
+              );
+            })}
+          </MemberList>
+        )}
 
-      {canRegroup && (
-        <p className="text-xs text-on-raised-muted">
-          Drag a {gridCarriesMembers ? "row" : "variable"} onto a group in the list on the left to move it
-          there, or onto &ldquo;In no group&rdquo; to take it out of every group.
-          {gridCarriesMembers && " Without a mouse, use the × beside a row's drag handle to take that variable out of this group."}{" "}
-          Your moves are saved as you make them.
-        </p>
-      )}
+        {canRegroup && (
+          <p className="text-xs text-on-raised-muted">
+            Drag a {gridCarriesMembers ? "row" : "variable"} onto a group in the
+            list on the left to move it there, or onto &ldquo;In no group&rdquo;
+            to take it out of every group.
+            {gridCarriesMembers &&
+              " Without a mouse, use the × beside a row's drag handle to take that variable out of this group."}{" "}
+            Your moves are saved as you make them.
+          </p>
+        )}
 
-      {/*
+        {/*
         THE DOOR ONTO THE POOL — a real destination with its own identifier, not a sentinel special-cased
         at each call site, which is what lets "take this out of every group" be the same verb as "put it
         in that one" rather than a second code path.
@@ -1310,51 +1480,59 @@ function ExpandedGroup({
         the GESTURE needs a target within reach while a group is open. So it reports the shared pool's
         size rather than a per-group slice of it.
       */}
-      {canRegroup && (
-        <MemberDropZone
-          groupId={UNASSIGNED_GROUP_ID}
-          label="Take a variable out of every group"
-          onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
-          className="bg-surface-inset"
-        >
-          <span className="w-full text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
-            In no group
-            {poolCount > 0 && <span className="ml-2 font-mono normal-case tracking-normal">{poolCount}</span>}
-          </span>
-          <span className="text-xs text-on-inset-muted">
-            Drop a variable here to take it out of every group. It goes to the pool below the ledger, where
-            you can read it and drag it back into any group.
-          </span>
-        </MemberDropZone>
-      )}
+        {canRegroup && (
+          <MemberDropZone
+            groupId={UNASSIGNED_GROUP_ID}
+            label="Take a variable out of every group"
+            onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
+            className="bg-surface-inset"
+          >
+            <span className="w-full text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
+              In no group
+              {poolCount > 0 && (
+                <span className="ml-2 font-mono normal-case tracking-normal">
+                  {poolCount}
+                </span>
+              )}
+            </span>
+            <span className="text-xs text-on-inset-muted">
+              Drop a variable here to take it out of every group. It goes to the
+              pool below the ledger, where you can read it and drag it back into
+              any group.
+            </span>
+          </MemberDropZone>
+        )}
 
-      {/* THE EVIDENCE LAYER (lifted from the workbench by the 2026-08-31 inherited-UI audit). The judgement
+        {/* THE EVIDENCE LAYER (lifted from the workbench by the 2026-08-31 inherited-UI audit). The judgement
           this screen asks for — is this really one concept? — is made against the dictionary rows, and
           asking it from a generated name and a row of chips leaves them a screen away. Returns null when
           the run carries no field detail, in which case the chips above are the whole membership view. */}
-      <SourceRows
-        memberIds={members}
-        fieldIndex={fieldIndex}
-        // ONLY WHERE A MOVE CAN BE HONOURED. `canRegroup` is false when the run recorded a capped sample
-        // of this group (T-08-89), and a drag written against a partial list would silently drop every
-        // member it never showed — so the grid stays pure evidence there, exactly as the withdrawn verb
-        // above says it does.
-        drag={
-          canRegroup
-            ? {
-                groupId: group.groupId,
-                label: `Variables in ${group.concept || group.groupId}`,
-                onDropMember: (memberId) => onMove(memberId, group.groupId),
-                // In a GROUP the row verb takes the variable OUT of it. The pool's own grid names the
-                // opposite verb from the same register — see `SourceRowsDrag.action`.
-                action: { kind: "remove", onAct: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID) },
-                movedMembers,
-              }
-            : undefined
-        }
-      />
+        <SourceRows
+          memberIds={members}
+          fieldIndex={fieldIndex}
+          // ONLY WHERE A MOVE CAN BE HONOURED. `canRegroup` is false when the run recorded a capped sample
+          // of this group (T-08-89), and a drag written against a partial list would silently drop every
+          // member it never showed — so the grid stays pure evidence there, exactly as the withdrawn verb
+          // above says it does.
+          drag={
+            canRegroup
+              ? {
+                  groupId: group.groupId,
+                  label: `Variables in ${group.concept || group.groupId}`,
+                  onDropMember: (memberId) => onMove(memberId, group.groupId),
+                  // In a GROUP the row verb takes the variable OUT of it. The pool's own grid names the
+                  // opposite verb from the same register — see `SourceRowsDrag.action`.
+                  action: {
+                    kind: "remove",
+                    onAct: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID),
+                  },
+                  movedMembers,
+                }
+              : undefined
+          }
+        />
 
-      {/* The coherence finding used to render HERE, below the rows; it now leads the pane (above the rows),
+        {/* The coherence finding used to render HERE, below the rows; it now leads the pane (above the rows),
           see the CoherenceFinding block near the top of this column. */}
       </div>
       {showTray && (
@@ -1396,25 +1574,42 @@ function SumBlock({
 }) {
   return (
     <div data-testid="sum-block" className="flex flex-col gap-1">
-      <p data-sum-line="realized" className="text-sm font-semibold text-on-raised">
+      <p
+        data-sum-line="realized"
+        className="text-sm font-semibold text-on-raised"
+      >
         {realized > 0 ? (
           <>
             Already spent to reach this gate:{" "}
-            <span className="font-mono tabular-nums">{formatUsd(realized)}</span> — naming the concepts,
-            dividing them, and checking them.
+            <span className="font-mono tabular-nums">
+              {formatUsd(realized)}
+            </span>{" "}
+            — naming the concepts, dividing them, and checking them.
           </>
         ) : (
-          <>Already spent to reach this gate: nothing — this run is a saved replay, so it was not billed.</>
+          <>
+            Already spent to reach this gate: nothing — this run is a saved
+            replay, so it was not billed.
+          </>
         )}
       </p>
-      <p data-sum-line="in-scope" className="text-sm font-normal text-on-raised">
+      <p
+        data-sum-line="in-scope"
+        className="text-sm font-normal text-on-raised"
+      >
         {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} in scope —{" "}
-        <span className="font-mono tabular-nums">{formatUsd(inScopeTotal)}</span> to match them against
-        common data elements at Gate 2.
+        <span className="font-mono tabular-nums">
+          {formatUsd(inScopeTotal)}
+        </span>{" "}
+        to match them against common data elements at Gate 2.
       </p>
-      <p data-sum-line="whole-corpus" className="text-sm font-normal text-on-raised-faint">
+      <p
+        data-sum-line="whole-corpus"
+        className="text-sm font-normal text-on-raised-faint"
+      >
         All {nGroups} {nGroups === 1 ? "group" : "groups"} would be{" "}
-        <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>.
+        <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>
+        .
       </p>
     </div>
   );
@@ -1429,6 +1624,7 @@ function SumBlock({
  */
 function QueueRow({
   group,
+  scoreTag,
   price,
   count,
   inScope,
@@ -1441,6 +1637,9 @@ function QueueRow({
   onDropMember,
 }: {
   group: ConceptGroup;
+  /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
+   *  as a tag and the reason this row is pinned to the top of the queue. */
+  scoreTag?: string[];
   price: number;
   count: number;
   inScope: boolean;
@@ -1463,7 +1662,9 @@ function QueueRow({
       data-testid="ledger-row"
       data-group-id={group.groupId}
       data-row-id={group.groupId}
-      data-spine={isFlagged(group) ? "unresolved" : changed ? "changed" : "none"}
+      data-spine={
+        isFlagged(group) ? "unresolved" : changed ? "changed" : "none"
+      }
       aria-current={selected}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -1499,9 +1700,16 @@ function QueueRow({
       }
       className={cn(
         "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 border-l-4 px-4 py-2.5 text-left",
-        isFlagged(group) ? "border-l-status-warn" : changed ? "border-l-accent-action" : "border-l-transparent",
-        selected ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]" : "hover:bg-surface-inset",
-        over && "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
+        isFlagged(group)
+          ? "border-l-status-warn"
+          : changed
+            ? "border-l-accent-action"
+            : "border-l-transparent",
+        selected
+          ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]"
+          : "hover:bg-surface-inset",
+        over &&
+          "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
       )}
     >
       <div className="mt-0.5" onClick={(e) => e.stopPropagation()}>
@@ -1514,24 +1722,51 @@ function QueueRow({
         />
       </div>
       <div className="min-w-0">
+        {scoreTag && scoreTag.length > 0 && (
+          <div className="mb-1 flex flex-wrap gap-1">
+            {scoreTag.map((name) => (
+              <span
+                key={name}
+                data-testid="queue-score-tag"
+                className="inline-flex max-w-full items-center gap-1 rounded-pill border border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
+                title={`Matched to the “${name}” component of a declared score`}
+              >
+                <Calculator className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{name}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div
-          className={cn("line-clamp-2 text-sm font-semibold leading-snug", selected ? "text-accent-on-raised" : "text-on-raised")}
+          className={cn(
+            "line-clamp-2 text-sm font-semibold leading-snug",
+            selected ? "text-accent-on-raised" : "text-on-raised",
+          )}
           title={label.text}
         >
           <span data-label-source={label.source}>{label.text}</span>
           {label.source === "reviewer" && <RenamedMark />}
           {label.source === "judge" && <BorrowedMark />}
-          {changed && <span className="ml-1 text-xs font-normal text-status-warn">· edited</span>}
+          {changed && (
+            <span className="ml-1 text-xs font-normal text-status-warn">
+              · edited
+            </span>
+          )}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <CoherenceMark state={group.coherence} />
-          {group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single") && (
-            <TemplateSuspicion judged={group.coherence === "single"} />
-          )}
+          {group.matrixSuspect &&
+            (group.coherence === "not_judged" ||
+              group.coherence === "single") && (
+              <TemplateSuspicion judged={group.coherence === "single"} />
+            )}
           {count >= BIG_GROUP_MIN && <LargeGroupMark count={count} />}
           <span className="flex flex-wrap gap-1">
             {group.cohorts.map((c) => (
-              <span key={c} className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-inset-muted">
+              <span
+                key={c}
+                className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-inset-muted"
+              >
                 {c}
               </span>
             ))}
@@ -1541,7 +1776,9 @@ function QueueRow({
           </span>
         </div>
       </div>
-      <span className="whitespace-nowrap pt-0.5 font-mono text-xs tabular-nums text-on-raised-muted">{formatUsd(price)}</span>
+      <span className="whitespace-nowrap pt-0.5 font-mono text-xs tabular-nums text-on-raised-muted">
+        {formatUsd(price)}
+      </span>
     </div>
   );
 }
@@ -1573,7 +1810,10 @@ function QueueSortHeader({
           type="button"
           data-testid={`sort-${c.k}`}
           onClick={() => onSort(c.k)}
-          className={cn("hover:text-accent-on-raised", sort?.key === c.k && "text-accent-on-raised")}
+          className={cn(
+            "hover:text-accent-on-raised",
+            sort?.key === c.k && "text-accent-on-raised",
+          )}
         >
           {c.label}
           {sort?.key === c.k ? (sort.dir === "asc" ? " ↑" : " ↓") : " ⇅"}
@@ -1643,7 +1883,10 @@ function GroupDetail({
                 className="min-w-[18rem] rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-xl font-semibold text-on-raised"
               />
             ) : (
-              <h2 className="text-xl font-semibold leading-tight text-on-raised" title={label.text}>
+              <h2
+                className="text-xl font-semibold leading-tight text-on-raised"
+                title={label.text}
+              >
                 {label.text}
               </h2>
             )}
@@ -1668,7 +1911,12 @@ function GroupDetail({
           </div>
           <p className="mt-1.5 text-xs text-on-raised-muted">
             <span className="font-semibold text-on-raised">{count}</span>{" "}
-            {count === 1 ? "variable" : "variables"} · {group.cohorts.join(", ")} · <span data-testid="row-provenance">from cluster <span className="font-mono">{group.clusterId || "—"}</span></span>
+            {count === 1 ? "variable" : "variables"} ·{" "}
+            {group.cohorts.join(", ")} ·{" "}
+            <span data-testid="row-provenance">
+              from cluster{" "}
+              <span className="font-mono">{group.clusterId || "—"}</span>
+            </span>
           </p>
         </div>
         <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-raised-muted">
@@ -1689,10 +1937,15 @@ function GroupDetail({
       {children}
 
       {group.idealCde && (
-        <details className="rounded-inner border border-rule-on-raised" open={stale}>
+        <details
+          className="rounded-inner border border-rule-on-raised"
+          open={stale}
+        >
           <summary className="cursor-pointer px-4 py-2.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
             Generated ideal CDE{" "}
-            <span className="font-normal normal-case tracking-normal text-on-raised-faint">— from the original grouping</span>
+            <span className="font-normal normal-case tracking-normal text-on-raised-faint">
+              — from the original grouping
+            </span>
             {stale && (
               <span className="ml-2 rounded-pill border border-status-warn px-2 py-0.5 text-xs normal-case tracking-normal text-status-warn">
                 stale — membership changed
@@ -1701,32 +1954,41 @@ function GroupDetail({
           </summary>
           {stale && (
             <p className="px-4 pt-2 text-xs leading-relaxed text-status-warn">
-              You changed this group&rsquo;s membership. The description below was generated once, before the
-              split, and is not updated by reassignment — it now describes a grouping that no longer exists.
-              It is regenerated only when the group is re-adjudicated (paid) or at Gate 2 on the finalized
-              membership.
+              You changed this group&rsquo;s membership. The description below
+              was generated once, before the split, and is not updated by
+              reassignment — it now describes a grouping that no longer exists.
+              It is regenerated only when the group is re-adjudicated (paid) or
+              at Gate 2 on the finalized membership.
             </p>
           )}
-          <p className="max-w-[90ch] px-4 py-3 text-sm leading-relaxed text-on-raised-muted">{group.idealCde}</p>
+          <p className="max-w-[90ch] px-4 py-3 text-sm leading-relaxed text-on-raised-muted">
+            {group.idealCde}
+          </p>
         </details>
       )}
 
       {/* SAME FRAME, LATER GATES (mockup parity). The queue on the left and this detail pane are the shell
           every gate reuses; naming what slots in here next is the mockup's own note, kept verbatim in tone. */}
       <div className="rounded-inner border border-dashed border-rule-on-raised bg-surface-inset px-4 py-3 text-xs text-on-inset-muted">
-        <span className="font-semibold text-on-inset">Same layout, later gates:</span> Gate 2 slots a ranked
-        CDE-candidate panel into this pane (score · collection · endorsement · select) plus the cosine to the
-        chosen element; Gate 3 adds a transform spec per source row. The left queue and this detail frame do
-        not change.
+        <span className="font-semibold text-on-inset">
+          Same layout, later gates:
+        </span>{" "}
+        Gate 2 slots a ranked CDE-candidate panel into this pane (score ·
+        collection · endorsement · select) plus the cosine to the chosen
+        element; Gate 3 adds a transform spec per source row. The left queue and
+        this detail frame do not change.
       </div>
     </div>
   );
 }
 
-
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(jobId, true, true);
+  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(
+    jobId,
+    true,
+    true,
+  );
   const [, navigate] = useLocation();
   const [resuming, setResuming] = useState(false);
 
@@ -1736,13 +1998,17 @@ export default function Gate1Page() {
   // pane to the "In no group" holding area instead.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [poolSelected, setPoolSelected] = useState(false);
+  // The detail pane, so the score panel's "open this group" can scroll it into view after selecting.
+  const detailPaneRef = useRef<HTMLElement>(null);
   // Drag-over cue for the sidebar's "In no group" drop target.
   const [poolOver, setPoolOver] = useState(false);
   /**
    * ONE sort state for both controls (08-16c Task 10). `null` = the ledger's own documented order
    * (verdict, breadth, size, id) — click-to-sort is opted into on top of the default, never instead of it.
    */
-  const [colSort, setColSort] = useState<ColumnSort<LedgerSortKey> | null>(null);
+  const [colSort, setColSort] = useState<ColumnSort<LedgerSortKey> | null>(
+    null,
+  );
   const [filters, setFilters] = useState<LedgerFilters>(NO_FILTERS);
   /** The terms the reviewer last searched. `null` means they have not searched — not "searched and got 0". */
   const [terms, setTerms] = useState<string[] | null>(null);
@@ -1753,6 +2019,37 @@ export default function Gate1Page() {
     () => jobState?.result?.conceptGroups ?? [],
     [jobState?.result?.conceptGroups],
   );
+  // groupId → group, so the declared-score panel can name a match's concept group and link into its detail.
+  const groupsById = useMemo(
+    () => new Map(groups.map((g) => [g.groupId, g])),
+    [groups],
+  );
+  // variableId ("cohort:var") → its concept groupId, from the run's FULL membership lists. Lets the score
+  // panel roll a variable-level retrieval candidate (a missing component's shortlist is variable-level) up
+  // to the ONE group it belongs to — so eight look-alike cancer-type variables collapse to a single group
+  // that links, instead of eight dead rows that don't. Uses conceptGroupMembers (untruncated), not the
+  // group rows' capped memberVariableNames sample.
+  const groupByVariable = useMemo(() => {
+    const m = new Map<string, string>();
+    const members = jobState?.result?.conceptGroupMembers ?? {};
+    for (const [groupId, vars] of Object.entries(members)) {
+      for (const v of vars) if (!m.has(v)) m.set(v, groupId);
+    }
+    return m;
+  }, [jobState?.result?.conceptGroupMembers]);
+  // groupId → the declared-score component(s) this run matched onto it, from the latest derived spec. Drives
+  // the queue's "pinned to the top + tagged" treatment: a reviewer building a score wants its groups first
+  // and named. Empty when the run has no composite, so the queue's order and rows are unchanged without one.
+  const scoreTagByGroup = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const match of jobState?.composites?.at(-1)?.matches ?? []) {
+      if (!match.conceptId) continue;
+      const arr = m.get(match.conceptId) ?? [];
+      arr.push(match.component);
+      m.set(match.conceptId, arr);
+    }
+    return m;
+  }, [jobState?.composites]);
   /**
    * The coverage column's denominator. `summary.cohorts` is EMPTY at a Gate 1 park on a real run, so
    * reading it directly drew a column of nothing — see `cohortRoster` for the measurement and the
@@ -1763,7 +2060,8 @@ export default function Gate1Page() {
     [jobState?.result?.summary?.cohorts, groups],
   );
   const unassigned = jobState?.result?.unassignedFields ?? [];
-  const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
+  const costSoFar =
+    jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   /**
    * Whether this run is the shared demo — and therefore whether decisions stay in the browser.
@@ -1792,8 +2090,14 @@ export default function Gate1Page() {
    * WRITE PATH rather than only in the rendering, because a disabled-looking control that still submits is
    * worse than an enabled one — and these decisions have already been consumed by the pipeline.
    */
-  const frozen = isGatePast("gate1", (jobState?.gatePosition ?? null) as GatePosition | null);
-  const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned, frozen });
+  const frozen = isGatePast(
+    "gate1",
+    (jobState?.gatePosition ?? null) as GatePosition | null,
+  );
+  const scope = useGateDecisions(jobId, "gate1_group_scope", {
+    pinned,
+    frozen,
+  });
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned, frozen });
   const renames = useGateDecisions(jobId, "gate1_rename", { pinned, frozen });
   /** The reviewer's own name for a group, or undefined. Read straight off the persisted decisions. */
@@ -1816,15 +2120,22 @@ export default function Gate1Page() {
       if (!trimmed || trimmed === generated) {
         // An empty or whitespace-only rename is REFUSED as a rename and read as "undo it" — restoring the
         // generated name rather than producing a nameless group.
-        if (renamedOf(group.groupId)) await renames.clear({ groupId: group.groupId });
+        if (renamedOf(group.groupId))
+          await renames.clear({ groupId: group.groupId });
         return;
       }
       await renames.write(
         { groupId: group.groupId },
-        { chosen: trimmed, alternatives: [generated, trimmed], extra: { generatedName: generated } },
+        {
+          chosen: trimmed,
+          alternatives: [generated, trimmed],
+          extra: { generatedName: generated },
+        },
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not rename this group");
+      toast.error(
+        e instanceof Error ? e.message : "Could not rename this group",
+      );
     }
   }
 
@@ -1833,14 +2144,17 @@ export default function Gate1Page() {
   const variables = groups.reduce((n, g) => n + g.nMembers, 0);
   const mode = ((runConfig?.mode as string | undefined) ?? "batch") as RunMode;
   const gate2Forecast = useMemo(
-    () => estimateRunCostBreakdown(variables, allCohorts.length, mode, true).byGate.gate2.forecast,
+    () =>
+      estimateRunCostBreakdown(variables, allCohorts.length, mode, true).byGate
+        .gate2.forecast,
     [variables, allCohorts.length, mode],
   );
   const price = pricePerGroup(gate2Forecast, groups.length);
 
   // Default IN. A reviewer who scopes nothing continues with everything, which is what "nothing blocks
   // Continue" has to mean; the checkbox REMOVES a group rather than admitting one.
-  const isInScope = (groupId: string) => scope.decisions[groupId]?.chosen !== OUT_OF_SCOPE;
+  const isInScope = (groupId: string) =>
+    scope.decisions[groupId]?.chosen !== OUT_OF_SCOPE;
 
   // "You changed it" is DERIVED from persisted decisions, never from component state — R6 requires the
   // correction to be visible after a reload, and a flag in `useState` is gone the moment the page reloads.
@@ -1848,12 +2162,15 @@ export default function Gate1Page() {
     const byGroup = new Set<string>();
     for (const d of Object.values(regroups.decisions)) {
       if (typeof d.chosen === "string" && d.chosen) byGroup.add(d.chosen);
-      if (typeof d.fromGroupId === "string" && d.fromGroupId) byGroup.add(d.fromGroupId);
+      if (typeof d.fromGroupId === "string" && d.fromGroupId)
+        byGroup.add(d.fromGroupId);
     }
     return byGroup;
   }, [regroups.decisions]);
   const isChanged = (groupId: string) =>
-    groupId in scope.decisions || groupId in renames.decisions || touchedByRegroup.has(groupId);
+    groupId in scope.decisions ||
+    groupId in renames.decisions ||
+    touchedByRegroup.has(groupId);
   const hasScopeDecision = (groupId: string) => groupId in scope.decisions;
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -1914,7 +2231,9 @@ export default function Gate1Page() {
    */
   const memberCount = (g: ConceptGroup) => {
     if (hasFullMembership(g)) return membership.byGroup[g.groupId]?.length ?? 0;
-    const movedIn = Object.values(moves).filter((to) => to === g.groupId).length;
+    const movedIn = Object.values(moves).filter(
+      (to) => to === g.groupId,
+    ).length;
     return g.nMembers + movedIn;
   };
 
@@ -1927,7 +2246,8 @@ export default function Gate1Page() {
     const out: Record<string, string> = {};
     const byGroup = jobState?.result?.conceptGroupMembers ?? {};
     for (const g of groups) {
-      for (const memberId of byGroup[g.groupId] ?? g.memberVariableNames) out[memberId] = g.groupId;
+      for (const memberId of byGroup[g.groupId] ?? g.memberVariableNames)
+        out[memberId] = g.groupId;
     }
     return out;
   }, [groups, jobState?.result?.conceptGroupMembers]);
@@ -1954,7 +2274,9 @@ export default function Gate1Page() {
         // the option space but would mark every regroup decision stale the moment any group id changed,
         // including the ones a re-adjudication elsewhere had nothing to do with, and a notice that fires
         // on unrelated changes is a notice reviewers learn to ignore.
-        alternatives: [...new Set([from, UNASSIGNED_GROUP_ID, toGroupId].filter(Boolean))],
+        alternatives: [
+          ...new Set([from, UNASSIGNED_GROUP_ID, toGroupId].filter(Boolean)),
+        ],
       },
     );
     // Confirm the move (mockup parity) — a drag has no other acknowledgement, and a member that lands in a
@@ -1967,7 +2289,9 @@ export default function Gate1Page() {
         : destGroup
           ? groupLabel(destGroup, renamedOf(toGroupId)).text
           : "another group";
-    toast.success(`Moved ${variable} → ${dest.length > 44 ? dest.slice(0, 44) + "…" : dest}`);
+    toast.success(
+      `Moved ${variable} → ${dest.length > 44 ? dest.slice(0, 44) + "…" : dest}`,
+    );
   }
 
   /**
@@ -1983,8 +2307,12 @@ export default function Gate1Page() {
 
   /** Undo every move out of one group — the "put them back" the emptied state offers. */
   async function restoreGroup(groupId: string) {
-    const strayed = Object.entries(moves).filter(([memberId]) => originalGroupOf[memberId] === groupId);
-    await Promise.all(strayed.map(([memberId]) => regroups.clear({ memberId })));
+    const strayed = Object.entries(moves).filter(
+      ([memberId]) => originalGroupOf[memberId] === groupId,
+    );
+    await Promise.all(
+      strayed.map(([memberId]) => regroups.clear({ memberId })),
+    );
   }
 
   /**
@@ -1996,7 +2324,12 @@ export default function Gate1Page() {
    * leftovers minus any the reviewer has since dragged into a real group, so nothing is listed twice.
    */
   const poolFromPipeline = useMemo(
-    () => unplacedFields(unassigned, moves, groups.map((g) => g.groupId)),
+    () =>
+      unplacedFields(
+        unassigned,
+        moves,
+        groups.map((g) => g.groupId),
+      ),
     [unassigned, moves, groups],
   );
   const poolCount = membership.unassigned.length + poolFromPipeline.length;
@@ -2025,13 +2358,13 @@ export default function Gate1Page() {
   const matchRefusal =
     (jobState?.result?.records?.length ?? 0) > 0
       ? null
-      : ({
+      : {
           claim: "deferred" as const,
           reason:
             "Matching needs this run's concepts to have been matched against common data elements, which " +
             "happens at Gate 2. Declare the components now — it is free and it is saved — and the verdict " +
             "fills in once the run has got that far.",
-        });
+        };
 
   const [accepting, setAccepting] = useState("");
   async function acceptCarve(groupId: string) {
@@ -2042,7 +2375,9 @@ export default function Gate1Page() {
       await readjudicateGroups(jobId, groupIds);
       toast.success("Re-split that group — its parts are below");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not re-split that group");
+      toast.error(
+        e instanceof Error ? e.message : "Could not re-split that group",
+      );
     } finally {
       setAccepting("");
     }
@@ -2057,7 +2392,9 @@ export default function Gate1Page() {
   // An EMPTIED group buys nothing at Gate 2 — there is no membership left to assign — so it drops out of
   // the price without the reviewer having to also untick it. The row still renders and still says what
   // happened; what it no longer does is quote a charge for work that cannot be done.
-  const inScopeGroups = groups.filter((g) => isInScope(g.groupId) && memberCount(g) > 0);
+  const inScopeGroups = groups.filter(
+    (g) => isInScope(g.groupId) && memberCount(g) > 0,
+  );
 
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
   const nCrossCohort = groups.filter((g) => g.crossCohort).length;
@@ -2073,7 +2410,8 @@ export default function Gate1Page() {
   // Searched across the WHOLE corpus, not the visible bucket: "no cohort in this run measures gait speed"
   // is a claim about the run, and deriving it from a filtered view would make it a claim about the filter.
   const search = useMemo(
-    () => (terms && terms.length > 0 ? matchTerms(groups, terms, renamedOf) : null),
+    () =>
+      terms && terms.length > 0 ? matchTerms(groups, terms, renamedOf) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [groups, terms, renames.decisions],
   );
@@ -2082,10 +2420,27 @@ export default function Gate1Page() {
     let rows = xcOnly ? buckets["cross-cohort"] : groups;
     if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
     rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
-    return sortGroupsByColumn(rows, colSort, renamedOf);
+    const sorted = sortGroupsByColumn(rows, colSort, renamedOf);
+    // Pin the score-linked groups to the top (stable — the column sort still orders within each partition),
+    // so a reviewer following a declared score meets its concept groups first. No composite → no reorder.
+    if (scoreTagByGroup.size === 0) return sorted;
+    const linked = sorted.filter((g) => scoreTagByGroup.has(g.groupId));
+    const rest = sorted.filter((g) => !scoreTagByGroup.has(g.groupId));
+    return [...linked, ...rest];
     // `isChanged`/`isInScope` close over the decision maps, which is what the two entries below track.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buckets, xcOnly, groups, search, filters, colSort, scope.decisions, touchedByRegroup, renames.decisions]);
+  }, [
+    buckets,
+    xcOnly,
+    groups,
+    search,
+    filters,
+    colSort,
+    scope.decisions,
+    touchedByRegroup,
+    renames.decisions,
+    scoreTagByGroup,
+  ]);
 
   /**
    * Apply a bulk scope change to the VISIBLE rows, one request at a time.
@@ -2104,11 +2459,16 @@ export default function Gate1Page() {
     try {
       for (const id of plan.clear) await scope.clear({ groupId: id });
       for (const id of plan.write) {
-        await scope.write({ groupId: id }, { chosen: OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS });
+        await scope.write(
+          { groupId: id },
+          { chosen: OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+        );
       }
     } catch (e) {
       toast.error(
-        e instanceof Error ? e.message : "Could not change the scope of every group — some may be unchanged",
+        e instanceof Error
+          ? e.message
+          : "Could not change the scope of every group — some may be unchanged",
       );
     } finally {
       setBulkBusy(false);
@@ -2119,7 +2479,10 @@ export default function Gate1Page() {
   // their own doing and is cleared; a search term that matched nothing is a finding about the corpus and
   // is reported by `TermSearch` instead.
   const filteredToNothing =
-    visible.length === 0 && groups.length > 0 && activeFilterCount(filters) > 0 && !search;
+    visible.length === 0 &&
+    groups.length > 0 &&
+    activeFilterCount(filters) > 0 &&
+    !search;
   /**
    * THE SEARCH EMPTIED THE LEDGER — and WHICH of search and filters is responsible (08-14h Task 7).
    *
@@ -2136,7 +2499,8 @@ export default function Gate1Page() {
    * hiding the matches, so both are named and both ways back are offered.
    */
   const searchEmptied = visible.length === 0 && groups.length > 0 && !!search;
-  const searchCause: "search" | "both" = search && search.ids.size === 0 ? "search" : "both";
+  const searchCause: "search" | "both" =
+    search && search.ids.size === 0 ? "search" : "both";
   /**
    * The DEFAULT bucket is empty and the other one is not.
    *
@@ -2147,7 +2511,8 @@ export default function Gate1Page() {
    * what it holds, and goes there in one click.
    */
   // The group whose depth is in the detail pane — the selected one, or the first visible as default.
-  const detailGroup = visible.find((g) => g.groupId === selectedId) ?? visible[0] ?? null;
+  const detailGroup =
+    visible.find((g) => g.groupId === selectedId) ?? visible[0] ?? null;
 
   /**
    * HAS THIS RUN EVEN REACHED GATE 1 YET? (08-14h Task 3)
@@ -2167,7 +2532,8 @@ export default function Gate1Page() {
    * knows nothing about the corpus — and "No groups formed" is exactly as false then as it is mid-run.
    * A stream failure is reported by the `error` alert above rather than by this branch.
    */
-  const awaitingRun = groups.length === 0 && (!jobState || isInFlight(jobState.status));
+  const awaitingRun =
+    groups.length === 0 && (!jobState || isInFlight(jobState.status));
   /**
    * The run ENDED before it produced anything.
    *
@@ -2176,7 +2542,10 @@ export default function Gate1Page() {
    * would otherwise wait for groups that are never coming.
    */
   const stoppedBeforeGate =
-    groups.length === 0 && !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
+    groups.length === 0 &&
+    !!jobState &&
+    isTerminal(jobState.status) &&
+    jobState.status !== "complete";
 
   /**
    * Commit this gate and GO. The second half is the one that was missing (08-16c Task 8).
@@ -2222,10 +2591,14 @@ export default function Gate1Page() {
         );
         return;
       }
-      toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
+      toast.success(
+        `Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`,
+      );
       navigate(pathForGate(jobId, target));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not continue this run");
+      toast.error(
+        e instanceof Error ? e.message : "Could not continue this run",
+      );
     } finally {
       setResuming(false);
     }
@@ -2248,8 +2621,13 @@ export default function Gate1Page() {
       resumed={isParked(jobState?.status)}
     >
       {reconnecting && (
-        <p role="status" data-testid="stream-reconnecting" className="text-sm font-semibold text-status-warn">
-          Lost contact with the server — reconnecting. The figures below are from the last update, not live.
+        <p
+          role="status"
+          data-testid="stream-reconnecting"
+          className="text-sm font-semibold text-status-warn"
+        >
+          Lost contact with the server — reconnecting. The figures below are
+          from the last update, not live.
         </p>
       )}
       {error && (
@@ -2277,6 +2655,30 @@ export default function Gate1Page() {
         pinned={pinned}
         spec={jobState?.composites?.at(-1) ?? null}
         matchRefusal={matchRefusal}
+        groupsById={groupsById}
+        groupByVariable={groupByVariable}
+        fieldIndex={jobState?.result?.fieldIndex}
+        onOpenGroup={(groupId) => {
+          // Select the matched group in the detail pane, bring the sidebar QUEUE row for it into view
+          // (08-16g review #6 — selecting the detail alone left the row scrolled off in the queue), then
+          // bring the detail pane itself into view — the score panel sits at the top of Gate 1 and the
+          // detail is a full scroll below it.
+          setPoolSelected(false);
+          setSelectedId(groupId);
+          requestAnimationFrame(() => {
+            // Match by dataset value (not a selector) so a group id containing "#" needs no escaping.
+            const row = Array.from(
+              window.document.querySelectorAll(
+                '[data-testid="gate1-rows"] [data-group-id]',
+              ),
+            ).find((el) => (el as HTMLElement).dataset.groupId === groupId);
+            row?.scrollIntoView({ block: "nearest" });
+            detailPaneRef.current?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          });
+        }}
       />
 
       {/* FOUR ZEROES ARE A CLAIM TOO. "0 concept groups · 0 parent clusters · 0 variables" reads as
@@ -2297,17 +2699,24 @@ export default function Gate1Page() {
           heading="Waiting for this run to reach Gate 1"
           nextStep={
             <span data-testid="gate1-waiting-next">
-              Nothing to do yet — the groups appear here on their own as soon as the run gets to them, with
-              no need to reload. You can close this tab; the run keeps going and will be waiting at this gate
-              when you come back.
+              Nothing to do yet — the groups appear here on their own as soon as
+              the run gets to them, with no need to reload. You can close this
+              tab; the run keeps going and will be waiting at this gate when you
+              come back.
             </span>
           }
           className="[&]:block"
         >
           <span data-testid="gate1-waiting">
-            This run is {jobState?.phase ? <span className="font-semibold">{jobState.phase}</span> : "still working"}.
-            Concept groups are formed after three stages finish: ddharmon describes the ideal element for each
-            cluster, splits clusters that hold more than one concept, and runs the coherence judge over the
+            This run is{" "}
+            {jobState?.phase ? (
+              <span className="font-semibold">{jobState.phase}</span>
+            ) : (
+              "still working"
+            )}
+            . Concept groups are formed after three stages finish: ddharmon
+            describes the ideal element for each cluster, splits clusters that
+            hold more than one concept, and runs the coherence judge over the
             result. The first rows land here when the third one does.
           </span>
         </GateEmptyState>
@@ -2321,11 +2730,17 @@ export default function Gate1Page() {
           nextStep={
             <>
               Start again from{" "}
-              <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">
+              <Link
+                href={`/run/${jobId}/setup`}
+                className="font-semibold text-link-on-raised underline underline-offset-2"
+              >
                 Set up
               </Link>
               , or open{" "}
-              <Link href="/jobs" className="font-semibold text-link-on-raised underline underline-offset-2">
+              <Link
+                href="/jobs"
+                className="font-semibold text-link-on-raised underline underline-offset-2"
+              >
                 Runs
               </Link>{" "}
               to pick up a different one.
@@ -2334,8 +2749,9 @@ export default function Gate1Page() {
           className="[&]:block"
         >
           <span data-testid="gate1-run-stopped">
-            No concept groups were produced, so there is nothing to review here. This is not a finding about
-            your dictionaries — the run ended before it got far enough to have one.
+            No concept groups were produced, so there is nothing to review here.
+            This is not a finding about your dictionaries — the run ended before
+            it got far enough to have one.
           </span>
         </GateEmptyState>
       ) : groups.length === 0 ? (
@@ -2345,14 +2761,19 @@ export default function Gate1Page() {
             nextStep={
               <>
                 Nothing can be scoped until at least one group forms. Go back to{" "}
-                <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">
+                <Link
+                  href={`/run/${jobId}/setup`}
+                  className="font-semibold text-link-on-raised underline underline-offset-2"
+                >
                   Set up
                 </Link>{" "}
-                and check that the description column is mapped, or add a dictionary that overlaps these.
+                and check that the description column is mapped, or add a
+                dictionary that overlaps these.
               </>
             }
           >
-            Every variable was left unassigned by the clustering — {unassigned.length}{" "}
+            Every variable was left unassigned by the clustering —{" "}
+            {unassigned.length}{" "}
             {unassigned.length === 1 ? "variable" : "variables"}, listed below.
           </GateEmptyState>
         ) : (
@@ -2361,15 +2782,18 @@ export default function Gate1Page() {
             nextStep={
               <>
                 Go back to{" "}
-                <Link href={`/run/${jobId}/setup`} className="font-semibold text-link-on-raised underline underline-offset-2">
+                <Link
+                  href={`/run/${jobId}/setup`}
+                  className="font-semibold text-link-on-raised underline underline-offset-2"
+                >
                   Set up
                 </Link>{" "}
                 and check the column mapping, or add a dictionary.
               </>
             }
           >
-            Every variable was left unassigned. That usually means the dictionaries share too little text to
-            group.
+            Every variable was left unassigned. That usually means the
+            dictionaries share too little text to group.
           </GateEmptyState>
         )
       ) : (
@@ -2408,16 +2832,26 @@ export default function Gate1Page() {
                 total={groups.length}
                 crossCohortOnly={xcOnly}
                 onCrossCohortOnlyChange={setXcOnly}
-                verdict={(filters.verdicts[0] ?? "all") as CoherenceState | "all"}
-                onVerdictChange={(v) => setFilters({ ...filters, verdicts: v === "all" ? [] : [v] })}
+                verdict={
+                  (filters.verdicts[0] ?? "all") as CoherenceState | "all"
+                }
+                onVerdictChange={(v) =>
+                  setFilters({ ...filters, verdicts: v === "all" ? [] : [v] })
+                }
               />
             </div>
-            <QueueSortHeader sort={colSort} onSort={(key) => setColSort((cur) => toggleSort(cur, key))} />
+            <QueueSortHeader
+              sort={colSort}
+              onSort={(key) => setColSort((cur) => toggleSort(cur, key))}
+            />
             <div className="px-4">
               <BulkScopeControl
                 frozen={frozen}
                 count={visible.length}
-                state={bulkScopeState(visible.map((g) => g.groupId), isInScope)}
+                state={bulkScopeState(
+                  visible.map((g) => g.groupId),
+                  isInScope,
+                )}
                 busy={bulkBusy}
                 onBulk={(t) => void onBulkScope(t)}
               />
@@ -2427,7 +2861,11 @@ export default function Gate1Page() {
               className="flex-1 divide-y divide-rule-quiet-on-raised overflow-y-auto border-y border-rule-quiet-on-raised"
             >
               {searchEmptied ? (
-                <p data-testid="search-empty" data-cause={searchCause} className="px-4 py-6 text-sm text-on-raised-muted">
+                <p
+                  data-testid="search-empty"
+                  data-cause={searchCause}
+                  className="px-4 py-6 text-sm text-on-raised-muted"
+                >
                   {searchCause === "search"
                     ? "Your search matched no group in this run. "
                     : "Your search matched groups, but the filters or Cross-cohort only are hiding them. "}
@@ -2437,11 +2875,15 @@ export default function Gate1Page() {
                     onClick={() => setTerms(null)}
                     className="font-semibold text-link-on-raised underline underline-offset-2"
                   >
-                    Clear the search to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
+                    Clear the search to see all {groups.length}{" "}
+                    {groups.length === 1 ? "group" : "groups"}.
                   </button>
                 </p>
               ) : filteredToNothing ? (
-                <p data-testid="filter-empty" className="px-4 py-6 text-sm text-on-raised-muted">
+                <p
+                  data-testid="filter-empty"
+                  className="px-4 py-6 text-sm text-on-raised-muted"
+                >
                   No group matches this filter.{" "}
                   <button
                     type="button"
@@ -2451,7 +2893,8 @@ export default function Gate1Page() {
                   >
                     Clear it
                   </button>{" "}
-                  to see all {groups.length} {groups.length === 1 ? "group" : "groups"}.
+                  to see all {groups.length}{" "}
+                  {groups.length === 1 ? "group" : "groups"}.
                 </p>
               ) : visible.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-on-raised-muted">
@@ -2476,11 +2919,15 @@ export default function Gate1Page() {
                   <QueueRow
                     key={g.groupId}
                     group={g}
+                    scoreTag={scoreTagByGroup.get(g.groupId)}
                     price={price}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}
                     changed={isChanged(g.groupId)}
-                    selected={!poolSelected && g.groupId === (detailGroup?.groupId ?? null)}
+                    selected={
+                      !poolSelected &&
+                      g.groupId === (detailGroup?.groupId ?? null)
+                    }
                     readOnly={frozen}
                     renamedTo={renamedOf(g.groupId)}
                     onSelect={() => {
@@ -2490,10 +2937,15 @@ export default function Gate1Page() {
                     onScopeChange={(next) =>
                       void scope.write(
                         { groupId: g.groupId },
-                        { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+                        {
+                          chosen: next ? IN_SCOPE : OUT_OF_SCOPE,
+                          alternatives: SCOPE_OPTIONS,
+                        },
                       )
                     }
-                    onDropMember={(memberId) => void moveMember(memberId, g.groupId)}
+                    onDropMember={(memberId) =>
+                      void moveMember(memberId, g.groupId)
+                    }
                   />
                 ))
               )}
@@ -2508,14 +2960,16 @@ export default function Gate1Page() {
                 frozen
                   ? undefined
                   : (e) => {
-                      if (!e.dataTransfer.types.includes(MEMBER_DRAG_TYPE)) return;
+                      if (!e.dataTransfer.types.includes(MEMBER_DRAG_TYPE))
+                        return;
                       e.preventDefault();
                       e.dataTransfer.dropEffect = "move";
                       setPoolOver(true);
                     }
               }
               onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) setPoolOver(false);
+                if (!e.currentTarget.contains(e.relatedTarget as Node))
+                  setPoolOver(false);
               }}
               onDrop={
                 frozen
@@ -2524,7 +2978,8 @@ export default function Gate1Page() {
                       e.preventDefault();
                       setPoolOver(false);
                       const memberId = e.dataTransfer.getData(MEMBER_DRAG_TYPE);
-                      if (memberId) void moveMember(memberId, UNASSIGNED_GROUP_ID);
+                      if (memberId)
+                        void moveMember(memberId, UNASSIGNED_GROUP_ID);
                     }
               }
               className={cn(
@@ -2535,14 +2990,22 @@ export default function Gate1Page() {
                 poolSelected
                   ? "border-rule-info bg-surface-info text-accent-on-raised"
                   : "border-rule-on-raised bg-surface-inset text-on-raised hover:border-rule-info hover:bg-surface-info",
-                poolOver && "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
+                poolOver &&
+                  "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
               )}
             >
               <span className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold uppercase tracking-eyebrow">In no group</span>
+                <span className="text-xs font-bold uppercase tracking-eyebrow">
+                  In no group
+                </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="font-mono text-sm font-semibold tabular-nums">{poolCount}</span>
-                  <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 opacity-70" />
+                  <span className="font-mono text-sm font-semibold tabular-nums">
+                    {poolCount}
+                  </span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="h-4 w-4 shrink-0 opacity-70"
+                  />
                 </span>
               </span>
               <span className="text-xs font-normal normal-case tracking-normal text-on-raised-muted">
@@ -2560,7 +3023,11 @@ export default function Gate1Page() {
             </div>
           </aside>
 
-          <section data-testid="gate1-detail" className="min-w-0 rounded-card bg-surface-raised p-5 shadow-card lg:p-6">
+          <section
+            ref={detailPaneRef}
+            data-testid="gate1-detail"
+            className="min-w-0 rounded-card bg-surface-raised p-5 shadow-card lg:p-6"
+          >
             {poolSelected ? (
               <UnassignedPool
                 reviewerRemoved={membership.unassigned}
@@ -2569,7 +3036,9 @@ export default function Gate1Page() {
                 membersOf={(id) => membership.byGroup[id] ?? []}
                 sampleOnly={(o) => !hasFullMembership(o)}
                 fieldIndex={fieldIndex}
-                onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+                onMove={(memberId, toGroupId) =>
+                  void moveMember(memberId, toGroupId)
+                }
                 onRestoreMember={(memberId) => void restoreMember(memberId)}
                 readOnly={frozen}
                 defaultOpen
@@ -2585,7 +3054,10 @@ export default function Gate1Page() {
                 onScopeChange={(next) =>
                   void scope.write(
                     { groupId: detailGroup.groupId },
-                    { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+                    {
+                      chosen: next ? IN_SCOPE : OUT_OF_SCOPE,
+                      alternatives: SCOPE_OPTIONS,
+                    },
                   )
                 }
                 stale={touchedByRegroup.has(detailGroup.groupId)}
@@ -2599,15 +3071,18 @@ export default function Gate1Page() {
                   poolCount={poolCount}
                   fieldIndex={fieldIndex}
                   movedMembers={movedMemberIds}
-                  onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+                  onMove={(memberId, toGroupId) =>
+                    void moveMember(memberId, toGroupId)
+                  }
                   onRestore={() => void restoreGroup(detailGroup.groupId)}
                   canRegroup={hasFullMembership(detailGroup)}
                   refusal={refusalFor}
                   carvePrice={
                     <>
-                      This costs money. Re-splitting this group and re-assigning its parts is paid work —
-                      about {formatUsd(price * 2)} for a group this size — and it starts as soon as you press
-                      the button. Your spend so far updates when it finishes.
+                      This costs money. Re-splitting this group and re-assigning
+                      its parts is paid work — about {formatUsd(price * 2)} for
+                      a group this size — and it starts as soon as you press the
+                      button. Your spend so far updates when it finishes.
                     </>
                   }
                   accepting={accepting === detailGroup.groupId}
@@ -2616,7 +3091,9 @@ export default function Gate1Page() {
                 />
               </GroupDetail>
             ) : (
-              <p className="py-16 text-center text-sm text-on-raised-muted">Select a concept group on the left.</p>
+              <p className="py-16 text-center text-sm text-on-raised-muted">
+                Select a concept group on the left.
+              </p>
             )}
           </section>
         </div>

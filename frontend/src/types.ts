@@ -599,6 +599,12 @@ export interface ScoreComponent {
   required: boolean;
   weight: number | null;
   coding: ComponentCoding;
+  /**
+   * The component's domain / sub-scale, when the source groups its items (e.g. a frailty index's
+   * "type of deficit"). GENERIC and OPTIONAL: extraction populates it when the source states it,
+   * and the coverage view groups by it only when present — never a code-side, score-specific grouping.
+   */
+  domain?: string;
 }
 
 export interface ScoreDefinition {
@@ -631,6 +637,13 @@ export interface ComponentMatch {
   required: boolean;
   pinned: boolean; // set by a reviewer override rather than the judge
   shortlist: string[]; // the ids retrieval offered — distinguishes "nothing found" from "all rejected"
+  isVariable?: boolean; // the match/candidate is a single source variable, not a harmonized concept group
+  // Variable-only matching: `conceptId` is a concept GROUP reached by rolling up the source variables the
+  // judge rated; `confidence` above is then the group AGGREGATE. `matchedMembers` are those variables
+  // (id + confidence), shown indented under the group; `groupCandidates` is the deduped Swap list — every
+  // group the component's rated variables reached, best-first. Absent on the legacy group-concept path.
+  matchedMembers?: { variableId: string; confidence: number }[];
+  groupCandidates?: { groupId: string; confidence: number }[];
 }
 
 export interface CohortCoverage {

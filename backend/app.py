@@ -1524,6 +1524,9 @@ def composite(
                 client.complete,
                 overrides=body.overrides,
                 hybrid=body.hybrid,
+                # Variable-level matching (augment): the run's field index lets a component bind to a
+                # single source variable, not only a harmonized concept group. Absent -> group-only.
+                field_index=(job.result or {}).get("fieldIndex") if job.result else None,
             )
     except ValueError as exc:
         # e.g. the document defines no score, or its text extraction came back empty — a 400, not a 500.
