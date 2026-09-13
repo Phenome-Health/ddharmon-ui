@@ -714,7 +714,12 @@ function MatchRow({
     : Array.from(new Set(rawCandidateIds));
 
   return (
-    <div className="rounded-md border border-border">
+    <div
+      className="rounded-md border border-border"
+      data-testid="score-match"
+      data-component={match.component}
+      data-matched={match.conceptId != null ? "true" : "false"}
+    >
       {/* Collapsed by default so a reviewer can scan the list and open ONE component at a time. */}
       <button
         type="button"

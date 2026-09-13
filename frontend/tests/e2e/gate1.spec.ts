@@ -1248,6 +1248,10 @@ test.describe("gate1 score", () => {
           required: true,
           pinned: false,
           shortlist: [matched.groupId],
+          // Variable-only shape: the matched variables that rolled up to the group, and the deduped
+          // group candidates the Swap list offers.
+          matchedMembers: vars.map((v) => ({ variableId: v, confidence: 0.72 })),
+          groupCandidates: [{ groupId: matched.groupId, confidence: 0.72 }],
         },
         {
           component: "Gait speed",
@@ -1260,7 +1264,11 @@ test.describe("gate1 score", () => {
           rationale: "no concept measured gait speed",
           required: true,
           pinned: false,
-          shortlist: [rejected.groupId],
+          // A MISSING component's shortlist is VARIABLE-level (no group rated on-topic → empty
+          // groupCandidates). These variables all belong to one group, so the panel must roll them up to
+          // that single group rather than list one dead, unlinkable variable row per variable.
+          shortlist: rejected.memberVariableNames.slice(0, 3),
+          groupCandidates: [],
         },
       ],
       feasibility: {
@@ -1280,15 +1288,16 @@ test.describe("gate1 score", () => {
     };
   }
 
-  test("@gate1 a declared component expands to its matched group's cohorts and vars, and opens the group's drag-drop detail", async ({
+  test("@gate1 a matched component shows its group, coverage and members and links; a missing component's variable candidates roll up to one group", async ({
     page,
   }) => {
     const groups = fixtureGroups();
-    const matched = groups.find((g) => g.groupId === "cb2a6e2cd6fd3#g0")!; // 4 cohorts, real vars
+    const matched = groups.find((g) => g.groupId === "cb2a6e2cd6fd3#g0")!; // real vars, in conceptGroupMembers
     const rejected = groups.find((g) => g.groupId === "c8331409f61e1#g0")!;
     const vars = matched.memberVariableNames.slice(0, 2);
     expect(matched).toBeTruthy();
     expect(vars.length).toBeGreaterThan(0);
+    expect(rejected.memberVariableNames.length).toBeGreaterThan(0);
 
     await serveRun(page, (run) => {
       run.composites = [scoreSpec(matched, rejected, vars)];
@@ -1296,35 +1305,45 @@ test.describe("gate1 score", () => {
     await openGate1(page);
     await openScorePanel(page);
 
-    // A MATCHED component expands to the group ddharmon matched it to — its concept, every cohort, its vars.
+    // A MATCHED component: the concept GROUP its source variables rolled up to, ONE match-confidence, the
+    // coverage tell (variable-only matching surfaces the group but coverage is the over-merge signal), and
+    // the matched members indented under it.
     const grip = page.locator(
-      "[data-testid='score-component'][data-component='Grip strength']",
+      "[data-testid='score-match'][data-component='Grip strength']",
     );
     await grip.locator("[data-testid='score-component-expand']").click();
-    const detail = grip.locator("[data-testid='score-component-detail']");
-    await expect(detail).toContainText(matched.concept.slice(0, 24));
+    await expect(grip.locator("[data-testid='score-confidence']")).toHaveText("0.72");
+    const coverage = grip.locator("[data-testid='score-coverage']");
+    await expect(coverage).toContainText(
+      `${vars.length} of ${matched.nMembers} group members matched`,
+    );
+    // A minority of a multi-member group is the over-merge flag.
+    await expect(coverage).toHaveAttribute("data-partial", "true");
+    await expect(grip.locator("[data-testid='score-matched-member']")).toHaveCount(
+      vars.length,
+    );
     await expect(
-      detail.locator("[data-testid='score-detail-cohort']"),
-    ).toHaveCount(matched.cohorts.length);
-    await expect(
-      detail.locator("[data-testid='score-detail-var']").first(),
+      grip.locator("[data-testid='score-matched-member']").first(),
     ).toContainText(vars[0]);
 
-    // Clicking the matched group opens it in the drag-drop detail pane.
-    await detail.locator("[data-testid='score-open-group']").click();
+    // The group link opens it in the drag-drop detail pane.
+    await grip.locator("[data-testid='score-open-group']").click();
     const pane = page.locator("[data-testid='gate1-detail']");
     await expect(pane).toContainText(matched.concept.slice(0, 24));
 
-    // A MISSING component lists the candidates retrieval offered — and they are click-through too.
+    // A MISSING component's candidates are VARIABLE-level; they must roll up to the ONE group they belong
+    // to — a single deduped, linkable row, not one dead row per variable.
     const gait = page.locator(
-      "[data-testid='score-component'][data-component='Gait speed']",
+      "[data-testid='score-match'][data-component='Gait speed']",
     );
     await gait.locator("[data-testid='score-component-expand']").click();
-    const candidate = gait
-      .locator("[data-testid='score-candidate-group']")
-      .first();
-    await expect(candidate).toContainText(rejected.concept.slice(0, 20));
-    await candidate.click();
+    await gait.getByRole("button", { name: /Choose concept/i }).click();
+    const candidates = gait.locator("[data-testid='swap-candidate']");
+    await expect(candidates).toHaveCount(1);
+    await expect(candidates.first()).toContainText(rejected.concept.slice(0, 20));
+
+    // …and it links: opening the rolled-up group lands it in the detail pane.
+    await gait.locator("[data-testid='swap-candidate-open']").first().click();
     await expect(pane).toContainText(rejected.concept.slice(0, 20));
   });
 
@@ -1522,41 +1541,39 @@ test.describe("gate1 score", () => {
     });
     await openGate1(page);
     await openScorePanel(page);
-    const verdict = page.locator("[data-testid='score-verdict']");
-    await expect(verdict).toHaveAttribute("data-verdict", "partial");
-    // PARTIAL IS NOT THE PUBLISHED SCORE, and it says so in words rather than leaving it to be inferred
-    // from a colour.
-    await expect(verdict).toContainText(
-      /not the published|is not the score as published/i,
-    );
+    const panel = page.locator("[data-testid='score-panel']");
 
-    // The matched one, and the missing one — reported as a RESULT, with which of the two findings it is.
+    // The verdict is DERIVED, not hard-coded: one required component matched and one did not, so the spec
+    // reads "partially computable" with the required tally spelled out — never a colour left to be inferred.
+    await expect(panel).toContainText(/partially computable/i);
+    await expect(panel).toContainText("1/2 required components");
+
+    // The matched one and the missing one — each reported as a result, distinguishable by whether it
+    // reached a group.
     await expect(
-      page.locator("[data-testid='score-component'][data-verdict='full']"),
+      panel.locator("[data-testid='score-match'][data-matched='true']"),
     ).toHaveCount(1);
-    const missing = page.locator(
-      "[data-testid='score-component'][data-verdict='infeasible']",
+    const missing = panel.locator(
+      "[data-testid='score-match'][data-matched='false']",
     );
     await expect(missing).toHaveCount(1);
-    await expect(missing).toContainText(/3 .*rejected|rejected/i);
+    await expect(missing).toContainText(/3 retrieved|none fit/i);
 
-    // NO CUTOFF IS INVENTED. The source stated none, so the panel flags it for a human instead of
-    // deriving a plausible one — a score's threshold is a clinical claim.
-    await expect(
-      page.locator("[data-testid='score-cutoff-unstated']").first(),
-    ).toBeVisible();
-    await expect(page.locator("[data-testid='score-panel']")).not.toContainText(
-      /\bkg\b|<\s*\d|≥\s*\d/,
-    );
+    // NO CUTOFF IS INVENTED. The source stated none, so expanding the matched component flags it for a
+    // human instead of deriving a plausible one, and no threshold number appears anywhere in the panel —
+    // a score's threshold is a clinical claim.
+    await panel
+      .locator(
+        "[data-testid='score-match'][data-matched='true'] [data-testid='score-component-expand']",
+      )
+      .click();
+    await expect(panel).toContainText(/no coding rule in source/i);
+    await expect(panel).not.toContainText(/\bkg\b|<\s*\d|≥\s*\d/);
 
-    // Presence is per DATA DICTIONARY. No participant-level completeness, no effective N — ddharmon never
-    // computes the score, it writes the recipe.
-    await expect(page.locator("[data-testid='score-panel']")).toContainText(
-      /data dictionar/i,
-    );
-    await expect(page.locator("[data-testid='score-panel']")).not.toContainText(
-      /effective N|participants? with/i,
-    );
+    // Presence is per DATA DICTIONARY: participant-level missingness — and therefore effective N — cannot
+    // be derived from metadata. ddharmon writes the recipe, it never computes the score.
+    await expect(panel).toContainText(/per data dictionar/i);
+    await expect(panel).toContainText(/cannot be derived from metadata/i);
   });
 });
 
@@ -2356,6 +2373,9 @@ test.describe("gate1 group label", () => {
         run.result!.conceptGroups![0];
       id = target.groupId;
       target.concept = "";
+      // A judge label is borrowed ONLY when there is no concept AND no idealCde — groupLabel prefers the
+      // generated idealCde over the judge's summary (08-16g). Clear it so this row is genuinely borrowed.
+      target.idealCde = "";
       target.coherence = "single";
       target.coherenceSummary =
         "Self-reported cigarette smoking across the cohorts";
@@ -2411,6 +2431,8 @@ test.describe("gate1 group label", () => {
         run.result!.conceptGroups![0];
       id = target.groupId;
       target.concept = "";
+      // No concept, no idealCde and unjudged → truly unnamed, so groupLabel falls all the way to "none".
+      target.idealCde = "";
       target.coherence = "not_judged";
       target.coherenceSummary = "";
     });
@@ -3392,6 +3414,8 @@ test.describe("gate1 rename", () => {
     await serveRun(page, (run) => {
       const t = run.result!.conceptGroups!.find((g) => g.groupId === BIG)!;
       t.concept = "";
+      // Borrowed = no concept AND no idealCde (groupLabel prefers idealCde over the judge summary, 08-16g).
+      t.idealCde = "";
       t.coherence = "single";
       t.coherenceSummary = "The judge's sentence about this group";
     });
