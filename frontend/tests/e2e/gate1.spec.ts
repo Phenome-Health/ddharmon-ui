@@ -1071,7 +1071,7 @@ test.describe("gate1 carve", () => {
       run.config = {
         ...(run.config as object),
         demo: false,
-        allowReadjudication: true,
+        readjudication: true,
       } as never;
     });
     await openGate1(page);

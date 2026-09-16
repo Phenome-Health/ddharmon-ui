@@ -738,6 +738,8 @@ export interface RunConfig {
    * different answer would stop matching the cost it was quoted (T-08-69).
    */
   allowReadjudication?: boolean;
+  /** SERVED config key. app.py:521 stores the create-payload `allowReadjudication` under this name; read THIS on JobResult.config, not the create key. */
+  readjudication?: boolean;
   displayName?: string;
   // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
   // omitted, and falls back to harmonize_leanb's own defaults for the rest)

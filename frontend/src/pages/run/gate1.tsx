@@ -2340,7 +2340,7 @@ export default function Gate1Page() {
   /** Why accepting is unavailable on this run, resolved once rather than per row. */
   const refusalFor = readjudicationRefusal({
     pinned: pinned === true,
-    optedIn: Boolean(runConfig?.allowReadjudication),
+    optedIn: Boolean(runConfig?.readjudication),
   });
 
   /**
