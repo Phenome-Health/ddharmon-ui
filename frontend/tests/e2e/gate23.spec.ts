@@ -498,6 +498,22 @@ test.describe("gate2 screen", () => {
     await expect(empty).toContainText("Nothing was passed from Gate 1");
   });
 
+  test("@gate2 a result that fails to load reads as a load failure, not an empty scope", async ({
+    page,
+  }) => {
+    // A 401 on /result (the key-cleared-on-reload case) leaves the page with no records — the SAME surface
+    // condition as a genuine empty scope, but the opposite cause. The screen must not blame Gate 1's scope
+    // for a fetch that never landed.
+    await page.route("**/static-data/result-*.json", (route) =>
+      route.fulfill({ status: 401, contentType: "application/json", body: "{}" }),
+    );
+    await openGate2(page, PAUSED_JOB);
+    const empty = page.locator("[data-testid='gate-empty-state']");
+    await expect(empty).toBeVisible();
+    await expect(empty).not.toContainText("Nothing was passed from Gate 1");
+    await expect(empty).toContainText(/load/i);
+  });
+
   test("@gate2 the source rows are the shared component, themed from role tokens", async ({
     page,
   }) => {

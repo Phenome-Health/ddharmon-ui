@@ -85,7 +85,7 @@ interface AnchorDraft {
 
 export default function Gate2Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, cancel } = useHarmonizeStream(jobId, true, true);
+  const { jobState, cancel, error } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const allRecords: UIRecord[] = useMemo(() => jobState?.result?.records ?? [], [jobState?.result?.records]);
@@ -149,6 +149,30 @@ export default function Gate2Page() {
   }, [records, query, verdictFilter, colSort]);
 
   const record = visible.find((r) => r.groupId === selectedId) ?? visible[0] ?? records[0];
+
+  // "Nothing in scope" is a claim about the LOADED result — the reviewer scoped every group out at Gate 1.
+  // An unloaded result (the /result fetch has not landed, or failed with a 401 after a key cleared, or the
+  // run is still computing) is a different fact and must not be blamed on the scope: `records` is empty then
+  // too, but for the opposite reason. Distinguish them by whether the result actually loaded.
+  const resultLoaded = jobState?.result != null;
+  if (!resultLoaded) {
+    return (
+      <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
+        <GateEmptyState
+          heading={error ? "This run's result didn't load" : "Loading this run…"}
+          nextStep={
+            error
+              ? "Reload the page — your gate state is saved. If your API key cleared on reload, re-enter it and press Continue."
+              : "One moment while the Gate 2 result loads."
+          }
+        >
+          {error
+            ? error.message
+            : "Fetching the assignment result. If this persists, reload — nothing here is lost."}
+        </GateEmptyState>
+      </Shell>
+    );
+  }
 
   if (records.length === 0) {
     return (
