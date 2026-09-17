@@ -22,6 +22,9 @@ import { IS_STATIC, appendAuthToken, cancelJob, getResult } from "@/lib/api";
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 1500;
+// After the SSE gives up, poll the payload channel this often instead of dead-ending. Slow on purpose:
+// the readout only needs to stay current-ish, and /result is the same fetch a manual reload would do.
+const POLL_MS = 8000;
 
 export interface StreamError {
   message: string;
@@ -47,6 +50,11 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
   const [reconnecting, setReconnecting] = useState(false);
   // The version token the newest frame announced. 0 = nothing to fetch yet.
   const [resultVersion, setResultVersion] = useState(0);
+  // Set when the SSE has EXHAUSTED its retries: the live transport is gone, so fall back to polling /result
+  // (a separate, header-authed fetch) rather than dead-ending. Cleared when the live stream comes back.
+  const [polling, setPolling] = useState(false);
+  // Bumped to force the connect effect to re-open the SSE — used by a tab refocus to retry the live stream.
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -178,9 +186,14 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
           const delay = BASE_RETRY_MS * Math.pow(2, retryCount);
           retryTimerRef.current = setTimeout(() => connect(retryCount + 1), delay);
         } else {
-          setReconnecting(false);
-          setError({ message: "Connection to harmonization service lost after multiple retries" });
-          setDone(true);
+          // Retries exhausted, but this is NOT a dead end. The payload channel (/result) is a separate
+          // header-authed fetch whose token refreshes independently of the SSE and still loads the run's
+          // current state; the run itself keeps going server-side and is close-the-tab safe (D-03). So
+          // DEGRADE TO POLLING rather than a red terminal error: keep `done` false, keep `reconnecting`
+          // true so the soft "figures are from the last update, not live" notice shows, and let the poll
+          // effect below refetch /result. A genuine terminal/error status arrives through that poll.
+          setReconnecting(true);
+          setPolling(true);
         }
       };
     }
@@ -191,7 +204,50 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       esRef.current?.close();
     };
-  }, [jobId, enabled, instant]);
+  }, [jobId, enabled, instant, reconnectNonce]);
+
+  // The SSE give-up fallback: poll /result on a slow interval so the readout stays current and the run stays
+  // resumable, instead of the old terminal error. Stops when a resting state (terminal, or an awaiting_review
+  // gate pause) arrives, or when the live SSE is re-established. A failed poll is not fatal — it keeps trying.
+  useEffect(() => {
+    if (!polling || !enabled || !jobId || IS_STATIC) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await getResult(jobId);
+        if (cancelled || !mountedRef.current) return;
+        setJobState(data);
+        if (data.status === "error") setError({ message: data.errorMessage ?? "Harmonization failed" });
+        if (isClosing(data.status)) {
+          if (data.status !== "awaiting_review") setDone(true);
+          setPolling(false);
+          setReconnecting(false);
+        }
+      } catch {
+        // a failed poll is not terminal — keep polling; the soft notice already covers a stale readout
+      }
+    };
+    void tick();
+    const id = setInterval(tick, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [polling, enabled, jobId]);
+
+  // A tab refocus is the natural moment to retry the LIVE stream after a give-up: re-open the SSE (bumping
+  // the connect effect), which on success resumes live frames and clears the poll fallback.
+  useEffect(() => {
+    if (!polling) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        setPolling(false);
+        setReconnectNonce((n) => n + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [polling]);
 
   // Stop an in-progress run. `mode` is "discard" (hard abort, no results) or "keep" (finish the current stage
   // → partial results, skip the rest). Backend: ask the server to cancel — the SSE stream delivers the terminal
