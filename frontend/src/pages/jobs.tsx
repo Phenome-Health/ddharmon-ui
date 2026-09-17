@@ -239,7 +239,7 @@ export default function JobsPage() {
               {!jobs.length && !isLoading && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-sm text-on-raised-muted">
-                    No runs yet. <Link href="/new" className="text-link-on-raised hover:underline">Start one →</Link>
+                    No runs yet. <Link href="/run/new/setup" className="text-link-on-raised hover:underline">Start one →</Link>
                   </TableCell>
                 </TableRow>
               )}

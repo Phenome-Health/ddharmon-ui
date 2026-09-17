@@ -321,7 +321,7 @@ export default function MethodsPage() {
             <Link href="/demo">Open demo</Link>
           </Button>
           <Button asChild size="sm">
-            <Link href="/new">
+            <Link href="/run/new/setup">
               New run <ArrowRight className="ml-1.5 h-4 w-4" />
             </Link>
           </Button>

@@ -13,6 +13,15 @@ test("landing page renders and offers the demo", async ({ page }) => {
   await expect(page.getByRole("link", { name: /explore a live demo/i })).toBeVisible();
 });
 
+test("the New run nav routes into the staged gated flow, not the legacy form", async ({ page }) => {
+  // 08-23b Task 4 (Replace): the "New run" entry sends the user into the staged Setup gate
+  // (/run/new/setup), not the legacy /new form (→ /job/:id). The legacy route stays reachable by URL for the
+  // demo, but nothing in the nav points at it.
+  await page.goto("/");
+  await page.getByRole("link", { name: "New run", exact: true }).click();
+  await expect(page).toHaveURL(/\/run\/new\/setup$/);
+});
+
 test("demo page lists the shipped cohorts", async ({ page }) => {
   await page.goto("/demo");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

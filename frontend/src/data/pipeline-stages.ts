@@ -109,7 +109,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
       "The pipeline requires a CDE backbone — assignment to the given catalog is the thesis; there is no “no-CDE” path.",
       "Value / encoding / units metadata is kept for the LLM prompts (symbolic), not folded into the geometric vector.",
     ],
-    link: { href: "/new", label: "Start a run — upload dictionaries & map columns" },
+    link: { href: "/run/new/setup", label: "Start a run — upload dictionaries & map columns" },
   },
   {
     id: "embedding",

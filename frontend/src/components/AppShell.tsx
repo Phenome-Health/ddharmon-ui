@@ -168,7 +168,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4" />} label="Benchmarks" collapsed={navCollapsed} />
             <NavLink href="/design" icon={<Lightbulb className="h-4 w-4" />} label="Design" collapsed={navCollapsed} />
             <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" collapsed={navCollapsed} />
-            <NavLink href="/new" icon={<Plus className="h-4 w-4" />} label="New run" collapsed={navCollapsed} />
+            <NavLink href="/run/new/setup" icon={<Plus className="h-4 w-4" />} label="New run" collapsed={navCollapsed} />
             <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" collapsed={navCollapsed} />
             <NavLink href="/related" icon={<Boxes className="h-4 w-4" />} label="Related work" collapsed={navCollapsed} />
             <NavLink href="/roadmap" icon={<Milestone className="h-4 w-4" />} label="Roadmap" collapsed={navCollapsed} />

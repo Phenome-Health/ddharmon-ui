@@ -182,7 +182,7 @@ export default function LandingPage() {
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <Button asChild size="lg" className="bg-status-destructive text-on-destructive hover:bg-status-destructive-hover">
-                <Link href="/new">
+                <Link href="/run/new/setup">
                   Start a run <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Link>
               </Button>
