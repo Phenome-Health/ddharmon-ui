@@ -106,8 +106,9 @@ class Job:
     decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Ownership + re-run support (durable per-user history). owner_subject is the verified Clerk subject
     # (None for demos / when the auth gate is disabled). dict_specs are the per-dictionary load specs
-    # (paths + column roles + cohort names) needed to re-execute the run from its retained uploads. Neither
-    # is exposed by to_dict() — owner_subject must never leak to the client.
+    # (paths + column roles + cohort names) needed to re-execute the run from its retained uploads.
+    # owner_subject and the server-side upload paths must NEVER leak to the client; to_dict() exposes only a
+    # roles-only projection (filename + cohort + column roles) under `dictionaries`, for the Setup replay.
     owner_subject: str | None = None
     dict_specs: list[dict[str, Any]] | None = None
     # Optional post-run "analysis ideas" (LLM-suggested downstream analyses). None = not generated yet;
@@ -223,6 +224,19 @@ class Job:
             "failedPhase": self.failed_phase,
             "result": self.result,
             "config": self.config,
+            # A roles-only projection of dict_specs, so the back-to-Setup replay can render the column
+            # mapping this run actually used (dict_specs is the run's persisted home for it; run_config
+            # deliberately keeps no dictionaries). Deliberately NOT the raw dict_specs: the server upload
+            # `path` and `owner_subject` must never reach the client (see the dict_specs field note). Empty
+            # for a demo/legacy run with no specs, so the reader iterates it without a null branch.
+            "dictionaries": [
+                {
+                    "filename": Path(s.get("path", "")).name,
+                    "cohortName": s.get("cohort_name"),
+                    "columnRoles": s.get("column_roles", {}),
+                }
+                for s in (self.dict_specs or [])
+            ],
             "decisions": decisions,
             "analysisIdeas": analysis_ideas,
             "composites": composites,

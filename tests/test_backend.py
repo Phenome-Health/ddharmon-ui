@@ -114,6 +114,55 @@ def test_jobstore_stamps_phase_start_timings():
     assert s.get("jt").to_dict()["phaseStartedAt"] == timings
 
 
+def test_to_dict_projects_dict_specs_to_dictionaries_without_leaking_paths():
+    """Back-to-Setup replay reads a run's persisted column roles from its OWN payload. to_dict() exposes a
+    roles-only projection of dict_specs (filename + cohortName + columnRoles) so the Setup screen can render
+    the mapping the run actually used — WITHOUT leaking the server-side upload path or owner_subject (both of
+    which live in dict_specs / the Job but must never reach the client)."""
+    job = Job(
+        job_id="jd",
+        display_name="Roles run",
+        owner_subject="user_secret_123",
+        dict_specs=[
+            {
+                "path": "/srv/work/abc123/uploads/clsa_baseline.csv",
+                "cohort_name": "CLSA",
+                "column_roles": {"variable_name": "name", "description": "label:en", "units": "unit"},
+            },
+            {
+                "path": "/srv/work/abc123/uploads/ukbb.csv",
+                "cohort_name": "UKBB",
+                "column_roles": {"variable_name": "field_name", "description": "description"},
+            },
+        ],
+    )
+    d = job.to_dict()
+    assert d["dictionaries"] == [
+        {
+            "filename": "clsa_baseline.csv",
+            "cohortName": "CLSA",
+            "columnRoles": {"variable_name": "name", "description": "label:en", "units": "unit"},
+        },
+        {
+            "filename": "ukbb.csv",
+            "cohortName": "UKBB",
+            "columnRoles": {"variable_name": "field_name", "description": "description"},
+        },
+    ]
+    # The projection is roles-only: no per-entry server path, and NOTHING in the whole wire view leaks the
+    # server upload path or the owner subject.
+    assert "path" not in d["dictionaries"][0]
+    blob = json.dumps(d)
+    assert "/srv/work" not in blob
+    assert "user_secret_123" not in blob
+
+
+def test_to_dict_dictionaries_empty_when_no_dict_specs():
+    """A demo/legacy run with no dict_specs yields an EMPTY list (not null), so the Setup reader iterates it
+    uniformly without a null branch."""
+    assert Job(job_id="jn", display_name="No specs").to_dict()["dictionaries"] == []
+
+
 # ── contract mapping (the insulation boundary) ──────────────────
 
 

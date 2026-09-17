@@ -488,6 +488,17 @@ export type ServerDecisions = Record<
   }
 >;
 
+/**
+ * One dictionary a run was set up with, projected from the backend's persisted dict_specs — roles only,
+ * never the server upload path. Powers the back-to-Setup replay so it can render the run's OWN column
+ * mapping (which source column played each role) instead of nothing.
+ */
+export interface RunDictionary {
+  filename: string;
+  cohortName: string;
+  columnRoles: Record<string, string>;
+}
+
 export interface JobResult {
   jobId: string;
   displayName: string;
@@ -501,6 +512,10 @@ export interface JobResult {
   failedPhase?: string | null;
   result: HarmonizationResult | null;
   config: Record<string, unknown>;
+  // The dictionaries this run was set up with — a roles-only projection of the backend's persisted
+  // dict_specs (filename + cohort + column roles; never the server path). Empty/absent for a demo or
+  // legacy run with no specs. Read by the back-to-Setup replay to render the run's own column mapping.
+  dictionaries?: RunDictionary[];
   decisions: ServerDecisions;
   // Opt-in, LLM-suggested downstream analyses (null until generated; see POST /jobs/{id}/analysis-ideas).
   analysisIdeas?: AnalysisIdea[] | null;

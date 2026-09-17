@@ -284,14 +284,18 @@ function headersFromManifest(entry: DemoEntry): string[] {
 /**
  * The dictionaries a run was set up with, read from the run's OWN record.
  *
- * Two shapes, because two kinds of run exist. A run started from the New Run form persists
- * `config.dictionaries` (filename, cohort, column roles). The shipped demo run persists only its dataset
+ * Two shapes, because two kinds of run exist. A run started from the New Run form exposes its column
+ * mapping as `job.dictionaries` (filename, cohort, column roles — the backend's roles-only projection of
+ * the persisted dict_specs). The shipped demo run persists only its dataset
  * ids, so its dictionaries are recovered from the manifest that produced them plus the demo catalogue's
  * own field counts — both shipped provenance, neither invented here.
  */
 function dictionariesFromRun(job: JobResult | null): SetupDict[] {
   const config = (job?.config ?? {}) as Record<string, unknown>;
-  const declared = config.dictionaries;
+  // The run's own column mapping, read from the backend's roles-only projection of its persisted
+  // dict_specs (`job.dictionaries`). run_config keeps no dictionaries, so this — not `config` — is the
+  // source for a run started from the New Run form.
+  const declared = job?.dictionaries;
   if (Array.isArray(declared) && declared.length) {
     return declared.map((d, i) => {
       const spec = d as { filename?: string; cohortName?: string; columnRoles?: Record<string, string> };
@@ -623,11 +627,11 @@ export default function SetupPage() {
   /**
    * How many cohorts the quote is for.
    *
-   * MEASURED ON A LIVE RUN, not on the fixture. A real run does NOT persist the `dictionaries` array this
-   * screen posts — `config.dictionaries` comes back null — so `dictionariesFromRun` yields nothing and
-   * `dicts.length` is ZERO for every run-seeded page. Before the commit control landed here that was a
-   * cosmetic wrong number in a read-back; now it is a factor in the figure on the button, which is the
-   * one number on this screen that must not be wrong.
+   * MEASURED ON A LIVE RUN, not on the fixture. A run-seeded page now knows its dictionaries: the backend
+   * projects the run's persisted roles as `job.dictionaries`, which `dictionariesFromRun` reads, so
+   * `dicts.length` is the real cohort count for a run-seeded page (before that projection it was ZERO — a
+   * wrong number that, once the commit control moved here, would have mis-stated the figure on the button,
+   * the one number on this screen that must not be wrong).
    *
    * At the pre-flight the run knows its own cohorts — one preparation report each — so that is the count
    * used. Everywhere else the composed list is still the only source there is.
@@ -1067,11 +1071,11 @@ export default function SetupPage() {
         ))}
 
         {dicts.length === 0 && runStarted ? (
-          /* A STARTED RUN THAT KEPT NO PER-DICTIONARY RECORD, which — measured on a live run — is every
-             run started from this screen: the backend does not persist the `dictionaries` array it is
-             sent, so `config.dictionaries` comes back null. Rendering the compose empty state here would
-             read as "this run had no dictionaries", which is a claim about the RUN and a false one. The
-             cohorts it actually covers are the ones the export above lists, one file each. */
+          /* A STARTED RUN WHOSE RECORD CARRIES NO PER-DICTIONARY COLUMN ROLES — now only a legacy run from
+             before the backend projected its persisted dict_specs as `job.dictionaries` (a current run reads
+             that and renders its mapping below). Rendering the compose empty state here would read as "this
+             run had no dictionaries", a claim about the RUN and a false one. The cohorts it covers are the
+             ones the export above lists, one file each. */
           <div className="rounded-card bg-surface-raised shadow-card">
             <GateEmptyState
               heading="This run kept no record of its column mapping"
