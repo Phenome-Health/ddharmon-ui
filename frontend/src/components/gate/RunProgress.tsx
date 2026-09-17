@@ -146,12 +146,27 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
       {queued ? (
         /* NO BAR HERE, DELIBERATELY. The percentage is standing still because the work is with the
            provider, and rendering it would present a stalled number as progress. */
-        <p data-testid="run-progress-queue" className="max-w-[80ch] text-sm text-on-raised-muted">
-          <span className="font-semibold text-on-raised">Waiting in the provider&rsquo;s batch queue.</span>{" "}
-          The work itself is minutes; the queue is what makes a batch run long — most clear within an hour,
-          and the provider allows up to 24. Nothing is stuck, and you can close this tab: the run keeps
-          going and will be waiting at its gate when you come back.
-        </p>
+<>
+          <p data-testid="run-progress-queue" className="max-w-[80ch] text-sm text-on-raised-muted">
+            <span className="font-semibold text-on-raised">Waiting in the provider&rsquo;s batch queue.</span>{" "}
+            The work itself is minutes; the queue is what makes a batch run long — most clear within an hour,
+            and the provider allows up to 24. Nothing is stuck, and you can close this tab: the run keeps
+            going and will be waiting at its gate when you come back.
+          </p>
+          {/* A link so the reviewer can watch the batch live instead of only our stalled queue line. It is the
+              console ROOT on purpose, NOT a workspaces/<id>/batches deep link: the batch carries no workspace
+              id here, and a BYOK key can belong to a non-default workspace, so a hardcoded one would land the
+              wrong (or empty) page. The console resolves the viewer's own workspace; Batches is one click in. */}
+          <a
+            href="https://console.anthropic.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="run-progress-batches-link"
+            className="inline-flex w-fit items-center gap-1 text-sm font-medium text-accent-on-raised underline underline-offset-2"
+          >
+            Watch it in the Anthropic Console →
+          </a>
+        </>
       ) : (
         <div
           data-testid="run-progress-bar"
