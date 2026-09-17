@@ -536,12 +536,14 @@ export function bulkScopePlan(
   ids: readonly string[],
   target: "in" | "out",
   isInScope: (groupId: string) => boolean,
-  hasDecision: (groupId: string) => boolean,
 ): BulkScopePlan {
+  // Default is OUT — selecting is the deliberate act (08-23b subset). So each direction WRITES an explicit
+  // decision for exactly the shown rows that are not already where they are being sent; nothing is CLEARED,
+  // because a group with no decision is already out by default (unless the score builder matched it) and
+  // there is no default-in state to restore. The write VALUE is the caller's: "in" for select, "out" for
+  // deselect.
   if (target === "in") {
-    // Only an explicit "out" needs undoing. Absent decision = already in; explicit "in" = already in, and
-    // clearing it would erase a mark the reviewer deliberately made.
-    return { clear: ids.filter((id) => hasDecision(id) && !isInScope(id)), write: [] };
+    return { clear: [], write: ids.filter((id) => !isInScope(id)) };
   }
   return { clear: [], write: ids.filter((id) => isInScope(id)) };
 }

@@ -2248,10 +2248,18 @@ export default function Gate1Page() {
   );
   const price = pricePerGroup(gate2Forecast, groups.length);
 
-  // Default IN. A reviewer who scopes nothing continues with everything, which is what "nothing blocks
-  // Continue" has to mean; the checkbox REMOVES a group rather than admitting one.
-  const isInScope = (groupId: string) =>
-    scope.decisions[groupId]?.chosen !== OUT_OF_SCOPE;
+  // DEFAULT OUT — selecting is the deliberate act (08-23b subset). Opting 1234 groups in by default was
+  // both the wrong default (most runs scope a subset) and the source of the deselect-everything grind. An
+  // explicit decision always wins; absent one, a group is in scope ONLY when the SCORE BUILDER matched it
+  // (those are the ones a reviewer building a score cares about). No composite -> nothing is pre-selected,
+  // and Continue stays disabled until the reviewer scopes something (the empty-in-scope guard already does
+  // this). The checkbox now ADMITS a group rather than removing one.
+  const isInScope = (groupId: string) => {
+    const chosen = scope.decisions[groupId]?.chosen;
+    if (chosen === IN_SCOPE) return true;
+    if (chosen === OUT_OF_SCOPE) return false;
+    return scoreTagByGroup.has(groupId);
+  };
 
   // "You changed it" is DERIVED from persisted decisions, never from component state — R6 requires the
   // correction to be visible after a reload, and a flag in `useState` is gone the moment the page reloads.
@@ -2268,7 +2276,6 @@ export default function Gate1Page() {
     groupId in scope.decisions ||
     groupId in renames.decisions ||
     touchedByRegroup.has(groupId);
-  const hasScopeDecision = (groupId: string) => groupId in scope.decisions;
   const [bulkBusy, setBulkBusy] = useState(false);
 
   /**
@@ -2554,15 +2561,16 @@ export default function Gate1Page() {
    */
   async function onBulkScope(target: "in" | "out") {
     const ids = visible.map((g) => g.groupId);
-    const plan = bulkScopePlan(ids, target, isInScope, hasScopeDecision);
+    const plan = bulkScopePlan(ids, target, isInScope);
     if (plan.clear.length === 0 && plan.write.length === 0) return;
+    const value = target === "in" ? IN_SCOPE : OUT_OF_SCOPE;
     setBulkBusy(true);
     try {
       for (const id of plan.clear) await scope.clear({ groupId: id });
       for (const id of plan.write) {
         await scope.write(
           { groupId: id },
-          { chosen: OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+          { chosen: value, alternatives: SCOPE_OPTIONS },
         );
       }
     } catch (e) {

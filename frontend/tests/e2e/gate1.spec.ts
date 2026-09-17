@@ -651,13 +651,14 @@ test.describe("gate1 toolbar", () => {
       "[data-testid='sum-block'] [data-sum-line='in-scope']",
     );
     const total = fixtureGroups().length;
-    await expect(inScopeLine).toContainText(`${total} of ${total}`);
+    // NEW DEFAULT (08-23b subset): nothing is in scope until the reviewer selects — the deliberate act.
+    await expect(inScopeLine).toContainText(`0 of ${total}`);
 
-    // Take one group out of scope — a real decision, written through the shared layer.
+    // Put one group IN scope — a real decision, written through the shared layer.
     const first = page.locator("[data-testid='ledger-row']").first();
     const id = await first.getAttribute("data-row-id");
     await first.locator("[data-testid='queue-scope']").click();
-    await expect(inScopeLine).toContainText(`${total - 1} of ${total}`);
+    await expect(inScopeLine).toContainText(`1 of ${total}`);
 
     // R6: derived from the persisted decisions, so it is still there after a reload.
     await page.reload();
@@ -665,18 +666,26 @@ test.describe("gate1 toolbar", () => {
     await expect(
       page.locator("[data-testid='ledger-row']").first(),
     ).toBeVisible();
-    await expect(inScopeLine).toContainText(`${total - 1} of ${total}`);
+    await expect(inScopeLine).toContainText(`1 of ${total}`);
     await expect(
       page.locator(`[data-testid='ledger-row'][data-row-id='${id}']`),
     ).toHaveAttribute("data-spine", /changed|unresolved/);
   });
-  test("@gate1 nothing gates Continue on a review count", async ({ page }) => {
+  test("@gate1 Continue is gated on having something in scope, not on a review count", async ({
+    page,
+  }) => {
     await openGate1(page);
-    // D-09 revised: there is no completion gate and no triage-volume halt. With nothing reviewed, the
-    // Continue button is still enabled (the "reviewed" readout itself was retired in 08-16f).
-    await expect(
-      page.locator("[data-testid='commit-bar'] button"),
-    ).toBeEnabled();
+    // NEW DEFAULT (08-23b subset): nothing is selected, so there is nothing to buy — Continue is disabled
+    // until the reviewer scopes at least one group. There is still no triage-VOLUME gate: one is enough,
+    // not N reviewed by hand.
+    const button = page.locator("[data-testid='commit-bar'] button");
+    await expect(button).toBeDisabled();
+    await page
+      .locator("[data-testid='ledger-row']")
+      .first()
+      .locator("[data-testid='queue-scope']")
+      .click();
+    await expect(button).toBeEnabled();
   });
   test("@gate1 the full row count renders without horizontal scroll and without a new package", async ({
     page,
@@ -1339,6 +1348,35 @@ test.describe("gate1 score", () => {
       validationRules: [],
     };
   }
+
+  test("@gate1 with a declared score, its matched groups start IN scope and the rest start OUT", async ({
+    page,
+  }) => {
+    // THE SCORE-BUILDER EXCEPTION to the new default-deselect (08-23b subset). The reviewer ran the score
+    // builder, so the groups it matched are the ones they care about — those are pre-selected; every other
+    // group starts deselected like on a run with no score.
+    const groups = fixtureGroups();
+    const matched = groups.find((g) => g.groupId === "cb2a6e2cd6fd3#g0")!;
+    const rejected = groups.find((g) => g.groupId === "c8331409f61e1#g0")!;
+    const vars = matched.memberVariableNames.slice(0, 2);
+    await serveRun(page, (run) => {
+      run.composites = [scoreSpec(matched, rejected, vars)];
+    });
+    await openGate1(page);
+
+    // The score matched this group -> pre-selected.
+    const matchedScope = page
+      .locator(`[data-testid='ledger-row'][data-row-id='${matched.groupId}']`)
+      .locator("[data-testid='queue-scope']");
+    await expect(matchedScope).toHaveAttribute("aria-checked", "true");
+    // A group the score did not match starts deselected, like every other group under the new default.
+    const otherScope = page
+      .locator(`[data-testid='ledger-row'][data-row-id='${rejected.groupId}']`)
+      .locator("[data-testid='queue-scope']");
+    await expect(otherScope).toHaveAttribute("aria-checked", "false");
+    // ...and Continue is live, because the score's matched group is already in scope.
+    await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
+  });
 
   test("@gate1 a matched component shows its group, coverage and members and links; a missing component's variable candidates roll up to one group", async ({
     page,
@@ -2237,6 +2275,12 @@ test.describe("gate1 continue", () => {
     page,
   }) => {
     await openGate1(page);
+    // NEW DEFAULT is deselected, so scope one group in to enable Continue before exercising the refusal.
+    await page
+      .locator("[data-testid='ledger-row']")
+      .first()
+      .locator("[data-testid='queue-scope']")
+      .click();
     const url = page.url();
     const button = page.locator("[data-testid='commit-bar'] button");
     await expect(button).toBeEnabled();
@@ -2256,6 +2300,12 @@ test.describe("gate1 continue", () => {
     page,
   }) => {
     await openGate1(page);
+    // NEW DEFAULT is deselected, so scope one group in to enable Continue.
+    await page
+      .locator("[data-testid='ledger-row']")
+      .first()
+      .locator("[data-testid='queue-scope']")
+      .click();
     const button = page.locator("[data-testid='commit-bar'] button");
     await expect(button).toBeEnabled();
     // `CommitBar` disables on `busy`, and `onContinue` sets it for the whole await. The guarantee is that
@@ -2503,63 +2553,41 @@ test.describe("gate1 group label", () => {
  * Bulk scope — "select all / deselect all" and its two traps (08-16c Task 7).
  */
 test.describe("gate1 bulk scope", () => {
-  const inScopeOf = (map: Record<string, string>) => (id: string) =>
-    map[id] !== "out";
-  const hasDecisionOf = (map: Record<string, string>) => (id: string) =>
-    id in map;
+  // NEW DEFAULT (08-23b subset): a group is OUT unless an explicit "in" decision puts it in — the score
+  // builder's auto-selection is modelled here by an explicit "in".
+  const inScopeOf = (map: Record<string, string>) => (id: string) => map[id] === "in";
 
   /**
-   * THE TRAP THAT MATTERS. In-scope is the DEFAULT, and `isChanged` is `id in scope.decisions`, so a
-   * "select all" that wrote "in" everywhere would mark every group as reviewer-changed — a ledger
-   * claiming they had reviewed all of them by hand.
+   * THE TRAP THAT MATTERS, INVERTED. With OUT the default and `isChanged` = `id in scope.decisions`, the
+   * deliberate act is now SELECTING: "select all" writes "in" to exactly the shown rows that are out, and
+   * "deselect all" writes "out" to exactly the ones that are in — neither re-writes a row already where it
+   * is being sent, so a bulk press never fakes a departure on rows that would not move.
    */
-  test("@gate1 putting all in scope CLEARS departures rather than writing 'in' to everything", () => {
+  test("@gate1 selecting all writes 'in' for exactly the shown rows that are out", () => {
     const decisions = { a: "out", b: "in", c: "out" };
-    const plan = bulkScopePlan(
-      ["a", "b", "c", "d"],
-      "in",
-      inScopeOf(decisions),
-      hasDecisionOf(decisions),
-    );
-    expect(plan.write).toEqual([]); // nothing is marked changed by selecting all
-    expect(plan.clear).toEqual(["a", "c"]); // only the explicit "out"s are undone
+    const plan = bulkScopePlan(["a", "b", "c", "d"], "in", inScopeOf(decisions));
+    expect(plan.clear).toEqual([]);
+    // b is already in; a and c are explicitly out, d is out by default — admit all three.
+    expect(plan.write).toEqual(["a", "c", "d"]);
   });
 
-  test("@gate1 an undecided group is already in scope, so selecting all does not touch it", () => {
-    const plan = bulkScopePlan(["d"], "in", inScopeOf({}), hasDecisionOf({}));
-    expect(plan).toEqual({ clear: [], write: [] });
-  });
-
-  test("@gate1 a deliberate 'in' decision is preserved, not erased, by selecting all", () => {
+  test("@gate1 an already-in group is not re-written by selecting all", () => {
     const decisions = { b: "in" };
-    expect(
-      bulkScopePlan(
-        ["b"],
-        "in",
-        inScopeOf(decisions),
-        hasDecisionOf(decisions),
-      ),
-    ).toEqual({ clear: [], write: [] });
+    expect(bulkScopePlan(["b"], "in", inScopeOf(decisions))).toEqual({ clear: [], write: [] });
   });
 
   test("@gate1 taking all out writes 'out' only for groups currently in scope", () => {
     const decisions = { a: "out", b: "in" };
-    const plan = bulkScopePlan(
-      ["a", "b", "c"],
-      "out",
-      inScopeOf(decisions),
-      hasDecisionOf(decisions),
-    );
+    const plan = bulkScopePlan(["a", "b", "c"], "out", inScopeOf(decisions));
     expect(plan.clear).toEqual([]);
-    expect(plan.write).toEqual(["b", "c"]); // "a" is already out and is not re-written
+    // b is in — take it out; a is already out and c is out by default, so both are untouched.
+    expect(plan.write).toEqual(["b"]);
   });
 
   test("@gate1 the control reports a real tri-state, never 'all' over a partial set", () => {
-    expect(bulkScopeState(["a", "b"], inScopeOf({}))).toBe("all");
-    expect(bulkScopeState(["a", "b"], inScopeOf({ a: "out", b: "out" }))).toBe(
-      "none",
-    );
-    expect(bulkScopeState(["a", "b"], inScopeOf({ a: "out" }))).toBe("some");
+    expect(bulkScopeState(["a", "b"], inScopeOf({ a: "in", b: "in" }))).toBe("all");
+    expect(bulkScopeState(["a", "b"], inScopeOf({}))).toBe("none");
+    expect(bulkScopeState(["a", "b"], inScopeOf({ a: "in" }))).toBe("some");
     expect(bulkScopeState([], inScopeOf({}))).toBe("none");
   });
 
@@ -2622,12 +2650,14 @@ test.describe("gate1 bulk scope", () => {
     page,
   }) => {
     await openGate1(page);
+    const bar = page.locator("[data-testid='commit-bar']");
+    // NEW DEFAULT is deselected: select everything first, so there is a full price to erode.
+    await page.locator("[data-testid='bulk-scope-in']").click();
+    const full = Number(await bar.getAttribute("data-total"));
+    expect(full).toBeGreaterThan(0);
     // Narrow to the cross-cohort bucket so the single-cohort groups are OFF screen. Bulk "all" acts on
     // the SHOWN rows only, so it must leave the off-screen ones in scope (08-16f: the view is the filter).
     await page.locator("[data-testid='cross-cohort-toggle']").click();
-    const bar = page.locator("[data-testid='commit-bar']");
-    const before = Number(await bar.getAttribute("data-total"));
-    expect(before).toBeGreaterThan(0);
     const shown = await page.locator("[data-testid='ledger-row']").count();
     expect(shown).toBeGreaterThan(0);
 
@@ -2637,65 +2667,52 @@ test.describe("gate1 bulk scope", () => {
       "none",
     );
 
+    // Back to the whole corpus: the single-cohort groups were off-screen and stayed IN, so the total
+    // dropped by exactly the cross-cohort rows and no more.
+    await page.locator("[data-testid='cross-cohort-toggle']").click();
     const after = Number(await bar.getAttribute("data-total"));
-    expect(after).toBeLessThan(before);
-    // The single-cohort groups were off-screen and untouched, so there is still something left to buy.
+    expect(after).toBeLessThan(full);
     expect(after).toBeGreaterThan(0);
   });
   /**
-   * THE FAILED-IMPLEMENTATION CHECK the plan calls for by name. `isChanged` is
-   * `groupId in scope.decisions`, and the row paints an accent spine from it. A "select all" that wrote
-   * "in" to every group would light every spine on the screen and hand back a ledger claiming the
-   * reviewer had been through all of them by hand.
+   * BULK IS THE DELIBERATE ACT, and the spine tracks it honestly. With OUT the default (08-23b subset),
+   * nothing is marked until the reviewer acts; "select all" then carries their own scope decisions, so the
+   * rows are marked. The guarantee `bulkScopePlan` still holds — a bulk press never re-writes a row already
+   * where it is being sent — is asserted in the unit test above; here it is the visible before/after.
    */
-  test("@gate1 putting all in scope marks NO row as reviewer-changed", async ({
+  test("@gate1 nothing is marked until a bulk press, then selecting all carries the decisions", async ({
     page,
   }) => {
     await openGate1(page);
-    const before = await page
-      .locator("[data-testid='ledger-row'][data-spine='changed']")
-      .count();
-    expect(before).toBe(0);
-    // Take them out (a genuine departure — every row SHOULD be marked), then restore the default.
-    await page.locator("[data-testid='bulk-scope-out']").click();
-    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
-      "data-state",
-      "none",
-    );
-    expect(
-      await page
-        .locator("[data-testid='ledger-row'][data-spine='changed']")
-        .count(),
-    ).toBeGreaterThan(0);
-
+    const changed = () =>
+      page.locator("[data-testid='ledger-row'][data-spine='changed']").count();
+    // New default: nothing selected, nothing marked.
+    expect(await changed()).toBe(0);
     await page.locator("[data-testid='bulk-scope-in']").click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
       "data-state",
       "all",
     );
-    // Back to the default, and back to no claim of having reviewed anything.
-    expect(
-      await page
-        .locator("[data-testid='ledger-row'][data-spine='changed']")
-        .count(),
-    ).toBe(0);
+    // The selections are the reviewer's own scope decisions, so the rows carry them.
+    expect(await changed()).toBeGreaterThan(0);
+    // ...and deselecting takes them all back out.
+    await page.locator("[data-testid='bulk-scope-out']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
+      "data-state",
+      "none",
+    );
   });
 
-  test("@gate1 the reverse action restores the default and is then itself unavailable", async ({
+  test("@gate1 once everything shown is selected, Select all is itself unavailable", async ({
     page,
   }) => {
     await openGate1(page);
-    await page.locator("[data-testid='bulk-scope-out']").click();
-    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
-      "data-state",
-      "none",
-    );
     await page.locator("[data-testid='bulk-scope-in']").click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
       "data-state",
       "all",
     );
-    // Nothing left to do in that direction, so the control says so rather than offering a no-op.
+    // Nothing left to select, so the control says so rather than offering a no-op.
     await expect(page.locator("[data-testid='bulk-scope-in']")).toBeDisabled();
   });
 });
@@ -2926,11 +2943,12 @@ test.describe("gate1 frozen", () => {
   }) => {
     await openGate1(page); // fixture parks AT gate1
     await expect(page.locator("[data-testid='gate-frozen']")).toHaveCount(0);
-    await expect(
-      page
-        .locator("[data-testid='ledger-row'] button[role='checkbox']")
-        .first(),
-    ).toBeEnabled();
+    const checkbox = page
+      .locator("[data-testid='ledger-row'] button[role='checkbox']")
+      .first();
+    await expect(checkbox).toBeEnabled();
+    // NEW DEFAULT is deselected, so scope one group in to show Continue is live on the current gate.
+    await checkbox.click();
     await expect(
       page.locator("[data-testid='commit-bar'] button"),
     ).toBeEnabled();
