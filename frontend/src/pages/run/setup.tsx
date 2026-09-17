@@ -36,7 +36,7 @@ import { RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { preparationProgress } from "@/lib/run-state";
-import { lookupPrefill, rememberAssignment } from "@/lib/column-prefill";
+import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatDurationRange } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
@@ -222,6 +222,13 @@ interface SetupDict {
   datasetId?: string;
   /** role -> source column. */
   roles: Record<string, string>;
+  /**
+   * Where the STARTING mapping came from, when it was prepopulated rather than assigned by hand: the shipped
+   * demo manifest, or this browser's own last-used mapping for a file with the same columns (with the date
+   * it was remembered). Absent when nothing prefilled — the identity fallback in `initialRoles` is not a
+   * "prepopulated from a previous run" claim and carries no provenance line.
+   */
+  prefill?: { source: PrefillSource; at?: number };
   /**
    * The mapping AS CONFIRMED by the reviewer, or null while it has not been.
    *
@@ -785,6 +792,7 @@ export default function SetupPage() {
         continue;
       }
 
+      const prefill = lookupPrefill(parsed.headers);
       setDicts((prev) =>
         prev.map((d) =>
           d.key === key
@@ -794,6 +802,9 @@ export default function SetupPage() {
                 rows: parsed.rows,
                 rowCount: parsed.rows.length,
                 roles: initialRoles(parsed.headers),
+                // Provenance for the "prepopulated from…" note, only when the mapping actually came from a
+                // remembered/demo assignment (not from the identity fallback initialRoles applies otherwise).
+                prefill: prefill ? { source: prefill.source, at: prefill.at } : undefined,
                 state: "ready",
               }
             : d,
@@ -1148,13 +1159,30 @@ export default function SetupPage() {
                   Reading this file in your browser. Nothing has been uploaded.
                 </p>
               ) : (
-                <DictionaryMappingTable
-                  headers={d.headers}
-                  roles={d.roles}
-                  rows={d.rows}
-                  disabled={runStarted}
-                  onRolesChange={(roles) => setRoles(d.key, roles)}
-                />
+                <>
+                  {/* WHERE THE PREPOPULATED MAPPING CAME FROM, so a reviewer can trust or override it rather
+                      than wondering why the columns arrived pre-assigned. Only shown when the mapping was
+                      actually prefilled (demo manifest or this browser's own prior mapping of the same
+                      columns) — never for the identity fallback, which is not a "from a previous run" claim. */}
+                  {d.prefill && (
+                    <p data-testid="prefill-provenance" className="text-xs text-on-raised-muted">
+                      {d.prefill.source === "demo"
+                        ? "Column assignments prepopulated from the demo mapping for this file. Edit any of them below."
+                        : d.prefill.at
+                          ? `Column assignments prepopulated from your previous mapping of this file (saved ${new Date(
+                              d.prefill.at,
+                            ).toLocaleDateString()}). Edit any of them below.`
+                          : "Column assignments prepopulated from your previous mapping of this file. Edit any of them below."}
+                    </p>
+                  )}
+                  <DictionaryMappingTable
+                    headers={d.headers}
+                    roles={d.roles}
+                    rows={d.rows}
+                    disabled={runStarted}
+                    onRolesChange={(roles) => setRoles(d.key, roles)}
+                  />
+                </>
               )}
 
               {/* PER-DICTIONARY CONFIRMATION AND EXPORT, compose stage only. A started run's column roles
