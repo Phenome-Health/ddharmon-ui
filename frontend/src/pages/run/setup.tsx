@@ -6,7 +6,7 @@ import Papa from "papaparse";
 import { ChevronDown, Eye, EyeOff, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
-import { GateShell, railFor } from "@/components/gate/GateShell";
+import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DictionaryMappingTable } from "@/components/gate/DictionaryMappingTable";
@@ -1236,7 +1236,7 @@ export default function SetupPage() {
             ? "What this run was set up with. It is a record now, not a decision — the column mapping is fixed for a run that has started, and this run is already past its first charge."
             : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Mark each dictionary complete to export the exact text that will be clustered — all of that is free. Nothing is charged until you press Start run."
       }
-      rail={railFor("setup", { totalRealized: costSoFar })}
+      rail={railFor("setup", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a

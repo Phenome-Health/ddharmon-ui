@@ -3,14 +3,14 @@ import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
-import { formatUsd, type GatePosition, type JobResult } from "@/types";
+import { formatUsd, type GatePosition, type JobResult, type RunCost } from "@/types";
 import { PhMark } from "@/components/ph-logo";
 import { StopRunAction } from "@/components/stop-run-action";
 import { GATE_LABELS, GATE_SEQUENCE, GateRail, type GateRailItem } from "@/components/gate/GateRail";
 import { HowToPanel } from "@/components/gate/HowToPanel";
 import { RunProgress } from "@/components/gate/RunProgress";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
-import { stopCostSplit } from "@/lib/estimate";
+import { realizedSpendByGate, stopCostSplit } from "@/lib/estimate";
 import { isInFlight } from "@/lib/run-state";
 
 /**
@@ -318,4 +318,20 @@ export function railFor(
       },
     };
   });
+}
+
+/**
+ * The realized-cost args for `railFor`, from the run's OWN ledger. Attributes per gate when the run HAS a
+ * per-stage ledger (each gate reads what it actually spent); otherwise it hands back only the total, for the
+ * current gate. An unledgered total — an in-flight run, or a DB-hydrated historical one — attributed per gate
+ * would be a guess, and the current $0-on-past-gates + whole-total-on-current is exactly that. This replaces
+ * passing bare `totalRealized`, which made Gate 1 read $0 while the cumulative total landed on the current gate.
+ */
+export function realizedRailArgs(
+  cost?: RunCost | null,
+  costSoFar?: number,
+): { realizedByGate?: Partial<Record<GatePosition, number>>; totalRealized: number } {
+  const spend = realizedSpendByGate(cost, costSoFar);
+  const hasLedger = !!cost?.perStage && Object.keys(cost.perStage).length > 0;
+  return hasLedger ? { realizedByGate: spend.byGate, totalRealized: spend.total } : { totalRealized: spend.total };
 }

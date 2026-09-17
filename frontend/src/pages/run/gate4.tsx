@@ -1,5 +1,5 @@
 import { useParams } from "wouter";
-import { GateShell, railFor } from "@/components/gate/GateShell";
+import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 
 /**
@@ -24,7 +24,7 @@ export default function Gate4Page() {
       // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
       jobId={jobId}
       subhead="Choose what to take away, check it before it goes, and read the decision trail behind it. Downloading is free."
-      rail={railFor("gate4", { totalRealized: costSoFar })}
+      rail={railFor("gate4", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a

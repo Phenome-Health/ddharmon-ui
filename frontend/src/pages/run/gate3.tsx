@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { GateShell, railFor } from "@/components/gate/GateShell";
+import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
 import {
   ConceptWorkbench,
   ConceptQueueRow,
@@ -847,7 +847,7 @@ function Shell({
       gate="gate3"
       jobId={jobId}
       subhead="One recode per source variable, grouped by concept. Arithmetic recodes always come to you for review."
-      rail={railFor("gate3", { totalRealized: costSoFar })}
+      rail={railFor("gate3", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}

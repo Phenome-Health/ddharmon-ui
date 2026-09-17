@@ -19,7 +19,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { GATE_LABELS } from "@/components/gate/GateRail";
-import { GateShell, railFor } from "@/components/gate/GateShell";
+import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
 import { LedgerRow } from "@/components/gate/LedgerRow";
 import { CoherenceMark } from "@/components/gate/CoherenceMark";
@@ -2610,7 +2610,7 @@ export default function Gate1Page() {
       // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
       jobId={jobId}
       subhead="Each row is a group of variables that mean the same thing, with the name ddharmon generated for it. Choose which ones go on to be matched against common data elements."
-      rail={railFor("gate1", { totalRealized: costSoFar })}
+      rail={railFor("gate1", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
