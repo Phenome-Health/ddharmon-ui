@@ -15,7 +15,7 @@ from typing import Any
 from backend.checkpoint import checkpoint_path, write_checkpoint
 from backend.engine import run_pipeline
 from backend.engine.adapter import StageFn
-from backend.jobs import JobStore
+from backend.jobs import AWAITING_REVIEW, JobStore
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,22 @@ def run_harmonization(
         # can name what broke (e.g. "assigning"). Ignore the non-stage sentinels.
         failing = store.get(job_id)
         failed_phase = failing.phase if failing and failing.phase not in ("error", "pending") else None
-        store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)
+        # A RESUMED leg (replay_responses given) still has its prior gate's checkpoint on disk and its
+        # gate_position/checkpoint_ref unchanged. A failed continue must NOT flip to a terminal `error` — that
+        # hides the served gate (/result) and blocks `resume` (409), which is what forced a manual jobs.db
+        # status flip in the live test. Leave the run PARKED at its last good gate, recording the failure via
+        # error_message as "the last continue failed — retry". A FIRST leg (no replay) has no prior gate to
+        # fall back to, so it still errors as before.
+        if replay_responses is not None and failing and failing.gate_position and failing.checkpoint_ref:
+            store.update(
+                job_id,
+                status=AWAITING_REVIEW,
+                phase=AWAITING_REVIEW,
+                error_message=str(exc),
+                failed_phase=failed_phase,
+            )
+        else:
+            store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)
 
 
 def _relative_ref(store: JobStore, job_id: str, path: Path) -> str:

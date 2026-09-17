@@ -1396,6 +1396,25 @@ def test_gate1_assign_scope_is_none_when_nothing_scoped_out(monkeypatch):
     assert app_module._gate1_assign_scope(SimpleNamespace(), "u", groups) is None
 
 
+def test_resume_needs_a_key_only_for_a_keyless_anthropic_paid_leg(monkeypatch):
+    """resume_run's pre-flight: a batch/sync Anthropic resume needs a key present (BYOK header OR server env)
+    BEFORE it commits the gate and spawns a worker. Preview runs and non-Anthropic (proxy) models are exempt.
+
+    This is the keyless-paid-action fix: discover the missing key at the door, not deep in the paid stage
+    where it errors the whole run and wipes the served gate state.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    needs = app_module._resume_needs_a_key
+    claude = {"run_mode": "batch", "model_tag": "claude-sonnet-4-6"}
+    assert needs(claude, None) is True  # keyless anthropic paid leg -> refuse
+    assert needs(claude, "sk-byok") is False  # BYOK header present
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env")
+    assert needs(claude, None) is False  # server env key present
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert needs({"run_mode": "preview"}, None) is False  # preview never calls a model
+    assert needs({"run_mode": "batch", "model_tag": "gpt-4o"}, None) is False  # proxy model, not the anthropic key
+
+
 def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
     """The adapter reports phases via the progress callback (data-driven progress for the UI)."""
     a = tmp_path / "cohortA.csv"

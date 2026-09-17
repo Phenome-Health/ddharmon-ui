@@ -568,6 +568,45 @@ def test_the_runner_marks_a_gate_boundary_awaiting_review_and_returns(tmp_path, 
     store.db.close()
 
 
+def test_a_failed_resumed_leg_stays_parked_not_errored(tmp_path, monkeypatch):
+    """The keyless-wipes-gate-state fix: a RESUMED leg (replay_responses given) whose paid stage raises
+    leaves the run PARKED at its prior gate — status still awaiting_review, gate_position and checkpoint_ref
+    intact — not flipped to terminal `error`. A terminal error hides the served gate (/result) and blocks
+    `resume` (409), which is what forced a manual jobs.db status flip in the live test.
+    """
+    store = JobStore(work_root=tmp_path / "work", db=None)
+    store.create("p", "Paused", {"work_dir": str(tmp_path / "work" / "p")})
+    store.checkpoint("p", gate="gate1", checkpoint_ref="p/checkpoint_gate1.json", realized_cost=1.0)
+    store.update("p", status="pending", phase="pending")  # what resume_run does before spawning the worker
+
+    def boom(*a, **k):
+        raise RuntimeError("Could not resolve authentication method")
+
+    monkeypatch.setattr(runner_module, "run_pipeline", boom)
+    runner_module.run_harmonization(
+        store, "p", [], None, {"work_dir": str(tmp_path / "work" / "p")}, replay_responses={"generate": {}}
+    )
+
+    job = store.get("p")
+    assert job.status == AWAITING_REVIEW, "a failed resumed leg destroyed the parked run instead of keeping it"
+    assert job.gate_position == "gate1"
+    assert job.checkpoint_ref == "p/checkpoint_gate1.json"
+
+
+def test_a_failed_first_leg_still_errors(tmp_path, monkeypatch):
+    """A FIRST leg (no replay_responses) that raises has no prior gate to fall back to — it errors, unchanged."""
+    store = JobStore(work_root=tmp_path / "work", db=None)
+    store.create("n", "New", {"work_dir": str(tmp_path / "work" / "n")})
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner_module, "run_pipeline", boom)
+    runner_module.run_harmonization(store, "n", [], None, {"work_dir": str(tmp_path / "work" / "n")})
+
+    assert store.get("n").status == "error"
+
+
 def test_resuming_a_run_with_no_decisions_lands_on_the_first_gate(tmp_path):
     """UI-SPEC §8.2: "resuming a run with no decisions resumes at the first gate".
 
@@ -1486,7 +1525,9 @@ def test_resuming_from_gate_2_runs_to_completion_and_asks_for_a_gate_3_park(monk
         write_checkpoint(wd, job_id="g2", gate="gate2", result={"records": []}, responses={}, realized_cost=3.0)
         app_module.store.checkpoint("g2", gate="gate2", checkpoint_ref="g2/checkpoint_gate2.json", realized_cost=3.0)
 
-        body = c.post("/api/harmonize/resume/g2").json()
+        # A paid resume now pre-flights the provider key (keyless-wipes-gate-state fix); supply one so this
+        # leg reaches the park-config assertions rather than the "enter your key" refusal.
+        body = c.post("/api/harmonize/resume/g2", headers={"x-anthropic-key": "sk-test"}).json()
 
     assert body["target"] == "gate3"
     assert seen["stop_at_gate"] is None, "Gate 3 was given an engine boundary it has no core support for"

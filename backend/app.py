@@ -744,6 +744,24 @@ def checkpoint_state(
 ENTRY_GATE = "gate1"
 
 
+def _resume_needs_a_key(config: dict[str, Any], header_key: str | None) -> bool:
+    """Whether resuming this run would make a paid Anthropic call with no key available.
+
+    A batch/sync resume calls the provider; Anthropic reads the key from the BYOK header or the server's
+    ``ANTHROPIC_API_KEY`` env (``api_key=None`` falls back to the env). Preview runs make no LLM call, and a
+    non-Anthropic (proxy) model does not use this key — both are exempt. :func:`resume_run` refuses BEFORE it
+    commits the gate and spawns the worker, so a missing key is a clear "enter your key" at the door rather
+    than an error deep in the paid stage that errors the whole run and wipes the served gate state.
+    """
+    if config.get("run_mode") == "preview":
+        return False
+    from backend.engine.llm import is_anthropic_model
+
+    if not is_anthropic_model(config.get("model_tag")):
+        return False
+    return not (header_key or os.environ.get("ANTHROPIC_API_KEY"))
+
+
 def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, Any]]) -> list[str] | None:
     """The group ids the reviewer KEPT in scope at Gate 1 — what the paid assign should process — or None.
 
@@ -829,6 +847,16 @@ def resume_run(
             realized_cost=ckpt.realized_cost,
         )
         return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
+    # Pre-flight the provider key BEFORE committing the gate and spawning the worker. Past Gate 4 this leg
+    # makes a PAID call, and the BYOK key clears on a browser reload — discovering it missing deep in the
+    # generating stage errors the whole run and wipes the served gate state (the keyless-wipes-gate-state
+    # bug). Refuse at the door instead; the run stays parked and resumable the moment a key is re-supplied.
+    if _resume_needs_a_key(job.config, x_anthropic_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter your Anthropic API key to continue — a paid step needs it and the key clears on "
+            "reload. Your gate state is preserved; re-enter the key and press Continue again.",
+        )
     # Where the ENGINE stops and where the RUN parks are two different questions. Only gates with a core
     # boundary are stop targets; past that the pipeline runs to completion and the UI backend holds the run
     # itself (UI-SPEC §0.1). Gate 3 is exactly that case — it reviews the FINISHED pipeline, so it takes no
