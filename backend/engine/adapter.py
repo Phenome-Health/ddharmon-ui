@@ -1917,6 +1917,16 @@ def run_pipeline(
     refine_cdes = config.get("refine_cdes", True) and "refine_cdes" in inspect.signature(harmonize_leanb).parameters
     if refine_cdes:
         kwargs["refine_cdes"] = True
+    # Gate-1 scope (08 resume): the reviewer kept a subset of groups at Gate 1, and the per-group assign is
+    # 77% of the run — so only the in-scope groups reach the PAID assign, and the Gate-2 cost matches the
+    # quote Gate 1 showed. `resume_run` computes the in-scope group ids off the `gate1_group_scope`
+    # decisions and threads them here as `assign_group_ids`. Signature-guarded like the flags above so a
+    # core pinned before the scope port ignores it (assign every group — the pre-scope behaviour) rather
+    # than erroring on an unexpected kwarg; the dev channel swaps core versions, so the adapter must not
+    # assume it. An explicit empty scope is honoured (assign nothing); absent (None) is assign-all.
+    scope_ids = config.get("assign_group_ids")
+    if scope_ids is not None and "assign_group_ids" in inspect.signature(harmonize_leanb).parameters:
+        kwargs["assign_group_ids"] = set(scope_ids)
     # ── the coherence judge, IN THE PRODUCT (STGD-02's adapter half) ──
     # Until this landed, `harmonize_leanb` here was passed neither `coherence=` nor `distinct_kinds=`, so
     # the judge never executed and every shipped artifact carried an incoherent count of zero — while the

@@ -43,6 +43,7 @@ import backend.artifact_kinds  # noqa: F401 — importing registers the artifact
 from backend import batch_reconcile
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
+    GATE1_GROUP_SCOPE,
     GATE_DECISION_KINDS,
     accept_gencde,
     derive_staleness,
@@ -743,6 +744,29 @@ def checkpoint_state(
 ENTRY_GATE = "gate1"
 
 
+def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, Any]]) -> list[str] | None:
+    """The group ids the reviewer KEPT in scope at Gate 1 — what the paid assign should process — or None.
+
+    Default-in: a group is in scope unless a ``gate1_group_scope`` decision marks it ``out`` (the same rule
+    the Gate-2 display filter applies, so the two never disagree). ``None`` means the reviewer scoped nothing
+    out, so the assign processes EVERY group exactly as before scope was honoured — an un-scoped run threads
+    no filter and keeps the pre-scope cost. Otherwise the kept subset (possibly empty, if everything was
+    scoped out): the assign then pays for only those groups, which is what makes the Gate-2 cost match the
+    quote Gate 1 showed. ``groups`` is the current gate's ``conceptGroups`` (the frozen partition the resume
+    replays), so a scope decision keyed on a group id that this leg no longer has simply matches nothing.
+    """
+    scope = (store.artifacts_for(job, subject) or {}).get(GATE1_GROUP_SCOPE) or []
+    out_ids = {d.get("groupId") for d in scope if d.get("chosen") == "out"}
+    if not out_ids:
+        return None
+    kept: list[str] = []
+    for g in groups:
+        gid = g.get("groupId")
+        if gid and gid not in out_ids:
+            kept.append(gid)
+    return kept
+
+
 @app.post("/api/harmonize/resume/{job_id}")
 def resume_run(
     job_id: str, request: Request, x_anthropic_key: Annotated[str | None, Header()] = None
@@ -814,6 +838,15 @@ def resume_run(
         "stop_at_gate": target if target in ("gate1", "gate2") else None,
         "park_at_gate": target,
     }
+    # Gate-1 scope: honour the reviewer's kept groups so the paid per-group assign (77% of the run) processes
+    # ONLY them — which is what makes the Gate-2 cost match the quote Gate 1 showed (until now the scope was a
+    # display filter only, so the assign paid for every group). Threaded on every worker-spawning leg (gate2
+    # and gate3), not just gate1->gate2: the group_assign prompts for out-of-scope groups have no replayed
+    # answer, so an unfiltered later leg would re-run them as "new work" and re-charge.
+    groups = (getattr(ckpt, "result", None) or {}).get("conceptGroups") or []
+    in_scope = _gate1_assign_scope(job, subject, groups)
+    if in_scope is not None:
+        run_config["assign_group_ids"] = in_scope
     store.update(job_id, status="pending", phase="pending")
     threading.Thread(
         target=run_harmonization,

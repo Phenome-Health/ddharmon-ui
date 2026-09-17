@@ -1236,6 +1236,7 @@ def _spy_on_core(monkeypatch, seen):
     def spy(embedded, **kw):
         seen["refine_cdes"] = kw.get("refine_cdes", "ABSENT")
         seen["refine_cb"] = kw.get("refine") is not None
+        seen["assign_group_ids"] = kw.get("assign_group_ids", "ABSENT")
         return orig(embedded, **kw)
 
     monkeypatch.setattr(core, "harmonize_leanb", spy)
@@ -1332,6 +1333,67 @@ def test_refine_cdes_can_be_gated_off(monkeypatch, tmp_path):
 
     assert seen["refine_cdes"] == "ABSENT", "refine_cdes=false should not pass the flag to core"
     assert not seen["refine_cb"], "refine_cdes=false should not pass the refine callback either"
+
+
+def test_assign_group_ids_is_wired_through_to_core(monkeypatch, tmp_path):
+    """Gate-1 scope reaches core: config['assign_group_ids'] is threaded to harmonize_leanb's assign subset.
+
+    Without this wire the Gate-2 assign matched EVERY group — the cost quote Gate 1 showed ("$0.09 to match
+    the 10 you kept") was a promise the backend broke, because the scope was a frontend display filter only.
+    ``resume_run`` computes the in-scope ids off the ``gate1_group_scope`` decisions; this asserts the knob
+    lands on core (a set, since the adapter normalises it), not that a given group is dropped — that is
+    core's own tested behaviour.
+    """
+    dict_specs, cde_spec, config, overrides = _refine_fixture(tmp_path, monkeypatch)
+    config["assign_group_ids"] = ["0#g0", "0#g1"]
+    seen: dict = {}
+    _spy_on_core(monkeypatch, seen)
+
+    run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert seen["assign_group_ids"] == {"0#g0", "0#g1"}, "Gate-1 scope never reached core's assign"
+
+
+def test_assign_group_ids_absent_is_assign_all(monkeypatch, tmp_path):
+    """No scope in config -> core sees no assign_group_ids, so every group is assigned (pre-scope behaviour)."""
+    dict_specs, cde_spec, config, overrides = _refine_fixture(tmp_path, monkeypatch)
+    seen: dict = {}
+    _spy_on_core(monkeypatch, seen)
+
+    run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), stage_overrides=overrides)
+
+    assert seen["assign_group_ids"] == "ABSENT"
+
+
+def test_gate1_assign_scope_keeps_all_but_explicitly_out(monkeypatch):
+    """resume_run's scope computation is default-in: a group is kept unless a decision marks it ``out``.
+
+    This is the fix for the cost bug — until now resume_run never read ``gate1_group_scope`` at all, so the
+    assign matched every group regardless of what the reviewer scoped.
+    """
+    from types import SimpleNamespace
+
+    groups = [{"groupId": "c0#g0"}, {"groupId": "c0#g1"}, {"groupId": "c1#g0"}]
+    monkeypatch.setattr(
+        app_module.store,
+        "artifacts_for",
+        lambda job, subject: {"gate1_group_scope": [{"groupId": "c0#g1", "chosen": "out"}]},
+    )
+    kept = app_module._gate1_assign_scope(SimpleNamespace(), "u", groups)
+    assert kept == ["c0#g0", "c1#g0"]  # the 'out' group dropped; the rest — including the untouched — kept
+
+
+def test_gate1_assign_scope_is_none_when_nothing_scoped_out(monkeypatch):
+    """No ``out`` decision -> None -> the assign processes every group (thread no filter, keep the old cost)."""
+    from types import SimpleNamespace
+
+    groups = [{"groupId": "c0#g0"}, {"groupId": "c0#g1"}]
+    monkeypatch.setattr(
+        app_module.store,
+        "artifacts_for",
+        lambda job, subject: {"gate1_group_scope": [{"groupId": "c0#g0", "chosen": "in"}]},
+    )
+    assert app_module._gate1_assign_scope(SimpleNamespace(), "u", groups) is None
 
 
 def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
