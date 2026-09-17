@@ -2829,6 +2829,87 @@ def test_readjudicate_degrades_on_a_core_that_lacks_it(monkeypatch):
     assert not any(r.get("readjudicatedFrom") for r in out)
 
 
+def test_readjudicate_split_only_requires_explicit_group_ids():
+    """Accept-the-division is a human decision too: an empty or absent id list is refused, never widened to
+    every flagged group. Same standing prohibition as the assign-path readjudicate."""
+    from backend.engine.adapter import readjudicate_split_only_groups
+
+    called = {"n": 0}
+
+    def _never(prompts):
+        called["n"] += 1
+        return {}
+
+    result = LeanBResult(records=_canned_records())
+    for bad in ([], None):
+        with pytest.raises(ValueError, match="group_ids"):
+            readjudicate_split_only_groups(result, [], group_ids=bad, split=_never)
+    assert called["n"] == 0, "a refused re-split must not run (or pay for) a single stage"
+
+
+def test_readjudicate_split_only_returns_child_groups_with_provenance(monkeypatch):
+    """The Gate-1 ledger, not records: split-only returns (conceptGroups, conceptGroupMembers), and each
+    re-split child names the parent group it was carved from — the provenance the "re-split from <parent>"
+    marker reads. NO classify is forwarded (this path takes only `split`)."""
+    from ddharmon.harmonization.models import ConceptGroup
+
+    from backend.engine import adapter as ad
+
+    seen = {}
+
+    def fake_core_split_only(result, embedded, embeddings, field_refs, **kw):
+        seen.update(kw)
+        parent_gid = result.records[0].group_id or result.records[0].cluster_id
+        result.concept_groups = [
+            ConceptGroup(
+                cluster_id=parent_gid,
+                group_id=f"{parent_gid}#g0",
+                concept="A",
+                n_members=1,
+                member_variable_names=["CohortA:v1"],
+                readjudicated_from=parent_gid,
+            ),
+            ConceptGroup(
+                cluster_id=parent_gid,
+                group_id=f"{parent_gid}#g1",
+                concept="B",
+                n_members=1,
+                member_variable_names=["CohortA:v2"],
+                readjudicated_from=parent_gid,
+            ),
+        ]
+        result.records = []
+        return result
+
+    monkeypatch.setattr(ad, "_core_readjudicate_split_only", lambda: fake_core_split_only)
+    monkeypatch.setattr(ad, "_collect_inputs", lambda embedded: ([], [], []))
+
+    result = LeanBResult(records=_canned_records())
+    gid = result.records[0].group_id or result.records[0].cluster_id
+    groups, members = ad.readjudicate_split_only_groups(result, [], group_ids=[gid], split=lambda p: {})
+
+    assert seen["group_ids"] == [gid], "the explicit id list must reach core verbatim"
+    assert "classify" not in seen, "split-only never forwards a classify stage"
+    assert sorted(g["readjudicatedFrom"] for g in groups) == [gid, gid]
+    assert all("groupId" in g for g in groups)
+    assert set(members) == {f"{gid}#g0", f"{gid}#g1"}
+
+
+def test_readjudicate_split_only_degrades_on_a_core_that_lacks_it(monkeypatch):
+    """An older pinned core has no `readjudicate_split_only`; the caller gets the run's groups back unchanged
+    rather than an exception."""
+    from backend.engine import adapter as ad
+
+    def _absent():
+        raise ImportError("no readjudicate_split_only in this core")
+
+    monkeypatch.setattr(ad, "_core_readjudicate_split_only", _absent)
+    result = LeanBResult(records=_canned_records())
+    gid = result.records[0].group_id or result.records[0].cluster_id
+    groups, _members = ad.readjudicate_split_only_groups(result, [], group_ids=[gid], split=lambda p: {})
+    assert not any(g.get("readjudicatedFrom") for g in groups)
+
+
 # ── Gate 1's group shape: deterministic order, collapsed cap, uncapped expansion ──────────────
 
 
@@ -3298,9 +3379,12 @@ def _spy_readjudicate(monkeypatch):
 
     def spy(leanb_result, embedded, *, group_ids, **kw):
         calls.append({"group_ids": list(group_ids), "kwargs": sorted(kw)})
-        return [{"id": "r1", "groupId": "g1"}]
+        # Split-only returns (conceptGroups, conceptGroupMembers): the parent is replaced by a child group
+        # carrying the provenance the Gate-1 "re-split from <parent>" marker reads.
+        gid = list(group_ids)[0]
+        return ([{"groupId": f"{gid}#g0", "readjudicatedFrom": gid}], {f"{gid}#g0": ["CohortA:v1"]})
 
-    monkeypatch.setattr(ad, "readjudicate_groups", spy)
+    monkeypatch.setattr(ad, "readjudicate_split_only_groups", spy)
     return calls
 
 
@@ -3375,15 +3459,16 @@ def test_readjudicate_refuses_a_keyless_paid_action(monkeypatch, tmp_path):
 
 def test_readjudicate_forwards_exactly_the_named_groups(monkeypatch, tmp_path):
     """The opt-in run's happy path: the endpoint hands core's seam the ids the human named and nothing else,
-    and the run's records are updated in place. The provider client is a stub whose calls are counted, so
-    "the split and assign for those groups is the ONLY new spend" is asserted rather than assumed."""
+    and the run's Gate-1 ledger is updated in place — the accepted parent replaced by its child concept-groups
+    (split-only), the parent's stale record dropped, and NO child records added (the children are unassigned
+    until Gate 2). The provider client is a stub whose calls are counted, so "the re-split for those groups is
+    the ONLY new spend" is asserted rather than assumed."""
     calls = _spy_readjudicate(monkeypatch)
     import backend.engine.adapter as ad
     import backend.engine.llm as llm_mod
 
     completions = []
     monkeypatch.setattr(ad, "replay_leanb_result", lambda *a, **k: (object(), []))
-    monkeypatch.setattr(ad, "build_member_index", lambda embedded: {})
     monkeypatch.setattr(
         llm_mod,
         "build_llm_client",
@@ -3394,9 +3479,11 @@ def test_readjudicate_forwards_exactly_the_named_groups(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
     job_id = _readjudicable_run("j-ok", opt_in=True, config={"work_dir": str(tmp_path / "j-ok")})
+    # A record on the accepted group (dropped) and one on another group (kept) — so the parent-drop is visible.
     app_module.store.update(
         job_id,
         dict_specs=[{"path": str(cde), "cohort_name": "CohortA", "column_roles": {"variable_name": "designation"}}],
+        result={"records": [{"id": "r1", "groupId": "g1"}, {"id": "r2", "groupId": "gKeep"}]},
     )
     # Re-adjudication is a paid action and now pre-flights the provider key (accept-the-division fix);
     # supply one so this reaches the forwarding assertions rather than the "enter your key" refusal.
@@ -3406,8 +3493,12 @@ def test_readjudicate_forwards_exactly_the_named_groups(monkeypatch, tmp_path):
         headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
-    assert calls and calls[0]["group_ids"] == ["g1", "g2"]
-    assert app_module.store.get(job_id).result["records"] == [{"id": "r1", "groupId": "g1"}]
+    assert calls and calls[0]["group_ids"] == ["g1", "g2"], "the explicit id list reaches the split-only seam"
+    res = app_module.store.get(job_id).result
+    assert res["conceptGroups"] == [{"groupId": "g1#g0", "readjudicatedFrom": "g1"}], "parent replaced by child"
+    assert res["conceptGroupMembers"] == {"g1#g0": ["CohortA:v1"]}
+    assert [r["id"] for r in res["records"]] == ["r2"], "the accepted parent's stale record is dropped, others kept"
+    assert resp.json()["nGroups"] == 1, "one re-split child group was produced"
     assert app_module.store.get(job_id).status == "complete", "re-deciding must not un-finish the run"
     assert completions == [], "the seam is stubbed here, so nothing should have reached a provider at all"
 
@@ -3570,6 +3661,7 @@ def test_a_finished_run_with_no_downstream_specs_re_decides_with_no_regeneration
 
     monkeypatch.setattr(ad, "regenerate_gencde_specs", boom)
     monkeypatch.setattr(ad, "readjudicate_groups", boom)
+    monkeypatch.setattr(ad, "readjudicate_split_only_groups", boom)
     monkeypatch.setattr(ad, "run_pipeline", boom)
     monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
 

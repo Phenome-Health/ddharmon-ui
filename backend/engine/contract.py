@@ -570,6 +570,12 @@ class UIConceptGroup(TypedDict):
     coherenceOutliers: list[str]  # periphery members judged off-theme ("cohort:var")
     incoherent: bool  # the HARD flag. A FLAG: this group is never auto-split, only surfaced for a human
     matrixSuspect: bool  # the $0 deterministic pre-filter, stamped whether or not the LLM judge ran
+    #: If this group is a re-split CHILD from a Gate-1 "accept the division", the parent group id it was
+    #: carved out of; absent on an original grouping. This is where re-adjudication provenance lands on the
+    #: GROUP shape — Gate 1 renders its "re-split from <parent>" marker from this. Accepting a division is a
+    #: GROUPING change (split-only), so the provenance belongs on the group, not the record; the record-level
+    #: :attr:`UIRecord.readjudicatedFrom` is the assign-path analogue and stays for the completeness gate.
+    readjudicatedFrom: NotRequired[str]
 
 
 #: What became of one preprocessing rule on one dictionary. FOUR values, because there are four

@@ -279,7 +279,9 @@ export async function readjudicateGroups(
   jobId: string,
   groupIds: string[],
   apiKey?: string,
-): Promise<{ jobId: string; groupIds: string[]; nRecords: number }> {
+): Promise<{ jobId: string; groupIds: string[]; nGroups: number }> {
+  // Split-only: the endpoint re-splits the named groups into child concept-groups and returns how many
+  // children it produced (nGroups). No records are assigned here — that happens later, at Gate 2.
   if (IS_STATIC) throw new Error(STATIC_MSG);
   if (groupIds.length === 0) throw new Error("Name the concept groups to re-adjudicate.");
   const headers = await authed({

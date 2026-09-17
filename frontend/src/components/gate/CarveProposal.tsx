@@ -24,8 +24,9 @@ const FINDING_STYLE: Record<CoherenceState, { border: string; surface: string; i
  * review. The pipeline FLAGS; a human resolves. So this renders the proposed sub-concepts and offers three
  * verbs — accept, edit, ignore — and applies none of them on its own.
  *
- * ACCEPT IS THE HUMAN TRIGGER FOR RE-ADJUDICATION (UI-SPEC §0.3, STGD-16), which re-splits the group and
- * re-assigns its parts, and therefore COSTS MONEY. It is opt-in per run and off by default. When the run
+ * ACCEPT IS THE HUMAN TRIGGER FOR RE-ADJUDICATION (UI-SPEC §0.3, STGD-16), which re-splits the group into
+ * distinct child concept-groups (split-only — the parts are assigned later, at Gate 2), and therefore
+ * COSTS MONEY. It is opt-in per run and off by default. When the run
  * did not opt in, accept renders as an honest `NotAvailable` naming the reason — not hidden, and not a
  * disabled control with no explanation:
  *
@@ -191,7 +192,7 @@ export function CarveProposal({
         ) : (
           notAvailable ?? (
             <NotAvailable thing="Re-adjudication" claim="not-enabled" className="bg-surface-raised">
-              Accepting a carve re-splits the group and re-assigns its parts, which costs money, so it is off
+              Accepting a carve re-splits the group into distinct concepts, which costs money, so it is off
               by default. Turn it on at Setup to enable it. Ignoring or editing the proposal by hand still
               works.
             </NotAvailable>

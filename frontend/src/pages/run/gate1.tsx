@@ -41,6 +41,7 @@ import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
+import { useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
 import { pathForGate } from "@/lib/gate-routes";
@@ -220,6 +221,27 @@ function BorrowedMark() {
     >
       <Quote aria-hidden="true" className="h-3 w-3" />
       judge&rsquo;s summary
+    </span>
+  );
+}
+
+/**
+ * The provenance pill for a re-split CHILD (08-23b Task 2). A reviewer accepted the division of an
+ * over-merged group at Gate 1, and this row is one of the child concept-groups carved out of it. Same
+ * shape and place as the other provenance pills, a different word — and it names the parent so the origin
+ * is legible on the row. A re-split is a GROUPING change: the child is NOT yet assigned to a CDE — that
+ * happens at Gate 2 — which is exactly what distinguishes "accept the division" from an assign.
+ */
+function ReSplitMark({ parent }: { parent: string }) {
+  return (
+    <span
+      data-testid="resplit-mark"
+      data-parent={parent}
+      title={`Re-split from ${parent}. A reviewer accepted the division of an over-merged group, and this is one of the child concept-groups carved out of it. It is not yet assigned to a CDE — that happens at Gate 2.`}
+      className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
+    >
+      <Scissors aria-hidden="true" className="h-3 w-3" />
+      re-split
     </span>
   );
 }
@@ -523,7 +545,7 @@ function readjudicationRefusal({
     return {
       claim: "not-enabled",
       reason:
-        "Accepting a division re-splits the group and re-assigns its parts, which costs money, so it is " +
+        "Accepting a division re-splits the group into distinct concepts, which costs money, so it is " +
         "off unless a run asks for it. Turn it on at Set up when you start a run to enable it. Ignoring " +
         "the proposal or editing it by hand still works.",
     };
@@ -1755,6 +1777,9 @@ function QueueRow({
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <CoherenceMark state={group.coherence} />
+          {group.readjudicatedFrom && (
+            <ReSplitMark parent={group.readjudicatedFrom} />
+          )}
           {group.matrixSuspect &&
             (group.coherence === "not_judged" ||
               group.coherence === "single") && (
@@ -1990,6 +2015,7 @@ export default function Gate1Page() {
     true,
   );
   const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
   const [resuming, setResuming] = useState(false);
 
   // Cross-cohort-only replaces the bucket partition: on = the harmonization subset, off = every group.
@@ -2373,7 +2399,11 @@ export default function Gate1Page() {
       // EXACTLY ONE ID, built by a named function so the prohibition has somewhere to be asserted.
       const { groupIds } = readjudicationRequest(groupId);
       await readjudicateGroups(jobId, groupIds);
-      toast.success("Re-split that group — its parts are below");
+      // The re-split persisted server-side (the parent replaced by its child groups). The stream hook only
+      // refetches /result on a version change, and a Gate-1 accept does not bump the version, so invalidate
+      // the result query explicitly — that refetches the ledger and the children appear, marked "re-split".
+      await queryClient.invalidateQueries({ queryKey: ["harmonize-result", jobId] });
+      toast.success("Re-split that group into its parts — they're in the queue, ready to assign at Gate 2");
     } catch (e) {
       toast.error(
         e instanceof Error ? e.message : "Could not re-split that group",
@@ -3079,10 +3109,11 @@ export default function Gate1Page() {
                   refusal={refusalFor}
                   carvePrice={
                     <>
-                      This costs money. Re-splitting this group and re-assigning
-                      its parts is paid work — about {formatUsd(price * 2)} for
-                      a group this size — and it starts as soon as you press the
-                      button. Your spend so far updates when it finishes.
+                      This costs money. Re-splitting this group into distinct
+                      concepts is paid work — at most about {formatUsd(price * 2)}{" "}
+                      for a group this size — and it starts as soon as you press
+                      the button. Assigning the parts to CDEs happens later, at
+                      Gate 2. Your spend so far updates when it finishes.
                     </>
                   }
                   accepting={accepting === detailGroup.groupId}

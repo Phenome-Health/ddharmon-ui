@@ -1098,6 +1098,58 @@ test.describe("gate1 carve", () => {
     // And nothing has been sent yet: the price is stated BEFORE the press, not after it.
     expect(requests).toEqual([]);
   });
+
+  /**
+   * ACCEPTING A DIVISION REPLACES THE PARENT WITH ITS CHILDREN (08-23b Task 2, Option A). The accept is
+   * split-only, so what a reviewer sees afterward is the persisted GROUPING: the over-merged parent is
+   * gone from the ledger and in its place stand the child concept-groups it was carved into, each marked
+   * "re-split from <parent>". Assignment is NOT part of this — the children are unassigned until Gate 2.
+   *
+   * Asserted against the RENDERED post-accept state (a fixture carrying the children), because the whole
+   * e2e suite runs against a backend-less static build and the paid accept itself cannot fire there — the
+   * live paid accept is a manual walk, named in the summary. What this pins is the durable contract: a
+   * group carrying `readjudicatedFrom` renders as a re-split child, and the parent it replaced is absent.
+   */
+  test("@gate1 an accepted division shows its children marked 're-split from', and the parent is gone", async ({
+    page,
+  }) => {
+    await serveRun(page, (run) => {
+      const groups = run.result?.conceptGroups ?? [];
+      const parent = groups.find((g) => g.groupId === FLAGGED)!;
+      const child = (i: number) => ({
+        ...parent,
+        groupId: `${FLAGGED}#g${i}`,
+        concept: `${parent.concept} — part ${i + 1}`,
+        // Provenance: this is what the marker reads, and what a records-only check would have missed.
+        readjudicatedFrom: FLAGGED,
+        // Freshly split children are not themselves flagged.
+        coherence: "single" as const,
+        incoherent: false,
+        membersTruncated: false,
+      });
+      run.result!.conceptGroups = groups.flatMap((g) =>
+        g.groupId === FLAGGED ? [child(0), child(1)] : [g],
+      );
+    });
+    await openGate1(page);
+
+    // The accepted parent is gone from the ledger — its grouping was replaced, not annotated.
+    await expect(
+      page.locator(`[data-testid='ledger-row'][data-row-id='${FLAGGED}']`),
+    ).toHaveCount(0);
+
+    // Its two children stand in its place, each marked as a re-split child that names the parent.
+    for (const i of [0, 1]) {
+      const childRow = page.locator(
+        `[data-testid='ledger-row'][data-row-id='${FLAGGED}#g${i}']`,
+      );
+      await expect(childRow).toBeVisible();
+      const mark = childRow.locator("[data-testid='resplit-mark']");
+      await expect(mark).toBeVisible();
+      await expect(mark).toHaveAttribute("data-parent", FLAGGED);
+      await expect(mark).toContainText(/re-split/i);
+    }
+  });
 });
 
 // --- the declared-score panel, moved here from Setup (Task 4, the 2026-08-25 amendment) -------------------

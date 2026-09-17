@@ -500,31 +500,35 @@ def _concept_groups_to_ui(leanb_result: Any, cap: int = _GROUP_MEMBER_CAP) -> li
         top1 = getattr(g, "top1_cos", None)
         members = list(getattr(g, "member_variable_names", []) or [])
         n_members = int(getattr(g, "n_members", 0) or 0) or len(members)
-        out.append(
-            {
-                "groupId": getattr(g, "group_id", "") or "",
-                "clusterId": getattr(g, "cluster_id", "") or "",
-                "concept": getattr(g, "concept", "") or "",
-                # A ConceptGroup's name is what generate(ideal) authored. Stated positively on every row.
-                "conceptIsGenerated": True,
-                "idealCde": getattr(g, "ideal_cde", "") or "",
-                "nMembers": n_members,
-                "cohorts": list(getattr(g, "cohorts", []) or []),
-                "crossCohort": bool(getattr(g, "cross_cohort", False)),
-                "top1Cos": float(top1) if top1 is not None else None,
-                "memberVariableNames": members[:cap],
-                "membersTruncated": len(members) > cap,
-                # The judge's verdicts, stamped pre-assign by 08-04's verdict pass. A group the judge was
-                # never asked about lands on `not_judged` — never on the clean state.
-                "coherence": _coherence_cell(g),
-                "coherenceSummary": str(getattr(g, "coherence_summary", "") or ""),
-                "coherenceAxis": str(getattr(g, "coherence_axis", "") or ""),
-                "coherenceDistinctValues": list(getattr(g, "coherence_distinct_values", []) or []),
-                "coherenceOutliers": list(getattr(g, "coherence_outliers", []) or []),
-                "incoherent": bool(getattr(g, "incoherent", False)),
-                "matrixSuspect": bool(getattr(g, "matrix_suspect", False)),
-            }
-        )
+        entry: UIConceptGroup = {
+            "groupId": getattr(g, "group_id", "") or "",
+            "clusterId": getattr(g, "cluster_id", "") or "",
+            "concept": getattr(g, "concept", "") or "",
+            # A ConceptGroup's name is what generate(ideal) authored. Stated positively on every row.
+            "conceptIsGenerated": True,
+            "idealCde": getattr(g, "ideal_cde", "") or "",
+            "nMembers": n_members,
+            "cohorts": list(getattr(g, "cohorts", []) or []),
+            "crossCohort": bool(getattr(g, "cross_cohort", False)),
+            "top1Cos": float(top1) if top1 is not None else None,
+            "memberVariableNames": members[:cap],
+            "membersTruncated": len(members) > cap,
+            # The judge's verdicts, stamped pre-assign by 08-04's verdict pass. A group the judge was
+            # never asked about lands on `not_judged` — never on the clean state.
+            "coherence": _coherence_cell(g),
+            "coherenceSummary": str(getattr(g, "coherence_summary", "") or ""),
+            "coherenceAxis": str(getattr(g, "coherence_axis", "") or ""),
+            "coherenceDistinctValues": list(getattr(g, "coherence_distinct_values", []) or []),
+            "coherenceOutliers": list(getattr(g, "coherence_outliers", []) or []),
+            "incoherent": bool(getattr(g, "incoherent", False)),
+            "matrixSuspect": bool(getattr(g, "matrix_suspect", False)),
+        }
+        # Provenance, set only on a re-split child (Gate-1 "accept the division"). Absent on an original
+        # grouping — the same set-only-when-present discipline as the record-level readjudicatedFrom.
+        readjudicated_from = str(getattr(g, "readjudicated_from", "") or "")
+        if readjudicated_from:
+            entry["readjudicatedFrom"] = readjudicated_from
+        out.append(entry)
     out.sort(key=lambda g: (-g["nMembers"], g["clusterId"], g["groupId"]))
     return out
 
@@ -597,8 +601,10 @@ def build_ui_result(
     records = [_record_to_ui(r, idx, concept_gate=concept_gate) for r in leanb_result.records]
     groups = _concept_groups_to_ui(leanb_result)
     # Derived, not declared: a run has re-adjudication provenance iff some row actually carries it. Asking
-    # the caller to tell us would let the register disagree with the payload it describes.
-    readjudicated = any(r.get("readjudicatedFrom") for r in records)
+    # the caller to tell us would let the register disagree with the payload it describes. Checked on BOTH
+    # shapes — a Gate-1 "accept the division" is split-only, so its provenance lands on a GROUP, never a
+    # record; a records-only check would miss it and the register would wrongly report "not readjudicated".
+    readjudicated = any(r.get("readjudicatedFrom") for r in records) or any(g.get("readjudicatedFrom") for g in groups)
     result: UIResult = {
         "contractVersion": CONTRACT_VERSION,
         "mode": mode,
@@ -2081,6 +2087,64 @@ def readjudicate_groups(
         **knobs,
     )
     return [_record_to_ui(r, idx, concept_gate=concept_gate) for r in updated.records]
+
+
+def _core_readjudicate_split_only() -> Callable[..., Any]:
+    """Fetch core's split-only re-adjudication (Gate-1 accept-the-division). A seam, so a test can stand
+    in for it without an LLM anywhere."""
+    from ddharmon.harmonization import readjudicate_split_only
+
+    return readjudicate_split_only
+
+
+def readjudicate_split_only_groups(
+    leanb_result: Any,
+    embedded: list[Any],
+    *,
+    group_ids: Sequence[str] | None,
+    split: StageFn,
+    cde_cohort: str = "NIH_CDE",
+    **knobs: Any,
+) -> tuple[list[UIConceptGroup], dict[str, list[str]]]:
+    """Gate-1 "accept the division": re-split EXACTLY the groups a human named into child CONCEPT-GROUPS
+    and return the updated ``(conceptGroups, conceptGroupMembers)`` — the Gate-1 ledger, not records.
+
+    Split-only: no ``classify``. Accepting a division is a GROUPING change, so the children are assigned
+    later at Gate 2 in the normal flow. Each child carries ``readjudicatedFrom`` = the parent group id,
+    which Gate 1 renders as "re-split from <parent>". Like :func:`readjudicate_groups`, ``group_ids`` is
+    required and non-empty — a re-split with no named human decision is the prohibited auto-resolution of
+    an over-merge.
+
+    The flow is core's: this calls ``readjudicate_split_only()``, which reuses ``prepare_readjudicate`` →
+    ``prepare_group_assign`` → ``concept_groups_from_prompts`` and splices the children into
+    ``result.concept_groups``. The adapter supplies the one stage callable and maps the result.
+
+    Degrades on an older pinned core with no ``readjudicate_split_only``: the groups come back unchanged and
+    nothing raises.
+    """
+    if not group_ids:
+        raise ValueError(
+            "readjudicate_split_only_groups requires an explicit non-empty group_ids list. Accepting a "
+            "division is a human decision; re-splitting every flagged group because it was flagged is the "
+            "prohibited auto-resolution of an over-merge."
+        )
+    try:
+        core_split_only = _core_readjudicate_split_only()
+    except (ImportError, AttributeError) as exc:
+        logger.warning("this core has no readjudicate_split_only (%s) — returning the groups unchanged", exc)
+        return _concept_groups_to_ui(leanb_result), _concept_group_members(leanb_result)
+    _docs, embeddings, field_refs = _collect_inputs(embedded)
+    updated = core_split_only(
+        leanb_result,
+        embedded,
+        embeddings,
+        field_refs,
+        split=split,
+        group_ids=list(group_ids),
+        cde_cohort=cde_cohort,
+        **knobs,
+    )
+    return _concept_groups_to_ui(updated), _concept_group_members(updated)
 
 
 # -- the $0 front-half replay: rebuilding core's inputs without buying anything ----------------

@@ -1078,7 +1078,8 @@ def readjudicate(
     """Re-adjudicate the named groups (STGD-16). The one gate action that STARTS PAID WORK.
 
     Every other gate decision rides the generic artifact route, because recording a decision is storage. This
-    one buys a re-split and a re-assign from a provider, so it carries three refusals rather than one, each a
+    one buys a re-split from a provider (split-only — accepting a division is a GROUPING change; the child
+    concept-groups are assigned later at Gate 2), so it carries three refusals rather than one, each a
     prohibition made mechanical:
 
     1. **A pinned demo is rejected outright** — checked first, so a demo that happens to carry the opt-in is
@@ -1091,7 +1092,7 @@ def readjudicate(
 
     Rebuilding core's inputs is FREE: ``replay_leanb_result`` replays the deterministic front half against
     the frozen substrate and the checkpoint's recorded stage answers (WINDOWS id22). The only new spend is
-    the split + assign for the groups the human named.
+    the re-split for the groups the human named — the child groups' assignment is bought later, at Gate 2.
 
     BYOK: the key is in-memory for this request only — never written to ``run_config``, the row, or a log.
     """
@@ -1110,7 +1111,7 @@ def readjudicate(
             status_code=409,
             detail=(
                 "Re-adjudication is not enabled for this run. It is opt-in at run creation because it buys a "
-                "new split and assign pass; start a new run with it enabled to re-split a group."
+                "new split pass; start a new run with it enabled to re-split a group."
             ),
         )
     group_ids = [g.strip() for g in (body.groupIds or []) if g and g.strip()]
@@ -1140,8 +1141,8 @@ def readjudicate(
     if _no_anthropic_key(job.config, x_provider_key or x_anthropic_key):
         raise HTTPException(
             status_code=400,
-            detail="Enter your Anthropic API key to re-split this group — it buys a new split and assign "
-            "pass and the key clears on reload. Your run is unchanged; re-enter the key and try again.",
+            detail="Enter your Anthropic API key to re-split this group — it buys a new split pass and the "
+            "key clears on reload. Your run is unchanged; re-enter the key and try again.",
         )
 
     from backend.engine import adapter as engine_adapter
@@ -1159,35 +1160,45 @@ def readjudicate(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     client = build_llm_client(job.config.get("model_tag"), x_provider_key or x_anthropic_key)
+    # Split-only: accepting a division is a GROUPING change, so this buys ONLY the re-split, not an assign.
+    # The children are assigned later at Gate 2 in the normal flow. One generic stage callable, for `split`.
     stage = engine_adapter.specgen_stage_fn(client)
     try:
-        updated = engine_adapter.readjudicate_groups(
+        groups, members = engine_adapter.readjudicate_split_only_groups(
             leanb_result,
             embedded,
             group_ids=group_ids,
             split=stage,
-            classify=stage,
             cde_cohort=job.config.get("cde_cohort", CDE_COHORT),
-            member_index=engine_adapter.build_member_index(embedded),
         )
     except ValueError as exc:  # the seam's own refusal, kept as a 400 rather than a 500
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # In place, on whichever surface holds this run's records: the row for a finished run, the checkpoint for
-    # a paused one (D-02 keeps a paused run's payload off the row, which is rewritten whole on every write).
-    records = cast("list[dict[str, Any]]", list(updated))
+    # Persist the re-split ledger onto whichever surface holds this run: the row for a finished run, the
+    # checkpoint for a paused one (D-02 keeps a paused run's payload off the row, rewritten whole on write).
+    # conceptGroups/Members are the Gate-1 ledger (the parent replaced by its children); the parent's stale
+    # RECORD is dropped from the stored records because its grouping was rejected — no child records are
+    # added, since the children stay UNASSIGNED until Gate 2. Reviewer decisions live in the decisions store,
+    # not on this payload, so re-deriving the groups does not lose them.
+    parent_ids = set(group_ids)
+    base_result = ckpt.result if ckpt is not None else (job.result or {})
+    kept_records = [
+        r for r in cast("list[dict[str, Any]]", base_result.get("records") or []) if r.get("groupId") not in parent_ids
+    ]
+    new_fields = {"conceptGroups": groups, "conceptGroupMembers": members, "records": kept_records}
     if ckpt is not None:
         write_checkpoint(
             ckpt.path.parent if ckpt.path is not None else Path(job.config["work_dir"]),
             job_id=ckpt.job_id,
             gate=ckpt.gate,
-            result={**ckpt.result, "records": records},
+            result={**ckpt.result, **new_fields},
             responses=ckpt.responses,
             realized_cost=ckpt.realized_cost,
         )
     else:
-        store.update(job_id, result={**(job.result or {}), "records": records})
-    return {"jobId": job_id, "groupIds": group_ids, "nRecords": len(records)}
+        store.update(job_id, result={**(job.result or {}), **new_fields})
+    n_children = sum(1 for g in groups if g.get("readjudicatedFrom") in parent_ids)
+    return {"jobId": job_id, "groupIds": group_ids, "nGroups": n_children}
 
 
 @app.post("/api/harmonize/jobs/{job_id}/clone")

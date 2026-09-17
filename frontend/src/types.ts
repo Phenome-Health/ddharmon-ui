@@ -325,6 +325,13 @@ export interface ConceptGroup {
   /** A FLAG, never a gate: an over-merged group is surfaced for a human, never auto-split. */
   incoherent: boolean;
   matrixSuspect: boolean;
+  /**
+   * Present only on a re-split CHILD: the parent group id it was carved from when a reviewer accepted its
+   * division at Gate 1. Absent on an original grouping. Gate 1 renders its "re-split from <parent>" marker
+   * from this. A re-split is a GROUPING change (split-only) — the child is not yet assigned to a CDE; that
+   * happens later, at Gate 2.
+   */
+  readjudicatedFrom?: string;
 }
 
 export interface NotComputedEntry {
