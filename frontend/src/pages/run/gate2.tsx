@@ -200,11 +200,13 @@ export default function Gate2Page() {
   const targetIsOwn = chosenId === "" || (!!gencde && chosenId === gencde.gencdeId);
   const anchorLags = touchedAtGate1.has(groupId);
 
-  // Prod parity: the model's pick is pre-selected (chosenId falls back to the isChosen candidate), and the
-  // rerank note fires when that pick is NOT the highest-cosine one — concept fit over raw similarity.
-  const chosenCand = record.candidates.find((c) => c.cdeId === chosenId);
+  // The rerank note narrates what the MODEL did, so it reads the model's OWN pick (isChosen), never the
+  // reviewer's current selection (chosenId): a reviewer picking a different candidate must not make the note
+  // re-attribute their choice to the model. It fires when the model's pick is NOT the highest-cosine one —
+  // concept fit over raw similarity.
+  const modelCand = record.candidates.find((c) => c.isChosen);
   const bestCos = record.candidates.reduce((m, c) => Math.max(m, c.cosine), -Infinity);
-  const reranked = !!chosenCand && Number.isFinite(bestCos) && chosenCand.cosine < bestCos - 1e-9;
+  const reranked = !!modelCand && Number.isFinite(bestCos) && modelCand.cosine < bestCos - 1e-9;
 
   const gencdeEdit = (pick?.gencdeEdit as Partial<AnchorDraft> | undefined) ?? undefined;
   const anchor: Omit<AnchorDraft, "id"> = {
@@ -380,7 +382,7 @@ export default function Gate2Page() {
                 </p>
               </div>
             )}
-            {listState === "ranked" && reranked && chosenCand && (
+            {listState === "ranked" && reranked && modelCand && (
               <div
                 data-testid="rerank-note"
                 className="flex items-start gap-2 rounded-inner border border-rule-info bg-surface-info px-3 py-2 text-xs text-on-raised"
@@ -388,7 +390,7 @@ export default function Gate2Page() {
                 <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-on-raised" />
                 <span>
                   The model chose a candidate at cos{" "}
-                  <span className="tabular-nums">{chosenCand.cosine.toFixed(3)}</span> over a higher-cosine one
+                  <span className="tabular-nums">{modelCand.cosine.toFixed(3)}</span> over a higher-cosine one
                   at <span className="tabular-nums">{bestCos.toFixed(3)}</span> — it ranks concept fit above raw
                   embedding similarity (see the rationale above).
                 </span>

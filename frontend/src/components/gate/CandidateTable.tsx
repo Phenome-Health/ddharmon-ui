@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Star, Sparkles, ExternalLink, Check, ChevronRight } from "lucide-react";
+import { Star, ExternalLink, Check, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { UICandidate } from "@/types";
@@ -119,9 +119,6 @@ export function CandidateTable({
           <Star className="h-3 w-3 fill-accent text-accent" /> model&apos;s pick
         </span>
         <span className="inline-flex items-center gap-1">
-          <Sparkles className="h-3 w-3 text-accent-on-raised" /> LLM-suggested
-        </span>
-        <span className="inline-flex items-center gap-1">
           <RichnessMeter score={3} /> metadata richness
         </span>
         <span>
@@ -165,11 +162,6 @@ export function CandidateTable({
                     {c.isChosen && !chosen && (
                       <span title="The model's pick — ranked best on concept fit">
                         <Star className="h-3.5 w-3.5 shrink-0 fill-accent text-accent" />
-                      </span>
-                    )}
-                    {c.llmSuggested && (
-                      <span title="LLM-suggested — the model flagged this candidate">
-                        <Sparkles className="h-3.5 w-3.5 shrink-0 text-accent-on-raised" />
                       </span>
                     )}
                     {c.rank === bestRank && !c.isChosen && (
