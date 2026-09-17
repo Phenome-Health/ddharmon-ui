@@ -1415,6 +1415,28 @@ def test_resume_needs_a_key_only_for_a_keyless_anthropic_paid_leg(monkeypatch):
     assert needs({"run_mode": "batch", "model_tag": "gpt-4o"}, None) is False  # proxy model, not the anthropic key
 
 
+def test_reconcile_failures_surface_deciding_stages_not_advisory(monkeypatch):
+    """A DECIDING-stage reconcile failure is recorded on the run (retry surfaced); an ADVISORY one is not.
+
+    Completeness half of the identity-drift finding: the backend must not present a clean gate when a
+    deciding stage (generate/split/classify/gencde/specgen) failed to complete. The advisory/deciding line
+    is read from TAG_TO_STAGE + the adapter's _JUDGE_STAGES, not a hand-kept list.
+    """
+    from types import SimpleNamespace
+
+    seen: dict[str, dict] = {}
+    monkeypatch.setattr(app_module.store, "update", lambda job_id, **kw: seen.__setitem__(job_id, kw))
+
+    app_module._note_reconcile_failures("r_split", SimpleNamespace(failed=("split",)))  # deciding
+    assert "r_split" in seen and "split" in seen["r_split"]["error_message"]
+
+    app_module._note_reconcile_failures("r_judge", SimpleNamespace(failed=("coherence", "kinds")))  # advisory only
+    assert "r_judge" not in seen
+
+    app_module._note_reconcile_failures("r_clean", SimpleNamespace(failed=()))  # nothing failed
+    assert "r_clean" not in seen
+
+
 def test_run_pipeline_reports_progress_phases(monkeypatch, tmp_path):
     """The adapter reports phases via the progress callback (data-driven progress for the UI)."""
     a = tmp_path / "cohortA.csv"

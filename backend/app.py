@@ -654,6 +654,35 @@ def _checkpoint_for(job: Job) -> Checkpoint | None:
         raise HTTPException(status_code=409, detail=f"This run's saved state could not be read: {exc}") from exc
 
 
+def _note_reconcile_failures(job_id: str, outcome: Any) -> None:
+    """Surface a DECIDING-stage reconcile failure on the run, so a reviewer is told the partition is
+    incomplete and can retry — instead of the gate reading as clean and complete (the silent-partial-failure
+    half of the identity-drift finding). ADVISORY-stage failures (coherence / distinct_kinds / concept_gate)
+    are allowed to fail silently by design and are ignored.
+
+    The advisory/deciding line is READ from the existing maps, never hand-kept: a reconcile ``tag`` is
+    advisory iff ``TAG_TO_STAGE[tag]`` names one of the adapter's ``_JUDGE_STAGES``.
+
+    Records the failure via ``error_message`` WITHOUT changing status: the checkpoint-backed result stays
+    served and the run stays resumable, so "retry" is the same paid Continue, now informed. (The UI retry
+    affordance — and clearing this note on a successful retry — is 08-23b.)
+    """
+    from backend.batch_reconcile import TAG_TO_STAGE
+    from backend.engine.adapter import _JUDGE_STAGES
+
+    steps: set[str] = set()
+    for tag in getattr(outcome, "failed", ()) or ():
+        if TAG_TO_STAGE.get(tag) not in _JUDGE_STAGES:  # a deciding stage, or an unknown tag — surface either
+            steps.add(str(TAG_TO_STAGE.get(tag, tag)))
+    if not steps:
+        return
+    store.update(
+        job_id,
+        error_message=f"A required step ({', '.join(sorted(steps))}) failed on the last continue — "
+        "re-enter your key if needed and press Continue to retry.",
+    )
+
+
 def _reconcile_on_open(job: Job, *, api_key: str | None = None) -> None:
     """The fast half of D-04: reconcile THIS run before its gate state is served.
 
@@ -666,7 +695,8 @@ def _reconcile_on_open(job: Job, *, api_key: str | None = None) -> None:
     therefore unauthenticated) read from being able to make this server talk to a provider.
     """
     try:
-        batch_reconcile.reconcile_run(job.job_id, store=store, api_key=api_key)
+        outcome = batch_reconcile.reconcile_run(job.job_id, store=store, api_key=api_key)
+        _note_reconcile_failures(job.job_id, outcome)
     except Exception as exc:  # noqa: BLE001 — see docstring
         logger.warning("on-open reconcile of %s failed (%s: %s)", job.job_id, type(exc).__name__, exc)
 
