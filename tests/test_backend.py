@@ -1415,6 +1415,23 @@ def test_resume_needs_a_key_only_for_a_keyless_anthropic_paid_leg(monkeypatch):
     assert needs({"run_mode": "batch", "model_tag": "gpt-4o"}, None) is False  # proxy model, not the anthropic key
 
 
+def test_no_anthropic_key_spends_unconditionally_no_preview_exemption(monkeypatch):
+    """readjudicate ALWAYS buys a split+assign, so `_no_anthropic_key` has NO preview exemption — a keyless
+    Anthropic re-split must fail loudly, not silently return 200 with zero records (the accept-the-division
+    finding). Distinct from `_resume_needs_a_key`, which exempts preview because a preview resume is free.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    no_key = app_module._no_anthropic_key
+    assert no_key({"model_tag": "claude-sonnet-4-6"}, None) is True  # keyless anthropic -> blocked
+    assert no_key({"model_tag": "claude-sonnet-4-6"}, "sk-byok") is False  # key present
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env")
+    assert no_key({"model_tag": "claude-sonnet-4-6"}, None) is False  # server env key present
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # No preview exemption: a preview-config run that re-adjudicates still spends and still needs a key.
+    assert no_key({"run_mode": "preview", "model_tag": "claude-sonnet-4-6"}, None) is True
+    assert no_key({"model_tag": "gpt-4o"}, None) is False  # proxy model uses a different key path
+
+
 def test_reconcile_failures_surface_deciding_stages_not_advisory(monkeypatch):
     """A DECIDING-stage reconcile failure is recorded on the run (retry surfaced); an ADVISORY one is not.
 
@@ -3287,6 +3304,26 @@ def test_readjudicate_on_a_foreign_run_is_404_not_403(monkeypatch):
     assert resp.status_code == 404
 
 
+def test_readjudicate_refuses_a_keyless_paid_action(monkeypatch, tmp_path):
+    """The accept-the-division gate: a keyless re-split fails LOUDLY (400 naming the key) instead of the
+    silent 200-with-zero-records the live test hit. The refusal comes AFTER the opt-in and group-id checks —
+    it is the paid-action guard, not a config one — so a run that IS enabled and DID name groups still fails
+    at the door when no provider key is available, leaving the run unchanged."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    job_id = _readjudicable_run("j-nokey", opt_in=True, config={"work_dir": str(tmp_path / "j-nokey")})
+    app_module.store.update(
+        job_id,
+        dict_specs=[{"path": str(cde), "cohort_name": "A", "column_roles": {"variable_name": "designation"}}],
+    )
+    resp = client.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json={"groupIds": ["g1"]})  # no key
+    assert resp.status_code == 400
+    assert "key" in resp.json()["detail"].lower()
+
+
 def test_readjudicate_forwards_exactly_the_named_groups(monkeypatch, tmp_path):
     """The opt-in run's happy path: the endpoint hands core's seam the ids the human named and nothing else,
     and the run's records are updated in place. The provider client is a stub whose calls are counted, so
@@ -3312,7 +3349,13 @@ def test_readjudicate_forwards_exactly_the_named_groups(monkeypatch, tmp_path):
         job_id,
         dict_specs=[{"path": str(cde), "cohort_name": "CohortA", "column_roles": {"variable_name": "designation"}}],
     )
-    resp = client.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json={"groupIds": ["g1", "g2"]})
+    # Re-adjudication is a paid action and now pre-flights the provider key (accept-the-division fix);
+    # supply one so this reaches the forwarding assertions rather than the "enter your key" refusal.
+    resp = client.post(
+        f"/api/harmonize/jobs/{job_id}/readjudicate",
+        json={"groupIds": ["g1", "g2"]},
+        headers={"x-anthropic-key": "sk-test"},
+    )
     assert resp.status_code == 200, resp.text
     assert calls and calls[0]["group_ids"] == ["g1", "g2"]
     assert app_module.store.get(job_id).result["records"] == [{"id": "r1", "groupId": "g1"}]

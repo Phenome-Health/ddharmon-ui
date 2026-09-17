@@ -774,22 +774,26 @@ def checkpoint_state(
 ENTRY_GATE = "gate1"
 
 
+def _no_anthropic_key(config: dict[str, Any], key: str | None) -> bool:
+    """No Anthropic key is available for a paid call: the run's model routes to Anthropic and NEITHER the
+    request key (BYOK header) NOR the server's ``ANTHROPIC_API_KEY`` env is set (``api_key=None`` falls back
+    to the env). A non-Anthropic (proxy) model does not use this key, so it is never blocked here. Callers
+    that only spend under certain modes layer that check on top (see :func:`_resume_needs_a_key`)."""
+    from backend.engine.llm import is_anthropic_model
+
+    return is_anthropic_model(config.get("model_tag")) and not (key or os.environ.get("ANTHROPIC_API_KEY"))
+
+
 def _resume_needs_a_key(config: dict[str, Any], header_key: str | None) -> bool:
     """Whether resuming this run would make a paid Anthropic call with no key available.
 
-    A batch/sync resume calls the provider; Anthropic reads the key from the BYOK header or the server's
-    ``ANTHROPIC_API_KEY`` env (``api_key=None`` falls back to the env). Preview runs make no LLM call, and a
-    non-Anthropic (proxy) model does not use this key — both are exempt. :func:`resume_run` refuses BEFORE it
-    commits the gate and spawns the worker, so a missing key is a clear "enter your key" at the door rather
-    than an error deep in the paid stage that errors the whole run and wipes the served gate state.
+    A batch/sync resume calls the provider; a preview run makes no LLM call and is exempt. :func:`resume_run`
+    refuses BEFORE it commits the gate and spawns the worker, so a missing key is a clear "enter your key" at
+    the door rather than an error deep in the paid stage that errors the whole run and wipes the gate state.
     """
     if config.get("run_mode") == "preview":
         return False
-    from backend.engine.llm import is_anthropic_model
-
-    if not is_anthropic_model(config.get("model_tag")):
-        return False
-    return not (header_key or os.environ.get("ANTHROPIC_API_KEY"))
+    return _no_anthropic_key(config, header_key)
 
 
 def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, Any]]) -> list[str] | None:
@@ -1115,6 +1119,17 @@ def readjudicate(
     if cde_path is None or not cde_path.exists():
         raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
     cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+
+    # A fourth refusal: re-adjudication ALWAYS buys a split + assign, so a missing provider key must fail
+    # loudly HERE, not deep in the paid stage where it returned 200 with zero records — a silent no-op on a
+    # paid button (the accept-the-division finding). No preview exemption: unlike a resume, this endpoint
+    # spends unconditionally. The key clears on a browser reload, which is exactly how the live test hit it.
+    if _no_anthropic_key(job.config, x_provider_key or x_anthropic_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter your Anthropic API key to re-split this group — it buys a new split and assign "
+            "pass and the key clears on reload. Your run is unchanged; re-enter the key and try again.",
+        )
 
     from backend.engine import adapter as engine_adapter
     from backend.engine.llm import build_llm_client
