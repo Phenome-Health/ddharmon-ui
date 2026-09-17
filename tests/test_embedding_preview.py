@@ -240,6 +240,18 @@ def test_the_endpoint_reports_how_many_rows_the_loader_collapsed():
     assert "DUP" in res.headers["x-ddharmon-repeated-names"]
 
 
+def test_a_field_over_the_default_csv_size_limit_is_read_not_crashed():
+    """A single field larger than Python's default csv.field_size_limit (128 KB) — a long notes /
+    value-encoding blob, as UKBB has — used to abort the read with 'field larger than field limit (131072)'
+    and 400 the download. The export must lift the limit so a big field is read, not a crash."""
+    client = _client()
+    big = "x" * (200 * 1024)  # 200 KB — over the 131072 (128 KB) default
+    res = _post_csv(client, "big.csv", f"var,desc\nA,{big}\nB,beta\n", ROLES)
+    assert res.status_code == 200, res.text
+    _, rows = _read(res.text)
+    assert any(len(r[EMBEDDING_EXPORT_COLUMN]) >= 200 * 1024 for r in rows), "the large field was dropped"
+
+
 def test_an_unusable_mapping_is_refused_with_a_reason():
     """The same requirement `/batch` enforces at the door — refused here too, so the two cannot disagree."""
     client = _client()

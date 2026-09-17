@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import threading
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -66,6 +67,18 @@ from backend.notebook import build_notebook
 from backend.runner import _relative_ref, run_harmonization
 
 logger = logging.getLogger(__name__)
+
+# A single dictionary field can exceed Python's default csv.field_size_limit (128 KB): UKBB carries a long
+# notes / value-encoding blob that does, which aborted the stdlib csv read of an upload with "field larger
+# than field limit (131072)". Lift the limit process-wide so any csv.reader here or in the loader reads it.
+# Portable: sys.maxsize overflows csv's C long on 32-bit builds, so step down until it is accepted.
+_csv_limit = sys.maxsize
+while True:
+    try:
+        csv.field_size_limit(_csv_limit)
+        break
+    except OverflowError:
+        _csv_limit //= 10
 
 # --- CDE catalog (server-side; not uploaded) -------------------------------------------------
 # Repo root is the parent of backend/ (this file is backend/app.py). The CDE catalog is NOT
