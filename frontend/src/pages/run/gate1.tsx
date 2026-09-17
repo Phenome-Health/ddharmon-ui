@@ -8,6 +8,7 @@ import {
   Pencil,
   Quote,
   Scissors,
+  Search,
   Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -901,6 +902,10 @@ function DestinationTray({
  * IT IS ITSELF A DROP TARGET, on the same `UNASSIGNED_GROUP_ID` as the in-row door, so the two are one
  * destination reached from two places rather than two code paths that could drift.
  */
+// Above this many variables the pool needs a search: the pipeline half can be thousands, and SourceRows
+// caps the DOM at 100 rows, so without search a specific variable past the cap is unreachable in-app.
+const POOL_SEARCH_MIN = 12;
+
 function UnassignedPool({
   reviewerRemoved,
   fromPipeline,
@@ -958,13 +963,51 @@ function UnassignedPool({
   const open = chosen ?? defaultOpen;
   const total = reviewerRemoved.length + fromPipeline.length;
   /**
+   * THE POOL SEARCH — filter BEFORE the render cap, not after.
+   *
+   * `SourceRows` caps the DOM at 100 rows; the pipeline half can be thousands. Filtering here, upstream of
+   * that cap, is what lets a reviewer find a specific variable (drag "Country of birth" onto its group)
+   * that would otherwise sit at row 5000, unreachable. The haystack is the same text the evidence grid
+   * shows — cohort, variable name, the run's text, and any description/question the fieldIndex carries.
+   */
+  const [poolQuery, setPoolQuery] = useState("");
+  const q = poolQuery.trim().toLowerCase();
+  // Token-AND, not a single substring: a reviewer typing "country of birth" must match a variable named
+  // `country_of_birth` (underscores) whose text reads "In what country were you born?" — no contiguous
+  // "country of birth" exists in either. Requiring every query WORD to appear keeps that forgiving while
+  // still excluding rows that miss any term.
+  const queryTokens = q.split(/\s+/).filter(Boolean);
+  const poolMatches = (
+    cohort: string,
+    variable: string,
+    text: string | undefined,
+    detail: FieldDetail | undefined,
+  ) => {
+    if (!queryTokens.length) return true;
+    const hay = [cohort, variable, text ?? "", detail?.description ?? "", detail?.questionText ?? ""]
+      .join(" ")
+      .toLowerCase();
+    return queryTokens.every((tok) => hay.includes(tok));
+  };
+  const filteredReviewer = q
+    ? reviewerRemoved.filter((id) => {
+        const { cohort, variable } = memberParts(id, fieldIndex);
+        return poolMatches(cohort, variable, undefined, fieldIndex[id]);
+      })
+    : reviewerRemoved;
+  const filteredPipeline = q
+    ? fromPipeline.filter((f) =>
+        poolMatches(f.cohort, f.variable, f.text, fieldIndex[`${f.cohort}:${f.variable}`]),
+      )
+    : fromPipeline;
+  /**
    * The leftovers as the grid's own shape. `UnassignedField` carries the run's text for a variable the
    * clustering dropped, and `SourceRows` already accepts that as `memberDetails` — so a run whose
    * `fieldIndex` covers these rows renders them as full evidence, and one whose does not falls back to
    * chips by the grid's OWN test rather than by a second guess here.
    */
-  const pipelineIds = fromPipeline.map((f) => `${f.cohort}:${f.variable}`);
-  const pipelineDetails = fromPipeline.map((f) => ({
+  const pipelineIds = filteredPipeline.map((f) => `${f.cohort}:${f.variable}`);
+  const pipelineDetails = filteredPipeline.map((f) => ({
     id: `${f.cohort}:${f.variable}`,
     cohort: f.cohort,
     name: f.variable,
@@ -972,12 +1015,14 @@ function UnassignedPool({
   }));
   // Every variable in the reviewer's half is there BECAUSE they moved it — the you-changed-it register is
   // the whole half, not a subset of it.
-  const movedHere = new Set(reviewerRemoved);
+  const movedHere = new Set(filteredReviewer);
   // Asked of the same expression the grid itself uses, so the two cannot drift — the rule `ExpandedGroup`
   // already follows. A grid that declines to render would otherwise leave a section with no members in it.
-  const reviewerGrid = hasSourceRows(reviewerRemoved, undefined, fieldIndex);
+  const reviewerGrid = hasSourceRows(filteredReviewer, undefined, fieldIndex);
   const pipelineGrid = hasSourceRows(pipelineIds, pipelineDetails, fieldIndex);
   const showTray = !readOnly && destinations.length > 0;
+  const showSearch = total > POOL_SEARCH_MIN;
+  const noMatches = q.length > 0 && filteredReviewer.length === 0 && filteredPipeline.length === 0;
   if (total === 0) return null;
   return (
     <MemberDropZone
@@ -1027,6 +1072,30 @@ function UnassignedPool({
           </div>
 
           <CollapsibleContent>
+            {/* THE POOL SEARCH — mirrors the ledger's own search affordance. Filtering happens upstream of
+                the 100-row render cap, so a match past the cap still surfaces and stays draggable. */}
+            {showSearch && (
+              <div className="relative mb-3">
+                <Search
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-on-raised-muted"
+                />
+                <input
+                  type="search"
+                  data-testid="pool-search"
+                  value={poolQuery}
+                  onChange={(e) => setPoolQuery(e.target.value)}
+                  placeholder="Search these variables — name, description, question or cohort"
+                  aria-label="Search the variables in no group"
+                  className="w-full rounded-md border border-rule-on-raised bg-surface-inset py-1.5 pl-7 pr-2 text-xs text-on-raised placeholder:text-on-raised-faint"
+                />
+              </div>
+            )}
+            {noMatches && (
+              <p data-testid="pool-no-matches" className="mb-3 text-xs text-on-raised-muted">
+                No variable in this pool matches &ldquo;{poolQuery.trim()}&rdquo;.
+              </p>
+            )}
             {/*
               TWO COLUMNS ONLY WHEN THERE IS A TRAY, and only above `lg` — the same rule, and the same
               tracks, as an expanded group's body. `minmax(0,…)` on BOTH is what stops the evidence grid
@@ -1041,7 +1110,7 @@ function UnassignedPool({
               )}
             >
               <div className="flex min-w-0 flex-col gap-3">
-                {reviewerRemoved.length > 0 && (
+                {filteredReviewer.length > 0 && (
                   <section
                     data-testid="pool-reviewer"
                     className="flex min-w-0 flex-col gap-1"
@@ -1049,12 +1118,13 @@ function UnassignedPool({
                     <h3 className="text-xs font-semibold text-on-raised">
                       You took these out{" "}
                       <span className="font-mono font-normal tabular-nums text-on-raised-muted">
-                        {reviewerRemoved.length}
+                        {filteredReviewer.length}
+                        {q ? ` of ${reviewerRemoved.length}` : ""}
                       </span>
                     </h3>
                     {reviewerGrid ? (
                       <SourceRows
-                        memberIds={reviewerRemoved}
+                        memberIds={filteredReviewer}
                         fieldIndex={fieldIndex}
                         drag={
                           readOnly
@@ -1080,7 +1150,7 @@ function UnassignedPool({
                       /* The grid declined — this run carries no descriptive field for these variables — so
                          the chips are the whole membership view, and the put-back comes back with them. */
                       <div className="flex flex-wrap gap-1">
-                        {reviewerRemoved.map((memberId) => {
+                        {filteredReviewer.map((memberId) => {
                           const { cohort, variable } = memberParts(
                             memberId,
                             fieldIndex,
@@ -1121,7 +1191,7 @@ function UnassignedPool({
                   </section>
                 )}
 
-                {fromPipeline.length > 0 && (
+                {filteredPipeline.length > 0 && (
                   <section
                     data-testid="pool-pipeline"
                     className="flex min-w-0 flex-col gap-1"
@@ -1129,7 +1199,8 @@ function UnassignedPool({
                     <h3 className="text-xs font-semibold text-on-raised">
                       The clustering never placed these{" "}
                       <span className="font-mono font-normal tabular-nums text-on-raised-muted">
-                        {fromPipeline.length}
+                        {filteredPipeline.length}
+                        {q ? ` of ${fromPipeline.length}` : ""}
                       </span>
                     </h3>
                     {/* NOT the reviewer's doing, and said so: these fell out of the clustering, which is a
@@ -1158,7 +1229,7 @@ function UnassignedPool({
                       />
                     ) : (
                       <ul className="flex flex-col gap-1">
-                        {fromPipeline.map((f) => {
+                        {filteredPipeline.map((f) => {
                           const memberId = `${f.cohort}:${f.variable}`;
                           return (
                             <li

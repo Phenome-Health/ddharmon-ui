@@ -3271,6 +3271,60 @@ test.describe("gate1 unassigned pool", () => {
     expect(text).toMatch(/gate 2|assigned|matched/);
     expect(text).toMatch(/back|any group|put/);
   });
+
+  test("@gate1 the pool search finds a variable past the 100-row cap and keeps it draggable", async ({
+    page,
+  }) => {
+    // A pool big enough to trip the render cap, with the target LAST so it sits past the first 100 rows.
+    // Rich fieldIndex so the capped evidence GRID engages (the uncapped chip fallback would hide the cap).
+    const target = "clsa:country_of_birth";
+    await serveRun(page, (run) => {
+      const leftovers: { cohort: string; variable: string; text: string }[] = [];
+      const fieldIndex: Record<string, { name: string; text: string; description: string }> = {};
+      for (let i = 0; i < 130; i++) {
+        const v = `filler_${String(i).padStart(3, "0")}`;
+        leftovers.push({ cohort: "ukbb", variable: v, text: `filler variable ${i}` });
+        fieldIndex[`ukbb:${v}`] = { name: v, text: `filler variable ${i}`, description: `filler description ${i}` };
+      }
+      leftovers.push({ cohort: "clsa", variable: "country_of_birth", text: "In what country were you born?" });
+      fieldIndex[target] = {
+        name: "country_of_birth",
+        text: "In what country were you born?",
+        description: "Country where the participant was born",
+      };
+      run.result!.unassignedFields = leftovers;
+      run.result!.fieldIndex = { ...(run.result!.fieldIndex ?? {}), ...fieldIndex } as never;
+    });
+    await openGate1(page);
+    await expandPool(page);
+
+    const targetRow = page.locator(
+      `${POOL} :is([data-testid='member-row'],[data-testid='member-chip'])[data-member-id='${target}']`,
+    );
+    // Before searching, the target is past the cap: the grid shows the first 100 and says so, and the
+    // target — row 131 — is not rendered.
+    await expect(page.locator(`${POOL}`)).toContainText(/showing the first 100 of 131/i);
+    await expect(targetRow).toHaveCount(0);
+
+    // Search surfaces it — filtering runs upstream of the cap, so a match at row 131 still appears.
+    const search = page.locator("[data-testid='pool-search']");
+    await expect(search).toBeVisible();
+    await search.fill("country of birth");
+    await expect(targetRow).toHaveCount(1);
+    // ...and the fillers are gone, so the reviewer is looking at the match, not scrolling for it.
+    await expect(
+      page.locator(`${POOL} :is([data-testid='member-row'],[data-testid='member-chip'])[data-member-id='ukbb:filler_000']`),
+    ).toHaveCount(0);
+    // A match under the cap drops the "first 100 of" footer.
+    await expect(page.locator(`${POOL}`)).not.toContainText(/showing the first 100/i);
+
+    // It stays a draggable row (the whole point is to drag it onto a group).
+    await expect(targetRow).toHaveAttribute("draggable", "true");
+
+    // Clearing the search restores the capped view, target hidden again.
+    await search.fill("");
+    await expect(targetRow).toHaveCount(0);
+  });
 });
 
 /**
