@@ -126,9 +126,9 @@ def test_a_row_that_embeds_nothing_is_still_a_row(tmp_path):
     cell = export.header.index(EMBEDDING_EXPORT_COLUMN)
     assert export.rows[1][cell] == ""
     assert export.n_nothing_to_embed == 1
-    # AND IT IS NOT REPORTED AS A COLLAPSE. Nothing was overwritten by a repeated name here, and sending
-    # the reviewer to hunt for a duplicate that does not exist is a worse outcome than saying nothing.
-    assert export.n_collapsed == 0
+    # AND IT IS NOT REPORTED AS A REPEATED NAME. Nothing shared a name here, and sending the reviewer to
+    # hunt for a duplicate that does not exist is a worse outcome than saying nothing.
+    assert export.n_repeated_kept == 0
     assert export.repeated_names == []
 
 
@@ -143,20 +143,22 @@ def test_the_synthesised_row_index_survives_an_empty_row_and_a_blank_line(tmp_pa
     assert [row[cell] for row in export.rows] == ["alpha", "", "beta", "gamma"]
 
 
-def test_a_repeated_variable_name_is_counted_and_only_the_surviving_row_carries_the_text(tmp_path):
-    """Defect 4. Last-wins is the loader's documented behaviour, so the LAST row is the one that survives."""
+def test_a_repeated_variable_name_keeps_both_rows_each_with_its_own_text(tmp_path):
+    """The loader now DISAMBIGUATES a repeated name (never last-wins collapses it), so BOTH rows survive AND
+    each carries its OWN text — the earlier row is no longer blanked as a casualty of the survivor."""
     src = tmp_path / "cohortD.csv"
     src.write_text("var,desc\nDUP,first definition\nUNIQ,only definition\nDUP,second definition\n")
 
     export = build_embedding_export(src, cohort_name="CohortD", column_roles=ROLES)
 
     cell = export.header.index(EMBEDDING_EXPORT_COLUMN)
-    assert len(export.rows) == 3, "a collapsed row must still be present"
-    assert export.rows[0][cell] == "", "the row the loader discarded was credited with text it never gave"
-    assert export.rows[2][cell] == "second definition", "the surviving row lost its text"
+    assert len(export.rows) == 3
+    # Each DUP row keeps its own definition — nothing is blanked.
+    assert export.rows[0][cell] == "first definition"
+    assert export.rows[2][cell] == "second definition"
     assert export.n_rows == 3
-    assert export.n_variables == 2
-    assert export.n_collapsed == 1
+    assert export.n_variables == 3, "both DUP rows are kept as distinct variables now"
+    assert export.n_repeated_kept == 1, "one repeated name, kept as distinct (not dropped)"
     assert export.repeated_names == ["DUP"]
 
 
@@ -169,7 +171,7 @@ def test_with_no_variable_name_column_every_row_is_still_attributed(tmp_path):
 
     cell = export.header.index(EMBEDDING_EXPORT_COLUMN)
     assert [row[cell] for row in export.rows] == ["alpha description", "beta description"]
-    assert export.n_collapsed == 0
+    assert export.n_repeated_kept == 0
 
 
 def test_the_same_file_twice_produces_byte_identical_output(tmp_path):
@@ -227,16 +229,17 @@ def test_the_endpoint_needs_no_job_and_creates_none(tmp_path):
         assert set(app_module.store.list_ids()) == before, "the export created run state"
 
 
-def test_the_endpoint_reports_how_many_rows_the_loader_collapsed():
-    """Silent last-wins is this project's longest-standing data loss; the export is where it becomes visible."""
+def test_the_endpoint_reports_repeated_names_kept_as_distinct():
+    """Silent last-wins was this project's longest-standing data loss; the loader now keeps repeats as
+    distinct variables and the export surfaces how many there are to check (header name kept for the FE)."""
     client = _client()
 
     res = _post_csv(client, "dup.csv", "var,desc\nDUP,one\nDUP,two\nX,three\n", ROLES)
 
     assert res.status_code == 200, res.text
     assert res.headers["x-ddharmon-rows"] == "3"
-    assert res.headers["x-ddharmon-variables"] == "2"
-    assert res.headers["x-ddharmon-collapsed"] == "1"
+    assert res.headers["x-ddharmon-variables"] == "3", "both DUP rows are kept as distinct variables"
+    assert res.headers["x-ddharmon-collapsed"] == "1", "one repeated name, kept as distinct (not dropped)"
     assert "DUP" in res.headers["x-ddharmon-repeated-names"]
 
 

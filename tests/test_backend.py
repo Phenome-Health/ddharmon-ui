@@ -3109,15 +3109,16 @@ def test_preprocessing_counts_match_field_count(tmp_path):
 
 
 def test_preprocessing_reports_the_row_count_and_the_unique_name_count(tmp_path):
-    """The silent last-wins drop, surfaced. `load_dictionary` keys fields on the variable name, so a
-    repeated name makes a variable VANISH with no error — a known and expensive debugging cost here."""
+    """A repeated variable name, surfaced. The loader now DISAMBIGUATES a repeat (no silent drop), so all
+    three rows survive — but the report still counts DISTINCT SOURCE names (crediting a disambiguation child
+    to its origin), so the reviewer is told two names cover three rows and can check the repeat is real."""
     from backend.engine.adapter import preprocess_for_run
 
     path, dd = _dup_name_dictionary(tmp_path)
     report = preprocess_for_run(dd, source_path=path)
 
     assert report["nVariables"] == 3, "the file has three data rows"
-    assert report["nUniqueVariableNames"] == 2, "one row was dropped, last-wins, on the repeated name"
+    assert report["nUniqueVariableNames"] == 2, "two distinct source names cover the three rows"
     assert report["nDuplicateVariableNames"] == 1
 
 

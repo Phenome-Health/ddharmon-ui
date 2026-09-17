@@ -859,9 +859,9 @@ export default function SetupPage() {
       const parts = [`${out.rows.toLocaleString()} rows · ${out.variables.toLocaleString()} variables`];
       if (out.collapsed > 0) {
         parts.push(
-          `${out.collapsed.toLocaleString()} ${out.collapsed === 1 ? "row was" : "rows were"} collapsed onto a repeated variable name` +
+          `${out.collapsed.toLocaleString()} ${out.collapsed === 1 ? "row shares" : "rows share"} a repeated variable name` +
             (out.repeatedNames.length ? ` (${out.repeatedNames.slice(0, 5).join(", ")})` : "") +
-            " and carry no text",
+            " — kept as distinct variables, so check they are really different",
         );
       }
       if (out.nothingToEmbed > 0) {

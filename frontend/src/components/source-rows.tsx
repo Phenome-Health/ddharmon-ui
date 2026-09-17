@@ -394,8 +394,16 @@ export function SourceRows({
                 </td>
                 <td className="px-2.5 py-1.5 align-top">
                   {r.synthetic ? (
-                    <span className="text-on-raised-muted" title={r.name}>
-                      —
+                    // A loader-synthesized id (the source had no variable-name/id column for this row). Shown
+                    // muted rather than as a bare "—": it is the run's STABLE per-variable identifier, and a
+                    // reviewer needs SOMETHING to cite or track a specific row by (08-23b subset). The title
+                    // says what it is so the generated id is not mistaken for a source name.
+                    <span
+                      data-testid="synthetic-var-id"
+                      className="whitespace-nowrap font-mono text-xs text-on-raised-muted"
+                      title={`Generated identifier — the source had no variable-name or id column for this row (${r.name})`}
+                    >
+                      {r.name}
                     </span>
                   ) : (
                     <span className="whitespace-nowrap font-mono text-on-raised">{r.name}</span>

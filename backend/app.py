@@ -1564,7 +1564,9 @@ async def dictionary_embedding_csv(
             "Content-Disposition": f'attachment; filename="{_safe_stem(spec["filename"])}_embedding.csv"',
             "X-Ddharmon-Rows": str(export.n_rows),
             "X-Ddharmon-Variables": str(export.n_variables),
-            "X-Ddharmon-Collapsed": str(export.n_collapsed),
+            # Header name kept for the FE contract; the value is now rows that shared a repeated name and
+            # were KEPT AS DISTINCT (disambiguated), not dropped — see EmbeddingExport.n_repeated_kept.
+            "X-Ddharmon-Collapsed": str(export.n_repeated_kept),
             "X-Ddharmon-Nothing-To-Embed": str(export.n_nothing_to_embed),
             # Comma-joined and already capped by the builder: "some name repeats" is not actionable, and
             # six thousand of them is not a header.

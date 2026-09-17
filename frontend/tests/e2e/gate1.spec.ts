@@ -907,6 +907,32 @@ test.describe("gate1 expanded row", () => {
     expect(scrolls.wider).toBe(true);
   });
 
+  test("@gate1 a loader-synthesized variable shows its generated id in the VARIABLE column, not a bare dash", async ({
+    page,
+  }) => {
+    // A row whose source had no variable-name/id column gets a synthetic "_ROW_n" identity. It used to
+    // render as a bare "—"; #11 shows the id (muted) so a reviewer can cite or track the row. Prepended so
+    // it is within the grid's 100-row render cap.
+    const synthId = "ukbb:_ROW_00042";
+    await serveRun(page, (run) => {
+      const members = run.result!.conceptGroupMembers ?? {};
+      members[BIG] = [synthId, ...(members[BIG] ?? [])];
+      run.result!.conceptGroupMembers = members;
+      const fi = (run.result!.fieldIndex ?? {}) as Record<string, unknown>;
+      fi[synthId] = {
+        name: "_ROW_00042",
+        text: "a row the loader gave a synthetic id",
+        description: "a row with no source variable-name column",
+      };
+      run.result!.fieldIndex = fi as never;
+    });
+    await openGate1(page);
+    const row = await expandRow(page, BIG);
+    const idCell = row.locator("[data-testid='synthetic-var-id']");
+    await expect(idCell.first()).toBeVisible();
+    await expect(idCell.first()).toHaveText("_ROW_00042");
+  });
+
   test("@gate1 with no field rows on the run, the expanded row falls back to membership", async ({
     page,
   }) => {

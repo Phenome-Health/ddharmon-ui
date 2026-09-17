@@ -805,12 +805,15 @@ class EmbeddingExport:
     #: The file's own header, in the file's own order, then :data:`EMBEDDING_EXPORT_COLUMN`.
     header: list[str]
     rows: list[list[str]]
-    #: Data rows in the FILE. Counted from the file, never from the loaded dictionary — the loaded one has
-    #: already collapsed the duplicates, which is the very thing being measured.
+    #: Data rows in the FILE. Counted from the file, never from the loaded dictionary.
     n_rows: int = 0
-    #: Variables the loader actually produced. Lower than ``n_rows`` means rows were collapsed.
+    #: Variables the loader produced. Equals ``n_rows`` now that repeated names are DISAMBIGUATED rather than
+    #: collapsed — a lower value means only rows core dropped for being empty.
     n_variables: int = 0
-    n_collapsed: int = 0
+    #: Rows that share a repeated variable name. They are KEPT AS DISTINCT variables now (the loader
+    #: disambiguates rather than last-wins collapsing), so this is how many the reviewer should CHECK are
+    #: really different — NOT a count of dropped rows.
+    n_repeated_kept: int = 0
     #: Variables whose composed text is empty. They embed nothing and reach no concept group — a silent
     #: loss everywhere else in the product, which is why this export states it rather than omitting it.
     n_nothing_to_embed: int = 0
@@ -821,6 +824,11 @@ class EmbeddingExport:
 
 #: How many repeated names travel with the export. A response header is not a place for a 6,000-item list.
 _REPEATED_NAME_CAP = 20
+
+#: The suffix csv_parser appends when it disambiguates a repeated variable_name (first keeps the name, the
+#: k-th repeat becomes ``name__k``). MUST match ``GenericCSVParser._disambiguate_variable_names``; the
+#: repeated-name backend test carries each row's own text and catches any drift.
+_DISAMBIG_SEP = "__"
 
 
 def build_embedding_export(
@@ -887,50 +895,44 @@ def build_embedding_export(
             key = (row[name_at] if name_at < len(row) else "").strip()
             if key:
                 occurrences[key] = occurrences.get(key, 0) + 1
-    # The LAST row bearing a repeated name is the one the loader kept, so it is the only one that may
-    # carry text. Recorded as an index set rather than re-scanned per row.
-    survivor_at: dict[str, int] = {}
-    if name_at is not None:
-        for i, row in enumerate(data_rows):
-            key = (row[name_at] if name_at < len(row) else "").strip()
-            if key:
-                survivor_at[key] = i
 
+    # EACH ROW CARRIES ITS OWN TEXT. The loader no longer collapses a repeated name onto one survivor — it
+    # DISAMBIGUATES in file order (first keeps the name, the k-th repeat becomes `name__k`), so every row is
+    # a distinct field with its own composed text. Reconstruct the k-th occurrence's disambiguated key to
+    # look up its field (`by_raw_name` is keyed on `raw_variable_name or variable_name`, which is that key).
     out: list[list[str]] = []
     n_empty = 0
+    seen: dict[str, int] = {}
     for i, row in enumerate(data_rows):
         padded = list(row) + [""] * (len(header) - len(row))
         raw = (padded[name_at] or "").strip() if name_at is not None else ""
-        # An unnamed row is not nameless to core: it synthesises `_ROW_NNNNN` from the DATA-row index, so
-        # a file with no variable-name column (or a blank cell in one) still joins exactly.
-        key = raw or _SYNTHETIC_NAME % i
-        field = by_raw_name.get(key)
-        if raw and occurrences.get(raw, 0) > 1 and survivor_at.get(raw) != i:
-            # Collapsed. Crediting it with the survivor's text would state the opposite of what happened.
-            text = ""
-        elif field is None:
-            text = ""
+        if raw:
+            seen[raw] = seen.get(raw, 0) + 1
+            occ = seen[raw]
+            lookup = raw if occ == 1 else f"{raw}{_DISAMBIG_SEP}{occ}"
         else:
-            try:
-                text = str(field.to_embedding_text() or "")
-            except Exception:  # noqa: BLE001 - a composition failure is a fact to report, not a 500
-                text = ""
+            # An unnamed row is not nameless to core: it synthesises `_ROW_NNNNN` from the DATA-row index.
+            lookup = _SYNTHETIC_NAME % i
+        field = by_raw_name.get(lookup)
+        try:
+            text = str(field.to_embedding_text() or "") if field is not None else ""
+        except Exception:  # noqa: BLE001 - a composition failure is a fact to report, not a 500
+            text = ""
         if not text:
             n_empty += 1
         out.append(padded + [text])
 
     repeated = sorted(name for name, n in occurrences.items() if n > 1)
-    # COUNTED FROM THE REPEATS, not as `rows - variables`. The subtraction conflates two different losses:
-    # a row collapsed onto another row's name, and a row core discarded for being empty. They need
-    # different fixes, so reporting one figure for both would send the reviewer looking for a duplicate
-    # name that does not exist.
-    n_collapsed = sum(n - 1 for n in occurrences.values() if n > 1)
+    # COUNTED FROM THE REPEATS, not as `rows - variables` (which would also fold in rows core dropped for
+    # being empty — a different problem). These rows are KEPT AS DISTINCT now, so the count is what to CHECK,
+    # not what was lost.
+    n_repeated_kept = sum(n - 1 for n in occurrences.values() if n > 1)
     return EmbeddingExport(
         header=list(header) + [EMBEDDING_EXPORT_COLUMN],
         rows=out,
         n_rows=len(data_rows),
         n_variables=len(dd.fields),
-        n_collapsed=n_collapsed,
+        n_repeated_kept=n_repeated_kept,
         n_nothing_to_embed=n_empty,
         repeated_names=repeated[:_REPEATED_NAME_CAP],
     )
@@ -1154,6 +1156,21 @@ def _nothing_to_embed(dd: Any) -> int:
     return n
 
 
+def _unique_source_names(dd: Any) -> int:
+    """Distinct SOURCE variable names in the loaded dictionary. A disambiguation CHILD (the loader minted it
+    a ``name__N`` identity so a repeated name would not drop) is credited to its SOURCE name — which it
+    carries on ``short_label`` — so a repeated name is still surfaced even though the ROW was kept, not
+    dropped. ``_DISAMBIG_SEP`` matches csv_parser; the preprocessing-report test guards the arithmetic."""
+    names: set[str] = set()
+    for f in dd.fields.values():
+        v = str(getattr(f, "variable_name", "") or "")
+        sl = str(getattr(f, "short_label", "") or "")
+        prefix = f"{sl}{_DISAMBIG_SEP}"
+        suffix = v[len(prefix) :] if sl and v.startswith(prefix) else ""
+        names.add(sl if suffix and suffix.isdigit() else v)
+    return len(names)
+
+
 def _failed_report(dd: Any, n_rows: int, n_applied: int, error: str) -> UIPreprocessReport:
     """A report for a dictionary whose preprocessing RAISED.
 
@@ -1164,8 +1181,8 @@ def _failed_report(dd: Any, n_rows: int, n_applied: int, error: str) -> UIPrepro
     return {
         "cohort": getattr(dd, "cohort_name", None) or dd.name,
         "nVariables": n_rows,
-        "nUniqueVariableNames": n_applied,
-        "nDuplicateVariableNames": max(0, n_rows - n_applied),
+        "nUniqueVariableNames": _unique_source_names(dd),
+        "nDuplicateVariableNames": max(0, n_rows - _unique_source_names(dd)),
         "nNothingToEmbed": _nothing_to_embed(dd),
         "namesChanged": 0,
         "descriptionsChanged": 0,
@@ -1214,8 +1231,8 @@ def preprocess_for_run(dd: Any, *, source_path: Path | str | None = None) -> UIP
         return {
             "cohort": getattr(dd, "cohort_name", None) or dd.name,
             "nVariables": n_rows,
-            "nUniqueVariableNames": n_applied_before,
-            "nDuplicateVariableNames": max(0, n_rows - n_applied_before),
+            "nUniqueVariableNames": _unique_source_names(dd),
+            "nDuplicateVariableNames": max(0, n_rows - _unique_source_names(dd)),
             "nNothingToEmbed": _nothing_to_embed(dd),
             "namesChanged": 0,
             "descriptionsChanged": 0,
@@ -1274,7 +1291,7 @@ def preprocess_for_run(dd: Any, *, source_path: Path | str | None = None) -> UIP
             }
         )
     diff, n_changed_vars = _preprocess_diff(dd)
-    n_unique = len(dd.fields)
+    n_unique = _unique_source_names(dd)
     return {
         "cohort": getattr(dd, "cohort_name", None) or dd.name,
         "nVariables": n_rows,
