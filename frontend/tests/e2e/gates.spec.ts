@@ -497,6 +497,32 @@ test.describe("the run-progress readout", () => {
     });
   }
 
+  test("@gates the staged progress shows the per-phase checklist when the run streams timings", async ({
+    page,
+  }) => {
+    // The verbose checklist (each completed phase with a ✓ + duration, the active one spinning) already
+    // exists and renders on the legacy dashboard; this asserts it is now wired into the STAGED gate chrome.
+    // Timestamps anchored near `now` so the active phase's live duration is sane, not epoch-huge.
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: "clustering", phase: "clustering", stopping: false });
+      const config = p.config as Record<string, unknown>;
+      config.run_mode = "sync";
+      config.est_fields = 1000;
+      config.est_cohorts = 5;
+      delete config.demo;
+      const t = Math.floor(Date.now() / 1000);
+      (p as Record<string, unknown>).phaseStartedAt = { loading: t - 30, embedding: t - 20, clustering: t - 5 };
+    });
+    await gotoGate(page);
+
+    const timeline = page.locator("[data-testid='run-timeline']");
+    await expect(timeline).toBeVisible();
+    // Every phase the run has reached is listed, the completed ones and the active one alike.
+    await expect(timeline).toContainText(/loading/i);
+    await expect(timeline).toContainText(/embedding/i);
+    await expect(timeline).toContainText(/clustering/i);
+  });
+
   test("@gates a run that is still running says so, with its stage, its progress and its elapsed time", async ({
     page,
   }) => {

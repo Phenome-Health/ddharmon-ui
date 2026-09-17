@@ -45,7 +45,7 @@ export function RunTimeline({
   const segments = timelineSegments({ phaseStartedAt, currentPhase, now });
   if (!segments.length) return null;
   return (
-    <div className="space-y-1 border-t border-rule-on-raised pt-2 text-xs">
+    <div data-testid="run-timeline" className="space-y-1 border-t border-rule-on-raised pt-2 text-xs">
       {segments.map((s) => (
         <div key={s.phase} className="flex items-center justify-between">
           <span className="flex items-center gap-1.5 capitalize text-on-raised">
@@ -181,6 +181,12 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
           <div className="h-full rounded-pill bg-accent-action" style={{ width: `${pct}%` }} />
         </div>
       )}
+
+      {/* The per-phase checklist — each completed phase with a ✓ and how long it ran, the active one
+          spinning. The SAME component the legacy dashboard renders; wired in here so the staged flow gets
+          the verbose progress too. It hides itself when the run carries no timings, so a hydrated
+          historical run stays clean, and it reuses the tick this section already owns. */}
+      <RunTimeline phaseStartedAt={job.phaseStartedAt} currentPhase={job.phase} now={now} />
     </section>
   );
 }
