@@ -529,6 +529,10 @@ export interface JobResult {
   // lets the frame stop carrying the (multi-megabyte) payload. Bumped only on a payload change, never on a
   // progress tick, so it cannot provoke a refetch storm.
   resultVersion?: number;
+  // The ddharmon core release this run was produced by, stamped on the /result payload. Gate 4's
+  // reproducibility disclosure and its E3 revision-rate anti-drift stamp read it; absent on runs that
+  // predate the stamp.
+  coreVersion?: string;
 }
 
 /** Where a run is parked and what reaching it cost — GET /api/harmonize/checkpoint/{jobId}. */

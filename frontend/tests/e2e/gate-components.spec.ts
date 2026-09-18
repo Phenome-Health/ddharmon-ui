@@ -206,7 +206,9 @@ test.describe("gate component vocabulary", () => {
     // opt in it renders an honest tile naming the option — never hidden, never a bare disabled control.
     expect(src).toContain("readjudicationEnabled");
     expect(src).toContain('claim="not-enabled"');
-    expect(src).toContain("Turn it on at Setup to enable it.");
+    // Interim honesty fix (08-17, 2026-09-17): the tile no longer promises a Setup control that does not
+    // work (the toggle is inert pending the decision-time opt-in redesign) — it states the off-state plainly.
+    expect(src).toContain("off on this run");
     // Edit and ignore stay live either way: both are free, and both are how the flag gets resolved by hand.
     expect(src).toContain("Edit by moving variables");
     expect(src).toContain("Ignore the proposal");
