@@ -193,8 +193,7 @@ export function CarveProposal({
           notAvailable ?? (
             <NotAvailable thing="Re-adjudication" claim="not-enabled" className="bg-surface-raised">
               Accepting a carve re-splits the group into distinct concepts, which costs money, so it is off
-              by default. Turn it on at Setup to enable it. Ignoring or editing the proposal by hand still
-              works.
+              on this run. Ignoring or editing the proposal by hand still works.
             </NotAvailable>
           )
         )}

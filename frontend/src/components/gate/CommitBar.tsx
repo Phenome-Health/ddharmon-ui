@@ -42,6 +42,13 @@ export interface CommitBarProps {
   scopeLabel?: string;
   /** Something upstream changed and this gate's rows need re-checking — the accent notice dot. */
   recheckNotice?: React.ReactNode;
+  /**
+   * A standing assurance carried on the bar itself (Gate 4's participant-data line, UI-SPEC §8.6). Rendered
+   * only when passed, so no other gate's bar changes. It rides IN the bar rather than above it because the
+   * bar is sticky, and an assurance that scrolls away is one the reviewer may never see at the moment they
+   * press download.
+   */
+  assurance?: React.ReactNode;
   onCommit?: () => void;
   busy?: boolean;
   disabled?: boolean;
@@ -56,6 +63,7 @@ export function CommitBar({
   firstCharge = false,
   scopeLabel,
   recheckNotice,
+  assurance,
   onCommit,
   busy = false,
   disabled = false,
@@ -115,6 +123,12 @@ export function CommitBar({
           )}
         </Button>
       </div>
+
+      {assurance && (
+        <p data-testid="commit-assurance" className="max-w-[80ch] text-xs text-on-raised-muted">
+          {assurance}
+        </p>
+      )}
     </div>
   );
 }
