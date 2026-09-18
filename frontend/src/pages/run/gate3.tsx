@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
-import { useParams } from "wouter";
+import { useLocation, useParams } from "wouter";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CommitBar } from "@/components/gate/CommitBar";
+import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
 import {
   ConceptWorkbench,
@@ -23,7 +26,9 @@ import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
-import { isGatePast } from "@/lib/gate-routes";
+import { getCheckpoint, resumeRun } from "@/lib/api";
+import { isGatePast, pathForGate } from "@/lib/gate-routes";
+import { isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
   recodeShape,
@@ -92,6 +97,36 @@ export default function Gate3Page() {
     "gate3",
     (jobState?.gatePosition ?? null) as GatePosition | null,
   );
+
+  // The commit bar past Gate 3 (08-23b Task 1). Same paid-resume idiom as Gate 1/2, but continuing to Gate 4
+  // BUYS NOTHING — Gate 4 is a pure read the backend carries forward without a worker — so the bar quotes no
+  // amount. A refused/failed continue leaves the reviewer here to retry.
+  const [, navigate] = useLocation();
+  const [resuming, setResuming] = useState(false);
+  const parkedHere =
+    jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate3";
+  const failedLeg =
+    !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
+
+  async function onContinue() {
+    setResuming(true);
+    try {
+      const { target } = await resumeRun(jobId);
+      const after = await getCheckpoint(jobId).catch(() => null);
+      if (after && !resumeTookEffect(after, target)) {
+        toast.error(
+          "The server accepted Continue, but this run has not started — it is still parked at this gate. Nothing was charged. Please report this run id.",
+        );
+        return;
+      }
+      toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
+      navigate(pathForGate(jobId, target));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not continue this run");
+    } finally {
+      setResuming(false);
+    }
+  }
 
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned, frozen });
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", {
@@ -824,6 +859,20 @@ export default function Gate3Page() {
             </p>
           )
         }
+      />
+      <CommitBar
+        action={failedLeg ? "Retry — continue this run" : "Continue to Gate 4"}
+        actionTestId="gate3-continue"
+        spentHere={costSoFar}
+        recheckNotice={
+          failedLeg
+            ? "The last attempt to continue this run did not finish. Nothing further was charged — press Retry to run the same step again."
+            : undefined
+        }
+        assurance="Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
+        onCommit={onContinue}
+        busy={resuming}
+        disabled={frozen || (!parkedHere && !failedLeg)}
       />
     </Shell>
   );

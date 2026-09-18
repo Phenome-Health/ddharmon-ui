@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { useParams } from "wouter";
+import { useLocation, useParams } from "wouter";
+import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,12 +16,17 @@ import {
   InheritedPanel,
 } from "@/components/gate/ConceptWorkbench";
 import { CandidateTable } from "@/components/gate/CandidateTable";
+import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
+import { GATE_LABELS } from "@/components/gate/GateRail";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
-import { isGatePast } from "@/lib/gate-routes";
+import { getCheckpoint, resumeRun } from "@/lib/api";
+import { estimateRunCostBreakdown } from "@/lib/estimate";
+import { isGatePast, pathForGate } from "@/lib/gate-routes";
+import { isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
 import {
   affectedSpecCount,
@@ -29,7 +35,7 @@ import {
   needsRepickConfirmation,
   repickConfirmation,
 } from "@/lib/gate23";
-import type { JobResult, UIRecord, GatePosition } from "@/types";
+import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
 
 /**
  * Gate 2 — Concepts to elements. Where the reviewer chooses the target for each concept the run passed on.
@@ -94,6 +100,47 @@ export default function Gate2Page() {
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
   const frozen = isGatePast("gate2", (jobState?.gatePosition ?? null) as GatePosition | null);
+
+  // The commit bar — the one place the paid resume is issued past Gate 1 (08-23b Task 1). Mirrors Gate 1's
+  // idiom exactly: the destination is the SERVER'S (resumeRun's `target`), navigation is downstream of a
+  // confirmed advance, and a refused/failed continue leaves the reviewer here to retry rather than dead-end.
+  const [, navigate] = useLocation();
+  const [resuming, setResuming] = useState(false);
+  const parkedHere = jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate2";
+  const failedLeg = !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
+
+  // What pressing Continue BUYS: continuing from Gate 2 runs the work whose results Gate 3 shows (spec-gen,
+  // plus the concept-match check if the run opted in), so the forecast is Gate 3's — priced on THIS run's
+  // own corpus and config, never a lower quote than will be charged (R8).
+  const continueCost = useMemo(() => {
+    const variables = allRecords.reduce((n, r) => n + (r.nMembers ?? 0), 0);
+    const nCohorts = new Set(allRecords.flatMap((r) => r.cohorts ?? [])).size || 1;
+    const mode = (runConfig?.runMode ?? runConfig?.run_mode ?? runConfig?.mode ?? "batch") as RunMode;
+    const genSpecs = runConfig?.genTransformSpecs !== false && runConfig?.gen_transform_specs !== false;
+    const conceptGate = Boolean(runConfig?.conceptGate ?? runConfig?.concept_gate);
+    return estimateRunCostBreakdown(variables, nCohorts, mode, genSpecs, false, { conceptGate }).byGate.gate3
+      .forecast;
+  }, [allRecords, runConfig]);
+
+  async function onContinue() {
+    setResuming(true);
+    try {
+      const { target } = await resumeRun(jobId);
+      const after = await getCheckpoint(jobId).catch(() => null);
+      if (after && !resumeTookEffect(after, target)) {
+        toast.error(
+          "The server accepted Continue, but this run has not started — it is still parked at this gate. Nothing was charged. Please report this run id.",
+        );
+        return;
+      }
+      toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
+      navigate(pathForGate(jobId, target));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not continue this run");
+    } finally {
+      setResuming(false);
+    }
+  }
 
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned, frozen });
   // Read-only here: Gate 3's decisions are what a re-pick would invalidate, so the confirmation's count
@@ -578,6 +625,21 @@ export default function Gate2Page() {
             )}
           </div>
         }
+      />
+      <CommitBar
+        action={failedLeg ? "Retry — continue this run" : "Continue to Gate 3"}
+        actionTestId="gate2-continue"
+        total={continueCost}
+        spentHere={costSoFar}
+        scopeLabel={`${allRecords.length} ${allRecords.length === 1 ? "concept" : "concepts"}`}
+        recheckNotice={
+          failedLeg
+            ? "The last attempt to continue this run did not finish. Nothing further was charged — press Retry to run the same step again."
+            : undefined
+        }
+        onCommit={onContinue}
+        busy={resuming}
+        disabled={frozen || (!parkedHere && !failedLeg)}
       />
     </Shell>
   );
