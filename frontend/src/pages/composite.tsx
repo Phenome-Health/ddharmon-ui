@@ -290,12 +290,11 @@ export function SpecView({
   const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.indeterminate;
   const codingFor = (name: string): ScoreComponent | undefined =>
     definition.components.find((c) => c.name === name);
-  // Two buckets, per the reviewer ask: concepts this run FOUND for a component (sorted most-confident
-  // first, since that is the order a reviewer audits) and the ones it did NOT.
-  const foundMatches = spec.matches
-    .filter((m) => m.conceptId != null)
-    .sort((a, b) => b.confidence - a.confidence);
-  const notFoundMatches = spec.matches.filter((m) => m.conceptId == null);
+  // The component list renders in SOURCE-DOCUMENT order — `spec.matches` preserves the definition's order,
+  // which the builder keeps from the source doc — never reordered by match state or confidence, so the
+  // reviewer reads the score exactly as the paper presents it. Found vs missing is shown per row (the icon)
+  // and summarised in the header count, not by regrouping the list.
+  const nFound = spec.matches.filter((m) => m.conceptId != null).length;
   // Resolve a concept id to a name + cohorts for the swap dropdown. Callers may pass a resolver (the gate
   // strip resolves against the run's concept groups); otherwise fall back to this run's records.
   const recordById = useMemo(
@@ -448,30 +447,19 @@ export function SpecView({
           <CardTitle className="text-sm">Components → this run's concepts</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
+              The header carries the found/total tally; each row shows its own found/missing icon. */}
           <Collapsible defaultOpen>
             <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
               <span className="flex items-center gap-1.5">
-                <CheckCircle2 className="h-3.5 w-3.5 text-status-ok" /> Found · {foundMatches.length}
+                Components · {nFound}/{spec.matches.length} found
               </span>
               <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2 space-y-2">
-              {foundMatches.map(renderRow)}
+              {spec.matches.map(renderRow)}
             </CollapsibleContent>
           </Collapsible>
-          {notFoundMatches.length > 0 && (
-            <Collapsible defaultOpen>
-              <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-                <span className="flex items-center gap-1.5">
-                  <XCircle className="h-3.5 w-3.5 text-on-raised-muted" /> Not found · {notFoundMatches.length}
-                </span>
-                <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2 space-y-2">
-                {notFoundMatches.map(renderRow)}
-              </CollapsibleContent>
-            </Collapsible>
-          )}
         </CardContent>
       </Card>
 
@@ -844,16 +832,32 @@ function MatchRow({
                     const support = first?.optionLabel
                       ? `“${first.optionLabel}”`
                       : (first?.variableId ?? "");
+                    // Union coverage can span SEVERAL groups: when a cohort's supporting member comes from a
+                    // group OTHER than the surfaced one, attribute it to its real group instead of letting it
+                    // read as if it were in the selected group (the cataracts case — AoU's support was a
+                    // different retrieved group).
+                    const srcGid = first?.groupId;
+                    const fromOther = srcGid && srcGid !== match.conceptId;
+                    const srcName = fromOther
+                      ? resolveConcept?.(srcGid)?.concept?.trim() || "another group"
+                      : "";
                     return (
                       <span
                         key={co}
                         data-testid="coverage-member"
                         data-cohort={co}
+                        data-from-group={srcGid ?? ""}
                         className="whitespace-nowrap"
                       >
                         <span className="font-medium text-on-raised">{co}</span>
                         {support && <span className="font-mono text-[11px]"> · {support}</span>}
                         {mem.length > 1 && <span> +{mem.length - 1}</span>}
+                        {fromOther && (
+                          <span className="text-on-raised-muted italic" title={srcName}>
+                            {" "}
+                            (from: {srcName.length > 32 ? `${srcName.slice(0, 32)}…` : srcName})
+                          </span>
+                        )}
                       </span>
                     );
                   })
@@ -911,10 +915,6 @@ function MatchRow({
                     </li>
                   ))}
                 </ul>
-              )}
-
-              {match.rationale && (
-                <p className="mt-1 text-on-raised-muted">{match.rationale}</p>
               )}
             </div>
           ) : (

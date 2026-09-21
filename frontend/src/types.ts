@@ -679,7 +679,12 @@ export interface ComponentMatch {
   // member sits in the over-merged group yet did not match. This is what reconciles the coverage table,
   // the found-component detail and the Swap list so they cannot disagree (the "cataracts" bug). Absent on
   // runs predating union coverage — callers fall back to `cohorts` (see `coveredCohorts`).
-  coverageMembers?: Record<string, { variableId: string; confidence: number; optionLabel?: string }[]>;
+  // Each coverage member also names the SOURCE group it came from (`groupId`) — union coverage may span
+  // several groups, so the detail can attribute each cohort's support to its real group (not the surfaced one).
+  coverageMembers?: Record<
+    string,
+    { variableId: string; confidence: number; optionLabel?: string; groupId?: string }[]
+  >;
 }
 
 export interface CohortCoverage {
