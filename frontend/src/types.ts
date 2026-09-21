@@ -668,8 +668,18 @@ export interface ComponentMatch {
   // judge rated; `confidence` above is then the group AGGREGATE. `matchedMembers` are those variables
   // (id + confidence), shown indented under the group; `groupCandidates` is the deduped Swap list — every
   // group the component's rated variables reached, best-first. Absent on the legacy group-concept path.
-  matchedMembers?: { variableId: string; confidence: number }[];
-  groupCandidates?: { groupId: string; confidence: number }[];
+  // `optionLabel` names the answer OPTION when a checklist/multi-select value supplies the member.
+  matchedMembers?: { variableId: string; confidence: number; optionLabel?: string }[];
+  // `nMatched` / `nTotal` = "N of M group members matched" for THAT candidate group, so every Swap
+  // candidate carries its own coverage readout (not just the currently-selected group).
+  groupCandidates?: { groupId: string; confidence: number; nMatched?: number; nTotal?: number }[];
+  // Member-level per-cohort UNION coverage across every matched group — the SINGLE SOURCE for "which
+  // cohorts actually have a supporting variable/option". A cohort key with a non-empty array is covered;
+  // a cohort that sits in the group's raw membership (`cohorts`) but is absent here is NOT covered — a
+  // member sits in the over-merged group yet did not match. This is what reconciles the coverage table,
+  // the found-component detail and the Swap list so they cannot disagree (the "cataracts" bug). Absent on
+  // runs predating union coverage — callers fall back to `cohorts` (see `coveredCohorts`).
+  coverageMembers?: Record<string, { variableId: string; confidence: number; optionLabel?: string }[]>;
 }
 
 export interface CohortCoverage {

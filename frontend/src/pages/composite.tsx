@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
+import { coveredCohorts } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
@@ -344,17 +345,30 @@ export function SpecView({
     }
     return order.map((d) => ({ domain: d, matches: byDomain.get(d)! }));
   }, [spec.matches, definition.components, hasDomains]);
-  // A cohort "covers" a domain when at least one of its components is present in that cohort.
+  // A cohort "covers" a domain when at least one of its components is COVERED in that cohort — union
+  // coverage (`coveredCohorts`), not raw group membership.
   const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
-    matches.some((m) => m.conceptId != null && m.cohorts.includes(cohort));
-  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables.
+    matches.some((m) => coveredCohorts(m).includes(cohort));
+  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables. Reads
+  // the SAME union coverage as the found-component detail and the Swap list, so the table cannot disagree.
   const coverageComponentRow = (m: ComponentMatch) => (
-    <tr key={m.component} className="border-b border-border/60 last:border-0">
+    <tr
+      key={m.component}
+      data-testid="coverage-row"
+      data-component={m.component}
+      className="border-b border-border/60 last:border-0"
+    >
       <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
       {feasibility.perCohort.map((c) => {
-        const present = m.conceptId != null && m.cohorts.includes(c.cohort);
+        const present = coveredCohorts(m).includes(c.cohort);
         return (
-          <td key={c.cohort} className="px-2 py-1.5 text-center">
+          <td
+            key={c.cohort}
+            data-testid="coverage-cell"
+            data-cohort={c.cohort}
+            data-present={present ? "true" : "false"}
+            className="px-2 py-1.5 text-center"
+          >
             {present ? (
               <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
             ) : (
@@ -530,8 +544,8 @@ export function SpecView({
                       {feasibility.perCohort.map((c) => (
                         <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
                           {
-                            spec.matches.filter(
-                              (m) => m.conceptId != null && m.cohorts.includes(c.cohort),
+                            spec.matches.filter((m) =>
+                              coveredCohorts(m).includes(c.cohort),
                             ).length
                           }
                         </td>
@@ -694,6 +708,14 @@ function MatchRow({
   const candidateConfidence = new Map(
     (match.groupCandidates ?? []).map((g) => [g.groupId, g.confidence] as const),
   );
+  // Per-candidate coverage: "N of M group members matched" for EACH Swap option, so a partial candidate
+  // is visible before it is selected. It replaces the raw group-cohort chip, which over-claimed coverage —
+  // the "cataracts" case where a group spanning UKBB printed "UKBB" as covered though no member matched.
+  const candidateCoverage = new Map(
+    (match.groupCandidates ?? [])
+      .filter((g) => g.nMatched != null && g.nTotal != null)
+      .map((g) => [g.groupId, { nMatched: g.nMatched!, nTotal: g.nTotal! }] as const),
+  );
   const rawCandidateIds = match.groupCandidates?.length
     ? match.groupCandidates.map((g) => g.groupId)
     : [...(match.shortlist ?? []), ...(match.conceptId ? [match.conceptId] : [])];
@@ -811,7 +833,33 @@ function MatchRow({
                 </Link>
               )}
               <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-on-raised-muted">
-                <span>{match.cohorts.join(", ") || "—"}</span>
+                {/* Per-cohort UNION coverage — the supporting variable/option in EACH covered cohort, the
+                    single source the coverage table and Swap list also read. A cohort that sits in the
+                    group's raw membership but whose members did not match simply does not appear (the
+                    "cataracts" fix). A checklist member names its answer OPTION, not the raw variable id. */}
+                {match.coverageMembers && coveredCohorts(match).length > 0 ? (
+                  coveredCohorts(match).map((co) => {
+                    const mem = match.coverageMembers![co] ?? [];
+                    const first = mem[0];
+                    const support = first?.optionLabel
+                      ? `“${first.optionLabel}”`
+                      : (first?.variableId ?? "");
+                    return (
+                      <span
+                        key={co}
+                        data-testid="coverage-member"
+                        data-cohort={co}
+                        className="whitespace-nowrap"
+                      >
+                        <span className="font-medium text-on-raised">{co}</span>
+                        {support && <span className="font-mono text-[11px]"> · {support}</span>}
+                        {mem.length > 1 && <span> +{mem.length - 1}</span>}
+                      </span>
+                    );
+                  })
+                ) : (
+                  <span>{match.cohorts.join(", ") || "—"}</span>
+                )}
                 {/* Confidence is already on the collapsed summary line above (08-16g review #7 — it read
                     twice once expanded); here keep only the low-confidence review flag, not the number. */}
                 {lowConfidence && (
@@ -926,7 +974,7 @@ function MatchRow({
                 // Never fall back to the raw internal id (08-16g review #5 — an unresolved candidate read
                 // "ca5ae18069d83#g0"); an unnameable group reads "Unnamed group".
                 const label = c?.concept?.trim() || "Unnamed group";
-                const co = c?.cohorts?.length ? c.cohorts.join(", ") : "";
+                const cov = candidateCoverage.get(id);
                 const conf = candidateConfidence.get(id);
                 const isCurrent = id === match.conceptId;
                 return (
@@ -945,12 +993,28 @@ function MatchRow({
                         title="Open this concept group on Gate 1"
                       >
                         <span className="line-clamp-1">{label}</span>
-                        {co && <span className="text-on-raised-muted"> · {co}</span>}
+                        {cov && (
+                          <span
+                            data-testid="swap-candidate-coverage"
+                            className="text-on-raised-muted"
+                          >
+                            {" "}
+                            · {cov.nMatched} of {cov.nTotal} matched
+                          </span>
+                        )}
                       </button>
                     ) : (
                       <span className="min-w-0 flex-1 text-xs text-on-raised">
                         <span className="line-clamp-1">{label}</span>
-                        {co && <span className="text-on-raised-muted"> · {co}</span>}
+                        {cov && (
+                          <span
+                            data-testid="swap-candidate-coverage"
+                            className="text-on-raised-muted"
+                          >
+                            {" "}
+                            · {cov.nMatched} of {cov.nTotal} matched
+                          </span>
+                        )}
                       </span>
                     )}
                     {conf != null && (

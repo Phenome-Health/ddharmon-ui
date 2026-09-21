@@ -28,6 +28,7 @@ import { isOver, nextDepth } from "@/lib/drop-highlight";
 import type {
   CoherenceState,
   ComponentCoding,
+  ComponentMatch,
   CompositeSpec,
   ConceptGroup,
 } from "@/types";
@@ -1282,6 +1283,13 @@ test.describe("gate1 score", () => {
     matched: ConceptGroup,
     rejected: ConceptGroup,
     vars: string[],
+    // Union coverage (08-25 Task 5). `coverageMembers` is the per-cohort union the panel now reads as its
+    // single source; `matchCohorts` lets a test set the match's honest coverage to a SUBSET of the group's
+    // raw cohorts, reproducing the "cataracts" over-merge (group spans a cohort no member covers).
+    opts?: {
+      coverageMembers?: ComponentMatch["coverageMembers"];
+      matchCohorts?: string[];
+    },
   ): CompositeSpec {
     const coding: ComponentCoding = {
       kind: "threshold",
@@ -1328,7 +1336,8 @@ test.describe("gate1 score", () => {
           conceptId: matched.groupId,
           concept: matched.concept,
           column: "grip",
-          cohorts: matched.cohorts,
+          // Honest coverage — the union keys — which may be a SUBSET of the group's raw `cohorts`.
+          cohorts: opts?.matchCohorts ?? matched.cohorts,
           sourceVariables: vars,
           confidence: 0.72,
           rationale: "measures grip strength",
@@ -1336,9 +1345,12 @@ test.describe("gate1 score", () => {
           pinned: false,
           shortlist: [matched.groupId],
           // Variable-only shape: the matched variables that rolled up to the group, and the deduped
-          // group candidates the Swap list offers.
+          // group candidates the Swap list offers — each candidate now carrying its own N-of-M coverage.
           matchedMembers: vars.map((v) => ({ variableId: v, confidence: 0.72 })),
-          groupCandidates: [{ groupId: matched.groupId, confidence: 0.72 }],
+          groupCandidates: [
+            { groupId: matched.groupId, confidence: 0.72, nMatched: vars.length, nTotal: matched.nMembers },
+          ],
+          coverageMembers: opts?.coverageMembers,
         },
         {
           component: "Gait speed",
@@ -1461,6 +1473,92 @@ test.describe("gate1 score", () => {
     // …and it links: opening the rolled-up group lands it in the detail pane.
     await gait.locator("[data-testid='swap-candidate-open']").first().click();
     await expect(pane).toContainText(rejected.concept.slice(0, 20));
+  });
+
+  test("@gate1 union coverage: the table, the found-component detail and the Swap list all agree — an over-merged cohort is never shown covered, swaps read X of Y, and a checklist member names its option", async ({
+    page,
+  }) => {
+    const groups = fixtureGroups();
+    // "Diastolic BP" spans FOUR cohorts (AI-READI, CLSA, MESA, UKBB) across 14 members — the over-merge
+    // the union-coverage model exists to keep honest.
+    const matched = groups.find((g) => g.groupId === "cb2a6e2cd6fd3#g0")!;
+    const rejected = groups.find((g) => g.groupId === "c8331409f61e1#g0")!;
+    expect(matched.cohorts).toEqual(
+      expect.arrayContaining(["AI-READI", "CLSA", "MESA", "UKBB"]),
+    );
+    // Union coverage: only CLSA (a real variable) and AI-READI (a checklist OPTION) actually match. UKBB
+    // and MESA sit in the group but no member covers them — they must read NOT covered everywhere. This is
+    // exactly the cataracts case: the group's raw membership over-claims, the union is the truth.
+    const coverageMembers = {
+      CLSA: [{ variableId: "CLSA:BP_DIASTOLIC_FIRST_COM", confidence: 0.95 }],
+      "AI-READI": [
+        { variableId: "AI-READI:bp1_diabp_vsorres", confidence: 0.9, optionLabel: "Diastolic BP" },
+      ],
+    };
+    const vars = matched.memberVariableNames.slice(0, 3);
+
+    await serveRun(page, (run) => {
+      const spec = scoreSpec(matched, rejected, vars, {
+        coverageMembers,
+        matchCohorts: ["CLSA", "AI-READI"],
+      });
+      // Give the per-cohort table a column for ALL FOUR of the group's cohorts, so the uncovered ones can
+      // be asserted as "not covered" rather than merely absent.
+      spec.feasibility.perCohort = matched.cohorts.map((cohort) => ({
+        cohort,
+        present: [],
+        missing: [],
+        computable: false,
+      }));
+      run.composites = [spec];
+    });
+    await openGate1(page);
+    await openScorePanel(page);
+
+    const grip = page.locator(
+      "[data-testid='score-match'][data-component='Grip strength']",
+    );
+    await grip.locator("[data-testid='score-component-expand']").click();
+
+    // (b) FOUND-COMPONENT DETAIL — per-cohort supporting variable/option from the union. Exactly the two
+    // covered cohorts appear; the over-merged UKBB/MESA do not; and the checklist cohort names its OPTION.
+    await expect(grip.locator("[data-testid='coverage-member']")).toHaveCount(2);
+    await expect(
+      grip.locator("[data-testid='coverage-member'][data-cohort='CLSA']"),
+    ).toContainText("CLSA:BP_DIASTOLIC_FIRST_COM");
+    await expect(
+      grip.locator("[data-testid='coverage-member'][data-cohort='AI-READI']"),
+    ).toContainText("Diastolic BP"); // the answer OPTION, not the raw variable id
+    await expect(
+      grip.locator("[data-testid='coverage-member'][data-cohort='UKBB']"),
+    ).toHaveCount(0);
+    await expect(
+      grip.locator("[data-testid='coverage-member'][data-cohort='MESA']"),
+    ).toHaveCount(0);
+
+    // (a) COVERAGE TABLE — the same verdict, cell by cell: it cannot disagree with the detail.
+    const row = page.locator(
+      "[data-testid='coverage-row'][data-component='Grip strength']",
+    );
+    for (const co of ["CLSA", "AI-READI"]) {
+      await expect(
+        row.locator(`[data-testid='coverage-cell'][data-cohort='${co}']`),
+      ).toHaveAttribute("data-present", "true");
+    }
+    for (const co of ["UKBB", "MESA"]) {
+      await expect(
+        row.locator(`[data-testid='coverage-cell'][data-cohort='${co}']`),
+      ).toHaveAttribute("data-present", "false");
+    }
+
+    // (c) SWAP LIST — every candidate carries its own "N of M matched"; the misleading raw-group cohort
+    // chip that printed UKBB as covered is gone.
+    await grip.getByRole("button", { name: "Swap", exact: true }).click();
+    const candidate = grip.locator("[data-testid='swap-candidate']").first();
+    await expect(
+      candidate.locator("[data-testid='swap-candidate-coverage']"),
+    ).toContainText(`${vars.length} of ${matched.nMembers} matched`);
+    await expect(candidate).not.toContainText("UKBB");
   });
 
   test("@gate1 the panel is a section of Gate 1, not a screen and not a modal", async ({

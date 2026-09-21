@@ -169,3 +169,25 @@ export const CUTOFF_UNSTATED =
   "The source did not state a cutoff for this component. It is flagged for a human rather than filled in — " +
   "a score's threshold is a clinical claim, and inventing a plausible one is the most consequential thing " +
   "this panel could get wrong.";
+
+/**
+ * The cohorts a component match ACTUALLY covers — the single source of truth for coverage.
+ *
+ * Union coverage (08-25) is member-level: a component's `coverageMembers` maps each cohort to the
+ * variable(s)/option(s) that actually matched, taken across every matched group. A cohort key with a
+ * non-empty array is covered. The over-merge case this exists to fix (the "cataracts" bug): a matched
+ * concept GROUP may span cohorts whose members did NOT match — its raw `cohorts` therefore over-claims,
+ * while `coverageMembers` keys are honest. Every view (coverage table, found-component detail, Swap list)
+ * reads THIS, so none can disagree with another.
+ *
+ * Back-compat: runs predating union coverage carry no `coverageMembers`, so we fall back to the legacy
+ * `cohorts` (a missing component has neither, and correctly reports as covering nothing).
+ */
+export function coveredCohorts(m: {
+  cohorts?: string[];
+  coverageMembers?: Record<string, { variableId: string }[]> | null;
+}): string[] {
+  const cm = m.coverageMembers;
+  if (cm) return Object.keys(cm).filter((c) => (cm[c]?.length ?? 0) > 0);
+  return m.cohorts ?? [];
+}

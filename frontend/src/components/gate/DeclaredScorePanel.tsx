@@ -27,6 +27,7 @@ import {
   PRESENCE_IS_PER_DICTIONARY,
   SCOPE_VERDICT_COPY,
   componentVerdictFor,
+  coveredCohorts,
   declaredComponents,
   missingReason,
   scopeVerdictFor,
@@ -180,7 +181,7 @@ function applyEditLocally(
   const matches = spec.matches.map((m) => {
     if (m.component !== component) return m;
     if (conceptId == null) {
-      return { ...m, conceptId: null, concept: "", cohorts: [], sourceVariables: [], confidence: 0, column: "", rationale: "", pinned: false };
+      return { ...m, conceptId: null, concept: "", cohorts: [], sourceVariables: [], confidence: 0, column: "", rationale: "", pinned: false, coverageMembers: undefined, matchedMembers: undefined };
     }
     const g = groupsById?.get(conceptId);
     return {
@@ -192,6 +193,11 @@ function applyEditLocally(
       column: "",
       rationale: "Manually re-pointed to this concept (pending the run's own re-derive).",
       pinned: true,
+      // The old match's members/coverage belong to the OLD group; a real per-cohort union only comes back
+      // from the run's own re-derive. Clear them so the table/detail fall back to the new group's cohorts
+      // rather than showing stale coverage for the concept just swapped in.
+      coverageMembers: undefined,
+      matchedMembers: undefined,
     };
   });
   const requiredNames = new Set(spec.definition.components.filter((c) => c.required).map((c) => c.name));
@@ -205,8 +211,8 @@ function applyEditLocally(
         ? "partial"
         : "infeasible";
   const perCohort = spec.feasibility.perCohort.map((c) => {
-    const present = matches.filter((m) => m.conceptId != null && m.cohorts.includes(c.cohort)).map((m) => m.component);
-    const missing = required.filter((m) => !(m.conceptId != null && m.cohorts.includes(c.cohort))).map((m) => m.component);
+    const present = matches.filter((m) => coveredCohorts(m).includes(c.cohort)).map((m) => m.component);
+    const missing = required.filter((m) => !coveredCohorts(m).includes(c.cohort)).map((m) => m.component);
     return { ...c, present, missing, computable: missing.length === 0 && required.length > 0 };
   });
   return {
