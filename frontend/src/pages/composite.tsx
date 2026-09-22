@@ -19,7 +19,6 @@ import {
   FileText,
   Link2,
   Loader2,
-  Pin,
   CircleDashed,
   Upload,
   XCircle,
@@ -257,6 +256,11 @@ export default function CompositePage() {
   );
 }
 
+// Builder-level: a concept group is auto-selected (and auto-tagged for Gate 2) when its aggregate
+// confidence is at/above this threshold. Provisional 0.80 — to be tuned against the 49×UKBB FI benchmark;
+// set once for the whole builder, never per component.
+const GROUP_SELECT_THRESHOLD = 0.8;
+
 export function SpecView({
   spec,
   conceptById,
@@ -447,6 +451,38 @@ export function SpecView({
           <CardTitle className="text-sm">Components → this run's concepts</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. */}
+          <div
+            data-testid="score-builder-info"
+            className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
+          >
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+              Score builder · how matching works
+            </p>
+            <ul className="flex flex-col gap-1 text-on-raised-muted">
+              <li>
+                <span className="font-semibold text-on-raised">Source-only.</span> Each component shows the
+                paper&rsquo;s own fields (name · categories · coding); generated prose is dropped unless it is
+                verbatim in the document.
+              </li>
+              <li>
+                <span className="font-semibold text-on-raised">Scoring.</span> The judge rates each variable /
+                answer-option individually (0–1); a group&rsquo;s score is the mean of its rated members.
+              </li>
+              <li>
+                <span className="font-semibold text-on-raised">Component number.</span> The figure on each
+                component is the mean of the best match per cohort, over the cohorts found.
+              </li>
+            </ul>
+            <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
+              Auto-select &amp; tag every group scoring{" "}
+              <span className="font-mono text-on-raised">{GROUP_SELECT_THRESHOLD.toFixed(2)}</span> or higher —
+              set once here, applies to all components.
+              <span className="mt-0.5 block text-on-raised-muted/80">
+                Provisional — to be tuned against the 49×UKBB FI benchmark.
+              </span>
+            </p>
+          </div>
           {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
               The header carries the found/total tally; each row shows its own found/missing icon. */}
           <Collapsible defaultOpen>
@@ -626,22 +662,18 @@ export function SpecView({
 }
 
 /**
- * One component row: its match (or its honest gap), the coding rule, and the accept/swap/drop controls.
- *
- * The gap wording distinguishes "the judge saw N candidates and rejected them all" from "retrieval found
- * nothing" — a rejected shortlist means the concepts exist but don't measure the component, which is a
- * different problem from the run simply not covering it.
+ * One component row: the concept GROUPS its rated variables reached. Every group at/above the builder's
+ * auto-select threshold renders as selected (and auto-tagged for Gate 2), with its covered members + cohorts;
+ * the header figure is the mean best match per cohort. Source coding is shown structurally, never as
+ * synthesised prose. A missing component lists the retrieved-but-below-threshold candidates instead.
  */
 function MatchRow({
   match,
   component,
-  concept,
   onEdit,
   busy,
-  jobId,
   onOpenGroup,
   resolveConcept,
-  resolveGroupId,
 }: {
   match: ComponentMatch;
   component?: ScoreComponent;
@@ -655,82 +687,145 @@ function MatchRow({
   ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
   resolveGroupId?: (id: string) => string | undefined;
 }) {
+  void onEdit;
+  void busy;
   const [open, setOpen] = useState(false);
-  const [swapping, setSwapping] = useState(false);
   const coding = component?.coding;
-  const lowConfidence =
-    match.conceptId != null && match.confidence > 0 && match.confidence < 0.6;
 
-  // Variable-only matching (08-16g): the match is now a concept GROUP the component's rated source
-  // variables rolled up to. Resolve it so the row shows the group's own name (never a raw id) and its
-  // true size — the denominator of the coverage line below.
-  const resolved = match.conceptId ? resolveConcept?.(match.conceptId) : undefined;
-  const groupName =
-    resolved?.concept?.trim() || match.concept?.trim() || "Unnamed group";
+  // Build the reached concept GROUPS from `groupCandidates`, each carrying its covered members (from
+  // `coverageMembers`, grouped by the member's source groupId). Union coverage already spans groups, so this
+  // shows WHICH group each cohort's support came from — no single "winner" group (the cataracts/glaucoma
+  // case where AoU's match lived in a different group than the surfaced one).
+  const membersByGroup = new Map<
+    string,
+    { cohort: string; variableId: string; confidence: number; optionLabel?: string }[]
+  >();
+  for (const [cohort, mems] of Object.entries(match.coverageMembers ?? {})) {
+    for (const mm of mems) {
+      const gid = mm.groupId ?? match.conceptId ?? "";
+      const list = membersByGroup.get(gid) ?? [];
+      list.push({ cohort, variableId: mm.variableId, confidence: mm.confidence, optionLabel: mm.optionLabel });
+      membersByGroup.set(gid, list);
+    }
+  }
+  const groups = (match.groupCandidates ?? []).map((g) => ({
+    groupId: g.groupId,
+    label: resolveConcept?.(g.groupId)?.concept?.trim() || "Unnamed group",
+    confidence: g.confidence,
+    nMatched: g.nMatched,
+    nTotal: g.nTotal,
+    members: (membersByGroup.get(g.groupId) ?? []).slice().sort((a, b) => b.confidence - a.confidence),
+    selected: g.confidence >= GROUP_SELECT_THRESHOLD,
+  }));
+  type GroupRow = (typeof groups)[number];
+  const selected = groups.filter((g) => g.selected);
+  const below = groups.filter((g) => !g.selected);
 
-  // COVERAGE is the over-merge tell. A component maps to a group, but the group may hold many unrelated
-  // variables (an over-merged cluster); how many of them actually measure this component is what separates
-  // a clean match (all members on-topic) from a subset match (1 of 16 — the group is bloated). The
-  // aggregate confidence does NOT show this — the judge only rates on-topic members, so a group's score
-  // equals its best member whether coverage is 100% or 6% (proven on the FI re-derive, median gap 0.00).
-  // `n` = matched members; `m` = the group's true size. When the group did not resolve (m unknown) the
-  // line degrades to "N members matched" rather than inventing a denominator.
-  const matchedMembers = match.matchedMembers ?? [];
-  const nMatched = matchedMembers.length;
-  const groupSize = resolved?.nMembers;
-  const coverage =
-    match.conceptId != null && nMatched > 0
-      ? {
-          n: nMatched,
-          m: groupSize,
-          // A minority of a real group's members = a subset match worth a reviewer's eye. Only flag when
-          // the denominator is known AND more than one member exists (a 1-of-1 group is not "over-merged").
-          partial: groupSize != null && groupSize > 1 && nMatched < groupSize,
-        }
-      : null;
+  // Header figure = mean of the best match per cohort, averaged over the cohorts FOUND across the selected
+  // groups (not one group's aggregate). Breadth is the spread line's job, so this number means "how good are
+  // the matches we found", not a coverage count.
+  const bestByCohort = new Map<string, number>();
+  for (const g of selected)
+    for (const m of g.members) {
+      const cur = bestByCohort.get(m.cohort);
+      if (cur == null || m.confidence > cur) bestByCohort.set(m.cohort, m.confidence);
+    }
+  const meanBest = bestByCohort.size
+    ? [...bestByCohort.values()].reduce((s, v) => s + v, 0) / bestByCohort.size
+    : null;
 
-  // The swap targets are the GROUPS the component's rated variables reached (`groupCandidates`, deduped
-  // and best-first, current pick folded in), with the per-group confidence to hand. Falls back to the
-  // legacy `shortlist` when a run predates variable-only matching OR when the component is MISSING (its
-  // groupCandidates are empty and the shortlist is variable-level).
-  const candidateConfidence = new Map(
-    (match.groupCandidates ?? []).map((g) => [g.groupId, g.confidence] as const),
+  const spreadVars = selected.reduce((s, g) => s + g.members.length, 0);
+  const spreadCohorts = [...new Set(selected.flatMap((g) => g.members.map((m) => m.cohort)))];
+  const isFound = selected.length > 0 || match.conceptId != null;
+
+  const renderGroup = (g: GroupRow, muted: boolean) => (
+    <div
+      key={g.groupId}
+      data-testid="score-group"
+      data-group={g.groupId}
+      data-selected={g.selected ? "true" : "false"}
+      className={cn(
+        "rounded-md border",
+        g.selected ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised",
+        muted && "opacity-70",
+      )}
+    >
+      <div className="flex items-start gap-2 px-2.5 py-2">
+        {g.selected ? (
+          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-ok" />
+        ) : (
+          <CircleDashed className="mt-0.5 h-3.5 w-3.5 shrink-0 text-on-raised-muted" />
+        )}
+        <div className="min-w-0 flex-1">
+          {onOpenGroup ? (
+            <button
+              type="button"
+              data-testid="score-open-group"
+              data-group={g.groupId}
+              onClick={() => onOpenGroup(g.groupId)}
+              className="text-left text-xs font-semibold text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
+              title="Open this concept group on Gate 1"
+            >
+              {g.label} ↗
+            </button>
+          ) : (
+            <span className="text-xs font-semibold text-on-raised">{g.label}</span>
+          )}
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-on-raised-muted">
+            <span className="font-mono tabular-nums text-on-raised">{g.confidence.toFixed(2)}</span>
+            {g.nMatched != null && g.nTotal != null && (
+              <span className="text-status-warn">
+                {g.nMatched} of {g.nTotal} matched
+              </span>
+            )}
+          </div>
+          {g.members.length > 0 && (
+            <ul className="mt-1.5 flex flex-col gap-0.5 border-l border-border/60 pl-2.5">
+              {g.members.map((m) => (
+                <li
+                  key={`${m.cohort}:${m.variableId}`}
+                  data-testid="score-group-member"
+                  data-cohort={m.cohort}
+                  className="flex items-baseline gap-2 text-[11px]"
+                >
+                  <span className="shrink-0 rounded border border-rule-on-raised px-1 py-0.5 font-mono text-[10px] font-semibold text-on-raised-muted">
+                    {m.cohort}
+                  </span>
+                  <span className="min-w-0 flex-1 break-all font-mono text-on-raised-muted">
+                    {m.variableId}
+                    {m.optionLabel && <span className="italic"> · “{m.optionLabel}”</span>}
+                  </span>
+                  <span className="shrink-0 font-mono tabular-nums text-on-raised-muted">
+                    {m.confidence.toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {g.selected && (
+          <span
+            data-testid="score-group-gate2"
+            className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised"
+          >
+            Gate 2 ✓
+          </span>
+        )}
+      </div>
+    </div>
   );
-  // Per-candidate coverage: "N of M group members matched" for EACH Swap option, so a partial candidate
-  // is visible before it is selected. It replaces the raw group-cohort chip, which over-claimed coverage —
-  // the "cataracts" case where a group spanning UKBB printed "UKBB" as covered though no member matched.
-  const candidateCoverage = new Map(
-    (match.groupCandidates ?? [])
-      .filter((g) => g.nMatched != null && g.nTotal != null)
-      .map((g) => [g.groupId, { nMatched: g.nMatched!, nTotal: g.nTotal! }] as const),
-  );
-  const rawCandidateIds = match.groupCandidates?.length
-    ? match.groupCandidates.map((g) => g.groupId)
-    : [...(match.shortlist ?? []), ...(match.conceptId ? [match.conceptId] : [])];
-  // Roll each raw candidate up to the GROUP it opens (a group id → itself; a variable id → its concept
-  // group), then dedupe by group. A missing component's shortlist is variable-level, and many variables
-  // share one group (eight "what type of cancer" variables → one group), so without this the list is a
-  // wall of look-alike rows that cannot link. A candidate with no group mapping is kept only if it is the
-  // current pick, so a selected non-group id never silently vanishes. Without a resolver (other callers),
-  // fall back to the raw ids unchanged.
-  const candidateIds = resolveGroupId
-    ? Array.from(
-        new Set(
-          rawCandidateIds
-            .map((id) => resolveGroupId(id) ?? (id === match.conceptId ? id : undefined))
-            .filter((id): id is string => !!id),
-        ),
-      )
-    : Array.from(new Set(rawCandidateIds));
+
+  // Source coding shown STRUCTURALLY (categories / coding map or the stated cutoff) — never the freeform
+  // `component.definition` prose, which the extract step can synthesise past the "from doc" guardrail.
+  const codeEntries = coding?.codeMap ? Object.entries(coding.codeMap) : [];
 
   return (
     <div
       className="rounded-md border border-border"
       data-testid="score-match"
       data-component={match.component}
-      data-matched={match.conceptId != null ? "true" : "false"}
+      data-matched={isFound ? "true" : "false"}
     >
-      {/* Collapsed by default so a reviewer can scan the list and open ONE component at a time. */}
       <button
         type="button"
         data-testid="score-component-expand"
@@ -738,51 +833,25 @@ function MatchRow({
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
       >
-        {match.conceptId ? (
+        {isFound ? (
           <CheckCircle2 className="h-4 w-4 shrink-0 text-status-ok" />
         ) : (
           <XCircle className="h-4 w-4 shrink-0 text-on-raised-muted" />
         )}
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-semibold text-on-raised">
-              {match.component}
+        <span className="min-w-0 flex-1 text-sm font-semibold text-on-raised">{match.component}</span>
+        {meanBest != null && (
+          <span className="flex shrink-0 items-baseline gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted/70">
+              mean best / cohort
             </span>
-            {!match.required && (
-              <Badge variant="neutral" className="text-xs">optional</Badge>
-            )}
-            {match.pinned && (
-              <Badge variant="neutral" className="gap-1 text-xs">
-                <Pin className="h-2.5 w-2.5" /> pinned
-              </Badge>
-            )}
-            {/* The name-vs-member "variable" tag was dropped in the variable-only rework: every match is now
-                variable-surfaced, so the tag was always-on and told a reviewer nothing. */}
-          </span>
-          <span className="mt-0.5 block truncate text-xs text-on-raised-muted">
-            {match.conceptId
-              ? groupName
-              : match.shortlist.length > 0
-                ? `Missing · ${match.shortlist.length} retrieved, none fit`
-                : "Missing · nothing retrieved"}
-          </span>
-        </span>
-        {/* Confidence lives in its own fixed slot, NOT appended to the name — an over-merged group's name is
-            the full idealCde paragraph, which would truncate the number off the line entirely. */}
-        {match.conceptId != null && (
-          <span
-            data-testid="score-confidence"
-            className="shrink-0 font-mono text-xs tabular-nums text-on-raised-muted"
-          >
-            {match.confidence.toFixed(2)}
+            <span data-testid="score-confidence" className="font-mono text-xs tabular-nums text-on-raised">
+              {meanBest.toFixed(2)}
+            </span>
           </span>
         )}
         <ChevronDown
           aria-hidden="true"
-          className={cn(
-            "h-4 w-4 shrink-0 text-on-raised-muted transition-transform",
-            open && "rotate-180",
-          )}
+          className={cn("h-4 w-4 shrink-0 text-on-raised-muted transition-transform", open && "rotate-180")}
         />
       </button>
 
@@ -790,273 +859,79 @@ function MatchRow({
         <div className="border-t border-border/60 px-3 py-2.5 pl-9 text-xs">
           {coding?.needsReview && (
             <Badge className="mb-1.5 border-rule-warn bg-surface-warn text-xs text-on-warn">
-              {coding.kind === "unstated"
-                ? "no coding rule in source"
-                : `${coding.kind.replace(/_/g, " ")} — review`}
+              {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
             </Badge>
           )}
-          {component?.definition && (
-            <p className="text-on-raised-muted">{component.definition}</p>
-          )}
-
-          {match.conceptId ? (
-            <div className="mt-1.5">
-              {onOpenGroup ? (
-                <button
-                  type="button"
-                  data-testid="score-open-group"
-                  onClick={() => onOpenGroup(match.conceptId!)}
-                  className="text-left text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
-                  title="Show this concept group on Gate 1"
-                >
-                  {groupName}
-                </button>
-              ) : (
-                <Link
-                  href={`/job/${jobId}/workbench?c=${encodeURIComponent(match.conceptId)}`}
-                  className="text-on-raised underline decoration-rule-control-on-raised hover:text-link-on-raised"
-                  title="Open this concept in the review workbench"
-                >
-                  {groupName}
-                </Link>
-              )}
-              <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-on-raised-muted">
-                {/* Per-cohort UNION coverage — the supporting variable/option in EACH covered cohort, the
-                    single source the coverage table and Swap list also read. A cohort that sits in the
-                    group's raw membership but whose members did not match simply does not appear (the
-                    "cataracts" fix). A checklist member names its answer OPTION, not the raw variable id. */}
-                {match.coverageMembers && coveredCohorts(match).length > 0 ? (
-                  coveredCohorts(match).map((co) => {
-                    const mem = match.coverageMembers![co] ?? [];
-                    const first = mem[0];
-                    const support = first?.optionLabel
-                      ? `“${first.optionLabel}”`
-                      : (first?.variableId ?? "");
-                    // Union coverage can span SEVERAL groups: when a cohort's supporting member comes from a
-                    // group OTHER than the surfaced one, attribute it to its real group instead of letting it
-                    // read as if it were in the selected group (the cataracts case — AoU's support was a
-                    // different retrieved group).
-                    const srcGid = first?.groupId;
-                    const fromOther = srcGid && srcGid !== match.conceptId;
-                    const srcName = fromOther
-                      ? resolveConcept?.(srcGid)?.concept?.trim() || "another group"
-                      : "";
-                    return (
-                      <span
-                        key={co}
-                        data-testid="coverage-member"
-                        data-cohort={co}
-                        data-from-group={srcGid ?? ""}
-                        className="whitespace-nowrap"
-                      >
-                        <span className="font-medium text-on-raised">{co}</span>
-                        {support && <span className="font-mono text-[11px]"> · {support}</span>}
-                        {mem.length > 1 && <span> +{mem.length - 1}</span>}
-                        {fromOther && (
-                          <span className="text-on-raised-muted italic" title={srcName}>
-                            {" "}
-                            (from: {srcName.length > 32 ? `${srcName.slice(0, 32)}…` : srcName})
-                          </span>
-                        )}
-                      </span>
-                    );
-                  })
-                ) : (
-                  <span>{match.cohorts.join(", ") || "—"}</span>
-                )}
-                {/* Confidence is already on the collapsed summary line above (08-16g review #7 — it read
-                    twice once expanded); here keep only the low-confidence review flag, not the number. */}
-                {lowConfidence && (
-                  <span className="text-status-warn">low confidence — review</span>
-                )}
-                {match.column && (
-                  <span className="font-mono text-xs">{match.column}</span>
-                )}
-              </div>
-
-              {/* COVERAGE — the over-merge tell. "N of M members matched" when the group's size is known,
-                  a warn tint when only a minority of a multi-member group is on-topic (the group is
-                  over-merged and this component maps to a subset of it). */}
-              {coverage && (
-                <p
-                  data-testid="score-coverage"
-                  data-partial={coverage.partial ? "true" : "false"}
-                  className={cn(
-                    "mt-1 font-medium",
-                    coverage.partial ? "text-status-warn" : "text-on-raised-muted",
-                  )}
-                >
-                  {coverage.m != null
-                    ? `${coverage.n} of ${coverage.m} group member${coverage.m === 1 ? "" : "s"} matched`
-                    : `${coverage.n} member${coverage.n === 1 ? "" : "s"} matched`}
-                </p>
-              )}
-
-              {/* The matched members, indented under the group with each one's own confidence — the ground
-                  truth the group's aggregate rolled up from. */}
-              {matchedMembers.length > 0 && (
-                <ul
-                  data-testid="score-matched-members"
-                  className="mt-1 flex flex-col gap-0.5 border-l border-border/60 pl-2.5"
-                >
-                  {matchedMembers.map((mm) => (
-                    <li
-                      key={mm.variableId}
-                      data-testid="score-matched-member"
-                      data-variable={mm.variableId}
-                      className="flex items-baseline justify-between gap-2"
-                    >
-                      <span className="min-w-0 break-all font-mono text-on-raised-muted">
-                        {mm.variableId}
-                      </span>
-                      <span className="shrink-0 font-mono tabular-nums text-on-raised-muted">
-                        {mm.confidence.toFixed(2)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ) : (
-            <p className="mt-1.5 text-on-raised-muted">
-              <span className="font-semibold text-on-raised">Missing.</span>{" "}
-              {match.shortlist.length > 0
-                ? `${match.shortlist.length} candidate concept${match.shortlist.length === 1 ? "" : "s"} were retrieved and none measures this component — pick one below if it fits.`
-                : "Nothing in this run retrieved for it."}
-            </p>
-          )}
-
-          {coding && (coding.cutoff || coding.referenceRange) && (
-            <p className="mt-1 text-on-raised-muted">
-              <span className="font-semibold">As stated: </span>
-              <span className="font-mono text-xs">
-                {coding.cutoff || coding.referenceRange}
+          <div
+            data-testid="score-source-coding"
+            className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-on-raised-muted"
+          >
+            {coding?.kind && coding.kind !== "unstated" && <span>{coding.kind.replace(/_/g, " ")}</span>}
+            {codeEntries.map(([k, v]) => (
+              <span key={k} className="font-mono">
+                · {k} → {v}
               </span>
-            </p>
-          )}
-
-          {/* accept / swap / drop — every re-derive is free (all other matches are pinned) */}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || candidateIds.length === 0}
-              onClick={() => setSwapping((sw) => !sw)}
-              className="h-6 px-2 text-xs"
-            >
-              {match.conceptId ? "Swap" : "Choose concept"}
-            </Button>
-            {match.conceptId && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => onEdit(match.component, null)}
-                className="h-6 px-2 text-xs"
-              >
-                Drop
-              </Button>
+            ))}
+            {(coding?.cutoff || coding?.referenceRange) && (
+              <span className="font-mono">· {coding.cutoff || coding.referenceRange}</span>
             )}
           </div>
 
-          {swapping && (
-            <div
-              data-testid="swap-candidates"
-              className="mt-1.5 flex flex-col gap-1 rounded-md border border-border bg-surface-raised p-1.5"
-            >
-              {/* Each retrieved candidate is a link into its Gate 1 group — inspect the members BEFORE
-                  selecting — with an explicit Select so opening a group is not the same act as choosing it. */}
-              <p className="px-1 pb-0.5 text-[11px] text-on-raised-muted">
-                Open a candidate to inspect its group on Gate 1, then select the one that fits.
-              </p>
-              {candidateIds.map((id) => {
-                const c = resolveConcept?.(id);
-                // Never fall back to the raw internal id (08-16g review #5 — an unresolved candidate read
-                // "ca5ae18069d83#g0"); an unnameable group reads "Unnamed group".
-                const label = c?.concept?.trim() || "Unnamed group";
-                const cov = candidateCoverage.get(id);
-                const conf = candidateConfidence.get(id);
-                const isCurrent = id === match.conceptId;
-                return (
-                  <div
-                    key={id}
-                    data-testid="swap-candidate"
-                    data-group={id}
-                    className="flex items-center gap-2 rounded px-1 py-0.5"
-                  >
-                    {onOpenGroup ? (
-                      <button
-                        type="button"
-                        data-testid="swap-candidate-open"
-                        onClick={() => onOpenGroup(id)}
-                        className="min-w-0 flex-1 text-left text-xs text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
-                        title="Open this concept group on Gate 1"
-                      >
-                        <span className="line-clamp-1">{label}</span>
-                        {cov && (
-                          <span
-                            data-testid="swap-candidate-coverage"
-                            className="text-on-raised-muted"
-                          >
-                            {" "}
-                            · {cov.nMatched} of {cov.nTotal} matched
-                          </span>
-                        )}
-                      </button>
-                    ) : (
-                      <span className="min-w-0 flex-1 text-xs text-on-raised">
-                        <span className="line-clamp-1">{label}</span>
-                        {cov && (
-                          <span
-                            data-testid="swap-candidate-coverage"
-                            className="text-on-raised-muted"
-                          >
-                            {" "}
-                            · {cov.nMatched} of {cov.nTotal} matched
-                          </span>
-                        )}
-                      </span>
-                    )}
-                    {conf != null && (
-                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-on-raised-muted">
-                        {conf.toFixed(2)}
-                      </span>
-                    )}
-                    {isCurrent ? (
-                      <Badge variant="neutral" className="shrink-0 gap-1 text-[11px]">
-                        <Pin className="h-2.5 w-2.5" /> current
-                      </Badge>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        data-testid="swap-candidate-select"
-                        disabled={busy}
-                        onClick={() => {
-                          setSwapping(false);
-                          onEdit(match.component, id);
-                        }}
-                        className="h-5 shrink-0 px-2 text-[11px]"
-                      >
-                        Select
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-              <button
-                type="button"
-                data-testid="swap-candidate-none"
-                disabled={busy}
-                onClick={() => {
-                  setSwapping(false);
-                  onEdit(match.component, null);
-                }}
-                className="mt-0.5 border-t border-border/60 px-1 pt-1 text-left text-[11px] text-on-raised-muted hover:text-on-raised"
+          {selected.length > 0 ? (
+            <>
+              <div
+                data-testid="score-spread"
+                className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule-info bg-surface-info px-3 py-2 text-on-raised"
               >
-                — none (report as missing) —
-              </button>
-            </div>
+                <span>
+                  <span className="font-semibold">{spreadVars}</span> variable{spreadVars === 1 ? "" : "s"}
+                </span>
+                <span className="text-on-raised-muted">·</span>
+                <span>
+                  <span className="font-semibold">{spreadCohorts.length}</span> cohort
+                  {spreadCohorts.length === 1 ? "" : "s"}{" "}
+                  <span className="text-on-raised-muted">({spreadCohorts.join(", ")})</span>
+                </span>
+                <span className="text-on-raised-muted">·</span>
+                <span>
+                  <span className="font-semibold">{selected.length}</span> group{selected.length === 1 ? "" : "s"}{" "}
+                  selected
+                </span>
+                <span className="ml-auto text-[11px] font-semibold text-link-on-raised">
+                  → auto-queued for Gate 2
+                </span>
+              </div>
+
+              <div className="mt-2 flex flex-col gap-1.5">{selected.map((g) => renderGroup(g, false))}</div>
+
+              {below.length > 0 && (
+                <div className="mt-3 flex flex-col gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                    Other candidate groups · below threshold
+                  </span>
+                  {below.map((g) => renderGroup(g, true))}
+                </div>
+              )}
+
+              <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
+                Selected groups auto-tag and continue to Gate 2. Refine any group&rsquo;s membership on Gate 1
+                via its <span className="font-semibold">↗</span> link (normal drag/drop); the panel re-reads it.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-1.5 text-on-raised-muted">
+                <span className="font-semibold text-on-raised">Missing.</span>{" "}
+                {below.length > 0
+                  ? `${below.length} candidate group${below.length === 1 ? "" : "s"} were retrieved but none cleared the selection threshold — open one on Gate 1 if it fits.`
+                  : match.shortlist.length > 0
+                    ? `${match.shortlist.length} candidates were retrieved and none measures this component.`
+                    : "Nothing in this run retrieved for it."}
+              </p>
+              {below.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1.5">{below.map((g) => renderGroup(g, true))}</div>
+              )}
+            </>
           )}
         </div>
       )}
