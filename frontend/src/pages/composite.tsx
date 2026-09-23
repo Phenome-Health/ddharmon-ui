@@ -718,10 +718,26 @@ function MatchRow({
     selected: g.confidence >= GROUP_SELECT_THRESHOLD,
   }));
   type GroupRow = (typeof groups)[number];
-  const selected = groups.filter((g) => g.selected);
-  const below = groups.filter((g) => !g.selected);
+  const orderedGroups = [...groups].sort((a, b) => b.confidence - a.confidence);
 
-  // Header figure = mean of the best match per cohort, averaged over the cohorts FOUND across the selected
+  // Selection is interactive: SEEDED from the auto-select threshold, then the reviewer checks/unchecks any
+  // group. The spread, the header figure and the Gate-2 tags all derive from the CHECKED set. This slice
+  // keeps the set in component state — clickable on the static demo; persisting it across a reload and wiring
+  // it into the Gate-2 queue is the next slice.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(groups.filter((g) => g.selected).map((g) => g.groupId)),
+  );
+  const isSel = (gid: string) => selectedIds.has(gid);
+  const toggleGroup = (gid: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(gid)) next.delete(gid);
+      else next.add(gid);
+      return next;
+    });
+  const selected = orderedGroups.filter((g) => isSel(g.groupId));
+
+  // Header figure = mean of the best match per cohort, averaged over the cohorts FOUND across the SELECTED
   // groups (not one group's aggregate). Breadth is the spread line's job, so this number means "how good are
   // the matches we found", not a coverage count.
   const bestByCohort = new Map<string, number>();
@@ -738,82 +754,105 @@ function MatchRow({
   const spreadCohorts = [...new Set(selected.flatMap((g) => g.members.map((m) => m.cohort)))];
   const isFound = selected.length > 0 || match.conceptId != null;
 
-  const renderGroup = (g: GroupRow, muted: boolean) => (
-    <div
-      key={g.groupId}
-      data-testid="score-group"
-      data-group={g.groupId}
-      data-selected={g.selected ? "true" : "false"}
-      className={cn(
-        "rounded-md border",
-        g.selected ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised",
-        muted && "opacity-70",
-      )}
-    >
-      <div className="flex items-start gap-2 px-2.5 py-2">
-        {g.selected ? (
-          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-ok" />
-        ) : (
-          <CircleDashed className="mt-0.5 h-3.5 w-3.5 shrink-0 text-on-raised-muted" />
+  const renderGroup = (g: GroupRow) => {
+    const sel = isSel(g.groupId);
+    return (
+      <div
+        data-testid="score-group"
+        data-group={g.groupId}
+        data-selected={sel ? "true" : "false"}
+        className={cn(
+          "rounded-md border",
+          sel ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised opacity-80",
         )}
-        <div className="min-w-0 flex-1">
-          {onOpenGroup ? (
-            <button
-              type="button"
-              data-testid="score-open-group"
-              data-group={g.groupId}
-              onClick={() => onOpenGroup(g.groupId)}
-              className="text-left text-xs font-semibold text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
-              title="Open this concept group on Gate 1"
-            >
-              {g.label} ↗
-            </button>
-          ) : (
-            <span className="text-xs font-semibold text-on-raised">{g.label}</span>
-          )}
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-on-raised-muted">
-            <span className="font-mono tabular-nums text-on-raised">{g.confidence.toFixed(2)}</span>
-            {g.nMatched != null && g.nTotal != null && (
-              <span className="text-status-warn">
-                {g.nMatched} of {g.nTotal} matched
-              </span>
+      >
+        <div className="flex items-start gap-2 px-2.5 py-2">
+          <input
+            type="checkbox"
+            data-testid="score-group-toggle"
+            checked={sel}
+            onChange={() => toggleGroup(g.groupId)}
+            aria-label={`Include the group ${g.label} for this component`}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
+          />
+          <div className="min-w-0 flex-1">
+            {onOpenGroup ? (
+              <button
+                type="button"
+                data-testid="score-open-group"
+                data-group={g.groupId}
+                onClick={() => onOpenGroup(g.groupId)}
+                className="text-left text-xs font-semibold text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
+                title="Open this concept group on Gate 1"
+              >
+                {g.label} ↗
+              </button>
+            ) : (
+              <span className="text-xs font-semibold text-on-raised">{g.label}</span>
+            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-on-raised-muted">
+              <span className="font-mono tabular-nums text-on-raised">{g.confidence.toFixed(2)}</span>
+              {g.nMatched != null && g.nTotal != null && (
+                <span className="text-status-warn">
+                  {g.nMatched} of {g.nTotal} matched
+                </span>
+              )}
+            </div>
+            {g.members.length > 0 && (
+              <ul className="mt-1.5 flex flex-col gap-0.5 border-l border-border/60 pl-2.5">
+                {g.members.map((m) => {
+                  // The raw variable id (e.g. "CLSA:GEN_HLTH_TRM") is not informative — surface the field's
+                  // question text (or its description, then its name) via the run's field index. Drop the
+                  // "cohort:" prefix on any fallback: the cohort chip beside it already carries the cohort.
+                  // Field text can carry raw HTML + help blocks (some cohorts bury the question in notes), so
+                  // strip tags and collapse whitespace; the span line-clamps so a messy field stays one row.
+                  const raw = resolveConcept?.(m.variableId)?.concept?.trim();
+                  const q = raw ? raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : "";
+                  const ci = m.variableId.indexOf(":");
+                  const label = q || (ci >= 0 ? m.variableId.slice(ci + 1) : m.variableId);
+                  return (
+                    <li
+                      key={`${m.cohort}:${m.variableId}`}
+                      data-testid="score-group-member"
+                      data-cohort={m.cohort}
+                      className="flex items-baseline gap-2 text-[11px]"
+                    >
+                      <span className="mt-px shrink-0 rounded border border-rule-on-raised px-1 py-0.5 font-mono text-[10px] font-semibold text-on-raised-muted">
+                        {m.cohort}
+                      </span>
+                      <span className="line-clamp-2 min-w-0 flex-1 text-on-raised-muted" title={label}>
+                        {label}
+                        {m.optionLabel && <span className="italic"> · “{m.optionLabel}”</span>}
+                      </span>
+                      <span className="shrink-0 font-mono tabular-nums text-on-raised-muted">
+                        {m.confidence.toFixed(2)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {/* Keep-all transparency: a group can be judge-affirmed yet have no member at/above the 0.50
+                coverage floor — show WHY it has a count but no evidence row, rather than an empty group. */}
+            {g.members.length === 0 && g.nMatched != null && g.nMatched > 0 && (
+              <p className="mt-1 pl-2.5 text-[11px] italic text-on-raised-muted">
+                {g.nMatched} affirmed {g.nMatched === 1 ? "member" : "members"} below the 0.50 coverage floor —
+                open on Gate 1 to inspect.
+              </p>
             )}
           </div>
-          {g.members.length > 0 && (
-            <ul className="mt-1.5 flex flex-col gap-0.5 border-l border-border/60 pl-2.5">
-              {g.members.map((m) => (
-                <li
-                  key={`${m.cohort}:${m.variableId}`}
-                  data-testid="score-group-member"
-                  data-cohort={m.cohort}
-                  className="flex items-baseline gap-2 text-[11px]"
-                >
-                  <span className="shrink-0 rounded border border-rule-on-raised px-1 py-0.5 font-mono text-[10px] font-semibold text-on-raised-muted">
-                    {m.cohort}
-                  </span>
-                  <span className="min-w-0 flex-1 break-all font-mono text-on-raised-muted">
-                    {m.variableId}
-                    {m.optionLabel && <span className="italic"> · “{m.optionLabel}”</span>}
-                  </span>
-                  <span className="shrink-0 font-mono tabular-nums text-on-raised-muted">
-                    {m.confidence.toFixed(2)}
-                  </span>
-                </li>
-              ))}
-            </ul>
+          {sel && (
+            <span
+              data-testid="score-group-gate2"
+              className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised"
+            >
+              Gate 2 ✓
+            </span>
           )}
         </div>
-        {g.selected && (
-          <span
-            data-testid="score-group-gate2"
-            className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised"
-          >
-            Gate 2 ✓
-          </span>
-        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   // Source coding shown STRUCTURALLY (categories / coding map or the stated cutoff) — never the freeform
   // `component.definition` prose, which the extract step can synthesise past the "from doc" guardrail.
@@ -855,83 +894,93 @@ function MatchRow({
         />
       </button>
 
-      {open && (
-        <div className="border-t border-border/60 px-3 py-2.5 pl-9 text-xs">
-          {coding?.needsReview && (
-            <Badge className="mb-1.5 border-rule-warn bg-surface-warn text-xs text-on-warn">
-              {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
-            </Badge>
+      {/* ALWAYS-VISIBLE summary (moved out of the dropdown per review): review flag, source coding, spread. */}
+      <div className="flex flex-col gap-1.5 px-3 pb-2.5 pl-9 text-xs">
+        {coding?.needsReview && (
+          <Badge className="w-fit border-rule-warn bg-surface-warn text-xs text-on-warn">
+            {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
+          </Badge>
+        )}
+        <div
+          data-testid="score-source-coding"
+          className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-on-raised-muted"
+        >
+          {coding?.kind && coding.kind !== "unstated" && <span>{coding.kind.replace(/_/g, " ")}</span>}
+          {codeEntries.map(([k, v]) => (
+            <span key={k} className="font-mono">
+              · {k} → {v}
+            </span>
+          ))}
+          {(coding?.cutoff || coding?.referenceRange) && (
+            <span className="font-mono">· {coding.cutoff || coding.referenceRange}</span>
           )}
+        </div>
+        {orderedGroups.length > 0 && (
           <div
-            data-testid="score-source-coding"
-            className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-on-raised-muted"
+            data-testid="score-spread"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule-info bg-surface-info px-3 py-2 text-on-raised"
           >
-            {coding?.kind && coding.kind !== "unstated" && <span>{coding.kind.replace(/_/g, " ")}</span>}
-            {codeEntries.map(([k, v]) => (
-              <span key={k} className="font-mono">
-                · {k} → {v}
+            <span>
+              <span className="font-semibold">{spreadVars}</span> variable{spreadVars === 1 ? "" : "s"}
+            </span>
+            <span className="text-on-raised-muted">·</span>
+            <span>
+              <span className="font-semibold">{spreadCohorts.length}</span> cohort
+              {spreadCohorts.length === 1 ? "" : "s"}
+              {spreadCohorts.length > 0 && (
+                <span className="text-on-raised-muted"> ({spreadCohorts.join(", ")})</span>
+              )}
+            </span>
+            <span className="text-on-raised-muted">·</span>
+            <span>
+              <span className="font-semibold">{selected.length}</span> group{selected.length === 1 ? "" : "s"}{" "}
+              selected
+            </span>
+            {selected.length > 0 && (
+              <span className="ml-auto text-[11px] font-semibold text-link-on-raised">
+                → auto-queued for Gate 2
               </span>
-            ))}
-            {(coding?.cutoff || coding?.referenceRange) && (
-              <span className="font-mono">· {coding.cutoff || coding.referenceRange}</span>
             )}
           </div>
+        )}
+      </div>
 
-          {selected.length > 0 ? (
+      {open && (
+        <div className="border-t border-border/60 px-3 py-2.5 pl-9 text-xs">
+          {orderedGroups.length > 0 ? (
             <>
-              <div
-                data-testid="score-spread"
-                className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule-info bg-surface-info px-3 py-2 text-on-raised"
-              >
-                <span>
-                  <span className="font-semibold">{spreadVars}</span> variable{spreadVars === 1 ? "" : "s"}
-                </span>
-                <span className="text-on-raised-muted">·</span>
-                <span>
-                  <span className="font-semibold">{spreadCohorts.length}</span> cohort
-                  {spreadCohorts.length === 1 ? "" : "s"}{" "}
-                  <span className="text-on-raised-muted">({spreadCohorts.join(", ")})</span>
-                </span>
-                <span className="text-on-raised-muted">·</span>
-                <span>
-                  <span className="font-semibold">{selected.length}</span> group{selected.length === 1 ? "" : "s"}{" "}
-                  selected
-                </span>
-                <span className="ml-auto text-[11px] font-semibold text-link-on-raised">
-                  → auto-queued for Gate 2
-                </span>
+              <div className="flex flex-col gap-1.5">
+                {orderedGroups.map((g, i) => {
+                  const showDivider =
+                    i > 0 &&
+                    orderedGroups[i - 1].confidence >= GROUP_SELECT_THRESHOLD &&
+                    g.confidence < GROUP_SELECT_THRESHOLD;
+                  return (
+                    <Fragment key={g.groupId}>
+                      {showDivider && (
+                        <div className="flex items-center gap-2 py-0.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                          <span className="h-px flex-1 bg-border" />
+                          below auto-select threshold {GROUP_SELECT_THRESHOLD.toFixed(2)}
+                          <span className="h-px flex-1 bg-border" />
+                        </div>
+                      )}
+                      {renderGroup(g)}
+                    </Fragment>
+                  );
+                })}
               </div>
-
-              <div className="mt-2 flex flex-col gap-1.5">{selected.map((g) => renderGroup(g, false))}</div>
-
-              {below.length > 0 && (
-                <div className="mt-3 flex flex-col gap-1.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-                    Other candidate groups · below threshold
-                  </span>
-                  {below.map((g) => renderGroup(g, true))}
-                </div>
-              )}
-
               <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
-                Selected groups auto-tag and continue to Gate 2. Refine any group&rsquo;s membership on Gate 1
+                Checked groups auto-tag and continue to Gate 2. Refine any group&rsquo;s membership on Gate 1
                 via its <span className="font-semibold">↗</span> link (normal drag/drop); the panel re-reads it.
               </p>
             </>
           ) : (
-            <>
-              <p className="mt-1.5 text-on-raised-muted">
-                <span className="font-semibold text-on-raised">Missing.</span>{" "}
-                {below.length > 0
-                  ? `${below.length} candidate group${below.length === 1 ? "" : "s"} were retrieved but none cleared the selection threshold — open one on Gate 1 if it fits.`
-                  : match.shortlist.length > 0
-                    ? `${match.shortlist.length} candidates were retrieved and none measures this component.`
-                    : "Nothing in this run retrieved for it."}
-              </p>
-              {below.length > 0 && (
-                <div className="mt-2 flex flex-col gap-1.5">{below.map((g) => renderGroup(g, true))}</div>
-              )}
-            </>
+            <p className="text-on-raised-muted">
+              <span className="font-semibold text-on-raised">Missing.</span>{" "}
+              {match.shortlist.length > 0
+                ? `${match.shortlist.length} candidates were retrieved and none measures this component.`
+                : "Nothing in this run retrieved for it."}
+            </p>
           )}
         </div>
       )}
