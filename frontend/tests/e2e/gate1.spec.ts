@@ -1416,7 +1416,7 @@ test.describe("gate1 score", () => {
     await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
   });
 
-  test("@gate1 a matched component shows its group, coverage and members and links; a missing component's variable candidates roll up to one group", async ({
+  test("@gate1 a matched component lists its concept groups — a below-threshold group starts unchecked, checking it tags it for Gate 2, and it links; a missing component says what was retrieved", async ({
     page,
   }) => {
     const groups = fixtureGroups();
@@ -1433,49 +1433,46 @@ test.describe("gate1 score", () => {
     await openGate1(page);
     await openScorePanel(page);
 
-    // A MATCHED component: the concept GROUP its source variables rolled up to, ONE match-confidence, the
-    // coverage tell (variable-only matching surfaces the group but coverage is the over-merge signal), and
-    // the matched members indented under it.
+    // A MATCHED component lists every judge-affirmed concept GROUP it reached (multi-group panel, not one
+    // "winner"). This group's aggregate is 0.72 — below the 0.80 auto-select threshold — so it is OFFERED but
+    // starts unchecked, and carries its own "N of M matched" over-merge tell.
     const grip = page.locator(
       "[data-testid='score-match'][data-component='Grip strength']",
     );
+    await expect(grip).toHaveAttribute("data-matched", "true");
     await grip.locator("[data-testid='score-component-expand']").click();
-    await expect(grip.locator("[data-testid='score-confidence']")).toHaveText("0.72");
-    const coverage = grip.locator("[data-testid='score-coverage']");
-    await expect(coverage).toContainText(
-      `${vars.length} of ${matched.nMembers} group members matched`,
-    );
-    // A minority of a multi-member group is the over-merge flag.
-    await expect(coverage).toHaveAttribute("data-partial", "true");
-    await expect(grip.locator("[data-testid='score-matched-member']")).toHaveCount(
-      vars.length,
-    );
-    await expect(
-      grip.locator("[data-testid='score-matched-member']").first(),
-    ).toContainText(vars[0]);
+    const group = grip.locator("[data-testid='score-group']");
+    await expect(group).toHaveCount(1);
+    await expect(group).toHaveAttribute("data-group", matched.groupId);
+    await expect(group).toHaveAttribute("data-selected", "false");
+    await expect(group).toContainText("0.72");
+    await expect(group).toContainText(`${vars.length} of ${matched.nMembers} matched`);
+    await expect(grip.locator("[data-testid='score-group-gate2']")).toHaveCount(0);
+    await expect(grip.locator("[data-testid='score-spread']")).toContainText("0 groups selected");
 
-    // The group link opens it in the drag-drop detail pane.
+    // Checking it is the reviewer's call: it becomes selected, is tagged for Gate 2, and the spread re-reads.
+    await group.locator("[data-testid='score-group-toggle']").check();
+    await expect(group).toHaveAttribute("data-selected", "true");
+    await expect(grip.locator("[data-testid='score-group-gate2']")).toHaveCount(1);
+    await expect(grip.locator("[data-testid='score-spread']")).toContainText("1 group selected");
+
+    // The group link opens it in the drag-drop detail pane — refinement happens on Gate 1, not in-panel.
     await grip.locator("[data-testid='score-open-group']").click();
     const pane = page.locator("[data-testid='gate1-detail']");
     await expect(pane).toContainText(matched.concept.slice(0, 24));
 
-    // A MISSING component's candidates are VARIABLE-level; they must roll up to the ONE group they belong
-    // to — a single deduped, linkable row, not one dead row per variable.
+    // A MISSING component (no group rated on-topic) reads as a result, not a dead control: it names how many
+    // candidates were retrieved and that none measures it — never "the cohort lacks it".
     const gait = page.locator(
       "[data-testid='score-match'][data-component='Gait speed']",
     );
+    await expect(gait).toHaveAttribute("data-matched", "false");
     await gait.locator("[data-testid='score-component-expand']").click();
-    await gait.getByRole("button", { name: /Choose concept/i }).click();
-    const candidates = gait.locator("[data-testid='swap-candidate']");
-    await expect(candidates).toHaveCount(1);
-    await expect(candidates.first()).toContainText(rejected.concept.slice(0, 20));
-
-    // …and it links: opening the rolled-up group lands it in the detail pane.
-    await gait.locator("[data-testid='swap-candidate-open']").first().click();
-    await expect(pane).toContainText(rejected.concept.slice(0, 20));
+    await expect(gait).toContainText("3 candidates were retrieved and none measures this component");
+    await expect(gait.locator("[data-testid='score-group']")).toHaveCount(0);
   });
 
-  test("@gate1 union coverage: the table, the found-component detail and the Swap list all agree — an over-merged cohort is never shown covered, swaps read X of Y, and a checklist member names its option", async ({
+  test("@gate1 union coverage: the table and the group detail agree — an over-merged cohort is never shown covered, an auto-selected group drives the spread and header, and a checklist member names its option", async ({
     page,
   }) => {
     const groups = fixtureGroups();
@@ -1489,10 +1486,11 @@ test.describe("gate1 score", () => {
     // Union coverage: only CLSA (a real variable) and AI-READI (a checklist OPTION) actually match. UKBB
     // and MESA sit in the group but no member covers them — they must read NOT covered everywhere. This is
     // exactly the cataracts case: the group's raw membership over-claims, the union is the truth.
+    // Confidences chosen so the header mean is exact in binary floating point: (0.9 + 0.7) / 2 = 0.80.
     const coverageMembers = {
-      CLSA: [{ variableId: "CLSA:BP_DIASTOLIC_FIRST_COM", confidence: 0.95 }],
+      CLSA: [{ variableId: "CLSA:BP_DIASTOLIC_FIRST_COM", confidence: 0.9 }],
       "AI-READI": [
-        { variableId: "AI-READI:bp1_diabp_vsorres", confidence: 0.9, optionLabel: "Diastolic BP" },
+        { variableId: "AI-READI:bp1_diabp_vsorres", confidence: 0.7, optionLabel: "Diastolic BP" },
       ],
     };
     const vars = matched.memberVariableNames.slice(0, 3);
@@ -1510,6 +1508,8 @@ test.describe("gate1 score", () => {
         missing: [],
         computable: false,
       }));
+      // At/above the 0.80 auto-select threshold, so this group starts CHECKED and tagged for Gate 2.
+      spec.matches[0].groupCandidates![0].confidence = 0.85;
       run.composites = [spec];
     });
     await openGate1(page);
@@ -1518,23 +1518,35 @@ test.describe("gate1 score", () => {
     const grip = page.locator(
       "[data-testid='score-match'][data-component='Grip strength']",
     );
-    await grip.locator("[data-testid='score-component-expand']").click();
 
-    // (b) FOUND-COMPONENT DETAIL — per-cohort supporting variable/option from the union. Exactly the two
-    // covered cohorts appear; the over-merged UKBB/MESA do not; and the checklist cohort names its OPTION.
-    await expect(grip.locator("[data-testid='coverage-member']")).toHaveCount(2);
+    // The always-visible summary reads from the CHECKED set: the auto-selected group contributes its two
+    // covered cohorts, and the header is the mean best match per cohort FOUND (0.9, 0.7 → 0.80) — not the
+    // group's 0.85 aggregate and not a coverage count.
+    const spread = grip.locator("[data-testid='score-spread']");
+    await expect(spread).toContainText("2 variables");
+    await expect(spread).toContainText("2 cohorts");
+    await expect(spread).toContainText("1 group selected");
+    await expect(spread).not.toContainText("UKBB");
+    await expect(spread).not.toContainText("MESA");
+    await expect(grip.locator("[data-testid='score-confidence']")).toHaveText("0.80");
+
+    await grip.locator("[data-testid='score-component-expand']").click();
+    const group = grip.locator("[data-testid='score-group']");
+    await expect(group).toHaveAttribute("data-selected", "true");
+    await expect(grip.locator("[data-testid='score-group-gate2']")).toHaveCount(1);
+
+    // (b) GROUP DETAIL — per-cohort supporting variable/option from the union. Exactly the two covered
+    // cohorts appear; the over-merged UKBB/MESA do not; and the checklist cohort names its OPTION.
+    const member = grip.locator("[data-testid='score-group-member']");
+    await expect(member).toHaveCount(2);
+    await expect(member.and(page.locator("[data-cohort='CLSA']"))).toHaveCount(1);
     await expect(
-      grip.locator("[data-testid='coverage-member'][data-cohort='CLSA']"),
-    ).toContainText("CLSA:BP_DIASTOLIC_FIRST_COM");
-    await expect(
-      grip.locator("[data-testid='coverage-member'][data-cohort='AI-READI']"),
-    ).toContainText("Diastolic BP"); // the answer OPTION, not the raw variable id
-    await expect(
-      grip.locator("[data-testid='coverage-member'][data-cohort='UKBB']"),
-    ).toHaveCount(0);
-    await expect(
-      grip.locator("[data-testid='coverage-member'][data-cohort='MESA']"),
-    ).toHaveCount(0);
+      member.and(page.locator("[data-cohort='AI-READI']")),
+    ).toContainText("Diastolic BP"); // the answer OPTION
+    await expect(member.and(page.locator("[data-cohort='UKBB']"))).toHaveCount(0);
+    await expect(member.and(page.locator("[data-cohort='MESA']"))).toHaveCount(0);
+    // The group still carries its own "N of M matched" — the misleading raw-group cohort chip is gone.
+    await expect(group).toContainText(`${vars.length} of ${matched.nMembers} matched`);
 
     // (a) COVERAGE TABLE — the same verdict, cell by cell: it cannot disagree with the detail.
     const row = page.locator(
@@ -1551,14 +1563,12 @@ test.describe("gate1 score", () => {
       ).toHaveAttribute("data-present", "false");
     }
 
-    // (c) SWAP LIST — every candidate carries its own "N of M matched"; the misleading raw-group cohort
-    // chip that printed UKBB as covered is gone.
-    await grip.getByRole("button", { name: "Swap", exact: true }).click();
-    const candidate = grip.locator("[data-testid='swap-candidate']").first();
-    await expect(
-      candidate.locator("[data-testid='swap-candidate-coverage']"),
-    ).toContainText(`${vars.length} of ${matched.nMembers} matched`);
-    await expect(candidate).not.toContainText("UKBB");
+    // (c) UNCHECKING the group drops it from Gate 2 and the summary re-reads from the now-empty set.
+    await group.locator("[data-testid='score-group-toggle']").uncheck();
+    await expect(group).toHaveAttribute("data-selected", "false");
+    await expect(grip.locator("[data-testid='score-group-gate2']")).toHaveCount(0);
+    await expect(spread).toContainText("0 cohorts");
+    await expect(grip.locator("[data-testid='score-confidence']")).toHaveCount(0);
   });
 
   test("@gate1 the panel is a section of Gate 1, not a screen and not a modal", async ({
@@ -1771,16 +1781,20 @@ test.describe("gate1 score", () => {
       "[data-testid='score-match'][data-matched='false']",
     );
     await expect(missing).toHaveCount(1);
-    await expect(missing).toContainText(/3 retrieved|none fit/i);
+    await missing.locator("[data-testid='score-component-expand']").click();
+    await expect(missing).toContainText("3 candidates were retrieved and none measures this component");
 
     // NO CUTOFF IS INVENTED. The source stated none, so expanding the matched component flags it for a
     // human instead of deriving a plausible one, and no threshold number appears anywhere in the panel —
     // a score's threshold is a clinical claim.
-    await panel
-      .locator(
-        "[data-testid='score-match'][data-matched='true'] [data-testid='score-component-expand']",
-      )
-      .click();
+    const found = panel.locator("[data-testid='score-match'][data-matched='true']");
+    await found.locator("[data-testid='score-component-expand']").click();
+    // A spec from BEFORE variable-only matching carries only `conceptId` (no `groupCandidates`). Expanded,
+    // it must still show that concept as its group — never contradict its own "matched" header with
+    // "Missing".
+    await expect(found.locator("[data-testid='score-group']")).toHaveCount(1);
+    await expect(found.locator("[data-testid='score-group']")).toHaveAttribute("data-group", "c1#g0");
+    await expect(found).not.toContainText("Missing.");
     await expect(panel).toContainText(/no coding rule in source/i);
     await expect(panel).not.toContainText(/\bkg\b|<\s*\d|≥\s*\d/);
 

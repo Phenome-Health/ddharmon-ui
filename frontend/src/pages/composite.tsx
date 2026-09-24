@@ -708,7 +708,14 @@ function MatchRow({
       membersByGroup.set(gid, list);
     }
   }
-  const groups = (match.groupCandidates ?? []).map((g) => ({
+  // Back-compat: a spec from before variable-only matching carries only `conceptId` (no `groupCandidates`).
+  // Treat that concept as its one group so a matched component never expands to "Missing".
+  const candidates: NonNullable<ComponentMatch["groupCandidates"]> = match.groupCandidates?.length
+    ? match.groupCandidates
+    : match.conceptId
+      ? [{ groupId: match.conceptId, confidence: match.confidence }]
+      : [];
+  const groups = candidates.map((g) => ({
     groupId: g.groupId,
     label: resolveConcept?.(g.groupId)?.concept?.trim() || "Unnamed group",
     confidence: g.confidence,
@@ -978,7 +985,7 @@ function MatchRow({
             <p className="text-on-raised-muted">
               <span className="font-semibold text-on-raised">Missing.</span>{" "}
               {match.shortlist.length > 0
-                ? `${match.shortlist.length} candidates were retrieved and none measures this component.`
+                ? `${match.shortlist.length} ${match.shortlist.length === 1 ? "candidate was" : "candidates were"} retrieved and none measures this component.`
                 : "Nothing in this run retrieved for it."}
             </p>
           )}
