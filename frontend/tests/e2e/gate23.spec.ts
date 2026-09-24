@@ -5,6 +5,7 @@ import {
   affectedSpecCount,
   autoAdoptsSingleCandidate,
   candidateListState,
+  citeCandidateOrdinals,
   conceptMatchState,
   needsRepickConfirmation,
   parseBandRange,
@@ -480,6 +481,23 @@ test.describe("gate23 algebra", () => {
     expect(needsRepickConfirmation(1)).toBe(true);
   });
 
+  test("@gate2 #3 a rationale's candidate ordinals are cited by NAME, keyed to the model's rank", () => {
+    const cands = [
+      { rank: 1, cdeId: "Age" },
+      { rank: 2, cdeId: "Current Pregnancy Indicator" },
+      { rank: 3, cdeId: "Marital Status" },
+    ];
+    // the ordinal the model wrote is its RANK (the order it saw them in), never the displayed row index
+    expect(citeCandidateOrdinals("Candidate 2 is the best fit; candidate #3 is too broad.", cands)).toBe(
+      "Candidate 2 (Current Pregnancy Indicator) is the best fit; candidate #3 (Marital Status) is too broad.",
+    );
+    // an ordinal no candidate carries is left alone rather than pinned to the wrong element
+    expect(citeCandidateOrdinals("Candidate 9 is out of range.", cands)).toBe("Candidate 9 is out of range.");
+    // idempotent: an already-named citation is not named twice
+    const once = citeCandidateOrdinals("Candidate 2 fits.", cands);
+    expect(citeCandidateOrdinals(once, cands)).toBe(once);
+  });
+
   test("@gate2 the shipped demo really does carry the shapes these screens are built on", () => {
     // Guards the fixture itself: every assertion below is only evidence while the demo still contains a
     // generated element, an arithmetic spec and a spread of unmapped values.
@@ -520,6 +538,32 @@ test.describe("gate2 screen", () => {
       );
     });
     expect(listFirst).toBe(true);
+  });
+
+  test("@gate2 #3 the rationale's ordinal and the model's-pick row agree", async ({ page }) => {
+    // Live-test-2 #3: the rationale said "Candidate 3" while the pick sat on displayed row #1 — the table
+    // floats the chosen candidate to the top and numbered rows by POSITION, but the model's ordinal is the
+    // candidate's RANK (the order it was shown them in). A reranked record: the model picked rank 3.
+    await serveFinished(
+      page,
+      (run) => {
+        run.result!.records = [run.result!.records!.find((x) => x.groupId === "c46be33d9a542#g1")!];
+      },
+      { keep: 0 },
+    );
+    await openGate2(page);
+    const rationale = page.locator("[data-testid='model-rationale']");
+    await expect(rationale).toContainText("Candidate 3 (Age when first started smoking cigarettes fairly regularly)");
+    const pick = page.locator("[data-testid='candidate-row'][data-model-pick='true']");
+    await expect(pick).toHaveCount(1);
+    await expect(pick.locator("[data-testid='candidate-ordinal']")).toHaveText("3");
+    await expect(pick).toHaveAttribute("data-cde-id", "Age when first started smoking cigarettes fairly regularly");
+    // every row's number is its rank, so the list reads the same numbering the model used
+    const ordinals = await page
+      .locator("[data-testid='candidate-ordinal']")
+      .allTextContents();
+    expect(new Set(ordinals).size).toBe(ordinals.length);
+    expect(ordinals).toContain("1");
   });
 
   test("@gate2 a re-pick moves the chosen marker and survives a reload", async ({

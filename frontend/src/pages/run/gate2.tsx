@@ -32,6 +32,7 @@ import {
   affectedSpecCount,
   candidateAlternatives,
   candidateListState,
+  citeCandidateOrdinals,
   needsRepickConfirmation,
   repickConfirmation,
 } from "@/lib/gate23";
@@ -425,7 +426,7 @@ export default function Gate2Page() {
                   Why this CDE — model rationale
                 </span>
                 <p className="border-l-2 border-rule-control-on-raised pl-3 text-sm italic text-on-raised">
-                  {record.rationale}
+                  {citeCandidateOrdinals(record.rationale, record.candidates)}
                 </p>
               </div>
             )}

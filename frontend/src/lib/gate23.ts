@@ -61,6 +61,30 @@ export function candidateAlternatives(candidates: UICandidate[]): string[] {
   return candidates.map((c) => c.cdeId).filter(Boolean);
 }
 
+/**
+ * Name every "Candidate N" the model's rationale cites (08-26, live-test-2 #3).
+ *
+ * THE MODEL'S ORDINAL IS THE CANDIDATE'S RANK — the order it was shown them in — not any position on the
+ * screen. The ranked table floats the chosen candidate to the top, so "Candidate 3" and a pick on the first
+ * displayed row are the SAME element; read against display positions they disagree. Citing the element by
+ * name removes the ambiguity whatever the table's order, and the table numbers each row by its rank so the
+ * two numberings are one. An ordinal no candidate carries is left untouched rather than pinned to a guess,
+ * and a citation already followed by its name is not named twice.
+ */
+export function citeCandidateOrdinals(
+  rationale: string,
+  candidates: Pick<UICandidate, "rank" | "cdeId">[],
+): string {
+  const byRank = new Map(candidates.map((c) => [c.rank, c.cdeId]));
+  return rationale.replace(
+    /\b(candidate\s*#?\s*)(\d+)\b(?!\s*\()/gi,
+    (whole, _lead: string, n: string) => {
+      const name = byRank.get(Number(n));
+      return name ? `${whole} (${name})` : whole;
+    },
+  );
+}
+
 // --- Gate 2: the SKOS relation between a concept and the element it takes -------------------------------
 
 /**

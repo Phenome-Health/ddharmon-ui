@@ -127,13 +127,20 @@ export function CandidateTable({
         <span>click a row for full metadata</span>
       </div>
       <div className="max-h-[30rem] overflow-y-auto rounded-inner border border-rule-quiet-on-raised divide-y divide-rule-quiet-on-raised">
-        {ordered.map((c, i) => {
+        {ordered.map((c) => {
           const chosen = c.cdeId === chosenId;
           const open = c.cdeId === effectiveExpanded;
           const score = richnessOf(c);
           const pvCount = c.permissibleValues?.length ?? 0;
           return (
-            <div key={c.cdeId || c.rank} data-testid="candidate-row" data-cde-id={c.cdeId} data-chosen={chosen ? "true" : undefined}>
+            <div
+              key={c.cdeId || c.rank}
+              data-testid="candidate-row"
+              data-cde-id={c.cdeId}
+              data-rank={c.rank}
+              data-chosen={chosen ? "true" : undefined}
+              data-model-pick={c.isChosen ? "true" : undefined}
+            >
               {/* The scannable row — clicking it INSPECTS (expands), never silently re-picks. */}
               <button
                 type="button"
@@ -146,7 +153,11 @@ export function CandidateTable({
                   chosen ? "bg-surface-ok/40" : "hover:bg-surface-inset",
                 )}
               >
-                <span className="tabular-nums text-xs text-on-raised-muted">{i + 1}</span>
+                {/* The RANK, not the row position (#3): the chosen candidate floats to the top, and the model's
+                    rationale numbers candidates in the order it saw them — so the row number must be that. */}
+                <span data-testid="candidate-ordinal" className="tabular-nums text-xs text-on-raised-muted">
+                  {c.rank}
+                </span>
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5">
                     <ChevronRight
