@@ -934,6 +934,50 @@ test.describe("gate3 screen", () => {
     ).toHaveValue("Checked against the source dictionary.");
   });
 
+  test("@gate3 #12 a Save visibly confirms it recorded, and the block stays marked edited", async ({ page }) => {
+    // Live-test-2 #12: Save persisted (gate3_spec_edit) but showed nothing, so a reviewer could not tell
+    // their decision had landed.
+    await serveFinished(page);
+    await openGate3(page);
+    const row = page.locator("[data-testid='spec-row']").first();
+    await expect(row.locator("[data-testid='spec-saved']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='spec-edited-badge']")).toHaveCount(0);
+    await row.locator("[data-testid='spec-note-input']").fill("Checked.");
+    await row.locator("[data-testid='spec-save']").click();
+    // the write itself is confirmed, in the row that was saved...
+    const saved = row.locator("[data-testid='spec-saved']");
+    await expect(saved).toBeVisible();
+    await expect(saved).toHaveAttribute("role", "status");
+    await expect(saved).toContainText(/saved/i);
+    // ...and as a toast, for the explicit button press
+    await expect(page.getByText(/recode note saved/i)).toBeVisible();
+    // the block carries a standing "edited" mark, which survives a reload because it is read off the store
+    await expect(row.locator("[data-testid='spec-edited-badge']")).toBeVisible();
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(
+      page.locator("[data-testid='spec-row']").first().locator("[data-testid='spec-edited-badge']"),
+    ).toBeVisible();
+  });
+
+  test("@gate3 #12 an editor change (not only the note) confirms its save", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      const r = run.result!.records!.find((x) => x.members.some((m) => m.includes("susmkstoage")));
+      if (r) run.result!.records = [r];
+    });
+    await openGate3(page);
+    const editor = page.locator("[data-testid='spec-number-map']").first();
+    const row = page.locator("[data-testid='spec-row']", { has: editor });
+    await expect(row.locator("[data-testid='spec-saved']")).toHaveCount(0);
+    await editor
+      .locator("[data-testid='number-row']")
+      .first()
+      .locator("[data-testid='number-action'][data-action='drop']")
+      .click();
+    await expect(row.locator("[data-testid='spec-saved']")).toBeVisible();
+    await expect(row.locator("[data-testid='spec-edited-badge']")).toBeVisible();
+  });
+
   test("@gate3 a spec edit survives a CONCEPT SWITCH with no reload", async ({
     page,
   }) => {

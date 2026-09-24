@@ -97,7 +97,12 @@ export interface UseGateDecisions {
   local: boolean;
   /** True when the run has moved past this gate: the screen is a record and every write refuses. */
   frozen: boolean;
-  write(fields: Record<string, unknown>, options: WriteOptions): Promise<void>;
+  /**
+   * Resolves TRUE once the decision is recorded (the store took it, or — on a demo / static build — the
+   * browser sandbox did) and FALSE when the write failed and was rolled back (the failure is already
+   * toasted). A screen confirms a save off this value, never off having called it (08-26 #12).
+   */
+  write(fields: Record<string, unknown>, options: WriteOptions): Promise<boolean>;
   clear(fields: Record<string, unknown>): Promise<void>;
   conflict: GateDecisionConflict | null;
   dismissConflict(): void;
@@ -171,13 +176,13 @@ export function useGateDecisions(
   const staleKeys = useMemo(() => staleItemKeys(stale, kind), [stale, kind]);
 
   const persist = useCallback(
-    async (itemKey: string, payload: GateDecision | null, previous: GateDecision | undefined) => {
+    async (itemKey: string, payload: GateDecision | null, previous: GateDecision | undefined): Promise<boolean> => {
       if (local) {
         // The demo is one shared, read-only run, so its edits stay in the browser and are kept by cloning
         // it into a run of your own. Routed here rather than at each call site, because a call site that
         // forgets is a write to somebody else's row.
         writeSandbox(jobId, withGateDecision(readSandbox(jobId), kind, itemKey, payload));
-        return;
+        return true;
       }
       try {
         if (payload === null) {
@@ -190,6 +195,7 @@ export function useGateDecisions(
           if (stored.conflict) setConflict({ ...stored.conflict, sentBase: sentBase !== undefined });
         }
         await refetch();
+        return true;
       } catch (e) {
         // Reconcile the optimistic state rather than leaving the screen showing a decision the store never
         // took, and surface the failure — a write reported successful but dropped is the defect the store's
@@ -201,6 +207,7 @@ export function useGateDecisions(
           return { ...prev, [kind]: byItem };
         });
         toast.error(e instanceof Error ? e.message : "Could not save that decision");
+        return false;
       }
     },
     [jobId, kind, local, refetch],
@@ -227,7 +234,7 @@ export function useGateDecisions(
       };
       const previous = index[kind]?.[itemKey];
       setIndex((prev) => ({ ...prev, [kind]: { ...(prev[kind] ?? {}), [itemKey]: payload } }));
-      await persist(itemKey, payload, previous);
+      return persist(itemKey, payload, previous);
     },
     [index, kind, persist, frozen],
   );

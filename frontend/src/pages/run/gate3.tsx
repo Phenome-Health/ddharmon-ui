@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CommitBar } from "@/components/gate/CommitBar";
@@ -153,6 +154,21 @@ export default function Gate3Page() {
     null,
   );
   const [rejecting, setRejecting] = useState<string | null>(null);
+  // Rows whose last save this session LANDED (08-26 #12). Set only off `write`'s resolved value — never
+  // off having pressed Save — so the confirmation is evidence the store took the decision.
+  const [savedKeys, setSavedKeys] = useState<Record<string, true>>({});
+  const markSaved = (sourceVariable: string, ok: boolean) => {
+    if (!ok) return;
+    const key = specs.itemKey({ sourceVariable });
+    setSavedKeys((prev) => ({ ...prev, [key]: true }));
+  };
+  const unmarkSaved = (itemKey: string) =>
+    setSavedKeys((prev) => {
+      if (!prev[itemKey]) return prev;
+      const next = { ...prev };
+      delete next[itemKey];
+      return next;
+    });
 
   const groups = useMemo(
     () =>
@@ -207,7 +223,7 @@ export default function Gate3Page() {
     sourceVariable: string,
     value: string,
   ) {
-    await specs.write(
+    const ok = await specs.write(
       { sourceVariable },
       {
         chosen: sourceVariable,
@@ -217,6 +233,13 @@ export default function Gate3Page() {
       },
     );
     setDraft(null);
+    markSaved(sourceVariable, ok);
+    if (ok)
+      toast.success(
+        specs.local
+          ? "Recode note saved in this browser"
+          : "Recode note saved to the decision log",
+      );
   }
 
   // A value-mapping edit persists immediately, the way a Gate 1 move does — the reviewer's mapping survives
@@ -227,7 +250,7 @@ export default function Gate3Page() {
     mapping: Record<string, string>,
     prev: Record<string, unknown> | undefined,
   ) {
-    await specs.write(
+    const ok = await specs.write(
       { sourceVariable },
       {
         chosen: sourceVariable,
@@ -239,6 +262,7 @@ export default function Gate3Page() {
         },
       },
     );
+    markSaved(sourceVariable, ok);
   }
 
   // ② A code→number edit (categorical source, numeric target) persists the same way; other decision fields
@@ -249,7 +273,7 @@ export default function Gate3Page() {
     numberMap: Record<string, NumberMapEntry>,
     prev: Record<string, unknown> | undefined,
   ) {
-    await specs.write(
+    const ok = await specs.write(
       { sourceVariable },
       {
         chosen: sourceVariable,
@@ -261,6 +285,7 @@ export default function Gate3Page() {
         },
       },
     );
+    markSaved(sourceVariable, ok);
   }
 
   // ③ A binning edit (numeric source, categorical target) persists the reviewer's band boundaries.
@@ -270,7 +295,7 @@ export default function Gate3Page() {
     bins: BinRule[],
     prev: Record<string, unknown> | undefined,
   ) {
-    await specs.write(
+    const ok = await specs.write(
       { sourceVariable },
       {
         chosen: sourceVariable,
@@ -282,6 +307,7 @@ export default function Gate3Page() {
         },
       },
     );
+    markSaved(sourceVariable, ok);
   }
 
   return (
@@ -709,6 +735,16 @@ export default function Gate3Page() {
                                 routed to review
                               </span>
                             )}
+                            {/* A STANDING mark, read off the store (so it survives a reload): this block
+                                carries a reviewer decision, not only the pipeline's recommendation (#12). */}
+                            {specs.isTouched(itemKey) && (
+                              <span
+                                data-testid="spec-edited-badge"
+                                className="rounded-pill border border-rule-on-raised px-2 py-0.5 text-xs text-on-raised-muted"
+                              >
+                                {decision?.rejected ? "rejected" : "edited"}
+                              </span>
+                            )}
                           </div>
 
                           {state === "failed" && (
@@ -802,12 +838,14 @@ export default function Gate3Page() {
                               placeholder="Your note on this recode"
                               value={noteValue}
                               disabled={frozen}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                // Typing again means the confirmation no longer describes what is on screen.
+                                unmarkSaved(itemKey);
                                 setDraft({
                                   key: itemKey,
                                   value: e.target.value,
-                                })
-                              }
+                                });
+                              }}
                               className="max-w-96 text-xs"
                             />
                             <Button
@@ -830,6 +868,21 @@ export default function Gate3Page() {
                             >
                               Reject
                             </Button>
+                            {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
+                                failed write rolls back and toasts instead, so this never claims a miss. */}
+                            {savedKeys[itemKey] && (
+                              <span
+                                data-testid="spec-saved"
+                                role="status"
+                                className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
+                              >
+                                <Check
+                                  aria-hidden="true"
+                                  className="h-3.5 w-3.5 text-status-ok"
+                                />
+                                {specs.local ? "Saved in this browser" : "Saved"}
+                              </span>
+                            )}
                           </div>
 
                           {rejecting === itemKey && (
@@ -847,18 +900,22 @@ export default function Gate3Page() {
                                   data-testid="reject-accept"
                                   size="sm"
                                   onClick={() => {
-                                    void specs.write(
-                                      { sourceVariable },
-                                      {
-                                        chosen: "",
-                                        alternatives: [sourceVariable],
-                                        upstream: {
-                                          kind: "gate2_candidate_pick",
-                                          itemKey: record.groupId,
+                                    void specs
+                                      .write(
+                                        { sourceVariable },
+                                        {
+                                          chosen: "",
+                                          alternatives: [sourceVariable],
+                                          upstream: {
+                                            kind: "gate2_candidate_pick",
+                                            itemKey: record.groupId,
+                                          },
+                                          extra: { rejected: true },
                                         },
-                                        extra: { rejected: true },
-                                      },
-                                    );
+                                      )
+                                      .then((ok) =>
+                                        markSaved(sourceVariable, ok),
+                                      );
                                     setRejecting(null);
                                   }}
                                 >
