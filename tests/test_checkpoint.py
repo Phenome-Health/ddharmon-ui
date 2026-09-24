@@ -1534,6 +1534,49 @@ def test_resuming_from_gate_2_runs_to_completion_and_asks_for_a_gate_3_park(monk
     assert seen["park_at_gate"] == "gate3", "the finished pipeline was not asked to park at Gate 3"
 
 
+def test_a_resumed_leg_starts_a_fresh_stage_timeline(monkeypatch, tmp_path):
+    """08-26 Task 3 (live-test-2 #5): the progress panel's stage list is THIS leg's, not the first leg's.
+
+    ``phase_timings`` stamps each phase with ``setdefault``, so on a resume the first leg's
+    loading/embedding/clustering starts (and the park stamp) survived, and the resumed leg's own entries into
+    those phases were silently dropped. The timeline then listed leg-1 stages with leg-1 durations under a
+    Gate 2 -> 3 resume, plus a "stage" spanning the days the run sat parked. A resume starts a new leg, so
+    its timeline starts empty.
+    """
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: None)
+
+    with TestClient(app_module.app) as c:
+        wd = tmp_path / "work" / "tl"
+        app_module.store.create(
+            "tl",
+            "Parked at Gate 2",
+            {"work_dir": str(wd), "cde_set": "endorsed"},
+            owner_subject=None,
+            dict_specs=[{"path": "x.csv", "cohort_name": "A", "column_roles": {}}],
+        )
+        for phase in ("loading", "embedding", "clustering", "generating", "assigning"):
+            app_module.store.update("tl", status=phase, phase=phase)
+        write_checkpoint(wd, job_id="tl", gate="gate2", result={"records": []}, responses={}, realized_cost=3.0)
+        app_module.store.checkpoint("tl", gate="gate2", checkpoint_ref="tl/checkpoint_gate2.json", realized_cost=3.0)
+        leg1 = dict(app_module.store.get("tl").phase_timings)
+        assert {"embedding", "clustering", "awaiting_review"} <= set(leg1)
+
+        assert c.post("/api/harmonize/resume/tl", headers={"x-anthropic-key": "sk-test"}).status_code == 200
+
+    timings = app_module.store.get("tl").phase_timings
+    # none of the first leg's stages, and no parked interval, carry into the resumed leg's timeline
+    assert not ({"loading", "embedding", "clustering", "generating", "assigning", "awaiting_review"} & set(timings))
+    # the resumed leg re-stamps what IT enters, with its own start times
+    app_module.store.update("tl", status="embedding", phase="embedding")
+    assert app_module.store.get("tl").phase_timings["embedding"] > leg1["embedding"]
+
+
 def test_resuming_from_gate_3_to_gate_4_spawns_no_worker_and_costs_nothing(monkeypatch, tmp_path):
     """Gate 4 is a PURE READ of the same finished result, so its leg must not re-run the pipeline.
 

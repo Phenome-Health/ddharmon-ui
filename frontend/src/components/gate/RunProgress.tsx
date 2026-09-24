@@ -7,6 +7,7 @@ import {
   elapsedSeconds,
   etaSeconds,
   isAwaitingProviderQueue,
+  legStartedAt,
   phasePercent,
   timelineSegments,
 } from "@/lib/run-progress";
@@ -101,7 +102,8 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
   if (!job || !inFlight) return null;
 
   const config = job.config as Record<string, unknown> | undefined;
-  const elapsed = elapsedSeconds(job, now);
+  // The CURRENT leg's clock (#5): a resumed run's createdAt is the first leg's start, days ago.
+  const elapsed = elapsedSeconds(job, now, legStartedAt(job.phaseStartedAt));
   const pct = phasePercent(job.phase, job.completed, job.total);
   const queued = isAwaitingProviderQueue(config, job.phase);
   const eta = etaSeconds({ status: job.status, phase: job.phase, config, elapsed, pct });

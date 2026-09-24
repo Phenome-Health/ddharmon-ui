@@ -922,7 +922,11 @@ def resume_run(
     in_scope = _gate1_assign_scope(job, subject, groups)
     if in_scope is not None:
         run_config["assign_group_ids"] = in_scope
-    store.update(job_id, status="pending", phase="pending")
+    # A resume starts a NEW LEG, so its stage timeline starts empty (08-26, live-test-2 #5). Phase starts are
+    # stamped with setdefault, so the first leg's loading/embedding/clustering stamps (and the park stamp) would
+    # otherwise survive, this leg's own entries into those phases would be dropped, and the progress panel
+    # would list the first leg's stages and durations — plus the days the run sat parked — under this leg.
+    store.update(job_id, status="pending", phase="pending", phase_timings={})
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, job.dict_specs, cde_spec, run_config),

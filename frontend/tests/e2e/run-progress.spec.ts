@@ -7,6 +7,7 @@ import {
   elapsedSeconds,
   etaSeconds,
   isAwaitingProviderQueue,
+  legStartedAt,
   phasePercent,
   timelineSegments,
 } from "@/lib/run-progress";
@@ -125,6 +126,59 @@ test.describe("timelineSegments", () => {
     expect(errored[0].active).toBe(false);
   });
 
+  test("@runprogress #5 queue/park markers are boundaries, never stages", () => {
+    // `pending` (the resume enqueue) and `awaiting_review` (the park) are stamped into the same map as the
+    // stages. Rendered, a park reads as a stage that "ran" for the days the run sat waiting for a human.
+    const segs = timelineSegments({
+      phaseStartedAt: { pending: 0, loading: 5, embedding: 10, awaiting_review: 40 },
+      currentPhase: "awaiting_review",
+      now: 9_999_999,
+    });
+    expect(segs.map((s) => s.phase)).toEqual(["loading", "embedding"]);
+    // the stage before the park ENDS at the park, not at `now`
+    expect(segs.map((s) => s.seconds)).toEqual([5, 30]);
+  });
+
+  test("@runprogress #5 a resumed leg lists only ITS stages, not the first leg's", () => {
+    // What an older server streams on a Gate 2 -> 3 resume: leg 1's stamps survive (setdefault), the park
+    // is stamped, and only phases NEW to this leg get stamps after it. The first leg's embedding and
+    // clustering are not this leg's work and must not be listed under it.
+    const leg2 = timelineSegments({
+      phaseStartedAt: {
+        loading: 0,
+        embedding: 10,
+        clustering: 30,
+        generating: 40,
+        awaiting_review: 100,
+        pending: 250_000,
+        specs: 250_010,
+      },
+      currentPhase: "specs",
+      now: 250_025,
+    });
+    expect(leg2.map((s) => s.phase)).toEqual(["specs"]);
+    expect(leg2[0].seconds).toBe(15);
+    expect(leg2[0].active).toBe(true);
+    // A server that starts each leg with a fresh map (08-26) needs no filtering: every stamp is this leg's.
+    const fresh = timelineSegments({
+      phaseStartedAt: { pending: 0, loading: 1, embedding: 2, specs: 9 },
+      currentPhase: "specs",
+      now: 12,
+    });
+    expect(fresh.map((s) => s.phase)).toEqual(["loading", "embedding", "specs"]);
+  });
+
+  test("@runprogress #5 the current leg starts at its first stamp after the last park", () => {
+    expect(legStartedAt(undefined)).toBeNull();
+    expect(legStartedAt({})).toBeNull();
+    // a first leg (never parked): its first stamp
+    expect(legStartedAt({ loading: 5, embedding: 10 })).toBe(5);
+    // a resumed leg on an older server: the first stamp AFTER the park, not leg 1's loading
+    expect(legStartedAt({ loading: 0, awaiting_review: 100, pending: 250_000, specs: 250_010 })).toBe(250_000);
+    // parked, nothing after it yet: the leg that just parked started at its first stamp
+    expect(legStartedAt({ loading: 0, embedding: 10, awaiting_review: 100 })).toBe(0);
+  });
+
   test("@runprogress a clock that would run backwards is floored at zero", () => {
     // `now` lags the last stage's start for a moment after a phase transition (the tick is on an interval,
     // the stream is not). A negative duration renders as "-3s", which reads as a bug in the run.
@@ -156,6 +210,17 @@ test.describe("elapsedSeconds", () => {
     expect(elapsedSeconds(RUN("awaiting_review", 1000, 1007), 9_999_999)).toBe(7);
     // Read it again much later — still identical. That is the whole point of freezing it.
     expect(elapsedSeconds(RUN("awaiting_review", 1000, 1007), 99_999_999)).toBe(7);
+  });
+
+  test("@runprogress #5 a resumed leg's clock counts THIS leg, not the days it sat parked", () => {
+    // "Running for 69h" on a Gate 2 -> 3 resume: createdAt is leg 1's start, so the live clock counted
+    // the whole parked interval. Given the leg's start, the live clock is measured from it.
+    const run = RUN("specs", 1000, 1000);
+    expect(elapsedSeconds(run, 250_025 + 1000, 250_000 + 1000)).toBe(25);
+    // no leg start known -> the old whole-run reading, unchanged
+    expect(elapsedSeconds(run, 1090)).toBe(90);
+    // a parked run stays frozen at its park regardless of the leg start
+    expect(elapsedSeconds(RUN("awaiting_review", 1000, 1007), 9_999_999, 1003)).toBe(7);
   });
 
   test("@runprogress a terminal run's clock is frozen too, and a clock never runs backwards", () => {

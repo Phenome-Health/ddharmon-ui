@@ -40,7 +40,7 @@ import { isParked } from "@/lib/run-state";
 // Both LIFTED OUT OF THIS FILE by 08-14h Task 1, where they were module-local and therefore reachable only
 // from a screen 08-14f stopped routing anyone through. The gate chrome now renders the same readout from
 // the same code rather than growing a second answer to "how far has this run got".
-import { elapsedSeconds, etaSeconds, phasePercent } from "@/lib/run-progress";
+import { elapsedSeconds, etaSeconds, legStartedAt, phasePercent } from "@/lib/run-progress";
 import { RunTimeline } from "@/components/gate/RunProgress";
 import { resumeGateOf } from "@/lib/gate-routes";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -331,7 +331,8 @@ export default function DashboardPage() {
   // COMPUTED BY `lib/run-progress.ts`, NOT HERE (08-14h Task 2). The freeze rule above is now needed by
   // the gate chrome as well, and two copies of it is how the 109-hour figure came to differ per surface
   // in the first place. The formula is unchanged; only its home is.
-  const elapsed = elapsedSeconds(jobState, now);
+  // The live clock counts the CURRENT leg (08-26 #5), the same rule the gate chrome uses.
+  const elapsed = elapsedSeconds(jobState, now, legStartedAt(jobState.phaseStartedAt));
   // ONE SOURCE LINE PER SENTENCE: a number that stops moving with no explanation reads as a hung page.
   const elapsedLabel = parked
     ? `Paused at ${parkedGate ? GATE_LABELS[parkedGate] : "a review gate"} · ran for ${formatDuration(elapsed)}`

@@ -50,6 +50,33 @@ export const PHASE_ORDER = ["loading", "embedding", "clustering", "generating", 
 export const TERMINAL_PHASES = ["complete", "error", "prepared"];
 
 /**
+ * Stamps that are QUEUE / PARK markers rather than stages (08-26, live-test-2 #5).
+ *
+ * `pending` is the enqueue before a leg's worker starts, `awaiting_review` the park at a gate, `cancelled`
+ * a stop. They are read as BOUNDARIES — the stage before a park ends at the park — but never rendered: a
+ * park drawn as a stage "ran" for the days the run sat waiting for a human.
+ */
+export const NON_STAGE_PHASES = ["pending", "awaiting_review", "cancelled", "stopping"];
+
+/**
+ * When the CURRENT leg of a staged run started, in the stream's clock — or null with no timings.
+ *
+ * A resumed run is several legs, and the progress panel describes the one running now. The server starts
+ * each leg with a fresh timing map (08-26), so the leg is simply its first stamp. An OLDER server kept the
+ * first leg's stamps (they are set once, never reset) and added the park; there the current leg is
+ * whatever was stamped AFTER the last park. Both readings are the same function.
+ */
+export function legStartedAt(phaseStartedAt?: Record<string, number>): number | null {
+  const entries = Object.entries(phaseStartedAt ?? {});
+  if (!entries.length) return null;
+  const park = phaseStartedAt?.awaiting_review;
+  const after = park == null ? [] : entries.filter(([p, t]) => p !== "awaiting_review" && t > park).map(([, t]) => t);
+  if (after.length) return Math.min(...after);
+  const rest = entries.filter(([p]) => p !== "awaiting_review").map(([, t]) => t);
+  return rest.length ? Math.min(...rest) : (park ?? null);
+}
+
+/**
  * The run's completion as a percentage: its phase's position in the pipeline, plus how far into that
  * phase its own item count has got.
  *
@@ -110,15 +137,21 @@ export function timelineSegments({
   now: number;
 }): TimelineSegment[] {
   const timings = phaseStartedAt ?? {};
+  // Only the CURRENT leg's stages (#5): on a resume, the first leg's stamps are not this leg's work.
+  const legStart = legStartedAt(timings);
   const seq = Object.keys(timings)
-    .filter((p) => !TERMINAL_PHASES.includes(p))
+    .filter((p) => !TERMINAL_PHASES.includes(p) && !NON_STAGE_PHASES.includes(p))
+    .filter((p) => legStart === null || timings[p] >= legStart)
     .sort((a, b) => timings[a] - timings[b]);
   if (!seq.length) return [];
   const terminalAt = timings.complete ?? timings.error ?? null;
-  const endOf = (i: number): number => (i + 1 < seq.length ? timings[seq[i + 1]] : (terminalAt ?? now));
-  return seq.map((phase, i) => ({
+  // A stage ends at the NEXT stamp of any kind — its successor stage, a park, a stop or the terminal stamp —
+  // and runs to `now` only when nothing has been stamped after it.
+  const stamps = Object.values(timings).sort((a, b) => a - b);
+  const endOf = (start: number): number => stamps.find((t) => t > start) ?? terminalAt ?? now;
+  return seq.map((phase) => ({
     phase,
-    seconds: Math.max(0, endOf(i) - timings[phase]),
+    seconds: Math.max(0, endOf(timings[phase]) - timings[phase]),
     // Nothing is active once the run has ended: the stage it stopped in is finished, not running.
     active: phase === currentPhase && terminalAt === null,
   }));
@@ -190,10 +223,13 @@ export function isAwaitingProviderQueue(
 export function elapsedSeconds(
   run: { status?: string | null; createdAt: number; updatedAt: number } | null | undefined,
   now: number,
+  /** The current leg's start (`legStartedAt`). Given, a LIVE clock counts this leg only (#5): measured from
+   *  `createdAt`, a Gate 2 -> 3 resume read "running for 69h" — the days it sat parked, not work. */
+  legStart?: number | null,
 ): number {
   if (!run) return 0;
-  const end = isInFlight(run.status) ? now : run.updatedAt;
-  return Math.max(0, end - run.createdAt);
+  if (isInFlight(run.status)) return Math.max(0, now - (legStart ?? run.createdAt));
+  return Math.max(0, run.updatedAt - run.createdAt);
 }
 
 /**

@@ -523,6 +523,38 @@ test.describe("the run-progress readout", () => {
     await expect(timeline).toContainText(/clustering/i);
   });
 
+  test("@gates #5 a resumed leg's checklist and clock describe THIS leg, not the first", async ({ page }) => {
+    // Live-test-2 #5: on a Gate 2 -> 3 resume the checklist listed embedding/clustering (the first leg's
+    // work, with the first leg's durations) and the clock read "running for 69h" — the parked interval.
+    // This is what an older server streams: leg-1 stamps kept, the park stamped, then this leg's.
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: "specs", phase: "specs", stopping: false });
+      const config = p.config as Record<string, unknown>;
+      config.run_mode = "sync";
+      config.est_fields = 1000;
+      config.est_cohorts = 5;
+      delete config.demo;
+      const t = Math.floor(Date.now() / 1000);
+      const leg1 = t - 69 * 3600;
+      (p as Record<string, unknown>).createdAt = leg1;
+      (p as Record<string, unknown>).phaseStartedAt = {
+        loading: leg1,
+        embedding: leg1 + 10,
+        clustering: leg1 + 200,
+        generating: leg1 + 260,
+        awaiting_review: leg1 + 900,
+        pending: t - 20,
+        specs: t - 15,
+      };
+    });
+    await gotoGate(page);
+    const timeline = page.locator("[data-testid='run-timeline']");
+    await expect(timeline).toBeVisible();
+    await expect(timeline).toContainText(/specs/i);
+    await expect(timeline).not.toContainText(/embedding|clustering|awaiting/i);
+    await expect(page.locator("[data-testid='run-progress-elapsed']")).not.toContainText(/\d+\s*h/);
+  });
+
   test("@gates a run that is still running says so, with its stage, its progress and its elapsed time", async ({
     page,
   }) => {
