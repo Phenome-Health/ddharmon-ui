@@ -540,6 +540,103 @@ test.describe("gate2 screen", () => {
     expect(listFirst).toBe(true);
   });
 
+  test("@gate2 #2 the ranked-candidates legend and row indicators are legible on the white card", async ({
+    page,
+  }) => {
+    // Live-test-2 #2: the legend (model's pick, metadata richness, N PV, cos) and the column key were set
+    // in `--on-raised-faint` — the HAIRLINE role, which index.css says is never text — and the empty
+    // richness dots in `--surface-track` (~1.2:1 on white), so "3 of 5" read as three dots of nothing.
+    await serveFinished(page, oneRankedConcept);
+    await openGate2(page);
+    await expect(page.locator("[data-testid='candidate-legend']")).toBeVisible();
+    const ratios = await page.evaluate(() => {
+      type Rgba = [number, number, number, number];
+      const parse = (v: string): Rgba => {
+        const legacy = /^rgba?\(([^)]+)\)$/i.exec(v.trim());
+        if (legacy) {
+          const p = legacy[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+          return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+        }
+        const modern = /^color\(srgb\s+([^)]+)\)$/i.exec(v.trim());
+        if (modern) {
+          const p = modern[1].split(/[\s/]+/).filter(Boolean).map(Number);
+          return [p[0] * 255, p[1] * 255, p[2] * 255, p.length > 3 ? p[3] : 1];
+        }
+        // Tailwind's `/40` opacity modifiers compute to oklab — convert to sRGB (Ottosson's matrices).
+        const ok = /^oklab\(([^)]+)\)$/i.exec(v.trim());
+        if (ok) {
+          const [L, A, B, alpha] = ok[1].split(/[\s/]+/).filter(Boolean).map(Number);
+          const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+          const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+          const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
+          const lin = [
+            4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+            -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+            -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+          ];
+          const enc = (x: number) =>
+            255 * Math.min(1, Math.max(0, x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055));
+          return [enc(lin[0]), enc(lin[1]), enc(lin[2]), Number.isFinite(alpha) ? alpha : 1];
+        }
+        throw new Error(`unexpected colour ${v}`);
+      };
+      const over = (f: Rgba, b: Rgba): Rgba => [
+        f[0] * f[3] + b[0] * (1 - f[3]),
+        f[1] * f[3] + b[1] * (1 - f[3]),
+        f[2] * f[3] + b[2] * (1 - f[3]),
+        1,
+      ];
+      const lum = (c: Rgba) => {
+        const ch = (x: number) => {
+          const s = x / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+      };
+      // The ground an element is drawn on: every ancestor's background composited from the page down.
+      const ground = (el: Element): Rgba => {
+        const chain: Element[] = [];
+        for (let e: Element | null = el.parentElement; e; e = e.parentElement) chain.unshift(e);
+        let bg: Rgba = [255, 255, 255, 1];
+        for (const e of chain) bg = over(parse(getComputedStyle(e).backgroundColor), bg);
+        return bg;
+      };
+      const ratio = (fg: string, el: Element, onSelf = false) => {
+        const b = onSelf ? over(parse(getComputedStyle(el).backgroundColor), ground(el)) : ground(el);
+        const f = over(parse(fg), b);
+        const [x, y] = [lum(f), lum(b)];
+        return Math.round(((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)) * 100) / 100;
+      };
+      const q = (sel: string) => Array.from(document.querySelectorAll(sel));
+      const text = (sel: string) => q(sel).map((e) => ratio(getComputedStyle(e).color, e));
+      return {
+        legend: text("[data-testid='candidate-legend']"),
+        columns: text("[data-testid='candidate-columns']"),
+        pv: q("[data-testid='candidate-pv']").map((e) => ratio(getComputedStyle(e).color, e, true)),
+        chevron: q("[data-testid='candidate-expand'] svg[aria-hidden='true']").map((e) =>
+          ratio(getComputedStyle(e).color, e),
+        ),
+        stars: q("[data-testid='pick-star']").map((e) => ratio(getComputedStyle(e).fill, e)),
+        cosBars: q("[data-testid='cos-bar-fill']").map((e) => ratio(getComputedStyle(e).backgroundColor, e)),
+        // a dot's mark is its fill when present, else its ring
+        dots: q("[data-testid='richness-dot']").map((e) => {
+          const cs = getComputedStyle(e);
+          const filled = parse(cs.backgroundColor)[3] > 0;
+          return ratio(filled ? cs.backgroundColor : cs.borderTopColor, e);
+        }),
+      };
+    });
+    expect(ratios.legend.length).toBeGreaterThan(0);
+    expect(ratios.dots.length).toBeGreaterThan(0);
+    expect(ratios.chevron.length).toBeGreaterThan(0);
+    for (const r of [...ratios.legend, ...ratios.columns, ...ratios.pv])
+      expect(r, "legend / column key / PV text must clear AA (4.5:1)").toBeGreaterThanOrEqual(4.5);
+    expect(ratios.stars.length).toBeGreaterThan(0);
+    expect(ratios.cosBars.length).toBeGreaterThan(0);
+    for (const r of [...ratios.dots, ...ratios.chevron, ...ratios.stars, ...ratios.cosBars])
+      expect(r, "a meaningful mark must clear the graphical floor (3:1)").toBeGreaterThanOrEqual(3);
+  });
+
   test("@gate2 #3 the rationale's ordinal and the model's-pick row agree", async ({ page }) => {
     // Live-test-2 #3: the rationale said "Candidate 3" while the pick sat on displayed row #1 — the table
     // floats the chosen candidate to the top and numbered rows by POSITION, but the model's ordinal is the

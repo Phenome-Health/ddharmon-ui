@@ -24,6 +24,11 @@ import type { UICandidate } from "@/types";
 
 const NIH_CDE_URL = "https://cde.nlm.nih.gov/deView?tinyId=";
 
+// THE `accent` UTILITY IS NOT THE ACCENT (08-26, live-test-2 #2). `bg-accent` / `fill-accent` / `text-accent`
+// are shadcn's HOVER-wash slot (`--color-accent: var(--surface-inset)`, the pale inset), so the model's-pick
+// star, the filled richness dots and the cos bar all rendered pale-on-white at ~1.15:1. The accent as a MARK
+// on the card is the `accent-on-raised` role.
+
 /** The richness fields a reviewer weighs — how many are actually populated for this candidate. */
 const RICHNESS_FIELDS = ["questionText", "dataType", "units", "permissibleValues", "stewardOrg"] as const;
 
@@ -44,7 +49,7 @@ function cos(x: number | null | undefined): string {
 function MiniBar({ value }: { value: number }) {
   return (
     <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-surface-track">
-      <div className="h-full rounded-full bg-accent" style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} />
+      <div data-testid="cos-bar-fill" className="h-full rounded-full bg-accent-on-raised" style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} />
     </div>
   );
 }
@@ -61,7 +66,15 @@ function RichnessMeter({ score }: { score: number }) {
       {Array.from({ length: total }).map((_, i) => (
         <span
           key={i}
-          className={cn("h-1.5 w-1.5 rounded-full", i < score ? "bg-accent" : "bg-surface-track")}
+          data-testid="richness-dot"
+          data-filled={i < score ? "true" : "false"}
+          className={cn(
+            "h-2 w-2 rounded-full",
+            // Filled = present, a HOLLOW RING = absent. The absent mark used to be `--surface-track`
+            // (~1.2:1 on white), so "3 of 5" read as three dots of nothing (#2). The ring is the track's
+            // own graphical foreground, which clears 3:1 on the card.
+            i < score ? "bg-accent-on-raised" : "border border-on-track",
+          )}
         />
       ))}
     </span>
@@ -103,7 +116,10 @@ export function CandidateTable({
   return (
     <div className="flex flex-col gap-1.5">
       {/* Column key — the ranked table's header, as a light strip above the expandable rows. */}
-      <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-3 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-faint">
+      <div
+        data-testid="candidate-columns"
+        className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-3 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+      >
         <span>#</span>
         <span>CDE</span>
         <span className="text-right" title="How many of the 5 catalog metadata fields this CDE has (question, data type, units, permissible values, steward)">
@@ -113,10 +129,15 @@ export function CandidateTable({
           cos
         </span>
       </div>
-      {/* Icon/column key — so the glyphs are legible without hovering each one. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-xs text-on-raised-faint">
+      {/* Icon/column key — so the glyphs are legible without hovering each one. Set in the MUTED text role:
+          it was `--on-raised-faint`, the hairline role that is never text, and measured 3.18:1 (#2). */}
+      <div
+        data-testid="candidate-legend"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-xs text-on-raised-muted"
+      >
         <span className="inline-flex items-center gap-1">
-          <Star className="h-3 w-3 fill-accent text-accent" /> model&apos;s pick
+          <Star data-testid="pick-star" className="h-3 w-3 fill-accent-on-raised text-accent-on-raised" />
+          model&apos;s pick
         </span>
         <span className="inline-flex items-center gap-1">
           <RichnessMeter score={3} /> metadata richness
@@ -162,7 +183,7 @@ export function CandidateTable({
                   <span className="flex items-center gap-1.5">
                     <ChevronRight
                       aria-hidden="true"
-                      className={cn("h-3.5 w-3.5 shrink-0 text-on-raised-faint transition-transform", open && "rotate-90")}
+                      className={cn("h-3.5 w-3.5 shrink-0 text-on-raised-muted transition-transform", open && "rotate-90")}
                     />
                     <span className="truncate text-sm font-semibold text-on-raised">{c.cdeId}</span>
                     {chosen && (
@@ -172,7 +193,10 @@ export function CandidateTable({
                     )}
                     {c.isChosen && !chosen && (
                       <span title="The model's pick — ranked best on concept fit">
-                        <Star className="h-3.5 w-3.5 shrink-0 fill-accent text-accent" />
+                        <Star
+                          data-testid="pick-star"
+                          className="h-3.5 w-3.5 shrink-0 fill-accent-on-raised text-accent-on-raised"
+                        />
                       </span>
                     )}
                     {c.rank === bestRank && !c.isChosen && (
@@ -193,7 +217,11 @@ export function CandidateTable({
                 </span>
                 <span className="flex items-center justify-end gap-2 text-right">
                   {pvCount > 0 && (
-                    <span className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-semibold text-on-inset-muted" title="permissible values">
+                    <span
+                      data-testid="candidate-pv"
+                      className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-semibold text-on-inset-muted"
+                      title="permissible values"
+                    >
                       {pvCount} PV
                     </span>
                   )}
