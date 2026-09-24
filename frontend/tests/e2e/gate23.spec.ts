@@ -18,6 +18,8 @@ import {
   specState,
   suggestedRelation,
   targetIsNumeric,
+  targetValueKind,
+  targetValuesFromSpecs,
   unmappedState,
 } from "@/lib/gate23";
 import {
@@ -207,13 +209,168 @@ test.describe("gate23 algebra", () => {
     expect(specForm("wide_to_long")).toBe("other");
   });
 
-  test("@gate3 a target is numeric when it has no enumerated permissible values", () => {
+  test("@gate3 a target is numeric only when it DECLARES a number type and has no enumerated values", () => {
     expect(targetIsNumeric("Number", [])).toBe(true);
-    expect(targetIsNumeric(undefined, [])).toBe(true); // no PVs, no declared type -> nothing to map INTO
+    expect(targetIsNumeric("integer", [])).toBe(true);
     expect(targetIsNumeric("categorical", ["Yes", "No"])).toBe(false);
     expect(targetIsNumeric("categorical", [])).toBe(false); // explicit categorical wins the no-PV tiebreak
     expect(targetIsNumeric("text", [])).toBe(false);
     expect(targetIsNumeric("date", [])).toBe(false);
+    // 08-26 (#7): the NIH catalog's own vocabulary. "Value List" is the catalog's categorical — reading it
+    // as a number is what put Yes/No targets on the code->number editor.
+    expect(targetIsNumeric("Value List", [])).toBe(false);
+    expect(targetIsNumeric("Externally Defined", [])).toBe(false);
+    // No declared type and no values is NOT evidence of a number — it is the absence of evidence (a run whose
+    // candidates reached the wire without catalog metadata, e.g. 573cf61f). It used to default to numeric.
+    expect(targetIsNumeric(undefined, [])).toBe(false);
+    expect(targetValueKind(undefined, [])).toBe("unknown");
+    expect(targetValueKind("", [])).toBe("unknown");
+    expect(targetValueKind("Number", [])).toBe("numeric");
+    expect(targetValueKind("Value List", [])).toBe("non-numeric");
+    expect(targetValueKind(undefined, ["Yes", "No"])).toBe("non-numeric");
+  });
+
+  test("@gate3 #7 an UNKNOWN target type never gets the code→number editor", () => {
+    // The live-test-2 case: coded source, categorical spec (1->Yes, 2->No), and a target with no declared
+    // type and no values on the wire. The spec itself is the evidence — it mapped codes onto LABELS.
+    expect(
+      recodeShape({
+        targetDataType: undefined,
+        targetValues: [],
+        hasSourceOptions: true,
+        kind: "categorical",
+      }),
+    ).toBe("value-map");
+    // With no categorical evidence either, stay read-only rather than assert a number.
+    for (const kind of [undefined, "none", "identity"])
+      expect(
+        recodeShape({
+          targetDataType: undefined,
+          targetValues: [],
+          hasSourceOptions: true,
+          kind,
+        }),
+      ).toBe("recode-detail");
+    // A declared Number target keeps ② (susmkstoage is unchanged).
+    expect(
+      recodeShape({
+        targetDataType: "Number",
+        targetValues: [],
+        hasSourceOptions: true,
+        kind: "categorical",
+      }),
+    ).toBe("code-to-number");
+  });
+
+  test("@gate3 #7 target values are recovered from the specs' code maps when the wire has none", () => {
+    const t = (
+      sourceVariable: string,
+      codeMap?: Record<string, string>,
+      targetCdeId = "Preg",
+    ) => ({
+      sourceVariable,
+      targetCdeId,
+      kind: "categorical",
+      confidence: 1,
+      coverage: 1,
+      needsUnits: false,
+      needsData: false,
+      needsReview: false,
+      codeMap,
+    });
+    // union across the concept's specs INTO this target, first-seen order, case-folded de-dupe
+    expect(
+      targetValuesFromSpecs(
+        [
+          t("a", { "1": "Yes", "2": "No" }),
+          t("b", { x: "no", y: "Unknown" }),
+          t("c", { "1": "Other target" }, "Else"),
+        ],
+        "Preg",
+      ),
+    ).toEqual(["Yes", "No", "Unknown"]);
+    // a code map onto NUMBERS is not a value list — nothing is invented for a numeric landing
+    expect(
+      targetValuesFromSpecs([t("a", { "98": "60", "1": "1.5" })], "Preg"),
+    ).toEqual([]);
+    expect(targetValuesFromSpecs([t("a")], "Preg")).toEqual([]);
+  });
+
+  test("@gate3 #7 a coded categorical target with no metadata on the wire renders the CATEGORICAL editor", async ({
+    page,
+  }) => {
+    // Mirrors run 573cf61f (clsa_baseline:_ROW_00129 -> Current Pregnancy Indicator): the chosen candidate
+    // reached the wire with NO dataType and NO permissibleValues, and the row rendered SpecNumberMap
+    // ("numeric responses pass through") for a Yes/No recode.
+    await serveFinished(
+      page,
+      (run) => {
+        const r = run.result!.records!.find(
+          (x) => x.groupId === "c46be33d9a542#g0",
+        )!;
+        for (const c of r.candidates) {
+          delete c.dataType;
+          delete c.permissibleValues;
+        }
+        run.result!.records = [r];
+      },
+      { keep: 0 },
+    );
+    await openGate3(page);
+    const row = page.locator(
+      "[data-testid='spec-row'][data-source='AI-READI:susmkncf']",
+    );
+    await expect(row).toBeVisible();
+    await expect(
+      row.locator("[data-testid='spec-mapping-editor']"),
+    ).toBeVisible();
+    await expect(page.locator("[data-testid='spec-number-map']")).toHaveCount(
+      0,
+    );
+    await expect(page.getByText("numeric responses pass through")).toHaveCount(
+      0,
+    );
+    // the buckets are the values the spec mapped into, so the model's Yes/No land where it put them
+    await expect(
+      row.locator("[data-testid='spec-bucket'][data-bucket='Yes']"),
+    ).toBeVisible();
+    await expect(
+      row.locator("[data-testid='spec-bucket'][data-bucket='No']"),
+    ).toBeVisible();
+    // and the screen says where those buckets came from, instead of passing them off as the catalog's list
+    await expect(
+      page.locator("[data-testid='target-values-inferred']"),
+    ).toContainText(/\bYes\b.*\bNo\b|\bNo\b.*\bYes\b/);
+    await expect(
+      page.locator("[data-testid='target-permissible-values']"),
+    ).toHaveCount(0);
+  });
+
+  test("@gate3 #7 an ENRICHED Value List target keeps the categorical editor and states no inference", async ({
+    page,
+  }) => {
+    await serveFinished(
+      page,
+      (run) => {
+        run.result!.records = [
+          run.result!.records!.find((x) => x.groupId === "c46be33d9a542#g0")!,
+        ];
+      },
+      { keep: 0 },
+    );
+    await openGate3(page);
+    const row = page.locator(
+      "[data-testid='spec-row'][data-source='AI-READI:susmkncf']",
+    );
+    await expect(
+      row.locator("[data-testid='spec-mapping-editor']"),
+    ).toBeVisible();
+    await expect(
+      page.locator("[data-testid='target-permissible-values']"),
+    ).toBeVisible();
+    await expect(
+      page.locator("[data-testid='target-values-inferred']"),
+    ).toHaveCount(0);
   });
 
   test("@gate3 the recode surface follows the TARGET type, not the source's coded options", () => {

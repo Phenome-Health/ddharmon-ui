@@ -1255,6 +1255,10 @@ def test_run_pipeline_end_to_end(monkeypatch, tmp_path):
     assert result["summary"]["nRecords"] == len(result["records"])
     # candidates persisted through the real assemble; atlas projected from the stub embeddings
     assert any(r["candidates"] for r in result["records"])
+    # 08-26 (#7): a real run's candidates carry the catalog's value list, joined from the embedded CDE
+    # dictionary — before this only the demo fixture had it, so Gate 3 read every real target as a number.
+    smoke = [c for r in result["records"] for c in r["candidates"] if c["cdeId"] == "SmokeCDE"]
+    assert smoke and all(c.get("permissibleValues") == ["Yes", "No"] for c in smoke)
     assert isinstance(result["atlas"], list) and len(result["atlas"]) >= 1
     assert {"cohort", "variable", "x", "y"}.issubset(result["atlas"][0])
     # fieldIndex covers the embedded non-CDE fields (uncapped) and excludes the CDE cohort; every clustered

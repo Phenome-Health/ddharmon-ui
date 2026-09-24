@@ -121,21 +121,79 @@ export function specForm(kind: string): SpecForm {
 }
 
 /**
- * Whether the harmonization TARGET is a number rather than an enumerated category.
+ * What the harmonization TARGET's values are: a number, something that is not a number (an enumerated
+ * category, text, a date…), or UNKNOWN.
  *
- * ENUMERATED VALUES DECIDE IT, NOT THE DECLARED TYPE. A target the reviewer can map values INTO is one that
- * has permissible values; a target that is "a number" has none. So the presence of a permissible-value list
- * is the primary signal, and the declared `dataType` is only a tiebreaker for the no-PV case — where an
- * explicitly non-numeric type (categorical / binary / text / date) still means "not a number", and anything
- * else (Number / numeric / integer / an absent type) means "a number to pass values through as".
+ * ENUMERATED VALUES DECIDE IT FIRST. A target with a permissible-value list is one the reviewer maps values
+ * INTO, whatever its declared type says. With no list, the DECLARED type decides — and only a declared
+ * number type (Number / numeric / integer / …) is numeric. Everything else declared — the catalog's own
+ * "Value List" (its word for categorical), "Externally Defined", text, date, binary — is not.
+ *
+ * WHY "UNKNOWN" IS ITS OWN ANSWER (08-26, live-test-2 #7). No type AND no values is the ABSENCE of evidence,
+ * not evidence of a number. It is exactly what a run whose candidates reached the wire without catalog
+ * metadata looks like (573cf61f), and reading it as numeric is what put a coded Yes/No target
+ * (`Current Pregnancy Indicator`) on the code→number editor with "numeric responses pass through".
  */
+export type TargetValueKind = "numeric" | "non-numeric" | "unknown";
+
+const NUMERIC_DATA_TYPES = new Set([
+  "number",
+  "numeric",
+  "integer",
+  "int",
+  "float",
+  "decimal",
+  "double",
+  "real",
+  "continuous",
+]);
+
+export function targetValueKind(
+  dataType: string | undefined,
+  permissibleValues: string[],
+): TargetValueKind {
+  if (permissibleValues.length > 0) return "non-numeric";
+  const t = (dataType ?? "").trim().toLowerCase();
+  if (!t) return "unknown";
+  return NUMERIC_DATA_TYPES.has(t) ? "numeric" : "non-numeric";
+}
+
+/** Whether the target is DECLARED a number (see `targetValueKind`; an unknown type is not a number). */
 export function targetIsNumeric(
   dataType: string | undefined,
   permissibleValues: string[],
 ): boolean {
-  if (permissibleValues.length > 0) return false;
-  const t = (dataType ?? "").trim().toLowerCase();
-  return t !== "categorical" && t !== "binary" && t !== "text" && t !== "date";
+  return targetValueKind(dataType, permissibleValues) === "numeric";
+}
+
+/**
+ * The values a concept's generated specs map INTO a target, recovered from their code maps — the fallback
+ * value list for a target whose own list never reached the wire (#7).
+ *
+ * A categorical spec's `codeMap` is source code → target LABEL, so the union of its right-hand sides over
+ * the specs into THIS target is a (possibly partial) picture of the target's domain: enough buckets to put
+ * the model's own recode back where it put it. A code map whose targets are all numbers is a numeric
+ * landing, not a value list, and yields nothing — this never invents categories for a number.
+ */
+export function targetValuesFromSpecs(
+  transforms: UITransform[],
+  targetCdeId: string,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of transforms) {
+    if (t.targetCdeId !== targetCdeId || !t.codeMap) continue;
+    for (const v of Object.values(t.codeMap)) {
+      const label = String(v ?? "").trim();
+      const key = label.toLowerCase();
+      if (!label || seen.has(key)) continue;
+      seen.add(key);
+      out.push(label);
+    }
+  }
+  const isNumber = (v: string) => v !== "" && Number.isFinite(Number(v));
+  if (out.length === 0 || out.every(isNumber)) return [];
+  return out;
 }
 
 /**
@@ -153,6 +211,9 @@ export function targetIsNumeric(
  *   - `code-to-number` ② target numeric     + source has options → each code → a number / Missing / Drop.
  *   - `binning`        ③ target categorical + source numeric     → source ranges → target bands.
  *   - `recode-detail`  ④ unit / arithmetic / data-dependent, or numeric→numeric with no value list → read-only.
+ *
+ * An UNKNOWN target type (no declared type, no values) is never treated as numeric (#7): a categorical spec
+ * gets ①, anything else ④.
  */
 export type RecodeShape =
   "value-map" | "code-to-number" | "binning" | "recode-detail";
@@ -173,10 +234,20 @@ export function recodeShape(args: {
     args.kind === "data_dependent"
   )
     return "recode-detail";
-  const numericTarget = targetIsNumeric(args.targetDataType, args.targetValues);
+  const target = targetValueKind(args.targetDataType, args.targetValues);
+  // An UNKNOWN target type (#7) never asserts a number. The spec is the only evidence left: a categorical
+  // spec mapped codes onto target LABELS, so a coded source gets the value map; anything else stays
+  // read-only rather than guess.
+  if (target === "unknown")
+    return args.hasSourceOptions && args.kind === "categorical"
+      ? "value-map"
+      : "recode-detail";
+  const numericTarget = target === "numeric";
   if (args.hasSourceOptions)
     return numericTarget ? "code-to-number" : "value-map";
-  if (!numericTarget) return "binning";
+  // A non-numeric target with no bands to bin into (e.g. free text) has nothing to edit — read-only.
+  if (!numericTarget)
+    return args.targetValues.length > 0 ? "binning" : "recode-detail";
   return "recode-detail";
 }
 

@@ -140,8 +140,69 @@ def _transform_to_ui(t: Any) -> UITransform:
     return ui
 
 
-def _candidate_to_ui(c: Any) -> UICandidate:
-    return {
+#: A very long value list is capped on the wire; the catalog link carries the full one. Same cap as the dev
+#: script (``scripts/enrich_candidates.py``) that prototyped this join for the demo fixture.
+_CANDIDATE_PV_CAP = 60
+
+#: The catalog metadata one candidate can carry — the ``NotRequired`` tail of :class:`UICandidate`.
+CandidateMeta = dict[str, Any]
+
+
+def _catalog_values(fld: Any) -> list[str]:
+    """A CDE's permissible values as labels, catalog order: the parsed response options, else the raw list."""
+    opts = getattr(fld, "response_options", None) or []
+    vals = [str(getattr(o, "label", "") or getattr(o, "code", "") or "").strip() for o in opts]
+    vals = [v for v in vals if v]
+    if not vals:
+        raw = str(getattr(fld, "value_encoding_raw", "") or "")
+        vals = [v.strip() for v in raw.split("|") if v.strip()]
+    return vals[:_CANDIDATE_PV_CAP]
+
+
+def build_cde_catalog_index(embedded: list[Any], cde_cohort: str) -> dict[str, CandidateMeta]:
+    """``{cde_id -> catalog metadata}`` read off the run's CDE dictionary (08-26, live-test-2 #7).
+
+    WHY HERE. Core's ``CandidateCDE`` carries rank/id/definition/cosine only, but the catalog it retrieved
+    from is one of the run's embedded dictionaries — so the type and value list every candidate needs are
+    already in memory. Without this join the wire was bare on every real run, and Gate 3 read "no type, no
+    values" as a number: a coded Yes/No target rendered the numeric code->number editor.
+
+    Keyed by the CDE dictionary's variable name — that IS the candidate's ``cde_id`` (disambiguated exactly as
+    core saw it) — and also by the catalog id (tinyId), which is the candidate's ``cde_external_id``. Only
+    non-empty values are kept, so an absent key always means "the catalog does not say".
+    """
+    index: dict[str, CandidateMeta] = {}
+    for ed in embedded:
+        dd = getattr(ed, "dictionary", None)
+        if dd is None:
+            continue
+        cohort = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
+        if cohort != cde_cohort:
+            continue
+        for var, fld in getattr(dd, "fields", {}).items():
+            meta: CandidateMeta = {}
+            for key, val in (
+                ("questionText", getattr(fld, "question_text", None)),
+                ("dataType", getattr(fld, "data_type", None)),
+                ("units", getattr(fld, "units", None)),
+            ):
+                text = str(val or "").strip()
+                if text:
+                    meta[key] = text
+            pv = _catalog_values(fld)
+            if pv:
+                meta["permissibleValues"] = pv
+            if not meta:
+                continue
+            index[var] = meta
+            ext = str(getattr(fld, "field_id", "") or "").strip()
+            if ext:
+                index.setdefault(ext, meta)
+    return index
+
+
+def _candidate_to_ui(c: Any, cde_index: dict[str, CandidateMeta] | None = None) -> UICandidate:
+    ui: UICandidate = {
         "rank": c.rank,
         "cdeId": c.cde_id,
         "cdeExternalId": c.cde_external_id or "",
@@ -150,6 +211,13 @@ def _candidate_to_ui(c: Any) -> UICandidate:
         "isChosen": c.is_chosen,
         "llmSuggested": c.llm_suggested,
     }
+    if cde_index:
+        # The dictionary key first (unique, what core ranked); the catalog id only as a fallback.
+        meta = cde_index.get(c.cde_id) or (cde_index.get(c.cde_external_id) if c.cde_external_id else None)
+        if meta:
+            for key, val in meta.items():
+                cast(dict[str, Any], ui)[key] = list(val) if isinstance(val, list) else val
+    return ui
 
 
 def _member_ui(member_id: str, index: dict[str, UIMember]) -> UIMember:
@@ -332,7 +400,13 @@ def _gencde_to_ui(g: Any) -> UIGenCDE | None:
     return ui
 
 
-def _record_to_ui(r: Any, member_index: dict[str, UIMember], *, concept_gate: bool = False) -> UIRecord:
+def _record_to_ui(
+    r: Any,
+    member_index: dict[str, UIMember],
+    *,
+    concept_gate: bool = False,
+    cde_index: dict[str, CandidateMeta] | None = None,
+) -> UIRecord:
     """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names.
 
     ``concept_gate`` says whether the opt-in M7 stage RAN on this run. When it did not, the
@@ -359,7 +433,7 @@ def _record_to_ui(r: Any, member_index: dict[str, UIMember], *, concept_gate: bo
         "members": list(r.member_variable_names),
         "memberDetails": [_member_ui(m, member_index) for m in r.member_variable_names],
         "transforms": [_transform_to_ui(t) for t in r.transforms],
-        "candidates": [_candidate_to_ui(c) for c in r.candidates],
+        "candidates": [_candidate_to_ui(c, cde_index) for c in r.candidates],
         "rationale": r.rationale,
         "decidedBy": r.decided_by,
         # ── the triage signals (v5) ──
@@ -585,6 +659,7 @@ def build_ui_result(
     result_version: int | None = None,
     concept_gate: bool = False,
     preprocessing: list[UIPreprocessReport] | None = None,
+    cde_index: dict[str, CandidateMeta] | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
 
@@ -594,11 +669,14 @@ def build_ui_result(
     ``field_index`` (from :func:`build_field_index`) is the uncapped per-field detail map surfaced as
     ``fieldIndex``; it also drives ``unassignedFields`` (its keys MINUS the union of record member keys). When
     omitted, both are empty (e.g. canned-record tests with no dictionaries).
+
+    ``cde_index`` (from :func:`build_cde_catalog_index`) joins each candidate's catalog type / value list /
+    question onto the wire; when omitted, candidates keep the bare core shape.
     """
     idx = member_index or {}
     fidx = field_index or {}
     atlas_pts = atlas or []
-    records = [_record_to_ui(r, idx, concept_gate=concept_gate) for r in leanb_result.records]
+    records = [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in leanb_result.records]
     groups = _concept_groups_to_ui(leanb_result)
     # Derived, not declared: a run has re-adjudication provenance iff some row actually carries it. Asking
     # the caller to tell us would let the register disagree with the payload it describes. Checked on BOTH
@@ -1783,6 +1861,10 @@ def run_pipeline(
     # the basis for unassignedFields (source fields that land in no concept). CDE cohort excluded (backbone).
     field_index = build_field_index(embedded, cde_cohort)
 
+    # {cde_id -> catalog type / values / question} so each candidate carries what Gate 3's recode surface keys
+    # off. Core's candidate does not; the catalog is already embedded above (08-26, live-test-2 #7).
+    cde_index = build_cde_catalog_index(embedded, cde_cohort)
+
     # --- Gate 0: the boundary a run ENTERS the staged flow at (UI-SPEC §7) ---
     #
     # Everything above this line is local and free — reading the files, running the rule-based preparation,
@@ -1841,6 +1923,7 @@ def run_pipeline(
             atlas=atlas,
             member_index=member_index,
             field_index=field_index,
+            cde_index=cde_index,
             cost=cast(UICost, ledger.to_dict()),
             preview_clusters=_preview_clusters(result),
             preprocessing=preprocess_reports,
@@ -2012,6 +2095,7 @@ def run_pipeline(
         atlas=atlas,
         member_index=member_index,
         field_index=field_index,
+        cde_index=cde_index,
         cost=cast(UICost, ledger.to_dict()),
         gate_position=park_at_gate,
         concept_gate=concept_gate_on,
@@ -2086,11 +2170,12 @@ def readjudicate_groups(
             "was flagged is an auto-resolution of an over-merge, which is prohibited."
         )
     idx = member_index or {}
+    cde_index = build_cde_catalog_index(embedded, cde_cohort)
     try:
         core_readjudicate = _core_readjudicate()
     except (ImportError, AttributeError) as exc:
         logger.warning("this core has no readjudicate (%s) — returning the records unchanged", exc)
-        return [_record_to_ui(r, idx, concept_gate=concept_gate) for r in leanb_result.records]
+        return [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in leanb_result.records]
     _docs, embeddings, field_refs = _collect_inputs(embedded)
     updated = core_readjudicate(
         leanb_result,
@@ -2103,7 +2188,7 @@ def readjudicate_groups(
         cde_cohort=cde_cohort,
         **knobs,
     )
-    return [_record_to_ui(r, idx, concept_gate=concept_gate) for r in updated.records]
+    return [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in updated.records]
 
 
 def _core_readjudicate_split_only() -> Callable[..., Any]:

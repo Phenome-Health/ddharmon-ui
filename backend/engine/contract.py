@@ -85,6 +85,14 @@ class UICandidate(TypedDict):
     cosine: float
     isChosen: bool
     llmSuggested: bool
+    # ── additive (08-26): the chosen-target metadata Gate 2/3 key off, joined from the run's CDE catalog ──
+    # Core's candidate carries none of it, so before this the wire was bare on every real run and Gate 3 read
+    # "no type, no values" as a NUMBER (live-test-2 #7). Present only when the catalog knows the candidate
+    # and the value is non-empty — an absent key means "not in the catalog", never an empty value list.
+    questionText: NotRequired[str]
+    dataType: NotRequired[str]  # the catalog's own vocabulary, verbatim: "Value List" | "Number" | "Text" | …
+    units: NotRequired[str]
+    permissibleValues: NotRequired[list[str]]  # value labels, catalog order (capped)
 
 
 class AtlasPoint(TypedDict):

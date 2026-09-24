@@ -37,6 +37,7 @@ import {
   seedNumberMap,
   specForm,
   specRowsFor,
+  targetValuesFromSpecs,
   type BinRule,
   type NumberMapEntry,
 } from "@/lib/gate23";
@@ -410,6 +411,21 @@ export default function Gate3Page() {
               const targetDataType = targetIsOwn
                 ? record.gencde?.dataType
                 : chosenCandidate?.dataType;
+              // #7: when the target's own value list never reached the wire (no catalog metadata on this
+              // run's candidates), recover the buckets from the specs' code maps into it, so a coded
+              // categorical recode is edited as one instead of falling onto the numeric editor. Only when the
+              // TYPE is also unknown — a declared type with no list is taken at its word.
+              const inferredPVs =
+                targetPVs.length === 0 && !targetDataType?.trim()
+                  ? targetValuesFromSpecs(
+                      record.transforms,
+                      targetIsOwn
+                        ? (record.gencde?.gencdeId ?? chosenTargetId)
+                        : chosenTargetId,
+                    )
+                  : [];
+              const recodeValues =
+                targetPVs.length > 0 ? targetPVs : inferredPVs;
               const targetUnits = targetIsOwn
                 ? record.gencde?.units
                 : chosenCandidate?.units;
@@ -543,6 +559,18 @@ export default function Gate3Page() {
                             </div>
                           </div>
                         )}
+                        {inferredPVs.length > 0 && (
+                          <p
+                            data-testid="target-values-inferred"
+                            className="max-w-[80ch] text-xs text-on-raised-muted"
+                          >
+                            This run did not carry the element&apos;s own value
+                            list, so the recode buckets below are the values the
+                            generated recodes map into:{" "}
+                            {inferredPVs.join(", ")}. Check them against the
+                            catalog entry.
+                          </p>
+                        )}
                       </div>
                     </div>
                   </InheritedPanel>
@@ -579,8 +607,8 @@ export default function Gate3Page() {
                       const hasOptions = sourceOptions.length > 0;
                       const recommendedMapping = seedRecommendedMapping(
                         sourceOptions,
-                        targetPVs,
-                        codeMapToBuckets(transform?.codeMap, targetPVs),
+                        recodeValues,
+                        codeMapToBuckets(transform?.codeMap, recodeValues),
                       );
                       const persistedMapping = decision?.mapping as
                         Record<string, string> | undefined;
@@ -593,7 +621,7 @@ export default function Gate3Page() {
                       // owns the decision so the render stays a switch.
                       const shape = recodeShape({
                         targetDataType,
-                        targetValues: targetPVs,
+                        targetValues: recodeValues,
                         hasSourceOptions: hasOptions,
                         kind: transform?.kind,
                       });
@@ -603,9 +631,9 @@ export default function Gate3Page() {
                         decision?.numberMap as
                           Record<string, NumberMapEntry> | undefined,
                       );
-                      const recommendedBins = seedBinning(targetPVs);
+                      const recommendedBins = seedBinning(recodeValues);
                       const binsValue = seedBinning(
-                        targetPVs,
+                        recodeValues,
                         decision?.bins as BinRule[] | undefined,
                       );
                       return (
@@ -711,7 +739,7 @@ export default function Gate3Page() {
                           {shape === "value-map" && (
                             <SpecMappingEditor
                               sourceOptions={sourceOptions}
-                              targetValues={targetPVs}
+                              targetValues={recodeValues}
                               value={mappingValue}
                               recommended={recommendedMapping}
                               readOnly={frozen}
