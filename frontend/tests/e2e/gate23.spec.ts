@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { JobResult } from "@/types";
+import { gate1ScopePayload, inheritedGate1Scope } from "@/lib/gate-decisions";
 import {
   SKOS_RELATIONS,
   affectedSpecCount,
@@ -1353,5 +1354,49 @@ test.describe("re-decide finished run", () => {
     await expect(
       page.locator("[data-testid='candidate-row'][data-stale='true']"),
     ).toHaveCount(0);
+  });
+});
+
+/**
+ * 08-27 #3 — Gate 2/3 inherit the scope Gate 1 SHOWED, not a re-derivation.
+ *
+ * Gate 1 displays default-OUT (08-23b), but Gate 2's display filter and the backend's paid assign were
+ * default-in (`chosen !== "out"`), so a group the reviewer never checked was billed and listed at Gate 2.
+ * Continue now freezes the displayed scope on `config.gate1_scope`; every later screen reads THAT list.
+ * A run with no frozen list (passed Gate 1 before 08-27) keeps the legacy default-in rule.
+ */
+test.describe("gate1 scope inheritance", () => {
+  test("@gate2 the frozen Gate 1 list wins over decisions; no list keeps default-in", () => {
+    const decisions = { a: { chosen: "in" }, b: { chosen: "out" } } as never;
+    const frozen = inheritedGate1Scope({ gate1_scope: ["c"] }, decisions);
+    expect([frozen("a"), frozen("b"), frozen("c")]).toEqual([false, false, true]);
+    const legacy = inheritedGate1Scope({}, decisions);
+    expect([legacy("a"), legacy("b"), legacy("c")]).toEqual([true, false, true]);
+  });
+
+  test("@gate1 Continue sends exactly the groups Gate 1 shows in scope, in row order", () => {
+    const shown = new Set(["g2", "g0"]);
+    expect(gate1ScopePayload(["g0", "g1", "g2"], (g) => shown.has(g))).toEqual({ gate1Scope: ["g0", "g2"] });
+  });
+
+  test("@gate2 a run with a frozen scope lists only those groups", async ({ page }) => {
+    let keptGroup = "";
+    let keptCount = 0;
+    await serveFinished(page, (run) => {
+      const recs = run.result!.records;
+      keptGroup = recs[0].groupId;
+      keptCount = recs.filter((r) => r.groupId === keptGroup).length;
+      run.config = { ...(run.config ?? {}), gate1_scope: [keptGroup] };
+    });
+    await openGate2(page);
+    await expect(page.locator("[data-testid='gate2-concept']")).toHaveCount(keptCount);
+  });
+
+  test("@gate3 a run whose frozen scope matches no record lists nothing", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      run.config = { ...(run.config ?? {}), gate1_scope: ["no-such-group"] };
+    });
+    await openGate3(page);
+    await expect(page.locator("[data-testid='gate3-concept']")).toHaveCount(0);
   });
 });

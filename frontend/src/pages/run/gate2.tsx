@@ -22,7 +22,7 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
@@ -152,7 +152,8 @@ export default function Gate2Page() {
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
 
-  const inScope = (groupId: string) => scope.decisions[groupId]?.chosen !== "out";
+  // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.
+  const inScope = inheritedGate1Scope(runConfig, scope.decisions);
   const touchedAtGate1 = useMemo(() => {
     const byGroup = new Set<string>();
     for (const d of Object.values(regroups.decisions)) {

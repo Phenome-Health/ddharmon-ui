@@ -40,7 +40,7 @@ import {
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
-import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
@@ -2696,7 +2696,14 @@ export default function Gate1Page() {
   async function onContinue() {
     setResuming(true);
     try {
-      const { target } = await resumeRun(jobId);
+      const { target } = await resumeRun(
+        jobId,
+        undefined,
+        gate1ScopePayload(
+          groups.map((g) => g.groupId),
+          isInScope,
+        ),
+      );
       /**
        * CONFIRM BEFORE MOVING. A 200 from this route is not proof the run advanced — see
        * `resumeTookEffect` for the defect and its reproduction. Navigating on the body alone would land

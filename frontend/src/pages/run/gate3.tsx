@@ -26,7 +26,7 @@ import { SpecNumberMap } from "@/components/gate/SpecNumberMap";
 import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
 import { isTerminal, resumeTookEffect } from "@/lib/run-state";
@@ -137,8 +137,8 @@ export default function Gate3Page() {
   });
   // Read-only inheritance from Gate 1: only in-scope groups reach this screen.
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
-  const inScope = (groupId: string) =>
-    scope.decisions[groupId]?.chosen !== "out";
+  // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.
+  const inScope = inheritedGate1Scope(runConfig, scope.decisions);
 
   const specsGenerated =
     runConfig?.genTransformSpecs !== false ||

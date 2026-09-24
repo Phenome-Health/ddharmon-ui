@@ -820,6 +820,13 @@ def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, An
     quote Gate 1 showed. ``groups`` is the current gate's ``conceptGroups`` (the frozen partition the resume
     replays), so a scope decision keyed on a group id that this leg no longer has simply matches nothing.
     """
+    # 08-27: the scope FROZEN at Gate 1's Continue wins. Gate 1 displays default-OUT (08-23b) while the rule
+    # below is default-in, so recomputing from decisions billed groups the reviewer was shown as unchecked.
+    frozen = (getattr(job, "config", None) or {}).get(GATE1_SCOPE_CONFIG_KEY)
+    if frozen is not None:
+        keep = set(frozen)
+        return [g["groupId"] for g in groups if g.get("groupId") in keep]
+    # Legacy (a run that passed Gate 1 before 08-27): default-in, unchanged.
     scope = (store.artifacts_for(job, subject) or {}).get(GATE1_GROUP_SCOPE) or []
     out_ids = {d.get("groupId") for d in scope if d.get("chosen") == "out"}
     if not out_ids:
@@ -832,9 +839,22 @@ def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, An
     return kept
 
 
+# Where the Gate-1 scope is frozen on the run's config — read by every later leg and by the Gate 2/3 display.
+GATE1_SCOPE_CONFIG_KEY = "gate1_scope"
+
+
+class ResumeBody(BaseModel):
+    """Optional Continue payload. ``gate1Scope`` = the group ids Gate 1 SHOWED in scope; honoured only at Gate 1."""
+
+    gate1Scope: list[str] | None = None
+
+
 @app.post("/api/harmonize/resume/{job_id}")
 def resume_run(
-    job_id: str, request: Request, x_anthropic_key: Annotated[str | None, Header()] = None
+    job_id: str,
+    request: Request,
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+    body: ResumeBody | None = None,
 ) -> dict[str, Any]:
     """Commit the current gate and continue the run to the next boundary — the Continue action.
 
@@ -919,6 +939,16 @@ def resume_run(
     # and gate3), not just gate1->gate2: the group_assign prompts for out-of-scope groups have no replayed
     # answer, so an unfiltered later leg would re-run them as "new work" and re-charge.
     groups = (getattr(ckpt, "result", None) or {}).get("conceptGroups") or []
+    # 08-27: Gate 1's Continue sends the scope it DISPLAYED; freeze it (checkpoint order, unknown ids dropped)
+    # before the first paid leg. Only at Gate 1 — past it the scope is a consumed decision, not an input.
+    if job.gate_position == "gate1" and body is not None and body.gate1Scope is not None:
+        sent = set(body.gate1Scope)
+        frozen = [g["groupId"] for g in groups if g.get("groupId") in sent]
+        if not frozen:
+            raise HTTPException(status_code=409, detail="Nothing is in scope — select at least one group on Gate 1.")
+        store.update(job_id, config={**job.config, GATE1_SCOPE_CONFIG_KEY: frozen})
+        job = store.get(job_id) or job
+        run_config = {**run_config, GATE1_SCOPE_CONFIG_KEY: frozen}
     in_scope = _gate1_assign_scope(job, subject, groups)
     if in_scope is not None:
         run_config["assign_group_ids"] = in_scope

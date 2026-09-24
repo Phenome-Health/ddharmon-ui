@@ -305,3 +305,34 @@ export function resolvePinned(config: Record<string, unknown> | null | undefined
   if (!config || Object.keys(config).length === 0) return undefined;
   return Boolean(config.demo);
 }
+
+// --- the Gate-1 scope later screens inherit (08-27 #3) ----------------------------------------------------
+
+/**
+ * Whether a group reaches Gate 2/3 — the scope Gate 1 SHOWED, frozen by its Continue on `config.gate1_scope`.
+ *
+ * Gate 1 displays default-OUT (08-23b); a re-derivation here from `gate1_group_scope` decisions as
+ * `chosen !== "out"` was default-IN, so a group the reviewer never checked was listed (and, server-side,
+ * billed) at Gate 2. The frozen list is exactly what the reviewer saw, score-seeded defaults included, so no
+ * second copy of that rule lives here. A run with no frozen list passed Gate 1 before 08-27 and keeps the
+ * legacy default-in rule — the same fallback `backend/app.py::_gate1_assign_scope` applies.
+ */
+export function inheritedGate1Scope(
+  config: Record<string, unknown> | null | undefined,
+  decisions: Record<string, { chosen?: unknown }>,
+): (groupId: string) => boolean {
+  const frozen = config?.gate1_scope;
+  if (Array.isArray(frozen)) {
+    const keep = new Set(frozen.filter((g): g is string => typeof g === "string"));
+    return (groupId) => keep.has(groupId);
+  }
+  return (groupId) => decisions[groupId]?.chosen !== "out";
+}
+
+/** Gate 1's Continue payload: the groups it shows in scope, in row order. The server freezes this list. */
+export function gate1ScopePayload(
+  groupIds: readonly string[],
+  isInScope: (groupId: string) => boolean,
+): { gate1Scope: string[] } {
+  return { gate1Scope: groupIds.filter(isInScope) };
+}

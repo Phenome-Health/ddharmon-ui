@@ -334,11 +334,23 @@ export async function getCheckpoint(jobId: string): Promise<CheckpointState> {
  * Disabled in the static build for the same reason `startHarmonize` is: this is the SPEND path, and a
  * preview with no backend has nothing to spend against. The gate walk itself is fully explorable there.
  */
-export async function resumeRun(jobId: string, apiKey?: string): Promise<{ jobId: string; target: string }> {
+export async function resumeRun(
+  jobId: string,
+  apiKey?: string,
+  body?: { gate1Scope?: string[] },
+): Promise<{ jobId: string; target: string }> {
   if (IS_STATIC) throw new Error(STATIC_MSG);
   const extra: Record<string, string> = {};
   if (apiKey) extra["x-anthropic-key"] = apiKey;
-  return json(await fetch(`${BASE}/resume/${jobId}`, { method: "POST", headers: await authed(extra) }));
+  // Gate 1's Continue carries the scope it SHOWED (08-27 #3), frozen server-side for every later leg.
+  if (body) extra["content-type"] = "application/json";
+  return json(
+    await fetch(`${BASE}/resume/${jobId}`, {
+      method: "POST",
+      headers: await authed(extra),
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+  );
 }
 
 export async function listJobs(): Promise<JobSummary[]> {

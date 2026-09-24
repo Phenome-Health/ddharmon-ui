@@ -1654,3 +1654,74 @@ def test_the_runner_parks_a_gate_3_stamp_and_writes_its_checkpoint(tmp_path, mon
     # The transform specs are what Gate 3 exists to review, so they must be in the state it resumes from.
     assert read_checkpoint(tmp_path / "work" / "g3", "gate3").result["records"][0]["transforms"]
     store.db.close()
+
+
+def _scope_fixture(monkeypatch, tmp_path, job_id: str, gate: str, groups: list[str]):
+    """A run parked at ``gate`` whose checkpoint holds ``groups``; returns the list of captured run_configs."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(app_module.store, "work_root", tmp_path / "work")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    configs: list[dict] = []
+    monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: configs.append(dict(a[4])))
+    wd = tmp_path / "work" / job_id
+    app_module.store.create(
+        job_id,
+        "Parked",
+        {"work_dir": str(wd), "cde_set": "endorsed"},
+        owner_subject=None,
+        dict_specs=[{"path": "x.csv", "cohort_name": "A", "column_roles": {}}],
+    )
+    result = {"records": [], "conceptGroups": [{"groupId": g} for g in groups]}
+    write_checkpoint(wd, job_id=job_id, gate=gate, result=result, responses={}, realized_cost=1.0)
+    app_module.store.checkpoint(job_id, gate=gate, checkpoint_ref=f"{job_id}/checkpoint_{gate}.json", realized_cost=1.0)
+    return configs
+
+
+def test_gate1_continue_freezes_the_scope_the_reviewer_saw(monkeypatch, tmp_path):
+    """08-27 #3: Gate 1 DISPLAYS default-out (08-23b) but the backend assign was default-in, so a group the
+    reviewer never checked was matched and BILLED at Gate 2. Continue now sends the in-scope list it showed;
+    the assign processes exactly that list — even with no persisted decision at all (the default-out case)."""
+    configs = _scope_fixture(monkeypatch, tmp_path, "fz", "gate1", ["g0", "g1", "g2"])
+    with TestClient(app_module.app) as c:
+        r = c.post(
+            "/api/harmonize/resume/fz",
+            headers={"x-anthropic-key": "sk-test"},
+            json={"gate1Scope": ["g2", "g0", "not-a-group"]},
+        )
+    assert r.status_code == 200, r.text
+    # checkpoint order, unknown ids dropped; g1 (never checked -> shown OUT) is not paid for
+    assert configs[-1]["assign_group_ids"] == ["g0", "g2"]
+    assert app_module.store.get("fz").config["gate1_scope"] == ["g0", "g2"]
+
+
+def test_the_frozen_gate1_scope_holds_on_every_later_leg(monkeypatch, tmp_path):
+    """Later legs re-apply the Gate-1 scope (an unfiltered leg would re-charge out-of-scope prompts). They read
+    the FROZEN list, not a recomputation from decisions, so Gate 2 bills what Gate 1 quoted."""
+    configs = _scope_fixture(monkeypatch, tmp_path, "fz2", "gate2", ["g0", "g1", "g2"])
+    job = app_module.store.get("fz2")
+    app_module.store.update("fz2", config={**job.config, "gate1_scope": ["g1"]})
+    with TestClient(app_module.app) as c:
+        # a body sent past Gate 1 is ignored: the scope is Gate 1's decision and Gate 1 is passed
+        r = c.post("/api/harmonize/resume/fz2", headers={"x-anthropic-key": "sk-test"}, json={"gate1Scope": ["g0"]})
+    assert r.status_code == 200, r.text
+    assert configs[-1]["assign_group_ids"] == ["g1"]
+
+
+def test_a_run_without_a_frozen_scope_keeps_the_legacy_rule(monkeypatch, tmp_path):
+    """Runs that passed Gate 1 before 08-27 carry no frozen list; they keep default-in, unchanged."""
+    configs = _scope_fixture(monkeypatch, tmp_path, "lg", "gate2", ["g0", "g1"])
+    with TestClient(app_module.app) as c:
+        assert c.post("/api/harmonize/resume/lg", headers={"x-anthropic-key": "sk-test"}).status_code == 200
+    assert "assign_group_ids" not in configs[-1]
+
+
+def test_an_empty_gate1_scope_is_refused(monkeypatch, tmp_path):
+    """Nothing in scope means Gate 2 has nothing to match — refuse at the door rather than start a paid leg."""
+    _scope_fixture(monkeypatch, tmp_path, "em", "gate1", ["g0"])
+    with TestClient(app_module.app) as c:
+        r = c.post("/api/harmonize/resume/em", headers={"x-anthropic-key": "sk-test"}, json={"gate1Scope": []})
+    assert r.status_code == 409
+    assert app_module.store.get("em").gate_position == "gate1"
