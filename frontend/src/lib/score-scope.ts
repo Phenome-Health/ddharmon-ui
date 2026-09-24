@@ -191,3 +191,47 @@ export function coveredCohorts(m: {
   if (cm) return Object.keys(cm).filter((c) => (cm[c]?.length ?? 0) > 0);
   return m.cohorts ?? [];
 }
+
+/**
+ * The builder-level AUTO-SELECT threshold: a concept group whose aggregate confidence is at/above this is
+ * checked in the score panel and seeded into Gate 1 scope (so it reaches Gate 2). Provisional — tuning it
+ * on the 49×UKBB FI benchmark is a filed todo. Distinct from the core's per-MEMBER 0.50 coverage floor.
+ */
+export const GROUP_SELECT_THRESHOLD = 0.8;
+
+/**
+ * The concept groups a component match OFFERS, one per judge-affirmed group.
+ *
+ * Back-compat: a spec from before variable-only matching carries only `conceptId` (no `groupCandidates`),
+ * so that concept is treated as its one group — a matched component never reads as offering nothing.
+ */
+export function offeredGroups(m: {
+  conceptId: string | null;
+  confidence: number;
+  groupCandidates?: { groupId: string; confidence: number; nMatched?: number; nTotal?: number }[];
+}): { groupId: string; confidence: number; nMatched?: number; nTotal?: number }[] {
+  if (m.groupCandidates?.length) return m.groupCandidates;
+  return m.conceptId ? [{ groupId: m.conceptId, confidence: m.confidence }] : [];
+}
+
+/**
+ * groupId → the components whose score match AUTO-SELECTS it (confidence ≥ GROUP_SELECT_THRESHOLD).
+ *
+ * THE ONE RULE for "the score builder put this group in scope". Gate 1's scope default and the score panel's
+ * initial check state both read it, so the panel's "Gate 2 ✓" can never name a group Gate 2 does not get.
+ * An explicit `gate1_group_scope` decision still overrides it, in either place.
+ */
+export function scoreSeededGroups(
+  matches: readonly (Parameters<typeof offeredGroups>[0] & { component: string })[],
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const m of matches) {
+    for (const g of offeredGroups(m)) {
+      if (g.confidence < GROUP_SELECT_THRESHOLD) continue;
+      const arr = out.get(g.groupId) ?? [];
+      if (!arr.includes(m.component)) arr.push(m.component);
+      out.set(g.groupId, arr);
+    }
+  }
+  return out;
+}

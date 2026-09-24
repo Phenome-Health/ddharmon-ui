@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
-import { coveredCohorts } from "@/lib/score-scope";
+import { coveredCohorts, GROUP_SELECT_THRESHOLD, offeredGroups } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
@@ -259,7 +259,6 @@ export default function CompositePage() {
 // Builder-level: a concept group is auto-selected (and auto-tagged for Gate 2) when its aggregate
 // confidence is at/above this threshold. Provisional 0.80 — to be tuned against the 49×UKBB FI benchmark;
 // set once for the whole builder, never per component.
-const GROUP_SELECT_THRESHOLD = 0.8;
 
 export function SpecView({
   spec,
@@ -270,6 +269,8 @@ export function SpecView({
   jobId,
   hideDerivation = false,
   onOpenGroup,
+  isGroupInScope,
+  onGroupScopeChange,
   resolveConcept,
   resolveGroupId,
 }: {
@@ -281,6 +282,8 @@ export function SpecView({
   jobId: string;
   hideDerivation?: boolean;
   onOpenGroup?: (conceptId: string) => void;
+  isGroupInScope?: (groupId: string) => boolean;
+  onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   resolveConcept?: (
     id: string,
   ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
@@ -321,6 +324,8 @@ export function SpecView({
       busy={busy}
       jobId={jobId}
       onOpenGroup={onOpenGroup}
+      isGroupInScope={isGroupInScope}
+      onGroupScopeChange={onGroupScopeChange}
       resolveConcept={resolve}
       resolveGroupId={resolveGroupId}
     />
@@ -673,6 +678,8 @@ function MatchRow({
   onEdit,
   busy,
   onOpenGroup,
+  isGroupInScope,
+  onGroupScopeChange,
   resolveConcept,
 }: {
   match: ComponentMatch;
@@ -682,6 +689,8 @@ function MatchRow({
   busy: boolean;
   jobId: string;
   onOpenGroup?: (conceptId: string) => void;
+  isGroupInScope?: (groupId: string) => boolean;
+  onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   resolveConcept?: (
     id: string,
   ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
@@ -708,13 +717,7 @@ function MatchRow({
       membersByGroup.set(gid, list);
     }
   }
-  // Back-compat: a spec from before variable-only matching carries only `conceptId` (no `groupCandidates`).
-  // Treat that concept as its one group so a matched component never expands to "Missing".
-  const candidates: NonNullable<ComponentMatch["groupCandidates"]> = match.groupCandidates?.length
-    ? match.groupCandidates
-    : match.conceptId
-      ? [{ groupId: match.conceptId, confidence: match.confidence }]
-      : [];
+  const candidates = offeredGroups(match);
   const groups = candidates.map((g) => ({
     groupId: g.groupId,
     label: resolveConcept?.(g.groupId)?.concept?.trim() || "Unnamed group",
@@ -727,21 +730,29 @@ function MatchRow({
   type GroupRow = (typeof groups)[number];
   const orderedGroups = [...groups].sort((a, b) => b.confidence - a.confidence);
 
-  // Selection is interactive: SEEDED from the auto-select threshold, then the reviewer checks/unchecks any
-  // group. The spread, the header figure and the Gate-2 tags all derive from the CHECKED set. This slice
-  // keeps the set in component state — clickable on the static demo; persisting it across a reload and wiring
-  // it into the Gate-2 queue is the next slice.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+  // Selection is interactive. Inside Gate 1 it IS the group's Gate 1 scope (`isGroupInScope` /
+  // `onGroupScopeChange`, a persisted gate decision whose default is the same auto-select rule), so a check
+  // here admits the group to Gate 2 and survives a reload, and the ledger checkbox and this one cannot
+  // disagree. Outside Gate 1 (no scope wiring) it falls back to local state seeded from the threshold.
+  // The spread, the header figure and the Gate-2 tags all derive from the CHECKED set.
+  const [localIds, setLocalIds] = useState<Set<string>>(
     () => new Set(groups.filter((g) => g.selected).map((g) => g.groupId)),
   );
-  const isSel = (gid: string) => selectedIds.has(gid);
-  const toggleGroup = (gid: string) =>
-    setSelectedIds((prev) => {
+  const scoped = isGroupInScope != null;
+  const readOnly = scoped && onGroupScopeChange == null;
+  const isSel = (gid: string) => (scoped ? isGroupInScope(gid) : localIds.has(gid));
+  const toggleGroup = (gid: string) => {
+    if (scoped) {
+      onGroupScopeChange?.(gid, !isGroupInScope(gid));
+      return;
+    }
+    setLocalIds((prev) => {
       const next = new Set(prev);
       if (next.has(gid)) next.delete(gid);
       else next.add(gid);
       return next;
     });
+  };
   const selected = orderedGroups.filter((g) => isSel(g.groupId));
 
   // Header figure = mean of the best match per cohort, averaged over the cohorts FOUND across the SELECTED
@@ -778,6 +789,7 @@ function MatchRow({
             type="checkbox"
             data-testid="score-group-toggle"
             checked={sel}
+            disabled={readOnly}
             onChange={() => toggleGroup(g.groupId)}
             aria-label={`Include the group ${g.label} for this component`}
             className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"

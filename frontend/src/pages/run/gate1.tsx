@@ -76,6 +76,7 @@ import {
   resumeTookEffect,
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
+import { offeredGroups, scoreSeededGroups } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
 import type {
   CoherenceState,
@@ -2137,16 +2138,23 @@ export default function Gate1Page() {
   // groupId → the declared-score component(s) this run matched onto it, from the latest derived spec. Drives
   // the queue's "pinned to the top + tagged" treatment: a reviewer building a score wants its groups first
   // and named. Empty when the run has no composite, so the queue's order and rows are unchanged without one.
+  // Every group the score OFFERS (the multi-group panel's list, not just the legacy `conceptId` winner) is
+  // tagged; only the AUTO-SELECTED subset (`scoreSeed`) starts in scope — the same rule the panel checks by.
   const scoreTagByGroup = useMemo(() => {
     const m = new Map<string, string[]>();
     for (const match of jobState?.composites?.at(-1)?.matches ?? []) {
-      if (!match.conceptId) continue;
-      const arr = m.get(match.conceptId) ?? [];
-      arr.push(match.component);
-      m.set(match.conceptId, arr);
+      for (const g of offeredGroups(match)) {
+        const arr = m.get(g.groupId) ?? [];
+        if (!arr.includes(match.component)) arr.push(match.component);
+        m.set(g.groupId, arr);
+      }
     }
     return m;
   }, [jobState?.composites]);
+  const scoreSeed = useMemo(
+    () => scoreSeededGroups(jobState?.composites?.at(-1)?.matches ?? []),
+    [jobState?.composites],
+  );
   /**
    * The coverage column's denominator. `summary.cohorts` is EMPTY at a Gate 1 park on a real run, so
    * reading it directly drew a column of nothing — see `cohortRoster` for the measurement and the
@@ -2258,8 +2266,14 @@ export default function Gate1Page() {
     const chosen = scope.decisions[groupId]?.chosen;
     if (chosen === IN_SCOPE) return true;
     if (chosen === OUT_OF_SCOPE) return false;
-    return scoreTagByGroup.has(groupId);
+    return scoreSeed.has(groupId);
   };
+  /** Write one group's scope — the ONE path, shared by the ledger checkbox and the score panel's. */
+  const setGroupScope = (groupId: string, next: boolean) =>
+    void scope.write(
+      { groupId },
+      { chosen: next ? IN_SCOPE : OUT_OF_SCOPE, alternatives: SCOPE_OPTIONS },
+    );
 
   // "You changed it" is DERIVED from persisted decisions, never from component state — R6 requires the
   // correction to be visible after a reload, and a flag in `useState` is gone the moment the page reloads.
@@ -2767,6 +2781,8 @@ export default function Gate1Page() {
         groupsById={groupsById}
         groupByVariable={groupByVariable}
         fieldIndex={jobState?.result?.fieldIndex}
+        isGroupInScope={isInScope}
+        onGroupScopeChange={frozen ? undefined : setGroupScope}
         onOpenGroup={(groupId) => {
           // Select the matched group in the detail pane, bring the sidebar QUEUE row for it into view
           // (08-16g review #6 — selecting the detail alone left the row scrolled off in the queue), then
@@ -3043,15 +3059,7 @@ export default function Gate1Page() {
                       setSelectedId(g.groupId);
                       setPoolSelected(false);
                     }}
-                    onScopeChange={(next) =>
-                      void scope.write(
-                        { groupId: g.groupId },
-                        {
-                          chosen: next ? IN_SCOPE : OUT_OF_SCOPE,
-                          alternatives: SCOPE_OPTIONS,
-                        },
-                      )
-                    }
+                    onScopeChange={(next) => setGroupScope(g.groupId, next)}
                     onDropMember={(memberId) =>
                       void moveMember(memberId, g.groupId)
                     }

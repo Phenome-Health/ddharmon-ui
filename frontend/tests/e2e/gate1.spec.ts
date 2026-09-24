@@ -1387,33 +1387,78 @@ test.describe("gate1 score", () => {
     };
   }
 
-  test("@gate1 with a declared score, its matched groups start IN scope and the rest start OUT", async ({
+  test("@gate1 with a declared score, the groups it AUTO-SELECTS start IN scope and the rest start OUT", async ({
     page,
   }) => {
     // THE SCORE-BUILDER EXCEPTION to the new default-deselect (08-23b subset). The reviewer ran the score
-    // builder, so the groups it matched are the ones they care about — those are pre-selected; every other
-    // group starts deselected like on a run with no score.
+    // builder, so the groups it auto-selected are the ones they care about — those are pre-selected; every
+    // other group starts deselected like on a run with no score. "Auto-selected" is the panel's rule: group
+    // confidence at/above the 0.80 threshold — NOT the single legacy `conceptId` winner, which is exactly the
+    // disagreement that let the panel print "Gate 2 ✓" on a group Gate 2 never received.
     const groups = fixtureGroups();
     const matched = groups.find((g) => g.groupId === "cb2a6e2cd6fd3#g0")!;
     const rejected = groups.find((g) => g.groupId === "c8331409f61e1#g0")!;
     const vars = matched.memberVariableNames.slice(0, 2);
     await serveRun(page, (run) => {
-      run.composites = [scoreSpec(matched, rejected, vars)];
+      const spec = scoreSpec(matched, rejected, vars);
+      // A SECOND group reached by the same component, above threshold — it is not the conceptId winner.
+      spec.matches[0].groupCandidates!.push({ groupId: rejected.groupId, confidence: 0.9 });
+      run.composites = [spec];
     });
     await openGate1(page);
 
-    // The score matched this group -> pre-selected.
-    const matchedScope = page
+    const scopeOf = (gid: string) =>
+      page
+        .locator(`[data-testid='ledger-row'][data-row-id='${gid}']`)
+        .locator("[data-testid='queue-scope']");
+    // Above threshold (0.90), though not the conceptId winner -> pre-selected.
+    await expect(scopeOf(rejected.groupId)).toHaveAttribute("aria-checked", "true");
+    // The conceptId winner at 0.72 is OFFERED in the panel but unchecked there — so it is OUT here too.
+    await expect(scopeOf(matched.groupId)).toHaveAttribute("aria-checked", "false");
+    // ...and Continue is live, because the score's auto-selected group is already in scope.
+    await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
+  });
+
+  test("@gate1 the score panel's group checkbox IS the group's Gate 1 scope — both directions, and it survives a reload", async ({
+    page,
+  }) => {
+    const groups = fixtureGroups();
+    const matched = groups.find((g) => g.groupId === "cb2a6e2cd6fd3#g0")!;
+    const rejected = groups.find((g) => g.groupId === "c8331409f61e1#g0")!;
+    const vars = matched.memberVariableNames.slice(0, 2);
+    await serveRun(page, (run) => {
+      run.composites = [scoreSpec(matched, rejected, vars)]; // group at 0.72 -> starts unchecked / OUT
+    });
+    await openGate1(page);
+    await openScorePanel(page);
+
+    const ledgerScope = page
       .locator(`[data-testid='ledger-row'][data-row-id='${matched.groupId}']`)
       .locator("[data-testid='queue-scope']");
-    await expect(matchedScope).toHaveAttribute("aria-checked", "true");
-    // A group the score did not match starts deselected, like every other group under the new default.
-    const otherScope = page
-      .locator(`[data-testid='ledger-row'][data-row-id='${rejected.groupId}']`)
-      .locator("[data-testid='queue-scope']");
-    await expect(otherScope).toHaveAttribute("aria-checked", "false");
-    // ...and Continue is live, because the score's matched group is already in scope.
-    await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
+    const grip = page.locator("[data-testid='score-match'][data-component='Grip strength']");
+    const group = grip.locator("[data-testid='score-group']");
+    await grip.locator("[data-testid='score-component-expand']").click();
+    await expect(group).toHaveAttribute("data-selected", "false");
+    await expect(ledgerScope).toHaveAttribute("aria-checked", "false");
+
+    // Panel -> ledger: checking it in the panel admits it to Gate 1 scope (what Gate 2 actually reads).
+    await group.locator("[data-testid='score-group-toggle']").check();
+    await expect(ledgerScope).toHaveAttribute("aria-checked", "true");
+
+    // Durable: a reload keeps it — the selection is a persisted gate decision, not component state.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await openScorePanel(page);
+    await grip.locator("[data-testid='score-component-expand']").click();
+    await expect(group).toHaveAttribute("data-selected", "true");
+    await expect(grip.locator("[data-testid='score-group-gate2']")).toHaveCount(1);
+    await expect(ledgerScope).toHaveAttribute("aria-checked", "true");
+
+    // Ledger -> panel: deselecting the group on the ledger unchecks it in the panel. One group, one answer.
+    await ledgerScope.click();
+    await expect(ledgerScope).toHaveAttribute("aria-checked", "false");
+    await expect(group).toHaveAttribute("data-selected", "false");
+    await expect(grip.locator("[data-testid='score-group-gate2']")).toHaveCount(0);
   });
 
   test("@gate1 a matched component lists its concept groups — a below-threshold group starts unchecked, checking it tags it for Gate 2, and it links; a missing component says what was retrieved", async ({

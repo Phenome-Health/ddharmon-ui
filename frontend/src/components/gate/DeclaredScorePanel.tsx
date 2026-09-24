@@ -164,6 +164,13 @@ export interface DeclaredScorePanelProps {
   fieldIndex?: Record<string, FieldDetail>;
   /** Select a group in Gate 1's detail pane (the drag-drop screen) and scroll it into view. */
   onOpenGroup?: (groupId: string) => void;
+  /**
+   * Gate 1 SCOPE for a group — the panel's group checkbox reads this, so "Gate 2 ✓" is literally what Gate 2
+   * receives. Absent → the panel falls back to local state seeded from the auto-select threshold.
+   */
+  isGroupInScope?: (groupId: string) => boolean;
+  /** Write a group's Gate 1 scope (the ledger checkbox's own path). Absent on a frozen gate → read-only. */
+  onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   className?: string;
 }
 
@@ -241,6 +248,8 @@ export function DeclaredScorePanel({
   groupByVariable,
   fieldIndex,
   onOpenGroup,
+  isGroupInScope,
+  onGroupScopeChange,
   className,
 }: DeclaredScorePanelProps) {
   const swaps = useGateDecisions(jobId, "composite_swap", { pinned });
@@ -603,6 +612,8 @@ export function DeclaredScorePanel({
               busy={editBusy}
               jobId={jobId}
               onOpenGroup={onOpenGroup}
+              isGroupInScope={isGroupInScope}
+              onGroupScopeChange={onGroupScopeChange}
               resolveConcept={resolveConcept}
               resolveGroupId={resolveGroupId}
               hideDerivation
