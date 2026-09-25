@@ -201,6 +201,7 @@ export function SourceRows({
   memberDetails,
   fieldIndex,
   drag,
+  highlightIds,
 }: {
   /** The group's member ids, `cohort:var`, in the order the pipeline pooled them. */
   memberIds: string[];
@@ -209,11 +210,18 @@ export function SourceRows({
   fieldIndex: Record<string, FieldDetail>;
   /** Present only where regrouping is offered (Gate 1). The workbench passes nothing and is unchanged. */
   drag?: SourceRowsDrag;
+  /** Members to mark (the score builder's matched variables, when the group was opened from the panel). They
+   *  lead the table so the row cap can never hide them. */
+  highlightIds?: ReadonlySet<string>;
 }) {
   // BEFORE THE EARLY RETURN, because a hook cannot be called conditionally. `over` is read only where
   // `drag` is present; the workbench's call site passes none and is unchanged.
   const { over, cue } = useDropHighlight();
-  const rows = buildRows(memberIds, memberDetails, fieldIndex);
+  const built = buildRows(memberIds, memberDetails, fieldIndex);
+  const rows =
+    highlightIds && highlightIds.size > 0
+      ? [...built.filter((r) => highlightIds.has(r.id)), ...built.filter((r) => !highlightIds.has(r.id))]
+      : built;
   if (!hasSourceRows(memberIds, memberDetails, fieldIndex)) return null;
 
   const shown = rows.slice(0, ROW_CAP);
@@ -317,6 +325,7 @@ export function SourceRows({
                 key={r.id}
                 data-testid={drag ? "member-row" : undefined}
                 data-member-id={drag ? r.id : undefined}
+                data-highlighted={highlightIds?.has(r.id) ? "true" : undefined}
                 // The moved state as DATA as well as as a colour: it is derived from a persisted
                 // decision, so a gate asserting "this correction survived a reload" has to READ it
                 // rather than eyeball a hue. Same contract `MemberChip` carries.
@@ -350,6 +359,7 @@ export function SourceRows({
                   "border-b border-rule-quiet-on-raised last:border-0 hover:bg-surface-inset",
                   drag && "cursor-grab",
                   drag && drag.movedMembers.has(r.id) && "bg-surface-inset",
+                  highlightIds?.has(r.id) && "bg-surface-info",
                 )}
               >
                 {drag && (

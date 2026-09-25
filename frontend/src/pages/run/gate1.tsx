@@ -1306,6 +1306,7 @@ function ExpandedGroup({
   onAcceptCarve,
   onIgnoreCarve,
   accepting,
+  highlightIds,
 }: {
   group: ConceptGroup;
   /** Every OTHER group, as drop destinations beside this one (08-16c Task 6). */
@@ -1330,6 +1331,8 @@ function ExpandedGroup({
   onAcceptCarve: () => void;
   onIgnoreCarve: () => void;
   accepting: boolean;
+  /** The score builder's matched variables, when this group was opened from the score panel. */
+  highlightIds?: ReadonlySet<string>;
 }) {
   const [ignored, setIgnored] = useState(false);
   const emptied = canRegroup && members.length === 0;
@@ -1601,9 +1604,16 @@ function ExpandedGroup({
           this screen asks for — is this really one concept? — is made against the dictionary rows, and
           asking it from a generated name and a row of chips leaves them a screen away. Returns null when
           the run carries no field detail, in which case the chips above are the whole membership view. */}
+        {highlightIds && highlightIds.size > 0 && (
+          <p data-testid="score-highlight-note" role="note" className="text-xs text-on-raised-muted">
+            Highlighted: the {highlightIds.size} {highlightIds.size === 1 ? "variable" : "variables"} the score
+            matched for this group.
+          </p>
+        )}
         <SourceRows
           memberIds={members}
           fieldIndex={fieldIndex}
+          highlightIds={highlightIds}
           // ONLY WHERE A MOVE CAN BE HONOURED. `canRegroup` is false when the run recorded a capped sample
           // of this group (T-08-89), and a drag written against a partial list would silently drop every
           // member it never showed — so the grid stays pure evidence there, exactly as the withdrawn verb
@@ -2095,6 +2105,9 @@ export default function Gate1Page() {
   // Master-detail selection. `selectedId` names the group in the detail pane; `poolSelected` swaps the
   // pane to the "In no group" holding area instead.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The score builder's matched variables for the group its link opened (todo 2026-09-23). Keyed on the group
+  // so selecting any other group from the queue drops it — the highlight belongs to that one navigation.
+  const [scoreHighlight, setScoreHighlight] = useState<{ groupId: string; ids: Set<string> } | null>(null);
   const [poolSelected, setPoolSelected] = useState(false);
   // The detail pane, so the score panel's "open this group" can scroll it into view after selecting.
   const detailPaneRef = useRef<HTMLElement>(null);
@@ -2790,7 +2803,11 @@ export default function Gate1Page() {
         isGroupInScope={isInScope}
         onGroupScopeChange={frozen ? undefined : setGroupScope}
         frozen={frozen}
-        onOpenGroup={(groupId) => {
+        onOpenGroup={(groupId: string, matchedIds?: string[]) => {
+          // Option coverage units carry a "#opt=<label>" suffix; the detail pane's rows are the variable.
+          setScoreHighlight(
+            matchedIds?.length ? { groupId, ids: new Set(matchedIds.map((id) => id.split("#opt=")[0])) } : null,
+          );
           // Select the matched group in the detail pane, bring the sidebar QUEUE row for it into view
           // (08-16g review #6 — selecting the detail alone left the row scrolled off in the queue), then
           // bring the detail pane itself into view — the score panel sits at the top of Gate 1 and the
@@ -3200,6 +3217,7 @@ export default function Gate1Page() {
                 stale={touchedByRegroup.has(detailGroup.groupId)}
               >
                 <ExpandedGroup
+                  highlightIds={scoreHighlight?.groupId === detailGroup.groupId ? scoreHighlight.ids : undefined}
                   group={detailGroup}
                   otherGroups={[]}
                   membersOf={(id) => membership.byGroup[id] ?? []}

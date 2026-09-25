@@ -1616,6 +1616,39 @@ test.describe("gate1 score", () => {
     await expect(grip.locator("[data-testid='score-confidence']")).toHaveCount(0);
   });
 
+  test("@gate1 opening a score group on Gate 1 highlights the variables the score matched (todo 2026-09-23)", async ({
+    page,
+  }) => {
+    const groups = fixtureGroups();
+    const matched = groups.find((g) => g.groupId === "cb2a6e2cd6fd3#g0")!;
+    const rejected = groups.find((g) => g.groupId === "c8331409f61e1#g0")!;
+    const vars = matched.memberVariableNames.slice(0, 2);
+    const coverageMembers: Record<string, { variableId: string; confidence: number }[]> = {};
+    for (const v of vars) (coverageMembers[v.split(":")[0]] ??= []).push({ variableId: v, confidence: 0.9 });
+    await serveRun(page, (run) => {
+      run.composites = [scoreSpec(matched, rejected, vars, { coverageMembers })];
+    });
+    await openGate1(page);
+    await openScorePanel(page);
+    const grip = page.locator("[data-testid='score-match'][data-component='Grip strength']");
+    await grip.locator("[data-testid='score-component-expand']").click();
+    await grip.locator("[data-testid='score-open-group']").click();
+
+    const pane = page.locator("[data-testid='gate1-detail']");
+    await expect(pane.locator("[data-testid='score-highlight-note']")).toContainText(
+      `${vars.length} variables the score matched`,
+    );
+    const lit = pane.locator("[data-testid='member-row'][data-highlighted='true']");
+    await expect(lit).toHaveCount(vars.length);
+    for (const v of vars) await expect(pane.locator(`[data-testid='member-row'][data-member-id='${v}']`)).toHaveAttribute("data-highlighted", "true");
+    // matched rows lead the list, so a capped table can never hide them
+    await expect(pane.locator("[data-testid='member-row']").first()).toHaveAttribute("data-highlighted", "true");
+
+    // selecting a different group from the queue drops the highlight — it belonged to the score's link
+    await page.locator(`[data-testid='ledger-row'][data-row-id='${rejected.groupId}']`).click();
+    await expect(pane.locator("[data-testid='score-highlight-note']")).toHaveCount(0);
+  });
+
   test("@gate1 the panel is a section of Gate 1, not a screen and not a modal", async ({
     page,
   }) => {

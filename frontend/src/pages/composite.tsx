@@ -281,7 +281,7 @@ export function SpecView({
   busy: boolean;
   jobId: string;
   hideDerivation?: boolean;
-  onOpenGroup?: (conceptId: string) => void;
+  onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
   isGroupInScope?: (groupId: string) => boolean;
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   resolveConcept?: (
@@ -688,7 +688,7 @@ function MatchRow({
   onEdit: (component: string, conceptId: string | null) => void;
   busy: boolean;
   jobId: string;
-  onOpenGroup?: (conceptId: string) => void;
+  onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
   isGroupInScope?: (groupId: string) => boolean;
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   resolveConcept?: (
@@ -800,7 +800,7 @@ function MatchRow({
                 type="button"
                 data-testid="score-open-group"
                 data-group={g.groupId}
-                onClick={() => onOpenGroup(g.groupId)}
+                onClick={() => onOpenGroup(g.groupId, g.members.map((m) => m.variableId))}
                 className="text-left text-xs font-semibold text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
                 title="Open this concept group on Gate 1"
               >
