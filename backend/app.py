@@ -1504,6 +1504,128 @@ async def composite_extract(job_id: str, request: Request, file: Annotated[Uploa
     return {"text": source.text, "provenance": source.provenance, "sha256": source.sha256, "nChars": len(source.text)}
 
 
+class ScoreComponentsBody(BaseModel):
+    """The text the free read (`/score/extract`) returned, and the handle it came with.
+
+    The TEXT, not the file: the reviewer has already looked at it, and re-uploading would either double the
+    parse or let the two steps disagree about what was read. ``sha256`` is that read's own fingerprint — when
+    supplied, text that does not hash to it is refused, so the proposal is always of the thing looked at.
+    """
+
+    text: str
+    sha256: str | None = None
+    provenance: str = ""
+
+
+@app.post("/api/harmonize/jobs/{job_id}/score/components")
+def score_components(
+    job_id: str,
+    body: ScoreComponentsBody,
+    request: Request,
+    x_anthropic_key: Annotated[str | None, Header()] = None,
+    x_provider_key: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    """PROPOSE a score's component names from already-read text — one paid model call (08-16e).
+
+    Extraction PROPOSES, the reviewer disposes: this writes NO declaration and matches nothing. The list comes
+    back for the reviewer to accept, edit or discard; accepting writes ordinary ``composite_swap`` rows from
+    the panel, indistinguishable from typed ones. It reuses core's ``extract_score_definition`` on its own.
+
+    JOB-SCOPED, unlike ``score_extract``. That route is job-independent so it can run before a run exists and
+    stay $0; this one CHARGES, and a charge belongs to a run: it is billed on the run's own configured model
+    (``model_tag``), refused on a passed Gate 1 (the panel is a record there) and on the shared demo, and cached
+    per user on that run. The panel lives on Gate 1, where a run always exists. When the declaration moves to
+    Setup (todo 2026-09-25) the same helper can back a sibling there; this route does not pretend to be one.
+
+    Refusals, all BEFORE anything is spent: unknown run (404), shared demo (403), a passed Gate 1 (409), empty
+    text (400), text over :data:`MAX_COMPONENT_EXTRACT_CHARS` (413 — never truncated), a handle that does not
+    match the text (400), and no provider key (400, as on the other paid gate action).
+
+    NOT CHARGED TWICE: the answer — including "nothing found", which also cost a call — is cached on the run
+    under the text's sha256 + model, and the same text returns it with ``cached: true`` and no provider call.
+    A FAILURE (an unreadable reply, a provider error) is not cached, so pressing again genuinely retries.
+
+    BYOK: the key rides ``X-Provider-Key`` / ``X-Anthropic-Key`` for this request only — never persisted.
+    """
+    import hashlib
+
+    from backend.artifact_kinds import COMPOSITE_SWAP, SCORE_COMPONENT_PROPOSAL
+    from backend.composite import MAX_COMPONENT_EXTRACT_CHARS, UnreadableReplyError, propose_components
+    from backend.engine.llm import build_llm_client
+    from backend.llm_errors import llm_call
+
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    with _writable_run():
+        if _is_pinned(job):
+            raise ReadOnlyRunError(
+                f"{job_id} is the shared demo and cannot spend on extracting components — clone it into a run "
+                "of your own, or type the components yourself"
+            )
+    # The proposal exists only to become Gate 1's `composite_swap` declaration, so it freezes with it.
+    _refuse_past_gate(job, COMPOSITE_SWAP)
+
+    text = body.text or ""
+    if not text.strip():
+        raise HTTPException(
+            status_code=400, detail="There is no text to extract components from — read a document first."
+        )
+    if len(text) > MAX_COMPONENT_EXTRACT_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"This document is {len(text):,} characters; extracting components reads at most "
+                f"{MAX_COMPONENT_EXTRACT_CHARS:,}, and a longer one is refused rather than cut short — half a "
+                "paper gives a plausible but incomplete list. Read the section or supplement that holds the "
+                "component table instead, or type the components below."
+            ),
+        )
+    digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+    if body.sha256 and body.sha256.strip().lower() != digest:
+        raise HTTPException(
+            status_code=400,
+            detail="This text is not the text that was read (its fingerprint differs). Read the document again.",
+        )
+
+    model_tag = str(job.config.get("model_tag") or "")
+    owner = principal_of(subject, job)
+    artifacts = store.artifacts
+    item_key = f"{digest}|{model_tag}"
+    if artifacts is not None:
+        prior = artifacts.get_one(owner=owner, job_id=job_id, kind=SCORE_COMPONENT_PROPOSAL, item_key=item_key)
+        if prior is not None:
+            return {**prior.payload, "cached": True}
+
+    key = x_provider_key or x_anthropic_key
+    if _no_anthropic_key(job.config, key):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter your Anthropic API key to extract the components — it is one model call and the key "
+            "clears on reload. Nothing was charged; you can still type the components yourself.",
+        )
+
+    client = build_llm_client(job.config.get("model_tag"), key)
+    try:
+        with llm_call(model=job.config.get("model_tag")):
+            proposal = propose_components(text, client.complete, provenance=body.provenance)
+    except UnreadableReplyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    payload = {
+        **proposal,
+        "sha256": digest,
+        "nChars": len(text),
+        "provenance": body.provenance,
+        "model": model_tag,
+    }
+    if artifacts is not None:
+        with _writable_run():
+            artifacts.put(owner=owner, job_id=job_id, kind=SCORE_COMPONENT_PROPOSAL, payload=payload)
+    return {**payload, "cached": False}
+
+
 @app.post("/api/harmonize/score/extract")
 async def score_extract(file: Annotated[UploadFile, File()]) -> dict[str, Any]:
     """Extract a score's definition text from an uploaded PDF or Word document — with NO run required.

@@ -195,3 +195,118 @@ def derive(
     # mislabel a re-derive as e.g. "criteria_count" instead of naming where the definition came from.
     payload["sourceKind"] = source.kind if isinstance(source, ScoreSource) else "definition"
     return payload
+
+
+# --- the component PROPOSAL (08-16e): a model reads the paper, the reviewer confirms the list ----------
+
+#: The most extracted text one component extraction will read. Searle et al. 2008 (a 40-item frailty index,
+#: table intact) extracts to ~41k characters; this is ~5x that, ~50k tokens — well inside the model's context,
+#: so the provider never truncates on our behalf. ABOVE it the request is REFUSED with both numbers rather than
+#: cut: half a paper yields a plausible, incomplete component list, which is the worst failure this step has.
+#: Mirrored in ``frontend/src/lib/score-proposal.ts`` (a test pins the two to one number).
+MAX_COMPONENT_EXTRACT_CHARS = 200_000
+
+
+class UnreadableReplyError(RuntimeError):
+    """The model answered, but not with anything the transcriber could parse — a FAILURE, not "found nothing"."""
+
+
+_DASHES = str.maketrans(
+    {"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2212": "-"}
+    | {"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u00a0": " "}
+)
+
+
+def _loose(text: str) -> str:
+    """Case-, whitespace- and dash/quote-insensitive form, for a word-for-word check that survives PDF layout."""
+    import re
+    import unicodedata
+
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).translate(_DASHES)).strip().lower()
+
+
+def _stated_coding(coding: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A component's coding ONLY when core marks it source-stated; otherwise nothing (rule 2).
+
+    ``definition`` and ``required`` are deliberately not part of a proposal at all: core may synthesise
+    ``definition`` prose and still mark it ``statedInSource`` (the 2026-09-22 faithfulness finding), and
+    ``required`` is a per-item model guess rather than a source fact. The proposal is names + stated coding.
+    """
+    if not coding.get("statedInSource"):
+        return None
+    return {k: coding.get(k) for k in ("kind", "cutoff", "referenceRange", "codeMap", "formula", "units")}
+
+
+def propose_components(text: str, complete: Any, *, provenance: str = "") -> dict[str, Any]:
+    """Ask core's transcriber for the component NAMES ``text`` states — a proposal, never a declaration.
+
+    Reuses core's ``extract_score_definition`` on its own (no matching, no concept index). Three outcomes,
+    kept distinct because the reviewer acts differently on each:
+
+      * components found -> ``found: True`` and the list, each name checked word-for-word against ``text``
+        (``verbatim``) so a name the document does not contain is FLAGGED for the reviewer rather than
+        trusted. It is kept, not dropped: the reviewer disposes, and a dropped name would be the web layer
+        quietly overruling what it cannot verify either;
+      * the model read it and found none -> ``found: False`` with core's reason — an answer, not an error;
+      * the model's reply could not be parsed at all -> :class:`UnreadableReplyError` — a failure, never reported
+        as "the paper has no components".
+
+    Takes the TEXT the free read produced, wrapped as-is (no re-normalisation), so the sha256 the reviewer
+    holds is the sha256 of what the model read.
+    """
+    from ddharmon.harmonization.composite import extract_score_definition
+    from ddharmon.harmonization.parse import extract_json
+
+    replies: list[str] = []
+
+    def recording_complete(prompt: str, **kwargs: Any) -> str:
+        reply = complete(prompt, **kwargs)
+        replies.append(reply)
+        return reply
+
+    source = ScoreSource(text=text, kind="paste", provenance=provenance or "extracted text")
+    try:
+        definition = extract_score_definition(source, recording_complete)
+    except ValueError as exc:
+        try:
+            parsed = extract_json(replies[-1]) if replies else None
+        except (ValueError, TypeError):
+            parsed = None
+        if not isinstance(parsed, dict):
+            raise UnreadableReplyError(
+                "The model's answer could not be read as a component list, so nothing is proposed. "
+                "This is a failure, not a finding that the document has no components — the text you read is "
+                "still below; retry, or type the components yourself."
+            ) from exc
+        stated = parsed.get("statedNItems")
+        return {
+            "found": False,
+            "scoreName": "",
+            "statedNItems": int(stated) if isinstance(stated, (int, float)) and stated > 0 else None,
+            "components": [],
+            "reason": str(exc),
+        }
+
+    loose_text = _loose(text)
+    payload = spec_to_dict_definition(definition)
+    return {
+        "found": True,
+        "scoreName": "" if payload["name"] == "(unnamed composite)" else payload["name"],
+        "statedNItems": payload["statedNItems"],
+        "components": [
+            {
+                "name": c["name"],
+                "verbatim": _loose(c["name"]) in loose_text,
+                "coding": _stated_coding(c.get("coding") or {}),
+            }
+            for c in payload["components"]
+        ],
+        "reason": "",
+    }
+
+
+def spec_to_dict_definition(definition: Any) -> dict[str, Any]:
+    """Core's own camelCase serialisation of a bare ``ScoreDefinition`` (``spec_to_dict``'s ``definition``)."""
+    from ddharmon.harmonization.composite import CompositeSpec
+
+    return spec_to_dict(CompositeSpec(definition=definition))["definition"]
