@@ -16,8 +16,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
+import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
 import { useGateDecisions } from "@/hooks/use-gate-decisions";
-import { deriveComposite, extractScoreDocument, IS_STATIC } from "@/lib/api";
+import { deriveComposite, extractScoreComponents, extractScoreDocument, IS_STATIC } from "@/lib/api";
+import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
 import { groupLabel } from "@/lib/ledger";
@@ -94,6 +96,13 @@ import type {
  * is priced inline BEFORE it runs — never behind a modal, in the same register as the commit bar — and
  * where the run cannot run it, it renders as an honest not-available naming the reason rather than as a
  * dead control.
+ *
+ * THREE STEPS, THREE COST STATES (08-16e). Between the free read and the paid match sits a second paid step:
+ * a model reads the extracted text and PROPOSES the component names (`ScoreComponentProposal`), so the
+ * reviewer confirms a list instead of transcribing one out of a 41,000-character dump. It is priced inline
+ * like the match, the closed strip names all three states, and the free text stays on screen beside the
+ * proposal — it is the evidence the list is checked against. The proposal is never written into the
+ * declaration: accepting fills the same box typing does, and "Declare these components" still writes it.
  *
  * THE DECLARATION PERSISTS THROUGH THE SHARED GATE-DECISION LAYER, on the `composite_swap` kind that
  * already keys on `(scoreName, componentName)` — one row per declared component, its `chosen` being the
@@ -262,10 +271,8 @@ export function DeclaredScorePanel({
   const [scoreName, setScoreName] = useState("");
   const [reading, setReading] = useState(false);
   const [readError, setReadError] = useState("");
-  const [document, setDocument] = useState<{
-    provenance: string;
-    nChars: number;
-  } | null>(null);
+  /** The free read, kept WHOLE: it is sent to be extracted, and shown beside the proposal as its evidence. */
+  const [document, setDocument] = useState<ReadDocument | null>(null);
   const [showDeclareForm, setShowDeclareForm] = useState(false);
   const [localSpec, setLocalSpec] = useState<CompositeSpec | null>(null);
   const [editBusy, setEditBusy] = useState(false);
@@ -406,8 +413,9 @@ export function DeclaredScorePanel({
       // finding out that a publisher PDF is an access-check interstitial, or that its component table did
       // not survive extraction, should not cost a derivation.
       const out = await extractScoreDocument(file);
-      setDocument({ provenance: out.provenance, nChars: out.nChars });
-      setDraft(out.text.slice(0, 4000));
+      // The text is EVIDENCE, not a draft: it no longer lands in the components box for the reviewer to
+      // prune (todo 2026-09-15). It is shown read-only beside the form, and a model can propose from it.
+      setDocument({ text: out.text, sha256: out.sha256, nChars: out.nChars, provenance: out.provenance });
     } catch (e) {
       setReadError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -474,8 +482,7 @@ export function DeclaredScorePanel({
             copy inside is unchanged and still sits immediately above the control it prices.
           */}
           <span className="min-w-0 text-xs text-on-field-muted">
-            Reading a paper is free; matching its components against this run
-            costs one model call.
+            {STRIP_SUMMARY}
           </span>
         </span>
         <ChevronDown
@@ -529,9 +536,7 @@ export function DeclaredScorePanel({
               />
             </label>
             <p className="max-w-[80ch] text-xs text-on-raised-muted">
-              Reading the document costs nothing — no model is called. It pulls
-              the text out so you can see whether the component table survived
-              extraction before anything is spent on it.
+              {READ_IS_FREE}
             </p>
             {document && (
               <p
@@ -539,7 +544,9 @@ export function DeclaredScorePanel({
                 className="text-xs text-on-raised"
               >
                 Read {document.nChars.toLocaleString()} characters from{" "}
-                {document.provenance}. Copy the component names out of it below.
+                {document.provenance}. The text is shown beside the proposal —
+                have a model propose the components from it, or type them
+                yourself.
               </p>
             )}
             {readError && (
@@ -552,6 +559,37 @@ export function DeclaredScorePanel({
               </p>
             )}
           </div>
+
+          {document && (
+            /* STEP 2 BESIDE ITS EVIDENCE. The proposal on the left, the free text it came from on the right —
+               and the text stays whatever the proposal's outcome, because it is the only way to notice
+               something the model missed. */
+            <div className="grid gap-4 lg:grid-cols-2">
+              <ScoreComponentProposal
+                key={document.sha256}
+                document={document}
+                extract={(doc) => extractScoreComponents(jobId, doc)}
+                pinned={pinned}
+                frozen={frozen}
+                onAccept={(names, proposedName) => {
+                  setDraft((d) => acceptedDraft(d, names));
+                  if (!scoreName.trim() && proposedName) setScoreName(proposedName);
+                }}
+              />
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                  What was read — free
+                </span>
+                <pre
+                  data-testid="score-doc-text"
+                  aria-label={`The text read from ${document.provenance}`}
+                  className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] text-on-raised-muted"
+                >
+                  {document.text}
+                </pre>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col gap-2">
             <label

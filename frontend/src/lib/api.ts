@@ -17,6 +17,7 @@ import type {
   ScoreDefinition,
   UIRecord,
 } from "@/types";
+import type { ComponentProposal, ReadDocument } from "@/lib/score-proposal";
 
 const BASE = "/api/harmonize";
 /** The six screens in order — the client-side half of contract.py's `GatePosition` literal. */
@@ -255,11 +256,74 @@ export async function extractCompositeDocument(
 export async function extractScoreDocument(
   file: File,
 ): Promise<{ text: string; provenance: string; sha256: string; nChars: number }> {
-  if (IS_STATIC) throw new Error(STATIC_MSG);
   if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to read a document.");
   const form = new FormData();
   form.append("file", file);
-  return json(await fetch(`${BASE}/score/extract`, { method: "POST", headers: await authed(), body: form }));
+  // A static build has no backend, so this answers STATIC_MSG exactly as it did — but only AFTER trying the
+  // request, which is the network seam the e2e gate fulfils (`page.route`) to exercise the propose flow.
+  const headers = await authed();
+  return scoreJson(() => fetch(`${BASE}/score/extract`, { method: "POST", headers, body: form }));
+}
+
+/** An API failure that keeps its HTTP status, so a caller can tell REFUSED (declined) from FAILED. */
+export class ApiError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/**
+ * The score panel's two document calls, shared: unpack FastAPI's `detail` with the status kept, and — in a
+ * static build — turn "there is no backend" (a network error, or the SPA's HTML fallback) into STATIC_MSG.
+ */
+async function scoreJson<T>(send: () => Promise<Response>): Promise<T> {
+  let res: Response;
+  try {
+    res = await send();
+  } catch (e) {
+    if (IS_STATIC) throw new ApiError(STATIC_MSG);
+    throw e;
+  }
+  const isJson = (res.headers.get("content-type") ?? "").includes("json");
+  if (IS_STATIC && !isJson) throw new ApiError(STATIC_MSG);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new ApiError((detail as { detail?: string }).detail || `${res.status} ${res.statusText}`, res.status);
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
+ * PROPOSE a score's component names from text the free read already returned — ONE PAID MODEL CALL (08-16e).
+ *
+ * Sends the TEXT, not the file (the reviewer has already looked at it; re-uploading would double the parse)
+ * with the read's `sha256` as its handle, so the server both refuses text that is not what was read and
+ * returns a cached answer — `cached: true`, no charge — for text it has already extracted on this run.
+ *
+ * A PROPOSAL, never a declaration: nothing here writes `composite_swap`. The caller shows the list for the
+ * reviewer to accept, edit or discard. Errors are `ApiError`s carrying the status, so the panel can say
+ * whether the request was REFUSED before spending (400/403/409/413) or attempted and FAILED (5xx).
+ */
+export async function extractScoreComponents(
+  jobId: string,
+  doc: ReadDocument,
+  apiKey?: string,
+): Promise<ComponentProposal> {
+  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to extract the components.", 401);
+  const headers = await authed({
+    "content-type": "application/json",
+    ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
+  });
+  return scoreJson(() =>
+    fetch(`${BASE}/jobs/${jobId}/score/components`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text: doc.text, sha256: doc.sha256, provenance: doc.provenance }),
+    }),
+  );
 }
 
 /**
