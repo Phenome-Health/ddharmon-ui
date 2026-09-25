@@ -66,19 +66,62 @@ test("@gate4 the export catalog covers EXACTLY the five shipping formats", () =>
 test("@gate4 the revision rate excludes cosmetic renames (P5) and stamps its denominator (P2)", () => {
   const index: DecisionIndex = {
     gate2_candidate_pick: { g0: { chosen: "CDE:1", alternatives: ["CDE:1"], optionSetKey: "x", groupId: "g0" } },
-    gate3_spec_edit: { v1: { chosen: "edited", alternatives: [], optionSetKey: "y", sourceVariable: "v1" } },
+    gate3_spec_edit: {
+      "A:v1": { chosen: "A:v1", alternatives: [], optionSetKey: "y", sourceVariable: "A:v1", mapping: { "1": "No" } },
+    },
     gate1_rename: { g2: { chosen: "My label", alternatives: [], optionSetKey: "z", groupId: "g2" } },
   };
-  const result = { records: [{ groupId: "g0" }, { groupId: "g1" }, { groupId: "g2" }, { groupId: "g3" }] } as unknown as HarmonizationResult;
+  const result = {
+    records: [
+      { groupId: "g0", members: ["A:v0"], candidates: [] },
+      { groupId: "g1", members: ["A:v1"], candidates: [] },
+      { groupId: "g2", members: [], candidates: [] },
+      { groupId: "g3", members: [], candidates: [] },
+    ],
+  } as unknown as HarmonizationResult;
   const rr = revisionRate(index, result, "1.2.0");
-  // Two substantive edits (candidate pick + spec edit); the rename is excluded as cosmetic.
+  // Two substantive edits (candidate pick on g0 + spec edit on g1's variable); the rename is excluded as cosmetic.
   expect(rr.edited).toBe(2);
   expect(rr.excludedCosmetic).toBe(1);
   expect(rr.shown).toBe(4);
   expect(rr.denominator).toBe("concept records reviewed");
   expect(rr.hygieneVersion).toBe("1.2.0");
-  // The rename kind is NOT counted as a substantive edit.
   expect(SUBSTANTIVE_EDIT_KINDS).not.toContain("gate1_rename");
+});
+
+test("@gate4 the revision rate counts RECORDS, skips no-op decisions, and uses the frozen scope (08-27 audit)", () => {
+  // Live 573cf61f read 15/20 when the truth was ~7/20: identity keys mixed variable ids, group ids and score
+  // names; empty-note saves and back-to-the-model picks counted as corrections.
+  const pick = (groupId: string, chosen: string, extra = {}) => ({ groupId, chosen, alternatives: [], optionSetKey: "k", ...extra });
+  const spec = (sv: string, extra = {}) => ({ sourceVariable: sv, chosen: sv, alternatives: [], optionSetKey: "k", ...extra });
+  const index: DecisionIndex = {
+    gate2_candidate_pick: {
+      g0: pick("g0", "CDE:model"), // equals the model's pick -> not an edit
+      g1: pick("g1", "CDE:other"), // a real re-pick
+      g3: pick("g3", "", { gencdeEdit: { definition: "x" } }), // a GenCDE edit -> an edit
+    },
+    gate3_spec_edit: {
+      "A:a": spec("A:a", { note: "" }), // empty note only -> not an edit
+      "A:b": spec("A:b", { mapping: { "1": "No" } }), // g1 again -> same record, counted once
+      "A:c": spec("A:c", { rejected: true, chosen: "" }), // g2
+    },
+    gate1_regroup: {
+      "A:d": { memberId: "A:d", chosen: "__unassigned__", fromGroupId: "g4", alternatives: [], optionSetKey: "k" },
+    },
+    composite_swap: { "S|c": { scoreName: "S", componentName: "c", chosen: "", alternatives: [], optionSetKey: "k" } },
+  };
+  const rec = (groupId: string, members: string[], model = "") => ({
+    groupId,
+    members,
+    candidates: model ? [{ cdeId: model, isChosen: true }] : [],
+  });
+  const result = {
+    records: [rec("g0", ["A:a"], "CDE:model"), rec("g1", ["A:b"], "CDE:model"), rec("g2", ["A:c"]), rec("g3", []), rec("g4", ["A:d"]), rec("g5", [])],
+  } as unknown as HarmonizationResult;
+  const rr = revisionRate(index, result, "1", { gate1_scope: ["g0", "g1", "g2", "g3", "g4"] });
+  expect(rr.shown).toBe(5); // g5 was not in the frozen scope
+  expect(rr.edited).toBe(4); // g1, g2, g3, g4 — never g0 (no-op pick, empty note) nor the composite
+  expect(rr.rate).toBeLessThanOrEqual(1);
 });
 
 test("@gate4 the decision log enumerates every kind and marks nothing stale without an upstream", () => {

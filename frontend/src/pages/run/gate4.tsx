@@ -194,7 +194,12 @@ export default function Gate4Page() {
         )}
 
         {/* Surface 4 — the in-app decision log, with the E3 revision rate. */}
-        <DecisionLog index={gate.all} result={result} coreVersion={coreVersion} />
+        <DecisionLog
+          index={gate.all}
+          result={result}
+          coreVersion={coreVersion}
+          config={jobState?.config as Record<string, unknown> | undefined}
+        />
 
         {/* Terminal next-actions: analysis ideas (Task 4, existing route) and run again (Task 5). */}
         <div data-testid="gate4-next-actions" className="flex flex-wrap items-center gap-4 text-sm">

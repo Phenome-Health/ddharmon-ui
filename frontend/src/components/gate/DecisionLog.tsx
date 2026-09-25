@@ -29,14 +29,17 @@ export function DecisionLog({
   index,
   result,
   coreVersion,
+  config,
 }: {
   index: DecisionIndex;
   result: HarmonizationResult | null | undefined;
   coreVersion?: string;
+  /** The run's config — carries the frozen Gate 1 scope the revision rate denominates over. */
+  config?: Record<string, unknown> | null;
 }) {
   const rows = decisionLogRows(index);
   const total = decisionCount(index);
-  const rr = revisionRate(index, result, coreVersion ?? "");
+  const rr = revisionRate(index, result, coreVersion ?? "", config);
 
   return (
     <section data-testid="decision-log" className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-5 shadow-card">

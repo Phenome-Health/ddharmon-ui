@@ -5,6 +5,7 @@ import {
   type GateDecision,
   type GateDecisionKind,
   deriveStaleness,
+  inheritedGate1Scope,
 } from "@/lib/gate-decisions";
 
 /**
@@ -242,28 +243,50 @@ export function revisionRate(
   index: DecisionIndex,
   result: HarmonizationResult | null | undefined,
   coreVersion: string,
+  config?: Record<string, unknown> | null,
 ): RevisionRate {
   const records = result?.records ?? [];
-  // Denominator: records not scoped OUT at Gate 1 — the population the reviewer actually adjudicated.
-  const scopedOut = new Set(
-    Object.values(index.gate1_group_scope ?? {})
-      .filter((d) => String(d.chosen) === "out")
-      .map((d) => String((d as GateDecision).groupId ?? "")),
-  );
-  const shown = records.filter((r) => !scopedOut.has(r.groupId)).length || records.length;
+  // Denominator: the records Gate 1 sent on — the FROZEN scope when the run has one (08-27 #3), else the legacy
+  // "not scoped out" rule.
+  const inScope = inheritedGate1Scope(config, index.gate1_group_scope ?? {});
+  const shownRecords = records.filter((r) => inScope(r.groupId));
+  const shownIds = new Set(shownRecords.map((r) => r.groupId));
+  const shown = shownRecords.length || records.length;
 
-  // Numerator: distinct records touched by a substantive edit. A decision's identity key starts with the
-  // record/group id for every substantive kind, so the leading segment identifies the record it edited.
+  // Numerator: distinct CONCEPT RECORDS a substantive edit touched (08-27 audit). Identity keys are not record
+  // ids for every kind — a regroup keys on the variable, a spec edit on the source variable, a composite on the
+  // score — so each decision is resolved to the record it edited, and no-op decisions are skipped.
+  const groupOfVariable = new Map<string, string>();
+  for (const r of records) for (const m of r.members ?? []) if (!groupOfVariable.has(m)) groupOfVariable.set(m, r.groupId);
+  const modelPick = new Map(records.map((r) => [r.groupId, r.candidates?.find((c) => c.isChosen)?.cdeId ?? ""]));
   const editedRecords = new Set<string>();
+  const touch = (groupId: unknown) => {
+    if (typeof groupId === "string" && shownIds.has(groupId)) editedRecords.add(groupId);
+  };
   let excludedCosmetic = 0;
   for (const kind of GATE_DECISION_KINDS) {
-    const byItem = index[kind] ?? {};
-    for (const itemKey of Object.keys(byItem)) {
-      if (SUBSTANTIVE_EDIT_KINDS.includes(kind)) {
-        editedRecords.add(itemKey.split("|")[0]);
-      } else if (kind === "gate1_rename") {
+    for (const d of Object.values(index[kind] ?? {}) as GateDecision[]) {
+      if (kind === "gate1_rename") {
         excludedCosmetic += 1; // the named P5 cosmetic example
+      } else if (kind === "gate2_candidate_pick" || kind === "gate2_relation") {
+        const gid = String(d.groupId ?? "");
+        const noop = kind === "gate2_candidate_pick" && d.chosen === modelPick.get(gid) && !d.gencdeEdit;
+        if (!noop) touch(gid);
+      } else if (kind === "gate1_regroup") {
+        if (d.fromGroupId !== d.chosen) {
+          touch(d.fromGroupId);
+          touch(d.chosen);
+        }
+      } else if (kind === "gate3_spec_edit") {
+        const substantive =
+          d.rejected === true ||
+          d.mapping != null ||
+          d.numberMap != null ||
+          d.bins != null ||
+          (typeof d.note === "string" && d.note.trim() !== "");
+        if (substantive) touch(groupOfVariable.get(String(d.sourceVariable ?? "")));
       }
+      // composite_swap edits a SCORE, not a concept record — it is not part of this record-denominated rate.
     }
   }
   const edited = editedRecords.size;
