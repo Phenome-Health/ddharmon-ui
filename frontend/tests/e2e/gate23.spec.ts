@@ -1481,3 +1481,33 @@ test.describe("gate3 spec edits merge", () => {
     await expect(inputs.nth(0)).toHaveValue("draft A");
   });
 });
+
+/** 08-27 audit B2 — saving anchor text never changes the target as a side effect. */
+test.describe("gate2 anchor save keeps the target", () => {
+  for (const [groupId, target] of [
+    ["c46be33d9a542#g0", "Tobacco smoked 100 cigarettes indicator"], // adopt, no GenCDE
+    ["c0a367d9fb0eb#g0", "Have you ever used any of these drugs"], // refine, a GenCDE exists
+  ] as const) {
+    test(`@gate2 saving anchor edits on ${groupId} keeps its catalog target`, async ({ page }) => {
+      await serveFinished(
+        page,
+        (run) => {
+          run.result!.records = [run.result!.records!.find((x) => x.groupId === groupId)!];
+        },
+        { keep: 0 },
+      );
+      await openGate2(page);
+      const header = page.locator("[data-testid='current-target']");
+      await expect(header).toContainText(target);
+      await page.locator("[data-testid='gencde-definition-input']").fill("A reviewer's anchor wording.");
+      await page.locator("[data-testid='gencde-save']").click();
+      await expect(header).toContainText(target);
+      await page.reload();
+      await page.waitForLoadState("networkidle");
+      await expect(header).toContainText(target);
+      await expect(page.locator("[data-testid='gencde-definition-input']")).toHaveValue(
+        "A reviewer's anchor wording.",
+      );
+    });
+  }
+});

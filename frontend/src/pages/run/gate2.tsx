@@ -301,9 +301,10 @@ export default function Gate2Page() {
   }
 
   async function saveAnchor() {
-    // Keep the current target (the generated element / "my own"), and persist the edited fields on the pick.
-    const keepChosen = targetIsOwn ? chosenId : gencde?.gencdeId ?? "";
-    await writePick(keepChosen, { gencdeEdit: { ...anchor } });
+    // Saving anchor TEXT keeps the current target, whatever it is (08-27 audit B2): substituting the GenCDE
+    // id — or "" on an adopt concept with no GenCDE — silently re-picked the target and skipped the re-pick
+    // confirmation. Switching to your own CDE is the explicit "use my own" action, not a side effect of Save.
+    await writePick(chosenId, { gencdeEdit: { ...anchor } });
     setDraft(null);
   }
 
