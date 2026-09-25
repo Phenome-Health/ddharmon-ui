@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { JobResult } from "@/types";
-import { gate1ScopePayload, inheritedGate1Scope } from "@/lib/gate-decisions";
+import { gate1BillableGroups, gate1ScopePayload, inheritedGate1Scope } from "@/lib/gate-decisions";
 import { mergeSpecEdit } from "@/lib/gate23";
 import {
   SKOS_RELATIONS,
@@ -1373,6 +1373,15 @@ test.describe("gate1 scope inheritance", () => {
     expect([frozen("a"), frozen("b"), frozen("c")]).toEqual([false, false, true]);
     const legacy = inheritedGate1Scope({}, decisions);
     expect([legacy("a"), legacy("b"), legacy("c")]).toEqual([true, false, true]);
+  });
+
+  test("@gate1 an in-scope group emptied by moves is neither priced nor sent (08-27 audit B3)", () => {
+    const groups = [{ groupId: "g0" }, { groupId: "g1" }, { groupId: "g2" }];
+    const members: Record<string, number> = { g0: 0, g1: 3, g2: 2 };
+    const billable = gate1BillableGroups(groups, () => true, (g) => members[g.groupId]);
+    expect(billable.map((g) => g.groupId)).toEqual(["g1", "g2"]);
+    // the Continue payload is built from the SAME list the price counts
+    expect(gate1ScopePayload(billable.map((g) => g.groupId), () => true)).toEqual({ gate1Scope: ["g1", "g2"] });
   });
 
   test("@gate1 Continue sends exactly the groups Gate 1 shows in scope, in row order", () => {

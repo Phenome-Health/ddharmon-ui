@@ -336,3 +336,16 @@ export function gate1ScopePayload(
 ): { gate1Scope: string[] } {
   return { gate1Scope: groupIds.filter(isInScope) };
 }
+
+/**
+ * The groups Gate 1 PRICES and SENDS: in scope AND still holding a member. One function for both, because the
+ * price used to filter emptied groups while the Continue payload did not — an in-scope group whose variables
+ * were all moved out read "$0" on the bar yet was frozen into scope and billed (08-27 audit B3).
+ */
+export function gate1BillableGroups<G extends { groupId: string }>(
+  groups: readonly G[],
+  isInScope: (groupId: string) => boolean,
+  memberCount: (group: G) => number,
+): G[] {
+  return groups.filter((g) => isInScope(g.groupId) && memberCount(g) > 0);
+}

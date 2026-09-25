@@ -40,7 +40,7 @@ import {
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
-import { gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { gate1BillableGroups, gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
@@ -2514,9 +2514,7 @@ export default function Gate1Page() {
   // An EMPTIED group buys nothing at Gate 2 — there is no membership left to assign — so it drops out of
   // the price without the reviewer having to also untick it. The row still renders and still says what
   // happened; what it no longer does is quote a charge for work that cannot be done.
-  const inScopeGroups = groups.filter(
-    (g) => isInScope(g.groupId) && memberCount(g) > 0,
-  );
+  const inScopeGroups = gate1BillableGroups(groups, isInScope, memberCount);
 
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
   const nCrossCohort = groups.filter((g) => g.crossCohort).length;
@@ -2699,8 +2697,9 @@ export default function Gate1Page() {
       const { target } = await resumeRun(
         jobId,
         undefined,
+        // the SAME list the commit bar prices (08-27 audit B3)
         gate1ScopePayload(
-          groups.map((g) => g.groupId),
+          inScopeGroups.map((g) => g.groupId),
           isInScope,
         ),
       );
