@@ -79,6 +79,22 @@ registry.register(
 
 registry.register(ArtifactKind(name=ANALYSIS_IDEAS))  # singleton: no identity function
 
+#: A model's PROPOSED component list for one score document (08-16e) — a paid answer kept so the same text is
+#: never charged twice on the same run. Keyed on the extracted text's sha256 (the handle the free read already
+#: returns) plus the model that read it. NOT a decision and NOT a declaration: nothing reads it as the
+#: reviewer's statement — accepting a proposal writes ordinary ``composite_swap`` rows, exactly as typing does.
+SCORE_COMPONENT_PROPOSAL = "score_component_proposal"
+
+
+def _proposal_identity(payload: dict[str, Any]) -> str:
+    digest = str(payload.get("sha256") or "").strip()
+    if not digest:
+        raise ValueError("a component proposal needs the sha256 of the text it was read from")
+    return f"{digest}|{str(payload.get('model') or '').strip()}"
+
+
+registry.register(ArtifactKind(name=SCORE_COMPONENT_PROPOSAL, identity=_proposal_identity))
+
 
 # -- gate decisions (08 staged review gates) --------------------------------------------------
 #
