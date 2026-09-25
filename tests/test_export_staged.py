@@ -159,11 +159,19 @@ def parked(monkeypatch, tmp_path):
         yield client, park
 
 
-def _put(client, job_id: str, kind: str, payload: dict) -> None:
+def _put(client, job_id: str, kind: str, payload: dict, subject: str | None = None) -> None:
+    """Seed a decision AS IF it was made at its own gate.
+
+    Written straight to the artifact store, not through the route: the fixture parks the run at Gate 3/4 first,
+    and the server now refuses writes to gates a run has passed (08-27 audit B4) — which is exactly right in
+    production, where each decision was made while its gate was open.
+    """
+    from backend.jobs import principal_of
+
     alternatives = payload.pop("alternatives", [payload["chosen"]])
     body = {**payload, "alternatives": alternatives, "optionSetKey": option_set_key(alternatives)}
-    r = client.put(f"/api/harmonize/jobs/{job_id}/artifacts/{kind}", json=body)
-    assert r.status_code == 200, r.text
+    job = app_module.store.get(job_id)
+    app_module.store.artifacts.put(owner=principal_of(subject, job), job_id=job_id, kind=kind, payload=body, pinned=False)
 
 
 def _rows(text: str, sep: str) -> list[dict[str, str]]:
@@ -395,9 +403,13 @@ def test_the_export_is_scoped_to_the_caller(parked, monkeypatch):
     monkeypatch.delenv("DDHARMON_ALLOWED_EMAIL_DOMAINS", raising=False)
     monkeypatch.setattr(auth, "_decode_claims", lambda token: {"email": f"{token}@x.org", "sub": token})
     a = {"Authorization": "Bearer user_A"}
-    alts = ["Age in years", "Participant age"]
-    body = {"groupId": "c0#g0", "chosen": "Participant age", "alternatives": alts, "optionSetKey": option_set_key(alts)}
-    assert client.put(f"/api/harmonize/jobs/{job_id}/artifacts/gate1_rename", json=body, headers=a).status_code == 200
+    _put(
+        client,
+        job_id,
+        "gate1_rename",
+        {"groupId": "c0#g0", "chosen": "Participant age", "alternatives": ["Age in years", "Participant age"]},
+        subject="user_A",
+    )
 
     mine = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "eitl_tsv"}, headers=a)
     assert mine.status_code == 200
