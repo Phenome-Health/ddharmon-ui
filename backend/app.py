@@ -911,11 +911,6 @@ def resume_run(
     if not job.dict_specs or not job.config.get("work_dir"):
         raise HTTPException(status_code=409, detail="This run predates resumable gates (no retained uploads)")
 
-    cde_set = job.config.get("cde_set", "endorsed")
-    cde_path = CDE_FILES.get(cde_set)
-    if cde_path is None or not cde_path.exists():
-        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
-    cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
     # Gate 4 is a PURE READ of the result the run already has (UI-SPEC §0.1, and the comment above
     # `_GATE_STOP_MECHANISM`): there is no stage left to run, so this leg spawns NO worker. It carries the
     # finished payload forward under the new position and returns. Re-running the pipeline to reach a
@@ -938,6 +933,13 @@ def resume_run(
             realized_cost=ckpt.realized_cost,
         )
         return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
+    # The catalog is needed only by a leg that spawns a worker — checked AFTER the Gate 4 pure-read branch, so a
+    # server without a catalog can still carry a finished run to its export screen.
+    cde_set = job.config.get("cde_set", "endorsed")
+    cde_path = CDE_FILES.get(cde_set)
+    if cde_path is None or not cde_path.exists():
+        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
+    cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
     # Pre-flight the provider key BEFORE committing the gate and spawning the worker. Past Gate 4 this leg
     # makes a PAID call, and the BYOK key clears on a browser reload — discovering it missing deep in the
     # generating stage errors the whole run and wipes the served gate state (the keyless-wipes-gate-state

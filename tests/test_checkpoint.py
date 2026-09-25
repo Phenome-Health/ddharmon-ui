@@ -1752,3 +1752,14 @@ def test_the_server_refuses_decisions_on_a_gate_the_run_has_passed(monkeypatch, 
         app_module.store.update("pz", gate_position=None)
         r = c.put("/api/harmonize/jobs/pz/artifacts/gate1_group_scope", json={**base, "groupId": "g0"})
         assert r.status_code == 200, r.text
+
+
+def test_continuing_to_gate_4_does_not_need_the_cde_catalog(monkeypatch, tmp_path):
+    """Gate 4 is a pure read with no worker, so a missing CDE catalog must not refuse it (found live on :8001:
+    "CDE catalog 'endorsed' is unavailable on the server" at Gate 3 → Continue)."""
+    _scope_fixture(monkeypatch, tmp_path, "nc", "gate3", ["g0"])
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": tmp_path / "missing.tsv", "full": tmp_path / "missing.tsv"})
+    with TestClient(app_module.app) as c:
+        r = c.post("/api/harmonize/resume/nc", headers={"x-anthropic-key": "sk-test"})
+    assert r.status_code == 200, r.text
+    assert r.json()["target"] == "gate4"
