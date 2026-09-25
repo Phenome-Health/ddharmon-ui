@@ -138,7 +138,8 @@ const ACTION_OF: Record<GateDecisionKind, string> = {
   gate2_relation: "Set a relation",
   gate3_spec_edit: "Edited a transform spec",
   gate4_export_selection: "Chose export inclusion",
-  composite_swap: "Swapped a component",
+  // The only composite write is the DECLARATION of a component (08-27 audit) — swaps never persisted.
+  composite_swap: "Declared a score component",
 };
 
 export interface DecisionLogRow {
@@ -149,6 +150,10 @@ export interface DecisionLogRow {
   thing: string;
   /** The identifier currently taken. `""` (rendered as "none of these") when the reviewer cleared it. */
   chosen: string;
+  /** The concept's name for a group-keyed decision (the reviewer's rename, else the generated one). */
+  label?: string;
+  /** What the decision DID, in words — before → after where it is known. Replaces "→ chosen" when present. */
+  detail?: string;
   /** DERIVED: the upstream this decision depended on has since changed, so it may be out of date. */
   stale: boolean;
 }
@@ -162,24 +167,83 @@ export interface DecisionLogRow {
  * decision whose upstream changed is marked `stale`, which is how the log "shows superseded honestly"
  * without claiming an earlier choice never happened.
  */
-export function decisionLogRows(index: DecisionIndex): DecisionLogRow[] {
-  const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}${s.itemKey}`));
+export function decisionLogRows(
+  index: DecisionIndex,
+  result?: HarmonizationResult | null,
+): DecisionLogRow[] {
+  const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}${s.itemKey}`));
+  const records = new Map((result?.records ?? []).map((r) => [r.groupId, r]));
+  const renames = index.gate1_rename ?? {};
+  const nameOf = (gid: unknown): string | undefined => {
+    if (typeof gid !== "string" || !gid || gid === "__unassigned__") return undefined;
+    const renamed = renames[gid]?.chosen;
+    if (typeof renamed === "string" && renamed.trim()) return renamed.trim();
+    return records.get(gid)?.concept || gid;
+  };
   const rows: DecisionLogRow[] = [];
   for (const kind of GATE_DECISION_KINDS) {
+    // Scope is summarised, not listed: one row per group buried ~20 real edits under 1,234 scope rows on the
+    // live run (08-27 audit). See `scopeSummary`.
+    if (kind === "gate1_group_scope") continue;
     const byItem = index[kind];
     if (!byItem) continue;
     for (const [itemKey, decision] of Object.entries(byItem)) {
+      const d = decision as GateDecision;
+      const gid = typeof d.groupId === "string" ? d.groupId : undefined;
       rows.push({
         kind,
         gate: GATE_OF[kind],
         action: ACTION_OF[kind],
         thing: itemKey,
-        chosen: String(decision.chosen ?? ""),
-        stale: stale.has(`${kind}${itemKey}`),
+        chosen: String(d.chosen ?? ""),
+        label: gid ? nameOf(gid) : undefined,
+        detail: detailOf(kind, d, nameOf, gid ? records.get(gid) : undefined),
+        stale: stale.has(`${kind}${itemKey}`),
       });
     }
   }
   return rows;
+}
+
+/** Gate 1 scope, as counts — the log shows this line instead of one row per group. */
+export function scopeSummary(index: DecisionIndex): { in: number; out: number } {
+  const all = Object.values(index.gate1_group_scope ?? {});
+  return {
+    in: all.filter((d) => String(d.chosen) === "in").length,
+    out: all.filter((d) => String(d.chosen) === "out").length,
+  };
+}
+
+function detailOf(
+  kind: GateDecisionKind,
+  d: GateDecision,
+  nameOf: (gid: unknown) => string | undefined,
+  record: { candidates?: { cdeId: string; isChosen?: boolean }[] } | undefined,
+): string | undefined {
+  const q = (t: unknown) => `“${String(t)}”`;
+  switch (kind) {
+    case "gate1_regroup":
+      return `from ${nameOf(d.fromGroupId) ?? "no group"} to ${nameOf(d.chosen) ?? "no group"}`;
+    case "gate1_rename":
+      return typeof d.generatedName === "string" ? `${q(d.generatedName)} → ${q(d.chosen)}` : `→ ${q(d.chosen)}`;
+    case "gate2_candidate_pick": {
+      if (d.chosen === "") return d.gencdeEdit ? "your own CDE, edited" : "none of these";
+      const model = record?.candidates?.find((c) => c.isChosen)?.cdeId;
+      const edited = d.gencdeEdit ? ", anchor edited" : "";
+      return model && model !== d.chosen ? `${String(d.chosen)} (model picked ${model})${edited}` : `${String(d.chosen)}${edited}`;
+    }
+    case "gate3_spec_edit": {
+      const parts: string[] = [];
+      if (d.rejected === true) parts.push("rejected");
+      if (d.mapping != null) parts.push("value map edited");
+      if (d.numberMap != null) parts.push("number map edited");
+      if (d.bins != null) parts.push("binning edited");
+      if (typeof d.note === "string" && d.note.trim()) parts.push(`note: ${q(d.note.trim())}`);
+      return parts.length ? parts.join(" · ") : "saved with no change";
+    }
+    default:
+      return undefined;
+  }
 }
 
 export function decisionCount(index: DecisionIndex): number {

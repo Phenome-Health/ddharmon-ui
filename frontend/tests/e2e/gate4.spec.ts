@@ -9,6 +9,7 @@ import {
   REAL_ARTIFACTS,
   SUBSTANTIVE_EDIT_KINDS,
   decisionLogRows,
+  scopeSummary,
   downloadLabel,
   previewFor,
   resolveFormat,
@@ -134,6 +135,40 @@ test("@gate4 the decision log enumerates every kind and marks nothing stale with
   expect(rows.find((r) => r.kind === "gate1_rename")?.gate).toBe("Gate 1");
   expect(rows.find((r) => r.kind === "gate2_candidate_pick")?.chosen).toBe("CDE:42");
   expect(rows.every((r) => r.stale === false)).toBe(true);
+});
+
+test("@gate4 the decision log says WHAT each decision did, by name, with scope collapsed (08-27 audit)", () => {
+  const d = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
+  const index: DecisionIndex = {
+    gate1_group_scope: { g0: d({ groupId: "g0", chosen: "in" }), g1: d({ groupId: "g1", chosen: "out" }), g2: d({ groupId: "g2", chosen: "out" }) },
+    gate1_regroup: { "A:x": d({ memberId: "A:x", chosen: "__unassigned__", fromGroupId: "g0" }) },
+    gate1_rename: { g0: d({ groupId: "g0", chosen: "Smoked 100", generatedName: "Tobacco use" }) },
+    gate2_candidate_pick: {
+      g0: d({ groupId: "g0", chosen: "Reviewer CDE" }),
+      g1: d({ groupId: "g1", chosen: "", gencdeEdit: { definition: "mine" } }),
+    },
+    gate3_spec_edit: { "A:y": d({ sourceVariable: "A:y", chosen: "", rejected: true, note: "wrong target" }) },
+    composite_swap: { "S|grip": d({ scoreName: "S", componentName: "grip", chosen: "" }) },
+  };
+  const result = {
+    records: [
+      { groupId: "g0", concept: "Tobacco use", members: ["A:y"], candidates: [{ cdeId: "Model CDE", isChosen: true }, { cdeId: "Reviewer CDE" }] },
+      { groupId: "g1", concept: "Vaping", members: [], candidates: [] },
+    ],
+  } as unknown as HarmonizationResult;
+  const rows = decisionLogRows(index, result);
+  expect(rows.some((r) => r.kind === "gate1_group_scope")).toBe(false); // collapsed, not 3 rows
+  expect(scopeSummary(index)).toEqual({ in: 1, out: 2 });
+  const by = (k: string) => rows.find((r) => r.kind === k)!;
+  expect(by("gate1_regroup").detail).toBe("from Smoked 100 to no group"); // the reviewer's name wins
+  expect(by("gate1_rename").detail).toBe("“Tobacco use” → “Smoked 100”");
+  const picks = rows.filter((r) => r.kind === "gate2_candidate_pick");
+  expect(picks.find((r) => r.thing === "g0")!.label).toBe("Smoked 100");
+  expect(picks.find((r) => r.thing === "g1")!.label).toBe("Vaping");
+  expect(picks.find((r) => r.thing === "g0")!.detail).toBe("Reviewer CDE (model picked Model CDE)");
+  expect(picks.find((r) => r.thing === "g1")!.detail).toBe("your own CDE, edited");
+  expect(by("gate3_spec_edit").detail).toBe("rejected · note: “wrong target”");
+  expect(by("composite_swap").action).toBe("Declared a score component");
 });
 
 test("@gate4 a preview is REAL generated content, not a description", () => {

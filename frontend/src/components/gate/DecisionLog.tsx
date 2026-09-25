@@ -4,6 +4,7 @@ import type { HarmonizationResult } from "@/types";
 import {
   decisionCount,
   decisionLogRows,
+  scopeSummary,
   formatRevisionPct,
   revisionRate,
 } from "@/lib/gate4";
@@ -37,7 +38,8 @@ export function DecisionLog({
   /** The run's config — carries the frozen Gate 1 scope the revision rate denominates over. */
   config?: Record<string, unknown> | null;
 }) {
-  const rows = decisionLogRows(index);
+  const rows = decisionLogRows(index, result);
+  const scope = scopeSummary(index);
   const total = decisionCount(index);
   const rr = revisionRate(index, result, coreVersion ?? "", config);
 
@@ -80,6 +82,13 @@ export function DecisionLog({
             </span>
           </p>
 
+          {scope.in + scope.out > 0 && (
+            <p data-testid="decision-scope-summary" className="text-xs text-on-raised-muted">
+              <span className="inline-flex min-w-16 rounded-inner bg-surface-inset px-2 py-0.5 font-semibold">Gate 1</span>{" "}
+              Scope set on {scope.in + scope.out} {scope.in + scope.out === 1 ? "group" : "groups"}:{" "}
+              <span className="font-semibold text-on-raised">{scope.in} in</span>, {scope.out} out.
+            </p>
+          )}
           <ul className="flex flex-col divide-y divide-rule-on-raised">
             {rows.map((r) => (
               <li
@@ -93,10 +102,20 @@ export function DecisionLog({
                   {r.gate}
                 </span>
                 <span className="text-sm text-on-raised">{r.action}</span>
-                <span className="truncate font-mono text-xs text-on-raised-muted" title={r.thing}>
-                  {r.thing}
-                </span>
-                {r.chosen !== "" ? (
+                {r.label ? (
+                  <span className="truncate text-xs font-semibold text-on-raised" title={r.thing}>
+                    {r.label}
+                  </span>
+                ) : (
+                  <span className="truncate font-mono text-xs text-on-raised-muted" title={r.thing}>
+                    {r.thing}
+                  </span>
+                )}
+                {r.detail !== undefined ? (
+                  <span data-testid="decision-detail" className="text-xs text-on-raised-muted">
+                    {r.detail}
+                  </span>
+                ) : r.chosen !== "" ? (
                   <span className="font-mono text-xs text-on-raised-faint">→ {r.chosen}</span>
                 ) : (
                   <span className="text-xs text-on-raised-faint">→ none of these</span>
