@@ -45,6 +45,7 @@ from backend import batch_reconcile
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
     GATE1_GROUP_SCOPE,
+    GATE2_CANDIDATE_PICK,
     GATE_DECISION_KINDS,
     accept_gencde,
     derive_staleness,
@@ -840,6 +841,28 @@ def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, An
     return kept
 
 
+def _gate2_picks(job: Job, subject: str | None, in_scope: list[str] | None) -> dict[str, dict[str, Any]]:
+    """The reviewer's persisted Gate 2 picks, ``{groupId: {chosen, gencdeEdit}}`` — what the Gate 3 leg honours.
+
+    The adapter decides which of these actually CHANGE a record (a pick naming the model's own CDE is a
+    confirmation and costs nothing). A pick on a group Gate 1 scoped out is dropped: that group was never
+    assigned, so re-targeting it would pay for specs on work the reviewer declined.
+    """
+    keep = set(in_scope) if in_scope is not None else None
+    out: dict[str, dict[str, Any]] = {}
+    for d in (store.artifacts_for(job, subject) or {}).get(GATE2_CANDIDATE_PICK) or []:
+        gid = d.get("groupId")
+        if not isinstance(gid, str) or not gid or (keep is not None and gid not in keep):
+            continue
+        chosen = d.get("chosen")
+        edit = d.get("gencdeEdit")
+        out[gid] = {
+            "chosen": chosen if isinstance(chosen, str) else "",
+            "gencdeEdit": edit if isinstance(edit, dict) else None,
+        }
+    return out
+
+
 # Where the Gate-1 scope is frozen on the run's config — read by every later leg and by the Gate 2/3 display.
 GATE1_SCOPE_CONFIG_KEY = "gate1_scope"
 
@@ -953,6 +976,12 @@ def resume_run(
     in_scope = _gate1_assign_scope(job, subject, groups)
     if in_scope is not None:
         run_config["assign_group_ids"] = in_scope
+    # 08-27b: the leg INTO Gate 3 generates the transform specs, so it must build them for the target the
+    # reviewer picked at Gate 2, not the model's. Only this leg reads the picks: they are Gate 2's output.
+    if target == "gate3":
+        picks = _gate2_picks(job, subject, in_scope)
+        if picks:
+            run_config["gate2_picks"] = picks
     # A resume starts a NEW LEG, so its stage timeline starts empty (08-26, live-test-2 #5). Phase starts are
     # stamped with setdefault, so the first leg's loading/embedding/clustering stamps (and the park stamp) would
     # otherwise survive, this leg's own entries into those phases would be dropped, and the progress panel

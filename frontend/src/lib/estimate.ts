@@ -261,7 +261,7 @@ export const GATE_LEDGER_KEYS: Record<GatePosition, string[]> = {
   gate0: [], // load → preprocess → embed: local, no provider call
   gate1: ["generating", "splitting", "judging", "kinds"],
   gate2: ["assigning", "gencde"],
-  gate3: ["specs", "refine", "concept_gate"],
+  gate3: ["specs", "specs_repick", "refine", "concept_gate"], // specs_repick: 08-27b Gate 2 re-pick regeneration
   gate4: [], // a terminal read
 };
 

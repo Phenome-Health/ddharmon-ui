@@ -221,6 +221,27 @@ export function targetValuesFromSpecs(
 }
 
 /**
+ * 08-27b: the targets a concept's specs were built for that are NOT the target Gate 3 shows — empty when they
+ * agree. Since 08-27b the backend regenerates a Gate 2 re-pick's specs for the reviewer's target, so a
+ * non-empty answer means the run crossed Gate 2 -> Gate 3 before that fix (its specs are the model's) and the
+ * screen must say so instead of labelling them with the pick. `alsoAccepted` covers a refine record, whose
+ * derived element is a legitimate second target of the model's own specs. No specs is never a mismatch.
+ */
+export function specTargetMismatch(
+  transforms: UITransform[],
+  expectedTargetId: string,
+  alsoAccepted: string[] = [],
+): string[] {
+  const ok = new Set([expectedTargetId, ...alsoAccepted]);
+  const off: string[] = [];
+  for (const t of transforms) {
+    const id = t.targetCdeId ?? "";
+    if (!ok.has(id) && !off.includes(id)) off.push(id);
+  }
+  return off;
+}
+
+/**
  * The four value-recode surfaces, and the ONE rule for choosing between them: the surface follows the
  * TARGET's type, not the source's coded options and not the pipeline's transform kind.
  *

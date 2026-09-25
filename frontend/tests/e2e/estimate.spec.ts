@@ -104,7 +104,7 @@ test.describe("run estimate", () => {
     // judge reports under an existing phase and carries its own cost key (WINDOWS id20).
     expect(GATE_LEDGER_KEYS.gate1).toEqual(["generating", "splitting", "judging", "kinds"]);
     expect(GATE_LEDGER_KEYS.gate2).toEqual(["assigning", "gencde"]);
-    expect(GATE_LEDGER_KEYS.gate3).toEqual(["specs", "refine", "concept_gate"]);
+    expect(GATE_LEDGER_KEYS.gate3).toEqual(["specs", "specs_repick", "refine", "concept_gate"]);
     expect(GATE_LEDGER_KEYS.gate0).toEqual([]);
     expect(GATE_LEDGER_KEYS.gate4).toEqual([]);
   });

@@ -214,6 +214,18 @@ export interface UIRecord {
   conceptMismatch?: boolean;
   /** Present only on a re-adjudication child: the parent group id it was carved from. */
   readjudicatedFrom?: string;
+  /** 08-27b: present only when the Gate 2 pick CHANGED this record's target (specs regenerated for it). */
+  reviewerPick?: ReviewerPick;
+}
+
+/** How a Gate 2 pick re-targeted a record. `target` is what the record's transforms were generated for. */
+export interface ReviewerPick {
+  chosen: string;
+  kind: "catalog" | "gencde" | "none";
+  target: string;
+  modelTarget: string;
+  /** Non-empty when no specs could be generated (e.g. "none of these" with nothing to fall back on). */
+  reason: string;
 }
 
 export interface PromptCounts {
