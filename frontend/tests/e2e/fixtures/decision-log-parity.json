@@ -1,0 +1,431 @@
+{
+ "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations.",
+ "result": {
+  "records": [
+   {
+    "id": "c0#g0",
+    "clusterId": "c0",
+    "groupId": "c0#g0",
+    "concept": "Age in years",
+    "verdict": "adopt",
+    "route": "assigned",
+    "cde": {
+     "id": "AgeCDE",
+     "externalId": "tiny-age"
+    },
+    "idealCde": "ideal Age in years",
+    "gencde": null,
+    "cosines": {
+     "top1": 0.8,
+     "chosen": 0.8
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 2,
+    "cohorts": [
+     "A",
+     "B"
+    ],
+    "members": [
+     "A:age",
+     "B:age_yrs"
+    ],
+    "memberDetails": [],
+    "transforms": [],
+    "candidates": [
+     {
+      "rank": 1,
+      "cdeId": "AgeCDE",
+      "cdeExternalId": "tiny-age",
+      "definition": "AgeCDE definition",
+      "cosine": 0.8,
+      "isChosen": true,
+      "llmSuggested": true
+     },
+     {
+      "rank": 2,
+      "cdeId": "AgeAtVisitCDE",
+      "cdeExternalId": "tiny-visit",
+      "definition": "AgeAtVisitCDE definition",
+      "cosine": 0.7,
+      "isChosen": false,
+      "llmSuggested": false
+     }
+    ],
+    "rationale": "because",
+    "decidedBy": "llm"
+   },
+   {
+    "id": "c1#g0",
+    "clusterId": "c1",
+    "groupId": "c1#g0",
+    "concept": "Smoking status",
+    "verdict": "refine",
+    "route": "assigned",
+    "cde": {
+     "id": "SmokeCDE",
+     "externalId": "tiny-smoke"
+    },
+    "idealCde": "ideal Smoking status",
+    "gencde": null,
+    "cosines": {
+     "top1": 0.8,
+     "chosen": 0.8
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 2,
+    "cohorts": [
+     "A",
+     "B"
+    ],
+    "members": [
+     "A:smoke",
+     "B:smk"
+    ],
+    "memberDetails": [],
+    "transforms": [
+     {
+      "sourceVariable": "A:smoke",
+      "targetCdeId": "SmokeCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "1": "Yes",
+       "2": "No"
+      },
+      "unmappedSourceCodes": []
+     },
+     {
+      "sourceVariable": "B:smk",
+      "targetCdeId": "SmokeCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "Y": "Yes",
+       "N": "No"
+      },
+      "unmappedSourceCodes": []
+     }
+    ],
+    "candidates": [
+     {
+      "rank": 1,
+      "cdeId": "SmokeCDE",
+      "cdeExternalId": "tiny-smoke",
+      "definition": "SmokeCDE definition",
+      "cosine": 0.8,
+      "isChosen": true,
+      "llmSuggested": true
+     },
+     {
+      "rank": 2,
+      "cdeId": "TobaccoCDE",
+      "cdeExternalId": "tiny-tob",
+      "definition": "TobaccoCDE definition",
+      "cosine": 0.7,
+      "isChosen": false,
+      "llmSuggested": false
+     }
+    ],
+    "rationale": "because",
+    "decidedBy": "llm"
+   },
+   {
+    "id": "c2#g0",
+    "clusterId": "c2",
+    "groupId": "c2#g0",
+    "concept": "Hair colour",
+    "verdict": "novel",
+    "route": "gencde_residual",
+    "cde": null,
+    "idealCde": "ideal Hair colour",
+    "gencde": {
+     "isGenerated": true,
+     "gencdeId": "GEN:hair",
+     "preferredName": "Hair colour"
+    },
+    "cosines": {
+     "top1": 0.8,
+     "chosen": null
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 1,
+    "cohorts": [
+     "A"
+    ],
+    "members": [
+     "A:hair"
+    ],
+    "memberDetails": [],
+    "transforms": [],
+    "candidates": [],
+    "rationale": "because",
+    "decidedBy": "llm"
+   }
+  ],
+  "conceptGroups": [
+   {
+    "groupId": "c0#g0",
+    "concept": "Age in years"
+   }
+  ]
+ },
+ "config": {
+  "gate1_scope": [
+   "c0#g0",
+   "c1#g0"
+  ]
+ },
+ "grouped": {
+  "gate1_group_scope": [
+   {
+    "groupId": "c2#g0",
+    "chosen": "out",
+    "alternatives": [
+     "in",
+     "out"
+    ],
+    "optionSetKey": "07fe4899a4e9f9da"
+   }
+  ],
+  "gate1_rename": [
+   {
+    "groupId": "c0#g0",
+    "chosen": "Participant âge",
+    "generatedName": "Age in years",
+    "alternatives": [
+     "Participant âge"
+    ],
+    "optionSetKey": "fb714030c8aaf1fe"
+   }
+  ],
+  "gate1_regroup": [
+   {
+    "memberId": "B:age_yrs",
+    "fromGroupId": "c0#g0",
+    "chosen": "c1#g0",
+    "alternatives": [
+     "c0#g0",
+     "",
+     "c1#g0"
+    ],
+    "optionSetKey": "fdbd36e5b4032979"
+   }
+  ],
+  "gate2_candidate_pick": [
+   {
+    "groupId": "c0#g0",
+    "chosen": "AgeAtVisitCDE",
+    "gencdeEdit": {
+     "name": "Age, visit",
+     "definition": "x",
+     "units": "years",
+     "values": ""
+    },
+    "alternatives": [
+     "AgeCDE",
+     "AgeAtVisitCDE"
+    ],
+    "optionSetKey": "9104df8e9cb8bfa4"
+   },
+   {
+    "groupId": "c2#g0",
+    "chosen": "",
+    "alternatives": [],
+    "optionSetKey": "e3b0c44298fc1c14"
+   },
+   {
+    "groupId": "c1#g0",
+    "chosen": "TobaccoCDE",
+    "alternatives": [
+     "SmokeCDE",
+     "TobaccoCDE"
+    ],
+    "optionSetKey": "96b5671d9778d0ac"
+   }
+  ],
+  "gate3_spec_edit": [
+   {
+    "sourceVariable": "A:smoke",
+    "chosen": "A:smoke",
+    "note": "checked, ok",
+    "mapping": {
+     "2": "Never",
+     "1": "Current"
+    },
+    "upstream": {
+     "kind": "gate2_candidate_pick",
+     "itemKey": "c1#g0",
+     "contentKey": "deadbeefdeadbeef"
+    },
+    "alternatives": [
+     "A:smoke"
+    ],
+    "optionSetKey": "aeba81f34fc8486e"
+   },
+   {
+    "sourceVariable": "B:smk",
+    "chosen": "",
+    "rejected": true,
+    "alternatives": [
+     "B:smk"
+    ],
+    "optionSetKey": "7d97f6a4e5beb7f8"
+   }
+  ],
+  "verdict": [
+   {
+    "recordId": "c1#g0",
+    "axis": "match",
+    "decision": "approve",
+    "note": "fine"
+   }
+  ]
+ },
+ "columns": [
+  "gate",
+  "kind",
+  "action",
+  "item",
+  "before",
+  "after",
+  "note",
+  "detail",
+  "stale"
+ ],
+ "expectedRows": [
+  [
+   "Gate 1",
+   "gate1_scope_frozen",
+   "Continued with this scope",
+   "",
+   "",
+   "2 groups in scope",
+   "",
+   "[\"c0#g0\",\"c1#g0\"]",
+   "false"
+  ],
+  [
+   "Gate 1",
+   "gate1_group_scope",
+   "Set group scope",
+   "c2#g0",
+   "",
+   "out",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 1",
+   "gate1_regroup",
+   "Moved a variable",
+   "B:age_yrs",
+   "c0#g0",
+   "c1#g0",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 1",
+   "gate1_rename",
+   "Renamed a group",
+   "c0#g0",
+   "Age in years",
+   "Participant âge",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c0#g0",
+   "AgeCDE",
+   "AgeAtVisitCDE",
+   "",
+   "{\"gencdeEdit\":{\"definition\":\"x\",\"name\":\"Age, visit\",\"units\":\"years\",\"values\":\"\"}}",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c2#g0",
+   "none of these",
+   "none of these",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c1#g0",
+   "SmokeCDE",
+   "TobaccoCDE",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "A:smoke",
+   "categorical {\"1\":\"Yes\",\"2\":\"No\"}",
+   "edited",
+   "checked, ok",
+   "{\"mapping\":{\"1\":\"Current\",\"2\":\"Never\"}}",
+   "true"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "B:smk",
+   "categorical {\"N\":\"No\",\"Y\":\"Yes\"}",
+   "rejected",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Workbench",
+   "verdict",
+   "Recorded a verdict",
+   "c1#g0|match",
+   "",
+   "approve",
+   "fine",
+   "",
+   "false"
+  ]
+ ],
+ "legacyDecisions": {
+  "c1#g0": {
+   "decision": "approve",
+   "note": "fine"
+  }
+ }
+}

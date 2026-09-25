@@ -1,4 +1,4 @@
-import type { ExportFormat, HarmonizationResult } from "@/types";
+import type { ExportFormat, HarmonizationResult, UIRecord, UITransform } from "@/types";
 import {
   GATE_DECISION_KINDS,
   type DecisionIndex,
@@ -52,7 +52,8 @@ export const REAL_ARTIFACTS: readonly RealArtifact[] = [
   {
     id: "decisions_csv",
     name: "Decision log (CSV)",
-    description: "Your approve / refine / reject decisions for this run — the audit trail that defends the export.",
+    description:
+      "Every decision you made at Gates 1–4, with what it changed from and to — the audit trail that defends the export.",
     filename: "decisions_csv.csv",
   },
   {
@@ -250,6 +251,139 @@ export function decisionCount(index: DecisionIndex): number {
   return GATE_DECISION_KINDS.reduce((n, kind) => n + Object.keys(index[kind] ?? {}).length, 0);
 }
 
+// --- the decision-log CSV (08-27) -------------------------------------------------------------------------
+
+/**
+ * The columns of the downloaded decision log on a staged run — `backend/export_decisions.py::DECISION_LOG_COLS`.
+ */
+export const DECISION_LOG_CSV_COLS = ["gate", "kind", "action", "item", "before", "after", "note", "detail", "stale"];
+
+/** The label a cleared choice (`chosen === ""`) reads as — `NONE_OF_THESE` in the backend. */
+const NONE_OF_THESE = "none of these";
+const SPEC_EDIT_FIELDS = ["mapping", "numberMap", "bins"] as const;
+
+/**
+ * Compact, key-sorted JSON — byte-identical to the backend's `_j` (`sort_keys`, no spaces, unescaped), so a
+ * `detail` cell previews exactly as it downloads.
+ */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson((value as Record<string, unknown>)[k])}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+const clean = (s: unknown) => String(s ?? "").replace(/[\t\n\r]/g, " ");
+const chosenLabel = (v: unknown) => String(v ?? "") || NONE_OF_THESE;
+
+function modelPick(record: UIRecord | undefined): string {
+  const chosen = record?.candidates?.find((c) => c.isChosen);
+  if (chosen?.cdeId) return chosen.cdeId;
+  return record?.cde?.id ?? "";
+}
+
+function specSummary(t: UITransform | undefined): string {
+  if (!t) return "";
+  const kind = String(t.kind ?? "");
+  if (kind === "categorical" && t.codeMap && Object.keys(t.codeMap).length) return `categorical ${stableJson(t.codeMap)}`;
+  if (kind === "unit") return `unit ${t.sourceUnit || "?"} -> ${t.targetUnit || "?"}`;
+  if (kind === "arithmetic") return `arithmetic ${t.formula ?? ""}`;
+  return kind;
+}
+
+/**
+ * The decision log the `decisions_csv` download carries on a staged run, header first — the client mirror of
+ * `backend/export_decisions.py::decision_log_rows`, pinned to it by the shared parity fixture
+ * (`tests/e2e/fixtures/decision-log-parity.json`). One row per gate decision in gate order, preceded by the
+ * scope Gate 1's Continue froze and followed by any workbench verdicts; `before` is filled where the run
+ * knows it (the generated name, the variable's origin group, the model's pick, the model's recode).
+ */
+export function decisionLogCsvRows(
+  index: DecisionIndex,
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  verdicts: Record<string, LegacyVerdicts> | undefined,
+): string[][] {
+  const records = result?.records ?? [];
+  const byGroup = new Map(records.map((r) => [String(r.groupId || r.id || ""), r]));
+  const specBySource = new Map<string, UITransform>();
+  for (const r of records) for (const t of r.transforms ?? []) specBySource.set(String(t.sourceVariable ?? ""), t);
+  const groups = new Map((result?.conceptGroups ?? []).map((g) => [String(g.groupId ?? ""), g]));
+  const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}\u001f${s.itemKey}`));
+
+  const rows: string[][] = [DECISION_LOG_CSV_COLS];
+  const frozen = config?.gate1_scope;
+  if (Array.isArray(frozen)) {
+    rows.push(["Gate 1", "gate1_scope_frozen", "Continued with this scope", "", "", `${frozen.length} groups in scope`, "", stableJson(frozen), "false"]);
+  }
+  for (const kind of GATE_DECISION_KINDS) {
+    for (const [item, d] of Object.entries(index[kind] ?? {})) {
+      let before = "";
+      let after = chosenLabel(d.chosen);
+      let detail = "";
+      const note = typeof d.note === "string" ? d.note : "";
+      if (kind === "gate1_rename") {
+        const gid = String(d.groupId || item);
+        before = String(d.generatedName || byGroup.get(gid)?.concept || groups.get(gid)?.concept || "");
+      } else if (kind === "gate1_regroup") {
+        before = String(d.fromGroupId || "");
+      } else if (kind === "gate2_candidate_pick") {
+        before = byGroup.has(item) ? chosenLabel(modelPick(byGroup.get(item))) : "";
+        if (d.gencdeEdit && typeof d.gencdeEdit === "object") detail = stableJson({ gencdeEdit: d.gencdeEdit });
+      } else if (kind === "gate3_spec_edit") {
+        before = specSummary(specBySource.get(item));
+        const edit: Record<string, unknown> = {};
+        for (const f of SPEC_EDIT_FIELDS) if (isPresent(d[f])) edit[f] = d[f];
+        const edited = Object.keys(edit).length > 0;
+        after = d.rejected ? "rejected" : edited ? "edited" : "annotated";
+        if (edited) detail = stableJson(edit);
+      }
+      rows.push([GATE_OF[kind], kind, ACTION_OF[kind], item, before, after, note, detail, String(stale.has(`${kind}\u001f${item}`))]);
+    }
+  }
+  for (const [recordId, v] of Object.entries(verdicts ?? {})) {
+    if (v.decision) rows.push(["Workbench", "verdict", "Recorded a verdict", `${recordId}|match`, "", v.decision, v.note ?? "", "", "false"]);
+    for (const [sv, t] of Object.entries(v.transforms ?? {}))
+      rows.push(["Workbench", "verdict", "Recorded a verdict", `${recordId}|transform|${sv}`, "", t.decision ?? "", t.note ?? "", "", "false"]);
+    if (v.gencde?.decision)
+      rows.push(["Workbench", "verdict", "Recorded a verdict", `${recordId}|gencde`, "", v.gencde.decision, v.gencde.note ?? "", "", "false"]);
+  }
+  return rows.map((row) => row.map(clean));
+}
+
+/** Python's `if d.get(k)` truthiness for a JSON value: empty string / object / array are absent. */
+function isPresent(v: unknown): boolean {
+  if (v === null || v === undefined || v === false || v === 0 || v === "") return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v as object).length > 0;
+  return true;
+}
+
+/** One CSV line quoted the way Python's `csv.writer` quotes (minimal: only a field that needs it). */
+export function csvLine(row: string[]): string {
+  return row.map((c) => (/[",\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",");
+}
+
+/** The legacy per-record verdict mirror (`jobState.decisions`) — what a workbench verdict is served as. */
+export interface LegacyVerdicts {
+  decision?: string;
+  note?: string;
+  transforms?: Record<string, { decision?: string; note?: string }>;
+  gencde?: { decision?: string; note?: string };
+}
+
+/**
+ * Whether a run downloads the staged decision log rather than the legacy per-record verdict CSV — the
+ * backend's `is_staged`: the run is parked at a gate, or it carries any gate decision.
+ */
+export function isStagedExport(gatePosition: string | null | undefined, index: DecisionIndex): boolean {
+  return !!gatePosition || decisionCount(index) > 0;
+}
+
 // --- E3 revision rate (external-methods audit E3, P5 exclusion, P2 denominator) ------------------------
 
 /**
@@ -406,11 +540,22 @@ export function previewFor(
   id: RealArtifact["id"],
   lang: NotebookLang,
   result: HarmonizationResult | null | undefined,
-  decisions: Record<string, { decision?: string; note?: string }> | undefined,
+  decisions: Record<string, LegacyVerdicts> | undefined,
+  gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
 ): string {
   const records = (result?.records ?? []).slice(0, 3);
   const dec = decisions ?? {};
   if (records.length === 0) return "This run produced no concept records, so this artifact would be empty.";
+
+  // 08-27: on a staged run the download is the gate decision LOG, so the preview reads the same decisions
+  // (never the legacy verdict mirror, which no gate writes) through the backend's own row rule.
+  if (id === "decisions_csv" && gateLog && isStagedExport(gateLog.gatePosition, gateLog.index)) {
+    const rows = decisionLogCsvRows(gateLog.index, result, gateLog.config, decisions);
+    const shown = rows.slice(0, 13).map(csvLine);
+    if (rows.length === 1) shown.push("(no decisions recorded yet — the file will carry only this header)");
+    else if (rows.length > 13) shown.push(`… ${rows.length - 13} more decision(s) in the file`);
+    return shown.join("\n");
+  }
 
   if (id === "records_json") {
     return JSON.stringify(

@@ -41,12 +41,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
-from backend import batch_reconcile
+from backend import batch_reconcile, export_decisions
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
     GATE1_GROUP_SCOPE,
     GATE2_CANDIDATE_PICK,
     GATE_DECISION_KINDS,
+    VERDICT,
     accept_gencde,
     derive_staleness,
 )
@@ -250,10 +251,9 @@ _JOBS_PREFIX = "/api/harmonize/jobs/"
 # behind that by the pinned-run check.
 #
 # `export` is deliberately NOT here. Gate 4 renders the export SET, which is the records plus the decisions,
-# and both already arrive on `/result/` and `artifacts`. The export route performs no owner check of its own
-# (it takes no request and never resolves a subject), so putting it on the unauthenticated surface would
-# rest the entire cross-user boundary on this one prefix check. Downloading the artifact is the single Gate 4
-# action a guest signs in for.
+# and both already arrive on `/result/` and `artifacts`. The export route now resolves the caller and checks
+# visibility like its siblings (08-27: it folds in that caller's gate decisions), but the unauthenticated
+# surface stays minimal regardless — downloading the artifact is the single Gate 4 action a guest signs in for.
 _DEMO_SCOPED_JOB_READS = ("artifacts",)
 
 
@@ -1997,26 +1997,115 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
     )
 
 
+#: The staged-run additions to the EITL TSV, appended AFTER the legacy columns so every legacy column keeps its
+#: index (index-based consumers of the legacy file keep working). Present only on a staged run — a legacy
+#: one-shot run exports exactly the legacy header.
+_EITL_STAGED_COLS = [
+    "generatedConcept", "modelCdeId", "targetPickedBy", "gencdeEdit", "rejectedTransforms", "transformEdits",
+]  # fmt: skip
+
+
+def _export_payload(job: Job) -> dict[str, Any] | None:
+    """The result an export serializes: a parked run's checkpoint (D-02), else the finished run's result."""
+    ckpt = _checkpoint_for(job)
+    if ckpt is not None:
+        return ckpt.result
+    return job.result
+
+
 @app.get("/api/harmonize/jobs/{job_id}/export")
-def export(job_id: str, format: str = "eitl_tsv") -> Any:
+def export(job_id: str, request: Request, format: str = "eitl_tsv") -> Any:
+    """Serialize one run's export set in one format.
+
+    A STAGED run (parked at a gate, or carrying gate decisions) exports what the REVIEWER left: its payload is
+    read from the checkpoint the gates share, and the caller's own gate decisions are folded in by
+    :mod:`backend.export_decisions` — the single place they are applied, so every format agrees. A legacy
+    one-shot run exports byte-for-byte as it always has.
+
+    Owner-checked like its sibling read routes: gate decisions are per user, so the file is too.
+    """
+    subject = _subject(request)
     job = store.get(job_id)
-    if job is None or job.result is None:
+    if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found or not complete")
-    records: list[dict[str, Any]] = job.result["records"]
+    payload = _export_payload(job)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Job not found or not complete")
+    grouped = store.artifacts_for(job, subject)
+    if export_decisions.is_staged(job.gate_position, grouped or {}):
+        return _export_staged(job, payload, grouped or {}, format)
+    return _export_legacy(job, payload, format)
+
+
+def _download(body: str, fmt: str, ext: str, job_id: str) -> StreamingResponse:
+    media = "text/csv" if ext == "csv" else "text/tab-separated-values"
+    return StreamingResponse(
+        iter([body]),
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{fmt}_{job_id[:8]}.{ext}"'},
+    )
+
+
+def _notebook_response(result: dict[str, Any], fmt: str, job: Job) -> JSONResponse:
+    lang = "r" if fmt == "notebook_r" else "py"
+    nb = build_notebook(result, lang, job.display_name)
+    return JSONResponse(
+        nb,
+        media_type="application/x-ipynb+json",
+        headers={"Content-Disposition": f'attachment; filename="harmonization_{job.job_id[:8]}.{lang}.ipynb"'},
+    )
+
+
+def _eitl_order(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        records,
+        key=lambda r: (
+            _EITL_RANK.get(r["verdict"], 3),
+            r["cosines"]["top1"] if r["cosines"]["top1"] is not None else 0.0,
+        ),
+    )
+
+
+def _eitl_row(r: dict[str, Any], dec: dict[str, Any], n_transforms: int) -> list[Any]:
+    cde = r["cde"] or {}
+    return [
+        r["id"],
+        r["clusterId"],
+        r["groupId"],
+        _clean(r["concept"]),
+        r["verdict"],
+        r["route"],
+        cde.get("id", ""),
+        cde.get("externalId", ""),
+        _fmt(r["cosines"]["top1"]),
+        _fmt(r["cosines"]["chosen"]),
+        r["coverageGap"],
+        r["floored"],
+        r["crossCohort"],
+        r["nMembers"],
+        ";".join(r["cohorts"]),
+        _clean(";".join(r["members"])),
+        n_transforms,
+        _clean(r["idealCde"]),
+        _clean(r["rationale"]),
+        dec.get("decision", ""),
+        _clean(dec.get("note", "")),
+        _transform_decisions_json(dec),
+        _gencde_decision_json(dec),
+    ]
+
+
+def _export_legacy(job: Job, result: dict[str, Any], format: str) -> Any:
+    """The pre-08-27 export, unchanged: raw records plus the legacy workbench verdicts."""
+    records: list[dict[str, Any]] = result["records"]
     decisions = job.decisions
 
     if format in ("notebook_py", "notebook_r"):
-        lang = "r" if format == "notebook_r" else "py"
-        nb = build_notebook(job.result, lang, job.display_name)
-        return JSONResponse(
-            nb,
-            media_type="application/x-ipynb+json",
-            headers={"Content-Disposition": f'attachment; filename="harmonization_{job_id[:8]}.{lang}.ipynb"'},
-        )
+        return _notebook_response(result, format, job)
 
     if format == "records_json":
         return JSONResponse(
-            records, headers={"Content-Disposition": f'attachment; filename="records_{job_id[:8]}.json"'}
+            records, headers={"Content-Disposition": f'attachment; filename="records_{job.job_id[:8]}.json"'}
         )
 
     if format == "decisions_csv":
@@ -2024,13 +2113,7 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
     else:
         format = "eitl_tsv"
         cols, sep, ext = _EITL_COLS, "\t", "tsv"
-        rows = sorted(
-            records,
-            key=lambda r: (
-                _EITL_RANK.get(r["verdict"], 3),
-                r["cosines"]["top1"] if r["cosines"]["top1"] is not None else 0.0,
-            ),
-        )
+        rows = _eitl_order(records)
 
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=sep)
@@ -2053,39 +2136,61 @@ def export(job_id: str, format: str = "eitl_tsv") -> Any:
                 ]
             )
         else:
-            w.writerow(
-                [
-                    r["id"],
-                    r["clusterId"],
-                    r["groupId"],
-                    _clean(r["concept"]),
-                    r["verdict"],
-                    r["route"],
-                    cde.get("id", ""),
-                    cde.get("externalId", ""),
-                    _fmt(r["cosines"]["top1"]),
-                    _fmt(r["cosines"]["chosen"]),
-                    r["coverageGap"],
-                    r["floored"],
-                    r["crossCohort"],
-                    r["nMembers"],
-                    ";".join(r["cohorts"]),
-                    _clean(";".join(r["members"])),
-                    len(r["transforms"]),
-                    _clean(r["idealCde"]),
-                    _clean(r["rationale"]),
-                    dec.get("decision", ""),
-                    _clean(dec.get("note", "")),
-                    _transform_decisions_json(dec),
-                    _gencde_decision_json(dec),
-                ]
-            )
-    media = "text/csv" if ext == "csv" else "text/tab-separated-values"
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type=media,
-        headers={"Content-Disposition": f'attachment; filename="{format}_{job_id[:8]}.{ext}"'},
-    )
+            w.writerow(_eitl_row(r, dec, len(r["transforms"])))
+    return _download(buf.getvalue(), format, ext, job.job_id)
+
+
+def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], format: str) -> Any:
+    """A staged run's export: the effective records (see :mod:`backend.export_decisions`) in every format.
+
+    * ``eitl_tsv`` — the legacy columns over the effective records (``concept`` = the reviewer's name,
+      ``cdeId`` = the reviewer's pick, ``nTransforms`` counts non-rejected recodes), then
+      :data:`_EITL_STAGED_COLS` carrying what the reviewer changed and what the model had.
+    * ``records_json`` — the effective records, with the same additive keys.
+    * ``notebook_*`` — built over the effective records, so an edited recode is applied as edited and a
+      rejected one is left out (and listed as excluded).
+    * ``decisions_csv`` — the decision LOG: one row per gate decision with before -> after.
+    """
+    config = job.config or {}
+    records = export_decisions.effective_records(payload, config, grouped)
+
+    if format in ("notebook_py", "notebook_r"):
+        return _notebook_response({**payload, "records": records}, format, job)
+
+    if format == "records_json":
+        return JSONResponse(
+            records, headers={"Content-Disposition": f'attachment; filename="records_{job.job_id[:8]}.json"'}
+        )
+
+    buf = io.StringIO()
+    if format == "decisions_csv":
+        w = csv.writer(buf)
+        w.writerow(export_decisions.DECISION_LOG_COLS)
+        for row in export_decisions.decision_log_rows(payload, config, grouped):
+            w.writerow([_clean(c) for c in row])
+        return _download(buf.getvalue(), format, "csv", job.job_id)
+
+    from backend.db import _verdicts_to_legacy
+
+    decisions = _verdicts_to_legacy(grouped.get(VERDICT, [])) if grouped else job.decisions
+    w = csv.writer(buf, delimiter="\t")
+    w.writerow(_EITL_COLS + _EITL_STAGED_COLS)
+    for r in _eitl_order(records):
+        dec = decisions.get(r["id"], {})
+        model_cde = r.get("modelCde") or {}
+        edits = export_decisions.transform_edits(r)
+        w.writerow(
+            _eitl_row(r, dec, len(export_decisions.active_transforms(r)))
+            + [
+                _clean(r.get("generatedConcept", "")),
+                model_cde.get("id", ""),
+                r.get("targetPickedBy", "model"),
+                _clean(json.dumps(r["gencdeEdit"], sort_keys=True)) if r.get("gencdeEdit") else "",
+                ";".join(export_decisions.rejected_sources(r)),
+                _clean(json.dumps(edits, sort_keys=True)) if edits else "",
+            ]
+        )
+    return _download(buf.getvalue(), "eitl_tsv", "tsv", job.job_id)
 
 
 # --- demos (precomputed) ---------------------------------------------------------------------
