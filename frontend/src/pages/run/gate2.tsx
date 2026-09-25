@@ -22,7 +22,7 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
@@ -65,8 +65,9 @@ import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
  *
  * The generated ideal/GenCDE is produced before Gate 1, on the ORIGINAL grouping. If the reviewer moved
  * variables at Gate 1 (`gate1_regroup`), the anchor describes a grouping that no longer exists. That is
- * flagged here, and — per the 08-16g decision — the backend regenerates the anchor for changed groups when
- * the reviewer continues. Until it lands, the reviewer can also correct the anchor by hand below.
+ * flagged here. The 08-16g plan was for the backend to regenerate the anchor for changed groups on Continue;
+ * that never landed, and moves are not yet applied to matching at all (08-27 option C — core has no
+ * membership override yet), so the copy says exactly that and the reviewer can correct the anchor by hand.
  *
  * TWO PANES, ADAPTED FROM CDEMapper (Wang et al., JAMIA 2025;32:1130-1139, doi:10.1093/jamia/ocaf064,
  * Fig. 4) AND CREDITED ON SCREEN. The framing is fixed: convergent method, extended scope — never a recall
@@ -150,6 +151,9 @@ export default function Gate2Page() {
   // Read-only inheritance from Gate 1: scope decides which groups reach this screen; regroups decide which
   // groups' anchors lag their membership. Neither is written here.
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
+  // A Gate 1 rename is the group's name from here on (08-27 option C) — it only ever showed on Gate 1.
+  const renames = useGateDecisions(jobId, "gate1_rename", { pinned });
+  const labelOf = (r: UIRecord) => renamedLabel(conceptLabel(r), renames.decisions[r.groupId]);
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
 
   // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.
@@ -181,7 +185,7 @@ export default function Gate2Page() {
     let rows = records;
     if (q) {
       rows = rows.filter((r) => {
-        const hay = `${conceptLabel(r)} ${r.cohorts?.join(" ") ?? ""} ${r.members?.join(" ") ?? ""}`.toLowerCase();
+        const hay = `${labelOf(r)} ${r.cohorts?.join(" ") ?? ""} ${r.members?.join(" ") ?? ""}`.toLowerCase();
         return hay.includes(q);
       });
     }
@@ -191,11 +195,12 @@ export default function Gate2Page() {
       rows = [...rows].sort((a, b) => {
         if (colSort.key === "vars") return (a.nMembers - b.nMembers) * dir;
         if (colSort.key === "verdict") return (a.verdict ?? "").localeCompare(b.verdict ?? "") * dir;
-        return conceptLabel(a).localeCompare(conceptLabel(b)) * dir;
+        return labelOf(a).localeCompare(labelOf(b)) * dir;
       });
     }
     return rows;
-  }, [records, query, verdictFilter, colSort]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, query, verdictFilter, colSort, renames.decisions]);
 
   const record = visible.find((r) => r.groupId === selectedId) ?? visible[0] ?? records[0];
 
@@ -380,7 +385,7 @@ export default function Gate2Page() {
                 key={r.groupId}
                 id={r.groupId}
                 testid="gate2-concept"
-                label={conceptLabel(r)}
+                label={labelOf(r)}
                 badges={<VerdictPill verdict={r.verdict} />}
                 cohorts={r.cohorts}
                 count={r.nMembers}
@@ -393,7 +398,7 @@ export default function Gate2Page() {
         detail={
           <div className="flex flex-col gap-4">
             <ConceptDetailHeader
-              title={conceptLabel(record)}
+              title={labelOf(record)}
               badges={<VerdictPill verdict={record.verdict} />}
               meta={
                 <>
@@ -516,7 +521,9 @@ export default function Gate2Page() {
                   className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
                 >
                   This target was built on the original grouping. You changed this concept&apos;s members at
-                  Gate 1, so it is regenerated when you continue — or correct it yourself below.
+                  Gate 1; those moves are recorded in the decision log but not yet applied to matching, so this
+                  run still matches the group&apos;s original members. Correct the target yourself below if it
+                  should describe the new grouping.
                 </p>
               )}
 

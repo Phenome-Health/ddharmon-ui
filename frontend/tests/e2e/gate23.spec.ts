@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { JobResult } from "@/types";
 import { gate1BillableGroups, gate1ScopePayload, inheritedGate1Scope } from "@/lib/gate-decisions";
 import { mergeSpecEdit } from "@/lib/gate23";
+import { optionSetKey } from "@/lib/gate-decisions";
+import { SANDBOX_PREFIX, withGateDecision } from "@/lib/sandbox";
 import {
   SKOS_RELATIONS,
   affectedSpecCount,
@@ -1519,4 +1521,37 @@ test.describe("gate2 anchor save keeps the target", () => {
       );
     });
   }
+});
+
+
+/** 08-27 option C — a Gate 1 rename reaches Gate 2 and Gate 3 (it only ever showed on Gate 1 and in the log). */
+test.describe("gate1 rename carries forward", () => {
+  const GROUP = "c46be33d9a542#g0";
+  async function seedRename(page: Page, gate: "gate2" | "gate3") {
+    await serveFinished(page, (run) => {
+      run.result!.records = [run.result!.records!.find((x) => x.groupId === GROUP)!];
+    }, { keep: 0 });
+    await page.goto(`/run/${FINISHED_JOB}/${gate}`);
+    await page.waitForLoadState("networkidle");
+    const state = withGateDecision({}, "gate1_rename", GROUP, {
+      groupId: GROUP,
+      chosen: "Ever smoked 100 cigarettes",
+      alternatives: ["generated", "Ever smoked 100 cigarettes"],
+      optionSetKey: optionSetKey(["generated", "Ever smoked 100 cigarettes"]),
+    });
+    await page.evaluate(
+      ({ key, state }) => sessionStorage.setItem(key, JSON.stringify(state)),
+      { key: `${SANDBOX_PREFIX}${FINISHED_JOB}`, state },
+    );
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+  }
+  test("@gate2 the reviewer's group name is what Gate 2 lists", async ({ page }) => {
+    await seedRename(page, "gate2");
+    await expect(page.locator("[data-testid='gate2-concept']").first()).toContainText("Ever smoked 100 cigarettes");
+  });
+  test("@gate3 the reviewer's group name is what Gate 3 lists", async ({ page }) => {
+    await seedRename(page, "gate3");
+    await expect(page.locator("[data-testid='gate3-concept']").first()).toContainText("Ever smoked 100 cigarettes");
+  });
 });

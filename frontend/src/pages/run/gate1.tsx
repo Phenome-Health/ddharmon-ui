@@ -2939,6 +2939,19 @@ export default function Gate1Page() {
           data-testid="ledger"
           className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(340px,384px)_minmax(0,1fr)] lg:items-start"
         >
+          {/* 08-27 option C: a move is recorded (decision log, export) but core has no membership override
+              yet, so the paid match still runs each group's ORIGINAL members. Say so wherever a move exists,
+              rather than let the reviewer believe Gate 2 will see the new grouping. */}
+          {Object.keys(moves).length > 0 && (
+            <p
+              data-testid="moves-not-applied"
+              role="note"
+              className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2 text-xs text-on-warn lg:col-span-2"
+            >
+              Your variable moves are recorded in the decision log, but they are not yet applied to matching:
+              Gate 2 will match each group&apos;s original members. A group you emptied is left out of scope.
+            </p>
+          )}
           <aside
             data-testid="gate1-queue"
             className="flex flex-col gap-3 overflow-hidden rounded-card bg-surface-raised py-4 shadow-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)]"

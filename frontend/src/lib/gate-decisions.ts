@@ -349,3 +349,9 @@ export function gate1BillableGroups<G extends { groupId: string }>(
 ): G[] {
   return groups.filter((g) => isInScope(g.groupId) && memberCount(g) > 0);
 }
+
+/** A group's display name: the reviewer's Gate 1 rename when there is one, else the generated label. */
+export function renamedLabel(generated: string, rename: { chosen?: unknown } | undefined): string {
+  const chosen = rename?.chosen;
+  return typeof chosen === "string" && chosen.trim() ? chosen.trim() : generated;
+}

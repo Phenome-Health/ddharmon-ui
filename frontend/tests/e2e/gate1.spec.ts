@@ -4425,3 +4425,19 @@ test.describe("gate1 score panel placement", () => {
     expect(Math.abs(strip!.height - howto!.height)).toBeLessThanOrEqual(2);
   });
 });
+
+/** 08-27 option C — variable moves are RECORDED but not yet applied to matching; the screen says so. */
+test.describe("gate1 moves are recorded, not applied", () => {
+  test("@gate1 after a move, Gate 1 states that this run matches each group's original members", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    await expect(page.locator("[data-testid='moves-not-applied']")).toHaveCount(0);
+    const row = await expandRow(page, BIG);
+    const chip = row.locator("[data-testid='member-row']").first();
+    await chip.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
+    const note = page.locator("[data-testid='moves-not-applied']");
+    await expect(note).toBeVisible();
+    await expect(note).toContainText(/original members/i);
+  });
+});

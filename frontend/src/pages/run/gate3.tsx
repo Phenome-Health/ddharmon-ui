@@ -26,7 +26,7 @@ import { SpecNumberMap } from "@/components/gate/SpecNumberMap";
 import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
 import { isTerminal, resumeTookEffect } from "@/lib/run-state";
@@ -138,6 +138,9 @@ export default function Gate3Page() {
   });
   // Read-only inheritance from Gate 1: only in-scope groups reach this screen.
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
+  // A Gate 1 rename is the group's name from here on (08-27 option C) — it only ever showed on Gate 1.
+  const renames = useGateDecisions(jobId, "gate1_rename", { pinned });
+  const labelOf = (r: UIRecord) => renamedLabel(conceptLabel(r), renames.decisions[r.groupId]);
   // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.
   const inScope = inheritedGate1Scope(runConfig, scope.decisions);
 
@@ -192,8 +195,9 @@ export default function Gate3Page() {
           : g.rows,
       }))
       .filter((g) => g.rows.length > 0)
-      .filter((g) => !q || conceptLabel(g.record).toLowerCase().includes(q));
-  }, [groups, arithmeticOnly, query]);
+      .filter((g) => !q || labelOf(g.record).toLowerCase().includes(q));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, arithmeticOnly, query, renames.decisions]);
 
   const anyRow = groups.some((g) => g.rows.length > 0);
   const selected =
@@ -309,7 +313,7 @@ export default function Gate3Page() {
               key={record.groupId}
               id={record.groupId}
               testid="gate3-concept"
-              label={conceptLabel(record)}
+              label={labelOf(record)}
               badges={
                 <>
                   <VerdictPill verdict={record.verdict} />
@@ -405,7 +409,7 @@ export default function Gate3Page() {
               return (
                 <div className="flex flex-col gap-4">
                   <ConceptDetailHeader
-                    title={conceptLabel(record)}
+                    title={labelOf(record)}
                     badges={
                       <>
                         <VerdictPill verdict={record.verdict} />
