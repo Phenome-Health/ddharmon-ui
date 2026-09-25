@@ -1161,8 +1161,9 @@ def test_no_reconcile_http_route_was_added():
     # nothing and touching no run,
     # because the file it exports has not been uploaded yet — it rides in the request body, which is the
     # same reason `/score/extract` is a POST. Bumped deliberately: this assertion exists so a POST appears
-    # only when a plan says so, not so the number never moves.
-    assert posts == 16, f"the POST surface changed ({posts} != 16)"
+    # only when a plan says so, not so the number never moves. 17 after 08-16e added
+    # `/jobs/{id}/score/components` — the paid, job-scoped component PROPOSAL (a model call, so a POST).
+    assert posts == 17, f"the POST surface changed ({posts} != 17)"
 
 
 # ── Gate 0: the boundary that lets a run ENTER the staged flow ───────────────────────────────
