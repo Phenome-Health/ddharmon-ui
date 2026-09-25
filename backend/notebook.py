@@ -52,6 +52,170 @@ def _num(x: Any, default: float) -> float:
         return default
 
 
+# --- the reviewer's Gate 3 edits (08-27) -----------------------------------------------------
+#
+# A staged run's transforms may carry ``reviewerEdit`` (the recode the reviewer corrected at Gate 3) and
+# ``targetRepicked`` (the reviewer re-picked the target at Gate 2 after this recode was generated for the
+# model's). Both are set only by ``backend/export_decisions.py``; a legacy run's transforms carry neither,
+# so its notebook is unchanged. A REJECTED recode never reaches here — ``build_notebook`` leaves it out.
+
+#: The standing buckets of the Gate 3 value-map editor (``SpecMappingEditor.tsx``): not a target value.
+_MISSING_BUCKET = "__missing__"
+_DROP_BUCKET = "__drop__"
+
+
+def _edit_of(t: dict[str, Any] | None) -> dict[str, Any]:
+    edit = (t or {}).get("reviewerEdit")
+    return edit if isinstance(edit, dict) else {}
+
+
+def _split_mapping(mapping: dict[str, Any]) -> tuple[dict[str, str], list[str], list[str]]:
+    """A reviewer's value map -> (code -> target value, codes set missing, codes dropped)."""
+    real: dict[str, str] = {}
+    missing: list[str] = []
+    dropped: list[str] = []
+    for code, target in mapping.items():
+        if target == _MISSING_BUCKET:
+            missing.append(str(code))
+        elif target == _DROP_BUCKET:
+            dropped.append(str(code))
+        elif target:
+            real[str(code)] = str(target)
+    return real, missing, dropped
+
+
+def _number_codes(number_map: dict[str, Any]) -> dict[str, float | None]:
+    """A reviewer's code -> number table: ``number`` carries its value; ``missing``/``drop`` become missing."""
+    out: dict[str, float | None] = {}
+    for code, entry in number_map.items():
+        entry = entry if isinstance(entry, dict) else {}
+        value = entry.get("value")
+        out[str(code)] = _num(value, 0.0) if entry.get("action") == "number" and value is not None else None
+    return out
+
+
+def _bin_rules(bins: list[Any]) -> list[tuple[str, float | None, float | None]]:
+    rules: list[tuple[str, float | None, float | None]] = []
+    for b in bins:
+        if not isinstance(b, dict) or not str(b.get("band") or ""):
+            continue
+        lo, hi = b.get("min"), b.get("max")
+        if lo is None and hi is None:
+            continue  # an unbounded band would swallow every value; the reviewer never bounded it
+        rules.append((str(b["band"]), None if lo is None else _num(lo, 0.0), None if hi is None else _num(hi, 0.0)))
+    return rules
+
+
+def _edited_lines_py(op: _Op, edit: dict[str, Any]) -> list[str] | None:
+    tgt, var = _pylit(op.target), _pylit(op.var)
+    head = f"# {op.concept}  ·  {op.verdict}"
+    if isinstance(edit.get("mapping"), dict):
+        real, missing, dropped = _split_mapping(edit["mapping"])
+        lines = [f"{head} (categorical recode — REVIEWER-EDITED at Gate 3)"]
+        if missing:
+            lines.append(f"# set missing by the reviewer → NaN: {', '.join(missing)}")
+        if dropped:
+            lines.append(
+                f"# dropped by the reviewer → NaN (filter these rows if a drop means exclude): {', '.join(dropped)}"
+            )
+        return [*lines, f"_map = {real!r}", f"h[{tgt}] = raw[{var}].astype(str).map(_map)", ""]
+    if isinstance(edit.get("numberMap"), dict):
+        codes = _number_codes(edit["numberMap"])
+        return [
+            f"{head} (code → number — REVIEWER-EDITED at Gate 3; None = missing)",
+            f"_codes = {codes!r}",
+            f"_s = raw[{var}].astype(str)",
+            f"h[{tgt}] = pd.to_numeric(raw[{var}].where(~_s.isin(list(_codes))), errors='coerce')"
+            ".fillna(_s.map(_codes))",
+            "",
+        ]
+    if isinstance(edit.get("bins"), list):
+        rules = _bin_rules(edit["bins"])
+        return [
+            f"{head} (binning — REVIEWER-EDITED at Gate 3; bounds inclusive, first matching band wins)",
+            f"_bins = {rules!r}",
+            f"_x = pd.to_numeric(raw[{var}], errors='coerce')",
+            "_out = pd.Series(pd.NA, index=_x.index, dtype='object')",
+            "for _band, _lo, _hi in _bins:",
+            "    _m = _x.notna() & _out.isna()",
+            "    if _lo is not None:",
+            "        _m &= _x >= _lo",
+            "    if _hi is not None:",
+            "        _m &= _x <= _hi",
+            "    _out[_m] = _band",
+            f"h[{tgt}] = _out",
+            "",
+        ]
+    return None
+
+
+def _rnum(x: float | None) -> str:
+    return "NA" if x is None else repr(float(x))
+
+
+def _edited_lines_r(op: _Op, edit: dict[str, Any]) -> list[str] | None:
+    tgt, var = _pylit(op.target), _pylit(op.var)
+    head = f"# {op.concept}  ·  {op.verdict}"
+    if isinstance(edit.get("mapping"), dict):
+        real, missing, dropped = _split_mapping(edit["mapping"])
+        pairs = ", ".join(f"{_pylit(k)}={_pylit(v)}" for k, v in real.items())
+        lines = [f"{head} (categorical recode — REVIEWER-EDITED at Gate 3)"]
+        if missing:
+            lines.append(f"# set missing by the reviewer → NA: {', '.join(missing)}")
+        if dropped:
+            lines.append(
+                f"# dropped by the reviewer → NA (filter these rows if a drop means exclude): {', '.join(dropped)}"
+            )
+        return [*lines, f".map <- c({pairs})", f"h[[{tgt}]] <- unname(.map[as.character(raw[[{var}]])])", ""]
+    if isinstance(edit.get("numberMap"), dict):
+        codes = _number_codes(edit["numberMap"])
+        pairs = ", ".join(f"{_pylit(k)}={_rnum(v)}" for k, v in codes.items())
+        return [
+            f"{head} (code → number — REVIEWER-EDITED at Gate 3; NA = missing)",
+            f".codes <- c({pairs})",
+            f".s <- as.character(raw[[{var}]])",
+            f"h[[{tgt}]] <- ifelse(.s %in% names(.codes), unname(.codes[.s]), suppressWarnings(as.numeric(.s)))",
+            "",
+        ]
+    if isinstance(edit.get("bins"), list):
+        lines = [
+            f"{head} (binning — REVIEWER-EDITED at Gate 3; bounds inclusive, first matching band wins)",
+            f".x <- suppressWarnings(as.numeric(as.character(raw[[{var}]])))",
+            ".out <- rep(NA_character_, length(.x))",
+        ]
+        for band, lo, hi in _bin_rules(edit["bins"]):
+            cond = ["!is.na(.x)", "is.na(.out)"]
+            if lo is not None:
+                cond.append(f".x >= {_rnum(lo)}")
+            if hi is not None:
+                cond.append(f".x <= {_rnum(hi)}")
+            lines.append(f".out[{' & '.join(cond)}] <- {_pylit(band)}")
+        return [*lines, f"h[[{tgt}]] <- .out", ""]
+    return None
+
+
+def _repicked_stub(op: _Op, model_lines: list[str]) -> list[str]:
+    """A recode generated for the MODEL's target after the reviewer re-picked it: shown, not applied."""
+    t = op.transform or {}
+    return [
+        f"# {op.concept}  ·  {op.verdict} — REVIEW REQUIRED: target re-picked at Gate 2",
+        f"# This recode was generated for {t.get('modelTargetCdeId') or 'the model’s target'}; the reviewer "
+        f"chose {op.target}. Its codes may not fit — re-map it at Gate 3, then re-export.",
+        *[f"# {ln}" for ln in model_lines if ln],
+        "",
+    ]
+
+
+def _op_lines(op: _Op, lang: Lang) -> list[str]:
+    model = _op_lines_r if lang == "r" else _op_lines_py
+    edited = (_edited_lines_r if lang == "r" else _edited_lines_py)(op, _edit_of(op.transform))
+    if edited is not None:
+        return edited
+    if (op.transform or {}).get("targetRepicked"):
+        return _repicked_stub(op, model(op))
+    return model(op)
+
+
 # --- per-op code lines (language-specific) ---------------------------------------------------
 
 
@@ -174,12 +338,19 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
     # Group harmonization ops by cohort (source side of each transform / member).
     ops: dict[str, list[_Op]] = {}
     novel: list[str] = []
+    rejected: list[str] = []
     for r in records:
         cde = r.get("cde")
         tmap = {t.get("sourceVariable"): t for t in r.get("transforms", [])}
         for member in r.get("members", []):
             cohort, _, var = str(member).partition(":")
             t = tmap.get(member)
+            if (t or {}).get("rejected"):
+                # Rejected at Gate 3: excluded from the notebook, as the Reject dialog promises — not even
+                # copied, since copying the raw codes onto the CDE column would apply the rejected mapping's
+                # opposite (no recode at all) without anyone having chosen it.
+                rejected.append(f"{r.get('concept', '?')}  ({member})")
+                continue
             target = (t or {}).get("targetCdeId") or (cde or {}).get("id") or ""
             if not target:
                 novel.append(f"{r.get('concept', '?')}  ({member})")
@@ -194,7 +365,6 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
                 )
             )
 
-    op_lines = _op_lines_r if lang == "r" else _op_lines_py
     read = "read.csv" if lang == "r" else "pd.read_csv"
     title = display_name or "ddharmon run"
 
@@ -220,6 +390,7 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
 
     if not ops:
         cells.append(_md("_This run produced no CDE assignments with transforms to apply._"))
+        cells.extend(_rejected_cells(rejected))
         return {"cells": cells, "metadata": _KERNELS[lang], "nbformat": 4, "nbformat_minor": 5}
 
     # Step 1 — load raw frames.
@@ -240,7 +411,7 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
             lines.append(f"h_{cid} <- data.frame(row.names = rownames(raw_{cid}))")
         lines.append("")
         for op in cohort_ops:
-            for ln in op_lines(op):
+            for ln in _op_lines(op, lang):
                 # rebind the generic `h`/`raw` in the per-op snippet to this cohort's frames
                 lines.append(ln.replace("h[", f"h_{cid}[").replace("raw[", f"raw_{cid}["))
         cells.append(_code(*lines))
@@ -278,4 +449,20 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
             )
         )
 
+    cells.extend(_rejected_cells(rejected))
     return {"cells": cells, "metadata": _KERNELS[lang], "nbformat": 4, "nbformat_minor": 5}
+
+
+def _rejected_cells(rejected: list[str]) -> list[dict[str, Any]]:
+    """The recodes the reviewer rejected at Gate 3 — named, so their absence above is not a silent one."""
+    if not rejected:
+        return []
+    return [
+        _md(
+            "## Rejected recodes (excluded)",
+            "",
+            "The reviewer rejected these recodes at Gate 3, so this notebook does not produce them:",
+            "",
+            *[f"- {n}" for n in rejected[:200]],
+        )
+    ]
