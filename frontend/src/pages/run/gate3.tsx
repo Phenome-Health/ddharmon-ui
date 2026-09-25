@@ -38,6 +38,7 @@ import {
   seedNumberMap,
   specForm,
   specRowsFor,
+  specTargetMismatch,
   targetValuesFromSpecs,
   type BinRule,
   type NumberMapEntry,
@@ -455,6 +456,20 @@ export default function Gate3Page() {
               const targetUnits = targetIsOwn
                 ? record.gencde?.units
                 : chosenCandidate?.units;
+              // 08-27b: a Gate 2 pick's specs are regenerated for the pick on the way here; a run that crossed
+              // before that fix still carries the model's, and must say so rather than wear the pick's label.
+              const expectedTarget = targetIsOwn
+                ? (record.gencde?.gencdeId ?? "")
+                : chosenTargetId;
+              const specsBuiltFor = pick
+                ? specTargetMismatch(
+                    record.transforms,
+                    expectedTarget,
+                    !targetIsOwn && record.gencde && record.cde?.id === chosenTargetId
+                      ? [record.gencde.gencdeId]
+                      : [],
+                  )
+                : [];
               return (
                 <div className="flex flex-col gap-4">
                   <ConceptDetailHeader
@@ -568,6 +583,33 @@ export default function Gate3Page() {
                             </div>
                           )}
                         </dl>
+                        {specsBuiltFor.length > 0 && (
+                          <p
+                            data-testid="spec-target-mismatch"
+                            role="status"
+                            className="max-w-[80ch] rounded-inner border border-status-warn px-2 py-1 text-xs text-on-warn"
+                          >
+                            The transform specs below were generated for{" "}
+                            <span className="font-mono">
+                              {specsBuiltFor.map((id) => id || "no target").join(", ")}
+                            </span>
+                            , not your pick (
+                            {targetIsOwn
+                              ? targetName
+                              : chosenTargetId || "none of these"}
+                            ). This run reached Gate 3 before a Gate 2 pick
+                            regenerated its specs, so judge each recode against
+                            the target above.
+                          </p>
+                        )}
+                        {record.reviewerPick?.reason && (
+                          <p
+                            data-testid="reviewer-pick-reason"
+                            className="max-w-[80ch] text-xs text-on-raised-muted"
+                          >
+                            {record.reviewerPick.reason}
+                          </p>
+                        )}
                         {targetPVs.length > 0 && (
                           <div data-testid="target-permissible-values">
                             <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
