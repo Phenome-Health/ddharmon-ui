@@ -219,15 +219,21 @@ def transform_edits(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _j(value: Any) -> str:
+    """Compact, key-sorted, unescaped JSON — byte-identical to ``stableJson`` in ``frontend/src/lib/gate4.ts``,
+    so the Gate 4 preview of the log matches the download."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
 def _spec_summary(t: dict[str, Any] | None) -> str:
     """A one-line account of the model's spec — the ``before`` of a Gate 3 edit."""
     if not t:
         return ""
     kind = str(t.get("kind") or "")
     if kind == "categorical" and t.get("codeMap"):
-        return f"categorical {json.dumps(t['codeMap'], sort_keys=True)}"
+        return f"categorical {_j(t['codeMap'])}"
     if kind == "unit":
-        return f"unit x{t.get('factor', 1)} +{t.get('offset', 0)} ({t.get('sourceUnit', '?')} -> {t.get('targetUnit', '?')})"
+        return f"unit {t.get('sourceUnit') or '?'} -> {t.get('targetUnit') or '?'}"
     if kind == "arithmetic":
         return f"arithmetic {t.get('formula', '')}"
     return kind
@@ -255,7 +261,7 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
     if isinstance(frozen, list):
         rows.append(
             ["Gate 1", "gate1_scope_frozen", "Continued with this scope", "", "", f"{len(frozen)} groups in scope", "",
-             json.dumps(frozen), "false"]
+             _j(frozen), "false"]
         )  # fmt: skip
 
     for kind in GATE_DECISION_KINDS:
@@ -275,13 +281,13 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
             elif kind == GATE2_CANDIDATE_PICK:
                 before = _chosen_label(model_pick(by_group.get(item) or {})) if item in by_group else ""
                 if isinstance(d.get("gencdeEdit"), dict):
-                    detail = json.dumps({"gencdeEdit": d["gencdeEdit"]}, sort_keys=True)
+                    detail = _j({"gencdeEdit": d["gencdeEdit"]})
             elif kind == GATE3_SPEC_EDIT:
                 before = _spec_summary(spec_by_source.get(item))
                 edit = {k: d[k] for k in SPEC_EDIT_FIELDS if d.get(k)}
                 after = "rejected" if d.get("rejected") else ("edited" if edit else "annotated")
                 if edit:
-                    detail = json.dumps(edit, sort_keys=True)
+                    detail = _j(edit)
             rows.append(
                 [GATE_OF.get(kind, ""), kind, ACTION_OF.get(kind, kind), item, before, after, note, detail,
                  "true" if (kind, item) in stale else "false"]

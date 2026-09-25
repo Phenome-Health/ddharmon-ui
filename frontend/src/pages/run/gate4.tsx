@@ -242,7 +242,11 @@ export default function Gate4Page() {
               data-testid="artifact-preview-content"
               className="mt-4 max-h-[calc(100vh-8rem)] overflow-auto whitespace-pre-wrap break-words rounded-inner bg-surface-inset p-4 font-mono text-xs text-on-inset"
             >
-              {previewFor(preview.id, lang, result, jobState?.decisions)}
+              {previewFor(preview.id, lang, result, jobState?.decisions, {
+                index: gate.all,
+                config: jobState?.config as Record<string, unknown> | undefined,
+                gatePosition: jobState?.gatePosition,
+              })}
             </pre>
           )}
         </SheetContent>

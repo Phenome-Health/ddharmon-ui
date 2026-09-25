@@ -477,3 +477,21 @@ def test_the_edited_python_notebook_runs_and_applies_every_edit_shape(tmp_path, 
                 exec("".join(cell["source"]), ns)  # noqa: S102 — the point is to run the generated code
         got = [None if pd.isna(v) else v for v in ns["h_A"]["T"]]
         assert got == expect, f"{src}: {got}"
+
+
+def test_the_decision_log_matches_the_pinned_parity_fixture():
+    """The Gate 4 preview (``frontend/src/lib/gate4.ts::decisionLogCsvRows``) re-derives the log on the client
+    so it works in the backend-less build. Both implementations are pinned to the SAME literal rows, so the
+    preview cannot drift from the file the download carries (the e2e twin is in ``gate4.spec.ts``)."""
+    from pathlib import Path
+
+    from backend.export_decisions import DECISION_LOG_COLS, decision_log_rows
+
+    fixture = json.loads(
+        (Path(__file__).parent.parent / "frontend/tests/e2e/fixtures/decision-log-parity.json").read_text("utf-8")
+    )
+    assert fixture["columns"] == DECISION_LOG_COLS
+    assert decision_log_rows(fixture["result"], fixture["config"], fixture["grouped"]) == fixture["expectedRows"]
+    kinds = {r[1] for r in fixture["expectedRows"]}
+    assert {"gate1_scope_frozen", "gate1_rename", "gate1_regroup", "gate2_candidate_pick", "gate3_spec_edit"} <= kinds
+    assert any(r[-1] == "true" for r in fixture["expectedRows"]), "the fixture must exercise a stale decision"

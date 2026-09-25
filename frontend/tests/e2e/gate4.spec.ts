@@ -2,12 +2,13 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
-import type { DecisionIndex } from "@/lib/gate-decisions";
+import { indexDecisions, type DecisionIndex, type GroupedDecisions } from "@/lib/gate-decisions";
 import type { HarmonizationResult } from "@/types";
 import {
   NOT_AVAILABLE_GAPS,
   REAL_ARTIFACTS,
   SUBSTANTIVE_EDIT_KINDS,
+  decisionLogCsvRows,
   decisionLogRows,
   downloadLabel,
   previewFor,
@@ -104,6 +105,50 @@ test("@gate4 a preview is REAL generated content, not a description", () => {
   // The notebook preview reflects the chosen language.
   expect(previewFor("notebook", "r", run, {})).toContain("(R)");
   expect(previewFor("notebook", "py", run, {})).toContain("(Python)");
+});
+
+// --- 08-27: the decision-log CSV preview reads what the download carries ---------------------------------
+
+/**
+ * The PARITY fixture is pinned by BOTH sides: `tests/test_export_staged.py` asserts the backend's
+ * `decision_log_rows` produces `expectedRows`, and this asserts the client's `decisionLogCsvRows` does too —
+ * so the Gate 4 preview of the log cannot drift from the file the download serves.
+ */
+const PARITY = JSON.parse(readFileSync(resolve(HERE, "fixtures/decision-log-parity.json"), "utf8")) as {
+  result: HarmonizationResult;
+  config: Record<string, unknown>;
+  grouped: GroupedDecisions;
+  legacyDecisions: Record<string, { decision?: string; note?: string }>;
+  columns: string[];
+  expectedRows: string[][];
+};
+
+test("@gate4 the decision-log CSV rows match the backend's, row for row", () => {
+  const rows = decisionLogCsvRows(indexDecisions(PARITY.grouped), PARITY.result, PARITY.config, PARITY.legacyDecisions);
+  expect(rows[0]).toEqual(PARITY.columns);
+  expect(rows.slice(1)).toEqual(PARITY.expectedRows);
+});
+
+test("@gate4 the decision-log CSV preview on a staged run reads gate decisions, not legacy verdicts", () => {
+  const index = indexDecisions(PARITY.grouped);
+  const preview = previewFor("decisions_csv", "py", PARITY.result, PARITY.legacyDecisions, {
+    index,
+    config: PARITY.config,
+    gatePosition: "gate4",
+  });
+  const lines = preview.split("\n");
+  expect(lines[0]).toBe(PARITY.columns.join(","));
+  expect(preview).toContain("gate1_rename");
+  expect(preview).toContain("Participant âge");
+  // A field carrying the separator is quoted, the way the downloaded CSV quotes it.
+  expect(preview).toContain('"checked, ok"');
+  // A legacy one-shot run (no gate position, no gate decisions) keeps the per-record verdict preview.
+  const legacy = previewFor("decisions_csv", "py", PARITY.result, PARITY.legacyDecisions, {
+    index: {},
+    config: {},
+    gatePosition: null,
+  });
+  expect(legacy.split("\n")[0]).toBe("record_id,concept,verdict,chosen_cde,your_decision,note");
 });
 
 test("@gate4 the verdict breakdown counts the real records", () => {
@@ -206,6 +251,31 @@ test.describe("Gate 4 screen", () => {
     // The E3 revision rate is rendered, denominator-stamped (P2), never a bare number.
     await expect(page.getByTestId("revision-rate")).toHaveAttribute("data-denominator", "concept records reviewed");
     await expect(page.getByTestId("revision-rate")).toContainText("concept records reviewed");
+  });
+
+  test("@gate4 the decision-log CSV preview shows the gate decisions the download carries", async ({ page }) => {
+    await page.addInitScript(
+      ([jobId]) => {
+        sessionStorage.setItem(
+          `ddharmon.sandbox.${jobId}`,
+          JSON.stringify({
+            gateDecisions: {
+              gate1_rename: {
+                "seed-group": { groupId: "seed-group", chosen: "My name", alternatives: ["Gen", "My name"], optionSetKey: "s", generatedName: "Gen" },
+              },
+            },
+          }),
+        );
+      },
+      [FINISHED_JOB],
+    );
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="decisions_csv"] [data-testid="artifact-preview"]').click();
+    const content = page.getByTestId("artifact-preview-content");
+    await expect(content).toContainText("gate,kind,action,item,before,after,note,detail,stale");
+    await expect(content).toContainText("Gate 1,gate1_rename,Renamed a group,seed-group,Gen,My name");
+    // Not the legacy per-record verdict header, which no gate writes to.
+    await expect(content).not.toContainText("your_decision");
   });
 
   test("@gate4 a run with no decisions shows the log's empty state rather than a blank panel", async ({ page }) => {
