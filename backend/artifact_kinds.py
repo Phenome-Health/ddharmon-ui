@@ -141,6 +141,20 @@ GATE_DECISION_KINDS = (
     COMPOSITE_SWAP,
 )
 
+#: The gate whose screen OWNS each decision kind. The server refuses a write to a kind whose gate the run has
+#: already passed (08-27 audit B4) — the freeze used to live only in the browser hook. The score panel sits on
+#: Gate 1, so its decisions freeze with Gate 1.
+DECISION_GATE: dict[str, str] = {
+    GATE1_GROUP_SCOPE: "gate1",
+    GATE1_REGROUP: "gate1",
+    GATE1_RENAME: "gate1",
+    COMPOSITE_SWAP: "gate1",
+    GATE2_CANDIDATE_PICK: "gate2",
+    GATE2_RELATION: "gate2",
+    GATE3_SPEC_EDIT: "gate3",
+    GATE4_EXPORT_SELECTION: "gate4",
+}
+
 #: How each gate-decision kind derives its item key: the payload fields, in order, that name the thing
 #: decided. Held as data rather than as seven near-identical closures so the granularity rule is readable
 #: as a table - the one property a reviewer of this file needs to check.

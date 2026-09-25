@@ -2789,6 +2789,7 @@ export default function Gate1Page() {
         fieldIndex={jobState?.result?.fieldIndex}
         isGroupInScope={isInScope}
         onGroupScopeChange={frozen ? undefined : setGroupScope}
+        frozen={frozen}
         onOpenGroup={(groupId) => {
           // Select the matched group in the detail pane, bring the sidebar QUEUE row for it into view
           // (08-16g review #6 — selecting the detail alone left the row scrolled off in the queue), then

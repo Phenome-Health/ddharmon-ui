@@ -52,6 +52,7 @@ from backend.artifact_kinds import (
 from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
 from backend.checkpoint import (
+    GATE_ORDER,
     Checkpoint,
     CheckpointMissingError,
     checkpoint_path,
@@ -1288,6 +1289,27 @@ def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
 # their own route and persist through the same store.
 
 
+def _refuse_past_gate(job: Job, kind: str) -> None:
+    """409 when ``kind`` belongs to a gate this staged run has already passed (08-27 audit B4).
+
+    Past gates are records: their decisions were consumed by a paid leg, so changing one afterwards would
+    rewrite history (and on a legacy run with no frozen scope, change what a later leg bills). A run with no
+    gate position — finished, or never staged — stays re-decidable, as the re-decide-a-finished-run design
+    requires.
+    """
+    from backend.artifact_kinds import DECISION_GATE
+
+    gate = DECISION_GATE.get(kind)
+    at = job.gate_position
+    if gate is None or not at or at not in GATE_ORDER:
+        return
+    if GATE_ORDER.index(at) > GATE_ORDER.index(gate):
+        raise HTTPException(
+            status_code=409,
+            detail=f"This run has passed {gate.replace('gate', 'Gate ')}; its decisions are a record and cannot be changed.",
+        )
+
+
 def _artifact_target(job_id: str, request: Request) -> tuple[Job, str]:
     """The run and the caller's owner key, or 404/403. Rejects the immutable demo for writes."""
     subject = _subject(request)
@@ -1366,6 +1388,7 @@ def put_artifact(
     itself reported as a conflict.
     """
     job, owner = _artifact_target(job_id, request)
+    _refuse_past_gate(job, kind)
     artifacts = store.artifacts
     if artifacts is None:
         raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
@@ -1394,6 +1417,7 @@ def put_artifact(
 @app.delete("/api/harmonize/jobs/{job_id}/artifacts/{kind}/{item_key:path}", status_code=204)
 def delete_artifact(job_id: str, kind: str, item_key: str, request: Request) -> None:
     job, owner = _artifact_target(job_id, request)
+    _refuse_past_gate(job, kind)
     artifacts = store.artifacts
     if artifacts is None:
         raise HTTPException(status_code=503, detail="Persistence is not configured on this server")

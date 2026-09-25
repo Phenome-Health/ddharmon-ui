@@ -1725,3 +1725,30 @@ def test_an_empty_gate1_scope_is_refused(monkeypatch, tmp_path):
         r = c.post("/api/harmonize/resume/em", headers={"x-anthropic-key": "sk-test"}, json={"gate1Scope": []})
     assert r.status_code == 409
     assert app_module.store.get("em").gate_position == "gate1"
+
+
+def test_the_server_refuses_decisions_on_a_gate_the_run_has_passed(monkeypatch, tmp_path):
+    """08-27 audit B4: the past-gate freeze lived only in the browser hook — a PUT/DELETE on a passed gate's
+    decision kind returned 200/204, and on a legacy run a post-Gate-1 scope edit changed a later leg's bill.
+    The current gate stays writable; a finished run (no gate position) stays re-decidable."""
+    from backend.artifact_kinds import option_set_key
+
+    _scope_fixture(monkeypatch, tmp_path, "pz", "gate3", ["g0"])
+    base = {"chosen": "out", "alternatives": ["in", "out"], "optionSetKey": option_set_key(["in", "out"])}
+    with TestClient(app_module.app) as c:
+        for kind, ident in [
+            ("gate1_group_scope", {"groupId": "g0"}),
+            ("gate1_regroup", {"memberId": "A:x"}),
+            ("gate1_rename", {"groupId": "g0"}),
+            ("composite_swap", {"scoreName": "S", "componentName": "c"}),
+            ("gate2_candidate_pick", {"groupId": "g0"}),
+        ]:
+            r = c.put(f"/api/harmonize/jobs/pz/artifacts/{kind}", json={**base, **ident})
+            assert r.status_code == 409, f"{kind} writable after its gate: {r.status_code}"
+        assert c.delete("/api/harmonize/jobs/pz/artifacts/gate1_group_scope/g0").status_code == 409
+        ok = c.put("/api/harmonize/jobs/pz/artifacts/gate3_spec_edit", json={**base, "sourceVariable": "A:x"})
+        assert ok.status_code == 200, ok.text
+        # a finished run (gate position cleared) stays re-decidable, as the re-decide-a-finished-run design requires
+        app_module.store.update("pz", gate_position=None)
+        r = c.put("/api/harmonize/jobs/pz/artifacts/gate1_group_scope", json={**base, "groupId": "g0"})
+        assert r.status_code == 200, r.text

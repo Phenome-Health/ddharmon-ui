@@ -171,6 +171,8 @@ export interface DeclaredScorePanelProps {
   isGroupInScope?: (groupId: string) => boolean;
   /** Write a group's Gate 1 scope (the ledger checkbox's own path). Absent on a frozen gate → read-only. */
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
+  /** Gate 1 has been passed: the panel is a record — nothing here may write (08-27 audit B4). */
+  frozen?: boolean;
   className?: string;
 }
 
@@ -250,9 +252,10 @@ export function DeclaredScorePanel({
   onOpenGroup,
   isGroupInScope,
   onGroupScopeChange,
+  frozen = false,
   className,
 }: DeclaredScorePanelProps) {
-  const swaps = useGateDecisions(jobId, "composite_swap", { pinned });
+  const swaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen });
   /** Closed by default (08-16c item E) — the charge it carries is stated on the trigger, not behind it. */
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -311,7 +314,7 @@ export function DeclaredScorePanel({
     [groupsById, groupByVariable],
   );
   async function handleEdit(component: string, conceptId: string | null) {
-    if (!shownSpec) return;
+    if (!shownSpec || frozen) return;
     // Optimistic: show the edit immediately. On an immutable demo or the static build this is the result.
     const optimistic = applyEditLocally(shownSpec, component, conceptId, groupsById);
     setLocalSpec(optimistic);
@@ -576,6 +579,7 @@ export function DeclaredScorePanel({
               rows={4}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              disabled={frozen}
               placeholder={
                 "Weak grip strength\nSlow walking speed\nUnintentional weight loss"
               }
@@ -585,7 +589,7 @@ export function DeclaredScorePanel({
               <Button
                 type="button"
                 onClick={() => void onDeclare()}
-                disabled={draft.trim().length === 0}
+                disabled={frozen || draft.trim().length === 0}
               >
                 Declare these components
               </Button>
@@ -685,7 +689,7 @@ export function DeclaredScorePanel({
                 <Button
                   type="button"
                   onClick={onMatch}
-                  disabled={matching || declared.length === 0}
+                  disabled={frozen || matching || declared.length === 0}
                 >
                   {matching && (
                     <Loader2

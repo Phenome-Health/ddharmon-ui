@@ -3077,6 +3077,13 @@ test.describe("gate1 frozen", () => {
     await openGate1(page);
   }
 
+  test("@gate1 the score panel on a passed Gate 1 is read-only too (08-27 audit B4)", async ({ page }) => {
+    await openPastGate1(page);
+    await openScorePanel(page);
+    await expect(page.locator("[data-testid='score-components']")).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Declare these components" })).toBeDisabled();
+  });
+
   test("@gate1 a passed Gate 1 says it is a record and offers the way back", async ({
     page,
   }) => {
