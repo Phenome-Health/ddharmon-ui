@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { JobResult } from "@/types";
 import { gate1ScopePayload, inheritedGate1Scope } from "@/lib/gate-decisions";
+import { mergeSpecEdit } from "@/lib/gate23";
 import {
   SKOS_RELATIONS,
   affectedSpecCount,
@@ -1398,5 +1399,85 @@ test.describe("gate1 scope inheritance", () => {
     });
     await openGate3(page);
     await expect(page.locator("[data-testid='gate3-concept']")).toHaveCount(0);
+  });
+});
+
+
+/**
+ * 08-27 audit B1 — a Gate 3 save MERGES into the persisted decision; it never replaces it.
+ *
+ * Every control wrote a partial payload and the store replaces the row, so a note save wiped the value map,
+ * Reject wiped the note + map, and any later edit silently dropped `rejected` (audit CBR ×3).
+ */
+test.describe("gate3 spec edits merge", () => {
+  const SRC = "AI-READI:susmkncf";
+  async function oneRow(page: Page): Promise<Locator> {
+    await serveFinished(
+      page,
+      (run) => {
+        run.result!.records = [run.result!.records!.find((x) => x.groupId === "c46be33d9a542#g0")!];
+      },
+      { keep: 0 },
+    );
+    await openGate3(page);
+    const row = page.locator(`[data-testid='spec-row'][data-source='${SRC}']`);
+    await expect(row).toBeVisible();
+    return row;
+  }
+  const chip = (row: Locator, code: string) => row.locator(`[data-testid='spec-value-chip'][data-code='${code}']`);
+  const bucket = (row: Locator, b: string) => row.locator(`[data-testid='spec-bucket'][data-bucket='${b}']`);
+
+  test("@gate3 mergeSpecEdit overlays the patch on every persisted edit field and drops a cleared reject", () => {
+    const prev = { note: "n", mapping: { "1": "No" }, rejected: true, chosen: "", optionSetKey: "k" };
+    expect(mergeSpecEdit(prev, { note: "m" })).toEqual({ note: "m", mapping: { "1": "No" }, rejected: true });
+    expect(mergeSpecEdit(prev, { rejected: false })).toEqual({ note: "n", mapping: { "1": "No" } });
+    expect(mergeSpecEdit(undefined, { bins: [] })).toEqual({ bins: [] });
+  });
+
+  test("@gate3 saving a note after a drag keeps the drag, across a reload", async ({ page }) => {
+    const row = await oneRow(page);
+    await chip(row, "1").dragTo(bucket(row, "No"));
+    await expect(bucket(row, "No").locator("[data-code='1']")).toBeVisible();
+    await row.locator("[data-testid='spec-note-input']").fill("checked the recode");
+    await row.locator("[data-testid='spec-save']").click();
+    await expect(row.locator("[data-testid='spec-saved']")).toBeVisible();
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(bucket(row, "No").locator("[data-code='1']")).toBeVisible();
+    await expect(row.locator("[data-testid='spec-note-input']")).toHaveValue("checked the recode");
+  });
+
+  test("@gate3 reject keeps the note and map, locks the editor, and un-reject restores them", async ({ page }) => {
+    const row = await oneRow(page);
+    await chip(row, "1").dragTo(bucket(row, "No"));
+    await row.locator("[data-testid='spec-note-input']").fill("why");
+    await row.locator("[data-testid='spec-save']").click();
+    await row.locator("[data-testid='spec-reject']").click();
+    await row.locator("[data-testid='reject-accept']").click();
+    await expect(row.locator("[data-testid='spec-edited-badge']")).toHaveText("rejected");
+    // a rejected recode is not silently un-rejected by a drag: its editor is read-only
+    await expect(chip(row, "0")).toHaveAttribute("draggable", "false");
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(row.locator("[data-testid='spec-edited-badge']")).toHaveText("rejected");
+    await expect(row.locator("[data-testid='spec-note-input']")).toHaveValue("why");
+    await row.locator("[data-testid='spec-unreject']").click();
+    await expect(row.locator("[data-testid='spec-edited-badge']")).toHaveText("edited");
+    await expect(bucket(row, "No").locator("[data-code='1']")).toBeVisible();
+    await expect(row.locator("[data-testid='spec-note-input']")).toHaveValue("why");
+  });
+
+  test("@gate3 an unsaved note in one row survives typing in another", async ({ page }) => {
+    await serveFinished(page);
+    await openGate3(page);
+    const inputs = page.locator("[data-testid='spec-note-input']");
+    // pick the first concept that carries at least two spec rows
+    const concepts = page.locator("[data-testid='gate3-concept']");
+    const n = await concepts.count();
+    for (let i = 0; i < n && (await inputs.count()) < 2; i++) await concepts.nth(i).click();
+    expect(await inputs.count()).toBeGreaterThanOrEqual(2);
+    await inputs.nth(0).fill("draft A");
+    await inputs.nth(1).fill("draft B");
+    await expect(inputs.nth(0)).toHaveValue("draft A");
   });
 });

@@ -33,6 +33,7 @@ import { isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
   recodeShape,
+  mergeSpecEdit,
   routesToReview,
   seedBinning,
   seedNumberMap,
@@ -150,9 +151,8 @@ export default function Gate3Page() {
   const [arithmeticOnly, setArithmeticOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
-  const [draft, setDraft] = useState<{ key: string; value: string } | null>(
-    null,
-  );
+  // Unsaved note text PER ROW — a single draft slot lost row A's text the moment row B was typed in.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [rejecting, setRejecting] = useState<string | null>(null);
   // Rows whose last save this session LANDED (08-26 #12). Set only off `write`'s resolved value — never
   // off having pressed Save — so the confirmation is evidence the store took the decision.
@@ -218,96 +218,43 @@ export default function Gate3Page() {
     );
   }
 
-  async function saveNote(
+  /**
+   * THE one Gate 3 write (08-27 audit B1). The store replaces a decision row on write, so every control patches
+   * its OWN field onto the persisted decision (`mergeSpecEdit`) instead of sending a partial payload — a note
+   * save no longer wipes the value map, Reject no longer wipes the note, and an edit never drops `rejected`.
+   * `chosen` is "" exactly while the recode is rejected.
+   */
+  async function saveSpec(
     record: UIRecord,
     sourceVariable: string,
-    value: string,
-  ) {
+    patch: Parameters<typeof mergeSpecEdit>[1],
+  ): Promise<boolean> {
+    const key = specs.itemKey({ sourceVariable });
+    const extra = mergeSpecEdit(specs.decisions[key] as Record<string, unknown> | undefined, patch);
     const ok = await specs.write(
       { sourceVariable },
       {
-        chosen: sourceVariable,
+        chosen: extra.rejected === true ? "" : sourceVariable,
         alternatives: [sourceVariable],
         upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
-        extra: { note: value },
+        extra,
       },
     );
-    setDraft(null);
     markSaved(sourceVariable, ok);
-    if (ok)
-      toast.success(
-        specs.local
-          ? "Recode note saved in this browser"
-          : "Recode note saved to the decision log",
-      );
+    return ok;
   }
 
-  // A value-mapping edit persists immediately, the way a Gate 1 move does — the reviewer's mapping survives
-  // a reload (R6). The existing note/unmapped on the decision are preserved.
-  async function saveMapping(
-    record: UIRecord,
-    sourceVariable: string,
-    mapping: Record<string, string>,
-    prev: Record<string, unknown> | undefined,
-  ) {
-    const ok = await specs.write(
-      { sourceVariable },
-      {
-        chosen: sourceVariable,
-        alternatives: [sourceVariable],
-        upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
-        extra: {
-          ...(typeof prev?.note === "string" ? { note: prev.note } : {}),
-          mapping,
-        },
-      },
-    );
-    markSaved(sourceVariable, ok);
-  }
-
-  // ② A code→number edit (categorical source, numeric target) persists the same way; other decision fields
-  // on the record (note, an unrelated mapping) are preserved.
-  async function saveNumberMap(
-    record: UIRecord,
-    sourceVariable: string,
-    numberMap: Record<string, NumberMapEntry>,
-    prev: Record<string, unknown> | undefined,
-  ) {
-    const ok = await specs.write(
-      { sourceVariable },
-      {
-        chosen: sourceVariable,
-        alternatives: [sourceVariable],
-        upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
-        extra: {
-          ...(typeof prev?.note === "string" ? { note: prev.note } : {}),
-          numberMap,
-        },
-      },
-    );
-    markSaved(sourceVariable, ok);
-  }
-
-  // ③ A binning edit (numeric source, categorical target) persists the reviewer's band boundaries.
-  async function saveBins(
-    record: UIRecord,
-    sourceVariable: string,
-    bins: BinRule[],
-    prev: Record<string, unknown> | undefined,
-  ) {
-    const ok = await specs.write(
-      { sourceVariable },
-      {
-        chosen: sourceVariable,
-        alternatives: [sourceVariable],
-        upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
-        extra: {
-          ...(typeof prev?.note === "string" ? { note: prev.note } : {}),
-          bins,
-        },
-      },
-    );
-    markSaved(sourceVariable, ok);
+  async function saveNote(record: UIRecord, sourceVariable: string, value: string) {
+    const ok = await saveSpec(record, sourceVariable, { note: value });
+    // Keep the typed text on a failed write — the rollback restores the stored note, not the reviewer's draft.
+    if (!ok) return;
+    const key = specs.itemKey({ sourceVariable });
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    toast.success(specs.local ? "Recode note saved in this browser" : "Recode note saved to the decision log");
   }
 
   return (
@@ -612,9 +559,10 @@ export default function Gate3Page() {
                         state === "failed" ||
                         matchState === "flagged" ||
                         (transform ? routesToReview(transform) : false);
+                      const rejected = decision?.rejected === true;
                       const noteValue =
-                        draft?.key === itemKey
-                          ? draft.value
+                        itemKey in drafts
+                          ? drafts[itemKey]
                           : typeof decision?.note === "string"
                             ? decision.note
                             : "";
@@ -778,14 +726,9 @@ export default function Gate3Page() {
                               targetValues={recodeValues}
                               value={mappingValue}
                               recommended={recommendedMapping}
-                              readOnly={frozen}
+                              readOnly={frozen || rejected}
                               onChange={(m) =>
-                                void saveMapping(
-                                  record,
-                                  sourceVariable,
-                                  m,
-                                  decision,
-                                )
+                                void saveSpec(record, sourceVariable, { mapping: m })
                               }
                             />
                           )}
@@ -795,14 +738,9 @@ export default function Gate3Page() {
                               targetUnits={targetUnits}
                               value={numberMapValue}
                               recommended={recommendedNumberMap}
-                              readOnly={frozen}
+                              readOnly={frozen || rejected}
                               onChange={(m) =>
-                                void saveNumberMap(
-                                  record,
-                                  sourceVariable,
-                                  m,
-                                  decision,
-                                )
+                                void saveSpec(record, sourceVariable, { numberMap: m })
                               }
                             />
                           )}
@@ -810,14 +748,9 @@ export default function Gate3Page() {
                             <SpecBinning
                               value={binsValue}
                               recommended={recommendedBins}
-                              readOnly={frozen}
+                              readOnly={frozen || rejected}
                               onChange={(b) =>
-                                void saveBins(
-                                  record,
-                                  sourceVariable,
-                                  b,
-                                  decision,
-                                )
+                                void saveSpec(record, sourceVariable, { bins: b })
                               }
                             />
                           )}
@@ -841,10 +774,8 @@ export default function Gate3Page() {
                               onChange={(e) => {
                                 // Typing again means the confirmation no longer describes what is on screen.
                                 unmarkSaved(itemKey);
-                                setDraft({
-                                  key: itemKey,
-                                  value: e.target.value,
-                                });
+                                const value = e.target.value;
+                                setDrafts((prev) => ({ ...prev, [itemKey]: value }));
                               }}
                               className="max-w-96 text-xs"
                             />
@@ -859,15 +790,27 @@ export default function Gate3Page() {
                             >
                               Save
                             </Button>
-                            <Button
-                              data-testid="spec-reject"
-                              size="sm"
-                              variant="outline"
-                              disabled={frozen}
-                              onClick={() => setRejecting(itemKey)}
-                            >
-                              Reject
-                            </Button>
+                            {rejected ? (
+                              <Button
+                                data-testid="spec-unreject"
+                                size="sm"
+                                variant="outline"
+                                disabled={frozen}
+                                onClick={() => void saveSpec(record, sourceVariable, { rejected: false })}
+                              >
+                                Un-reject
+                              </Button>
+                            ) : (
+                              <Button
+                                data-testid="spec-reject"
+                                size="sm"
+                                variant="outline"
+                                disabled={frozen}
+                                onClick={() => setRejecting(itemKey)}
+                              >
+                                Reject
+                              </Button>
+                            )}
                             {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
                                 failed write rolls back and toasts instead, so this never claims a miss. */}
                             {savedKeys[itemKey] && (
@@ -900,22 +843,7 @@ export default function Gate3Page() {
                                   data-testid="reject-accept"
                                   size="sm"
                                   onClick={() => {
-                                    void specs
-                                      .write(
-                                        { sourceVariable },
-                                        {
-                                          chosen: "",
-                                          alternatives: [sourceVariable],
-                                          upstream: {
-                                            kind: "gate2_candidate_pick",
-                                            itemKey: record.groupId,
-                                          },
-                                          extra: { rejected: true },
-                                        },
-                                      )
-                                      .then((ok) =>
-                                        markSaved(sourceVariable, ok),
-                                      );
+                                    void saveSpec(record, sourceVariable, { rejected: true });
                                     setRejecting(null);
                                   }}
                                 >

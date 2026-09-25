@@ -515,3 +515,28 @@ export function repickConfirmation(n: number): string {
 export function needsRepickConfirmation(affected: number): boolean {
   return affected > 0;
 }
+
+// --- Gate 3: one decision per source variable, MERGED on every save (08-27 audit B1) --------------------
+
+/** The reviewer-edit fields a `gate3_spec_edit` decision carries. Each control patches ONE of them. */
+export const SPEC_EDIT_FIELDS = ["note", "mapping", "numberMap", "bins", "rejected"] as const;
+export type SpecEditField = (typeof SPEC_EDIT_FIELDS)[number];
+
+/**
+ * The `extra` payload for a Gate 3 save: the persisted decision's edit fields, overlaid with this control's
+ * patch. The store REPLACES a decision row on write, so a control that sent only its own field erased the
+ * others (a note save wiped the value map; Reject wiped the note; a later drag dropped `rejected`). A patch
+ * of `rejected: false` clears the flag rather than storing it.
+ */
+export function mergeSpecEdit(
+  prev: Record<string, unknown> | undefined,
+  patch: Partial<Record<SpecEditField, unknown>>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of SPEC_EDIT_FIELDS) {
+    const v = f in patch ? patch[f] : prev?.[f];
+    if (v === undefined || (f === "rejected" && v !== true)) continue;
+    out[f] = v;
+  }
+  return out;
+}
