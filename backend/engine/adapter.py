@@ -457,6 +457,11 @@ def _record_to_ui(
     }
     if concept_gate:
         ui["conceptMismatch"] = bool(getattr(r, "concept_mismatch", False))
+    raw = getattr(r, "raw", None)
+    reviewer_pick = raw.get("reviewer_pick") if isinstance(raw, dict) else None
+    if reviewer_pick:
+        # 08-27b: the Gate 2 pick re-targeted this record and its specs were regenerated for that target.
+        ui["reviewerPick"] = cast(Any, dict(reviewer_pick))
     readjudicated_from = str(getattr(r, "readjudicated_from", "") or "")
     if readjudicated_from:
         # Only ever set on a re-adjudication CHILD. Absent means this row is an original grouping, which
@@ -1617,6 +1622,10 @@ _GATE_STOP_MECHANISM = {
 #:
 #: Decision stages are NOT in here on purpose: swallowing a `classify` failure would silently produce a
 #: run with no assignments and call it a success.
+#: The cost-ledger key the Gate 2 -> Gate 3 re-pick spec regeneration bills under (a Gate 3 key; see
+#: ``GATE_LEDGER_KEYS`` in the frontend's estimate.ts).
+_REPICK_COST_KEY = "specs_repick"
+
 _JUDGE_STAGES: dict[str, dict[str, str]] = {
     # stage kwarg -> {progress phase it reports under, batch cache tag, cost-ledger key}
     "coherence": {"phase": "splitting", "tag": "coherence", "cost": "judging"},
@@ -1941,8 +1950,14 @@ def run_pipeline(
     }
 
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
+    # 08-27b: the Gate 2 -> Gate 3 leg re-generates specs for re-picked groups (see apply_reviewer_picks). Its
+    # own stage + cost key, so the spend is visible as its own line; built ONLY when there are picks to apply.
+    gate2_picks: dict[str, Any] = config.get("gate2_picks") or {}
+    want_repick = bool(gate2_picks) and stop_at_gate is None
     if overrides:
-        stages: dict[str, StageFn] = overrides
+        stages: dict[str, StageFn] = dict(overrides)
+        if want_repick and "specgen_repick" not in stages and "specgen" in stages:
+            stages["specgen_repick"] = stages["specgen"]
     elif mode == "sync":
         # Client selection keys off the chosen model tag via the shared builder: Anthropic is pinned to the
         # PICKED Claude model (the SDK client's own default is a stale snapshot that 404s and ignored the
@@ -1958,6 +1973,15 @@ def run_pipeline(
             "gencde": _sync_stage("gencde", progress, client, ledger, stopping),
             "specgen": _sync_stage("specs", progress, client, ledger, stopping),
             "refine": _sync_stage("refine", progress, client, ledger, stopping),
+            **(
+                {
+                    "specgen_repick": _sync_stage(
+                        "specs", progress, client, ledger, stopping, ledger_key=_REPICK_COST_KEY
+                    )
+                }
+                if want_repick
+                else {}
+            ),
             # The judge and its R2 second read. One line each, same shape as every stage above (see
             # _JUDGE_STAGES for why they borrow an existing progress phase and carry their own cost key).
             **{
@@ -1977,6 +2001,22 @@ def run_pipeline(
             "gencde": _batch_stage("gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping),
             "specgen": _batch_stage("specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping),
             "refine": _batch_stage("refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping),
+            **(
+                {
+                    "specgen_repick": _batch_stage(
+                        "specs",
+                        progress,
+                        work_dir,
+                        "specgen_repick",
+                        ledger,
+                        api_key=api_key,
+                        stopping=stopping,
+                        ledger_key=_REPICK_COST_KEY,
+                    )
+                }
+                if want_repick
+                else {}
+            ),
             **{
                 name: _batch_stage(
                     w["phase"],
@@ -2088,6 +2128,19 @@ def run_pipeline(
         **kwargs,
     )
     _save_substrate_if_new(substrate_path, result)
+    # 08-27b: the reviewer's Gate 2 picks, applied AFTER the leg's specgen and BEFORE the result is built, so the
+    # Gate 3 checkpoint's records are self-consistent (chosen target == the target their specs were built for).
+    repick_stage = stages.get("specgen_repick")
+    if want_repick and gen_specs and repick_stage is not None:
+        cde_ed = next((ed for ed in embedded if getattr(ed.dictionary, "cohort_name", None) == cde_cohort), None)
+        apply_reviewer_picks(
+            result.records,
+            gate2_picks,
+            embedded,
+            dict(cde_ed.dictionary.fields) if cde_ed is not None else {},
+            model_tag=kwargs.get("model_tag"),
+            stage_fn=repick_stage,
+        )
     return build_ui_result(
         result,
         mode=mode,
@@ -2485,6 +2538,39 @@ def _rebuild_regen_record(rec_ui: UIRecord) -> Any:
     )
 
 
+def _regen_gencde_transforms(rec: Any, embedded: list[Any], *, model_tag: str | None, stage_fn: StageFn) -> None:
+    """Append fresh member->GenCDE recodes to the core ``rec`` for its (possibly edited) ``rec.gencde``.
+
+    The SAME core seams a full run uses, on a single-record list — shared by the per-record regenerate
+    endpoint and the Gate 2 -> Gate 3 pick application (:func:`apply_reviewer_picks`). Categorical GenCDE:
+    C1 LLM member-code -> GenCDE-code recodes. Numeric GenCDE: deterministic unit specs (N1) + the LLM
+    arithmetic residual upgrade (N2). The guarded import makes a core build predating N1/N2 raise a clean
+    ``RuntimeError`` instead of silently dropping the numeric recodes with nothing to replace them.
+    """
+    from ddharmon.harmonization import assemble_gencde_specgen, prepare_gencde_specgen
+
+    kwargs = {"model_tag": model_tag} if model_tag else {}
+    if rec.gencde is not None and rec.gencde.permissible_values:
+        prompts = prepare_gencde_specgen([rec], embedded, **kwargs)
+        if prompts:
+            assemble_gencde_specgen(prompts, stage_fn(prompts), [rec])
+        return
+    try:
+        from ddharmon.harmonization import (
+            assemble_gencde_arith_specgen,
+            generate_gencde_unit_specs,
+            prepare_gencde_arith_specgen,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "this core build cannot regenerate numeric GenCDE recodes (needs the N1/N2 spec-gen seams)"
+        ) from exc
+    generate_gencde_unit_specs([rec], embedded)  # N1 (deterministic) — leaves needs_units residuals
+    prompts = prepare_gencde_arith_specgen([rec], embedded, **kwargs)  # N2 residual -> arith prompts
+    if prompts:
+        assemble_gencde_arith_specgen(prompts, stage_fn(prompts), [rec])
+
+
 def regenerate_gencde_specs(
     rec_ui: UIRecord,
     dict_specs: list[dict[str, Any]],
@@ -2502,36 +2588,13 @@ def regenerate_gencde_specs(
     auto-approved here. The stale categorical member->GenCDE recodes are replaced; any non-GenCDE-target
     transforms on the record are preserved untouched.
     """
-    from ddharmon.harmonization import assemble_gencde_specgen, prepare_gencde_specgen
     from ddharmon.harmonization.models import TransformKind
 
     embedded = _reload_source_dicts(dict_specs)
     member_index = build_member_index(embedded)
     rec = _rebuild_regen_record(rec_ui)
-
-    kwargs = {"model_tag": model_tag} if model_tag else {}
     g = rec_ui.get("gencde") or {}
-    if g.get("permissibleValues"):
-        # CATEGORICAL GenCDE: LLM member-code -> GenCDE-code recodes (C1), same as a full run.
-        prompts = prepare_gencde_specgen([rec], embedded, **kwargs)
-        assemble_gencde_specgen(prompts, stage_fn(prompts), [rec])
-    else:
-        # NUMERIC GenCDE: deterministic unit specs (N1) + LLM arithmetic residual upgrade (N2), mirroring
-        # harmonize_leanb's gencde stage. Guarded import so a core build predating N1/N2 returns a clean 409
-        # (RuntimeError) instead of dropping the record's numeric recodes with nothing to replace them.
-        try:
-            from ddharmon.harmonization import (
-                assemble_gencde_arith_specgen,
-                generate_gencde_unit_specs,
-                prepare_gencde_arith_specgen,
-            )
-        except ImportError as exc:
-            raise RuntimeError(
-                "this core build cannot regenerate numeric GenCDE recodes (needs the N1/N2 spec-gen seams)"
-            ) from exc
-        generate_gencde_unit_specs([rec], embedded)  # N1 (deterministic) — leaves needs_units residuals
-        prompts = prepare_gencde_arith_specgen([rec], embedded, **kwargs)  # N2 residual -> arith prompts
-        assemble_gencde_arith_specgen(prompts, stage_fn(prompts), [rec])
+    _regen_gencde_transforms(rec, embedded, model_tag=model_tag, stage_fn=stage_fn)
 
     # Fresh recodes = everything assemble appended (the record started with only the wide->long guard).
     fresh_ui = [_transform_to_ui(t) for t in rec.transforms if t.kind != TransformKind.WIDE_TO_LONG]
@@ -2547,3 +2610,280 @@ def regenerate_gencde_specs(
     updated["transforms"] = preserved + fresh_ui
     updated["memberDetails"] = [_member_ui(m, member_index) for m in updated.get("members", [])]
     return updated
+
+
+# ── Gate 2 picks drive Gate 3's specs (08-27b) ─────────────────────────────────────────────────
+#
+# Gate 2 persists a ``gate2_candidate_pick`` per group (``chosen`` = a catalog CDE id, the generated element's
+# id, or "" for "none of these", plus an optional ``gencdeEdit``). Core's ``harmonize_leanb`` takes no pick
+# override, so the Gate 2 -> Gate 3 leg's specgen builds every recode for the MODEL's target. Rather than
+# change core, the adapter re-targets each re-picked record AFTER that specgen and regenerates its specs
+# against the reviewer's target through the SAME core seams the run uses (prepare/assemble_specgen for a
+# catalog CDE; :func:`_regen_gencde_transforms` — the per-record regenerate endpoint's call — for a GenCDE).
+# It runs before ``build_ui_result``, so the Gate 3 checkpoint holds a self-consistent record: its chosen
+# target IS the target its transforms were generated for.
+#
+# Pick semantics (the frontend's own reading, so Gate 3's header and the specs agree):
+#   * ``chosen`` = a catalog id other than the generated element's  -> that catalog CDE (no-op if it IS the
+#     model's CDE). ``gencdeEdit`` is ignored: an edit describes the generated element, not a catalog one.
+#   * ``chosen`` = "" or the generated element's id                 -> the reviewer's OWN target: the record's
+#     GenCDE with ``gencdeEdit`` applied, or a GenCDE built from the edit when the record has none.
+#   * ``chosen`` = "" with no edit and no generated element         -> "none of these": no target, so no
+#     specs, and a stated reason on ``reviewerPick`` rather than an empty list that reads as "nothing to map".
+
+#: Separators a reviewer's permissible-value list may use. Gate 2 pre-fills ``code=label / code=label``; the
+#: catalog form is ``code=label|code=label``. A slash only separates when spaced, so "mg/dL" survives.
+_PV_SEPARATORS = r"\s*(?:\||\n|;|\s/\s)\s*"
+
+
+def parse_permissible_values(text: Any) -> list[Any]:
+    """Parse a reviewer-typed value list (``"1=Yes / 0=No"``) into core ``ResponseOption``s, in order.
+
+    ``code=label`` items keep both halves; a bare item is its own code and label. Blank items are dropped.
+    """
+    import re
+
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    out: list[Any] = []
+    for item in re.split(_PV_SEPARATORS, str(text or "")):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" in item:
+            code, _, label = item.partition("=")
+            code, label = code.strip(), label.strip()
+            if not code:
+                continue
+            out.append(ResponseOption(code=code, label=label or code))
+        else:
+            out.append(ResponseOption(code=item, label=item))
+    return out
+
+
+def _clean_edit(raw: Any) -> dict[str, str] | None:
+    """The ``gencdeEdit`` fields as strings, or None when there is no edit (absent, not a dict, all blank)."""
+    if not isinstance(raw, dict):
+        return None
+    edit = {k: str(raw.get(k) or "") for k in ("name", "definition", "units", "values") if k in raw}
+    return edit if any(v.strip() for v in edit.values()) else None
+
+
+def _edit_changes(g: Any, edit: dict[str, str]) -> bool:
+    """Whether applying ``edit`` to GenCDE ``g`` changes anything (Gate 2 saves ALL anchor fields, edited or not)."""
+    if "name" in edit and edit["name"].strip() != (g.preferred_name or g.title or ""):
+        return True
+    if "definition" in edit and edit["definition"].strip() != (g.definition or ""):
+        return True
+    if "units" in edit and edit["units"].strip() != (g.units or ""):
+        return True
+    if "values" in edit:
+        now = [(o.code, o.label) for o in g.permissible_values]
+        if [(o.code, o.label) for o in parse_permissible_values(edit["values"])] != now:
+            return True
+    return False
+
+
+def _apply_gencde_edit(base: Any, edit: dict[str, str] | None, rec: Any) -> Any:
+    """A NEW GenCDE: ``base`` (or a fresh reviewer-authored one) with the edited fields applied. ``base`` untouched."""
+    import dataclasses
+
+    from ddharmon.harmonization.models import GenCDE
+
+    key = rec.group_id or rec.cluster_id
+    if base is None:
+        g = GenCDE(
+            gencde_id=f"GENCDE:{key}",
+            source_variables=list(rec.member_variable_names),
+            source_cohorts=list(rec.cohorts),
+            generated_by="reviewer",
+            needs_review=True,
+        )
+    else:
+        g = dataclasses.replace(base, permissible_values=list(base.permissible_values))
+    if not edit:
+        return g
+    if "name" in edit and edit["name"].strip():
+        g.preferred_name = edit["name"].strip()
+        g.title = g.title or g.preferred_name
+    if "definition" in edit:
+        g.definition = edit["definition"].strip()
+    if "units" in edit:
+        g.units = edit["units"].strip() or None
+    if "values" in edit:
+        g.permissible_values = parse_permissible_values(edit["values"])
+        if g.permissible_values and not g.data_type:
+            g.data_type = "categorical"
+    return g
+
+
+def _repick_ids(stage_fn: StageFn) -> StageFn:
+    """Give a regeneration's prompts ids of their OWN, and map the answers back to the ids core assembles by.
+
+    Core's spec-gen ids are content-addressed on (target id, SOURCE value set) — or on the record — never on
+    the target's value set. An edited GenCDE keeps its id, so its recode prompt would share an id with the
+    stale one the leg already answered; replay would hand back the old recode. Keying on the full prompt text
+    makes an identical prompt dedupe and a changed target always a new question.
+    """
+    import dataclasses
+
+    from ddharmon.harmonization.substrate import content_token
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        renamed = [
+            dataclasses.replace(p, id=f"leanb:repick:{content_token(p.id, p.system_prompt, p.user_prompt)}")
+            for p in prompts
+        ]
+        back = {r.id: p.id for r, p in zip(renamed, prompts, strict=True)}
+        out = stage_fn(renamed) or {}
+        return {back.get(str(k), str(k)): v for k, v in out.items()}
+
+    return stage
+
+
+def _plan_pick(rec: Any, pick: dict[str, Any]) -> tuple[str, str, dict[str, str] | None] | None:
+    """``(kind, chosen, edit)`` for a pick that CHANGES the record's target, or None for a no-op pick."""
+    chosen = str(pick.get("chosen") or "")
+    edit = _clean_edit(pick.get("gencdeEdit"))
+    gid = rec.gencde.gencde_id if rec.gencde is not None else ""
+    if chosen and chosen != gid:
+        return None if chosen == rec.cde_id else ("catalog", chosen, None)
+    # The reviewer's OWN target (the generated element, possibly edited).
+    if edit is not None:
+        if rec.cde_id is None and rec.gencde is not None and not _edit_changes(rec.gencde, edit):
+            return None  # the model's target already, unedited
+        return ("gencde", chosen, edit)
+    if rec.gencde is not None:
+        return None if rec.cde_id is None else ("gencde", chosen, None)
+    if rec.cde_id is None:
+        return None  # nothing targeted before, nothing targeted now
+    return ("none", chosen, None)
+
+
+def _retarget_catalog(
+    rec: Any, cde_id: str, embedded: list[Any], cde_fields: dict[str, Any], *, model_tag: str | None, stage_fn: StageFn
+) -> str:
+    """Point ``rec`` at catalog CDE ``cde_id`` and regenerate its specs for it. Returns a reason when it can't."""
+    from ddharmon.harmonization import (
+        assemble_arith_specgen,
+        assemble_specgen,
+        generate_unit_specs,
+        generate_wide_to_long_specs,
+        prepare_arith_specgen,
+        prepare_specgen,
+    )
+
+    cand = next((c for c in rec.candidates if c.cde_id == cde_id), None)
+    rec.cde_id = cde_id
+    rec.cde_external_id = (cand.cde_external_id if cand else None) or None
+    rec.chosen_cos = cand.cosine if cand else None
+    for c in rec.candidates:
+        c.is_chosen = c.cde_id == cde_id
+    if rec.verdict not in ("adopt", "refine"):
+        rec.verdict = "adopt"
+    rec.route = "assigned"
+    # A GenCDE on the record is either a from-scratch proposal the reviewer declined in favour of a catalog
+    # CDE, or a refinement DERIVED from the model's CDE — neither describes the reviewer's target.
+    rec.gencde = None
+    rec.transforms = []
+    if cde_id not in cde_fields:
+        return f"{cde_id} is not in this run's CDE catalog, so no transform specs could be generated for it."
+    kwargs = {"model_tag": model_tag} if model_tag else {}
+    generate_wide_to_long_specs([rec], embedded, cde_fields)
+    generate_unit_specs([rec], embedded, cde_fields)  # N1, deterministic
+    cat = prepare_specgen([rec], embedded, cde_fields, **kwargs)  # C1
+    arith = prepare_arith_specgen([rec], embedded, cde_fields, **kwargs)  # N2
+    if cat or arith:
+        responses = _repick_ids(stage_fn)(cat + arith)
+        assemble_specgen(cat, responses, [rec])
+        assemble_arith_specgen(arith, responses, [rec])
+    return ""
+
+
+def _retarget_gencde(
+    rec: Any, edit: dict[str, str] | None, embedded: list[Any], *, model_tag: str | None, stage_fn: StageFn
+) -> None:
+    """Point ``rec`` at its own (edited) GenCDE and regenerate its specs for it."""
+    from ddharmon.harmonization.models import TransformKind, TransformSpec
+
+    g = _apply_gencde_edit(rec.gencde, edit, rec)
+    reshape = next((t for t in rec.transforms if t.kind == TransformKind.WIDE_TO_LONG), None)
+    rec.gencde = g
+    rec.cde_id = None
+    rec.cde_external_id = None
+    rec.chosen_cos = None
+    for c in rec.candidates:
+        c.is_chosen = False
+    rec.verdict = "novel"
+    rec.route = "gencde_residual"
+    # A repeating measure stays ONE structural reshape whatever it lands on; only its target changes.
+    rec.transforms = (
+        [TransformSpec(source_variable=reshape.source_variable, target_cde_id=g.gencde_id, kind=reshape.kind)]
+        if reshape is not None
+        else []
+    )
+    _regen_gencde_transforms(rec, embedded, model_tag=model_tag, stage_fn=_repick_ids(stage_fn))
+
+
+def apply_reviewer_picks(
+    records: list[Any],
+    picks: dict[str, Any],
+    embedded: list[Any],
+    cde_fields: dict[str, Any],
+    *,
+    model_tag: str | None,
+    stage_fn: StageFn,
+) -> list[str]:
+    """Re-target every record whose Gate 2 pick differs from the model's and regenerate its specs.
+
+    ``picks`` is ``{groupId: {"chosen": str, "gencdeEdit": dict | None}}``. Mutates the core records in place
+    and stamps ``rec.raw["reviewer_pick"]`` (the wire's ``reviewerPick``). Returns the group ids it changed.
+    Each changed group costs at most one spec-gen call per unique coded source encoding (+ one arithmetic call
+    per numeric residual), paid through ``stage_fn`` — the caller's ledgered stage.
+    """
+    changed: list[str] = []
+    for rec in records:
+        key = rec.group_id or rec.cluster_id
+        pick = picks.get(key)
+        if not isinstance(pick, dict):
+            continue
+        plan = _plan_pick(rec, pick)
+        if plan is None:
+            continue
+        kind, chosen, edit = plan
+        model_target = rec.cde_id or (rec.gencde.gencde_id if rec.gencde is not None else "")
+        reason = ""
+        if kind == "catalog":
+            reason = _retarget_catalog(rec, chosen, embedded, cde_fields, model_tag=model_tag, stage_fn=stage_fn)
+            target = chosen
+        elif kind == "gencde":
+            _retarget_gencde(rec, edit, embedded, model_tag=model_tag, stage_fn=stage_fn)
+            target = rec.gencde.gencde_id
+        else:
+            rec.cde_id = None
+            rec.cde_external_id = None
+            rec.chosen_cos = None
+            for c in rec.candidates:
+                c.is_chosen = False
+            rec.verdict = "novel"
+            rec.route = "gencde_residual"
+            rec.transforms = []
+            target = ""
+            reason = (
+                "You picked “none of these” at Gate 2 and this group has no generated CDE to fall back on, so it "
+                "has no target and no transform specs were generated."
+            )
+        rec.decided_by = "reviewer"
+        raw = rec.raw if isinstance(getattr(rec, "raw", None), dict) else {}
+        raw["reviewer_pick"] = {
+            "chosen": chosen,
+            "kind": kind,
+            "target": target,
+            "modelTarget": model_target,
+            "reason": reason,
+        }
+        rec.raw = raw
+        changed.append(key)
+    if changed:
+        logger.info("applied %d Gate 2 re-pick(s); specs regenerated for the reviewer's targets", len(changed))
+    return changed

@@ -266,6 +266,16 @@ class UIGenCDE(TypedDict, total=False):
     overRefined: bool  # the delta rewrites rather than refines -> this should probably have been a novel
 
 
+class ReviewerPick(TypedDict):
+    """How a Gate 2 pick re-targeted a record (08-27b). ``target`` is what the transforms were built for."""
+
+    chosen: str  # the persisted pick: a catalog CDE id, the generated element's id, or "" (none of these)
+    kind: Literal["catalog", "gencde", "none"]
+    target: str  # the id the record's transforms now target ("" when there is none)
+    modelTarget: str  # what the model had chosen (a CDE id or GenCDE id; "" if nothing)
+    reason: str  # non-empty when no specs could be generated (e.g. "none of these" with nothing to fall back on)
+
+
 class UIRecord(TypedDict):
     """One harmonization decision per concept-GROUP (mapped from ``LeanBRecord``)."""
 
@@ -318,6 +328,9 @@ class UIRecord(TypedDict):
     #: Only ever populated by a caller-invoked re-adjudication — nothing in the pipeline re-splits on its
     #: own, so on a normal run this is absent and the register records it PER-RUN.
     readjudicatedFrom: NotRequired[str]
+    #: 08-27b: present only when the reviewer's Gate 2 pick CHANGED this record's target, so the Gate 2 -> 3
+    #: leg re-targeted it and regenerated its specs. Absent = the model's target stands.
+    reviewerPick: NotRequired[ReviewerPick]
 
 
 #: Core ``LeanBRecord`` signal attribute -> where the wire carries it. The completeness gate

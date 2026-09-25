@@ -90,6 +90,7 @@ TAG_TO_STAGE: dict[str, str] = {
     "assign": "classify",
     "gencde": "gencde",
     "specgen": "specgen",
+    "specgen_repick": "specgen_repick",  # 08-27b: Gate 2 re-pick spec regeneration (its own replay stage)
     "refine": "refine",
     "coherence": "coherence",
     "kinds": "distinct_kinds",
