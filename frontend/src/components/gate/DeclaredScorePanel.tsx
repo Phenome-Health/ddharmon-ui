@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
 import { useGateDecisions } from "@/hooks/use-gate-decisions";
-import { deriveComposite, extractScoreComponents, extractScoreDocument, IS_STATIC } from "@/lib/api";
+import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
@@ -29,7 +29,6 @@ import {
   PRESENCE_IS_PER_DICTIONARY,
   SCOPE_VERDICT_COPY,
   componentVerdictFor,
-  coveredCohorts,
   declaredComponents,
   missingReason,
   scopeVerdictFor,
@@ -38,7 +37,6 @@ import {
 } from "@/lib/score-scope";
 import type {
   CompositeSpec,
-  UIRecord,
   ComponentCoding,
   ComponentMatch,
   ConceptGroup,
@@ -169,7 +167,7 @@ export interface DeclaredScorePanelProps {
    *  linkable — instead of listing many look-alike raw variables that cannot open a group. */
   groupByVariable?: Map<string, string>;
   /** cohort:var → its FieldDetail, so a variable-level match/candidate resolves to its name (not a raw id)
-   *  in the Swap dropdown. From the run's `fieldIndex`. */
+   *  in the candidate list. From the run's `fieldIndex`. */
   fieldIndex?: Record<string, FieldDetail>;
   /** Select a group in Gate 1's detail pane (the drag-drop screen) and scroll it into view. */
   onOpenGroup?: (groupId: string) => void;
@@ -183,69 +181,6 @@ export interface DeclaredScorePanelProps {
   /** Gate 1 has been passed: the panel is a record — nothing here may write (08-27 audit B4). */
   frozen?: boolean;
   className?: string;
-}
-
-// Apply a swap/drop to a spec CLIENT-SIDE — the optimistic preview shown immediately, and the only
-// result on an immutable demo or the static build (both refuse the backend write). On an owned run the
-// backend's authoritative re-derive replaces this (it fills confidence + rationale the client cannot).
-// The backend (backend/composite.py::assess_feasibility) remains the authority; this mirrors its verdict
-// rule closely enough to keep the readout honest between the click and the server's answer.
-function applyEditLocally(
-  spec: CompositeSpec,
-  component: string,
-  conceptId: string | null,
-  groupsById?: Map<string, ConceptGroup>,
-): CompositeSpec {
-  const matches = spec.matches.map((m) => {
-    if (m.component !== component) return m;
-    if (conceptId == null) {
-      return { ...m, conceptId: null, concept: "", cohorts: [], sourceVariables: [], confidence: 0, column: "", rationale: "", pinned: false, coverageMembers: undefined, matchedMembers: undefined };
-    }
-    const g = groupsById?.get(conceptId);
-    return {
-      ...m,
-      conceptId,
-      concept: g ? groupLabel(g).text : conceptId,
-      cohorts: g?.cohorts ?? [],
-      sourceVariables: g?.memberVariableNames ?? [],
-      column: "",
-      rationale: "Manually re-pointed to this concept (pending the run's own re-derive).",
-      pinned: true,
-      // The old match's members/coverage belong to the OLD group; a real per-cohort union only comes back
-      // from the run's own re-derive. Clear them so the table/detail fall back to the new group's cohorts
-      // rather than showing stale coverage for the concept just swapped in.
-      coverageMembers: undefined,
-      matchedMembers: undefined,
-    };
-  });
-  const requiredNames = new Set(spec.definition.components.filter((c) => c.required).map((c) => c.name));
-  const anyRequired = requiredNames.size > 0;
-  const required = matches.filter((m) => !anyRequired || requiredNames.has(m.component));
-  const matchedRequired = required.filter((m) => m.conceptId != null);
-  const verdict =
-    required.length > 0 && matchedRequired.length === required.length
-      ? "full"
-      : matchedRequired.length > 0
-        ? "partial"
-        : "infeasible";
-  const perCohort = spec.feasibility.perCohort.map((c) => {
-    const present = matches.filter((m) => coveredCohorts(m).includes(c.cohort)).map((m) => m.component);
-    const missing = required.filter((m) => !coveredCohorts(m).includes(c.cohort)).map((m) => m.component);
-    return { ...c, present, missing, computable: missing.length === 0 && required.length > 0 };
-  });
-  return {
-    ...spec,
-    matches,
-    feasibility: {
-      ...spec.feasibility,
-      verdict,
-      nRequired: required.length,
-      nRequiredMatched: matchedRequired.length,
-      matched: matches.filter((m) => m.conceptId != null).map((m) => m.component),
-      missing: matches.filter((m) => m.conceptId == null).map((m) => m.component),
-      perCohort,
-    },
-  };
 }
 
 export function DeclaredScorePanel({
@@ -274,24 +209,8 @@ export function DeclaredScorePanel({
   /** The free read, kept WHOLE: it is sent to be extracted, and shown beside the proposal as its evidence. */
   const [document, setDocument] = useState<ReadDocument | null>(null);
   const [showDeclareForm, setShowDeclareForm] = useState(false);
-  const [localSpec, setLocalSpec] = useState<CompositeSpec | null>(null);
-  const [editBusy, setEditBusy] = useState(false);
-  // A swap/drop re-derives with every OTHER match pinned, so the recompute costs no model call; the
-  // result is held locally so the panel updates without a round-trip to the run's stored spec.
-  const shownSpec = localSpec ?? spec;
-  // The Swap dropdown's targets: this run's concept groups, shaped as the minimal record the row reads
-  // (id + concept + cohorts). Without these, Swap can only drop a match; with them it can re-point it.
-  const swapRecords = useMemo(
-    () =>
-      [...(groupsById?.values() ?? [])].map((g) => ({
-        id: g.groupId,
-        concept: g.concept,
-        cohorts: g.cohorts,
-      })) as unknown as UIRecord[],
-    [groupsById],
-  );
   // Resolve a candidate id to a name + cohorts (+ the group's TRUE size, for the coverage line) for the
-  // Swap dropdown and the matched-group render — a GROUP id via `groupsById`, OR a variable-level candidate
+  // matched-group render — a GROUP id via `groupsById`, OR a variable-level candidate
   // id ("cohort:var") via the run's `fieldIndex`. Without the fieldIndex branch a variable candidate would
   // render as a raw "Cohort:var" id. `nMembers` is the denominator of "N of M members matched"; a variable
   // candidate has no group so it stays undefined and the coverage line degrades to "N members matched".
@@ -310,7 +229,7 @@ export function DeclaredScorePanel({
     [groupsById, fieldIndex],
   );
   // Map any candidate id to the GROUP it should open: a group id resolves to itself; a variable id ("cohort:var")
-  // rolls up to its concept group. This is what lets the Swap list dedupe by group and link — a missing
+  // rolls up to its concept group. This is what lets the candidate list dedupe by group and link — a missing
   // component's shortlist is variable-level (eight look-alike cancer-type variables all belong to one group),
   // and without the roll-up they render as eight dead, unlinkable rows.
   const resolveGroupId = useMemo(
@@ -320,30 +239,6 @@ export function DeclaredScorePanel({
     },
     [groupsById, groupByVariable],
   );
-  async function handleEdit(component: string, conceptId: string | null) {
-    if (!shownSpec || frozen) return;
-    // Optimistic: show the edit immediately. On an immutable demo or the static build this is the result.
-    const optimistic = applyEditLocally(shownSpec, component, conceptId, groupsById);
-    setLocalSpec(optimistic);
-    if (IS_STATIC) return;
-    // Reconcile with the run's own re-derive (owned run: fills confidence + rationale; every other match
-    // is pinned so it costs no model call). A 403 means this is a read-only demo — keep the optimistic view.
-    const overrides: Record<string, string | null> = {};
-    for (const m of optimistic.matches) overrides[m.component] = m.conceptId;
-    setEditBusy(true);
-    try {
-      setLocalSpec(
-        await deriveComposite(jobId, {
-          definition: shownSpec.definition,
-          overrides,
-        }),
-      );
-    } catch {
-      // Read-only demo (403) or a transient failure — the optimistic edit stands.
-    } finally {
-      setEditBusy(false);
-    }
-  }
 
   /**
    * The declared components — from the persisted rows, and from any spec this run has already derived.
@@ -499,7 +394,7 @@ export function DeclaredScorePanel({
           aria-label="A published score you want this run to support"
           className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
         >
-          {(!shownSpec || showDeclareForm) && (
+          {(!spec || showDeclareForm) && (
             <>
           <div className="flex flex-col gap-1">
             {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
@@ -635,7 +530,7 @@ export function DeclaredScorePanel({
           </div>
             </>
           )}
-          {shownSpec && (
+          {spec && (
             <button
               type="button"
               onClick={() => setShowDeclareForm((v) => !v)}
@@ -645,13 +540,11 @@ export function DeclaredScorePanel({
             </button>
           )}
 
-          {shownSpec ? (
+          {spec ? (
             <SpecView
-              spec={shownSpec}
+              spec={spec}
               conceptById={{}}
-              records={swapRecords}
-              onEdit={handleEdit}
-              busy={editBusy}
+              records={[]}
               jobId={jobId}
               onOpenGroup={onOpenGroup}
               isGroupInScope={isGroupInScope}
@@ -704,7 +597,7 @@ export function DeclaredScorePanel({
           ) : null}
 
           {/* THE PAID BOUNDARY, priced inline and never behind a modal. */}
-          {!shownSpec && (
+          {!spec && (
           <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
             <p
               data-testid="score-match-price"

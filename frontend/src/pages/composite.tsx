@@ -92,30 +92,17 @@ export default function CompositePage() {
     }
   }
 
-  async function derive(overrides?: Record<string, string | null>) {
+  async function derive() {
     setBusy("derive");
     setError("");
     try {
-      const body = overrides
-        ? { definition: shown!.definition, overrides }
-        : mode === "ref"
-          ? { sourceRef: ref, hybrid }
-          : { sourceText: text, hybrid };
+      const body = mode === "ref" ? { sourceRef: ref, hybrid } : { sourceText: text, hybrid };
       setSpec(await deriveComposite(jobId, body, apiKey || undefined));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy("");
     }
-  }
-
-  /** Re-derive with one component's match changed — pin every other match so the pass stays free. */
-  function editMatch(component: string, conceptId: string | null) {
-    if (!shown) return;
-    const overrides: Record<string, string | null> = {};
-    for (const m of shown.matches) overrides[m.component] = m.conceptId;
-    overrides[component] = conceptId;
-    void derive(overrides);
   }
 
   if (!jobState) {
@@ -251,7 +238,7 @@ export default function CompositePage() {
         </CardContent>
       </Card>
 
-      {shown && <SpecView spec={shown} conceptById={conceptById} records={records} onEdit={editMatch} busy={busy === "derive"} jobId={jobId} />}
+      {shown && <SpecView spec={shown} conceptById={conceptById} records={records} jobId={jobId} />}
     </div>
   );
 }
@@ -264,8 +251,6 @@ export function SpecView({
   spec,
   conceptById,
   records,
-  onEdit,
-  busy,
   jobId,
   hideDerivation = false,
   onOpenGroup,
@@ -277,8 +262,6 @@ export function SpecView({
   spec: CompositeSpec;
   conceptById: Record<string, UIRecord>;
   records: UIRecord[];
-  onEdit: (component: string, conceptId: string | null) => void;
-  busy: boolean;
   jobId: string;
   hideDerivation?: boolean;
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
@@ -302,7 +285,7 @@ export function SpecView({
   // reviewer reads the score exactly as the paper presents it. Found vs missing is shown per row (the icon)
   // and summarised in the header count, not by regrouping the list.
   const nFound = spec.matches.filter((m) => m.conceptId != null).length;
-  // Resolve a concept id to a name + cohorts for the swap dropdown. Callers may pass a resolver (the gate
+  // Resolve a concept id to a name + cohorts for the group list. Callers may pass a resolver (the gate
   // strip resolves against the run's concept groups); otherwise fall back to this run's records.
   const recordById = useMemo(
     () => Object.fromEntries(records.map((r) => [r.id, r])),
@@ -320,8 +303,6 @@ export function SpecView({
       match={m}
       component={codingFor(m.component)}
       concept={m.conceptId ? conceptById[m.conceptId] : undefined}
-      onEdit={onEdit}
-      busy={busy}
       jobId={jobId}
       onOpenGroup={onOpenGroup}
       isGroupInScope={isGroupInScope}
@@ -358,7 +339,7 @@ export function SpecView({
   const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
     matches.some((m) => coveredCohorts(m).includes(cohort));
   // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables. Reads
-  // the SAME union coverage as the found-component detail and the Swap list, so the table cannot disagree.
+  // the SAME union coverage as the found-component detail and the group list, so the table cannot disagree.
   const coverageComponentRow = (m: ComponentMatch) => (
     <tr
       key={m.component}
@@ -675,8 +656,6 @@ export function SpecView({
 function MatchRow({
   match,
   component,
-  onEdit,
-  busy,
   onOpenGroup,
   isGroupInScope,
   onGroupScopeChange,
@@ -685,8 +664,6 @@ function MatchRow({
   match: ComponentMatch;
   component?: ScoreComponent;
   concept?: UIRecord;
-  onEdit: (component: string, conceptId: string | null) => void;
-  busy: boolean;
   jobId: string;
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
   isGroupInScope?: (groupId: string) => boolean;
@@ -696,8 +673,6 @@ function MatchRow({
   ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
   resolveGroupId?: (id: string) => string | undefined;
 }) {
-  void onEdit;
-  void busy;
   const [open, setOpen] = useState(false);
   const coding = component?.coding;
 
