@@ -19,6 +19,7 @@ import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
 import { useGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
+import { heldRunKey } from "@/lib/run-key";
 import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
@@ -463,7 +464,8 @@ export function DeclaredScorePanel({
               <ScoreComponentProposal
                 key={document.sha256}
                 document={document}
-                extract={(doc) => extractScoreComponents(jobId, doc)}
+                // The tab's held key, read AT THE PRESS (08-28): a key typed into the field is the next one sent.
+                extract={(doc) => extractScoreComponents(jobId, doc, heldRunKey())}
                 pinned={pinned}
                 frozen={frozen}
                 onAccept={(names, proposedName) => {

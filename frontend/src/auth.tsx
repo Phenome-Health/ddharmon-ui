@@ -18,6 +18,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { ClerkProvider, SignIn, useAuth, useUser } from "@clerk/react";
 import { AUTH_ENABLED, setLastToken, setTokenGetter } from "@/lib/api";
+import { forgetRunKey } from "@/lib/run-key";
 import { markGuestSession } from "@/lib/sandbox";
 
 const PUB_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
@@ -63,6 +64,9 @@ function TokenBridge() {
       clearInterval(id);
       setTokenGetter(null);
       setLastToken(null);
+      // Signing out ends the session the tab's BYOK key was entered in, so it goes too (08-28): the next person
+      // to sign in on this tab must not inherit it.
+      forgetRunKey();
     };
   }, [getToken]);
   return null;

@@ -77,6 +77,7 @@ from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
 from backend.engine.adapter import cost_block
 from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
+from backend.llm_errors import CodedHTTPException, coded_http_error, key_required
 from backend.notebook import build_notebook
 from backend.role_requirement import role_requirement_error, zero_variable_error
 from backend.runner import _relative_ref, run_harmonization
@@ -204,6 +205,9 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="ddharmon Harmonization API", version="1.1.0", lifespan=_lifespan)
+# A missing (or rejected) provider key is refused with a stable `code` beside its human `detail`, so the gate
+# screens reveal their key field on the code rather than on the English sentence (08-28, BYOK key on Continue).
+app.add_exception_handler(CodedHTTPException, coded_http_error)
 
 # CORS: the built SPA is served same-origin by this app in prod, so CORS matters only for the Vite dev
 # proxy and any deliberate cross-origin caller. Lock the allowed origins via DDHARMON_UI_ALLOWED_ORIGINS
@@ -480,10 +484,9 @@ async def start_batch(
     # here, before anything is created: no run row, no work dir, nothing embedded, nothing charged. A preview
     # makes no model call and is exempt; a non-Anthropic model does not use this key.
     if _resume_needs_a_key({"run_mode": cfg.get("runMode", "batch"), "model_tag": cfg.get("modelTag")}, effective_key):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter your Anthropic API key to start this run — its first step is a paid model call and the "
-            "key clears on reload. Nothing was created or charged; re-enter the key and press Start again.",
+        raise key_required(
+            "Enter your Anthropic API key to start this run — its first step is a paid model call and the "
+            "key clears on reload. Nothing was created or charged; re-enter the key and press Start again."
         )
     job_id = str(uuid.uuid4())
     work_dir = _WORK_ROOT / job_id
@@ -1072,10 +1075,9 @@ def _resume_locked(
     # generating stage errors the whole run and wipes the served gate state (the keyless-wipes-gate-state
     # bug). Refuse at the door instead; the run stays parked and resumable the moment a key is re-supplied.
     if _resume_needs_a_key(job.config, x_anthropic_key):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter your Anthropic API key to continue — a paid step needs it and the key clears on "
-            "reload. Your gate state is preserved; re-enter the key and press Continue again.",
+        raise key_required(
+            "Enter your Anthropic API key to continue — a paid step needs it and the key clears on "
+            "reload. Your gate state is preserved; re-enter the key and press Continue again."
         )
     # Where the ENGINE stops and where the RUN parks are two different questions. Only gates with a core
     # boundary are stop targets; past that the pipeline runs to completion and the UI backend holds the run
@@ -1272,10 +1274,9 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     # The same door check as a fresh start (08-28 1a, F8): refuse a keyless paid re-run before its uploads are
     # copied into a new run that could only error in its first paid stage.
     if _resume_needs_a_key(src.config, x_anthropic_key):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter your Anthropic API key to re-run — its first step is a paid model call and the key "
-            "clears on reload. Nothing was created or charged; re-enter the key and try again.",
+        raise key_required(
+            "Enter your Anthropic API key to re-run — its first step is a paid model call and the key "
+            "clears on reload. Nothing was created or charged; re-enter the key and try again."
         )
 
     # Rebuild the CDE backbone from the stored cdeSet (catalog files live server-side, not in the job dir).
@@ -1497,10 +1498,9 @@ def readjudicate(
     # not deep in the paid stage where it once returned 200 with nothing done. No preview exemption. The key
     # clears on a browser reload, which is exactly how the live test hit it.
     if _no_anthropic_key(job.config, x_provider_key or x_anthropic_key):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter your Anthropic API key to re-split this group — it buys a new split pass and the "
-            "key clears on reload. Your run is unchanged; re-enter the key and try again.",
+        raise key_required(
+            "Enter your Anthropic API key to re-split this group — it buys a new split pass and the "
+            "key clears on reload. Your run is unchanged; re-enter the key and try again."
         )
 
     from backend.engine import adapter as engine_adapter
@@ -1986,10 +1986,9 @@ def score_components(
 
     key = x_provider_key or x_anthropic_key
     if _no_anthropic_key(job.config, key):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter your Anthropic API key to extract the components — it is one model call and the key "
-            "clears on reload. Nothing was charged; you can still type the components yourself.",
+        raise key_required(
+            "Enter your Anthropic API key to extract the components — it is one model call and the key "
+            "clears on reload. Nothing was charged; you can still type the components yourself."
         )
 
     client = build_llm_client(job.config.get("model_tag"), key)
@@ -2264,10 +2263,9 @@ def composite(
                 detail=f"No score named {body.declaredScore.strip()!r} was declared on this run's Gate 1.",
             )
         if _no_anthropic_key(job.config, key):
-            raise HTTPException(
-                status_code=400,
-                detail="Enter your Anthropic API key to match the declared score — it is one model call and the "
-                "key clears on reload. Nothing was charged.",
+            raise key_required(
+                "Enter your Anthropic API key to match the declared score — it is one model call and the "
+                "key clears on reload. Nothing was charged."
             )
         source = definition_for(declared)
     elif body.definition is None:

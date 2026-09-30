@@ -88,8 +88,10 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
   ],
   webServer: {
-    // Build in static mode, then serve the dist with vite preview on a fixed port.
-    command: `VITE_STATIC=1 npm run build && npm run serve -- --port ${E2E_PORT} --strictPort`,
+    // Build in static mode, then serve the dist with vite preview on a fixed port. VITE_STATIC=1 rides the SERVE
+    // too: it is what turns the preview's /api proxy off (vite.config.ts), so an unrouted /api call in a spec can
+    // never reach a backend on :8000 — a developer's live rig included (08-28).
+    command: `VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve -- --port ${E2E_PORT} --strictPort`,
     url: E2E_BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,

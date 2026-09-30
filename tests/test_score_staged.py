@@ -295,6 +295,8 @@ def test_matching_a_declared_score_without_a_key_is_refused_before_spending(stag
     _declare(job_id, "Fried", ["Weight loss"])
     r = client.post(f"/api/harmonize/jobs/{job_id}/composite", json={"declaredScore": "Fried"})
     assert r.status_code == 400, r.text
+    assert r.json()["code"] == "key_required", "the refusal is not machine-readable"
+    assert "Enter your Anthropic API key" in r.json()["detail"]
     assert stub.calls == []
 
 

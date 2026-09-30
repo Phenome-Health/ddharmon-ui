@@ -46,9 +46,11 @@ import {
 import { preparationProgress } from "@/lib/run-state";
 import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
+import { heldRunKey, holdRunKey, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatDurationRange } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
+import { RunKeyField } from "@/components/gate/RunKeyField";
 import type { CdeSet, GatePosition, JobResult, RunDictionary, RunMode } from "@/types";
 
 /**
@@ -458,8 +460,10 @@ export default function SetupPage() {
    */
   const [allowReadjudication, setAllowReadjudication] = useState(false);
   const [displayName, setDisplayName] = useState("");
-  // BYOK: component memory only. Never persisted, never echoed back, cleared on reload.
-  const [apiKey, setApiKey] = useState("");
+  // BYOK: memory only. Never persisted, never echoed back, cleared on reload. Pre-filled from the TAB's held key
+  // (`lib/run-key.ts`) when there is one — a second run in the same tab need not ask again — and put there on
+  // Start, so the gates' paid calls carry the key this run was started with (08-28).
+  const [apiKey, setApiKey] = useState(() => heldRunKey() ?? "");
   const [provider, setProvider] = useState("anthropic");
   /** Reveal the key field. Rendering only — the key itself is never persisted either way. */
   const [showKey, setShowKey] = useState(false);
@@ -469,6 +473,8 @@ export default function SetupPage() {
   const [dictsOpen, setDictsOpen] = useState(false);
   /** True while the run's first charge is being committed. */
   const [committing, setCommitting] = useState(false);
+  /** The server refused the pre-flight Continue for want of a BYOK key (08-28): the bar asks for one inline. */
+  const [commitKeyAsk, setCommitKeyAsk] = useState<KeyRefusal | null>(null);
   // The pre-Start export's own state. Per-dictionary busy/note/error are keyed by dictionary, because a
   // failure on one file must not read as a failure of the set.
   const [runConfirmed, setRunConfirmed] = useState(false);
@@ -1102,6 +1108,10 @@ export default function SetupPage() {
         "anthropic",
         runMode === "preview" ? undefined : apiKey.trim(),
       );
+      // HOLD THE KEY THIS RUN STARTED WITH, for the tab's lifetime (08-28). Setup is the only screen that takes a
+      // key up front, and every gate after it spends: without this the key was gone at Gate 1. A preview run was
+      // started with none, so a key typed and then abandoned for Preview is not held on its behalf.
+      if (runMode !== "preview") holdRunKey(apiKey);
       // WRITE the column-mapping cache Setup already READ. `initialRoles` calls `lookupPrefill`, so before
       // this line Setup consumed a cache that only the New Run form ever filled — a read path fed by a
       // writer living on another screen. Written HERE, at run start, exactly where `home.tsx:228` writes
@@ -1382,7 +1392,9 @@ export default function SetupPage() {
   async function onCommitFirstCharge() {
     setCommitting(true);
     try {
-      const { target } = await resumeRun(jobId);
+      // The tab's held key rides the first charge (08-28); with none, the server decides.
+      const { target } = await resumeRun(jobId, heldRunKey());
+      setCommitKeyAsk(null);
       toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
       // Through the helper, not an inline template. `next_gate("setup")` is the RETIRED position — it is
       // still in `GATE_ORDER` — so this call site could genuinely receive `gate0` and send the reviewer to
@@ -1391,6 +1403,7 @@ export default function SetupPage() {
       // that translation for every caller (08-16c Task 8).
       navigate(pathForGate(jobId, target));
     } catch (e) {
+      setCommitKeyAsk(keyAskFor(e, { preview: isPreview }));
       toast.error(e instanceof Error ? e.message : "Could not continue this run");
     } finally {
       setCommitting(false);
@@ -1633,6 +1646,9 @@ export default function SetupPage() {
             total={isPreview || !estimate ? undefined : estimate.firstCharge}
             firstCharge={!isPreview}
             scopeLabel={totalFields === null ? undefined : `${totalFields.toLocaleString()} variables`}
+            keyField={
+              commitKeyAsk ? <RunKeyField reason={commitKeyAsk} action="Continue to Concept groups" /> : undefined
+            }
             onCommit={onCommitFirstCharge}
             busy={committing}
             disabled={!preparation.allPrepared || IS_STATIC}

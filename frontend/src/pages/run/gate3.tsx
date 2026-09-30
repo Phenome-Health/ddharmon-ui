@@ -5,6 +5,7 @@ import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CommitBar } from "@/components/gate/CommitBar";
+import { RunKeyField } from "@/components/gate/RunKeyField";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
 import {
@@ -25,6 +26,7 @@ import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
+import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
@@ -118,10 +120,14 @@ export default function Gate3Page() {
   // amount. A refused/failed continue leaves the reviewer here to retry.
   const [, navigate] = useLocation();
   const [resuming, setResuming] = useState(false);
+  // Set when the server refused Continue for want of a BYOK key (08-28): the bar then asks for one inline. The
+  // hop to Gate 4 is a free read the server never refuses for a key; a Retry of a failed leg may be paid.
+  const [keyAsk, setKeyAsk] = useState<KeyRefusal | null>(null);
   const parkedHere =
     jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate3";
   const failedLeg =
     !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
+  const continueAction = failedLeg ? "Retry — continue this run" : "Continue to Gate 4";
 
   async function onContinue() {
     // The shared demo is walked, not resumed (08-18) — see Gate 1's `onContinue`.
@@ -131,8 +137,10 @@ export default function Gate3Page() {
     }
     setResuming(true);
     try {
-      const { target } = await resumeRun(jobId);
-      const after = await getCheckpoint(jobId).catch(() => null);
+      // The tab's held key rides every Continue (08-28); with none, the server decides.
+      const { target } = await resumeRun(jobId, heldRunKey());
+      setKeyAsk(null);
+      const after = await getCheckpoint(jobId, heldRunKey()).catch(() => null);
       if (after && !resumeTookEffect(after, target)) {
         toast.error(
           "The server accepted Continue, but this run has not started — it is still parked at this gate. Nothing was charged. Please report this run id.",
@@ -142,6 +150,7 @@ export default function Gate3Page() {
       toast.success(`Continuing to ${GATE_LABELS[target as GatePosition] ?? target}`);
       navigate(pathForGate(jobId, target));
     } catch (e) {
+      setKeyAsk(keyAskFor(e, { pinned: !!pinned, preview: isPreviewRun(runConfig) }));
       toast.error(e instanceof Error ? e.message : "Could not continue this run");
     } finally {
       setResuming(false);
@@ -1085,7 +1094,7 @@ export default function Gate3Page() {
         }
       />
       <CommitBar
-        action={failedLeg ? "Retry — continue this run" : "Continue to Gate 4"}
+        action={continueAction}
         actionTestId="gate3-continue"
         spentHere={costSoFar}
         recheckNotice={
@@ -1098,6 +1107,7 @@ export default function Gate3Page() {
             ? DEMO_CONTINUE_NOTE
             : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
         }
+        keyField={keyAsk ? <RunKeyField reason={keyAsk} action={continueAction} /> : undefined}
         onCommit={onContinue}
         busy={resuming}
         disabled={frozen || (pinned !== true && !parkedHere && !failedLeg)}

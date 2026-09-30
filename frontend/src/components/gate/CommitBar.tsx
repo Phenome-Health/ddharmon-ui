@@ -49,6 +49,12 @@ export interface CommitBarProps {
    * press download.
    */
   assurance?: React.ReactNode;
+  /**
+   * The inline key field, when the server refused this press for want of a BYOK key (08-28) — `RunKeyField`.
+   * Rendered beside the price it unblocks, in the bar the reviewer is already reading; the retry is this bar's
+   * own button. Only ever passed after such a refusal, so no bar changes until a server asks.
+   */
+  keyField?: React.ReactNode;
   onCommit?: () => void;
   busy?: boolean;
   disabled?: boolean;
@@ -64,6 +70,7 @@ export function CommitBar({
   scopeLabel,
   recheckNotice,
   assurance,
+  keyField,
   onCommit,
   busy = false,
   disabled = false,
@@ -108,6 +115,7 @@ export function CommitBar({
               {firstCharge && " This is where spending begins; everything before it ran on this machine."}
             </p>
           )}
+          {keyField}
         </div>
         <Button
           type="button"
