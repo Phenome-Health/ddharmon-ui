@@ -35,6 +35,10 @@ from typing import Any
 
 _SINGLETON_KEY = ""
 
+#: The served name of a row's stored version. SERVER-OWNED: read off the row on the list route, never stored
+#: from a payload (``backend/app.py::put_artifact`` strips it), so there is exactly one answer to "which version".
+UPDATED_AT = "updatedAt"
+
 
 class ArtifactError(Exception):
     """Base for artifact-layer failures. All are the caller's problem, not a server fault."""
@@ -185,7 +189,9 @@ class ArtifactStore:
             schema_version=spec.version,
         )
 
-    def get_all(self, *, owner: str | None, job_id: str, include_private: bool = False) -> dict[str, Any]:
+    def get_all(
+        self, *, owner: str | None, job_id: str, include_private: bool = False, with_updated_at: bool = False
+    ) -> dict[str, Any]:
         """Every artifact this owner holds for this run, grouped by kind, in one query.
 
         Singleton kinds map to their payload (or absent); keyed kinds map to a list. Unknown kinds found in
@@ -197,6 +203,13 @@ class ArtifactStore:
         one read path every caller goes through, because "remember to redact at each new read site" is
         precisely the class of rule this module was built to stop relying on. A future publish path passes
         ``include_private=True`` deliberately; nothing else has to know the rule exists.
+
+        ``with_updated_at`` serves each keyed row's stored version as ``updatedAt`` (08-28 3f). A client names
+        the version it is replacing (the ``base`` of a write), and it can only name one it was SERVED - without
+        this the first save after every reload was blind and reported a conflict nobody had caused. It is
+        opt-in because only the list route answers "which version did you see"; exports and the job payload
+        fold decisions into results, where a timestamp would be noise in every file. The value is the ROW's,
+        set here on a copy - never a payload field (the write route strips one a client echoes back).
         """
         grouped: dict[str, Any] = {}
         if not owner:
@@ -206,6 +219,8 @@ class ArtifactStore:
                 continue
             spec = self._registry.get(row.kind)
             payload = spec.read(row.payload, row.schema_version)
+            if with_updated_at and not spec.singleton:
+                payload = {**payload, UPDATED_AT: row.updated_at}
             if spec.singleton:
                 grouped[row.kind] = payload
             else:

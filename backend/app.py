@@ -58,7 +58,7 @@ from backend.artifact_kinds import (
     derive_staleness,
     reviewer_group_name,
 )
-from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
+from backend.artifacts import UPDATED_AT, ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
 from backend.checkpoint import (
     GATE_ORDER,
@@ -1603,9 +1603,12 @@ def list_artifacts(job_id: str, request: Request) -> dict[str, Any]:
     against that upstream's current one (see ``artifact_kinds.derive_staleness``). It is deliberately not a
     stored field: a flag would have to be written onto a row that may not exist yet, from a write to a
     DIFFERENT row - which is the cross-row read-modify-write this table exists to eliminate.
+
+    Each keyed row carries its stored ``updatedAt`` (08-28 3f): it is what a client sends back as the ``base``
+    of its next write, so the first save after a reload names the version it replaces instead of writing blind.
     """
     job, owner = _artifact_target(job_id, request)
-    grouped = store.artifacts_for(job, owner)
+    grouped = store.artifacts_for(job, owner, with_updated_at=True)
     return {
         "kinds": registry.names(),
         "artifacts": grouped,
@@ -1668,6 +1671,9 @@ def put_artifact(
     artifacts = store.artifacts
     if artifacts is None:
         raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    # The version is the ROW's, served on read (08-28 3f): a client echoing a served row back must not plant a
+    # stale copy of it inside the payload.
+    payload = {k: v for k, v in payload.items() if k != UPDATED_AT}
     # An accepted generated element's two keys are minted HERE, server-side: a client-supplied digest is not
     # a digest, a client-supplied identifier is not an identity, and `published` must not be settable by
     # including a field on an acceptance (publishing is a separate, explicit, later opt-in).

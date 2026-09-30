@@ -362,7 +362,7 @@ class JobStore:
             self._artifacts = ArtifactStore(self.db)
         return self._artifacts
 
-    def artifacts_for(self, job: Job, subject: str | None) -> dict[str, Any] | None:
+    def artifacts_for(self, job: Job, subject: str | None, *, with_updated_at: bool = False) -> dict[str, Any] | None:
         """Everything ``subject`` has stored against ``job``, grouped by kind.
 
         Resolves the owner key through :func:`principal_of` — the SAME way the write path does. Looking up
@@ -374,13 +374,15 @@ class JobStore:
 
         A pinned run resolves to ``{}``: the canonical demo holds nobody's work by design — demo edits live
         in the browser for the tab's lifetime, and are kept by cloning the demo into a run of your own.
+
+        ``with_updated_at`` is the list route's opt-in to each row's version (see ``ArtifactStore.get_all``).
         """
         store_ = self.artifacts
         if store_ is None:
             return None
         if _is_pinned(job):
             return {}
-        return store_.get_all(owner=principal_of(subject, job), job_id=job.job_id)
+        return store_.get_all(owner=principal_of(subject, job), job_id=job.job_id, with_updated_at=with_updated_at)
 
     def _teardown_work_dir(self, job_id: str) -> bool:
         """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone.
