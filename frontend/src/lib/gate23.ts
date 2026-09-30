@@ -132,16 +132,36 @@ export function suggestedRelation(
 
 // --- Gate 3: what one transform spec is ----------------------------------------------------------------
 
-/** The editing surfaces Gate 3 offers. Everything else renders read-only with its kind named. */
+/** The editing surfaces Gate 3 offers. Everything else renders read-only with its kind named.
+ *
+ *  `none` is NOT a passthrough (08-28 1c, F16): core emits it when the model's code map came back EMPTY — no
+ *  value could be mapped — so it is `no-spec`, the opposite claim to `identity`'s "already aligned". */
 export type SpecForm =
-  "categorical" | "unit" | "arithmetic" | "passthrough" | "other";
+  "categorical" | "unit" | "arithmetic" | "passthrough" | "no-spec" | "other";
 
 export function specForm(kind: string): SpecForm {
   if (kind === "categorical") return "categorical";
   if (kind === "unit") return "unit";
   if (kind === "arithmetic") return "arithmetic";
-  if (kind === "none" || kind === "identity") return "passthrough";
+  if (kind === "identity") return "passthrough";
+  if (kind === "none") return "no-spec";
   return "other";
+}
+
+/**
+ * Why a GENERATED spec could not actually be produced, or `""` when it can be applied (08-28 1c, F16).
+ *
+ *  - kind `none` — the model's code map came back empty: nothing was mapped.
+ *  - a `unit` spec with no conversion factor — core's `needs_units` residual: the units could not be
+ *    reconciled, so there is no conversion to apply (the notebook used to emit `raw * 1.0 + 0.0`).
+ *
+ * Mirrored by `backend/notebook.py::_unproduced`, which emits a REVIEW REQUIRED stub for exactly these.
+ */
+export function specUnproduced(t: Pick<UITransform, "kind" | "factor"> | undefined): string {
+  if (!t) return "";
+  if (t.kind === "none") return "couldn't map";
+  if (t.kind === "unit" && typeof t.factor !== "number") return "couldn't convert";
+  return "";
 }
 
 /**
@@ -389,9 +409,10 @@ export function seedBinning(
  * wrong, so there is no value of `needsReview` from the pipeline that should be able to turn this off.
  */
 export function routesToReview(
-  t: Pick<UITransform, "kind" | "needsReview">,
+  t: Pick<UITransform, "kind" | "needsReview" | "factor">,
 ): boolean {
-  return t.kind === "arithmetic" || t.needsReview;
+  // A spec that could not be produced is the reviewer's by construction, whatever the pipeline flag says.
+  return t.kind === "arithmetic" || !!specUnproduced(t) || t.needsReview;
 }
 
 /**
@@ -426,6 +447,9 @@ export const UNMAPPED_OUTCOME_LABEL: Record<UnmappedOutcome, string> = {
 /**
  * `ok`            — a spec exists and says how to convert.
  * `no-transform`  — a spec exists and says nothing needs converting. A RESULT, not an absence.
+ * `needs-you`     — a spec row exists but the model could not produce the recode (an empty code map, a unit
+ *                   pair with no conversion): "couldn't map — needs you". Reading it as `no-transform` put raw
+ *                   yes/no codes into a 35-value disease column labelled "already matches" (F16).
  * `failed`        — spec generation ran for this run and produced nothing for this variable.
  * `not-generated` — spec generation never ran, because the run did not buy it.
  *
@@ -433,14 +457,15 @@ export const UNMAPPED_OUTCOME_LABEL: Record<UnmappedOutcome, string> = {
  * tool tried and could not, the other says the tool was never asked. Omitting a failed spec from the list
  * is worse than either — it removes the only evidence that the variable was ever in scope.
  */
-export type SpecState = "ok" | "no-transform" | "failed" | "not-generated";
+export type SpecState = "ok" | "no-transform" | "needs-you" | "failed" | "not-generated";
 
 export function specState(
-  t: Pick<UITransform, "kind"> | undefined,
+  t: Pick<UITransform, "kind" | "factor"> | undefined,
   { specsGenerated }: { specsGenerated: boolean },
 ): SpecState {
   if (!specsGenerated) return "not-generated";
   if (!t) return "failed";
+  if (specUnproduced(t)) return "needs-you";
   return specForm(t.kind) === "passthrough" ? "no-transform" : "ok";
 }
 

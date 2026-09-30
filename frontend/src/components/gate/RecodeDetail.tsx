@@ -23,7 +23,11 @@ export function transformSummary(t: UITransform): string {
         t.unmappedSourceCodes?.length ? `, ${t.unmappedSourceCodes.length} unmapped` : ""
       }`;
     case "unit":
-      return `× ${t.factor ?? "?"}${t.offset ? ` + ${t.offset}` : ""} (${t.sourceUnit ?? "?"} → ${t.targetUnit ?? "?"})`;
+      // No factor = the units could not be reconciled: say so rather than render "× ?" as if it converts.
+      if (typeof t.factor !== "number") return `no conversion (${t.sourceUnit ?? "?"} → ${t.targetUnit ?? "?"})`;
+      return `× ${t.factor}${t.offset ? ` + ${t.offset}` : ""} (${t.sourceUnit ?? "?"} → ${t.targetUnit ?? "?"})`;
+    case "none":
+      return "no mapping produced";
     case "arithmetic":
       return t.formula ?? "formula";
     case "data_dependent":

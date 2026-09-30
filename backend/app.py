@@ -2339,6 +2339,10 @@ _EITL_STAGED_COLS = [
     "modelVerdict",
 ]  # fmt: skip
 
+#: 08-28 1d: how same-cohort variables sharing a target column combine (``backend/combine_rules.py``) — the rule
+#: the notebook ran for this record's members, JSON, or "" when none of its members shares a column.
+_EITL_COMBINE_COLS = ["combineRules"]
+
 
 def _export_payload(job: Job) -> dict[str, Any] | None:
     """The result an export serializes: a parked run's checkpoint (D-02), else the finished run's result."""
@@ -2525,7 +2529,7 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
 
     decisions = _verdicts_to_legacy(grouped.get(VERDICT, [])) if grouped else job.decisions
     w = csv.writer(buf, delimiter="\t")
-    w.writerow(_EITL_COLS + _EITL_STAGED_COLS)
+    w.writerow(_EITL_COLS + _EITL_STAGED_COLS + _EITL_COMBINE_COLS)
     for r in _eitl_order(records):
         dec = decisions.get(r["id"], {})
         model_cde = r.get("modelCde") or {}
@@ -2541,6 +2545,7 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
                 _clean(json.dumps(edits, sort_keys=True)) if edits else "",
                 r.get("modelVerdict", ""),
             ]
+            + [_clean(json.dumps(r["combineRules"], sort_keys=True)) if r.get("combineRules") else ""]
         )
     return _download(buf.getvalue(), "eitl_tsv", "tsv", job.job_id)
 

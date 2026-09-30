@@ -28,7 +28,12 @@ WHAT EACH DECISION DOES TO THE EXPORT (and what it deliberately does not):
   ``modelGencde``), never from the re-targeted record, which says the pick (08-28 1e, F17).
 * ``gate3_spec_edit`` — ``rejected: true`` marks the recode rejected: excluded from the notebook, marked in
   the TSV and the records JSON, logged. An edited ``mapping`` / ``numberMap`` / ``bins`` rides on the
-  transform as ``reviewerEdit`` and is what the notebook applies. Every field is optional.
+  transform as ``reviewerEdit`` and is what the notebook applies, in the target's CODES (an edit saved in labels
+  before 08-28 is resolved through the target's value table — ``backend/target_codes.py``). Every field is
+  optional.
+* ``gate3_combine_rule`` — how several variables of one cohort on one target column become that column
+  (``backend/combine_rules.py``). Every record with a member in such a group carries the resolved rule as
+  ``combineRules`` (the default ``coalesce`` when undecided, said so); the notebook applies it.
 * ``gate4_export_selection`` — per-record inclusion. A record whose decision's ``chosen`` is ``exclude``
   (or ``out``) is absent from every format; any other value, and absence, include it. NO SCREEN WRITES THIS
   KIND TODAY (Gate 4's tile selection is component state), so the filter is a no-op until one does.
@@ -48,6 +53,7 @@ from backend.artifact_kinds import (
     GATE1_RENAME,
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
+    GATE3_COMBINE_RULE,
     GATE3_SPEC_EDIT,
     GATE4_EXPORT_SELECTION,
     GATE_DECISION_KINDS,
@@ -55,6 +61,8 @@ from backend.artifact_kinds import (
     derive_staleness,
 )
 from backend.artifacts import registry
+from backend.combine_rules import attach_combine_rules
+from backend.target_codes import in_target_codes
 
 #: Where Gate 1's Continue freezes the scope it displayed (``backend/app.py::GATE1_SCOPE_CONFIG_KEY``).
 GATE1_SCOPE_CONFIG_KEY = "gate1_scope"
@@ -72,6 +80,7 @@ GATE_OF = {
     GATE2_CANDIDATE_PICK: "Gate 2",
     GATE2_RELATION: "Gate 2",
     GATE3_SPEC_EDIT: "Gate 3",
+    GATE3_COMBINE_RULE: "Gate 3",
     GATE4_EXPORT_SELECTION: "Gate 4",
     COMPOSITE_SWAP: "Composite",
 }
@@ -82,6 +91,7 @@ ACTION_OF = {
     GATE2_CANDIDATE_PICK: "Picked a target",
     GATE2_RELATION: "Set a relation",
     GATE3_SPEC_EDIT: "Edited a transform spec",
+    GATE3_COMBINE_RULE: "Chose how variables combine",
     GATE4_EXPORT_SELECTION: "Chose export inclusion",
     # The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
     COMPOSITE_SWAP: "Declared a score",
@@ -285,7 +295,12 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
                 # re-mapped them after the re-pick.
                 if not any(k in edit for k in SPEC_EDIT_FIELDS):
                     t["targetRepicked"] = True
+            if edit:
+                # One code space per column (08-28 1c, F18): an edit saved in labels is applied in codes.
+                t["reviewerEdit"] = in_target_codes(edit, r, t)
         out.append(r)
+    # Same-cohort variables on one target column: the rule each export carries and the notebook runs (1d).
+    attach_combine_rules(out, grouped)
     return out
 
 

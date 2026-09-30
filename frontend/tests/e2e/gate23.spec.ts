@@ -151,6 +151,10 @@ test.describe("gate23 algebra", () => {
     expect(routesToReview({ kind: "categorical", needsReview: true })).toBe(
       true,
     );
+    // 08-28 1c (F16): a spec that could not be produced always comes to the reviewer, whatever its flag says.
+    expect(routesToReview({ kind: "none", needsReview: false })).toBe(true);
+    expect(routesToReview({ kind: "unit", needsReview: false })).toBe(true);
+    expect(routesToReview({ kind: "unit", needsReview: false, factor: 2.54 })).toBe(false);
   });
 
   test("@gate3 zero, one and many unmapped values are three states", () => {
@@ -165,7 +169,7 @@ test.describe("gate23 algebra", () => {
     expect(specState({ kind: "categorical" }, { specsGenerated: true })).toBe(
       "ok",
     );
-    expect(specState({ kind: "none" }, { specsGenerated: true })).toBe(
+    expect(specState({ kind: "identity" }, { specsGenerated: true })).toBe(
       "no-transform",
     );
     expect(specState(undefined, { specsGenerated: true })).toBe("failed");
@@ -174,13 +178,23 @@ test.describe("gate23 algebra", () => {
     );
   });
 
+  test("@gate3 F16 a spec that could not be produced is its own state, never 'no transform required'", () => {
+    // kind `none` = the model produced an EMPTY code map: nothing was mapped, so "the values already match"
+    // is the one reading it must never get. A unit spec with no conversion factor is the same failure.
+    expect(specState({ kind: "none" }, { specsGenerated: true })).toBe("needs-you");
+    expect(specState({ kind: "unit" }, { specsGenerated: true })).toBe("needs-you");
+    expect(specState({ kind: "unit", factor: 1000 }, { specsGenerated: true })).toBe("ok");
+    expect(specState({ kind: "identity" }, { specsGenerated: true })).toBe("no-transform");
+  });
+
   test("@gate3 spec rows are driven by the MEMBERS so a failed spec still gets a row", () => {
     // Iterating the transforms can only show variables that produced one, which makes the failure
     // invisible — the omission the whole three-state split exists to prevent.
     const rows = specRowsFor(
       {
         members: ["UKBB:age", "AOU:age"],
-        transforms: [{ sourceVariable: "UKBB:age", kind: "unit" } as never],
+        // a unit spec WITH a factor: one without is `needs-you` (08-28 1c), which is not what this test is about
+        transforms: [{ sourceVariable: "UKBB:age", kind: "unit", factor: 2.54 } as never],
       },
       { specsGenerated: true },
     );
@@ -209,7 +223,7 @@ test.describe("gate23 algebra", () => {
     expect(specForm("categorical")).toBe("categorical");
     expect(specForm("unit")).toBe("unit");
     expect(specForm("arithmetic")).toBe("arithmetic");
-    expect(specForm("none")).toBe("passthrough");
+    expect(specForm("none")).toBe("no-spec");
     expect(specForm("identity")).toBe("passthrough");
     expect(specForm("wide_to_long")).toBe("other");
   });
@@ -960,7 +974,7 @@ test.describe("gate3 screen", () => {
     await serveFinished(page, (run) => {
       const rec = run.result!.records![0];
       rec.transforms = [
-        { ...rec.transforms[0], kind: "none", sourceVariable: rec.members[0] },
+        { ...rec.transforms[0], kind: "identity", sourceVariable: rec.members[0] },
       ];
     });
     await openGate3(page);
@@ -970,6 +984,30 @@ test.describe("gate3 screen", () => {
     await expect(none).toBeVisible();
     await expect(none).toContainText("No transform required");
     await expect(none).not.toContainText("did not generate");
+  });
+
+  test("@gate3 F16 a spec the model could not map reads 'couldn't map — needs you', never 'No transform required'", async ({
+    page,
+  }) => {
+    await serveFinished(page, (run) => {
+      const rec = run.result!.records![0];
+      rec.transforms = [
+        {
+          ...rec.transforms[0],
+          kind: "none",
+          sourceVariable: rec.members[0],
+          codeMap: undefined,
+          coverage: 0,
+          needsReview: false,
+        },
+      ];
+    });
+    await openGate3(page);
+    const row = page.locator("[data-testid='spec-row'][data-state='needs-you']").first();
+    await expect(row).toBeVisible();
+    await expect(row).toContainText(/couldn.t map — needs you/i);
+    await expect(row).not.toContainText("No transform required");
+    await expect(row).toHaveAttribute("data-review", "true");
   });
 
   test("@gate3 with the opt-in off the concept-match check is an honest, named absence", async ({

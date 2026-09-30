@@ -17,11 +17,8 @@ import {
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RecodeDetail, transformSummary } from "@/components/gate/RecodeDetail";
-import {
-  SpecMappingEditor,
-  seedRecommendedMapping,
-  codeMapToBuckets,
-} from "@/components/gate/SpecMappingEditor";
+import { SpecMappingEditor } from "@/components/gate/SpecMappingEditor";
+import { CombineRuleControl } from "@/components/gate/CombineRule";
 import { SpecNumberMap } from "@/components/gate/SpecNumberMap";
 import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
@@ -40,10 +37,23 @@ import {
   specForm,
   specRowsFor,
   specTargetMismatch,
+  specUnproduced,
   targetValuesFromSpecs,
   type BinRule,
   type NumberMapEntry,
 } from "@/lib/gate23";
+import {
+  catalogTargetValues,
+  generatedTargetValues,
+  mappingHeadline,
+  mappingInCodes,
+  mappingSummary,
+  recommendedMapping,
+  rowTargetValues,
+  withModelTargets,
+  type TargetValue,
+} from "@/lib/value-map";
+import { combineAlternatives, combineChoice, combineGroups } from "@/lib/combine-rules";
 import { cn } from "@/lib/utils";
 import { permissibleValueLabels, sourceValueLabels } from "@/types";
 import type { JobResult, UIRecord, GatePosition } from "@/types";
@@ -133,6 +143,8 @@ export default function Gate3Page() {
   }
 
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned, frozen });
+  // 08-28 1d (Q4): how several of one cohort's variables on one target column combine.
+  const combines = useGateDecisions(jobId, "gate3_combine_rule", { pinned, frozen });
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", {
     pinned,
     frozen,
@@ -199,6 +211,20 @@ export default function Gate3Page() {
       .filter((g) => !q || labelOf(g.record).toLowerCase().includes(q));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, arithmeticOnly, query, renames.decisions]);
+
+  // The columns several of one cohort's in-scope variables write (a rejected recode writes nothing) — the only
+  // places the combine control appears. Across records, as the notebook groups them.
+  const combineList = useMemo(() => {
+    const rejected = new Set(
+      Object.values(specs.decisions)
+        .filter((d) => d.rejected === true)
+        .map((d) => String(d.sourceVariable ?? "")),
+    );
+    return combineGroups(
+      groups.map((g) => g.record),
+      rejected,
+    );
+  }, [groups, specs.decisions]);
 
   const anyRow = groups.some((g) => g.rows.length > 0);
   const selected =
@@ -409,11 +435,12 @@ export default function Gate3Page() {
                 : (chosenCandidate?.definition ?? "");
               // The target's value domain (08-16g) — carried into Gate 3 so recodes can be built and judged
               // against it. Adopt -> the chosen catalog candidate's enriched metadata; own/novel -> the GenCDE.
-              const targetPVs: string[] = targetIsOwn
-                ? (record.gencde?.permissibleValues?.map(
-                    (v) => v.label || v.code,
-                  ) ?? [])
-                : (chosenCandidate?.permissibleValues ?? []);
+              // A TABLE of code + label (08-28 1c): a GenCDE's codes differ from its labels, and the recodes
+              // are written in codes; a catalog CDE's value is its own code.
+              const targetTable: TargetValue[] = targetIsOwn
+                ? generatedTargetValues(record.gencde?.permissibleValues)
+                : catalogTargetValues(chosenCandidate?.permissibleValues);
+              const targetPVs: string[] = targetTable.map((v) => v.label);
               const targetDataType = targetIsOwn
                 ? record.gencde?.dataType
                 : chosenCandidate?.dataType;
@@ -430,8 +457,8 @@ export default function Gate3Page() {
                         : chosenTargetId,
                     )
                   : [];
-              const recodeValues =
-                targetPVs.length > 0 ? targetPVs : inferredPVs;
+              const recodeTable: TargetValue[] =
+                targetTable.length > 0 ? targetTable : catalogTargetValues(inferredPVs);
               const targetUnits = targetIsOwn
                 ? record.gencde?.units
                 : chosenCandidate?.units;
@@ -595,12 +622,12 @@ export default function Gate3Page() {
                               Permissible values ({targetPVs.length})
                             </span>
                             <div className="mt-1 flex max-h-28 flex-wrap gap-1 overflow-y-auto">
-                              {targetPVs.map((v, i) => (
+                              {targetTable.map((v, i) => (
                                 <span
                                   key={i}
                                   className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-on-raised"
                                 >
-                                  {v}
+                                  {v.code !== v.label ? `${v.code} = ${v.label}` : v.label}
                                 </span>
                               ))}
                             </div>
@@ -621,6 +648,36 @@ export default function Gate3Page() {
                       </div>
                     </div>
                   </InheritedPanel>
+
+                  {/* 08-28 1d: only where a cohort has two or more variables on one target column. */}
+                  {combineList
+                    .filter((g) => g.members.some((m) => record.members.includes(m)))
+                    .map((g) => {
+                      const key = combines.itemKey({ cohort: g.cohort, targetId: g.targetId });
+                      return (
+                        <CombineRuleControl
+                          key={key}
+                          group={g}
+                          choice={combineChoice(combines.decisions[key], g.members)}
+                          targetLabel={
+                            record.gencde && g.targetId === record.gencde.gencdeId
+                              ? labelOf(record)
+                              : undefined
+                          }
+                          readOnly={frozen}
+                          onChoose={(chosen) =>
+                            void combines.write(
+                              { cohort: g.cohort, targetId: g.targetId },
+                              {
+                                chosen,
+                                alternatives: combineAlternatives(g.members),
+                                upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
+                              },
+                            )
+                          }
+                        />
+                      );
+                    })}
 
                   <div className="flex flex-col gap-2">
                     <h3 className="text-sm font-semibold text-on-raised">
@@ -653,23 +710,47 @@ export default function Gate3Page() {
                         ([code, label]) => ({ code, label }),
                       );
                       const hasOptions = sourceOptions.length > 0;
-                      const recommendedMapping = seedRecommendedMapping(
+                      // The value table THIS row maps into (08-28 1c): the target its spec writes — a refine
+                      // record's specs write its derived element, with its own codes — else the shown target.
+                      const rowValues = rowTargetValues({
+                        transform,
+                        gencde: record.gencde,
+                        candidates: record.candidates,
+                        fallback: recodeTable,
+                      });
+                      const rowCandidate = transform
+                        ? record.candidates.find((c) => c.cdeId === transform.targetCdeId)
+                        : undefined;
+                      const rowDataType = toGenCDE
+                        ? record.gencde?.dataType
+                        : (rowCandidate?.dataType ?? targetDataType);
+                      const rowLabels = rowValues.map((v) => v.label);
+                      // The editor opens on the MODEL's code map, placed by target code (F19); only a spec with
+                      // no code map is seeded from the $0 label heuristic, and the screen says which.
+                      const recommended = recommendedMapping(
                         sourceOptions,
-                        recodeValues,
-                        codeMapToBuckets(transform?.codeMap, recodeValues),
+                        rowValues,
+                        transform?.codeMap,
                       );
                       const persistedMapping = decision?.mapping as
                         Record<string, string> | undefined;
-                      const mappingValue =
-                        persistedMapping ?? recommendedMapping;
+                      // A mapping saved in LABELS before the fix is shown in codes, as the export applies it (F18).
+                      const mappingValue = persistedMapping
+                        ? mappingInCodes(persistedMapping, rowValues)
+                        : recommended.mapping;
+                      const mappingBuckets = withModelTargets(
+                        rowValues,
+                        recommended.mapping,
+                        mappingValue,
+                      );
                       // The recode SURFACE follows the target type, not the source's coded options: a coded
                       // source on a NUMERIC target is a code→number table (②), a numeric source on a banded
                       // target is a range table (③), a coded source on a categorical target is the drag-drop
                       // value map (①), and everything else keeps its read-only detail (④). `recodeShape`
                       // owns the decision so the render stays a switch.
                       const shape = recodeShape({
-                        targetDataType,
-                        targetValues: recodeValues,
+                        targetDataType: rowDataType,
+                        targetValues: rowLabels,
                         hasSourceOptions: hasOptions,
                         kind: transform?.kind,
                       });
@@ -679,11 +760,36 @@ export default function Gate3Page() {
                         decision?.numberMap as
                           Record<string, NumberMapEntry> | undefined,
                       );
-                      const recommendedBins = seedBinning(recodeValues);
+                      const recommendedBins = seedBinning(rowLabels);
                       const binsValue = seedBinning(
-                        recodeValues,
+                        rowLabels,
                         decision?.bins as BinRule[] | undefined,
                       );
+                      // The row header describes what will be EXPORTED: the reviewer's mapping once there is
+                      // one (F19's "3 mapped, 1 unmapped, 75%" kept describing the model's after an edit).
+                      const editedSummary =
+                        shape === "value-map" && persistedMapping
+                          ? mappingSummary(
+                              sourceOptions.map((o) => o.code),
+                              mappingValue,
+                            )
+                          : null;
+                      const headline = editedSummary
+                        ? mappingHeadline(editedSummary)
+                        : decision?.numberMap && shape === "code-to-number"
+                          ? "your code → number table"
+                          : decision?.bins && shape === "binning"
+                            ? "your value bands"
+                            : transform
+                              ? transformSummary(transform)
+                              : "";
+                      const coverage = editedSummary
+                        ? editedSummary.coverage
+                        : (decision?.numberMap && shape === "code-to-number") ||
+                            (decision?.bins && shape === "binning")
+                          ? null
+                          : (transform?.coverage ?? null);
+                      const unproduced = specUnproduced(transform);
                       return (
                         <div
                           key={sourceVariable}
@@ -712,11 +818,14 @@ export default function Gate3Page() {
                             <span className="font-mono text-xs text-on-raised">
                               {sourceVariable}
                             </span>
-                            {transform && (
+                            {headline && (
                               <>
                                 <span className="text-on-raised-faint">→</span>
-                                <span className="text-xs text-on-raised">
-                                  {transformSummary(transform)}
+                                <span
+                                  data-testid="spec-row-summary"
+                                  className="text-xs text-on-raised"
+                                >
+                                  {headline}
                                 </span>
                               </>
                             )}
@@ -727,10 +836,12 @@ export default function Gate3Page() {
                                   : "→ Proposed GenCDE"}
                               </span>
                             )}
-                            {transform && (
-                              <span className="text-xs text-on-raised-muted">
-                                coverage {(transform.coverage * 100).toFixed(0)}
-                                %
+                            {coverage !== null && (
+                              <span
+                                data-testid="spec-row-coverage"
+                                className="text-xs text-on-raised-muted"
+                              >
+                                {`coverage ${(coverage * 100).toFixed(0)}%`}
                               </span>
                             )}
                             {transform?.needsUnits && (
@@ -789,6 +900,25 @@ export default function Gate3Page() {
                               match the target&apos;s value domain.
                             </p>
                           )}
+                          {/* 08-28 1c (F16): the model could not produce this recode. Never "no transform
+                              required" — that reading exported raw codes as if they already fit. */}
+                          {state === "needs-you" && (
+                            <p
+                              data-testid="spec-needs-you"
+                              className="max-w-[68ch] text-xs text-on-raised"
+                            >
+                              <span className="font-semibold text-on-warn">
+                                {unproduced} — needs you.
+                              </span>{" "}
+                              {transform?.kind === "unit"
+                                ? `No unit conversion could be authored (${transform.sourceUnit ?? "?"} → ${transform.targetUnit ?? "?"}), so the notebook leaves this variable as a REVIEW REQUIRED stub rather than a no-op conversion.`
+                                : persistedMapping
+                                  ? "The model could not map any of this variable's values; your mapping below is what the export applies."
+                                  : shape === "value-map"
+                                    ? "The model could not map any of this variable's values onto the target, so nothing is exported for it until you place its values below."
+                                    : "The model could not map any of this variable's values onto the target, so the notebook leaves it as a REVIEW REQUIRED stub — nothing is copied across."}
+                            </p>
+                          )}
 
                           {/* The recode surface is chosen by the TARGET type (see `recodeShape`), so a coded
                           source landing on a numeric CDE gets a code→number table instead of chips with
@@ -797,9 +927,10 @@ export default function Gate3Page() {
                           {shape === "value-map" && (
                             <SpecMappingEditor
                               sourceOptions={sourceOptions}
-                              targetValues={recodeValues}
+                              targetValues={mappingBuckets}
                               value={mappingValue}
-                              recommended={recommendedMapping}
+                              recommended={recommended.mapping}
+                              recommendedFrom={recommended.from}
                               readOnly={frozen || rejected}
                               onChange={(m) =>
                                 void saveSpec(record, sourceVariable, { mapping: m })
