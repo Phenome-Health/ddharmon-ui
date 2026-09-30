@@ -132,19 +132,50 @@ export function relationTargetId(chosenId: string, ownGencdeId: string | undefin
 }
 
 /**
- * The relation the pipeline's own verdict implies, used as the control's initial position.
+ * What the relation control SHOWS for one (group, target) edge (08-28 3f).
  *
- * A SUGGESTION, NEVER A RECORDED DECISION. Nothing is persisted until the reviewer picks, so a run the
- * reviewer never touched carries no relation assertion — which is the truth about it.
+ * `stored` is the reviewer's persisted relation ("" / absent = none asserted), `model` the pipeline's relation for
+ * the same edge (`modelRelation` in `lib/gate4.ts`; "" = it implied none). The reviewer's wins when asserted; the
+ * model's is shown AS the model's otherwise — a starting point, never a record — and stays on screen beside an
+ * override so the override never hides what it replaced. An off-vocabulary value reads as nothing: a control
+ * that lit a button for a predicate nobody chose is how an unmade decision gets exported as a made one.
  */
-export function suggestedRelation(
-  record: Pick<UIRecord, "verdict" | "gencde">,
-): SkosRelation {
-  if (record.verdict === "adopt") return "skos:exactMatch";
-  const stamped = record.gencde?.relation;
-  if (stamped && (SKOS_RELATIONS as readonly string[]).includes(stamped))
-    return stamped as SkosRelation;
-  return "skos:closeMatch";
+export interface RelationView {
+  /** The lit button, or undefined when nobody asserted a relation for this edge. */
+  active?: SkosRelation;
+  /** Whose relation `active` is. */
+  source: "reviewer" | "model" | "none";
+  /** The model's relation for this edge, when it implied one. */
+  model?: SkosRelation;
+  /** The reviewer asserted a relation that differs from the model's. */
+  overridden: boolean;
+}
+
+function asRelation(value: string | undefined): SkosRelation | undefined {
+  return value && (SKOS_RELATIONS as readonly string[]).includes(value) ? (value as SkosRelation) : undefined;
+}
+
+export function relationView(stored: string | undefined, model: string): RelationView {
+  const mine = asRelation(stored);
+  const theirs = asRelation(model);
+  if (mine) return { active: mine, source: "reviewer", model: theirs, overridden: !!theirs && theirs !== mine };
+  if (theirs) return { active: theirs, source: "model", model: theirs, overridden: false };
+  return { active: undefined, source: "none", model: undefined, overridden: false };
+}
+
+/**
+ * The relation decision after one edit: a relation pick keeps the saved note, a note save keeps the saved
+ * relation. The store REPLACES a row on every write, so a save that sent only its own half would wipe the other
+ * (the Gate 3 whole-record overwrite, audit Theme B #1). `null` when nothing is left to record — the caller clears
+ * the row instead of writing an empty decision.
+ */
+export function mergeRelation(
+  stored: { chosen?: unknown; note?: unknown } | undefined,
+  patch: { chosen?: string; note?: string },
+): { chosen: string; note: string } | null {
+  const chosen = patch.chosen ?? (typeof stored?.chosen === "string" ? stored.chosen : "");
+  const note = (patch.note ?? (typeof stored?.note === "string" ? stored.note : "")).trim();
+  return chosen || note ? { chosen, note } : null;
 }
 
 // --- Gate 3: what one transform spec is ----------------------------------------------------------------
