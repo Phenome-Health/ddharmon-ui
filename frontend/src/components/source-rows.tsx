@@ -345,8 +345,8 @@ export function SourceRows({
                         ghost.setAttribute(
                           "style",
                           "position:fixed;top:-1000px;left:-1000px;padding:4px 10px;border-radius:8px;" +
-                            "background:var(--brand-navy-deep,#00063D);color:#fff;white-space:nowrap;" +
-                            "font:600 12px/1.2 Inter,ui-sans-serif,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);",
+                            "background:var(--surface-chrome);color:var(--on-chrome);white-space:nowrap;" +
+                            "font:600 12px/1.2 Inter,ui-sans-serif,sans-serif;box-shadow:var(--elevation-drag);",
                         );
                         document.body.appendChild(ghost);
                         e.dataTransfer.setDragImage(ghost, 12, 12);

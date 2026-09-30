@@ -43,6 +43,7 @@ def _installed_core_version() -> str:
     except importlib.metadata.PackageNotFoundError:
         return "unknown"
 
+
 # Explicit, hand-verified CORE column-role maps per demo cohort — NOT auto-detected. The demo runs on only
 # the "core" columns a user would map, split two ways:
 #   • semantic (question) side  — variable_name, short_label, question_text, description

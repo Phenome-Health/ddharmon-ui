@@ -430,7 +430,7 @@ def test_no_public_surface_claims_the_staged_flow_is_free() -> None:
 
     assert not offenders, (
         "an unauthenticated surface claims the staged flow costs nothing until the "
-        "reviewer chooses. The first charge is Gate 0's Continue (concept generation, "
+        "reviewer chooses. The first charge is Setup's Start run (concept generation, "
         "splitting, the coherence judge); the reviewer scopes before the BULK of the "
         "spend, not before all of it (UI-SPEC §0.4, §7.2):\n  " + "\n  ".join(offenders)
     )

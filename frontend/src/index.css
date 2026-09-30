@@ -512,6 +512,12 @@
      as paper in print and in forced-colours mode, where a shadow is not drawn. */
   --elevation-raised: 0 1px 2px color-mix(in srgb, var(--brand-navy-deep) 6%, transparent),
                       0 12px 28px -18px color-mix(in srgb, var(--brand-navy-deep) 26%, transparent);
+  /* The drag pill — the compact drag image a source row hands the browser while it is dragged
+     (`source-rows.tsx`). It floats over ANY row, so it takes a tight lift of its own rather than
+     the card's long soft fall. Same geometry and strength as the literal it replaced
+     (`0 2px 8px`, 25%); tinted from the deep navy like every other shadow in this block rather than
+     from pure black. The pill itself is the chrome pair (`--surface-chrome` / `--on-chrome`). */
+  --elevation-drag: 0 2px 8px color-mix(in srgb, var(--brand-navy-deep) 25%, transparent);
 
   /* ── DATA SERIES ────────────────────────────────────────────────────────────
      Roles, not primitives, and they live in `:root` rather than `@theme inline`:

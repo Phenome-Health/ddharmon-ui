@@ -174,7 +174,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     outputs: ["An ideal-CDE description (the coverage anchor / Concept summary)"],
     keyDecisions: [
       "Formed with no candidates on purpose — it anchors the later novel decision rather than following retrieval.",
-      "“GenCDE” is reserved for the spec-conformant novel route; this free-text anchor is the Concept summary.",
+      "“GenCDE” is reserved for the spec-conformant novel route; this prose anchor is the Concept summary.",
     ],
     link: { href: "/demo", label: "the Concept summary in the demo (Gate 2)" },
   },
