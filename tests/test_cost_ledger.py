@@ -646,3 +646,89 @@ def test_every_billing_key_is_attributed_to_a_gate():
     assert m
     attributed = set(re.findall(r'"([a-z_]+)"', m.group(1)))
     assert set(billing.BILLING_KEYS) <= attributed, sorted(set(billing.BILLING_KEYS) - attributed)
+
+
+# ── fix 4: a keyless start is refused at the door, like a keyless Continue ──────────────────────────────
+
+
+def _start_env(monkeypatch, tmp_path):
+    from backend import app as app_module
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path / "work")
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    spawned: list[str] = []
+    monkeypatch.setattr(app_module, "run_harmonization", lambda store, job_id, *a, **k: spawned.append(job_id))
+    return app_module, spawned
+
+
+def _start(client, run_mode: str, headers: dict | None = None):
+    import json
+
+    cfg = {
+        "dictionaries": [
+            {"filename": "a.csv", "cohortName": "A", "columnRoles": {"variable_name": "var", "description": "desc"}}
+        ],
+        "cdeSet": "endorsed",
+        "runMode": run_mode,
+    }
+    return client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("a.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+        headers=headers or {},
+    )
+
+
+def test_a_keyless_start_is_refused_before_anything_is_created(monkeypatch, tmp_path):
+    """F8: resume pre-flighted the key but start did not, so a keyless paid run was accepted, embedded, and then
+    errored in its first paid stage. It is now refused at the door — before a work dir or a run row exists."""
+    from fastapi.testclient import TestClient
+
+    app_module, spawned = _start_env(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as c:
+        for mode in ("batch", "sync"):
+            r = _start(c, mode)
+            assert r.status_code == 400, f"{mode}: {r.status_code} {r.text}"
+            assert "key" in r.json()["detail"].lower()
+        assert spawned == [], "a keyless paid run was started"
+        work = tmp_path / "work"
+        assert not work.exists() or not any(work.iterdir()), "the refused start still created a run directory"
+
+        # A preview makes no model call, so it needs no key; with a key, a paid run starts.
+        assert _start(c, "preview").status_code == 200
+        assert _start(c, "batch", {"x-anthropic-key": "sk-test"}).status_code == 200
+    assert len(spawned) == 2
+
+
+def test_a_keyless_rerun_is_refused_before_it_copies_anything(monkeypatch, tmp_path):
+    """Re-run is the other start door: the same refusal, before the uploads are copied into a new run."""
+    from fastapi.testclient import TestClient
+
+    app_module, spawned = _start_env(monkeypatch, tmp_path)
+    src_up = tmp_path / "work" / "src" / "uploads"
+    src_up.mkdir(parents=True)
+    (src_up / "a.csv").write_text("var,desc\nage,Age\n")
+    with TestClient(app_module.app) as c:
+        app_module.store.create(
+            "src",
+            "Mine",
+            {"work_dir": str(tmp_path / "work" / "src"), "cde_set": "endorsed", "run_mode": "batch"},
+            owner_subject=None,
+            dict_specs=[
+                {
+                    "path": str(src_up / "a.csv"),
+                    "cohort_name": "A",
+                    "column_roles": {"variable_name": "var", "description": "desc"},
+                }
+            ],
+        )
+        app_module.store.update("src", status="complete", result={"records": []})
+        r = c.post("/api/harmonize/jobs/src/rerun")
+        assert r.status_code == 400, r.text
+        assert "key" in r.json()["detail"].lower()
+        assert sorted(p.name for p in (tmp_path / "work").iterdir()) == ["src"], "the refused re-run copied uploads"
+        assert spawned == []

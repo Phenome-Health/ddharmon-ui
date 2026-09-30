@@ -462,6 +462,19 @@ async def start_batch(
     from backend.engine.adapter import PREPARE_BEFORE_EMBED_DEFAULT
 
     cfg = json.loads(config)
+    # BYOK: prefer the provider-agnostic header; fall back to the legacy Anthropic-specific one. Held in memory
+    # for this job only (thread kwarg below) — never written to run_config (persisted) or any log.
+    effective_key = x_provider_key or x_anthropic_key
+    # Pre-flight the provider key AT THE DOOR, like Continue does (08-28 1a, live verify 3 F8). A run started
+    # without one used to be accepted, uploaded and embedded, and then errored in its first paid stage. Refused
+    # here, before anything is created: no run row, no work dir, nothing embedded, nothing charged. A preview
+    # makes no model call and is exempt; a non-Anthropic model does not use this key.
+    if _resume_needs_a_key({"run_mode": cfg.get("runMode", "batch"), "model_tag": cfg.get("modelTag")}, effective_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter your Anthropic API key to start this run — its first step is a paid model call and the "
+            "key clears on reload. Nothing was created or charged; re-enter the key and press Start again.",
+        )
     job_id = str(uuid.uuid4())
     work_dir = _WORK_ROOT / job_id
     uploads = work_dir / "uploads"
@@ -560,9 +573,6 @@ async def start_batch(
     selected_model = run_config.get("model_tag")
     if run_config["run_mode"] == "batch" and selected_model and _provider_for_model(str(selected_model)) != "anthropic":
         run_config["run_mode"] = "sync"
-    # BYOK: prefer the provider-agnostic header; fall back to the legacy Anthropic-specific one. Held in memory
-    # for this job only (thread kwarg below) — never written to run_config (persisted) or any log.
-    effective_key = x_provider_key or x_anthropic_key
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
     # Own the run (verified Clerk subject) and persist dict_specs so it can be re-run from its retained
     # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
@@ -807,7 +817,7 @@ def _no_anthropic_key(config: dict[str, Any], key: str | None) -> bool:
 
 
 def _resume_needs_a_key(config: dict[str, Any], header_key: str | None) -> bool:
-    """Whether resuming this run would make a paid Anthropic call with no key available.
+    """Whether resuming (or starting, or re-running) this run would make a paid Anthropic call with no key.
 
     A batch/sync resume calls the provider; a preview run makes no LLM call and is exempt. :func:`resume_run`
     refuses BEFORE it commits the gate and spawns the worker, so a missing key is a clear "enter your key" at
@@ -1076,6 +1086,14 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     old_uploads = Path(src.config["work_dir"]) / "uploads"
     if not old_uploads.is_dir():
         raise HTTPException(status_code=409, detail="Uploaded files for this run are no longer available")
+    # The same door check as a fresh start (08-28 1a, F8): refuse a keyless paid re-run before its uploads are
+    # copied into a new run that could only error in its first paid stage.
+    if _resume_needs_a_key(src.config, x_anthropic_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter your Anthropic API key to re-run — its first step is a paid model call and the key "
+            "clears on reload. Nothing was created or charged; re-enter the key and try again.",
+        )
 
     # Rebuild the CDE backbone from the stored cdeSet (catalog files live server-side, not in the job dir).
     cde_set = src.config.get("cde_set", "endorsed")

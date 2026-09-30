@@ -1353,6 +1353,7 @@ def test_submitting_a_run_asks_for_the_entry_gate_stop(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
