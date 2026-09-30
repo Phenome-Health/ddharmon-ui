@@ -303,7 +303,15 @@ export function railFor(
     // `indexOf` would return -1 and every column would render as a forecast — including gates the run has
     // already paid for. There is no call site left that can: the route redirects before a page mounts.
     if (gate === "setup") return { gate, label, cost: { kind: "state" as const, text: "local" } };
-    if (gate === "gate4") return { gate, label, cost: { kind: "state" as const, text: "no charge" } };
+    // Gate 4 runs no pipeline stage, but it hosts two paid ACTIONS (score Match, analysis ideas — 08-28 1a/1f,
+    // `GATE_LEDGER_KEYS.gate4`). Once either has billed, the column shows it like any other realized spend, or the
+    // rail stops summing to the run's total; until then it is honestly "no charge".
+    if (gate === "gate4") {
+      const realized = realizedByGate.gate4 ?? 0;
+      return realized > 0
+        ? { gate, label, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } }
+        : { gate, label, cost: { kind: "state" as const, text: "no charge" } };
+    }
     if (i <= currentIndex) {
       const realized = realizedByGate[gate] ?? (gate === current ? totalRealized : 0);
       return { gate, label, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } };
