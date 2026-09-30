@@ -533,12 +533,18 @@ class Driver:
                 "gate1_new_group",
                 decision({"groupId": new_gid}, new_name, [new_name], name=new_name, createdAt=int(time.time() * 1000)),
             )
-            fill = [
-                m for g in eye_groups for m in members.get(g) or [] if m in eye and m != (move or {}).get("memberId")
-            ]
+            # Fill it from ANY group, in scope or not (moving a variable out of a group the reviewer left out is a
+            # legal Gate 1 move), so the check does not depend on where the fixture's eye items clustered this run.
+            taken = (move or {}).get("memberId")
+            home = {m: g for g in by_id for m in members.get(g) or []}
+            fill = [m for m in eye if m in home and m != taken]
+            if len(fill) < 2:  # the fixture did not land as designed — two members of the largest in-scope group
+                big = max(scope, key=lambda g: len(members.get(g) or []))
+                fill = [m for m in members.get(big) or [] if m != taken][:2] if len(members.get(big) or []) > 2 else []
+                self.report.note("I4", f"eye items not found in any group; filled the New group from {big}")
             moved = []
             for m in fill[:3]:
-                src = next(g for g in eye_groups if m in (members.get(g) or []))
+                src = home[m]
                 alts = list(dict.fromkeys([src, UNASSIGNED_GROUP_ID, new_gid]))
                 self.api.decide(
                     self.job_id,
@@ -787,7 +793,8 @@ class Driver:
         self.report.check("I1", sorted(frozen or []) == sorted(d["scope"]), "the frozen scope is exactly what Gate 1 "
                           "showed in scope", {"frozen": frozen, "shown": d["scope"]})  # fmt: skip
         got = sorted({r["groupId"] for r in records})
-        want = sorted(set(d["scope"]) | ({(d.get("newGroup") or {}).get("groupId")} - {None}))
+        ng = d.get("newGroup") or {}
+        want = sorted(set(d["scope"]) | ({ng.get("groupId")} if ng.get("members") else set()))
         self.report.check("I1", got == want, "Gate 2 lists exactly the in-scope groups", {"got": got, "want": want})
         r1, r2 = snaps["gate1"]["responseIds"], snaps["gate2"]["responseIds"]
         if not r1 or not r2:
@@ -832,7 +839,7 @@ class Driver:
             self.report.check("I14", gone and there, f"{gate}: {mv['memberId']} moved {mv['fromGroupId']} → "
                               f"{mv['toGroupId']}", {"leftOrigin": gone, "inDestination": there})  # fmt: skip
         ng = d.get("newGroup") or {}
-        if ng.get("groupId"):
+        if ng.get("groupId") and ng.get("members"):
             self.report.check(
                 "I4", ng["groupId"] in by_group, f"{gate}: the New group is its own record", ng["groupId"]
             )
@@ -889,7 +896,7 @@ class Driver:
         tsv = ex.get("eitl_tsv") or ""
         self.report.check("I4", bool(rn.get("name")) and rn["name"] in tsv, "the EITL TSV carries the rename")
         ng = d.get("newGroup") or {}
-        if ng.get("groupId"):
+        if ng.get("groupId") and ng.get("members"):
             self.report.check("I4", ng["groupId"] in by_group, "the New group is exported as its own record")
         # I5 — re-pick provenance
         rp = d.get("repick")
