@@ -76,6 +76,9 @@ export interface UICandidate {
   permissibleValues?: string[]; // value labels, catalog order
   stewardOrg?: string;
   endorsed?: boolean;
+  // 08-28 F13: the catalog designation, present ONLY when more than one catalog element carries it ("Age" x2).
+  // `cdeId` is then core's minted key (`Age__2`); Gate 2 shows this name beside `cdeExternalId`. Mirrors contract.py.
+  sharedName?: string;
 }
 
 export interface AtlasPoint {

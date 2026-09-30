@@ -27,6 +27,7 @@ import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
 import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
+import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
 import {
   affectedSpecCount,
@@ -268,10 +269,10 @@ export default function Gate2Page() {
   const listState = candidateListState(record);
   const alternatives = candidateAlternatives(record.candidates);
   const pick = picks.decisions[groupId];
+  // A pick names its element by tinyId when it has one — a catalog name can repeat (08-28 F13).
   const chosenId =
-    (typeof pick?.chosen === "string" ? pick.chosen : undefined) ??
-    record.candidates.find((c) => c.isChosen)?.cdeId ??
-    "";
+    pickedCandidateId(pick, record.candidates) ?? record.candidates.find((c) => c.isChosen)?.cdeId ?? "";
+  const chosenCandidate = record.candidates.find((c) => c.cdeId === chosenId);
   const targetIsOwn = chosenId === "" || (!!gencde && chosenId === gencde.gencdeId);
   const anchorLags = touchedAtGate1.has(groupId);
 
@@ -300,6 +301,9 @@ export default function Gate2Page() {
   const editAnchor = (patch: Partial<Omit<AnchorDraft, "id">>) => setDraft({ id: groupId, ...anchor, ...patch });
 
   async function writePick(nextChosen: string, extra?: Record<string, unknown>) {
+    // The catalog element's tinyId rides BESIDE `chosen` (08-28 F13): `chosen` stays the id every reader already
+    // keys on, and the tinyId says which element it is when two share a name. None / own CDE carry none.
+    const externalId = record.candidates.find((c) => c.cdeId === nextChosen)?.cdeExternalId ?? "";
     await picks.write(
       { groupId },
       {
@@ -307,6 +311,7 @@ export default function Gate2Page() {
         alternatives,
         extra: {
           ...(gencdeEdit ? { gencdeEdit } : {}),
+          ...(externalId ? { externalId } : {}),
           ...extra,
         },
       },
@@ -427,7 +432,12 @@ export default function Gate2Page() {
                   {record.nMembers === 1 ? "variable" : "variables"} · {record.cohorts?.join(", ")}
                   {record.route ? <> · route {record.route}</> : null} ·{" "}
                   <span data-testid="current-target">
-                    target: {targetIsOwn ? "your own CDE" : chosenId || "none chosen"}
+                    target:{" "}
+                    {targetIsOwn
+                      ? "your own CDE"
+                      : chosenCandidate
+                        ? candidateLabel(chosenCandidate, record.candidates)
+                        : chosenId || "none chosen"}
                   </span>
                 </>
               }
@@ -454,7 +464,11 @@ export default function Gate2Page() {
                   Why this CDE — model rationale
                 </span>
                 <p className="border-l-2 border-rule-control-on-raised pl-3 text-sm italic text-on-raised">
-                  {citeCandidateOrdinals(record.rationale, record.candidates)}
+                  {citeCandidateOrdinals(
+                    record.rationale,
+                    // cited by the name the rows show — a repeated catalog name with its tinyId (08-28 F13)
+                    record.candidates.map((c) => ({ rank: c.rank, cdeId: candidateLabel(c, record.candidates) })),
+                  )}
                 </p>
               </div>
             )}

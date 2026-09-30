@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Star, ExternalLink, Check, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { candidateLabel } from "@/lib/cde-identity";
 import { cn } from "@/lib/utils";
 import type { UICandidate } from "@/types";
 
@@ -185,7 +186,11 @@ export function CandidateTable({
                       aria-hidden="true"
                       className={cn("h-3.5 w-3.5 shrink-0 text-on-raised-muted transition-transform", open && "rotate-90")}
                     />
-                    <span className="truncate text-sm font-semibold text-on-raised">{c.cdeId}</span>
+                    {/* The catalog NAME, with its tinyId beside it when the name repeats (08-28 F13) — never core's minted
+                        `Age__2` key, which is unique but says nothing about which element the row is. */}
+                    <span data-testid="candidate-name" className="truncate text-sm font-semibold text-on-raised">
+                      {candidateLabel(c, candidates)}
+                    </span>
                     {chosen && (
                       <span title="Your selected target">
                         <Check className="h-3.5 w-3.5 shrink-0 text-status-ok" data-testid="candidate-chosen-mark" />

@@ -122,15 +122,25 @@ def model_pick(record: dict[str, Any]) -> str:
     return str((record.get("cde") or {}).get("id") or "")
 
 
-def _catalog_ref(record: dict[str, Any], cde_id: str) -> dict[str, str] | None:
-    """The CdeRef for a picked id: a catalog candidate, or None for "no catalog target"."""
+def _catalog_ref(record: dict[str, Any], cde_id: str, external_id: str = "") -> dict[str, str] | None:
+    """The CdeRef for a picked id: a catalog candidate, or None for "no catalog target".
+
+    ``external_id`` is the pick's catalog id (tinyId, 08-28 F13). Catalog NAMES repeat (two endorsed "Age"s), so
+    when the pick carries its tinyId that — not the name — says which element the reviewer chose.
+    """
     gencde = record.get("gencde") or {}
     if not cde_id or cde_id == gencde.get("gencdeId"):
         return None
     model = record.get("cde") or {}
+    cands = record.get("candidates") or []
+    if external_id:
+        if model.get("id") and model.get("externalId") == external_id:
+            return {"id": str(model["id"]), "externalId": external_id}
+        hit = next((c for c in cands if c.get("cdeExternalId") == external_id), None)
+        return {"id": str((hit or {}).get("cdeId") or cde_id), "externalId": external_id}
     if model.get("id") == cde_id:
         return {"id": cde_id, "externalId": str(model.get("externalId") or "")}
-    cand = next((c for c in record.get("candidates") or [] if c.get("cdeId") == cde_id), None)
+    cand = next((c for c in cands if c.get("cdeId") == cde_id), None)
     return {"id": cde_id, "externalId": str((cand or {}).get("cdeExternalId") or "")}
 
 
@@ -177,10 +187,12 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
         repicked = False
         if pick is not None and isinstance(pick.get("chosen"), str):
             chosen = pick["chosen"]
+            ref = _catalog_ref(raw, chosen, str(pick.get("externalId") or "").strip())
+            chosen = ref["id"] if ref else chosen  # resolved by the pick's tinyId when it has one (08-28 F13)
             own = {"", str((raw.get("gencde") or {}).get("gencdeId") or "")}
             same = chosen == model_id or (chosen in own and model_id in own)
             if not same:
-                r["cde"] = _catalog_ref(raw, chosen)
+                r["cde"] = ref
                 r["targetPickedBy"] = "reviewer"
                 repicked = True
             if isinstance(pick.get("gencdeEdit"), dict):

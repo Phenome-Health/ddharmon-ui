@@ -93,6 +93,10 @@ class UICandidate(TypedDict):
     dataType: NotRequired[str]  # the catalog's own vocabulary, verbatim: "Value List" | "Number" | "Text" | …
     units: NotRequired[str]
     permissibleValues: NotRequired[list[str]]  # value labels, catalog order (capped)
+    # 08-28 F13: the catalog designation, present ONLY when more than one catalog element carries it ("Age" x2 in
+    # the endorsed catalog). ``cdeId`` is then core's minted key (``Age__2``), so Gate 2 shows this name beside
+    # ``cdeExternalId`` to say which element each row is.
+    sharedName: NotRequired[str]
 
 
 class AtlasPoint(TypedDict):
