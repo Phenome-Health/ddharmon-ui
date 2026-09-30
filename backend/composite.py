@@ -218,11 +218,21 @@ _DASHES = str.maketrans(
 
 
 def _loose(text: str) -> str:
-    """Case-, whitespace- and dash/quote-insensitive form, for a word-for-word check that survives PDF layout."""
+    """The WORDS of ``text``, in order: case-, whitespace- and punctuation-insensitive, for a word-for-word
+    check that survives PDF layout.
+
+    Punctuation (Unicode category P*) is layout, not wording: a PDF read "Severe anxiety/ panic attacks" and a
+    model writing "Severe anxiety / panic attacks" name the same item (live verify 3 F6), and so do
+    "Self-rated" / "Self rated". Each mark becomes a word break, except an apostrophe, which joins
+    ("Parkinson's" / "Parkinsons"). SYMBOLS (S*: ``≥ < = + °``) are kept, because "≥ 65" and "< 65" are
+    different criteria, and so is every word — "anxiety or panic" is still not "anxiety / panic".
+    """
     import re
     import unicodedata
 
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).translate(_DASHES)).strip().lower()
+    folded = unicodedata.normalize("NFKC", text).translate(_DASHES)
+    words = "".join("" if ch == "'" else (" " if unicodedata.category(ch).startswith("P") else ch) for ch in folded)
+    return re.sub(r"\s+", " ", words).strip().lower()
 
 
 def _stated_coding(coding: Mapping[str, Any]) -> dict[str, Any] | None:

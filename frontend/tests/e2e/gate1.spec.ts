@@ -1746,7 +1746,9 @@ test.describe("gate1 score", () => {
       "[data-testid='score-panel'] [data-testid='not-available']",
     );
     await expect(na).toBeVisible();
-    await expect(na).toContainText(/Gate 2|matched against/i);
+    // 08-28 1f (Q5): matching is hosted on Gate 4, against the final records — the old "fills in once the
+    // run has got that far" pointed at no screen that ever offered it (live verify 3 F20).
+    await expect(na).toContainText(/Gate 4/);
     expect(requests).toEqual([]);
   });
 
@@ -4437,7 +4439,7 @@ test.describe("gate1 score panel placement", () => {
     const paid = page.locator(
       "[data-testid='score-panel'] [data-testid='not-available']",
     );
-    await expect(paid).toContainText(/Gate 2/i);
+    await expect(paid).toContainText(/Gate 4/);
     const priceBox = await price.boundingBox();
     const paidBox = await paid.boundingBox();
     expect(priceBox!.y).toBeLessThan(paidBox!.y);

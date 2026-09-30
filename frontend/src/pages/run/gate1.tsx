@@ -77,6 +77,7 @@ import {
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { offeredGroups, scoreSeededGroups } from "@/lib/score-scope";
+import { GATE1_MATCH_DEFERRED } from "@/lib/score-match";
 import { cn } from "@/lib/utils";
 import type {
   CoherenceState,
@@ -2475,27 +2476,19 @@ export default function Gate1Page() {
   });
 
   /**
-   * Why matching the declared components cannot run HERE — the honest not-available, rather than a dead
-   * control.
+   * Why matching the declared components does not run HERE — the honest not-available, pointing at where it
+   * does, rather than a dead control.
    *
-   * A RUN PARKED AT GATE 1 HAS NO ASSIGNED RECORDS. `match_components` runs over the run's harmonized
-   * concepts, which the assign stage produces at Gate 2; the backend's own derive route refuses a run
-   * with no records for exactly that reason. So the concept GROUPS this screen renders are not yet what
-   * matching consumes, and saying so plainly is better than offering a button that would 409.
+   * MATCHING IS HOSTED ON GATE 4 (decision Q5, 08-28 1f). A run parked at Gate 1 has no assigned records, so
+   * `match_components` has nothing to match onto; and Gate 4 is where the concepts are FINAL — scope, renames,
+   * picks and edits applied. The old copy promised "the verdict fills in once the run has got that far" while
+   * no later screen ever offered the match (live verify 3 F20). Unconditional, so a run that does carry
+   * records never shows a Match button with nothing behind it.
    *
-   * The declaration itself still belongs here: it is free, it is where a reviewer scoping a run is
-   * thinking about it, and the verdict becomes derivable the moment the matching evidence exists.
+   * The declaration itself still belongs here: it is free, it is where a reviewer scoping a run is thinking
+   * about it, and the per-component group hints stay as the scoping aid.
    */
-  const matchRefusal =
-    (jobState?.result?.records?.length ?? 0) > 0
-      ? null
-      : {
-          claim: "deferred" as const,
-          reason:
-            "Matching needs this run's concepts to have been matched against common data elements, which " +
-            "happens at Gate 2. Declare the components now — it is free and it is saved — and the verdict " +
-            "fills in once the run has got that far.",
-        };
+  const matchRefusal = { claim: "deferred" as const, reason: GATE1_MATCH_DEFERRED };
 
   const [accepting, setAccepting] = useState("");
   async function acceptCarve(groupId: string) {

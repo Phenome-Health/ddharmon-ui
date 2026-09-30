@@ -102,6 +102,22 @@ export const SPLIT_ASSIGN_DIVISION = { split: 0.43, assign: 0.57 };
  */
 export const ANALYSIS_IDEAS_USD = 0.05;
 
+/**
+ * Matching a declared score (Gate 4, 08-28 1f) is ONE synchronous judge call over every component at once:
+ * each component brings its retrieved shortlist (core's `_DEFAULT_TOP_K` = 8 candidates, ~400 input tokens
+ * with their labels, answers and cohorts) and gets back a rated entry per candidate that measures it (~125
+ * output tokens with rationale). At Sonnet rates ($3 / $15 per M) that is ~$0.003 a component, on a ~$0.005
+ * fixed prompt. PROVISIONAL — derived from the prompt's shape, not yet from a billed match; the route returns
+ * what the call actually cost (`billedUsd`), and that is the figure shown once it has run.
+ */
+export const SCORE_MATCH_BASE_USD = 0.005;
+export const SCORE_MATCH_PER_COMPONENT_USD = 0.003;
+
+/** What matching `nComponents` declared components is expected to cost — one call, so linear in components. */
+export function estimateScoreMatchUsd(nComponents: number): number {
+  return SCORE_MATCH_BASE_USD + SCORE_MATCH_PER_COMPONENT_USD * Math.max(0, nComponents);
+}
+
 // --- the coherence judge, which the calibration run never paid for -------------------------------------
 
 /**

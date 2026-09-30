@@ -223,6 +223,32 @@ def test_a_name_the_document_does_not_contain_is_flagged_not_trusted(stub_llm):
     assert [(p["name"], p["verbatim"]) for p in comps] == [("Help  bathing", True), ("Grip strength", False)]
 
 
+def test_the_verbatim_check_tolerates_spacing_and_punctuation_but_not_different_words(stub_llm):
+    """Live verify 3 F6: the PDF read "Severe anxiety/ panic attacks", the model wrote "Severe anxiety / panic
+    attacks", and the name started UNTICKED as if the paper did not contain it. Spacing and punctuation are
+    layout, not wording; a different WORD is still a different name and still flagged."""
+    text = "Table 2. Deficits.\nSevere anxiety/ panic attacks  Yes = 1\nSelf-rated health: poor\nParkinson's disease\n"
+    named = dict(_TRANSCRIBED)
+    named["components"] = [
+        {"name": "Severe anxiety / panic attacks", "coding": {}},  # spacing around "/" differs
+        {"name": "Self rated health", "coding": {}},  # hyphen dropped
+        {"name": "Parkinsons disease", "coding": {}},  # apostrophe dropped
+        {"name": "Severe anxiety or panic attacks", "coding": {}},  # a different word: NOT verbatim
+        {"name": "Mild anxiety / panic attacks", "coding": {}},  # a different word: NOT verbatim
+    ]
+    stub_llm.reply = json.dumps(named)
+    with TestClient(app_module.app) as c:
+        _gate1_job()
+        comps = c.post(_ROUTE, json=_body(text), headers=_KEY).json()["components"]
+    assert [(p["name"], p["verbatim"]) for p in comps] == [
+        ("Severe anxiety / panic attacks", True),
+        ("Self rated health", True),
+        ("Parkinsons disease", True),
+        ("Severe anxiety or panic attacks", False),
+        ("Mild anxiety / panic attacks", False),
+    ]
+
+
 # --- bounded input ---------------------------------------------------------------------------------
 
 

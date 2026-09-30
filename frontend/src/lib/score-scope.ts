@@ -72,14 +72,20 @@ export function setupScopeVerdict(nConceptsAvailable: number): ScopeVerdict {
   return nConceptsAvailable > 0 ? "partial" : "indeterminate";
 }
 
-/** The one-line claim beside the verdict. Never "not computable" for the indeterminate case. */
+/**
+ * The one-line claim beside the verdict. Never "not computable" for the indeterminate case.
+ *
+ * `indeterminate` says NOT MATCHED YET (live verify 3 F9). It used to say "this run has not produced any
+ * concepts", which was Setup's reason and was false wherever the verdict is actually shown: Gate 1 renders it
+ * beside hundreds of concept groups, and Gate 4 beside the final records. What is missing is the match.
+ */
 export const SCOPE_VERDICT_COPY: Record<ScopeVerdict, string> = {
   full: "Every required component is present in this run.",
   partial: "Some required components are present in this run; others are not.",
   infeasible: "Every required component was looked for in this run and none was found.",
   indeterminate:
-    "Cannot be determined yet — this run has not produced any concepts, so there is nothing to match " +
-    "these components against. It is not a finding that the score cannot be built.",
+    "Cannot be determined yet — these components have not been matched against this run's concepts, so " +
+    "there is no evidence either way. It is not a finding that the score cannot be built.",
 };
 
 // --- the derived verdict, at a gate that has a run behind it ---------------------------------------------
