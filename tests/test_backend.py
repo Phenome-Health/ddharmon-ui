@@ -554,6 +554,7 @@ def test_batch_flow_with_fake_runner(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
@@ -620,6 +621,7 @@ def test_transform_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
@@ -709,6 +711,7 @@ def test_verdict_clear_unsets_each_axis(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
@@ -771,6 +774,7 @@ def test_gencde_verdict_axis_persists_and_exports(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
@@ -922,6 +926,7 @@ def test_gencde_recode_regeneration_replaces_stale_specs_and_byok_not_persisted(
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", b"var,desc,enc\nsmk,Ever smoked,1=Yes|2=No\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
@@ -1042,6 +1047,7 @@ def test_gencde_recode_regeneration_numeric_runs_n1_n2(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", b"var,desc\nagemo,Age in months\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobId"]
@@ -1125,7 +1131,10 @@ def test_byok_key_threaded_to_runner_and_never_persisted(monkeypatch, tmp_path):
     persisted = next(j for j in client.get("/api/harmonize/jobs").json() if j["jobId"] == job_id)
     assert "sk-ant-byok-secret" not in json.dumps(persisted)
 
-    # (2) no header -> api_key is None (unchanged ANTHROPIC_API_KEY env behavior)
+    # (2) no header -> api_key is None (unchanged ANTHROPIC_API_KEY env behavior). Since 08-28 1a a keyless
+    # paid start is refused at the door, so this stands in for a server whose env DOES carry a key — the door
+    # check itself is covered in tests/test_cost_ledger.py.
+    monkeypatch.setattr(app_module, "_no_anthropic_key", lambda config, key: False)
     captured.clear()
     resp2 = client.post("/api/harmonize/batch", files=files, data={"config": json.dumps(cfg)})
     assert resp2.status_code == 200
@@ -1145,6 +1154,7 @@ def test_batch_rejects_missing_required_role(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("x.csv", b"a,b\n1,2\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 400
 
@@ -1161,6 +1171,7 @@ def test_batch_rejects_missing_cde_catalog(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("x.csv", b"var,desc\nage,Age\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 400
     assert "CDE" in resp.json()["detail"]
@@ -3398,6 +3409,7 @@ def test_a_new_run_records_that_it_does_not_prepare(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("a.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
     job = app_module.store.get(resp.json()["jobId"])
@@ -3510,6 +3522,7 @@ def test_rejects_row_level_upload(monkeypatch, tmp_path):
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", _PARTICIPANT_CSV, "text/csv"))],
         data={"config": json.dumps(_batch_config())},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 400, resp.text
     detail = resp.json()["detail"]
@@ -3543,6 +3556,7 @@ def test_a_real_dictionary_is_not_mistaken_for_participant_data(monkeypatch, tmp
         "/api/harmonize/batch",
         files=[("files", ("cohortA.csv", dictionary, "text/csv"))],
         data={"config": json.dumps(cfg)},
+        headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 200, resp.text
 

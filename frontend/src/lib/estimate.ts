@@ -255,14 +255,27 @@ export interface RealizedSpend {
  * judge under `splitting`, the concept gate under `specs` — because adding a phase to `PHASES_RUN` would
  * invalidate the shipped demo artifact and the Methods manifest (WINDOWS id20). Per-stage cost
  * attribution rides `ledger_key` instead, which is why this table names those and not phases.
+ *
+ * PAID ACTIONS OUTSIDE A LEG (08-28 1a). A few buttons spend money without a Continue — each bills under its
+ * own key (backend/billing.py `BILLING_KEYS`, pinned to this table by a backend test) and is attributed to
+ * the gate it is PRESSED ON, so the money shows in the figure of the screen where the reviewer spent it:
+ *   - `score_components` — Gate 1: the declared-score panel's "extract the components" (one model call).
+ *   - `readjudicate`     — Gate 1: "accept the division", the re-split of the groups the reviewer named.
+ *   - `specs_regen`      — Gate 3: regenerating a record's recodes after its GenCDE was edited (transform
+ *                          specs are Gate 3's subject; on a legacy run it is pressed in the workbench).
+ *   - `composite`        — Gate 4: deriving a composite score needs the FINISHED concepts, so it can only be
+ *                          pressed once the run has got that far.
+ *   - `analysis_ideas`   — Gate 4: "Explore analysis ideas" is a Gate 4 next action, and the run's own opt-in
+ *                          ideas pass runs at the end of a finished run.
  */
 export const GATE_LEDGER_KEYS: Record<GatePosition, string[]> = {
   setup: [],
   gate0: [], // load → preprocess → embed: local, no provider call
-  gate1: ["generating", "splitting", "judging", "kinds"],
+  gate1: ["generating", "splitting", "judging", "kinds", "score_components", "readjudicate"],
   gate2: ["assigning", "gencde"],
-  gate3: ["specs", "specs_repick", "refine", "concept_gate"], // specs_repick: 08-27b Gate 2 re-pick regeneration
-  gate4: [], // a terminal read
+  // specs_repick: 08-27b Gate 2 re-pick regeneration; specs_regen: the GenCDE-edit recode regeneration
+  gate3: ["specs", "specs_repick", "refine", "concept_gate", "specs_regen"],
+  gate4: ["composite", "analysis_ideas"], // nothing the pipeline runs — only the two paid actions above
 };
 
 // --- the estimate ------------------------------------------------------------------------------------

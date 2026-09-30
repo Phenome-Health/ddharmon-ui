@@ -12,9 +12,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from backend.checkpoint import checkpoint_path, write_checkpoint
+from backend import billing
+from backend.checkpoint import checkpoint_lock, checkpoint_path, write_checkpoint
 from backend.engine import run_pipeline
-from backend.engine.adapter import StageFn
+from backend.engine.adapter import CumulativeLedger, StageFn, cost_block, merge_costs
 from backend.jobs import AWAITING_REVIEW, JobStore
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ def run_harmonization(
     stage_overrides: dict[str, StageFn] | None = None,
     api_key: str | None = None,
     replay_responses: dict[str, dict[str, Any]] | None = None,
+    prior_cost: dict[str, Any] | None = None,
 ) -> None:
     """Run a job to completion, reporting phase progress to ``store``. Safe to run in a thread.
 
@@ -52,6 +54,12 @@ def run_harmonization(
 
     ``replay_responses`` is a resumed leg's already-paid stage answers, read out of the previous gate's
     checkpoint and handed to the adapter so no prompt is bought twice.
+
+    ``prior_cost`` is that checkpoint's ``cost`` block. It seeds the leg's ledger, so the live counter and the
+    checkpoint this leg writes carry the RUN's cumulative spend, never one leg's share (08-28 1a, F14). The
+    ledger is built HERE and handed to the adapter, so that what a leg bought before it failed can still be
+    read afterwards and kept on the parked run's bill. Bills made by paid routes while this leg ran (queued by
+    :mod:`backend.billing`) are folded into whatever this leg writes last — its checkpoint or its result.
 
     STAGED RUNS. When ``config['stop_at_gate']`` names a boundary, the adapter stops there and the result
     carries ``gatePosition``. This function then writes the checkpoint, parks the run at
@@ -72,6 +80,8 @@ def run_harmonization(
         fields: dict[str, Any] = {"status": phase, "phase": phase, "completed": completed, "total": total}
         # The LLM stages pass the run's realized cost-so-far (USD) after pricing their usage; fold it into the
         # job for the live "spent so far" counter. Pre-LLM phases call with 3 args (cost=None) -> not touched.
+        # The store keeps it monotonic (max with what the job already shows), so a figure below what the run
+        # has been charged can never rewind the counter.
         if cost is not None:
             fields["cost_so_far"] = cost
         store.update(job_id, **fields)
@@ -85,6 +95,12 @@ def run_harmonization(
         staged["stage_responses"] = recorded
     if replay_responses:
         staged["replay_responses"] = replay_responses
+    # The leg's ledger, seeded with every earlier leg's spend (08-28 1a). Owned here rather than inside the
+    # adapter so the failure branches below can still read what this leg bought.
+    leg_ledger = CumulativeLedger(prior_cost)
+    if staged:
+        staged["ledger"] = leg_ledger
+    work_dir = Path(config.get("work_dir", "."))
     try:
         result = run_pipeline(
             dict_specs,
@@ -107,45 +123,62 @@ def run_harmonization(
             # stop — but the run is NOT terminal: it is parked, and pressing Continue spawns a fresh worker.
             # The payload goes to the per-run work dir, never into the jobs row (D-02): that row is
             # rewritten whole on every write, and a Gate 2 partial is megabytes.
-            work_dir = Path(config.get("work_dir", "."))
-            ckpt = write_checkpoint(
-                work_dir,
-                job_id=job_id,
-                gate=gate,
-                result=payload,
-                responses=recorded,
-                # The LEDGER's number, never a hardcoded per-stage guess: whatever stages actually ran to
-                # reach this gate are what the reviewer is told they spent. Falls back to the live counter
-                # for a result built without a ledger.
-                realized_cost=float((payload.get("cost") or {}).get("actualUsd") or 0.0)
-                or float(getattr(store.get(job_id), "cost_so_far", 0.0) or 0.0),
-            )
-            store.checkpoint(
-                job_id,
-                gate=gate,
-                # RELATIVE to the work root, so the pointer survives a redeploy that moves it.
-                checkpoint_ref=_relative_ref(store, job_id, ckpt.path or checkpoint_path(work_dir, gate)),
-                realized_cost=ckpt.realized_cost,
-            )
+            #
+            # Under the run's checkpoint lock, so a paid route billing this run cannot slip a bill between the
+            # queue being absorbed and the run being parked (it then lands in THIS checkpoint instead).
+            with checkpoint_lock(job_id):
+                _absorb_pending(payload, work_dir)
+                ckpt = write_checkpoint(
+                    work_dir,
+                    job_id=job_id,
+                    gate=gate,
+                    result=payload,
+                    responses=recorded,
+                    # The LEDGER's number, never a hardcoded per-stage guess: whatever stages actually ran to
+                    # reach this gate — in THIS leg and every earlier one (the ledger is seeded) — are what the
+                    # reviewer is told they spent. Falls back to the live counter for a result with no ledger.
+                    realized_cost=float((payload.get("cost") or {}).get("actualUsd") or 0.0)
+                    or float(getattr(store.get(job_id), "cost_so_far", 0.0) or 0.0),
+                )
+                store.checkpoint(
+                    job_id,
+                    gate=gate,
+                    # RELATIVE to the work root, so the pointer survives a redeploy that moves it.
+                    checkpoint_ref=_relative_ref(store, job_id, ckpt.path or checkpoint_path(work_dir, gate)),
+                    realized_cost=ckpt.realized_cost,
+                )
             logger.info("job %s paused at %s (%.4f USD realized)", job_id, gate, ckpt.realized_cost)
             return
         if store.cancel_mode(job_id) == "keep":
             # "Keep" stop: the pipeline finished the in-flight stage and skipped the rest, returning a PARTIAL
             # result. Mark the run cancelled but attach that result so the user gets what they paid for.
-            store.update(job_id, status="cancelled", phase="cancelled", result=result)
+            with checkpoint_lock(job_id):
+                _absorb_pending(payload, work_dir)
+                store.update(job_id, status="cancelled", phase="cancelled", result=payload, cost_so_far=_total(payload))
             logger.info("job %s stopped (keep): %d partial records", job_id, len(result.get("records", [])))
             return
-        fields: dict[str, Any] = {"status": "complete", "phase": "complete", "result": result}
-        ideas = _generate_ideas(payload, config, api_key)  # None unless opted-in + produced
-        if ideas is not None:
-            fields["analysis_ideas"] = ideas
-        store.update(job_id, **fields)
+        # None unless opted-in + produced. Its spend is billed while this worker still owns the run, so it is
+        # queued and folded into the finished result's cost just below.
+        ideas = _generate_ideas(payload, config, api_key, store=store, job_id=job_id)
+        with checkpoint_lock(job_id):
+            _absorb_pending(payload, work_dir)
+            # The counter ends on the result's own (cumulative) figure; the store keeps it monotonic.
+            fields: dict[str, Any] = {
+                "status": "complete",
+                "phase": "complete",
+                "result": payload,
+                "cost_so_far": _total(payload),
+            }
+            if ideas is not None:
+                fields["analysis_ideas"] = ideas
+            store.update(job_id, **fields)
         logger.info("job %s complete: %d records", job_id, len(result["records"]))
     except RunCancelledError:
         # "Discard" stop: terminal but NOT an error, and NO result — the user chose to throw away in-flight
         # work. Leave error_message unset; the run stays re-runnable from its retained uploads.
         logger.info("job %s stopped (discard)", job_id)
         store.update(job_id, status="cancelled", phase="cancelled")
+        _keep_leg_spend(store, job_id, leg_ledger, work_dir)
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI rather than crash the thread
         logger.exception("job %s failed", job_id)
         # Capture the stage the run was in BEFORE we overwrite phase to "error", so the UI / an error report
@@ -168,6 +201,35 @@ def run_harmonization(
             )
         else:
             store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)
+        _keep_leg_spend(store, job_id, leg_ledger, work_dir)
+
+
+def _total(payload: dict[str, Any]) -> float:
+    """The run total a payload's cost block states (0 when it carries none)."""
+    return float(cost_block(payload.get("cost"))["actualUsd"])
+
+
+def _absorb_pending(payload: dict[str, Any], work_dir: Path) -> None:
+    """Fold bills queued while this leg ran into the payload's cost block. Caller holds the checkpoint lock."""
+    pending = billing.take_pending(work_dir)
+    if pending is not None:
+        payload["cost"] = merge_costs(payload.get("cost"), pending)
+
+
+def _keep_leg_spend(store: JobStore, job_id: str, ledger: CumulativeLedger, work_dir: Path) -> None:
+    """Keep what a leg that did not finish had already bought — plus any bill queued for it — on the run.
+
+    A failed resumed leg stays parked at its old gate, so this lands in that gate's checkpoint and the retry's
+    seed includes it; a first leg that errored has no checkpoint, so only the counter holds it. Both were
+    already reported live (the stages' progress and the queue both moved the counter), so the counter is not
+    bumped a second time. Never raises: this runs on the failure path.
+    """
+    try:
+        with checkpoint_lock(job_id):
+            spent = merge_costs(ledger.leg_cost(), billing.take_pending(work_dir))
+            billing.record_cost(store, job_id, spent, already_live=True)
+    except Exception:  # noqa: BLE001 — accounting must not mask the failure being reported
+        logger.warning("job %s: could not keep the failed leg's spend on the run", job_id, exc_info=True)
 
 
 def _relative_ref(store: JobStore, job_id: str, path: Path) -> str:
@@ -186,19 +248,30 @@ def _relative_ref(store: JobStore, job_id: str, path: Path) -> str:
     return f"{job_id}/{path.name}"
 
 
-def _generate_ideas(result: dict[str, Any], config: dict[str, Any], api_key: str | None) -> list[dict[str, Any]] | None:
+def _generate_ideas(
+    result: dict[str, Any],
+    config: dict[str, Any],
+    api_key: str | None,
+    *,
+    store: JobStore | None = None,
+    job_id: str | None = None,
+) -> list[dict[str, Any]] | None:
     """Generate "analysis ideas" as part of the run when opted in — using the SAME model/provider/key the
     run used (via :func:`backend.engine.llm.build_llm_client`), so the results page has them with no second
     key entry. Returns the ideas list (possibly empty), or None when skipped/failed.
 
     Non-fatal by design: a preview run (no LLM), an opted-out run, a run with no records, or any error here
     just yields None — the harmonization still completes, and the user can generate on-demand later.
+
+    It is a paid call, so with ``store``/``job_id`` its spend is billed to the run (08-28 1a) — even when the
+    reply could not be used, because the call was still charged.
     """
     if not config.get("gen_analysis_ideas") or config.get("run_mode") == "preview":
         return None
     records = result.get("records") or []
     if not records:
         return None
+    client: Any = None
     try:
         from backend.analysis_ideas import generate_analysis_ideas
         from backend.engine.llm import build_llm_client
@@ -208,3 +281,6 @@ def _generate_ideas(result: dict[str, Any], config: dict[str, Any], api_key: str
     except Exception:  # noqa: BLE001 — analysis ideas are a bonus; never fail the run over them
         logger.warning("analysis-ideas generation failed (non-fatal)", exc_info=True)
         return None
+    finally:
+        if store is not None and job_id is not None and client is not None:
+            billing.bill_client(store, job_id, billing.ANALYSIS_IDEAS, client)

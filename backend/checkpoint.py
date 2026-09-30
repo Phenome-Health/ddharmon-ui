@@ -30,8 +30,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -75,6 +78,30 @@ class Checkpoint:
     realized_cost: float = 0.0
     written_at: float = 0.0
     path: Path | None = None
+
+
+#: One re-entrant lock per run, created on demand — see :func:`checkpoint_lock`.
+_run_locks: dict[str, threading.RLock] = {}
+_run_locks_guard = threading.Lock()
+
+
+@contextmanager
+def checkpoint_lock(job_id: str) -> Iterator[None]:
+    """Serialize every READ-MODIFY-WRITE of one run's checkpoint (and its cost) within this process.
+
+    Several writers rewrite a parked run's checkpoint: a paid action billing its spend onto it, the batch
+    reconciler attaching late answers, a re-adjudication replacing its groups, the worker parking at the
+    next gate, and Continue reading it as the next leg's seed. The write itself is atomic, but two writers
+    that each read, modify and write would lose one of the two edits — and for a cost edit that is money
+    silently missing from the figure a reviewer is shown (08-28 1a). Holding this across the read and the
+    write closes that; it is re-entrant so a holder can call a helper that takes it again.
+
+    In-process only, like ``batch_reconcile``'s lock: one backend process serves a run.
+    """
+    with _run_locks_guard:
+        lock = _run_locks.setdefault(job_id, threading.RLock())
+    with lock:
+        yield
 
 
 def next_gate(gate: str) -> str | None:

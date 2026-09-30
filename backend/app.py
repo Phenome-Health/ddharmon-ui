@@ -41,7 +41,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
-from backend import batch_reconcile, export_decisions
+from backend import batch_reconcile, billing, export_decisions
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
     GATE1_GROUP_SCOPE,
@@ -57,6 +57,7 @@ from backend.checkpoint import (
     GATE_ORDER,
     Checkpoint,
     CheckpointMissingError,
+    checkpoint_lock,
     checkpoint_path,
     load_checkpoint,
     next_gate,
@@ -65,6 +66,7 @@ from backend.checkpoint import (
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
+from backend.engine.adapter import cost_block
 from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
 from backend.runner import _relative_ref, run_harmonization
@@ -460,6 +462,19 @@ async def start_batch(
     from backend.engine.adapter import PREPARE_BEFORE_EMBED_DEFAULT
 
     cfg = json.loads(config)
+    # BYOK: prefer the provider-agnostic header; fall back to the legacy Anthropic-specific one. Held in memory
+    # for this job only (thread kwarg below) — never written to run_config (persisted) or any log.
+    effective_key = x_provider_key or x_anthropic_key
+    # Pre-flight the provider key AT THE DOOR, like Continue does (08-28 1a, live verify 3 F8). A run started
+    # without one used to be accepted, uploaded and embedded, and then errored in its first paid stage. Refused
+    # here, before anything is created: no run row, no work dir, nothing embedded, nothing charged. A preview
+    # makes no model call and is exempt; a non-Anthropic model does not use this key.
+    if _resume_needs_a_key({"run_mode": cfg.get("runMode", "batch"), "model_tag": cfg.get("modelTag")}, effective_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter your Anthropic API key to start this run — its first step is a paid model call and the "
+            "key clears on reload. Nothing was created or charged; re-enter the key and press Start again.",
+        )
     job_id = str(uuid.uuid4())
     work_dir = _WORK_ROOT / job_id
     uploads = work_dir / "uploads"
@@ -558,9 +573,6 @@ async def start_batch(
     selected_model = run_config.get("model_tag")
     if run_config["run_mode"] == "batch" and selected_model and _provider_for_model(str(selected_model)) != "anthropic":
         run_config["run_mode"] = "sync"
-    # BYOK: prefer the provider-agnostic header; fall back to the legacy Anthropic-specific one. Held in memory
-    # for this job only (thread kwarg below) — never written to run_config (persisted) or any log.
-    effective_key = x_provider_key or x_anthropic_key
     display = cfg.get("displayName") or f"Run {job_id[:8]}"
     # Own the run (verified Clerk subject) and persist dict_specs so it can be re-run from its retained
     # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
@@ -805,7 +817,7 @@ def _no_anthropic_key(config: dict[str, Any], key: str | None) -> bool:
 
 
 def _resume_needs_a_key(config: dict[str, Any], header_key: str | None) -> bool:
-    """Whether resuming this run would make a paid Anthropic call with no key available.
+    """Whether resuming (or starting, or re-running) this run would make a paid Anthropic call with no key.
 
     A batch/sync resume calls the provider; a preview run makes no LLM call and is exempt. :func:`resume_run`
     refuses BEFORE it commits the gate and spawns the worker, so a missing key is a clear "enter your key" at
@@ -909,7 +921,26 @@ def resume_run(
     # Reconcile before the replay fuel is read, not after: a late batch result that is attached now is a
     # stage this leg replays for $0, and one attached a minute later is a stage it pays for twice.
     _reconcile_on_open(job, api_key=x_anthropic_key)
-    job = store.get(job_id) or job
+    # Everything from reading the checkpoint to handing it to the next leg happens under the run's
+    # checkpoint lock (08-28 1a). A paid action billed onto this checkpoint AFTER it is read as the seed but
+    # BEFORE the run leaves `awaiting_review` would land in a file the new leg never reads again, and drop
+    # out of every later figure; under the lock it instead waits and is queued for the new leg's checkpoint.
+    with checkpoint_lock(job_id):
+        return _resume_locked(job_id, target, subject, x_anthropic_key, body)
+
+
+def _resume_locked(
+    job_id: str,
+    target: str,
+    subject: str | None,
+    x_anthropic_key: str | None,
+    body: ResumeBody | None,
+) -> dict[str, Any]:
+    """The body of :func:`resume_run`, run under the run's checkpoint lock. Never call this directly."""
+    job = store.get(job_id)
+    if job is None or job.status != AWAITING_REVIEW or not job.gate_position or next_gate(job.gate_position) != target:
+        # Re-checked under the lock: a second Continue that waited on the first must not spawn a second leg.
+        raise HTTPException(status_code=409, detail="This run is not paused at a gate")
     ckpt = _checkpoint_for(job)
     if ckpt is None:
         raise HTTPException(status_code=409, detail="This run has no saved state to resume from")
@@ -923,19 +954,23 @@ def resume_run(
     # result already on disk.
     if target == "gate4":
         work_dir = Path(job.config["work_dir"])
+        # The CUMULATIVE figure, and one the carried result agrees with: the rail reads `result.cost`, the
+        # Gate 4 copy reads the realized cost, and a legacy Gate 3 checkpoint could carry a per-leg realized
+        # figure its own cost block contradicts (08-28 1a, F14). The larger is the one money was spent on.
+        realized = max(ckpt.realized_cost, cost_block(ckpt.result.get("cost")).get("actualUsd", 0.0))
         carried = write_checkpoint(
             work_dir,
             job_id=job_id,
             gate=target,
             result=ckpt.result,
             responses=ckpt.responses,
-            realized_cost=ckpt.realized_cost,
+            realized_cost=realized,
         )
         store.checkpoint(
             job_id,
             gate=target,
             checkpoint_ref=_relative_ref(store, job_id, carried.path or checkpoint_path(work_dir, target)),
-            realized_cost=ckpt.realized_cost,
+            realized_cost=realized,
         )
         return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
     # The catalog is needed only by a leg that spawns a worker — checked AFTER the Gate 4 pure-read branch, so a
@@ -997,7 +1032,9 @@ def resume_run(
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, job.dict_specs, cde_spec, run_config),
-        kwargs={"api_key": x_anthropic_key, "replay_responses": ckpt.responses},
+        # `prior_cost` seeds the leg's ledger with everything the run has spent so far, so the checkpoint this
+        # leg writes carries the run's cumulative cost rather than the leg's own share (08-28 1a, F14/F10).
+        kwargs={"api_key": x_anthropic_key, "replay_responses": ckpt.responses, "prior_cost": ckpt.result.get("cost")},
         daemon=True,
     ).start()
     return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
@@ -1049,6 +1086,14 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     old_uploads = Path(src.config["work_dir"]) / "uploads"
     if not old_uploads.is_dir():
         raise HTTPException(status_code=409, detail="Uploaded files for this run are no longer available")
+    # The same door check as a fresh start (08-28 1a, F8): refuse a keyless paid re-run before its uploads are
+    # copied into a new run that could only error in its first paid stage.
+    if _resume_needs_a_key(src.config, x_anthropic_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter your Anthropic API key to re-run — its first step is a paid model call and the key "
+            "clears on reload. Nothing was created or charged; re-enter the key and try again.",
+        )
 
     # Rebuild the CDE backbone from the stored cdeSet (catalog files live server-side, not in the job dir).
     cde_set = src.config.get("cde_set", "endorsed")
@@ -1105,8 +1150,12 @@ def analysis_ideas(
     model_tag = job.config.get("model_tag")
     client = build_llm_client(model_tag, x_anthropic_key)
     # A rejected key or an overloaded provider is an expected condition, not a crash — surface it as such.
-    with llm_call(model=model_tag):
-        out = generate_analysis_ideas(records, client.complete)
+    try:
+        with llm_call(model=model_tag):
+            out = generate_analysis_ideas(records, client.complete)
+    finally:
+        # Billed to the run whether or not the reply was usable: the call was charged either way (08-28 1a).
+        billing.bill_client(store, job_id, billing.ANALYSIS_IDEAS, client)
     store.set_analysis_ideas(job_id, out["ideas"], subject=_subject(request))
     return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
 
@@ -1244,6 +1293,10 @@ def readjudicate(
         )
     except ValueError as exc:  # the seam's own refusal, kept as a 400 rather than a 500
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        # The re-split is billed to the run's Gate 1 line BEFORE the ledger below is written, and that write
+        # re-reads the checkpoint under the lock, so the two edits compose instead of one erasing the other.
+        billing.bill_client(store, job_id, billing.READJUDICATE, client)
 
     # Persist the re-split ledger onto whichever surface holds this run: the row for a finished run, the
     # checkpoint for a paused one (D-02 keeps a paused run's payload off the row, rewritten whole on write).
@@ -1252,22 +1305,29 @@ def readjudicate(
     # added, since the children stay UNASSIGNED until Gate 2. Reviewer decisions live in the decisions store,
     # not on this payload, so re-deriving the groups does not lose them.
     parent_ids = set(group_ids)
-    base_result = ckpt.result if ckpt is not None else (job.result or {})
-    kept_records = [
-        r for r in cast("list[dict[str, Any]]", base_result.get("records") or []) if r.get("groupId") not in parent_ids
-    ]
-    new_fields = {"conceptGroups": groups, "conceptGroupMembers": members, "records": kept_records}
-    if ckpt is not None:
-        write_checkpoint(
-            ckpt.path.parent if ckpt.path is not None else Path(job.config["work_dir"]),
-            job_id=ckpt.job_id,
-            gate=ckpt.gate,
-            result={**ckpt.result, **new_fields},
-            responses=ckpt.responses,
-            realized_cost=ckpt.realized_cost,
-        )
-    else:
-        store.update(job_id, result={**(job.result or {}), **new_fields})
+    # Re-read under the lock: the paid call above took seconds, and the checkpoint it read may have been
+    # rewritten since — by its own bill, just now, if nothing else. Writing the stale copy back would erase that.
+    with checkpoint_lock(job_id):
+        latest = store.get(job_id) or job
+        fresh = _checkpoint_for(latest) if ckpt is not None else None
+        base_result = fresh.result if fresh is not None else (latest.result or {})
+        kept_records = [
+            r
+            for r in cast("list[dict[str, Any]]", base_result.get("records") or [])
+            if r.get("groupId") not in parent_ids
+        ]
+        new_fields = {"conceptGroups": groups, "conceptGroupMembers": members, "records": kept_records}
+        if fresh is not None:
+            write_checkpoint(
+                fresh.path.parent if fresh.path is not None else Path(job.config["work_dir"]),
+                job_id=fresh.job_id,
+                gate=fresh.gate,
+                result={**fresh.result, **new_fields},
+                responses=fresh.responses,
+                realized_cost=fresh.realized_cost,
+            )
+        else:
+            store.update(job_id, result={**base_result, **new_fields})
     n_children = sum(1 for g in groups if g.get("readjudicatedFrom") in parent_ids)
     return {"jobId": job_id, "groupIds": group_ids, "nGroups": n_children}
 
@@ -1617,6 +1677,10 @@ def score_components(
             proposal = propose_components(text, client.complete, provenance=body.provenance)
     except UnreadableReplyError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        # The one paid call is billed to the run (Gate 1's line) — also when its reply was unreadable, since
+        # it was charged all the same. A cached repeat returned above and never reaches here (08-28 1a, F5).
+        billing.bill_client(store, job_id, billing.SCORE_COMPONENTS, client)
 
     payload = {
         **proposal,
@@ -1879,6 +1943,9 @@ def composite(
     except ValueError as exc:
         # e.g. the document defines no score, or its text extraction came back empty — a 400, not a 500.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        # Whatever the derivation's calls cost is billed to the run (a free re-derive drains nothing).
+        billing.bill_client(store, job_id, billing.COMPOSITE, client)
     # Durable home is the per-user artifact store, keyed by the score's name — so a re-derive REPLACES that
     # score for THIS user (what `composite.upsert` used to do by hand) and one user's derivation is never
     # visible to another on a shared run. A pinned run raises here rather than silently discarding the spec,
@@ -2037,6 +2104,8 @@ def regenerate_specs(
         )
     except RuntimeError as exc:  # e.g. a core build lacking the GenCDE spec-gen seams
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        billing.bill_client(store, job_id, billing.SPECS_REGEN, client)  # the regeneration's calls (08-28 1a)
     store.replace_result_record(job_id, record_id, cast("dict[str, Any]", updated))
     return {"record": updated}
 
