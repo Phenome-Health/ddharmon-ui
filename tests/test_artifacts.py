@@ -1117,17 +1117,19 @@ def test_a_non_decision_kind_is_never_given_a_conflict_notice(tmp_path, monkeypa
 def _a_valid_decision(kind: str) -> dict:
     """One payload the registered kind accepts, built from the identity table rather than by hand, so a kind
     added to the registry is covered here without anyone remembering to add it."""
-    from backend.artifact_kinds import _DECISION_IDENTITY_FIELDS, REVIEWER_GROUP_PREFIX
+    from backend.artifact_kinds import _DECISION_IDENTITY_FIELDS, REVIEWER_GROUP_PREFIX, SKOS_RELATIONS
 
     payload = {field: f"{field}-1" for field in _DECISION_IDENTITY_FIELDS[kind]}
     if "groupId" in payload:
         payload["groupId"] = f"{REVIEWER_GROUP_PREFIX}guest-1"  # the one id every group-keyed kind accepts
+    # A relation's `chosen` must be a SKOS predicate (the store refuses anything else); every other kind takes "x".
+    options = list(SKOS_RELATIONS[:2]) if kind == GATE2_RELATION else ["x", "y"]
     return {
         **payload,
         "name": "My group",
-        "chosen": "x",
-        "alternatives": ["x", "y"],
-        "optionSetKey": option_set_key(["x", "y"]),
+        "chosen": options[0],
+        "alternatives": options,
+        "optionSetKey": option_set_key(options),
     }
 
 
