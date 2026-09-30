@@ -641,3 +641,71 @@ def test_the_reconciler_never_raises_the_switch():
     src = Path(batch_reconcile.__file__).read_text().lower()
     for banned in ("switch", "cancel(", "patience", "legtransport", "request_switch_to_sync"):
         assert banned not in src, f"backend/batch_reconcile.py mentions {banned!r}"
+
+
+# ── a switched stage's gap (08-28: a partial batch is never silently accepted) ─────────────────────────
+
+
+class _FlakySyncClient(_FakeSyncClient):
+    """A sync client whose call for a given prompt fails ``fail[prompt]`` times first (an unbilled failure)."""
+
+    def __init__(self, events: dict, fail: dict[str, int]) -> None:
+        super().__init__(events)
+        self.fail = dict(fail)
+        self.failed: list[str] = []
+
+    def complete_request(self, prompt, **kw):
+        with self._lock:
+            if self.fail.get(prompt, 0) > 0:
+                self.fail[prompt] -= 1
+                self.failed.append(prompt)
+                raise RuntimeError("Could not resolve authentication method")
+        return super().complete_request(prompt, **kw)
+
+
+def test_a_sync_call_that_fails_after_the_switch_is_one_missing_answer_and_is_retried_once(monkeypatch, tmp_path, fast):
+    """One failed sync call used to abort the whole stage and throw away the leg; it is now one unanswered prompt,
+    re-asked once like any other gap, and the calls that did answer are kept and priced."""
+    events: dict = {}
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", _fake_core(fast, ["p0", "p1"], events))
+    client = _FlakySyncClient(events, {"u-p2": 1})
+    ledger = adapter_mod.CumulativeLedger()
+    out = adapter_mod._batch_stage(
+        "generating",
+        lambda *a, **k: None,
+        tmp_path,
+        "generate",
+        ledger,
+        transport=_transport(client, requested=lambda: True),
+    )([_prompt(p) for p in ("p0", "p1", "p2", "p3")])
+
+    assert set(out) == {"p0", "p1", "p2", "p3"}
+    assert client.failed == ["u-p2"] and sorted(client.prompts) == ["u-p2", "u-p3"], "not one retry of just the gap"
+    line = ledger.to_dict()["perStage"]["generating"]
+    assert line["calls"] == 4 and line["usd"] == pytest.approx(2 * _BATCH_ITEM + 2 * _SYNC_ITEM)
+
+
+def test_a_switched_stage_still_short_after_its_retry_fails_naming_the_stage_and_keeps_what_it_bought(
+    monkeypatch, tmp_path, fast
+):
+    events: dict = {}
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", _fake_core(fast, ["p0", "p1"], events))
+    client = _FlakySyncClient(events, {"u-p2": 99})
+    ledger = adapter_mod.CumulativeLedger()
+    stage = adapter_mod._batch_stage(
+        "splitting",
+        lambda *a, **k: None,
+        tmp_path,
+        "split",
+        ledger,
+        transport=_transport(client, requested=lambda: True),
+    )
+    with pytest.raises(adapter_mod.StageIncompleteError) as caught:
+        stage([_prompt(p) for p in ("p0", "p1", "p2", "p3")])
+
+    assert caught.value.tag == "split" and caught.value.missing == ["p2"]
+    assert client.failed == ["u-p2", "u-p2"], "the switched gap was not re-asked exactly once"
+    lines = {rec["id"]: rec for rec in _lines(tmp_path / "responses_split.jsonl")}
+    assert set(lines) == {"p0", "p1", "p3"} and lines["p3"]["transport"] == "sync", "a bought answer was lost"
+    line = ledger.to_dict()["perStage"]["splitting"]
+    assert line["calls"] == 3 and line["usd"] == pytest.approx(2 * _BATCH_ITEM + _SYNC_ITEM), "a failure was priced"

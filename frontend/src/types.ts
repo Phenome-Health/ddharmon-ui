@@ -364,6 +364,21 @@ export interface NotComputedEntry {
   reason: string;
 }
 
+/** One LLM stage that was ASKED prompts it holds no answer for on this run (08-28). The provider's batch
+ *  retrieve skips errored / expired / canceled items, so a stage can come back short. A `deciding` stage that
+ *  does fails its leg instead (the run stays parked, the error names it), so on a result this is almost always
+ *  `advisory` — and an advisory prompt with no answer means NOT JUDGED, never "judged clean". */
+export interface StageGap {
+  stage: string;
+  kind: "deciding" | "advisory";
+  /** Prompts the stage was asked, across every leg of the run. */
+  asked: number;
+  /** Of those, how many hold no answer. */
+  unanswered: number;
+  /** The unanswered prompt ids, sorted and uncapped. */
+  promptIds: string[];
+}
+
 /** One preprocessing rule's outcome. Four values: a rule that RAN and changed nothing is a different
  *  claim from a rule that never ran, and both differ from one that threw. */
 export type RuleOutcome = "changed" | "no_change" | "not_run" | "failed";
@@ -460,6 +475,9 @@ export interface HarmonizationResult {
    *  opt-in stage exists and this run did not enable it (actionable); `permanent` means no stage
    *  produces it at all. Rendering them alike either understates the product or misleads about it. */
   notComputed?: NotComputedEntry[];
+  /** Every stage that was asked prompts it never heard back on (08-28). EMPTY means every asked prompt was
+   *  answered; absent on a preview / Gate 0 result and on payloads that predate the register. */
+  unanswered?: StageGap[];
   /** What preprocessing did to each source dictionary, between loading and embedding. */
   preprocessing?: PreprocessReport[];
   // Present when this result is a PAUSED run's state rather than a finished one.
@@ -610,6 +628,9 @@ export interface CheckpointState {
   nextGate: GatePosition | null;
   resultVersion: number;
   costSoFar: number;
+  /** How many prompts this gate's state was asked and never heard back on — the result's `unanswered`
+   *  register, summed (08-28). 0 on a complete gate; optional so an older backend still parses. */
+  unansweredPrompts?: number;
   result: HarmonizationResult | null;
 }
 

@@ -63,6 +63,7 @@ from backend.engine.contract import (
     UIPreprocessRule,
     UIRecord,
     UIResult,
+    UIStageGap,
     UISummary,
     UITransform,
     UnassignedField,
@@ -697,8 +698,12 @@ def build_ui_result(
     concept_gate: bool = False,
     preprocessing: list[UIPreprocessReport] | None = None,
     cde_index: dict[str, CandidateMeta] | None = None,
+    unanswered: list[UIStageGap] | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
+
+    ``unanswered`` (from :func:`_unanswered_register`) is emitted whenever given — an empty list included,
+    because "every asked prompt was answered" is a checked statement, not an absence. Omitted, the key is too.
 
     ``member_index`` (from :func:`build_member_index`) enriches each record's ``memberDetails`` with the
     source field text; when omitted, member details fall back to the ``cohort:var`` id parts.
@@ -752,6 +757,8 @@ def build_ui_result(
         # that it ran and changed nothing, and the two must not render alike.
         "preprocessing": preprocessing or [],
     }
+    if unanswered is not None:
+        result["unanswered"] = unanswered
     if gate_position is not None:
         result["gatePosition"] = cast(Any, gate_position)
     if result_version is not None:
@@ -2057,6 +2064,13 @@ def _sync_remainder(
 
     Priced at the full rate under ``key`` — the stage's own ledger key — in a ``finally``, so calls that were
     answered before a Stop are billed too (they were charged).
+
+    A call that FAILS (08-28) is one missing answer, exactly like a batch item that errored: it is logged and
+    left out of ``out``, and the rest keep going. It used to raise out of the whole stage, which threw away a
+    switched leg over one transient error. What a missing answer means is decided by the caller's gap check
+    (:func:`_batch_stage`): a deciding stage re-asks it once and then fails naming it; an advisory one records
+    it as not judged. A failed call is not billed, so nothing is priced for it. A Stop still aborts at once —
+    that arrives from ``progress``, not from a call, and is re-raised.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2067,13 +2081,20 @@ def _sync_remainder(
     done = n - len(missing)
     client = transport.client()
     progress(phase, done, n)
+    failed: list[str] = []
     try:
         with ThreadPoolExecutor(max_workers=min(_SYNC_MAX_WORKERS, len(missing))) as ex:
             futures = {ex.submit(_complete_like_batch, client, rec): rec for rec in missing}
             try:
                 for fut in as_completed(futures):
                     rec = futures[fut]
-                    resp = fut.result()
+                    try:
+                        resp = fut.result()
+                    except Exception as exc:  # noqa: BLE001 — one failed call is one missing answer (see docstring)
+                        if not failed:
+                            logger.warning("sync %s: a call failed (%s: %s)", phase, type(exc).__name__, exc)
+                        failed.append(str(rec.id))
+                        continue
                     out[str(rec.id)] = resp
                     with open(responses_path, "a") as f:
                         f.write(json.dumps({"id": rec.id, "response": resp, "transport": "sync"}, default=str) + "\n")
@@ -2085,6 +2106,70 @@ def _sync_remainder(
                 raise
     finally:
         ledger.add(key, client.drain_usage(), batch=False)
+        if failed:
+            logger.warning("sync %s: %d of %d call(s) failed and stay unanswered", phase, len(failed), len(missing))
+
+
+# ── a partial batch is never silently accepted (08-28) ─────────────────────────────────────────
+#
+# Core's ``retrieve_batch`` logs and SKIPS every errored / expired / canceled result, so a batch stage can come
+# back holding answers for only some of what it asked, and nothing downstream noticed: a split with 6 of 336
+# clusters errored became a Gate 1 missing ~90 variables, parked as complete; a demo shipped without 80 answers
+# across five stages. So every batch stage now compares the ids it ASKED with the ids that came BACK, and what a
+# gap means depends on the stage's class:
+#
+# * DECIDING (every stage not in ``_JUDGE_STAGES``: generate + split, which ARE the partition, then assign,
+#   gencde, specgen, refine and the re-pick, which are the verdicts and artifacts a reviewer signs off). A gap
+#   is re-asked ONCE; still short, the stage raises :class:`StageIncompleteError`. Passing it on is not an
+#   option: core has no way to tell "no answer" from "an answer that said nothing" — a split with no answer drops
+#   its whole cluster, an assign with no answer leaves a group unassigned — so the result would be wrong in a way
+#   no screen shows. Failing the leg is the runner's existing path: a resumed leg stays PARKED at its last good
+#   gate with the error on the run, and the next Continue re-asks only what is still missing (answers already on
+#   disk are free).
+# * ADVISORY (``_JUDGE_STAGES``: coherence, distinct_kinds, concept_gate). No retry, no raise. These FLAG and
+#   never decide, and their failure is designed to cost the run the flag and nothing else (``_resilient_stage``);
+#   an unanswered prompt leaves its item NOT JUDGED, which is honest — as long as it is recorded. It is: the leg's
+#   recording marks it asked-but-unanswered, and :func:`_unanswered_register` puts it on the result, so the UI and
+#   the export can say "not judged" rather than "clean". Re-buying a flag is spend the run can do without.
+#
+# The retry runs on the leg's own transport, never on a costlier one. On a batch leg it is a batch of just the gap
+# (core's cache-aware resume submits only the ids the responses file lacks), at the batch rate the run was quoted
+# — so the reviewer's "Finish now with sync" and the operator's patience still apply to it. On a leg that has
+# switched to sync it is sync, the rate the reviewer already chose. Silently re-buying a gap at twice the quoted
+# price is the unconsented spend path T-08-56 rules out for timers; a retry is no different. An errored item is
+# not billed, so the ledger's rules are unchanged: every answer that came back is priced once, at the rate it was
+# bought at, and nothing is priced for one that did not.
+
+#: The retry advice every "a required step failed" message ends with — the reconcile path's vocabulary
+#: (``backend.app._note_reconcile_failures``), shared so the two can never tell a reviewer different things.
+REQUIRED_STEP_RETRY = "re-enter your key if needed and press Continue to retry."
+
+
+class StageIncompleteError(RuntimeError):
+    """A DECIDING batch stage still holds no answer for some of the prompts it was asked, after one retry.
+
+    Raised instead of handing core a partial answer set (see the section header). Carries the stage's batch
+    ``tag``, every unanswered prompt id (``missing``, sorted) and how many it was ``asked``; the message names the
+    first few, like :class:`PartitionDriftError`, so a run's error line stays readable.
+    """
+
+    def __init__(self, tag: str, missing: Sequence[str], asked: int) -> None:
+        self.tag = tag
+        self.missing = sorted(str(m) for m in missing)
+        self.asked = asked
+        shown = ", ".join(self.missing[:10]) + (
+            f", ... (+{len(self.missing) - 10} more)" if len(self.missing) > 10 else ""
+        )
+        super().__init__(
+            f"A required step ({tag}) came back incomplete: {len(self.missing)} of {asked} prompt(s) had no answer "
+            f"from the provider, even after one retry ({shown}). Nothing was built on the partial answers — "
+            + REQUIRED_STEP_RETRY
+        )
+
+
+def _is_advisory_tag(tag: str) -> bool:
+    """Whether a batch cache tag belongs to one of the judge's ADVISORY stages — read off ``_JUDGE_STAGES``."""
+    return any(spec["tag"] == tag for spec in _JUDGE_STAGES.values())
 
 
 def _batch_stage(
@@ -2129,18 +2214,60 @@ def _batch_stage(
     (:func:`_sync_remainder`, full rate, same ledger key). Nothing is written to the responses file while the
     worker lives, because core's retrieve opens it with ``"w"``. A leg that has switched runs every later batch
     stage sync from the start (answers already on disk are still free).
+
+    NEVER PASSES A PARTIAL ANSWER SET SILENTLY (08-28). After the batch — and after a switch's sync remainder —
+    the ids asked are compared with the ids answered. A DECIDING stage re-asks its gap once, on the leg's own
+    transport, and raises :class:`StageIncompleteError` if it is still short; an ADVISORY stage (the judge's tags)
+    proceeds with the gap, which the leg's recording then carries onto the result as "not judged". A keep-stop
+    pressed during the stage buys no retry and raises nothing: a partial result is what the reviewer asked for.
+    The why of each choice is in the section header above :data:`REQUIRED_STEP_RETRY`.
     """
+    advisory = _is_advisory_tag(tag)
+    key = ledger_key or phase
+
+    def keep_stopped() -> bool:
+        return bool(stopping and stopping() == "keep")
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
             return {}
-        if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (never submit)
+        if keep_stopped():  # keep-stop before this stage started -> skip it (never submit)
             return {}
+        n = len(prompts)
+        out = _attempt(prompts)
+        unanswered = [p for p in prompts if str(p.id) not in out]
+        if unanswered and not advisory and not keep_stopped():
+            # One retry of just the gap. `_attempt` over the gap submits only these ids (core's resume is
+            # cache-aware and the gap goes through the sidecar), prices only what comes back, and on a switched
+            # leg runs them sync — see the section header for why the retry never changes the transport.
+            logger.warning(
+                "batch %s: %d of %d prompt(s) came back unanswered — asking them once more",
+                tag,
+                len(unanswered),
+                n,
+            )
+            out.update(_attempt(unanswered))
+            unanswered = [p for p in prompts if str(p.id) not in out]
+        if unanswered:
+            ids = [str(p.id) for p in unanswered]
+            if not advisory and not keep_stopped():
+                raise StageIncompleteError(tag, ids, n)
+            logger.warning(
+                "batch %s: %d of %d prompt(s) have no answer — %s",
+                tag,
+                len(ids),
+                n,
+                "left NOT JUDGED (advisory stage)" if advisory else "kept partial (keep-stop)",
+            )
+        progress(phase, n, n, ledger.total_usd)
+        return out
+
+    def _attempt(prompts: list[Any]) -> dict[str, Any]:
+        """One pass over ``prompts``: a batch (or, on a switched leg, sync), priced; returns what came back."""
         from ddharmon.harmonization import write_prompts_jsonl
         from ddharmon.llm.batch import resume_and_wait
 
         n = len(prompts)
-        key = ledger_key or phase
         progress(phase, 0, n)
         work_dir.mkdir(parents=True, exist_ok=True)
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
@@ -2161,7 +2288,6 @@ def _batch_stage(
             transport.report(None)
             cached = _answers_on_disk(responses_path, asked)
             _sync_remainder(phase, progress, transport, prompts, cached, responses_path, ledger, key)
-            progress(phase, n, n, ledger.total_usd)
             return cached
         # Run the blocking Batch API wait off-thread so we can honor a mid-poll Stop (see docstring).
         holder: dict[str, BaseException] = {}
@@ -2218,7 +2344,7 @@ def _batch_stage(
                 rid = str(rec["id"])
                 if rid not in asked:
                     continue
-                out[rec["id"]] = rec["response"]
+                out[rid] = rec["response"]
                 if rid in already or rid in priced:
                     continue  # an answer this call did not buy (or a duplicate line) is not priced again
                 priced.add(rid)
@@ -2238,7 +2364,6 @@ def _batch_stage(
         if switching and transport is not None:
             # Only the ids the cancelled batch did NOT hand back, at the full rate, under the same key.
             _sync_remainder(phase, progress, transport, prompts, out, responses_path, ledger, key)
-        progress(phase, n, n, ledger.total_usd)
         return out
 
     return stage
@@ -2445,6 +2570,33 @@ def _resilient_stage(name: str, fn: StageFn) -> StageFn:
 #: already cost money and produced nothing — which is the most expensive possible reading of
 #: "no re-charge for work already done".
 _NO_ANSWER = {"__no_answer__": True}
+
+
+def _unanswered_register(recorded: dict[str, dict[str, Any]]) -> list[UIStageGap]:
+    """Every stage the run ASKED prompts it holds no answer for — the result's ``unanswered`` (08-28).
+
+    Read off the leg's recording, which marks each asked-but-unanswered prompt :data:`_NO_ANSWER` whatever the
+    reason — a batch item that errored, an advisory stage that failed outright (``_resilient_stage`` hands core
+    ``{}``), a keep-stop that skipped the stage — and which a resumed leg carries forward for the stages it
+    replays. So the register covers the whole run's checkpointed state, not just this leg's calls. Classed by
+    ``_JUDGE_STAGES`` like everything else: an ``advisory`` entry's items are NOT JUDGED.
+    """
+    out: list[UIStageGap] = []
+    for name in sorted(recorded):
+        answers = recorded[name] or {}
+        ids = sorted(str(pid) for pid, v in answers.items() if isinstance(v, dict) and v == _NO_ANSWER)
+        if not ids:
+            continue
+        out.append(
+            {
+                "stage": name,
+                "kind": "advisory" if name in _JUDGE_STAGES else "deciding",
+                "asked": len(answers),
+                "unanswered": len(ids),
+                "promptIds": ids,
+            }
+        )
+    return out
 
 
 def _recording_stage(name: str, fn: StageFn, sink: dict[str, dict[str, Any]]) -> StageFn:
@@ -3051,6 +3203,9 @@ def run_pipeline(
         gate_position=park_at_gate,
         concept_gate=concept_gate_on,
         preprocessing=preprocess_reports,
+        # 08-28: what the run asked and never heard back on. A deciding stage that came back short already
+        # failed the leg (StageIncompleteError), so this is chiefly the judge's "not judged" — see UIStageGap.
+        unanswered=_unanswered_register(recorded),
     )
 
 
