@@ -48,7 +48,7 @@ GATES = ("gate1", "gate2", "gate3", "gate4")
 UNASSIGNED_GROUP_ID = "__unassigned__"  # frontend/src/components/gate/MemberChip.tsx
 IN_SCOPE, OUT_OF_SCOPE = "in", "out"
 SCOPE_OPTIONS = [IN_SCOPE, OUT_OF_SCOPE]
-EXPORT_FORMATS = ("eitl_tsv", "records_json", "decisions_csv", "notebook_py", "notebook_r")
+EXPORT_FORMATS = ("eitl_tsv", "records_json", "decisions_csv", "notebook_py", "notebook_r", "score_json")
 INVARIANTS = {
     "I1": "frozen scope == displayed; assign prompts == scope; a resumed leg buys no generate/split/judge answer",
     "I2": "cost: costSoFar monotonic; perStage grows; actualUsd = prior + new; every paid route billed",
@@ -740,19 +740,24 @@ class Driver:
 
         # score matching on the staged run (I11)
         s = d.get("score")
-        if s and self.args.score_doc:
-            with open(self.args.score_doc, "rb") as fh:
-                read = self.api.post("/score/extract", files={"file": (Path(self.args.score_doc).name, fh.read())})
+        if s and s.get("scoreName"):
+            # Gate 4's "Match" (Q5): the Gate 1 declaration IS the definition — one model call, nothing transcribed.
             t0 = time.time()
             try:
-                spec = self.api.post(f"/jobs/{self.job_id}/composite", json={"sourceText": read["text"]})
-                s["match"] = {"verdict": spec.get("feasibility") or spec.get("verdict"), "keys": sorted(spec)[:20]}
+                spec = self.api.post(f"/jobs/{self.job_id}/composite", json={"declaredScore": s["scoreName"]})
+                s["match"] = {"verdict": spec.get("feasibility") or spec.get("verdict"), "keys": sorted(spec)[:20],
+                              "billedUsd": spec.get("billedUsd")}  # fmt: skip
                 self.report.check("I11", True, "score matching is reachable on a staged run at Gate 4")
             except ApiError as exc:
                 s["match"] = {"refused": exc.status, "detail": exc.body[:200]}
                 self.report.check("I11", False, "score matching is reachable on a staged run at Gate 4",
                                   f"{exc.status}: {exc.body[:160]}")  # fmt: skip
             s["matchTapUsd"] = tap_usd(tap_rows(self.tap, t0, time.time()))
+            billed = (s.get("match") or {}).get("billedUsd")
+            if s["matchTapUsd"] > 0:
+                self.report.check("I11", billed is not None and abs(float(billed) - s["matchTapUsd"]) <= 0.002,
+                                  "the match's bill equals what the provider billed",
+                                  {"billed": billed, "tap": s["matchTapUsd"]})  # fmt: skip
 
         exports: dict[str, Any] = {}
         for fmt in EXPORT_FORMATS:
@@ -901,6 +906,14 @@ class Driver:
                 vals = {str(v) for v in m.values()} - {"", "__missing__", "missing"}
                 self.report.check("I7", not targets or vals <= targets, f"reviewer mapping for {t['sourceVariable']} "
                                   "is in target codes", {"mapping": m, "targetCodes": sorted(targets)[:12]})  # fmt: skip
+        # I11 — a matched score travels in the exports
+        if ((d.get("score") or {}).get("match") or {}).get("billedUsd") is not None:
+            try:
+                sj = json.loads(ex.get("score_json") or "{}")
+            except json.JSONDecodeError:
+                sj = {}
+            self.report.check("I11", bool(sj) and "verdict" in json.dumps(sj).lower(), "the score export carries the "
+                              "match verdict", sorted(sj)[:10] if isinstance(sj, dict) else type(sj).__name__)  # fmt: skip
         # I8 / I9 — the notebook
         self.check_notebook(ex.get("notebook_py") or "", recs)
         # I10 — the decision log
