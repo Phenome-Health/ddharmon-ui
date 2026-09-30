@@ -37,6 +37,7 @@ import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import {
   meetsRoleRequirement,
   participantLevelColumn,
+  representableRoles,
   roleRequirementReason,
   type DictRow,
 } from "@/lib/dictionary";
@@ -368,7 +369,10 @@ function dictionariesFromRun(job: JobResult | null): SetupDict[] {
  */
 function initialRoles(headers: string[]): Record<string, string> {
   const prefilled = lookupPrefill(headers);
-  if (prefilled) return prefilled.roles;
+  // NARROWED TO WHAT THE TABLE CAN SHOW (08-28). A remembered mapping can name a column by a case the file
+  // does not use, or put two roles on one column; the table then showed part of it and Start POSTed all of
+  // it. What the reviewer sees here must be the whole of what the run is sent.
+  if (prefilled) return representableRoles(prefilled.roles, headers);
   const byFolded = new Map(headers.map((h) => [h.trim().toLowerCase(), h]));
   const roles: Record<string, string> = {};
   for (const role of COLUMN_ROLES) {
@@ -2131,7 +2135,9 @@ export default function SetupPage() {
           scopeLabel={totalFields === null ? undefined : `${totalFields.toLocaleString()} variables`}
           onCommit={() => void onStart()}
           busy={starting}
-          disabled={blockers.length > 0 || IS_STATIC}
+          // NOT disabled for the static build any more (08-28): `startHarmonize` tries the request there and
+          // answers "static preview" itself, which is the seam the e2e gate reads the Start payload through.
+          disabled={blockers.length > 0}
           className="static"
           recheckNotice={
             isPreview || estimate?.free

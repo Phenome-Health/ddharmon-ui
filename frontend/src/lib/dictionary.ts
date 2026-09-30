@@ -185,6 +185,38 @@ export function roleOf(roles: Record<string, string>, column: string): string {
   return Object.entries(roles).find(([, c]) => c === column)?.[0] ?? "";
 }
 
+/**
+ * The same mapping, narrowed to what the column-major table can SHOW — so what is shown is what is sent.
+ *
+ * The table renders one row per source column with ONE role each (`roleOf` takes the first). A remembered
+ * mapping can hold more than that: the header-signature cache folds case, so it can name `Unit` for a file
+ * whose column is `unit`; and the role-major New Run form lets two roles point at one column. Either way the
+ * table showed part of the mapping and Start POSTed all of it (08-28, reproduced in `setup.spec.ts`), and core
+ * cannot honour two roles on one column anyway — its column map keeps only the later one.
+ *
+ * So: a role whose column is not a header is re-pointed at the header it case-folds to, or dropped when there is
+ * none; and a column keeps only its FIRST role, the one the table displays. A mapping that already fits is
+ * returned unchanged.
+ */
+export function representableRoles(roles: Record<string, string>, headers: string[]): Record<string, string> {
+  const exact = new Set(headers);
+  const byFolded = new Map<string, string>();
+  for (const h of headers) {
+    const k = h.trim().toLowerCase();
+    if (!byFolded.has(k)) byFolded.set(k, h);
+  }
+  const out: Record<string, string> = {};
+  const taken = new Set<string>();
+  for (const [role, column] of Object.entries(roles)) {
+    if (!column) continue;
+    const header = exact.has(column) ? column : byFolded.get(column.trim().toLowerCase());
+    if (header === undefined || taken.has(header)) continue;
+    taken.add(header);
+    out[role] = header;
+  }
+  return out;
+}
+
 // --- the column-role requirement ----------------------------------------------------------------------
 
 /**

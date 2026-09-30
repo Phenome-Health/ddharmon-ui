@@ -118,7 +118,6 @@ export async function startHarmonize(
   _provider?: string,
   _apiKey?: string,
 ): Promise<{ jobId: string }> {
-  if (IS_STATIC) throw new Error(STATIC_MSG);
   const fd = new FormData();
   for (const f of _files) fd.append("files", f);
   fd.append("config", JSON.stringify(_config));
@@ -132,7 +131,19 @@ export async function startHarmonize(
   if (_apiKey) extra["x-provider-key"] = _apiKey;
   if (_provider) extra["x-provider"] = _provider;
   const headers = await authed(extra);
-  return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers }));
+  if (!IS_STATIC) return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers }));
+  // A static build has no backend, so this still answers STATIC_MSG — but only AFTER trying the request,
+  // the same network seam `extractScoreDocument` gives the score panel. It is what lets the e2e gate read
+  // the exact `columnRoles` a Start sends and compare them with the mapping table (08-28): the one claim
+  // about Start that matters most, and the one the static build used to make unobservable.
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers });
+  } catch {
+    throw new Error(STATIC_MSG);
+  }
+  if (!(res.headers.get("content-type") ?? "").includes("json")) throw new Error(STATIC_MSG);
+  return json(res);
 }
 
 export async function rerunJob(jobId: string, apiKey?: string): Promise<{ jobId: string }> {
