@@ -476,6 +476,30 @@ def unresolved_signals(names: Iterable[str], *, register: list[NotComputedEntry]
     return sorted(n for n in names if resolve_signal(n, register=register) == "unresolved")
 
 
+#: Which of the two kinds of LLM stage an unanswered prompt belongs to (08-28). The line is the adapter's
+#: ``_JUDGE_STAGES``: the judge's three stages are ``advisory`` (they FLAG), every other stage is ``deciding``
+#: (it produces the partition, a verdict or an artifact).
+StageKind = Literal["deciding", "advisory"]
+
+
+class UIStageGap(TypedDict):
+    """One LLM stage that was ASKED prompts it holds no answer for on this run (08-28).
+
+    Core's batch retrieve skips every errored / expired / canceled result, so a stage can come back short with
+    nothing saying so. A ``deciding`` stage that comes back short fails its leg instead (the run stays parked
+    at its last good gate), so on a result this is almost always an ``advisory`` stage — and an advisory
+    prompt with no answer means its item is NOT JUDGED, which is a different claim from "judged clean". A
+    ``deciding`` entry can still appear: a "stop, keep what you have" partial, or a checkpoint written before
+    this register existed.
+    """
+
+    stage: str  # the pipeline stage (generate / split / classify / … / coherence / distinct_kinds / concept_gate)
+    kind: StageKind
+    asked: int  # prompts this stage was asked, across every leg of the run
+    unanswered: int  # of those, how many hold no answer
+    promptIds: list[str]  # the unanswered prompt ids, sorted — uncapped, so a consumer can join every one
+
+
 class PromptCounts(TypedDict):
     ideal: int
     split: int
@@ -745,6 +769,10 @@ class UIResult(TypedDict):
     # An explicit reasoned absence, so "we know, and here is why" cannot be confused with "we forgot" —
     # and so an opt-in nobody enabled does not read as a capability the product lacks.
     notComputed: NotRequired[list[NotComputedEntry]]
+    # 08-28: every stage that was asked prompts it holds no answer for (see UIStageGap). An EMPTY list means
+    # every asked prompt was answered — a checked statement, not an omission. Absent on a preview / Gate 0
+    # result, which asks no LLM anything, and on payloads that predate the register.
+    unanswered: NotRequired[list[UIStageGap]]
     # What preprocessing did to each source dictionary, between loading and embedding. One entry per
     # dictionary. Absent when preprocessing did not run at all (an older payload, or a run that gated it
     # off) — which is a different statement from an entry with `ran: false`.

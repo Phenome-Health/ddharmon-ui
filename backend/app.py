@@ -701,7 +701,7 @@ def _note_reconcile_failures(job_id: str, outcome: Any) -> None:
     affordance — and clearing this note on a successful retry — is 08-23b.)
     """
     from backend.batch_reconcile import TAG_TO_STAGE
-    from backend.engine.adapter import _JUDGE_STAGES
+    from backend.engine.adapter import _JUDGE_STAGES, REQUIRED_STEP_RETRY
 
     steps: set[str] = set()
     for tag in getattr(outcome, "failed", ()) or ():
@@ -712,7 +712,7 @@ def _note_reconcile_failures(job_id: str, outcome: Any) -> None:
     store.update(
         job_id,
         error_message=f"A required step ({', '.join(sorted(steps))}) failed on the last continue — "
-        "re-enter your key if needed and press Continue to retry.",
+        + REQUIRED_STEP_RETRY,
     )
 
 
@@ -781,8 +781,20 @@ def checkpoint_state(
         "nextGate": next_gate(job.gate_position) if job.gate_position else None,
         "resultVersion": job.result_version,
         "costSoFar": job.cost_so_far,
+        # 08-28: how many prompts this gate's state was asked and never heard back on (the result's
+        # `unanswered` register, summed) — the one number a reviewer needs before trusting "clean". 0 on a
+        # complete gate and on a checkpoint written before the register existed.
+        "unansweredPrompts": _unanswered_prompts(ckpt.result if ckpt is not None else None),
         "result": ckpt.result if ckpt is not None else None,
     }
+
+
+def _unanswered_prompts(result: Any) -> int:
+    """The total of a result's ``unanswered`` register; 0 when it has none (or is not a result at all)."""
+    gaps = result.get("unanswered") if isinstance(result, dict) else None
+    if not isinstance(gaps, list):
+        return 0
+    return sum(int(g.get("unanswered") or 0) for g in gaps if isinstance(g, dict))
 
 
 #: The boundary a FRESH run stops at. Gate 1 since 08-14f; ``gate0`` before it.
