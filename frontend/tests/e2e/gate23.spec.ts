@@ -5,7 +5,6 @@ import { mergeSpecEdit } from "@/lib/gate23";
 import { optionSetKey } from "@/lib/gate-decisions";
 import { SANDBOX_PREFIX, withGateDecision } from "@/lib/sandbox";
 import {
-  OWN_TARGET,
   SKOS_RELATIONS,
   affectedSpecCount,
   autoAdoptsSingleCandidate,
@@ -22,15 +21,12 @@ import {
   specForm,
   specRowsFor,
   specState,
-  mergeRelation,
-  relationTargetId,
-  relationView,
+  suggestedRelation,
   targetIsNumeric,
   targetValueKind,
   targetValuesFromSpecs,
   unmappedState,
 } from "@/lib/gate23";
-import { modelRelation } from "@/lib/gate4";
 import {
   FINISHED_JOB,
   PAUSED_JOB,
@@ -128,62 +124,19 @@ test.describe("gate23 algebra", () => {
     expect(autoAdoptsSingleCandidate()).toBe(false);
   });
 
-  test("@gate2 the relation vocabulary is SKOS and the model's relation follows its verdict, for its own target", () => {
+  test("@gate2 the relation vocabulary is SKOS and the suggestion follows the verdict", () => {
     expect(SKOS_RELATIONS).toContain("skos:exactMatch");
-    const adopt = { groupId: "g", verdict: "adopt", gencde: null, cde: { id: "C" }, candidates: [{ cdeId: "C", isChosen: true }] };
-    expect(modelRelation(adopt as never, "C")).toBe("skos:exactMatch");
-    // A refined element carries core's own stamped predicate, so the browser shows what core wrote rather than a
-    // second opinion — and only for the model's own target (08-28 3f): a re-picked target was never judged.
-    const refine = { ...adopt, verdict: "refine", gencde: { gencdeId: "G", relation: "skos:narrowMatch" } };
-    expect(modelRelation(refine as never, "C")).toBe("skos:narrowMatch");
-    expect(modelRelation(refine as never, "OTHER")).toBe("");
-  });
-
-  test("@gate2 3f a relation is keyed on ONE id per target — the own element's GenCDE id, else `own`", () => {
-    expect(relationTargetId("AgeCDE", undefined, false)).toBe("AgeCDE");
-    expect(relationTargetId("AgeCDE", "GEN:x", false)).toBe("AgeCDE");
-    // The group's own element is one target whether the pick says "" or names its id.
-    expect(relationTargetId("", "GEN:x", true)).toBe("GEN:x");
-    expect(relationTargetId("GEN:x", "GEN:x", true)).toBe("GEN:x");
-    expect(relationTargetId("", undefined, true)).toBe(OWN_TARGET);
-  });
-
-  test("@gate2 3f the control shows the reviewer's relation over the model's, and never fakes one", () => {
-    // Untouched: the model's relation is shown AS the model's — a starting point, not a record.
-    expect(relationView(undefined, "skos:exactMatch")).toEqual({
-      active: "skos:exactMatch",
-      source: "model",
-      model: "skos:exactMatch",
-      overridden: false,
-    });
-    // Overridden: the reviewer's wins and the model's stays on screen beside it.
-    expect(relationView("skos:closeMatch", "skos:exactMatch")).toEqual({
-      active: "skos:closeMatch",
-      source: "reviewer",
-      model: "skos:exactMatch",
-      overridden: true,
-    });
-    expect(relationView("skos:exactMatch", "skos:exactMatch").overridden).toBe(false);
-    // Nobody asserted one (a re-picked target, or a novel): nothing is lit.
-    expect(relationView(undefined, "")).toEqual({ active: undefined, source: "none", model: undefined, overridden: false });
-    // A note-only row asserts nothing; an off-vocabulary value reads as nothing, never as a predicate.
-    expect(relationView("", "skos:narrowMatch").source).toBe("model");
-    expect(relationView("narrower", "").active).toBeUndefined();
-  });
-
-  test("@gate2 3f a relation save keeps the other half: a pick keeps the note, a note keeps the pick", () => {
-    expect(mergeRelation(undefined, { chosen: "skos:closeMatch" })).toEqual({ chosen: "skos:closeMatch", note: "" });
-    expect(mergeRelation({ chosen: "skos:closeMatch", note: "why" }, { chosen: "skos:broadMatch" })).toEqual({
-      chosen: "skos:broadMatch",
-      note: "why",
-    });
-    expect(mergeRelation({ chosen: "skos:closeMatch", note: "why" }, { note: "why not" })).toEqual({
-      chosen: "skos:closeMatch",
-      note: "why not",
-    });
-    expect(mergeRelation(undefined, { note: "  only a note  " })).toEqual({ chosen: "", note: "only a note" });
-    // Nothing left to record — the caller CLEARS the row rather than writing an empty decision.
-    expect(mergeRelation({ chosen: "", note: "why" }, { note: "   " })).toBeNull();
+    expect(suggestedRelation({ verdict: "adopt", gencde: null })).toBe(
+      "skos:exactMatch",
+    );
+    // A refined element carries core's own stamped predicate, so the browser proposes what core wrote
+    // rather than a second opinion.
+    expect(
+      suggestedRelation({
+        verdict: "refine",
+        gencde: { relation: "skos:narrowMatch" } as never,
+      }),
+    ).toBe("skos:narrowMatch");
   });
 
   test("@gate3 arithmetic always routes to review, regardless of the pipeline's own flag", () => {
@@ -903,9 +856,9 @@ test.describe("gate2 screen", () => {
     }
   });
 
-  // Removed 08-16g (#72, #74): the retrieval-score histogram was dropped from Gate 2 in the declutter. The SKOS
-  // relation control was dropped with it and is BACK since 08-28 3f (the audit's "gate2_relation never written"),
-  // as one compact panel under the candidates — see the "gate2 relation" describe below.
+  // Removed 08-16g (#72, #74): the retrieval-score histogram and the SKOS relation control were dropped
+  // from Gate 2 in the declutter. Their tests are retired with them. (The `suggestedRelation` algebra
+  // stays covered above; only the on-screen control is gone.)
 
   test("@gate2 the concept-match decision renders as an honest absence, not a dead control", async ({
     page,
@@ -1638,167 +1591,5 @@ test.describe("gate1 rename carries forward", () => {
   test("@gate3 the reviewer's group name is what Gate 3 lists", async ({ page }) => {
     await seedRename(page, "gate3");
     await expect(page.locator("[data-testid='gate3-concept']").first()).toContainText("Ever smoked 100 cigarettes");
-  });
-});
-
-
-/**
- * 08-28 3f — the SKOS relation + note on Gate 2. The audit found `gate2_relation` registered but never written
- * (RelationControl imported nowhere). A relation is a claim about ONE (group, target) edge, persisted through the
- * shared decision hook; in this static build that is the browser sandbox, so "survives a reload" proves the
- * screen re-reads it (the store round-trip is `tests/test_export_staged.py` + `tests/test_artifacts.py`).
- */
-test.describe("gate2 relation", () => {
-  const control = (page: Page) => page.locator("[data-testid='relation-control']");
-  const item = (page: Page, relation: string) => control(page).locator(`[data-relation='${relation}']`);
-  const status = (page: Page) => page.locator("[data-testid='relation-status']");
-  const note = (page: Page) => page.locator("[data-testid='relation-note-input']");
-  const reload = async (page: Page) => {
-    await page.reload();
-    await page.waitForLoadState("networkidle");
-  };
-  const only = (groupId: string) => (run: JobResult) => {
-    run.result!.records = [finishedRecords().find((r) => r.groupId === groupId)!];
-  };
-
-  test("@gate2 3f the relation starts at the model's, a pick overrides it visibly, and it survives a reload", async ({
-    page,
-  }) => {
-    await serveFinished(page, oneRankedConcept);
-    await openGate2(page);
-    // An adopt: the model took the element as-is, so its relation is exact — shown as the model's, not recorded.
-    await expect(item(page, "skos:exactMatch")).toHaveAttribute("data-state", "on");
-    await expect(status(page)).toContainText("not yet confirmed");
-    await expect(page.locator("[data-testid='relation-model']")).toHaveCount(0);
-
-    await item(page, "skos:closeMatch").click();
-    await expect(item(page, "skos:closeMatch")).toHaveAttribute("data-state", "on");
-    await expect(item(page, "skos:exactMatch")).toHaveAttribute("data-state", "off");
-    await expect(status(page)).toContainText("overrides the model");
-    // The model's value stays discoverable beside the override.
-    await expect(page.locator("[data-testid='relation-model']")).toContainText("skos:exactMatch");
-
-    await reload(page);
-    await expect(item(page, "skos:closeMatch")).toHaveAttribute("data-state", "on");
-    await expect(page.locator("[data-testid='relation-model']")).toContainText("skos:exactMatch");
-  });
-
-  test("@gate2 3f clicking the model's own relation CONFIRMS it rather than un-setting it", async ({ page }) => {
-    await serveFinished(page, oneRankedConcept);
-    await openGate2(page);
-    await item(page, "skos:exactMatch").click();
-    await expect(item(page, "skos:exactMatch")).toHaveAttribute("data-state", "on");
-    await expect(status(page)).toContainText("agrees with the model");
-    await reload(page);
-    await expect(status(page)).toContainText("agrees with the model");
-  });
-
-  test("@gate2 3f a refine starts at the predicate core stamped on its derived element", async ({ page }) => {
-    await serveFinished(page, only("c0a367d9fb0eb#g0"), { keep: 0 });
-    await openGate2(page);
-    await expect(item(page, "skos:closeMatch")).toHaveAttribute("data-state", "on");
-    await expect(status(page)).toContainText("not yet confirmed");
-  });
-
-  test("@gate2 3f a re-pick moves the relation to the new edge, which the model never judged", async ({ page }) => {
-    await serveFinished(page, oneRankedConcept);
-    await openGate2(page);
-    const rows = candidateRows(page);
-    await expect(rows.first()).toBeVisible();
-    const modelIndex = await rows.evaluateAll((els) => els.findIndex((e) => e.getAttribute("data-chosen") === "true"));
-    await item(page, "skos:closeMatch").click();
-    await expect(item(page, "skos:closeMatch")).toHaveAttribute("data-state", "on");
-
-    await pickCandidate(page, page.locator("[data-testid='candidate-row']:not([data-chosen='true'])").first());
-    await expect(control(page).locator("[data-state='on']")).toHaveCount(0);
-    await expect(status(page)).toContainText("asserted none");
-
-    // Back to the model's target: the relation set on THAT edge is still there.
-    await pickCandidate(page, rows.nth(modelIndex));
-    await expect(item(page, "skos:closeMatch")).toHaveAttribute("data-state", "on");
-  });
-
-  test("@gate2 3f a note saves, says so, and survives a reload — without asserting a relation", async ({ page }) => {
-    await serveFinished(page, oneRankedConcept);
-    await openGate2(page);
-    await note(page).fill("Age at consent, not at the visit.");
-    await expect(page.locator("[data-testid='relation-note-unsaved']")).toBeVisible();
-    await page.locator("[data-testid='relation-note-save']").click();
-    await expect(page.locator("[data-testid='relation-saved']")).toBeVisible();
-    await expect(page.locator("[data-testid='relation-note-unsaved']")).toHaveCount(0);
-    await reload(page);
-    await expect(note(page)).toHaveValue("Age at consent, not at the visit.");
-    // A note is not a relation: the model's is still the one shown, still unconfirmed.
-    await expect(status(page)).toContainText("not yet confirmed");
-    // Setting a relation afterwards keeps the note.
-    await item(page, "skos:narrowMatch").click();
-    await reload(page);
-    await expect(item(page, "skos:narrowMatch")).toHaveAttribute("data-state", "on");
-    await expect(note(page)).toHaveValue("Age at consent, not at the visit.");
-  });
-
-  test("@gate2 3f an unsaved note survives a CONCEPT SWITCH", async ({ page }) => {
-    await serveFinished(
-      page,
-      (run) => {
-        run.result!.records = finishedRecords()
-          .filter((r) => r.verdict === "adopt" && r.candidates.length >= 2)
-          .slice(0, 2);
-      },
-      { keep: 0 },
-    );
-    await openGate2(page);
-    const concepts = page.locator("[data-testid='gate2-concept']");
-    await expect(concepts).toHaveCount(2);
-    await concepts.nth(0).click();
-    await note(page).fill("draft on the first concept");
-    await concepts.nth(1).click();
-    await expect(note(page)).toHaveValue("");
-    await concepts.nth(0).click();
-    await expect(note(page)).toHaveValue("draft on the first concept");
-  });
-
-  test("@gate2 3f the group's own generated element takes a note but offers no relation", async ({ page }) => {
-    // The demo's first record is a novel: its target is the element generated FOR it, so there is no catalog
-    // relation to assert — a SKOS predicate to a GenCDE would present it as a catalog element.
-    await serveFinished(page, only(finishedRecords()[0].groupId), { keep: 0 });
-    await openGate2(page);
-    await expect(page.locator("[data-testid='relation-panel']")).toBeVisible();
-    await expect(control(page)).toHaveCount(0);
-    await expect(page.locator("[data-testid='relation-own-target']")).toBeVisible();
-    await note(page).fill("Definition checked with the study PI.");
-    await page.locator("[data-testid='relation-note-save']").click();
-    await expect(page.locator("[data-testid='relation-saved']")).toBeVisible();
-    await reload(page);
-    await expect(note(page)).toHaveValue("Definition checked with the study PI.");
-  });
-
-  test("@gate2 3f Clear takes the relation and the note back to unrecorded", async ({ page }) => {
-    await serveFinished(page, oneRankedConcept);
-    await openGate2(page);
-    await item(page, "skos:broadMatch").click();
-    await note(page).fill("broader");
-    await page.locator("[data-testid='relation-note-save']").click();
-    await expect(page.locator("[data-testid='relation-saved']")).toBeVisible();
-    await page.locator("[data-testid='relation-clear']").click();
-    await expect(item(page, "skos:exactMatch")).toHaveAttribute("data-state", "on");
-    await expect(status(page)).toContainText("not yet confirmed");
-    await expect(note(page)).toHaveValue("");
-    await expect(page.locator("[data-testid='relation-clear']")).toHaveCount(0);
-    await reload(page);
-    await expect(item(page, "skos:exactMatch")).toHaveAttribute("data-state", "on");
-    await expect(note(page)).toHaveValue("");
-  });
-
-  test("@gate2 3f on a gate the run has passed the relation and note are a record, not controls", async ({ page }) => {
-    await serveFinished(page, (run) => {
-      oneRankedConcept(run);
-      run.gatePosition = "gate3";
-    });
-    await openGate2(page);
-    await expect(control(page)).toBeVisible();
-    await expect(item(page, "skos:closeMatch")).toBeDisabled();
-    await expect(note(page)).toBeDisabled();
-    await expect(page.locator("[data-testid='relation-note-save']")).toHaveCount(0);
   });
 });

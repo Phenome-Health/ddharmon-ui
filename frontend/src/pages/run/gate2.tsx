@@ -20,7 +20,6 @@ import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { NotAvailable } from "@/components/gate/NotAvailable";
-import { RelationPanel } from "@/components/gate/RelationControl";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
@@ -32,18 +31,13 @@ import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
 import { isReviewerGroupId } from "@/lib/ledger";
 import {
-  SKOS_RELATIONS,
   affectedSpecCount,
   candidateAlternatives,
   candidateListState,
   citeCandidateOrdinals,
-  mergeRelation,
   needsRepickConfirmation,
-  relationTargetId,
-  relationView,
   repickConfirmation,
 } from "@/lib/gate23";
-import { modelRelation } from "@/lib/gate4";
 import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
 
 /**
@@ -68,15 +62,6 @@ import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
  * "None fit — use my own CDE" control forgoes the catalogue entirely. Each writes a tracked
  * `gate2_candidate_pick` — `chosen: ""` is the schema's "none of these", the generated element's id is
  * "my own". No edit lives only in component state.
- *
- * -- THE RELATION AND THE NOTE (08-28 3f) ---------------------------------------------------------------
- *
- * Under the candidates, one compact panel records what the reviewer claims is TRUE of the concept and the chosen
- * target: a SKOS relation (exact / close / narrow / broad / related) and a free-text note, as that edge's
- * `gate2_relation` decision (keyed on group + target, so a re-pick moves the panel to the new edge and the old
- * edge keeps its own). Untouched, the control shows the MODEL's relation for the edge as the model's — an adopt
- * is exact, a refine is the predicate core stamped — and writes nothing; an override keeps the model's on screen
- * beside it. The group's own generated element takes a note only. Exports and the decision log carry both.
  *
  * -- A GROUP THE REVIEWER RESHAPED AT GATE 1 --------------------------------------------------------------
  *
@@ -163,7 +148,6 @@ export default function Gate2Page() {
   }
 
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", { pinned, frozen });
-  const relations = useGateDecisions(jobId, "gate2_relation", { pinned, frozen });
   // Read-only here: Gate 3's decisions are what a re-pick would invalidate, so the confirmation's count
   // comes from them. Writing them is Gate 3's job.
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned });
@@ -198,11 +182,6 @@ export default function Gate2Page() {
   const [colSort, setColSort] = useState<ColumnSort<Gate2SortKey> | null>(null);
   const [draft, setDraft] = useState<AnchorDraft | null>(null);
   const [pendingPick, setPendingPick] = useState<{ chosenId: string; affected: number } | null>(null);
-  // Unsaved relation notes PER EDGE, and the edges whose last note save LANDED — a single draft slot lost one
-  // concept's text the moment another was opened (audit Theme D), and a confirmation set off having pressed Save
-  // would claim a write the store refused.
-  const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({});
-  const [relationSaved, setRelationSaved] = useState<Record<string, true>>({});
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -298,20 +277,6 @@ export default function Gate2Page() {
   const chosenCandidate = record.candidates.find((c) => c.cdeId === chosenId);
   const targetIsOwn = chosenId === "" || (!!gencde && chosenId === gencde.gencdeId);
   const membershipChanged = touchedAtGate1.has(groupId);
-
-  // The relation panel's edge: (this group, the target it takes now). One id per target — the own element is
-  // its GenCDE id, else `own` — so switching between "" and its id cannot split the note across two rows.
-  const relationTarget = relationTargetId(chosenId, gencde?.gencdeId, targetIsOwn);
-  const relationFields = { groupId, targetId: relationTarget };
-  const relationKey = relations.itemKey(relationFields);
-  const storedRelation = relations.decisions[relationKey];
-  const relView = relationView(
-    typeof storedRelation?.chosen === "string" ? storedRelation.chosen : undefined,
-    modelRelation(record, relationTarget),
-  );
-  const savedRelationNote = typeof storedRelation?.note === "string" ? storedRelation.note : "";
-  const relationDraft = relationDrafts[relationKey];
-  const relationNote = relationDraft ?? savedRelationNote;
   // A frozen regrouping means Gate 1's moves were applied to this run; its absence means a pre-08-28 run.
   const movesApplied = !!runConfig && typeof runConfig.gate1_overrides === "object" && runConfig.gate1_overrides !== null;
 
@@ -368,51 +333,6 @@ export default function Gate2Page() {
       return;
     }
     setPendingPick({ chosenId: nextChosen, affected });
-  }
-
-  const forgetRelationDraft = (key: string) =>
-    setRelationDrafts((prev) => {
-      if (!(key in prev)) return prev;
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-  const unmarkRelationSaved = (key: string) =>
-    setRelationSaved((prev) => {
-      if (!prev[key]) return prev;
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-
-  /** Write one half of the edge's decision, keeping the other (`mergeRelation`); an emptied decision is CLEARED. */
-  async function writeRelation(patch: { chosen?: string; note?: string }): Promise<boolean> {
-    const next = mergeRelation(storedRelation, patch);
-    if (next === null) {
-      await relations.clear(relationFields);
-      return true;
-    }
-    return relations.write(relationFields, {
-      chosen: next.chosen,
-      alternatives: [...SKOS_RELATIONS],
-      ...(next.note ? { extra: { note: next.note } } : {}),
-    });
-  }
-
-  async function saveRelationNote() {
-    const key = relationKey;
-    const ok = await writeRelation({ note: relationNote });
-    // Keep the typed text on a failed write — the rollback restores the stored note, not the reviewer's draft.
-    if (!ok) return;
-    forgetRelationDraft(key);
-    setRelationSaved((prev) => ({ ...prev, [key]: true }));
-  }
-
-  async function clearRelation() {
-    const key = relationKey;
-    await relations.clear(relationFields);
-    forgetRelationDraft(key);
-    unmarkRelationSaved(key);
   }
 
   async function saveAnchor() {
@@ -617,27 +537,6 @@ export default function Gate2Page() {
                 </NotAvailable>
               </div>
             )}
-
-            {/* WHAT IS TRUE OF THIS CONCEPT AND ITS TARGET (08-28 3f) — the relation and a note, for the edge the
-                concept takes now. Right under the candidates, because it is a claim about the one just chosen. */}
-            <RelationPanel
-              view={relView}
-              ownTarget={targetIsOwn}
-              targetId={relationTarget}
-              note={relationNote}
-              noteDirty={relationDraft !== undefined && relationDraft !== savedRelationNote}
-              saved={!!relationSaved[relationKey]}
-              local={relations.local}
-              canClear={!!storedRelation}
-              frozen={frozen}
-              onPick={(relation) => void writeRelation({ chosen: relation })}
-              onNoteChange={(value) => {
-                unmarkRelationSaved(relationKey);
-                setRelationDrafts((prev) => ({ ...prev, [relationKey]: value }));
-              }}
-              onSaveNote={() => void saveRelationNote()}
-              onClear={() => void clearRelation()}
-            />
 
             {/* AUTHOR / EDIT THE TARGET — for a NOVEL concept this IS the target; for adopt/refine it is the
                 escape hatch when no catalogue element fits. No cluster-level ideal is shown as an anchor (#66):
