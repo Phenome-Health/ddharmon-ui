@@ -272,3 +272,18 @@ def test_an_unknown_group_is_refused_before_anything_is_bought(parked):
         r = _accept(c, "c0000000000000#g9")
     assert r.status_code == 404
     assert parked["divider"].asked == []
+
+
+def test_the_pre_flight_reads_a_group_as_the_reviewer_sees_it():
+    """The $0 refusal of a too-small group reads the same membership the screen draws: the split's (the uncapped
+    list, else the recorded sample), minus moves out, plus moves in."""
+    from backend.app import _effective_members
+
+    result = {
+        "conceptGroups": [{"groupId": "g1", "memberVariableNames": ["A:a", "A:b"]}, {"groupId": "g2"}],
+        "conceptGroupMembers": {"g2": ["A:c", "A:d", "A:e"]},
+    }
+    assert _effective_members(result, None, "g1") == ["A:a", "A:b"], "a group with no uncapped list read as empty"
+    moves = {"moves": {"A:c": "g1", "A:d": None}}
+    assert _effective_members(result, moves, "g2") == ["A:e"]
+    assert _effective_members(result, moves, "g1") == ["A:a", "A:b", "A:c"]

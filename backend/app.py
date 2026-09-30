@@ -1378,7 +1378,11 @@ def _effective_members(result: dict[str, Any], overrides: dict[str, Any] | None,
     applies (``resolve_group_membership``) — used here only to refuse, before any spend, a division of a group
     the reviewer has already emptied down to one variable. Core's own resolution is what the re-split uses.
     """
-    original = [str(m) for m in (result.get("conceptGroupMembers") or {}).get(group_id) or []]
+    uncapped = (result.get("conceptGroupMembers") or {}).get(group_id)
+    if uncapped is None:  # a payload with no uncapped list for this group: the recorded sample, as the screen does
+        group = next((g for g in result.get("conceptGroups") or [] if g.get("groupId") == group_id), {})
+        uncapped = group.get("memberVariableNames") or []
+    original = [str(m) for m in uncapped]
     moves = (overrides or {}).get("moves") or {}
     kept = [m for m in original if moves.get(m, group_id) == group_id]
     return kept + sorted(m for m, dest in moves.items() if dest == group_id and m not in original)
