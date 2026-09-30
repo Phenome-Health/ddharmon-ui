@@ -288,7 +288,9 @@ export const GATE_LEDGER_KEYS: Record<GatePosition, string[]> = {
   setup: [],
   gate0: [], // load → preprocess → embed: local, no provider call
   gate1: ["generating", "splitting", "judging", "kinds", "score_components", "readjudicate"],
-  gate2: ["assigning", "gencde"],
+  // new_group_ideal: 08-28 Wave 2 — each filled New group's ONE generated ideal, bought by Gate 1's Continue in
+  // the same leg as the assign (backend/engine/adapter.py `GROUP_IDEAL_COST_KEY`).
+  gate2: ["assigning", "gencde", "new_group_ideal"],
   // specs_repick: 08-27b Gate 2 re-pick regeneration; specs_regen: the GenCDE-edit recode regeneration
   gate3: ["specs", "specs_repick", "refine", "concept_gate", "specs_regen"],
   gate4: ["composite", "analysis_ideas"], // nothing the pipeline runs — only the two paid actions above
@@ -302,6 +304,16 @@ export function estimateRunCost(totalFields: number, nCohorts: number, mode: Run
   const cohortFactor = 1 + 0.08 * Math.max(0, nCohorts - 1); // cross-cohort assign work grows with cohorts
   const mid = totalFields * PER_FIELD_BATCH_USD * modeFactor * cohortFactor;
   return { low: mid * 0.6, mid, high: mid * 1.6, free: false };
+}
+
+/**
+ * What ONE New group's generated ideal costs (08-28 Wave 2): a single generate-ideal call, priced as the run's
+ * own ideal line spread over the clusters that line pays for. A New group was never a cluster, so it has no
+ * ideal of its own until Gate 1's Continue buys this one — Gate 1's quote adds it per filled New group.
+ */
+export function newGroupIdealUsd(totalFields: number, nCohorts: number, mode: RunMode, nClusters: number): number {
+  const ideal = estimateRunCostBreakdown(totalFields, nCohorts, mode, false).lines.find((l) => l.id === "ideal");
+  return (ideal?.cost ?? 0) / Math.max(1, nClusters);
 }
 
 export function formatUsd(x: number): string {

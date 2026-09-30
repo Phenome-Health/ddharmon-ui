@@ -175,6 +175,23 @@ test("@gate4 the decision log says WHAT each decision did, by name, with scope c
   expect(by("composite_swap").action).toBe("Declared a score");
 });
 
+test("@gate4 the decision log lists a New group by its name, and a move into it names it too (08-28 Wave 2)", () => {
+  const d = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
+  const rev = "rev:5b1f8d6e-2c3a-4f7b-9e0d-1a2b3c4d5e6f";
+  const index: DecisionIndex = {
+    gate1_new_group: { [rev]: d({ groupId: rev, chosen: "Eye conditions", name: "Eye conditions" }) },
+    gate1_regroup: { "A:cat": d({ memberId: "A:cat", chosen: rev, fromGroupId: "g0" }) },
+  };
+  // No record carries the New group yet (the log is read at Gate 1 too): its name comes from the decision.
+  const result = { records: [{ groupId: "g0", concept: "Glaucoma", members: [], candidates: [] }] } as unknown as HarmonizationResult;
+  const rows = decisionLogRows(index, result);
+  const made = rows.find((r) => r.kind === "gate1_new_group")!;
+  expect(made.action).toBe("Created a group");
+  expect(made.label).toBe("Eye conditions");
+  expect(made.gate).toBe("Gate 1");
+  expect(rows.find((r) => r.kind === "gate1_regroup")!.detail).toBe("from Glaucoma to Eye conditions");
+});
+
 test("@gate4 a preview is REAL generated content, not a description", () => {
   const run = finishedFixture().result as HarmonizationResult;
   const recordsJson = previewFor("records_json", "py", run, {});

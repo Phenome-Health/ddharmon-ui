@@ -91,6 +91,7 @@ TAG_TO_STAGE: dict[str, str] = {
     "gencde": "gencde",
     "specgen": "specgen",
     "specgen_repick": "specgen_repick",  # 08-27b: Gate 2 re-pick spec regeneration (its own replay stage)
+    "group_generate": "group_generate",  # 08-28 Wave 2: a New group's ideal (its own stage, outside the drift guard)
     "refine": "refine",
     "coherence": "coherence",
     "kinds": "distinct_kinds",

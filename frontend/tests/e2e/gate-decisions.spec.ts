@@ -77,6 +77,8 @@ test.describe("gate decisions", () => {
     expect([...GATE_DECISION_KINDS].sort()).toEqual([
       "composite_swap",
       "gate1_group_scope",
+      // Added by 08-28 Wave 2: a group the REVIEWER created, keyed on the group it is (`rev:<uuid>`).
+      "gate1_new_group",
       "gate1_regroup",
       // Added by 08-16c Task 3: the reviewer's own name for a concept group, keyed on the GROUP. Listed
       // explicitly rather than counted, so a new kind cannot arrive without a human confirming it keys on
@@ -93,6 +95,8 @@ test.describe("gate decisions", () => {
     expect(DECISION_IDENTITY_FIELDS.gate3_combine_rule).toEqual(["cohort", "targetId"]);
     expect(decisionItemKey("gate3_combine_rule", { cohort: "CLSA", targetId: "CDE:9" })).toBe("CLSA|CDE:9");
     expect(DECISION_IDENTITY_FIELDS.gate1_regroup).toEqual(["memberId"]);
+    expect(DECISION_IDENTITY_FIELDS.gate1_new_group).toEqual(["groupId"]);
+    expect(decisionItemKey("gate1_new_group", { groupId: "rev:1" })).toBe("rev:1");
     expect(DECISION_IDENTITY_FIELDS.gate1_rename).toEqual(["groupId"]);
     expect(decisionItemKey("gate1_rename", { groupId: "c1#g0" })).toBe("c1#g0");
     expect(decisionItemKey("gate1_regroup", { memberId: "ukbb:21001" })).toBe("ukbb:21001");

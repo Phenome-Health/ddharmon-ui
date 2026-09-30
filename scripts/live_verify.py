@@ -523,12 +523,15 @@ class Driver:
             )
         d["move"] = move
 
-        # New group (I4/I14): a reviewer group filled with the remaining eye items
+        # New group (I4/I14): a reviewer group filled with the remaining eye items. The payload is exactly what the
+        # Gate 1 sidebar writes (frontend/src/pages/run/gate1.tsx `createGroup`): name in `chosen` and `name`.
         new_gid = f"rev:{uuid.uuid4()}"
         new_name = "LV eye conditions"
         try:
             self.api.decide(
-                self.job_id, "gate1_new_group", decision({"groupId": new_gid}, new_name, [new_name], name=new_name)
+                self.job_id,
+                "gate1_new_group",
+                decision({"groupId": new_gid}, new_name, [new_name], name=new_name, createdAt=int(time.time() * 1000)),
             )
             fill = [
                 m for g in eye_groups for m in members.get(g) or [] if m in eye and m != (move or {}).get("memberId")
@@ -544,6 +547,10 @@ class Driver:
                 )
                 moved.append({"memberId": m, "fromGroupId": src})
             d["newGroup"] = {"groupId": new_gid, "name": new_name, "members": moved}
+            # Continue sends the groups Gate 1 BILLS — in scope and non-empty (`gate1BillableGroups`), and a New
+            # group is in scope by default — so a filled New group rides in the scope the server freezes.
+            if moved:
+                scope.append(new_gid)
         except ApiError as exc:
             d["newGroup"] = {"refused": exc.status, "detail": exc.body[:300]}
             self.report.check("I4", False, "Gate 1 can create a New group", f"PUT gate1_new_group → {exc.status}")
@@ -789,6 +796,15 @@ class Driver:
         for stage in ("generate", "split", "coherence", "kinds"):
             extra = sorted(set(r2.get(stage) or []) - set(r1.get(stage) or []))
             self.report.check("I1", not extra, f"the Gate 1→2 leg bought no new {stage} answer", extra[:8])
+        # The ONE sanctioned new generate-style call: a filled New group's ideal, on its own stage (never `generate`).
+        ng = d.get("newGroup") or {}
+        ideals = sorted(r2.get("group_generate") or [])
+        self.report.check(
+            "I4",
+            len(ideals) == (1 if ng.get("members") else 0) and all(i.startswith("leanb:groupideal:") for i in ideals),
+            "the Gate 1→2 leg bought exactly one ideal per filled New group",
+            ideals[:4],
+        )
         assigned = sorted(r2.get("classify") or [])
         self.report.check(
             "I1",

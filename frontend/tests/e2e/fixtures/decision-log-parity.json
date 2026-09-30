@@ -295,7 +295,18 @@
    "c0#g0",
    "c1#g0",
    "c3#g0"
-  ]
+  ],
+  "gate1_overrides": {
+   "moves": {
+    "B:age_yrs": "c1#g0"
+   },
+   "newGroups": [
+    {
+     "groupId": "rev:5b1f8d6e-2c3a-4f7b-9e0d-1a2b3c4d5e6f",
+     "name": "Eye conditions"
+    }
+   ]
+  }
  },
  "grouped": {
   "gate1_group_scope": [
@@ -307,6 +318,17 @@
      "out"
     ],
     "optionSetKey": "07fe4899a4e9f9da"
+   }
+  ],
+  "gate1_new_group": [
+   {
+    "groupId": "rev:5b1f8d6e-2c3a-4f7b-9e0d-1a2b3c4d5e6f",
+    "name": "Eye conditions",
+    "chosen": "Eye conditions",
+    "alternatives": [
+     "Eye conditions"
+    ],
+    "optionSetKey": "64e1ed97d875c0ba"
    }
   ],
   "gate1_rename": [
@@ -509,13 +531,24 @@
   ],
   [
    "Gate 1",
+   "gate1_new_group",
+   "Created a group",
+   "rev:5b1f8d6e-2c3a-4f7b-9e0d-1a2b3c4d5e6f",
+   "",
+   "Eye conditions",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 1",
    "gate1_regroup",
    "Moved a variable",
    "B:age_yrs",
    "c0#g0",
    "c1#g0",
    "",
-   "",
+   "applied",
    "false"
   ],
   [

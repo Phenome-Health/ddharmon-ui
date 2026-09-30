@@ -122,6 +122,7 @@ export function downloadLabel(count: number): string {
 
 const GATE_OF: Record<GateDecisionKind, string> = {
   gate1_group_scope: "Gate 1",
+  gate1_new_group: "Gate 1",
   gate1_regroup: "Gate 1",
   gate1_rename: "Gate 1",
   gate2_candidate_pick: "Gate 2",
@@ -134,6 +135,7 @@ const GATE_OF: Record<GateDecisionKind, string> = {
 
 const ACTION_OF: Record<GateDecisionKind, string> = {
   gate1_group_scope: "Set group scope",
+  gate1_new_group: "Created a group",
   gate1_regroup: "Moved a variable",
   gate1_rename: "Renamed a group",
   gate2_candidate_pick: "Picked a target",
@@ -177,10 +179,15 @@ export function decisionLogRows(
   const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}${s.itemKey}`));
   const records = new Map((result?.records ?? []).map((r) => [r.groupId, r]));
   const renames = index.gate1_rename ?? {};
+  const newGroups = index.gate1_new_group ?? {};
   const nameOf = (gid: unknown): string | undefined => {
     if (typeof gid !== "string" || !gid || gid === "__unassigned__") return undefined;
     const renamed = renames[gid]?.chosen;
     if (typeof renamed === "string" && renamed.trim()) return renamed.trim();
+    // A New group has no record until Gate 2 — its own decision carries its name.
+    const made = newGroups[gid];
+    const madeName = made && (typeof made.name === "string" && made.name.trim() ? made.name : made.chosen);
+    if (typeof madeName === "string" && madeName.trim()) return madeName.trim();
     return records.get(gid)?.concept || gid;
   };
   const specBySource = new Map<string, UITransform>();
@@ -523,6 +530,12 @@ export function decisionLogCsvRows(
   const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}\u001f${s.itemKey}`));
 
   const rows: string[][] = [DECISION_LOG_CSV_COLS];
+  // Past Gate 1 the regrouping is frozen (`config.gate1_overrides`): a move in it was APPLIED by the pipeline, one
+  // outside it was not (the run passed Gate 1 before moves were applied). At Gate 1 nothing is claimed either way.
+  const regrouping = config?.gate1_overrides as { moves?: Record<string, unknown> } | undefined;
+  const appliedMoves = new Set(Object.keys((regrouping && typeof regrouping === "object" && regrouping.moves) || {}));
+  const passedGate1 =
+    Array.isArray(config?.gate1_scope) || (!!regrouping && typeof regrouping === "object" && !Array.isArray(regrouping));
   const frozen = config?.gate1_scope;
   if (Array.isArray(frozen)) {
     rows.push(["Gate 1", "gate1_scope_frozen", "Continued with this scope", "", "", `${frozen.length} groups in scope`, "", stableJson(frozen), "false"]);
@@ -542,6 +555,7 @@ export function decisionLogCsvRows(
         before = String(d.generatedName || byGroup.get(gid)?.concept || groups.get(gid)?.concept || "");
       } else if (kind === "gate1_regroup") {
         before = String(d.fromGroupId || "");
+        if (passedGate1) detail = appliedMoves.has(item) ? "applied" : "not applied";
       } else if (kind === "gate2_candidate_pick") {
         const extra: Record<string, unknown> = {};
         if (isPlainObject(d.gencdeEdit)) extra.gencdeEdit = d.gencdeEdit;

@@ -5,6 +5,7 @@ import {
   SPLIT_ASSIGN_DIVISION,
   STAGE_SHARES,
   estimateRunCostBreakdown,
+  newGroupIdealUsd,
   realizedSpendByGate,
 } from "@/lib/estimate";
 
@@ -113,10 +114,23 @@ test.describe("run estimate", () => {
       "score_components",
       "readjudicate",
     ]);
-    expect(GATE_LEDGER_KEYS.gate2).toEqual(["assigning", "gencde"]);
+    // new_group_ideal: 08-28 Wave 2 — a reviewer's New group's one generated ideal, bought by Gate 1's Continue
+    expect(GATE_LEDGER_KEYS.gate2).toEqual(["assigning", "gencde", "new_group_ideal"]);
     expect(GATE_LEDGER_KEYS.gate3).toEqual(["specs", "specs_repick", "refine", "concept_gate", "specs_regen"]);
     expect(GATE_LEDGER_KEYS.gate0).toEqual([]);
     expect(GATE_LEDGER_KEYS.gate4).toEqual(["composite", "analysis_ideas"]);
+  });
+
+  test("@estimate a New group's ideal is one generate call: the ideal line over the run's clusters", () => {
+    // 08-28 Wave 2: each New group a reviewer fills buys ONE generate-ideal call on Gate 1's Continue. It is
+    // priced as the run's own ideal line divided across the clusters that line pays for — one call's share.
+    const ideal = (mode: "batch" | "sync") =>
+      estimateRunCostBreakdown(600, 3, mode, true).lines.find((l) => l.id === "ideal")!.cost;
+    expect(newGroupIdealUsd(600, 3, "batch", 40)).toBeCloseTo(ideal("batch") / 40, 10);
+    expect(newGroupIdealUsd(600, 3, "sync", 40)).toBeCloseTo(ideal("sync") / 40, 10);
+    expect(newGroupIdealUsd(600, 3, "batch", 40)).toBeGreaterThan(0);
+    expect(newGroupIdealUsd(600, 3, "batch", 0)).toBeCloseTo(ideal("batch"), 10); // never divides by zero
+    expect(newGroupIdealUsd(600, 3, "preview", 40)).toBe(0);
   });
 
   test("@estimate a paid action outside a leg is attributed to its gate, not left unattributed", () => {

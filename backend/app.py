@@ -46,11 +46,16 @@ from backend import batch_reconcile, billing, export_decisions
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
     GATE1_GROUP_SCOPE,
+    GATE1_NEW_GROUP,
+    GATE1_REGROUP,
     GATE2_CANDIDATE_PICK,
     GATE_DECISION_KINDS,
+    REVIEWER_GROUP_PREFIX,
+    UNASSIGNED_GROUP_ID,
     VERDICT,
     accept_gencde,
     derive_staleness,
+    reviewer_group_name,
 )
 from backend.artifacts import ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
 from backend.auth import AuthError, authenticate
@@ -842,21 +847,67 @@ def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, An
     """
     # 08-27: the scope FROZEN at Gate 1's Continue wins. Gate 1 displays default-OUT (08-23b) while the rule
     # below is default-in, so recomputing from decisions billed groups the reviewer was shown as unchecked.
+    # 08-28 Wave 2: the reviewer's New groups are groups too. They are never in a checkpoint's conceptGroups (the
+    # split's view — a New group is a RECORD from Gate 2 on), so they come from the frozen regrouping.
+    universe = [str(g["groupId"]) for g in groups if g.get("groupId")] + _new_group_ids(job)
     frozen = (getattr(job, "config", None) or {}).get(GATE1_SCOPE_CONFIG_KEY)
     if frozen is not None:
         keep = set(frozen)
-        return [g["groupId"] for g in groups if g.get("groupId") in keep]
+        return [gid for gid in universe if gid in keep]
     # Legacy (a run that passed Gate 1 before 08-27): default-in, unchanged.
     scope = (store.artifacts_for(job, subject) or {}).get(GATE1_GROUP_SCOPE) or []
     out_ids = {d.get("groupId") for d in scope if d.get("chosen") == "out"}
     if not out_ids:
         return None
-    kept: list[str] = []
-    for g in groups:
-        gid = g.get("groupId")
-        if gid and gid not in out_ids:
-            kept.append(gid)
-    return kept
+    return [gid for gid in universe if gid not in out_ids]
+
+
+def _new_group_ids(job: Job) -> list[str]:
+    """The New groups Gate 1's Continue froze into this run's regrouping, in frozen order."""
+    frozen = (getattr(job, "config", None) or {}).get(GATE1_OVERRIDES_CONFIG_KEY) or {}
+    return [str(g.get("groupId")) for g in frozen.get("newGroups") or [] if isinstance(g, dict) and g.get("groupId")]
+
+
+def _current_group(member: str, origin: dict[str, str], recorded: Any) -> str | None:
+    """Where a variable is before a move: the checkpoint's membership when it carries one, else the origin the move
+    itself recorded (``None`` = in no group)."""
+    if origin:
+        return origin.get(member)
+    return None if recorded in (None, "", UNASSIGNED_GROUP_ID) else str(recorded)
+
+
+def _gate1_overrides(job: Job, subject: str | None, result: dict[str, Any]) -> dict[str, Any] | None:
+    """The reviewer's Gate-1 regrouping as core will apply it — built from the decisions, sanitised, or None.
+
+    ``{"moves": {memberId: destination | None}, "newGroups": [{"groupId", "name"}]}``, both in a stable order
+    (moves by member id, New groups by id) so the frozen value is a pure function of the decisions. A move is
+    DROPPED, not frozen, when it would do nothing or name nothing: back to where the variable already is, to a
+    group this run does not have (a destination that cannot be honoured must not fail the paid leg), or of a
+    variable the run does not have. ``None`` when nothing is left — the leg then runs the split's groups as-is.
+    """
+    grouped = store.artifacts_for(job, subject) or {}
+    existing = {str(g.get("groupId")) for g in result.get("conceptGroups") or [] if g.get("groupId")}
+    new_groups: dict[str, dict[str, str]] = {}
+    for d in grouped.get(GATE1_NEW_GROUP) or []:
+        gid = str(d.get("groupId") or "")
+        if gid.startswith(REVIEWER_GROUP_PREFIX) and gid not in existing:
+            new_groups[gid] = {"groupId": gid, "name": reviewer_group_name(d)}
+    origin = {str(m): gid for gid, members in (result.get("conceptGroupMembers") or {}).items() for m in members or []}
+    fields = set(result.get("fieldIndex") or {})
+    moves: dict[str, str | None] = {}
+    for d in grouped.get(GATE1_REGROUP) or []:
+        member, dest = str(d.get("memberId") or ""), d.get("chosen")
+        if not member or not isinstance(dest, str) or not dest or (fields and member not in fields):
+            continue
+        target = None if dest == UNASSIGNED_GROUP_ID else dest
+        if target is not None and target not in existing and target not in new_groups:
+            continue
+        if _current_group(member, origin, d.get("fromGroupId")) == target:
+            continue
+        moves[member] = target
+    if not moves and not new_groups:
+        return None
+    return {"moves": dict(sorted(moves.items())), "newGroups": [new_groups[g] for g in sorted(new_groups)]}
 
 
 def _gate2_picks(job: Job, subject: str | None, in_scope: list[str] | None) -> dict[str, dict[str, Any]]:
@@ -889,6 +940,9 @@ def _gate2_picks(job: Job, subject: str | None, in_scope: list[str] | None) -> d
 
 # Where the Gate-1 scope is frozen on the run's config — read by every later leg and by the Gate 2/3 display.
 GATE1_SCOPE_CONFIG_KEY = "gate1_scope"
+# Where Gate 1's Continue freezes the reviewer's regrouping (moves + New groups) — every later leg hands it to
+# core (``backend/engine/adapter.py`` reads the same key) and the export says which moves it applied.
+GATE1_OVERRIDES_CONFIG_KEY = "gate1_overrides"
 
 
 class ResumeBody(BaseModel):
@@ -1001,27 +1055,41 @@ def _resume_locked(
     # boundary are stop targets; past that the pipeline runs to completion and the UI backend holds the run
     # itself (UI-SPEC §0.1). Gate 3 is exactly that case — it reviews the FINISHED pipeline, so it takes no
     # engine stop and still parks, which is what `park_at_gate` carries.
-    run_config = {
-        **job.config,
-        "stop_at_gate": target if target in ("gate1", "gate2") else None,
-        "park_at_gate": target,
-    }
     # Gate-1 scope: honour the reviewer's kept groups so the paid per-group assign (77% of the run) processes
     # ONLY them — which is what makes the Gate-2 cost match the quote Gate 1 showed (until now the scope was a
     # display filter only, so the assign paid for every group). Threaded on every worker-spawning leg (gate2
     # and gate3), not just gate1->gate2: the group_assign prompts for out-of-scope groups have no replayed
     # answer, so an unfiltered later leg would re-run them as "new work" and re-charge.
-    groups = (getattr(ckpt, "result", None) or {}).get("conceptGroups") or []
-    # 08-27: Gate 1's Continue sends the scope it DISPLAYED; freeze it (checkpoint order, unknown ids dropped)
-    # before the first paid leg. Only at Gate 1 — past it the scope is a consumed decision, not an input.
-    if job.gate_position == "gate1" and body is not None and body.gate1Scope is not None:
-        sent = set(body.gate1Scope)
-        frozen = [g["groupId"] for g in groups if g.get("groupId") in sent]
-        if not frozen:
-            raise HTTPException(status_code=409, detail="Nothing is in scope — select at least one group on Gate 1.")
-        store.update(job_id, config={**job.config, GATE1_SCOPE_CONFIG_KEY: frozen})
-        job = store.get(job_id) or job
-        run_config = {**run_config, GATE1_SCOPE_CONFIG_KEY: frozen}
+    ckpt_result = getattr(ckpt, "result", None) or {}
+    groups = ckpt_result.get("conceptGroups") or []
+    if job.gate_position == "gate1":
+        # 08-28 Wave 2: FREEZE the reviewer's regrouping (moves + New groups) before the first paid leg, exactly as
+        # the scope is frozen — every later leg and the $0 replay read this, never the live decisions. Recomputed
+        # on EVERY Gate 1 Continue (a leg that failed parks the run back here, and the reviewer may regroup again).
+        config = {k: v for k, v in job.config.items() if k != GATE1_OVERRIDES_CONFIG_KEY}
+        overrides = _gate1_overrides(job, subject, ckpt_result)
+        if overrides is not None:
+            config[GATE1_OVERRIDES_CONFIG_KEY] = overrides
+        # 08-27: Gate 1's Continue sends the scope it DISPLAYED; freeze it (checkpoint order, then the New groups,
+        # unknown ids dropped). Only at Gate 1 — past it the scope is a consumed decision, not an input.
+        if body is not None and body.gate1Scope is not None:
+            sent = set(body.gate1Scope)
+            known = [g["groupId"] for g in groups if g.get("groupId")]
+            known += [g["groupId"] for g in (overrides or {}).get("newGroups", [])]
+            frozen = [gid for gid in known if gid in sent]
+            if not frozen:
+                raise HTTPException(
+                    status_code=409, detail="Nothing is in scope — select at least one group on Gate 1."
+                )
+            config[GATE1_SCOPE_CONFIG_KEY] = frozen
+        if config != job.config:
+            store.update(job_id, config=config)
+            job = store.get(job_id) or job
+    run_config = {
+        **job.config,
+        "stop_at_gate": target if target in ("gate1", "gate2") else None,
+        "park_at_gate": target,
+    }
     in_scope = _gate1_assign_scope(job, subject, groups)
     if in_scope is not None:
         run_config["assign_group_ids"] = in_scope
@@ -1539,7 +1607,10 @@ def put_artifact(
         # Read what is there BEFORE replacing it: after the upsert the prior value is gone, and with it any
         # way to tell the reviewer that theirs was not the version they were looking at.
         conflict = _conflict_for(artifacts, owner=owner, job_id=job_id, kind=kind, payload=payload, base=base)
-        stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload, pinned=_is_pinned(job))
+        try:
+            stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload, pinned=_is_pinned(job))
+        except ValueError as exc:  # the kind's own validation: a malformed payload is the caller's error, not a 500
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "kind": stored.kind,
         "itemKey": stored.item_key,

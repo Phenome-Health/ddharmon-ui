@@ -15,9 +15,14 @@ WHAT EACH DECISION DOES TO THE EXPORT (and what it deliberately does not):
   the legacy default-in rule applies, the same rule the paid assign used, so the file matches what was billed.
 * ``gate1_rename`` — ``concept`` is the reviewer's name; the generated one rides alongside as
   ``generatedConcept``. A rename is an annotation, never an erasure (08-16c Task 3).
-* ``gate1_regroup`` — LOGGED ONLY. The paid pipeline never consumed a move (audit Theme A), so the specs and
-  targets in the file were built for the ORIGINAL membership; moving the member in the export would attach it
-  to a group whose recodes were never generated for it. The decision log records every move with its origin.
+* ``gate1_regroup`` — APPLIED BY THE PIPELINE (08-28 Wave 2). Gate 1's Continue freezes every move into the
+  run's regrouping (``config.gate1_overrides``) and core re-groups before the paid assign, so the records — and
+  every format built from them — already carry each moved variable in its destination group, with specs built
+  for it there. Nothing is re-applied here. The decision log records every move with its origin and says
+  whether the pipeline applied it (``applied``), or the run passed Gate 1 before moves were applied
+  (``not applied`` — a legacy run, whose records keep the original membership).
+* ``gate1_new_group`` — a reviewer-created group (``rev:<uuid>``). The pipeline forms it and assigns, specs and
+  exports it as its own record under that id, named as the reviewer named it; the log lists its creation.
 * ``gate2_candidate_pick`` — the CDE is the reviewer's pick (``""`` or the group's own generated element
   means "no catalog target"); the model's pick rides alongside as ``modelCde`` + ``modelVerdict``. Any GenCDE
   edit is carried verbatim as ``gencdeEdit``. A spec generated for the model's CDE that the reviewer did not
@@ -49,6 +54,7 @@ from typing import Any
 from backend.artifact_kinds import (
     COMPOSITE_SWAP,
     GATE1_GROUP_SCOPE,
+    GATE1_NEW_GROUP,
     GATE1_REGROUP,
     GATE1_RENAME,
     GATE2_CANDIDATE_PICK,
@@ -66,6 +72,8 @@ from backend.target_codes import in_target_codes
 
 #: Where Gate 1's Continue freezes the scope it displayed (``backend/app.py::GATE1_SCOPE_CONFIG_KEY``).
 GATE1_SCOPE_CONFIG_KEY = "gate1_scope"
+#: Where it freezes the regrouping the pipeline then applies (``backend/app.py::GATE1_OVERRIDES_CONFIG_KEY``).
+GATE1_OVERRIDES_CONFIG_KEY = "gate1_overrides"
 
 #: The ``gate4_export_selection`` values that EXCLUDE a record. Anything else includes it.
 EXCLUDE_VALUES = frozenset({"exclude", "out"})
@@ -75,6 +83,7 @@ SPEC_EDIT_FIELDS = ("mapping", "numberMap", "bins")
 
 GATE_OF = {
     GATE1_GROUP_SCOPE: "Gate 1",
+    GATE1_NEW_GROUP: "Gate 1",
     GATE1_REGROUP: "Gate 1",
     GATE1_RENAME: "Gate 1",
     GATE2_CANDIDATE_PICK: "Gate 2",
@@ -86,6 +95,7 @@ GATE_OF = {
 }
 ACTION_OF = {
     GATE1_GROUP_SCOPE: "Set group scope",
+    GATE1_NEW_GROUP: "Created a group",
     GATE1_REGROUP: "Moved a variable",
     GATE1_RENAME: "Renamed a group",
     GATE2_CANDIDATE_PICK: "Picked a target",
@@ -444,6 +454,9 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
     spec_by_source = {str(t.get("sourceVariable") or ""): t for r in records for t in r.get("transforms") or []}
     groups = {str(g.get("groupId") or ""): g for g in result.get("conceptGroups") or []}
     stale = {(s["kind"], s["itemKey"]) for s in derive_staleness(grouped)}
+    regrouping = (config or {}).get(GATE1_OVERRIDES_CONFIG_KEY)
+    applied_moves = set((regrouping or {}).get("moves") or {}) if isinstance(regrouping, dict) else set()
+    passed_gate1 = isinstance((config or {}).get(GATE1_SCOPE_CONFIG_KEY), list) or isinstance(regrouping, dict)
 
     rows: list[list[str]] = []
     frozen = (config or {}).get(GATE1_SCOPE_CONFIG_KEY)
@@ -470,6 +483,10 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                 )
             elif kind == GATE1_REGROUP:
                 before = str(d.get("fromGroupId") or "")
+                # Past Gate 1 the regrouping is frozen: a move in it was applied by the pipeline; one outside it was
+                # not (the run passed Gate 1 before moves were applied). At Gate 1 nothing is claimed either way.
+                if passed_gate1:
+                    detail = "applied" if item in applied_moves else "not applied"
             elif kind == GATE2_CANDIDATE_PICK:
                 extra: dict[str, Any] = {}
                 if isinstance(d.get("gencdeEdit"), dict):

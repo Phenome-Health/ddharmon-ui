@@ -115,8 +115,22 @@ registry.register(ArtifactKind(name=SCORE_COMPONENT_PROPOSAL, identity=_proposal
 #: Gate 1: keep / drop / merge this concept group. Keyed on the group.
 GATE1_GROUP_SCOPE = "gate1_group_scope"
 
+#: Gate 1: a group the REVIEWER created (08-28 Wave 2), ``{groupId: "rev:<uuid>", name}``. Keyed on the group.
+#: It is filled by ordinary ``gate1_regroup`` moves whose destination is its id; Gate 1's Continue freezes both
+#: into the run's regrouping, and core forms it as a group of its own (it may span clusters). The name rides
+#: as ``chosen`` too, so it has the option-space shape every gate decision carries.
+GATE1_NEW_GROUP = "gate1_new_group"
+
+#: A reviewer group's id prefix. The pipeline's own group ids are ``<cluster content id>#g<N>``, so the two can
+#: never collide — and a reviewer group is recognisable by its id alone on every later screen and export.
+REVIEWER_GROUP_PREFIX = "rev:"
+
+#: The destination a move OUT of every group names (``frontend/src/components/gate/MemberChip.tsx``).
+UNASSIGNED_GROUP_ID = "__unassigned__"
+
 #: Gate 1: move one source variable into another group. Keyed on the VARIABLE moved, so two variables
-#: moved in two tabs are two independent rows.
+#: moved in two tabs are two independent rows. APPLIED since 08-28 Wave 2: Gate 1's Continue freezes every
+#: move into the run's regrouping and each later leg hands it to core before the paid assign.
 GATE1_REGROUP = "gate1_regroup"
 
 #: Gate 1: the reviewer's own NAME for a concept group. Keyed on the group.
@@ -155,6 +169,7 @@ COMPOSITE_SWAP = "composite_swap"
 #: derivation - so a screen plan adding a tenth gets all three by adding one name here.
 GATE_DECISION_KINDS = (
     GATE1_GROUP_SCOPE,
+    GATE1_NEW_GROUP,
     GATE1_REGROUP,
     GATE1_RENAME,
     GATE2_CANDIDATE_PICK,
@@ -170,6 +185,7 @@ GATE_DECISION_KINDS = (
 #: Gate 1, so its decisions freeze with Gate 1.
 DECISION_GATE: dict[str, str] = {
     GATE1_GROUP_SCOPE: "gate1",
+    GATE1_NEW_GROUP: "gate1",
     GATE1_REGROUP: "gate1",
     GATE1_RENAME: "gate1",
     COMPOSITE_SWAP: "gate1",
@@ -185,6 +201,7 @@ DECISION_GATE: dict[str, str] = {
 #: as a table - the one property a reviewer of this file needs to check.
 _DECISION_IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     GATE1_GROUP_SCOPE: ("groupId",),
+    GATE1_NEW_GROUP: ("groupId",),
     GATE1_REGROUP: ("memberId",),
     GATE1_RENAME: ("groupId",),
     GATE2_CANDIDATE_PICK: ("groupId",),
@@ -282,6 +299,23 @@ def _combine_rule_validate(payload: dict[str, Any]) -> None:
         )
 
 
+def reviewer_group_name(payload: dict[str, Any]) -> str:
+    """A New group's name: its ``name`` field, else the ``chosen`` it also carries. Stripped; ``""`` if neither."""
+    return str(payload.get("name") or payload.get("chosen") or "").strip()
+
+
+def _new_group_validate(payload: dict[str, Any]) -> None:
+    """A New group must carry a reviewer id (never a pipeline group id) and a name, on top of the shared shape."""
+    _decision_validate(payload)
+    if not str(payload.get("groupId") or "").startswith(REVIEWER_GROUP_PREFIX):
+        raise ValueError(
+            f"a New group's id must start with {REVIEWER_GROUP_PREFIX!r} — the pipeline's own group ids are "
+            "<cluster>#g<N>, and a reviewer id that looked like one would be read as that group"
+        )
+    if not reviewer_group_name(payload):
+        raise ValueError("a New group needs a name")
+
+
 def derive_staleness(grouped: dict[str, Any]) -> list[dict[str, str]]:
     """Which stored decisions are stale, DERIVED by comparison on read. Never a column, never a flag.
 
@@ -343,6 +377,13 @@ registry.register(
         name=GATE1_GROUP_SCOPE,
         identity=_decision_identity(GATE1_GROUP_SCOPE),
         validate=_decision_validate,
+    )
+)
+registry.register(
+    ArtifactKind(
+        name=GATE1_NEW_GROUP,
+        identity=_decision_identity(GATE1_NEW_GROUP),
+        validate=_new_group_validate,
     )
 )
 registry.register(

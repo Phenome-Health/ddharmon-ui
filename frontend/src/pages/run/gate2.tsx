@@ -29,6 +29,7 @@ import { isGatePast, pathForGate } from "@/lib/gate-routes";
 import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
+import { isReviewerGroupId } from "@/lib/ledger";
 import {
   affectedSpecCount,
   candidateAlternatives,
@@ -62,13 +63,14 @@ import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
  * `gate2_candidate_pick` — `chosen: ""` is the schema's "none of these", the generated element's id is
  * "my own". No edit lives only in component state.
  *
- * -- THE ANCHOR CAN LAG THE MEMBERSHIP ------------------------------------------------------------------
+ * -- A GROUP THE REVIEWER RESHAPED AT GATE 1 --------------------------------------------------------------
  *
- * The generated ideal/GenCDE is produced before Gate 1, on the ORIGINAL grouping. If the reviewer moved
- * variables at Gate 1 (`gate1_regroup`), the anchor describes a grouping that no longer exists. That is
- * flagged here. The 08-16g plan was for the backend to regenerate the anchor for changed groups on Continue;
- * that never landed, and moves are not yet applied to matching at all (08-27 option C — core has no
- * membership override yet), so the copy says exactly that and the reviewer can correct the anchor by hand.
+ * Gate 1's moves (`gate1_regroup`) and New groups (`gate1_new_group`) are APPLIED (08-28 Wave 2): Continue
+ * freezes them on the run (`config.gate1_overrides`) and core re-groups before the paid assign, so this
+ * concept's candidates were retrieved — and its generated target written — for the members as the reviewer
+ * left them. A concept whose membership changed says so, so the reviewer knows why it differs from Gate 1's
+ * row. A run that passed Gate 1 BEFORE moves were applied has no frozen regrouping; there the copy says it
+ * was matched on the original members, which on that run is still true.
  *
  * TWO PANES, ADAPTED FROM CDEMapper (Wang et al., JAMIA 2025;32:1130-1139, doi:10.1093/jamia/ocaf064,
  * Fig. 4) AND CREDITED ON SCREEN. The framing is fixed: convergent method, extended scope — never a recall
@@ -274,7 +276,9 @@ export default function Gate2Page() {
     pickedCandidateId(pick, record.candidates) ?? record.candidates.find((c) => c.isChosen)?.cdeId ?? "";
   const chosenCandidate = record.candidates.find((c) => c.cdeId === chosenId);
   const targetIsOwn = chosenId === "" || (!!gencde && chosenId === gencde.gencdeId);
-  const anchorLags = touchedAtGate1.has(groupId);
+  const membershipChanged = touchedAtGate1.has(groupId);
+  // A frozen regrouping means Gate 1's moves were applied to this run; its absence means a pre-08-28 run.
+  const movesApplied = !!runConfig && typeof runConfig.gate1_overrides === "object" && runConfig.gate1_overrides !== null;
 
   // The rerank note narrates what the MODEL did, so it reads the model's OWN pick (isChosen), never the
   // reviewer's current selection (chosenId): a reviewer picking a different candidate must not make the note
@@ -550,17 +554,26 @@ export default function Gate2Page() {
                 </span>
               </div>
 
-              {anchorLags && (
-                <p
-                  data-testid="anchor-refresh-pending"
-                  className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
-                >
-                  This target was built on the original grouping. You changed this concept&apos;s members at
-                  Gate 1; those moves are recorded in the decision log but not yet applied to matching, so this
-                  run still matches the group&apos;s original members. Correct the target yourself below if it
-                  should describe the new grouping.
-                </p>
-              )}
+              {membershipChanged &&
+                (movesApplied ? (
+                  <p
+                    data-testid="membership-changed"
+                    className="rounded-inner border-l-4 border-l-accent-action bg-surface-inset px-3 py-2 text-xs text-on-inset"
+                  >
+                    {isReviewerGroupId(groupId)
+                      ? "You made this group at Gate 1. Its candidates were retrieved, and this target was generated, for exactly the variables you put in it."
+                      : "You changed this concept's members at Gate 1. Its candidates were retrieved, and this target was generated, for the members as you left them."}
+                  </p>
+                ) : (
+                  <p
+                    data-testid="membership-changed"
+                    className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
+                  >
+                    You changed this concept&apos;s members at Gate 1, but this run passed Gate 1 before moves
+                    were applied: it was matched on the group&apos;s original members, and this target describes
+                    them. Correct the target yourself below if it should describe the new grouping.
+                  </p>
+                ))}
 
               <div className="flex flex-col gap-1">
                 <label htmlFor="gencde-name" className="text-xs font-semibold text-on-raised">
