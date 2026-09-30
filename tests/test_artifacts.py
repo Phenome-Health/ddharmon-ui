@@ -24,6 +24,7 @@ from backend.artifact_kinds import (
     GATE3_SPEC_EDIT,
     GATE4_EXPORT_SELECTION,
     GATE_DECISION_KINDS,
+    SKOS_RELATIONS,
     VERDICT,
     content_key,
     derive_staleness,
@@ -741,9 +742,9 @@ def test_the_relation_and_swap_kinds_key_on_the_edge_they_decide(artifacts):
             payload={
                 "groupId": "g1",
                 "targetId": target,
-                "chosen": "narrower",
-                "alternatives": ["exact", "narrower", "broader"],
-                "optionSetKey": option_set_key(["exact", "narrower", "broader"]),
+                "chosen": "skos:narrowMatch",
+                "alternatives": list(SKOS_RELATIONS),
+                "optionSetKey": option_set_key(SKOS_RELATIONS),
             },
         )
     artifacts.put(
@@ -761,6 +762,33 @@ def test_the_relation_and_swap_kinds_key_on_the_edge_they_decide(artifacts):
     grouped = artifacts.get_all(owner=USER_A, job_id="run-1")
     assert len(grouped[GATE2_RELATION]) == 2
     assert len(grouped[COMPOSITE_SWAP]) == 1
+
+
+def _relation(chosen: str, **extra) -> dict:
+    return {
+        "groupId": "g1",
+        "targetId": "CDE:9",
+        "chosen": chosen,
+        "alternatives": list(SKOS_RELATIONS),
+        "optionSetKey": option_set_key(SKOS_RELATIONS),
+        **extra,
+    }
+
+
+def test_a_relation_names_a_skos_predicate_or_asserts_none(artifacts):
+    """08-28 3f: a relation is exported as the crosswalk's predicate, so the store takes only the SKOS vocabulary
+    Gate 2 offers — and "", a note written with no relation asserted. Anything else would reach the export as a
+    predicate nobody can read."""
+    for chosen in (*SKOS_RELATIONS, ""):
+        artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_RELATION, payload=_relation(chosen, note="checked"))
+    stored = artifacts.get_all(owner=USER_A, job_id="run-1")[GATE2_RELATION]
+    assert len(stored) == 1, "one (group, target) edge holds one relation, whatever it is re-set to"
+    assert stored[0]["chosen"] == "" and stored[0]["note"] == "checked"
+    for bad in ("narrower", "exactMatch", "owl:sameAs"):
+        with pytest.raises(ValueError, match="skos:exactMatch"):
+            artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_RELATION, payload=_relation(bad))
+    with pytest.raises(ValueError, match="targetId"):
+        artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_RELATION, payload=_relation("", targetId=""))
 
 
 def test_the_artifacts_read_derives_staleness_on_the_wire(tmp_path, monkeypatch):
