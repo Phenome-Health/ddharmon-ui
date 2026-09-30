@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -66,6 +66,7 @@ export function CloneDialog({
   onDone?: () => void;
 }) {
   const [location, navigate] = useLocation();
+  const queryClient = useQueryClient();
   const { data: jobs } = useQuery({ queryKey: ["jobs"], queryFn: listJobs, enabled: open, staleTime: 30_000 });
   const existing = useMemo(() => (jobs ?? []).map((j) => j.displayName ?? "").filter(Boolean), [jobs]);
   const proposal = useMemo(() => uniqueCloneName(sourceName, existing), [sourceName, existing]);
@@ -96,6 +97,8 @@ export function CloneDialog({
     try {
       const { jobId: newId } = await cloneJob(jobId, cloneRequestFor(flavour, readSandbox(jobId), name));
       clearSandbox(jobId);
+      // The copy is a new row on the Runs page, and the next collision check must see its name.
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
       onDone?.();
       onOpenChange(false);
       toast.success(
