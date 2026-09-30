@@ -721,6 +721,16 @@ def build_ui_result(
     fidx = field_index or {}
     atlas_pts = atlas or []
     records = [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in leanb_result.records]
+    # Option B (2026-09-18): a group whose membership the reviewer changed at Gate 1 was assigned against an ideal
+    # REGENERATED for its final members — marked, so Gate 2 can say so without claiming it for a run that did not.
+    regenerated = {
+        str(p.context.get("group_id", ""))
+        for p in getattr(leanb_result, "group_assign_prompts", None) or []
+        if isinstance(getattr(p, "context", None), dict) and p.context.get("ideal_regenerated")
+    }
+    for rec in records:
+        if rec.get("groupId") in regenerated:
+            rec["idealRegenerated"] = True
     groups = _concept_groups_to_ui(leanb_result)
     # Derived, not declared: a run has re-adjudication provenance iff some row actually carries it. Asking
     # the caller to tell us would let the register disagree with the payload it describes. Checked on BOTH

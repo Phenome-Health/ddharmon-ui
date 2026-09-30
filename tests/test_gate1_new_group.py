@@ -202,6 +202,8 @@ def test_every_later_leg_applies_the_regrouping_and_buys_the_new_groups_ideal_on
     assert list(recorded["group_generate"]) == [
         p for p in recorded["group_generate"] if p.startswith("leanb:groupideal:")
     ]
+    # A New group has its own ideal by construction; only an EDITED pipeline group is marked "regenerated".
+    assert not by[REV].get("idealRegenerated") and by[smoke].get("idealRegenerated")
 
     # Gate 2 -> Gate 3: the same frozen overrides replay every answer, the New group's ideal included, for $0.
     leg3_calls: dict[str, int] = {}
@@ -395,6 +397,7 @@ def test_a_moves_only_regrouping_buys_the_changed_groups_ideals_on_their_own_sta
     )
     by = {r["groupId"]: r for r in leg2["records"]}
     assert moved in by[dest]["members"] and moved not in by[src]["members"]
+    assert by[src].get("idealRegenerated") and by[dest].get("idealRegenerated"), "Gate 2 cannot tell it was regenerated"
     ideals = sorted(recorded.get("group_generate") or {})
     assert [i.split("@")[0] for i in ideals] == sorted(f"leanb:groupideal:{g}" for g in (src, dest)), ideals
     assert set(recorded.get("generate") or {}) == set(responses["generate"]), "an edited group's ideal hid in generate"

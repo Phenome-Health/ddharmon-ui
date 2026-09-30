@@ -339,6 +339,9 @@ class UIRecord(TypedDict):
     #: Only ever populated by a caller-invoked re-adjudication — nothing in the pipeline re-splits on its
     #: own, so on a normal run this is absent and the register records it PER-RUN.
     readjudicatedFrom: NotRequired[str]
+    #: 08-28 (Option B): present only when the reviewer changed this group's membership at Gate 1 and it was
+    #: assigned against an ideal description REGENERATED for its final members. Absent = the split's own ideal.
+    idealRegenerated: NotRequired[bool]
     #: 08-27b: present only when the reviewer's Gate 2 pick CHANGED this record's target, so the Gate 2 -> 3
     #: leg re-targeted it and regenerated its specs. Absent = the model's target stands.
     reviewerPick: NotRequired[ReviewerPick]

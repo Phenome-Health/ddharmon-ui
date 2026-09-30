@@ -823,14 +823,22 @@ class Driver:
         for stage in ("generate", "split", "coherence", "kinds"):
             extra = sorted(set(r2.get(stage) or []) - set(r1.get(stage) or []))
             self.report.check("I1", not extra, f"the Gate 1→2 leg bought no new {stage} answer", extra[:8])
-        # The ONE sanctioned new generate-style call: a filled New group's ideal, on its own stage (never `generate`).
+        # The ONE sanctioned new generate-style call, on its own stage (never `generate`): an ideal for the filled New
+        # group, and (Option B) a REGENERATED one for each edited group that was sent — one each, and nothing else.
         ng = d.get("newGroup") or {}
         ideals = sorted(r2.get("group_generate") or [])
+        got = [i.split("@")[0].removeprefix("leanb:groupideal:") for i in ideals]
+        edited = {x for x in ((d.get("move") or {}).get("fromGroupId"), (d.get("move") or {}).get("toGroupId")) if x}
+        edited |= {m.get("fromGroupId") for m in ng.get("members") or [] if m.get("fromGroupId")}
+        allowed = ({ng["groupId"]} if ng.get("members") else set()) | (edited & set(d["scope"]))
         self.report.check(
             "I4",
-            len(ideals) == (1 if ng.get("members") else 0) and all(i.startswith("leanb:groupideal:") for i in ideals),
-            "the Gate 1→2 leg bought exactly one ideal per filled New group",
-            ideals[:4],
+            all(i.startswith("leanb:groupideal:") for i in ideals)
+            and len(got) == len(set(got))
+            and set(got) <= allowed
+            and (not ng.get("members") or ng["groupId"] in got),
+            "the Gate 1→2 leg bought one ideal per filled New group and per edited in-scope group, and no other",
+            {"bought": got[:8], "allowed": sorted(allowed)[:8]},
         )
         assigned = sorted(r2.get("classify") or [])
         self.report.check(
