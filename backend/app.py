@@ -1526,6 +1526,7 @@ def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="Job not found")
     if source.result is None:
         raise HTTPException(status_code=409, detail="This run has no result to copy yet.")
+    carried = _checked_clone_artifacts(body.artifacts or [])
 
     new_id = uuid.uuid4().hex[:12]
     # Deep copy: a shallow one leaves the copy sharing the demo's record list, so editing the copy would
@@ -1547,15 +1548,36 @@ def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
     store.update(new_id, status="complete", phase="complete", result=result)
 
     artifacts = store.artifacts
-    if artifacts is not None and body.artifacts:
+    if artifacts is not None and carried:
         owner = principal_of(subject, store.get(new_id))
         with _writable_run():
-            for entry in body.artifacts:
-                kind, payload = entry.get("kind"), entry.get("payload")
-                if not kind or not isinstance(payload, dict):
-                    raise HTTPException(status_code=400, detail="each artifact needs a kind and a payload object")
-                artifacts.put(owner=owner, job_id=new_id, kind=str(kind), payload=payload)
+            for kind, payload in carried:
+                artifacts.put(owner=owner, job_id=new_id, kind=kind, payload=payload)
     return {"jobId": new_id}
+
+
+def _checked_clone_artifacts(entries: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """Every carried artifact, validated by its registered kind BEFORE the copy exists (08-18).
+
+    All or nothing, because the alternative loses work silently: checked one at a time during the copy, a bad
+    entry halfway down refused the request AFTER the run and the entries before it were already stored — a
+    copy that looks kept on the Runs page and quietly lacks everything after the bad entry. The guest's edits
+    are still in their tab when this refuses, so a clean refusal is recoverable and a partial copy is not. The
+    same registry the upsert uses does the checking, so no second copy of any rule lives here.
+    """
+    carried: list[tuple[str, dict[str, Any]]] = []
+    for i, entry in enumerate(entries):
+        kind, payload = entry.get("kind"), entry.get("payload")
+        if not kind or not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="each artifact needs a kind and a payload object")
+        try:
+            spec = registry.get(str(kind))
+            spec.check(payload)
+            spec.key_for(payload)
+        except (UnknownArtifactKindError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"artifact {i} ({kind}): {exc}") from exc
+        carried.append((str(kind), payload))
+    return carried
 
 
 # --- user artifacts (generic) ----------------------------------------------------------------
@@ -1708,7 +1730,7 @@ def delete_artifact(job_id: str, kind: str, item_key: str, request: Request) -> 
         raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
     with _writable_run():
         if _is_pinned(job):
-            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified")
+            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified — clone it to keep your work")
         artifacts.delete(owner=owner, job_id=job_id, kind=kind, item_key=item_key)
 
 
