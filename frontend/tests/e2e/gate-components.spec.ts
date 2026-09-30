@@ -53,6 +53,17 @@ function code(file: string): string {
     .replace(/^\s*\/\/.*$/gm, " ");
 }
 
+/**
+ * The COPY a component renders, as a reader sees it: comments stripped, then every whitespace run collapsed to
+ * one space — which is exactly what JSX does to a text child. A copy assertion has to survive a reflow.
+ * CarveProposal's off-state sentence was wrapped as "…so it is off⏎on this run." by a merge (f27e981): the
+ * screen was unchanged, but a raw substring gate read the reflow as the sentence having been deleted.
+ * Stripping comments first also means the phrase must be RENDERED copy, not a docstring describing it.
+ */
+function copy(file: string): string {
+  return code(file).replace(/\s+/g, " ");
+}
+
 /** Every gate component source, by filename. */
 function gateSources(): Record<string, string> {
   return Object.fromEntries(
@@ -208,10 +219,12 @@ test.describe("gate component vocabulary", () => {
     expect(src).toContain('claim="not-enabled"');
     // Interim honesty fix (08-17, 2026-09-17): the tile no longer promises a Setup control that does not
     // work (the toggle is inert pending the decision-time opt-in redesign) — it states the off-state plainly.
-    expect(src).toContain("off on this run");
+    // Read as rendered copy (see `copy`), so a line-wrap inside the sentence is not mistaken for its removal.
+    const text = copy("CarveProposal.tsx");
+    expect(text).toContain("off on this run");
     // Edit and ignore stay live either way: both are free, and both are how the flag gets resolved by hand.
-    expect(src).toContain("Edit by moving variables");
-    expect(src).toContain("Ignore the proposal");
+    expect(text).toContain("Edit by moving variables");
+    expect(text).toContain("Ignore the proposal");
   });
 
   test("@gate-components the not-available tile distinguishes three claims and is not an error", () => {
