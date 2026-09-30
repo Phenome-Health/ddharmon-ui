@@ -29,12 +29,14 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import dataclasses
 import inspect
 import json
 import logging
 import os
 import threading
 import time
+import uuid
 from collections import Counter
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
@@ -2453,8 +2455,15 @@ def core_group_overrides(raw: Any, known_fields: Collection[str]) -> Any | None:
     from ddharmon.harmonization.overrides import GroupOverrides, ReviewerGroup
 
     known = set(known_fields)
+    # A part of an accepted division carries the group it was divided from — provenance only (the record says
+    # "re-split from"). Passed only to a core whose ReviewerGroup has the field; an older one simply omits it.
+    carries_split = "split_from" in {f.name for f in dataclasses.fields(ReviewerGroup)}
     new_groups = tuple(
-        ReviewerGroup(group_id=str(g["groupId"]), name=str(g.get("name") or ""))
+        ReviewerGroup(
+            group_id=str(g["groupId"]),
+            name=str(g.get("name") or ""),
+            **({"split_from": str(g["splitFrom"])} if carries_split and g.get("splitFrom") else {}),
+        )
         for g in raw.get("newGroups") or []
         if isinstance(g, dict) and g.get("groupId")
     )
@@ -3303,52 +3312,70 @@ def readjudicate_groups(
     return [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in updated.records]
 
 
-def _core_readjudicate_split_only() -> Callable[..., Any]:
-    """Fetch core's split-only re-adjudication (Gate-1 accept-the-division). A seam, so a test can stand
-    in for it without an LLM anywhere."""
-    from ddharmon.harmonization import readjudicate_split_only
+class DivisionUnavailableError(RuntimeError):
+    """This core cannot divide a group the way Gate 1 needs it divided. Raised BEFORE anything is bought.
 
-    return readjudicate_split_only
+    Deliberately NOT a silent degrade: this used to hand the run's groups back unchanged when the import failed
+    (and it did fail — core never exported the function), so the paid "Accept the division" answered 200 and did
+    nothing (08-28, the silent no-op). A paid button must fail where the reviewer can see it, not look done.
+    """
 
 
-def readjudicate_split_only_groups(
+def _core_division() -> tuple[Callable[..., Any], Callable[..., Any]]:
+    """Core's split-only re-adjudication and its division -> regrouping translation. A seam, so a test can stand
+    in for a core that lacks them; the real ones run everywhere else."""
+    from ddharmon.harmonization import division_overrides, readjudicate_split_only
+
+    return readjudicate_split_only, division_overrides
+
+
+def divide_groups(
     leanb_result: Any,
     embedded: list[Any],
     *,
     group_ids: Sequence[str] | None,
     split: StageFn,
+    group_overrides: Any | None = None,
     cde_cohort: str = "NIH_CDE",
+    mint_id: Callable[[], str] | None = None,
     **knobs: Any,
-) -> tuple[list[UIConceptGroup], dict[str, list[str]]]:
-    """Gate-1 "accept the division": re-split EXACTLY the groups a human named into child CONCEPT-GROUPS
-    and return the updated ``(conceptGroups, conceptGroupMembers)`` — the Gate-1 ledger, not records.
+) -> list[dict[str, Any]]:
+    """Gate-1 "accept the division": re-split EXACTLY the groups a human named, as the reviewer decisions that
+    carry the division to every later leg.
 
-    Split-only: no ``classify``. Accepting a division is a GROUPING change, so the children are assigned
-    later at Gate 2 in the normal flow. Each child carries ``readjudicatedFrom`` = the parent group id,
-    which Gate 1 renders as "re-split from <parent>". Like :func:`readjudicate_groups`, ``group_ids`` is
-    required and non-empty — a re-split with no named human decision is the prohibited auto-resolution of
-    an over-merge.
+    Core's ``readjudicate_split_only`` re-splits each named group — as the reviewer currently sees it, when
+    ``group_overrides`` (their regrouping so far) is given — and ``division_overrides`` turns its parts into the
+    one shape a replay reproduces: a New group per part, with the part's members moved in. The children core
+    returns exist on this result only (the next leg re-runs the split, which keeps the group whole), so they are
+    NOT returned as concept groups; each part comes back as ``{parentGroupId, groupId, name, members}`` for the
+    caller to persist as ``gate1_new_group`` + ``gate1_regroup`` decisions.
 
-    The flow is core's: this calls ``readjudicate_split_only()``, which reuses ``prepare_readjudicate`` →
-    ``prepare_group_assign`` → ``concept_groups_from_prompts`` and splices the children into
-    ``result.concept_groups``. The adapter supplies the one stage callable and maps the result.
-
-    Degrades on an older pinned core with no ``readjudicate_split_only``: the groups come back unchanged and
-    nothing raises.
+    A group the re-split kept whole (one part) produces nothing: there is no division to record. Part ids are
+    minted here (``rev:<uuid>``, ``mint_id`` for a test); a part the re-split gave no concept is named for the
+    group it came from. ``group_ids`` is required and non-empty — a re-split with no named human decision is the
+    prohibited auto-resolution of an over-merge. Raises :class:`DivisionUnavailableError` on a core without the
+    seams, before any stage runs.
     """
     if not group_ids:
         raise ValueError(
-            "readjudicate_split_only_groups requires an explicit non-empty group_ids list. Accepting a "
-            "division is a human decision; re-splitting every flagged group because it was flagged is the "
-            "prohibited auto-resolution of an over-merge."
+            "divide_groups requires an explicit non-empty group_ids list. Accepting a division is a human "
+            "decision; re-splitting every flagged group because it was flagged is the prohibited auto-resolution "
+            "of an over-merge."
         )
     try:
-        core_split_only = _core_readjudicate_split_only()
+        split_only, to_overrides = _core_division()
     except (ImportError, AttributeError) as exc:
-        logger.warning("this core has no readjudicate_split_only (%s) — returning the groups unchanged", exc)
-        return _concept_groups_to_ui(leanb_result), _concept_group_members(leanb_result)
+        raise DivisionUnavailableError(
+            f"the pinned ddharmon core cannot divide a group at Gate 1 ({exc}); upgrade core — nothing was charged"
+        ) from exc
+    if group_overrides is not None and "group_overrides" not in inspect.signature(split_only).parameters:
+        raise DivisionUnavailableError(
+            "the pinned ddharmon core cannot divide a group you have already regrouped (no `group_overrides` on "
+            "readjudicate_split_only); upgrade core — nothing was charged"
+        )
+    parent_name = {g.group_id: g.concept for g in leanb_result.concept_groups}
     _docs, embeddings, field_refs = _collect_inputs(embedded)
-    updated = core_split_only(
+    updated = split_only(
         leanb_result,
         embedded,
         embeddings,
@@ -3356,9 +3383,22 @@ def readjudicate_split_only_groups(
         split=split,
         group_ids=list(group_ids),
         cde_cohort=cde_cohort,
+        **({"group_overrides": group_overrides} if group_overrides is not None else {}),
         **knobs,
     )
-    return _concept_groups_to_ui(updated), _concept_group_members(updated)
+    mint = mint_id or (lambda: f"rev:{uuid.uuid4()}")
+    out: list[dict[str, Any]] = []
+    for parent in dict.fromkeys(group_ids):
+        parts = [g for g in updated.concept_groups if g.readjudicated_from == parent]
+        if len(parts) < 2:
+            continue  # kept whole: the re-split found one concept, so there is nothing to divide
+        division = to_overrides(parts, [mint() for _ in parts])
+        for i, (part, group) in enumerate(zip(parts, division.new_groups, strict=True)):
+            members = [m for m, dest in division.moves.items() if dest == group.group_id]
+            name = part.concept or f"{parent_name.get(parent) or parent} — part {i + 1}"
+            out.append({"parentGroupId": parent, "groupId": group.group_id, "name": name, "members": members})
+    logger.info("divide_groups: %d group(s) named -> %d part(s)", len(group_ids), len(out))
+    return out
 
 
 # -- the $0 front-half replay: rebuilding core's inputs without buying anything ----------------
