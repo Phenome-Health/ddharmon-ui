@@ -9,6 +9,7 @@ import {
   isAwaitingProviderQueue,
   legStartedAt,
   phasePercent,
+  syncSwitchState,
   timelineSegments,
 } from "@/lib/run-progress";
 
@@ -303,5 +304,71 @@ test.describe("etaSeconds", () => {
     expect(eta({ phase: "splitting", status: "splitting", config: { run_mode: "batch" } })).toBeNull();
     // ...but the LOCAL leg of the same batch run is genuine progress and still gets one.
     expect(eta({ phase: "clustering", status: "clustering", config: { run_mode: "batch" } })).toBe(300);
+  });
+});
+
+/**
+ * 08-28 0e — the batch -> sync switch, as the readout decides it. Pure, so the four states are asserted
+ * without a browser; `sync-switch.spec.ts` renders them.
+ */
+test.describe("syncSwitchState", () => {
+  const batch = (over: Record<string, unknown> = {}) => ({
+    tag: "generate",
+    nItems: 330,
+    status: "in_progress",
+    switchable: true,
+    syncEstimateUsd: 0.42,
+    ...over,
+  });
+
+  test("@runprogress offered only while the leg is batch and its batch is switchable and in_progress", () => {
+    expect(syncSwitchState({ transport: "batch", batch: batch() })).toEqual({
+      kind: "offer",
+      label: "Finish now with sync (+$0.42)",
+      estimateUsd: 0.42,
+      nItems: 330,
+    });
+    // An ending batch hands back everything anyway; a sync leg has nothing to switch; no batch, no offer.
+    expect(syncSwitchState({ transport: "batch", batch: batch({ status: "canceling", switchable: false }) })).toBeNull();
+    expect(syncSwitchState({ transport: "batch", batch: batch({ status: "ended", switchable: true }) })).toBeNull();
+    expect(syncSwitchState({ transport: "sync", batch: null })).toBeNull();
+    expect(syncSwitchState({ transport: "batch", batch: null })).toBeNull();
+    expect(syncSwitchState(null)).toBeNull();
+    expect(syncSwitchState({})).toBeNull();
+  });
+
+  test("@runprogress an unpriceable remainder is never labelled +$0", () => {
+    const state = syncSwitchState({ transport: "batch", batch: batch({ syncEstimateUsd: null }) });
+    expect(state).toMatchObject({ kind: "offer", label: "Finish now with sync", estimateUsd: null });
+  });
+
+  test("@runprogress pressed but not yet acted on reads as requested, not as a fresh offer", () => {
+    // The server marks the batch un-switchable the moment the press lands; the stage acts a heartbeat later.
+    expect(syncSwitchState({ transport: "batch", batch: batch({ switchable: false }) })).toEqual({ kind: "requested" });
+  });
+
+  test("@runprogress a cancelled batch handing back what it finished is its own state", () => {
+    expect(
+      syncSwitchState({ transport: "sync", batch: batch({ status: "canceling", switchable: false }) }),
+    ).toEqual({ kind: "switching" });
+  });
+});
+
+test.describe("the queue after a switch", () => {
+  test("@runprogress once the leg runs sync it is no longer waiting in the provider's queue", () => {
+    expect(isAwaitingProviderQueue({ run_mode: "batch" }, "generating", "sync")).toBe(false);
+    expect(isAwaitingProviderQueue({ run_mode: "batch" }, "generating", "batch")).toBe(true);
+    expect(isAwaitingProviderQueue({ run_mode: "batch" }, "generating", null)).toBe(true);
+    // ...and so the ETA may be projected again from real progress.
+    expect(
+      etaSeconds({
+        status: "generating",
+        phase: "generating",
+        config: { run_mode: "batch" },
+        transport: "sync",
+        elapsed: 100,
+        pct: 25,
+      }),
+    ).toBe(300);
   });
 });

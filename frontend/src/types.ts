@@ -567,6 +567,26 @@ export interface JobResult {
   // reproducibility disclosure and its E3 revision-rate anti-drift stamp read it; absent on runs that
   // predate the stamp.
   coreVersion?: string;
+  // LIVE runs (08-28 0e): how the current leg is sending its LLM stages — "batch" until a switch, then "sync"
+  // for the rest of the leg. Absent/null when no leg is running. Streamed on the progress frame.
+  transport?: "batch" | "sync" | null;
+  // LIVE runs (08-28 0e): the batch a batch stage is polling right now, or null when none is in flight. What
+  // the "Finish now with sync" control renders from.
+  batch?: BatchInFlight | null;
+}
+
+/** The in-flight batch, as the progress frame reports it (08-28 0e). */
+export interface BatchInFlight {
+  /** The stage's batch cache tag (`generate`, `split`, `assign`, …). */
+  tag: string;
+  /** Requests this batch was sent — everything a switch would re-run if the batch returns nothing. */
+  nItems: number;
+  /** The provider's `processing_status` (`in_progress`, `canceling`, `ended`), or null before the first read. */
+  status: string | null;
+  /** The switch is on offer: the batch is `in_progress` and nobody has pressed it this leg. */
+  switchable: boolean;
+  /** A deliberately HIGH estimate of those requests at the full (sync) rate; null when it cannot be priced. */
+  syncEstimateUsd: number | null;
 }
 
 /** Where a run is parked and what reaching it cost — GET /api/harmonize/checkpoint/{jobId}. */

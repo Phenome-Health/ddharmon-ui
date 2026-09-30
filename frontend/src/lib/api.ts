@@ -156,6 +156,20 @@ export async function cancelJob(jobId: string, mode: "keep" | "discard" = "disca
   return json(await fetch(`${BASE}/jobs/${jobId}/cancel?mode=${mode}`, { method: "POST", headers: await authed() }));
 }
 
+/**
+ * Stop waiting on the in-flight batch and finish the stage synchronously (08-28 0e). A PAID choice: whatever
+ * the cancelled batch does not hand back is bought again at the full rate — the offer carries its estimate.
+ *
+ * The server answers 409 when there is nothing to switch (no batch in flight, or one no longer queued), and is
+ * idempotent (`alreadyRequested`). Tried even in a static build: that is the network seam the e2e gate fulfils
+ * with `page.route`; with no backend behind it the call answers STATIC_MSG instead of a raw network error.
+ */
+export async function switchToSync(jobId: string): Promise<{ switched: boolean; alreadyRequested: boolean }> {
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to switch a run to sync.");
+  const headers = await authed();
+  return scoreJson(() => fetch(`${BASE}/jobs/${jobId}/switch-to-sync`, { method: "POST", headers }));
+}
+
 export async function generateAnalysisIdeas(
   jobId: string,
   apiKey?: string,
@@ -276,8 +290,9 @@ export class ApiError extends Error {
 }
 
 /**
- * The score panel's two document calls, shared: unpack FastAPI's `detail` with the status kept, and — in a
- * static build — turn "there is no backend" (a network error, or the SPA's HTML fallback) into STATIC_MSG.
+ * The score panel's two document calls (and the batch -> sync switch), shared: unpack FastAPI's `detail` with
+ * the status kept, and — in a static build — turn "there is no backend" (a network error, or the SPA's HTML
+ * fallback) into STATIC_MSG.
  */
 async function scoreJson<T>(send: () => Promise<Response>): Promise<T> {
   let res: Response;
