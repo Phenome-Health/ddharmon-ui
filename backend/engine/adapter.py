@@ -3184,6 +3184,12 @@ def apply_reviewer_picks(
             continue
         kind, chosen, edit = plan
         model_target = rec.cde_id or (rec.gencde.gencde_id if rec.gencde is not None else "")
+        # 08-28 1e (F17): the MODEL's pick, captured BEFORE the re-target overwrites the record's cde / verdict
+        # / gencde. From here on those fields describe the reviewer's target, so an export reading them for
+        # "what the model chose" would report the pick as the model's own.
+        model_cde = {"id": rec.cde_id, "externalId": str(rec.cde_external_id or "")} if rec.cde_id else None
+        model_verdict = str(rec.verdict or "")
+        model_gencde = _gencde_to_ui(rec.gencde)
         reason = ""
         if kind == "catalog":
             reason = _retarget_catalog(rec, chosen, embedded, cde_fields, model_tag=model_tag, stage_fn=stage_fn)
@@ -3213,6 +3219,9 @@ def apply_reviewer_picks(
             "target": target,
             "modelTarget": model_target,
             "reason": reason,
+            "modelCde": model_cde,
+            "modelVerdict": model_verdict,
+            "modelGencde": model_gencde,
         }
         rec.raw = raw
         changed.append(key)

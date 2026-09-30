@@ -274,6 +274,13 @@ class ReviewerPick(TypedDict):
     target: str  # the id the record's transforms now target ("" when there is none)
     modelTarget: str  # what the model had chosen (a CDE id or GenCDE id; "" if nothing)
     reason: str  # non-empty when no specs could be generated (e.g. "none of these" with nothing to fall back on)
+    # ── 08-28 1e: the MODEL's pick, stamped before the re-target overwrote the record (F17) ──
+    # Once re-targeted, the record's own cde / candidates / verdict / gencde describe the REVIEWER's target, so
+    # these are the only place the model's choice survives. `NotRequired`: a checkpoint written before 08-28
+    # carries only `modelTarget`, and readers fall back to it.
+    modelCde: NotRequired[CdeRef | None]  # the model's catalog CDE; None when it picked none (a GenCDE / novel)
+    modelVerdict: NotRequired[str]  # adopt | refine | novel — the model's verdict
+    modelGencde: NotRequired[UIGenCDE | None]  # the model's generated element, UNEDITED; None when it had none
 
 
 class UIRecord(TypedDict):
