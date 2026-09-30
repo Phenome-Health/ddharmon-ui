@@ -1137,7 +1137,8 @@ def analysis_ideas(
         raise HTTPException(status_code=404, detail="Job not found")
     if job.analysis_ideas is not None and not regenerate:
         return {"ideas": job.analysis_ideas, "cached": True}
-    records = (job.result or {}).get("records") if job.result else None
+    # The reviewer's concepts — a staged run's effective records from its checkpoint (08-28 1f, F20).
+    _payload, records, _staged = _harmonized(job, _subject(request))
     if not records:
         raise HTTPException(status_code=409, detail="This run has no harmonized concepts to analyze yet.")
 
@@ -1534,13 +1535,37 @@ class CompositeBody(BaseModel):
     `definition` re-derives from an ALREADY-transcribed definition (the `definition` object of a previous
     response), skipping the extraction call. `overrides` maps a component name to a concept id to pin it, or
     to null to drop it; with every component pinned the re-derive costs no LLM call at all.
+
+    `declaredScore` names a score DECLARED on Gate 1 (its ``composite_swap`` rows) and matches exactly those
+    components — Gate 4's "Match" (08-28 1f, decision Q5). The declaration is the definition, so nothing is
+    transcribed: one model call, the match.
     """
 
     sourceText: str | None = None
     sourceRef: str | None = None
     definition: dict[str, Any] | None = None
+    declaredScore: str | None = None
     overrides: dict[str, str | None] | None = None
     hybrid: bool = False
+
+
+def _harmonized(job: Job, subject: str | None) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool]:
+    """``(payload, records, staged)`` — the run's concepts as the paid routes over them must read them.
+
+    A STAGED run keeps its payload in the checkpoint its gates share (D-02), so ``job.result`` is empty while it
+    is parked — which is why composite / analysis-ideas / regenerate-specs used to 409 on every staged run (live
+    verify 3 F20). This reads the same checkpoint-aware payload the exports do and, on a staged run, the same
+    EFFECTIVE records (:func:`backend.export_decisions.effective_records`: scope, renames, target picks, recode
+    edits), so a paid action is made against the concepts the reviewer left and every export will carry. A
+    legacy one-shot run reads its result's records exactly as it always has.
+    """
+    payload = _export_payload(job)
+    if payload is None:
+        return None, [], False
+    grouped = store.artifacts_for(job, subject) or {}
+    if export_decisions.is_staged(job.gate_position, grouped):
+        return payload, export_decisions.effective_records(payload, job.config or {}, grouped), True
+    return payload, list(payload.get("records") or []), False
 
 
 @app.post("/api/harmonize/jobs/{job_id}/composite/extract")
@@ -1895,6 +1920,7 @@ def composite(
     body: CompositeBody,
     request: Request,
     x_anthropic_key: Annotated[str | None, Header()] = None,
+    x_provider_key: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
     """Derive a composite/derived-variable spec for this run — can a published score be computed, and how?
 
@@ -1902,31 +1928,62 @@ def composite(
     score from the supplied document, matches each component to a concept actually present, and returns the
     feasibility verdict + per-cohort coverage + the derivation recipe. Cached on the job (replacing any
     previous spec for the same score) so a re-view isn't re-billed.
+
+    The concepts are the reviewer's (:func:`_harmonized`): on a staged run, the checkpoint's effective records,
+    so Gate 4 matches against the concepts as they will be exported (08-28 1f, F20). ``declaredScore`` matches
+    the score declared on Gate 1 in ONE call; a passed Gate 1 freezes editing that declaration, never matching
+    it, so no gate refusal applies here. Its spend is billed under ``composite`` and returned as ``billedUsd``.
     """
     subject = _subject(request)
     job = store.get(job_id)
     if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
-    records = (job.result or {}).get("records") if job.result else None
+    payload, records, staged = _harmonized(job, subject)
     if not records:
         raise HTTPException(status_code=409, detail="This run has no harmonized concepts to build a score from.")
 
     from backend.artifact_kinds import COMPOSITE
     from backend.composite import derive, resolve_source
+    from backend.declared_score import definition_for, find_declared, scoped_field_index
     from backend.engine.llm import build_llm_client
     from backend.llm_errors import llm_call
 
-    # A re-derive from an existing definition needs no document; a first derivation does.
+    key = x_provider_key or x_anthropic_key
+    # A re-derive from an existing definition needs no document; a first derivation does; a declared score IS
+    # its definition. Every refusal below is made BEFORE anything is spent.
     source = None
-    if body.definition is None:
+    declared = None
+    if body.declaredScore is not None:
+        declared = find_declared(store.artifacts_for(job, subject), body.declaredScore)
+        if declared is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No score named {body.declaredScore.strip()!r} was declared on this run's Gate 1.",
+            )
+        if _no_anthropic_key(job.config, key):
+            raise HTTPException(
+                status_code=400,
+                detail="Enter your Anthropic API key to match the declared score — it is one model call and the "
+                "key clears on reload. Nothing was charged.",
+            )
+        source = definition_for(declared)
+    elif body.definition is None:
         try:
             source = resolve_source(text=body.sourceText, ref=body.sourceRef)
         except (ValueError, ImportError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Variable-level matching (augment): the run's field index lets a component bind to a single source
+    # variable, not only a harmonized concept group. Absent -> group-only. On a staged run it is cut to the
+    # final records' members, so a scoped-out variable never takes a shortlist slot.
+    field_index = (payload or {}).get("fieldIndex")
+    if staged:
+        field_index = scoped_field_index(field_index, records)
+
     # Same model/provider the run was configured with. BYOK: in-memory for this request only.
     model_tag = job.config.get("model_tag")
-    client = build_llm_client(model_tag, x_anthropic_key)
+    client = build_llm_client(model_tag, key)
+    billed = 0.0
     try:
         # llm_call: a rejected key / rate limit / overload is the provider's condition, not our crash.
         with llm_call(model=model_tag):
@@ -1936,16 +1993,17 @@ def composite(
                 client.complete,
                 overrides=body.overrides,
                 hybrid=body.hybrid,
-                # Variable-level matching (augment): the run's field index lets a component bind to a
-                # single source variable, not only a harmonized concept group. Absent -> group-only.
-                field_index=(job.result or {}).get("fieldIndex") if job.result else None,
+                field_index=field_index,
             )
     except ValueError as exc:
         # e.g. the document defines no score, or its text extraction came back empty — a 400, not a 500.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         # Whatever the derivation's calls cost is billed to the run (a free re-derive drains nothing).
-        billing.bill_client(store, job_id, billing.COMPOSITE, client)
+        billed = billing.bill_client(store, job_id, billing.COMPOSITE, client)
+    if declared is not None:
+        spec["sourceKind"] = "declaration"  # not a transcribed document: the reviewer's own Gate 1 list
+    spec["billedUsd"] = billed
     # Durable home is the per-user artifact store, keyed by the score's name — so a re-derive REPLACES that
     # score for THIS user (what `composite.upsert` used to do by hand) and one user's derivation is never
     # visible to another on a shared run. A pinned run raises here rather than silently discarding the spec,
@@ -2076,13 +2134,27 @@ def regenerate_specs(
     BYOK: the key rides the ``X-Provider-Key`` (or legacy ``X-Anthropic-Key``) header, is used to build the
     LLM client for THIS request only, and is NEVER written to ``run_config``, the job, the DB, os.environ, or
     any log — exactly like the analysis-ideas + batch paths.
+
+    ON A PARKED (staged) RUN the record lives in its checkpoint, and is read from and written back to it
+    (08-28 1f, F20) — only at Gate 3, whose subject the recodes are. Before Gate 3 the leg into it regenerates
+    every spec (a regeneration here would be paid for and then overwritten); after it, Gate 3's recodes are a
+    record. The record must be one the reviewer kept (their effective records); the checkpoint's own copy is the
+    base, so the reviewer's overlays (renames, edits, rejections) stay decisions and are never baked into it.
     """
+    subject = _subject(request)
     job = store.get(job_id)
-    if job is None or not _visible_to(job, _subject(request)):
+    if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
-    records = (job.result or {}).get("records") if job.result else None
-    rec_ui = next((r for r in (records or []) if r.get("id") == record_id), None)
-    if rec_ui is None:
+    parked = _checkpoint_for(job) is not None
+    if parked and job.gate_position != "gate3":
+        raise HTTPException(
+            status_code=409,
+            detail="On a staged run, recodes are regenerated at Gate 3. Nothing was charged.",
+        )
+    payload, records, _staged = _harmonized(job, subject)
+    kept = {r.get("id") for r in records}
+    rec_ui = next((r for r in (payload or {}).get("records") or [] if r.get("id") == record_id), None)
+    if rec_ui is None or record_id not in kept:
         raise HTTPException(status_code=404, detail="Record not found in this run")
     if not rec_ui.get("gencde"):
         raise HTTPException(status_code=409, detail="This record has no proposed GenCDE to regenerate recodes for")
@@ -2106,8 +2178,35 @@ def regenerate_specs(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     finally:
         billing.bill_client(store, job_id, billing.SPECS_REGEN, client)  # the regeneration's calls (08-28 1a)
-    store.replace_result_record(job_id, record_id, cast("dict[str, Any]", updated))
+    if parked:
+        _replace_checkpoint_record(job_id, record_id, cast("dict[str, Any]", updated))
+    else:
+        store.replace_result_record(job_id, record_id, cast("dict[str, Any]", updated))
     return {"record": updated}
+
+
+def _replace_checkpoint_record(job_id: str, record_id: str, new_record: dict[str, Any]) -> None:
+    """Swap one record of a parked run's checkpoint — the staged sibling of ``store.replace_result_record``.
+
+    Re-read under the run's checkpoint lock: the paid call before this took seconds, and its own bill has just
+    rewritten the checkpoint's cost block; writing back the copy read before the call would erase that bill.
+    """
+    with checkpoint_lock(job_id):
+        latest = store.get(job_id)
+        fresh = _checkpoint_for(latest) if latest is not None else None
+        if latest is None or fresh is None:
+            return
+        records = [new_record if r.get("id") == record_id else r for r in fresh.result.get("records") or []]
+        write_checkpoint(
+            fresh.path.parent if fresh.path is not None else Path(latest.config["work_dir"]),
+            job_id=fresh.job_id,
+            gate=fresh.gate,
+            result={**fresh.result, "records": records},
+            responses=fresh.responses,
+            realized_cost=fresh.realized_cost,
+        )
+        # The payload changed, so the version token the gate screens refetch on moves once.
+        store.update(job_id, result_version=latest.result_version + 1)
 
 
 # --- export ----------------------------------------------------------------------------------
@@ -2230,9 +2329,25 @@ def export(job_id: str, request: Request, format: str = "eitl_tsv") -> Any:
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found or not complete")
     grouped = store.artifacts_for(job, subject)
+    if format == "score_json":
+        # The declared score's verdict + recipe ride their OWN file (08-28 1f, Q5) — see backend/declared_score.py.
+        return _score_download(job, grouped)
     if export_decisions.is_staged(job.gate_position, grouped or {}):
         return _export_staged(job, payload, grouped or {}, format)
     return _export_legacy(job, payload, format)
+
+
+def _score_download(job: Job, grouped: dict[str, Any] | None) -> JSONResponse:
+    """``score_json``: every declared score with its status, verdict and derived spec (recipe included)."""
+    from backend.artifact_kinds import COMPOSITE
+    from backend.declared_score import score_export
+
+    # No artifact store configured: a finished run's composites are still on its in-memory mirror.
+    source = grouped if grouped is not None else {COMPOSITE: job.composites or []}
+    return JSONResponse(
+        score_export(source),
+        headers={"Content-Disposition": f'attachment; filename="score_{job.job_id[:8]}.json"'},
+    )
 
 
 def _download(body: str, fmt: str, ext: str, job_id: str) -> StreamingResponse:
