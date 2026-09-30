@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
+import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
+import { GuestAuthNotice } from "@/components/gate/SandboxBanner";
+import { useSandboxCount } from "@/hooks/use-sandbox-count";
+import { demoExportNote } from "@/lib/sandbox";
 import { ArtifactTile } from "@/components/gate/ArtifactTile";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DecisionLog } from "@/components/gate/DecisionLog";
@@ -113,6 +117,14 @@ export default function Gate4Page() {
       el.remove();
     }
   };
+
+  // THE SHARED DEMO (08-18). A guest cannot download at all — the export route is not on the guest surface, so
+  // the bar says so specifically instead of handing them a 401 as a file. Anyone on the demo who holds edits is
+  // told the files leave them out: the previews below read this tab, the download reads the demo's own row.
+  const { isGuest } = useAuthState();
+  const guestLocked = AUTH_ENABLED && isGuest;
+  const held = useSandboxCount(jobId);
+  const exportNote = pinned === true ? demoExportNote(held) : null;
 
   const breakdown = verdictBreakdown(result);
   // F21: the variables no artifact carries, split by WHY — scoped out at Gate 1 is the reviewer's choice, not a
@@ -298,7 +310,15 @@ export default function Gate4Page() {
         action={downloadLabel(selectedCount)}
         actionTestId="download-artifacts"
         onCommit={download}
-        disabled={selectedCount === 0}
+        disabled={selectedCount === 0 || guestLocked}
+        recheckNotice={
+          guestLocked || exportNote ? (
+            <span className="flex flex-col gap-1">
+              {guestLocked && <GuestAuthNotice action="downloading the export" />}
+              {exportNote && <span data-testid="demo-export-note">{exportNote}</span>}
+            </span>
+          ) : undefined
+        }
         assurance="Nothing here contains participant data. Every file is metadata, a decision, or code."
         className="mt-6"
       />

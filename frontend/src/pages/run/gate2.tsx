@@ -25,7 +25,8 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
-import { isGatePast, pathForGate } from "@/lib/gate-routes";
+import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
@@ -128,6 +129,11 @@ export default function Gate2Page() {
   }, [allRecords, runConfig]);
 
   async function onContinue() {
+    // The shared demo is walked, not resumed (08-18) — see Gate 1's `onContinue`.
+    if (pinned === true) {
+      navigate(pathForGate(jobId, nextRailGate("gate2") ?? "gate3"));
+      return;
+    }
     setResuming(true);
     try {
       const { target } = await resumeRun(jobId);
@@ -687,7 +693,7 @@ export default function Gate2Page() {
       <CommitBar
         action={failedLeg ? "Retry — continue this run" : "Continue to Gate 3"}
         actionTestId="gate2-continue"
-        total={continueCost}
+        total={pinned === true ? undefined : continueCost}
         spentHere={costSoFar}
         scopeLabel={`${allRecords.length} ${allRecords.length === 1 ? "concept" : "concepts"}`}
         recheckNotice={
@@ -695,9 +701,10 @@ export default function Gate2Page() {
             ? "The last attempt to continue this run did not finish. Nothing further was charged — press Retry to run the same step again."
             : undefined
         }
+        assurance={pinned === true ? DEMO_CONTINUE_NOTE : undefined}
         onCommit={onContinue}
         busy={resuming}
-        disabled={frozen || (!parkedHere && !failedLeg)}
+        disabled={frozen || (pinned !== true && !parkedHere && !failedLeg)}
       />
     </Shell>
   );

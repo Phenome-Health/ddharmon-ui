@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { JobResult } from "@/types";
 import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
+import { asOwnedRun } from "./gate1-fixture";
 
 /**
  * The commit bar carries the reviewer past Gate 2 and Gate 3 (08-23b Task 1). The walk REACHES Gate 4; it
@@ -17,7 +18,8 @@ import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
 function park(run: JobResult, gate: "gate2" | "gate3"): JobResult {
   run.status = "awaiting_review";
   run.gatePosition = gate;
-  return run;
+  // The PAID affordance is an owned run's: the shared demo's bar is a free walk (08-18, `sandbox.spec.ts`).
+  return asOwnedRun(run);
 }
 
 test("@commit-bar @gate2 Gate 2 offers a commit bar continuing to Gate 3", async ({ page }) => {

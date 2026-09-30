@@ -1104,3 +1104,81 @@ def test_a_non_decision_kind_is_never_given_a_conflict_notice(tmp_path, monkeypa
         c.put("/api/harmonize/jobs/j1/artifacts/composite", json=body)
         again = c.put("/api/harmonize/jobs/j1/artifacts/composite", json=body)
     assert again.json()["conflict"] is None
+
+
+# --- 08-18: the guest sandbox's clone bridge ---------------------------------------------------
+#
+# A guest's gate decisions live in the tab (frontend/src/lib/sandbox.ts) and reach the store ONLY through
+# "clone with my changes", which posts every held decision as `{kind, payload}`. Two failures would lose that
+# work silently at sign-in: a kind the clone route cannot store, and a clone that half-succeeds — a run created,
+# some decisions stored, the rest refused — which reads as "kept" while quietly dropping the remainder.
+
+
+def _a_valid_decision(kind: str) -> dict:
+    """One payload the registered kind accepts, built from the identity table rather than by hand, so a kind
+    added to the registry is covered here without anyone remembering to add it."""
+    from backend.artifact_kinds import _DECISION_IDENTITY_FIELDS, REVIEWER_GROUP_PREFIX, SKOS_RELATIONS
+
+    payload = {field: f"{field}-1" for field in _DECISION_IDENTITY_FIELDS[kind]}
+    if "groupId" in payload:
+        payload["groupId"] = f"{REVIEWER_GROUP_PREFIX}guest-1"  # the one id every group-keyed kind accepts
+    # A relation's `chosen` must be a SKOS predicate (the store refuses anything else); every other kind takes "x".
+    options = list(SKOS_RELATIONS[:2]) if kind == GATE2_RELATION else ["x", "y"]
+    return {
+        **payload,
+        "name": "My group",
+        "chosen": options[0],
+        "alternatives": options,
+        "optionSetKey": option_set_key(options),
+    }
+
+
+def test_clone_with_my_changes_carries_every_gate_decision_kind(tmp_path, monkeypatch):
+    """R9: every kind a guest can decide on the demo arrives on the clone, unchanged — and none on the demo."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    sent = [{"kind": kind, "payload": _a_valid_decision(kind)} for kind in GATE_DECISION_KINDS]
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        r = c.post("/api/harmonize/jobs/demo-1/clone", json={"displayName": "Mine", "artifacts": sent})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["jobId"]
+        stored = app_module.store.artifacts.get_all(owner=LOCAL_PRINCIPAL, job_id=new_id)
+        on_demo = app_module.store.artifacts.get_all(owner=LOCAL_PRINCIPAL, job_id="demo-1")
+    assert sorted(stored) == sorted(GATE_DECISION_KINDS)
+    for entry in sent:
+        assert stored[entry["kind"]] == [entry["payload"]], f"{entry['kind']} was not carried unchanged"
+    assert on_demo == {}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"kind": "no_such_kind", "payload": {"x": 1}},
+        {"kind": GATE2_CANDIDATE_PICK, "payload": {"groupId": "g1", "chosen": "CDE:1", "alternatives": ["CDE:1"]}},
+        {"kind": VERDICT, "payload": {"recordId": "r1", "axis": "match", "decision": "maybe"}},
+    ],
+    ids=["unknown-kind", "decision-without-option-set-key", "invalid-verdict"],
+)
+def test_a_clone_with_one_bad_artifact_is_refused_whole_and_creates_no_run(tmp_path, monkeypatch, bad):
+    """All or nothing. The bad entry is named in a 400, and NO run is left behind carrying the entries that
+    happened to come before it — a half-kept clone is guest work silently lost at sign-in."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    good = {"kind": GATE1_GROUP_SCOPE, "payload": _a_valid_decision(GATE1_GROUP_SCOPE)}
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        before = {j.job_id for j in app_module.store.list()}
+        r = c.post("/api/harmonize/jobs/demo-1/clone", json={"artifacts": [good, bad]})
+        after = {j.job_id for j in app_module.store.list()}
+    assert r.status_code == 400, r.text
+    assert after == before, f"a refused clone left a run behind: {after - before}"
+
+
+def test_pinned_run_rejects_deletes_of_every_gate_decision_kind(tmp_path, monkeypatch):
+    """The write half's twin: a guest's "clear this decision" must not reach the shared row either."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("demo-1", config={"demo": True})
+        for kind in GATE_DECISION_KINDS:
+            r = c.delete(f"/api/harmonize/jobs/demo-1/artifacts/{kind}/anything")
+            assert r.status_code == 403, f"{kind} was deletable on the shared demo ({r.status_code})"
+            assert "clone" in r.json()["detail"].lower()

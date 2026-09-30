@@ -170,6 +170,31 @@ export function isGateReachable(gate: GatePosition, runPosition: GatePosition | 
 }
 
 /**
+ * How far along the rail a run has got, for REACHABILITY — which is not the same question as freezing (08-18).
+ *
+ * A FINISHED run carries no gate position (the pipeline ran through every boundary), and `isGateReachable`
+ * reads an absent position as "reached nothing". So the finished shared demo — the run every guest walks — drew
+ * all four gates as "this run has not reached this gate yet": false, and no way forward. A finished run has
+ * produced everything every gate shows, so it has reached them all.
+ *
+ * FREEZING IS DELIBERATELY UNTOUCHED. `isGatePast` keeps reading the raw position, so a finished run's gates
+ * stay re-decidable (R13) and nothing about a parked run changes.
+ */
+export function railReachOf(
+  job: { status?: string | null; gatePosition?: GatePosition | null } | null | undefined,
+): GatePosition | null {
+  if (!job) return null;
+  if (job.status === "complete") return RAIL_SEQUENCE[RAIL_SEQUENCE.length - 1];
+  return job.gatePosition ?? null;
+}
+
+/** The next screen on the rail, or null from the last — where the shared demo's Continue walks to (08-18). */
+export function nextRailGate(gate: GatePosition): GatePosition | null {
+  const i = RAIL_SEQUENCE.indexOf(gate);
+  return i >= 0 && i < RAIL_SEQUENCE.length - 1 ? RAIL_SEQUENCE[i + 1] : null;
+}
+
+/**
  * The query parameter that turns a NEW run's Setup into a re-run of an earlier one (08-28).
  *
  * Re-run means "start a new run, with the last one's inputs filled in" — not "repeat the last run". The

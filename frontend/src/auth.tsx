@@ -18,6 +18,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { ClerkProvider, SignIn, useAuth, useUser } from "@clerk/react";
 import { AUTH_ENABLED, setLastToken, setTokenGetter } from "@/lib/api";
+import { markGuestSession } from "@/lib/sandbox";
 
 const PUB_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 // Guest "try the demo" bypass is allowed by default; only the explicit string "false" disables it (so an
@@ -67,6 +68,16 @@ function TokenBridge() {
   return null;
 }
 
+/**
+ * Records, for this tab, that it browsed as a guest (08-18). A sign-in is only recognisable as "the guest just
+ * signed in" through something that survives it — an OAuth round trip reloads the app and this component's
+ * state with it — so the fact goes to tab-lifetime storage, where `SignInClonePrompt` reads it.
+ */
+function GuestSessionMarker() {
+  useEffect(() => markGuestSession(), []);
+  return null;
+}
+
 function SignInWall({ onGuest }: { onGuest?: () => void }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-surface-inset p-6">
@@ -113,6 +124,7 @@ function Gate({ children }: { children: ReactNode }) {
     // anyway — so we render exactly the guest read-only surface.
     return (
       <AuthContext.Provider value={{ isAuthed: false, isGuest: true, email, exitGuest: () => void signOut() }}>
+        <GuestSessionMarker />
         {children}
       </AuthContext.Provider>
     );
@@ -120,6 +132,7 @@ function Gate({ children }: { children: ReactNode }) {
   if (guest && ALLOW_GUEST) {
     return (
       <AuthContext.Provider value={{ isAuthed: false, isGuest: true, exitGuest: () => setGuest(false) }}>
+        <GuestSessionMarker />
         {children}
       </AuthContext.Provider>
     );

@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/auth";
 import { AppShell } from "@/components/AppShell";
+import { SignInClonePrompt } from "@/components/gate/CloneDialog";
 import LandingPage from "@/pages/landing";
 import HomePage from "@/pages/home";
 import DashboardPage from "@/pages/dashboard";
@@ -100,6 +101,9 @@ export default function App() {
             </Route>
             </Switch>
           </AppShell>
+          {/* A guest who signs in holding demo work is offered BOTH clone flavours, once (08-18). App-wide,
+              because a sign-in does not return them to the gate they were on. Renders nothing otherwise. */}
+          <SignInClonePrompt />
         </Router>
         <Toaster />
       </TooltipProvider>

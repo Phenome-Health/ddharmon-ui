@@ -55,3 +55,18 @@ export async function serveRun(page: Page, mutate: (run: JobResult) => JobResult
     });
   });
 }
+
+/**
+ * The same run, served as the REVIEWER'S OWN rather than as the shared demo (08-18).
+ *
+ * Both committed fixtures are derived from the demo, so they carry `config.demo: true` — and since 08-18 the demo
+ * is WALKED, not resumed: its Continue steps to the next screen for free and its commit bar quotes no amount,
+ * because the pinned demo cannot be resumed and a guest must never be shown a purchase. A test about the PAID
+ * path (a price, a quote, a refused resume) is therefore about an owned run, and says so by serving one. The
+ * config keeps its other keys, so `resolvePinned` reads a real run (`false`), never "unknown".
+ */
+export function asOwnedRun(run: JobResult): JobResult {
+  const { demo: _demo, ...rest } = (run.config ?? {}) as Record<string, unknown>;
+  run.config = rest as JobResult["config"];
+  return run;
+}

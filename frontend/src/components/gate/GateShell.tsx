@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
-import { isGatePast, pathForGate } from "@/lib/gate-routes";
+import { isGatePast, pathForGate, railReachOf } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult, type RunCost } from "@/types";
 import { PhMark } from "@/components/ph-logo";
@@ -11,6 +11,7 @@ import { HowToPanel } from "@/components/gate/HowToPanel";
 import { RunProgress } from "@/components/gate/RunProgress";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
 import { ConflictNotice } from "@/components/gate/ConflictNotice";
+import { SandboxBanner } from "@/components/gate/SandboxBanner";
 import { realizedSpendByGate, stopCostSplit } from "@/lib/estimate";
 import { isInFlight } from "@/lib/run-state";
 
@@ -28,9 +29,11 @@ import { isInFlight } from "@/lib/run-state";
  *  2. **Masthead** — eyebrow (`Gate N of 4`), display h1, one-sentence subhead.
  *  3. **Gate rail** — five columns, always. See `GateRail`.
  *  4. **How-to panel** — on the ground, above the working surface. See `HowToPanel`.
- *  5. **Banner slots** — the sandbox banner (passed in by the page, since only it knows whether the run is
- *     the shared demo) and the resume banner (rendered here from `resumed`). Plus the two-tab conflict notice
- *     (`ConflictNotice`), which every decision hook on the screen feeds — see `lib/gate-conflicts.ts`.
+ *  5. **Banner slots** — the sandbox banner and the resume banner (rendered here from `resumed`). Plus the
+ *     two-tab conflict notice (`ConflictNotice`), which every decision hook on the screen feeds — see
+ *     `lib/gate-conflicts.ts`. The sandbox banner is rendered HERE for any run whose config says it is the
+ *     shared demo (08-18): one placement, so no screen of the guest walk can forget it. A page may still pass
+ *     its own through `sandboxBanner`, which replaces it.
  *
  * PLUS THE STOP CONTROL, and it is HERE rather than on a page on purpose (08-14 Task 4). Before this,
  * no screen under `pages/run/` or `components/gate/` offered a cancel: with a run in flight the only way
@@ -82,7 +85,10 @@ export interface GateShellProps {
   costSoFar?: number;
   /** True when this run was REJOINED at a gate rather than walked to — renders the resume banner. */
   resumed?: boolean;
-  /** The sandbox/demo banner, when the page's run is the shared demo (R9). */
+  /**
+   * Overrides the shared-demo banner the shell renders by itself for a demo run (R9). Omit it: the shell reads
+   * `job.config.demo` and renders `SandboxBanner`, so every gate of the guest walk carries it.
+   */
   sandboxBanner?: ReactNode;
   /**
    * The run this gate is showing, or null/undefined when there is none. Read ONLY to decide whether a
@@ -202,7 +208,8 @@ export function GateShell({
         </div>
       </div>
 
-      {sandboxBanner}
+      {/* The shared-demo banner (UI-SPEC §8.5): persistent, in the flow, never a modal — on every screen. */}
+      {sandboxBanner ?? (isDemo && jobId ? <SandboxBanner jobId={jobId} sourceName={job?.displayName} /> : null)}
       {resumed && <ResumeBanner gate={gate} costSoFar={costSoFar} />}
       {/* The two-tab notice (UI-SPEC §8.4, 08-28 3f): ONE placement, every screen — fixed to the viewport, so it
           renders nothing here in the flow and nothing at all until a save on this run replaced an unseen one. */}
@@ -216,7 +223,9 @@ export function GateShell({
       </header>
 
       {/* (3) The rail, then (4) the how-to panel — both on the ground, above the working surface. */}
-      <GateRail current={gate} items={rail} jobId={jobId} runPosition={runPosition} />
+      {/* Reachability reads `railReachOf`, not the raw position: a FINISHED run (the shared demo every guest walks)
+          carries none, and has reached every gate (08-18). Freezing above still reads the raw position. */}
+      <GateRail current={gate} items={rail} jobId={jobId} runPosition={railReachOf(job)} />
 
       {frozen && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
 

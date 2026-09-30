@@ -48,7 +48,8 @@ import { isGatePast } from "@/lib/gate-routes";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
-import { pathForGate } from "@/lib/gate-routes";
+import { nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
 import {
   DEFAULT_BUCKET,
@@ -2993,6 +2994,12 @@ export default function Gate1Page() {
    * itself. The fallback string is only for a throw that is not an Error at all.
    */
   async function onContinue() {
+    // THE SHARED DEMO IS WALKED, NOT RESUMED (08-18). It is precomputed and immutable server-side — the resume
+    // route refuses it — so its Continue is a step to the next screen: no request, no charge (T-08-109).
+    if (pinned === true) {
+      navigate(pathForGate(jobId, nextRailGate("gate1") ?? "gate2"));
+      return;
+    }
     setResuming(true);
     try {
       const { target } = await resumeRun(
@@ -3588,7 +3595,10 @@ export default function Gate1Page() {
 
       <CommitBar
         action="Continue to Gate 2"
-        total={groups.length > 0 ? quote : undefined}
+        // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
+        // cost there would claim a purchase that does not happen.
+        total={pinned !== true && groups.length > 0 ? quote : undefined}
+        assurance={pinned === true ? DEMO_CONTINUE_NOTE : undefined}
         // `spentHere` is DELIBERATELY OMITTED here, and only on this screen. The ledger's sum block
         // directly above already leads with the realized figure — that placement is the requirement, not
         // a preference — so passing it to the bar as well rendered the same fact twice, in two different
