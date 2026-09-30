@@ -1425,9 +1425,10 @@ function ExpandedGroup({
               ))}
             </ul>
             <p className="max-w-[80ch] text-sm text-on-inset-muted">
-              Each part is now a group of its own, at the top of the list and in
-              scope: at Gate 2 it is matched and gets an ideal description of its
-              own. This group is empty, so it will not go on to Gate 2.
+              Each part is now a group of its own, at the top of the list (sent
+              to Gate 2 unless you untick it): there it is matched and gets an
+              ideal description of its own. This group is empty, so it will not go
+              on to Gate 2.
             </p>
             {onUndoDivision && (
               <div>
