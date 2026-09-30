@@ -21,6 +21,7 @@ import {
   downloadLabel,
   previewFor,
   resolveFormat,
+  unassignedBreakdown,
   verdictBreakdown,
 } from "@/lib/gate4";
 
@@ -92,7 +93,15 @@ export default function Gate4Page() {
   };
 
   const breakdown = verdictBreakdown(result);
-  const unassignedCount = result?.unassignedFields?.length ?? 0;
+  // F21: the variables no artifact carries, split by WHY — scoped out at Gate 1 is the reviewer's choice, not a
+  // concept the pipeline failed to form (live 6c66731c: "506 reached no concept", 497 of them scoped out).
+  const unassigned = unassignedBreakdown(
+    result,
+    jobState?.config as Record<string, unknown> | undefined,
+    gate.all.gate1_group_scope,
+  );
+  const unassignedCount = unassigned.scopedOut + unassigned.noConcept;
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const filenameFor = (a: RealArtifact) => (a.id === "notebook" ? `harmonization.${lang}.ipynb` : a.filename);
 
   return (
@@ -185,11 +194,30 @@ export default function Gate4Page() {
 
         {/* Adapt UnassignedRow — the no-concept population, made visible rather than silently omitted. */}
         {unassignedCount > 0 && (
-          <p data-testid="unassigned-summary" className="text-xs text-on-field-muted">
-            <span className="font-semibold text-on-field">{unassignedCount}</span>{" "}
-            {unassignedCount === 1 ? "variable" : "variables"} reached no concept and are not represented in these
-            artifacts. They are not part of the mapping — they are listed on the results view so the export never
-            silently omits them.
+          <p
+            data-testid="unassigned-summary"
+            data-no-concept={unassigned.noConcept}
+            data-scoped-out={unassigned.scopedOut}
+            className="text-xs text-on-field-muted"
+          >
+            {unassigned.noConcept > 0 && (
+              <>
+                <span className="font-semibold text-on-field">
+                  {plural(unassigned.noConcept, "variable", "variables")}
+                </span>{" "}
+                reached no concept.{" "}
+              </>
+            )}
+            {unassigned.scopedOut > 0 && (
+              <>
+                <span className="font-semibold text-on-field">
+                  {plural(unassigned.scopedOut, "variable was", "variables were")}
+                </span>{" "}
+                in groups you scoped out at Gate 1.{" "}
+              </>
+            )}
+            They are not represented in these artifacts and are not part of the mapping — they are listed on the
+            results view so the export never silently omits them.
           </p>
         )}
 
@@ -199,6 +227,7 @@ export default function Gate4Page() {
           result={result}
           coreVersion={coreVersion}
           config={jobState?.config as Record<string, unknown> | undefined}
+          verdicts={jobState?.decisions}
         />
 
         {/* Terminal next-actions: analysis ideas (Task 4, existing route) and run again (Task 5). */}

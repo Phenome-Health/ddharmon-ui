@@ -226,6 +226,15 @@ export interface ReviewerPick {
   modelTarget: string;
   /** Non-empty when no specs could be generated (e.g. "none of these" with nothing to fall back on). */
   reason: string;
+  /**
+   * 08-28 1e: the MODEL's pick, stamped before the re-target overwrote the record (F17). The record's own
+   * cde / candidates / verdict / gencde describe the REVIEWER's target, so these are where the model's choice
+   * survives. Absent on a checkpoint written before 08-28 — readers fall back to `modelTarget`.
+   */
+  modelCde?: CdeRef | null;
+  modelVerdict?: string;
+  /** The model's generated element, UNEDITED; null when it had none. */
+  modelGencde?: GenCDE | null;
 }
 
 export interface PromptCounts {

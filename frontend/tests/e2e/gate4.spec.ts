@@ -8,13 +8,16 @@ import {
   NOT_AVAILABLE_GAPS,
   REAL_ARTIFACTS,
   SUBSTANTIVE_EDIT_KINDS,
+  decisionCount,
   decisionLogCsvRows,
+  decisionLogEntryCount,
   decisionLogRows,
   scopeSummary,
   downloadLabel,
   previewFor,
   resolveFormat,
   revisionRate,
+  unassignedBreakdown,
   verdictBreakdown,
 } from "@/lib/gate4";
 import { FINISHED_JOB, finishedFixture, serveFinished } from "./gate23-fixture";
@@ -169,7 +172,7 @@ test("@gate4 the decision log says WHAT each decision did, by name, with scope c
   expect(picks.find((r) => r.thing === "g0")!.detail).toBe("Reviewer CDE (model picked Model CDE)");
   expect(picks.find((r) => r.thing === "g1")!.detail).toBe("your own CDE, edited");
   expect(by("gate3_spec_edit").detail).toBe("rejected · note: “wrong target”");
-  expect(by("composite_swap").action).toBe("Declared a score component");
+  expect(by("composite_swap").action).toBe("Declared a score");
 });
 
 test("@gate4 a preview is REAL generated content, not a description", () => {
@@ -227,6 +230,103 @@ test("@gate4 the decision-log CSV preview on a staged run reads gate decisions, 
     gatePosition: null,
   });
   expect(legacy.split("\n")[0]).toBe("record_id,concept,verdict,chosen_cde,your_decision,note");
+});
+
+// --- 08-28 1e: provenance & the decision log (08-LIVE-VERIFY-3 F7 F17 F21 H9) ------------------------------
+
+const dd = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
+
+/**
+ * A record the Gate 2 -> 3 leg RE-TARGETED (`apply_reviewer_picks`): its candidates / cde already name the
+ * reviewer's pick, so the model's own survives only on the `reviewerPick` stamp.
+ */
+const REPICKED = {
+  groupId: "g1",
+  concept: "Diabetes",
+  verdict: "adopt",
+  members: ["A:dm"],
+  cde: { id: "CDE:pick", externalId: "" },
+  gencde: null,
+  candidates: [{ cdeId: "CDE:pick", isChosen: true }],
+  reviewerPick: {
+    chosen: "CDE:pick", kind: "catalog", target: "CDE:pick", modelTarget: "GEN:g1", reason: "",
+    modelCde: null, modelVerdict: "novel", modelGencde: { gencdeId: "GEN:g1" },
+  },
+};
+
+test("@gate4 an APPLIED re-pick counts as an edit and names the model's own pick (F17)", () => {
+  const index: DecisionIndex = {
+    gate2_candidate_pick: {
+      g1: dd({ groupId: "g1", chosen: "CDE:pick" }),
+      g2: dd({ groupId: "g2", chosen: "" }), // a novel group keeping its own generated element: not an edit
+    },
+  };
+  const result = {
+    records: [REPICKED, { groupId: "g2", concept: "Hair", members: [], candidates: [], gencde: { gencdeId: "GEN:g2" } }],
+  } as unknown as HarmonizationResult;
+  // Live 6c66731c read "1 of 8" when the truth was 2 of 8: the re-targeted record's own isChosen IS the pick.
+  expect(revisionRate(index, result, "1").edited).toBe(1);
+  const rows = decisionLogRows(index, result);
+  expect(rows.find((r) => r.thing === "g1")!.detail).toBe("CDE:pick (model picked GEN:g1)");
+});
+
+test("@gate4 the in-app log: an empty Gate 3 save is the model's spec, a value map diffs per code, a score is one row (F7 Q3 H9)", () => {
+  const index: DecisionIndex = {
+    gate3_spec_edit: {
+      "U:a": dd({ sourceVariable: "U:a", chosen: "U:a", note: "" }),
+      "U:b": dd({ sourceVariable: "U:b", chosen: "U:b", mapping: { "1": "1", "-121": "__missing__" } }),
+    },
+    composite_swap: {
+      "Frailty|grip": dd({ scoreName: "Frailty", componentName: "grip", chosen: "" }),
+      "Frailty|gait": dd({ scoreName: "Frailty", componentName: "gait", chosen: "" }),
+      "PHQ|mood": dd({ scoreName: "PHQ", componentName: "mood", chosen: "" }),
+    },
+  };
+  const result = {
+    records: [
+      {
+        groupId: "g0", concept: "Migraine", members: ["U:a", "U:b"], candidates: [],
+        transforms: [
+          { sourceVariable: "U:a", kind: "categorical", codeMap: { "1": "1" } },
+          { sourceVariable: "U:b", kind: "categorical", codeMap: { "1": "1", "-121": "9" } },
+        ],
+      },
+    ],
+  } as unknown as HarmonizationResult;
+  const rows = decisionLogRows(index, result);
+  expect(rows.find((r) => r.thing === "U:a")!.detail).toBe("reverted to model spec");
+  expect(rows.find((r) => r.thing === "U:b")!.detail).toBe("value map: -121: 9 → missing");
+  const scores = rows.filter((r) => r.kind === "composite_swap");
+  expect(scores.map((r) => r.thing)).toEqual(["Frailty", "PHQ"]); // not one row per component
+  expect(scores[0].action).toBe("Declared a score");
+  expect(scores[0].detail).toBe("2 components: grip, gait");
+});
+
+test("@gate4 the decision count is the number of entries the downloaded log carries (F21)", () => {
+  const index = indexDecisions(PARITY.grouped);
+  const n = decisionLogEntryCount(index, PARITY.result, PARITY.config, PARITY.legacyDecisions);
+  expect(n).toBe(PARITY.expectedRows.length);
+  // The raw decision count read "61 decisions" beside a 62-row file: it misses the frozen-scope row and counts
+  // every declared component.
+  expect(decisionCount(index)).not.toBe(n);
+});
+
+test("@gate4 variables scoped out at Gate 1 are counted apart from those that reached no concept (F21)", () => {
+  const result = {
+    records: [{ groupId: "g0", members: ["A:in"], candidates: [] }],
+    conceptGroups: [
+      { groupId: "g0", memberVariableNames: ["A:in"] },
+      { groupId: "g9", memberVariableNames: ["A:out1"] }, // a collapsed sample: the uncapped list wins
+      { groupId: "g8", memberVariableNames: ["A:out3"] }, // no uncapped list: the sample is all there is
+    ],
+    conceptGroupMembers: { g0: ["A:in", "A:dropped"], g9: ["A:out1", "A:out2"] },
+    unassignedFields: ["out1", "out2", "out3", "orphan", "dropped"].map((v) => ({ cohort: "A", variable: v, text: "" })),
+  } as unknown as HarmonizationResult;
+  // Live 6c66731c: "506 variables reached no concept" — 497 of them were scoped OUT at Gate 1.
+  expect(unassignedBreakdown(result, { gate1_scope: ["g0"] }, {})).toEqual({ scopedOut: 3, noConcept: 2 });
+  // No frozen scope: the legacy rule — only an explicit "out" scopes a group out.
+  expect(unassignedBreakdown(result, {}, { g9: { chosen: "out" } })).toEqual({ scopedOut: 2, noConcept: 3 });
+  expect(unassignedBreakdown(result, {}, {})).toEqual({ scopedOut: 0, noConcept: 5 });
 });
 
 test("@gate4 the verdict breakdown counts the real records", () => {
@@ -386,6 +486,42 @@ test.describe("Gate 4 screen", () => {
     });
     await gotoGate4(page);
     await expect(page.getByTestId("unassigned-summary")).toContainText("reached no concept");
+  });
+
+  test("@gate4 the summary tells variables scoped out at Gate 1 apart from ones that reached no concept (F21)", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      if (!run.result) return;
+      run.config = { ...(run.config ?? {}), gate1_scope: [] };
+      run.result.conceptGroupMembers = { "g-out": ["AoU:scoped1", "AoU:scoped2"] };
+      run.result.unassignedFields = ["scoped1", "scoped2", "orphan"].map((v) => ({ cohort: "AoU", variable: v, text: v }));
+    });
+    await gotoGate4(page);
+    const summary = page.getByTestId("unassigned-summary");
+    await expect(summary).toContainText("1 variable reached no concept");
+    await expect(summary).toContainText("2 variables were in groups you scoped out at Gate 1");
+  });
+
+  test("@gate4 the decision count names the entries the downloaded log carries (F21)", async ({ page }) => {
+    await page.addInitScript(
+      ([jobId]) => {
+        const comp = (componentName: string) => ({
+          scoreName: "Frailty", componentName, chosen: "", alternatives: ["grip", "gait"], optionSetKey: "s",
+        });
+        sessionStorage.setItem(
+          `ddharmon.sandbox.${jobId}`,
+          JSON.stringify({
+            gateDecisions: {
+              gate2_candidate_pick: { "seed-group": { groupId: "seed-group", chosen: "CDE:1", alternatives: ["CDE:1"], optionSetKey: "p" } },
+              composite_swap: { "Frailty|grip": comp("grip"), "Frailty|gait": comp("gait") },
+            },
+          }),
+        );
+      },
+      [FINISHED_JOB],
+    );
+    await gotoGate4(page);
+    // Three stored decisions, but the log carries two entries: the pick, and ONE row for the declared score.
+    await expect(page.getByTestId("decision-count")).toHaveText("2 entries in the decision log");
   });
 
   test("@gate4 the terminal next-actions route to analysis ideas and a new run", async ({ page }) => {

@@ -440,3 +440,58 @@ def test_an_unchanged_anchor_save_on_a_novel_group_costs_nothing(tmp_path):
         )
         == []
     )
+
+
+# ── 08-28 1e: the record keeps the MODEL's pick once it is re-targeted (F17) ─────────────────────────
+#
+# After the re-pick the record's own ``cde`` / candidates / verdict / ``gencde`` describe the REVIEWER's
+# target, so an export reading them for "what the model chose" reported the pick as the model's own
+# (targetPickedBy=model, modelCde = the pick, a log row reading "X -> X"). The adapter therefore stamps the
+# model's pick on ``reviewerPick`` before it overwrites anything, and every downstream reader uses the stamp.
+
+
+def test_a_catalog_repick_stamps_the_models_cde_and_verdict(tmp_path, _one_cluster):
+    model_rec = _only_record(_run(tmp_path)[0])
+    out, _ = _run(tmp_path, picks={model_rec["groupId"]: {"chosen": "SmokeCDE"}})
+    pick = _only_record(out)["reviewerPick"]
+
+    assert pick["modelCde"] == {"id": "SmokeAltCDE", "externalId": model_rec["cde"]["externalId"]}
+    assert pick["modelVerdict"] == model_rec["verdict"]
+    assert pick["modelGencde"] is None, "the model had no generated element on this group"
+
+
+def test_an_edited_generated_element_stamps_the_models_unedited_one(tmp_path):
+    from backend.engine.adapter import apply_reviewer_picks
+
+    rec, embedded = _novel_with_gencde(tmp_path)
+
+    def stage(prompts):
+        return {p.id: {"code_map": {"1": "1", "0": "0"}, "confidence": 0.9} for p in prompts}
+
+    edit = {"name": "smoking_status", "definition": "Smokes", "units": "", "values": "E1=Yes / E0=No"}
+    apply_reviewer_picks(
+        [rec], {"c0#g0": {"chosen": "", "gencdeEdit": edit}}, embedded, {}, model_tag=None, stage_fn=stage
+    )
+    pick = rec.raw["reviewer_pick"]
+
+    assert pick["modelCde"] is None, "the model picked no catalog CDE for a novel group"
+    assert pick["modelVerdict"] == "novel"
+    assert pick["modelGencde"]["gencdeId"] == "GENCDE:c0#g0"
+    assert [(v["code"], v["label"]) for v in pick["modelGencde"]["permissibleValues"]] == [("1", "Yes"), ("0", "No")]
+    # ...while the record itself now carries the EDITED element.
+    assert [o.code for o in rec.gencde.permissible_values] == ["E1", "E0"]
+
+
+def test_a_novel_group_repicked_to_a_catalog_cde_keeps_the_models_generated_element(tmp_path):
+    from backend.engine.adapter import apply_reviewer_picks
+
+    rec, embedded = _novel_with_gencde(tmp_path)
+    apply_reviewer_picks(
+        [rec], {"c0#g0": {"chosen": "SmokeCDE"}}, embedded, {}, model_tag=None, stage_fn=lambda prompts: {}
+    )
+    pick = rec.raw["reviewer_pick"]
+
+    assert rec.gencde is None and rec.cde_id == "SmokeCDE"
+    assert pick["modelTarget"] == "GENCDE:c0#g0"
+    assert pick["modelCde"] is None and pick["modelVerdict"] == "novel"
+    assert pick["modelGencde"]["gencdeId"] == "GENCDE:c0#g0"

@@ -1,5 +1,5 @@
 {
- "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations.",
+ "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations. 08-28 1e adds: an APPLIED re-pick (reviewerPick stamp), a pick on an absent group, an empty Gate 3 row, a per-code mapping diff, and score declarations collapsed to one row per score.",
  "result": {
   "records": [
    {
@@ -178,6 +178,109 @@
     "candidates": [],
     "rationale": "because",
     "decidedBy": "llm"
+   },
+   {
+    "id": "c3#g0",
+    "clusterId": "c3",
+    "groupId": "c3#g0",
+    "concept": "Diabetes",
+    "verdict": "adopt",
+    "route": "assigned",
+    "cde": {
+     "id": "DiabetesCDE",
+     "externalId": "tiny-dm"
+    },
+    "idealCde": "ideal Diabetes",
+    "gencde": null,
+    "cosines": {
+     "top1": 0.8,
+     "chosen": 0.8
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 2,
+    "cohorts": [
+     "A",
+     "B"
+    ],
+    "members": [
+     "A:dm",
+     "B:dm"
+    ],
+    "memberDetails": [],
+    "transforms": [
+     {
+      "sourceVariable": "A:dm",
+      "targetCdeId": "DiabetesCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "1": "Yes"
+      },
+      "unmappedSourceCodes": []
+     },
+     {
+      "sourceVariable": "B:dm",
+      "targetCdeId": "DiabetesCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "1": "1",
+       "0": "0",
+       "-121": "9"
+      },
+      "unmappedSourceCodes": []
+     }
+    ],
+    "candidates": [
+     {
+      "rank": 1,
+      "cdeId": "DiabetesCDE",
+      "cdeExternalId": "tiny-dm",
+      "definition": "DiabetesCDE definition",
+      "cosine": 0.8,
+      "isChosen": true,
+      "llmSuggested": false
+     }
+    ],
+    "rationale": "because",
+    "decidedBy": "reviewer",
+    "reviewerPick": {
+     "chosen": "DiabetesCDE",
+     "kind": "catalog",
+     "target": "DiabetesCDE",
+     "modelTarget": "GENCDE:c3#g0",
+     "reason": "",
+     "modelCde": null,
+     "modelVerdict": "novel",
+     "modelGencde": {
+      "gencdeId": "GENCDE:c3#g0",
+      "preferredName": "diabetes_ind",
+      "permissibleValues": [
+       {
+        "code": "1",
+        "label": "Yes"
+       },
+       {
+        "code": "0",
+        "label": "No"
+       }
+      ]
+     }
+    }
    }
   ],
   "conceptGroups": [
@@ -190,7 +293,8 @@
  "config": {
   "gate1_scope": [
    "c0#g0",
-   "c1#g0"
+   "c1#g0",
+   "c3#g0"
   ]
  },
  "grouped": {
@@ -259,6 +363,22 @@
      "TobaccoCDE"
     ],
     "optionSetKey": "96b5671d9778d0ac"
+   },
+   {
+    "groupId": "c3#g0",
+    "chosen": "DiabetesCDE",
+    "alternatives": [
+     "DiabetesCDE"
+    ],
+    "optionSetKey": "k3"
+   },
+   {
+    "groupId": "zz#g9",
+    "chosen": "AgeCDE",
+    "alternatives": [
+     "AgeCDE"
+    ],
+    "optionSetKey": "k9"
    }
   ],
   "gate3_spec_edit": [
@@ -288,6 +408,29 @@
      "B:smk"
     ],
     "optionSetKey": "7d97f6a4e5beb7f8"
+   },
+   {
+    "sourceVariable": "A:dm",
+    "chosen": "A:dm",
+    "note": "",
+    "alternatives": [
+     "A:dm"
+    ],
+    "optionSetKey": "k4"
+   },
+   {
+    "sourceVariable": "B:dm",
+    "chosen": "B:dm",
+    "mapping": {
+     "1": "1",
+     "0": "0",
+     "-121": "__missing__",
+     "-818": "9"
+    },
+    "alternatives": [
+     "B:dm"
+    ],
+    "optionSetKey": "k5"
    }
   ],
   "verdict": [
@@ -296,6 +439,37 @@
     "axis": "match",
     "decision": "approve",
     "note": "fine"
+   }
+  ],
+  "composite_swap": [
+   {
+    "scoreName": "Frailty",
+    "componentName": "grip",
+    "chosen": "",
+    "alternatives": [
+     "grip",
+     "gait"
+    ],
+    "optionSetKey": "s1"
+   },
+   {
+    "scoreName": "Frailty",
+    "componentName": "gait",
+    "chosen": "c1#g0",
+    "alternatives": [
+     "grip",
+     "gait"
+    ],
+    "optionSetKey": "s1"
+   },
+   {
+    "scoreName": "PHQ",
+    "componentName": "mood",
+    "chosen": "",
+    "alternatives": [
+     "mood"
+    ],
+    "optionSetKey": "s2"
    }
   ]
  },
@@ -317,9 +491,9 @@
    "Continued with this scope",
    "",
    "",
-   "2 groups in scope",
+   "3 groups in scope",
    "",
-   "[\"c0#g0\",\"c1#g0\"]",
+   "[\"c0#g0\",\"c1#g0\",\"c3#g0\"]",
    "false"
   ],
   [
@@ -371,8 +545,8 @@
    "gate2_candidate_pick",
    "Picked a target",
    "c2#g0",
-   "none of these",
-   "none of these",
+   "GEN:hair",
+   "GEN:hair",
    "",
    "",
    "false"
@@ -389,6 +563,28 @@
    "false"
   ],
   [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c3#g0",
+   "GENCDE:c3#g0",
+   "DiabetesCDE",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "zz#g9",
+   "",
+   "AgeCDE",
+   "",
+   "{\"notApplied\":\"no record for this group in the run's results\"}",
+   "false"
+  ],
+  [
    "Gate 3",
    "gate3_spec_edit",
    "Edited a transform spec",
@@ -396,7 +592,7 @@
    "categorical {\"1\":\"Yes\",\"2\":\"No\"}",
    "edited",
    "checked, ok",
-   "{\"mapping\":{\"1\":\"Current\",\"2\":\"Never\"}}",
+   "1: Yes → Current; 2: No → Never",
    "true"
   ],
   [
@@ -408,6 +604,50 @@
    "rejected",
    "",
    "",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "A:dm",
+   "categorical {\"1\":\"Yes\"}",
+   "reverted to model spec",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "B:dm",
+   "categorical {\"-121\":\"9\",\"0\":\"0\",\"1\":\"1\"}",
+   "edited",
+   "",
+   "-818: missing → 9; -121: 9 → missing",
+   "false"
+  ],
+  [
+   "Composite",
+   "composite_swap",
+   "Declared a score",
+   "Frailty",
+   "",
+   "2 components, 1 matched",
+   "",
+   "{\"components\":[\"grip\",\"gait\"],\"matched\":{\"gait\":\"c1#g0\"}}",
+   "false"
+  ],
+  [
+   "Composite",
+   "composite_swap",
+   "Declared a score",
+   "PHQ",
+   "",
+   "1 component",
+   "",
+   "{\"components\":[\"mood\"]}",
    "false"
   ],
   [
