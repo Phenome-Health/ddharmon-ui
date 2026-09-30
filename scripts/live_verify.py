@@ -322,12 +322,14 @@ class Driver:
 
         def on_frame(frame: dict[str, Any]) -> None:
             self.state["frames"].append(
-                {k: frame.get(k) for k in ("_t", "status", "phase", "costSoFar", "gatePosition", "completed", "total")}
-                | {"leg": label}
+                {k: frame.get(k) for k in ("_t", "status", "phase", "costSoFar", "gatePosition", "completed", "total",
+                                           "transport")}  # fmt: skip
+                | {"leg": label, "batchStatus": (frame.get("batch") or {}).get("status")}
             )
             if time.time() - last_guard[0] > 5:
                 last_guard[0] = time.time()
                 self.guard()
+            self.maybe_switch(label, frame, t0)
 
         playwright_inflight = None
         if self.args.playwright and label != "leg1":
@@ -355,6 +357,24 @@ class Driver:
             raise RuntimeError(f"{label} ended {leg['status']}: {leg['error']}")
         self.guard()
         return last
+
+    def maybe_switch(self, label: str, frame: dict[str, Any], t0: float) -> None:
+        """Press "Finish now with sync" (0e) once per iteration, on the first leg whose batch is still queued after
+        ``--switch-after`` seconds — the loop's exit needs one batch iteration with the switch exercised."""
+        after = self.args.switch_after
+        if after is None or self.state.get("switch") or time.time() - t0 < after:
+            return
+        batch = frame.get("batch") or {}
+        if not batch.get("switchable"):
+            return
+        rec: dict[str, Any] = {"leg": label, "at": time.time(), "batch": batch}
+        try:
+            rec["response"] = self.api.post(f"/jobs/{self.job_id}/switch-to-sync")
+        except ApiError as exc:
+            rec["refused"] = {"status": exc.status, "detail": exc.body[:200]}
+        self.state["switch"] = rec
+        self.save()
+        print(f"· switched {label} to sync: {rec.get('response') or rec.get('refused')}")
 
     def snapshot(self, gate: str) -> dict[str, Any]:
         """What the gate screen reads (the checkpoint route) plus the run's own recorded checkpoint file."""
@@ -1055,6 +1075,12 @@ class Driver:
         self.report.info["legs"] = [
             {k: lg.get(k) for k in ("label", "status", "gate", "tapUsd", "tapCalls")} for lg in legs
         ]
+        sw = self.state.get("switch")
+        if sw:
+            self.report.check("I2", "response" in sw, "the batch→sync switch was accepted mid-leg", sw.get("refused") or
+                              sw.get("leg"))  # fmt: skip
+        elif self.args.switch_after is not None:
+            self.report.note("I2", "the switch was requested but no leg's batch was still queued long enough")
         tol = max(0.002, 0.03 * tap_total)
         self.report.check("I2", abs(app_total - tap_total) <= tol, "the run's spend equals what the provider billed",
                           {"app": app_total, "tap": tap_total})  # fmt: skip
@@ -1142,6 +1168,8 @@ def main() -> int:
     ap.add_argument("--score-doc", default=os.environ.get("LIVE_SCORE_DOC"))
     ap.add_argument("--cap", type=float, default=1.50, help="USD; the run is cancelled when the tap passes it")
     ap.add_argument("--playwright", action="store_true", help="run the live Playwright project at each gate")
+    ap.add_argument("--switch-after", type=float, default=None, help="batch mode: press 'Finish now with sync' once, "
+                    "on the first leg still queued after this many seconds")  # fmt: skip
     args = ap.parse_args()
     return Driver(args).run()
 
