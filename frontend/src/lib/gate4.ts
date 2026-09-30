@@ -103,7 +103,7 @@ export const NOT_AVAILABLE_GAPS: readonly NotAvailableGap[] = [
   {
     slug: "composite-notebook",
     thing: "Composite recipes in the notebook",
-    body: "The notebook applies approved recodes; it has no notion of a derived variable, so a composite score you built is not computed by it. Export the records to carry it.",
+    body: "The notebook applies approved recodes; it has no notion of a derived variable, so a composite score you built is not computed by it. Export the score file to carry it.",
   },
 ] as const;
 

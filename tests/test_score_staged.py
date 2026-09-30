@@ -385,3 +385,13 @@ def test_the_existing_export_formats_are_untouched_by_a_score(staged):
     ).is_success
     records = client.get(f"/api/harmonize/jobs/{job_id}/export", params={"format": "records_json"}).json()
     assert isinstance(records, list) and [r["groupId"] for r in records] == ["c0#g0", "c1#g0"]
+
+
+def test_the_score_files_note_matches_the_gate4_preview():
+    """The Gate 4 preview builds the score file client-side; its self-description must be the server's, verbatim."""
+    from pathlib import Path
+
+    from backend.declared_score import EXPORT_NOTE
+
+    src = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "lib" / "score-match.ts").read_text()
+    assert f'"{EXPORT_NOTE}"' in src

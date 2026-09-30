@@ -44,6 +44,7 @@ const EXPORT_EXT: Record<ExportFormat, string> = {
   records_json: "records.json",
   notebook_py: "py.ipynb",
   notebook_r: "r.ipynb",
+  score_json: "score.json",
 };
 
 // --- auth (Clerk SSO) ----------------------------------------------------------------------------
@@ -322,6 +323,30 @@ export async function extractScoreComponents(
       method: "POST",
       headers,
       body: JSON.stringify({ text: doc.text, sha256: doc.sha256, provenance: doc.provenance }),
+    }),
+  );
+}
+
+/**
+ * MATCH the score declared on Gate 1 against this run's final concepts — ONE PAID MODEL CALL, on Gate 4 (08-28
+ * 1f, decision Q5).
+ *
+ * Sends only the score's NAME: the server reads the declaration itself (its `composite_swap` rows), so what is
+ * matched is exactly what was declared, and it matches against the effective records every export carries.
+ * Errors are `ApiError`s with the status kept, like the extraction call, so the panel can tell a refusal made
+ * before spending (400/409) from an attempt that failed (5xx). A static build has no backend and says so.
+ */
+export async function matchDeclaredScore(jobId: string, scoreName: string, apiKey?: string): Promise<CompositeSpec> {
+  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to match the declared score.", 401);
+  const headers = await authed({
+    "content-type": "application/json",
+    ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
+  });
+  return scoreJson(() =>
+    fetch(`${BASE}/jobs/${jobId}/composite`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ declaredScore: scoreName }),
     }),
   );
 }

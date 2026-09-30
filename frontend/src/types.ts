@@ -747,7 +747,9 @@ export interface CompositeSpec {
   // 0 for a fully-pinned re-derive.
   nConceptsIndexed?: number;
   callsMade?: number;
-  sourceKind?: "paste" | "url" | "repo" | "pdf" | "definition";
+  sourceKind?: "paste" | "url" | "repo" | "pdf" | "definition" | "declaration";
+  /** What the call that produced this spec was billed, in USD (08-28 1f) — the actual, beside the estimate. */
+  billedUsd?: number;
 }
 
 export interface DictSpec {
@@ -807,7 +809,14 @@ export interface RunConfig {
   estCohorts?: number;
 }
 
-export type ExportFormat = "eitl_tsv" | "records_json" | "decisions_csv" | "notebook_py" | "notebook_r";
+export type ExportFormat =
+  | "eitl_tsv"
+  | "records_json"
+  | "decisions_csv"
+  | "notebook_py"
+  | "notebook_r"
+  // The declared score's verdict + recipe (08-28 1f) — offered only on a run that carries a score.
+  | "score_json";
 
 // Precomputed demo runs (loaded without spending API credits).
 export interface DemoDataset {

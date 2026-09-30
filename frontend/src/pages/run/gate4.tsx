@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
 import { ArtifactTile } from "@/components/gate/ArtifactTile";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DecisionLog } from "@/components/gate/DecisionLog";
+import { Gate4ScorePanel } from "@/components/gate/Gate4ScorePanel";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ReproducibilityInfo } from "@/components/gate/ReproducibilityInfo";
@@ -23,6 +25,8 @@ import {
   resolveFormat,
   verdictBreakdown,
 } from "@/lib/gate4";
+import { SCORE_ARTIFACT, declaredScores, scoreExport, specForScore } from "@/lib/score-match";
+import type { CompositeSpec } from "@/types";
 
 /**
  * Gate 4 — Export — the staged review flow's sixth and terminal screen (08-17, STGD-15 / R15).
@@ -58,6 +62,24 @@ export default function Gate4Page() {
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<RealArtifact | null>(null);
 
+  // THE DECLARED SCORE (08-28 1f, decision Q5): declared on Gate 1, matched HERE against the final records.
+  // The declaration is read from the decision index (every kind, `gate.all`) — a record on this screen, never
+  // written. A match is held locally the moment it returns and the run's stored composites are refetched.
+  const queryClient = useQueryClient();
+  const pinned = resolvePinned(jobState?.config);
+  const scores = useMemo(() => declaredScores(gate.all), [gate.all]);
+  const [matched, setMatched] = useState<Record<string, CompositeSpec>>({});
+  const composites = useMemo(
+    () => [...(jobState?.composites ?? []), ...Object.values(matched)],
+    [jobState?.composites, matched],
+  );
+  // The score file rides the export set only on a run that carries a score — declared (even unmatched: the
+  // file then says so) or derived. Otherwise the set is exactly the shipping four.
+  const artifacts = useMemo(
+    () => (scores.length > 0 || composites.length > 0 ? [...REAL_ARTIFACTS, SCORE_ARTIFACT] : REAL_ARTIFACTS),
+    [scores.length, composites.length],
+  );
+
   // A finished run has produced every serialization; a run still streaming has not. There is no per-format
   // build-failure signal for these five formats (they are serialization, not builds), so the page derives
   // ready/generating from run state — the `failed` claim exists in `ArtifactTile` for when a signal appears.
@@ -65,8 +87,8 @@ export default function Gate4Page() {
 
   const isSelected = (id: string) => artifactState === "ready" && !deselected.has(id);
   const selectedArtifacts = useMemo(
-    () => REAL_ARTIFACTS.filter((a) => artifactState === "ready" && !deselected.has(a.id)),
-    [deselected, artifactState],
+    () => artifacts.filter((a) => artifactState === "ready" && !deselected.has(a.id)),
+    [artifacts, deselected, artifactState],
   );
   const selectedCount = selectedArtifacts.length;
 
@@ -133,10 +155,26 @@ export default function Gate4Page() {
           <ReproducibilityInfo coreVersion={coreVersion} />
         </div>
 
+        {/* The declared score, matched here (Q5) — before the export set, because the match is what fills the
+            score file's verdict and recipe. Absent when no score was declared. */}
+        {scores.map((score) => (
+          <Gate4ScorePanel
+            key={score.scoreName}
+            jobId={jobId}
+            score={score}
+            spec={specForScore(composites, score.scoreName)}
+            pinned={pinned === true}
+            onMatched={(spec) => {
+              setMatched((prev) => ({ ...prev, [score.scoreName]: spec }));
+              void queryClient.invalidateQueries({ queryKey: ["harmonize-result", jobId] });
+            }}
+          />
+        ))}
+
         {/* Surface 2 — what ships: the real artifacts, then the honest gaps. */}
         <section className="flex flex-col gap-3" data-testid="export-set">
           <h2 className="text-sm font-semibold text-on-field">What leaves the tool</h2>
-          {REAL_ARTIFACTS.map((a) => (
+          {artifacts.map((a) => (
             <ArtifactTile
               key={a.id}
               slug={a.id}
@@ -247,11 +285,13 @@ export default function Gate4Page() {
               data-testid="artifact-preview-content"
               className="mt-4 max-h-[calc(100vh-8rem)] overflow-auto whitespace-pre-wrap break-words rounded-inner bg-surface-inset p-4 font-mono text-xs text-on-inset"
             >
-              {previewFor(preview.id, lang, result, jobState?.decisions, {
-                index: gate.all,
-                config: jobState?.config as Record<string, unknown> | undefined,
-                gatePosition: jobState?.gatePosition,
-              })}
+              {preview.id === "score_json"
+                ? JSON.stringify(scoreExport(scores, composites), null, 2)
+                : previewFor(preview.id, lang, result, jobState?.decisions, {
+                    index: gate.all,
+                    config: jobState?.config as Record<string, unknown> | undefined,
+                    gatePosition: jobState?.gatePosition,
+                  })}
             </pre>
           )}
         </SheetContent>
