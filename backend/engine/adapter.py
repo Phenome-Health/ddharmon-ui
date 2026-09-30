@@ -2418,19 +2418,22 @@ def _use_frozen_substrate(kwargs: dict[str, Any], substrate_path: Path, harmoniz
 #
 # Gate 1's Continue freezes the regrouping on the run's config (``backend/app.py::_gate1_overrides``) and every
 # later leg — and the $0 replay — hands it to core as ``group_overrides``. The only paid work it adds is ONE
-# generate-ideal call per New group. That call is NOT routed through the ``generate`` stage: past Gate 1 that
+# generate-ideal call per New group AND per existing group whose membership changed (Option B, 2026-09-18: the
+# ideal anchors the novel decision, so it must describe the members the group is assigned with) — in scope only.
+# Those calls are NOT routed through the ``generate`` stage: past Gate 1 that
 # stage is frozen (a prompt the checkpoint never recorded is partition drift, and the leg fails before buying
 # it — 08-28 F2). It runs on a stage of its own, ``group_generate``, which core addresses under its own id
-# namespace (``leanb:groupideal:<rev id>@<member content id>``). So the drift guard keeps exactly the strictness
-# it had: the cluster ideals must still all be replayed, and the New groups' ideals can only ever reach the one
+# namespace (``leanb:groupideal:<group id>@<member content id>``). So the drift guard keeps exactly the strictness
+# it had: the cluster ideals must still all be replayed, and the regrouped groups' ideals can only ever reach the one
 # stage built for them. Recorded and replayed like any post-Gate-1 stage: bought once on the Gate 1 -> Gate 2
 # leg, answered from the checkpoint for $0 on every leg after.
 
 #: Where Gate 1's Continue freezes the regrouping on the run's config (``backend/app.py`` writes the same key).
 GATE1_OVERRIDES_CONFIG_KEY = "gate1_overrides"
 
-#: The cost-ledger key a New group's ideal bills under. Gate 1's Continue buys it, in the same leg as the assign,
-#: so it is in Gate 2's figure (``GATE_LEDGER_KEYS`` in the frontend's estimate.ts).
+#: The cost-ledger key a New or edited group's ideal bills under (the name predates Option B and is kept: ledgers
+#: already carry it). Gate 1's Continue buys it, in the same leg as the assign, so it is in Gate 2's figure
+#: (``GATE_LEDGER_KEYS`` in the frontend's estimate.ts).
 GROUP_IDEAL_COST_KEY = "new_group_ideal"
 
 #: Its batch cache tag (and replay stage name — ``backend/batch_reconcile.py::TAG_TO_STAGE``).
@@ -2941,10 +2944,12 @@ def run_pipeline(
     # own stage + cost key, so the spend is visible as its own line; built ONLY when there are picks to apply.
     gate2_picks: dict[str, Any] = config.get("gate2_picks") or {}
     want_repick = bool(gate2_picks) and stop_at_gate is None
-    # 08-28 Wave 2: the frozen Gate-1 regrouping. A New group's ideal is the one paid call it adds, on its own
-    # stage (see GROUP_IDEAL_COST_KEY), built ONLY when a New group exists — otherwise nothing can buy it.
+    # 08-28 Wave 2: the frozen Gate-1 regrouping. The one paid call it adds is an ideal per New OR edited group
+    # (Option B: a group whose members changed is assigned against a description of its final members), on its own
+    # stage (see GROUP_IDEAL_COST_KEY). Built for ANY regrouping — a moves-only one included: without it core falls
+    # back to the frozen `generate`, and the leg fails as partition drift over the reviewer's own edit.
     regrouping = core_group_overrides(config.get(GATE1_OVERRIDES_CONFIG_KEY), field_index)
-    want_group_ideal = regrouping is not None and bool(regrouping.new_groups)
+    want_group_ideal = regrouping is not None
     if overrides:
         stages: dict[str, StageFn] = dict(overrides)
         if want_repick and "specgen_repick" not in stages and "specgen" in stages:
@@ -3049,6 +3054,7 @@ def run_pipeline(
                         api_key=api_key,
                         stopping=stopping,
                         ledger_key=GROUP_IDEAL_COST_KEY,
+                        **leg,  # the leg's one transport, so a batch->sync switch holds for these calls too
                     )
                 }
                 if want_group_ideal
