@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/table";
 import { cancelJob, deleteJob, listJobs } from "@/lib/api";
 import { isInFlight, isParked, isTerminal } from "@/lib/run-state";
-import { resumeGateOf, resumePathFor } from "@/lib/gate-routes";
+import { resumeGateOf, resumePathFor, runPathFor } from "@/lib/gate-routes";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { useAuthState } from "@/auth";
 import { RerunAction } from "@/components/rerun-action";
@@ -165,12 +165,11 @@ export default function JobsPage() {
                   <TableCell>
                     <span className="flex items-center gap-2">
                       <Link
-                        // A parked run re-enters at its gate; everything else keeps the destination it
-                        // already had (results for a finished run, the dashboard for a live one).
-                        href={
-                          resume ??
-                          (j.status === "complete" || isDemo ? `/job/${j.jobId}?results=1` : `/job/${j.jobId}`)
-                        }
+                        // A run that is not over is a STAGED run, so it is linked into the gates: a parked
+                        // run at the gate it waits on, an in-flight one at the gate its leg is running
+                        // toward (08-28 — it used to go to the legacy dashboard, which has no gate link).
+                        // Only an ended run, and the demo, keep the legacy page. One helper decides.
+                        href={runPathFor(j)}
                         className="font-semibold text-link-on-raised hover:underline"
                       >
                         {j.displayName}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
@@ -26,13 +26,15 @@ import {
   IS_STATIC,
   embeddingCsv,
   embeddingWorkbook,
+  fetchRetainedUpload,
   listDemos,
+  listJobs,
   listModels,
   resumeRun,
   saveBlob,
   startHarmonize,
 } from "@/lib/api";
-import { RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
+import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
 import { preparationProgress } from "@/lib/run-state";
@@ -41,7 +43,7 @@ import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatDurationRange } from "@/types";
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
-import type { CdeSet, GatePosition, JobResult, RunMode } from "@/types";
+import type { CdeSet, GatePosition, JobResult, RunDictionary, RunMode } from "@/types";
 
 /**
  * PER-LINE DETAIL FOR THE CONSOLIDATED BILL (review 2026-08-26).
@@ -228,7 +230,7 @@ interface SetupDict {
    * it was remembered). Absent when nothing prefilled — the identity fallback in `initialRoles` is not a
    * "prepopulated from a previous run" claim and carries no provenance line.
    */
-  prefill?: { source: PrefillSource; at?: number };
+  prefill?: { source: PrefillSource | "rerun"; at?: number; from?: string };
   /**
    * The mapping AS CONFIRMED by the reviewer, or null while it has not been.
    *
@@ -259,8 +261,39 @@ function isConfirmed(d: SetupDict): boolean {
 interface FileProblem {
   key: string;
   filename: string;
-  kind: "participant-level" | "unreadable" | "no-rows";
+  /** `unavailable`: a re-run's dictionary whose retained upload the server no longer has. */
+  kind: "participant-level" | "unreadable" | "no-rows" | "unavailable";
   detail: string;
+}
+
+/**
+ * What a re-run carries into ONE dictionary it reads back: the earlier run's cohort name and column roles,
+ * and that run's name for the provenance line. The FILE itself comes from the server's retained copy.
+ */
+interface RerunSeed {
+  cohortName: string;
+  roles: Record<string, string>;
+  from: string;
+}
+
+/**
+ * The earlier run's column roles, kept only where the column is really in the file read back. The file is
+ * the same one the run was started from, so this normally keeps everything; if it does not, a role pointed
+ * at a column that is not there would be a mapping the table cannot show and the loader cannot honour.
+ */
+function carriedRoles(roles: Record<string, string>, headers: string[]): Record<string, string> {
+  const present = new Set(headers);
+  return Object.fromEntries(Object.entries(roles).filter(([, column]) => column && present.has(column)));
+}
+
+/** The run mode in the words the mode select itself uses, for the re-run notice. */
+const RUN_MODE_WORDS: Record<string, string> = { batch: "Batch", sync: "Synchronous", preview: "Preview" };
+
+/** A re-run's name: the earlier one's, marked — and marked once, however many times it is re-run. */
+function rerunNameFor(name: string | undefined): string {
+  const base = (name ?? "").trim();
+  if (!base) return "";
+  return /\(re-run\)$/.test(base) ? base : `${base} (re-run)`;
 }
 
 interface DemoEntry {
@@ -719,99 +752,199 @@ export default function SetupPage() {
     return [...names];
   }, [dicts]);
 
-  const onDrop = useCallback(async (accepted: File[]) => {
-    composed.current = true;
-    for (const file of accepted) {
-      const key = `up:${file.name}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-      // The file shows its OWN parse state from the moment it is accepted — one card per file, so a slow
-      // file cannot make a fast one look unfinished, and a set-wide banner cannot hide which is which.
-      setDicts((prev) => [
-        ...prev,
-        {
-          key,
-          filename: file.name,
-          cohortName: file.name.replace(/\.(csv|tsv|txt)$/i, ""),
-          file,
-          headers: [],
-          rows: null,
-          rowCount: null,
-          roles: {},
-          confirmedRoles: null,
-          state: "parsing",
-          origin: "upload",
-        },
-      ]);
+  /**
+   * Read ONE file into a dictionary card — a file the reviewer dropped, or (with `seed`) one a re-run read
+   * back from the earlier run's retained upload. ONE path for both, so a re-run's dictionary is checked
+   * exactly like a dropped one: parse state, the participant-level refusal, the row and name counts, and a
+   * `File` for Start to post. The seed carries only what the run RECORDED: the cohort name and the roles.
+   */
+  const addFile = useCallback(async (file: File, seed?: RerunSeed) => {
+    const key = `up:${file.name}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    // The file shows its OWN parse state from the moment it is accepted — one card per file, so a slow
+    // file cannot make a fast one look unfinished, and a set-wide banner cannot hide which is which.
+    setDicts((prev) => [
+      ...prev,
+      {
+        key,
+        filename: file.name,
+        cohortName: seed?.cohortName ?? file.name.replace(/\.(csv|tsv|txt)$/i, ""),
+        file,
+        headers: [],
+        rows: null,
+        rowCount: null,
+        roles: {},
+        confirmedRoles: null,
+        state: "parsing",
+        origin: "upload",
+      },
+    ]);
 
-      const parsed = await new Promise<{ headers: string[]; rows: DictRow[] }>((resolve) => {
-        Papa.parse<DictRow>(file, {
-          header: true,
-          skipEmptyLines: true,
-          complete: (res) =>
-            resolve({ headers: (res.meta.fields ?? []).filter(Boolean), rows: res.data ?? [] }),
-          error: () => resolve({ headers: [], rows: [] }),
-        });
+    const parsed = await new Promise<{ headers: string[]; rows: DictRow[] }>((resolve) => {
+      Papa.parse<DictRow>(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (res) =>
+          resolve({ headers: (res.meta.fields ?? []).filter(Boolean), rows: res.data ?? [] }),
+        error: () => resolve({ headers: [], rows: [] }),
       });
+    });
 
-      const drop = (problem: Omit<FileProblem, "key" | "filename">) => {
-        setDicts((prev) => prev.filter((d) => d.key !== key));
-        setProblems((prev) => [...prev, { key, filename: file.name, ...problem }]);
-      };
+    const drop = (problem: Omit<FileProblem, "key" | "filename">) => {
+      setDicts((prev) => prev.filter((d) => d.key !== key));
+      setProblems((prev) => [...prev, { key, filename: file.name, ...problem }]);
+    };
 
-      if (!parsed.headers.length) {
-        drop({
-          kind: "unreadable",
-          detail:
-            "No header row could be read, so there are no columns to map. ddharmon reads comma- or " +
-            "tab-delimited text with the column names on the first line. Export the dictionary again as " +
-            "CSV or TSV and drop it here.",
-        });
-        continue;
-      }
-      // Refused BEFORE anything is uploaded, and refused in the browser: this is a standing product
-      // prohibition (metadata only, never participant-level data), so the user should not have to wait on
-      // a round trip to learn the file is the wrong kind. The server refuses it too — this is the second
-      // lock on the same door, not a replacement for it.
-      const offender = participantLevelColumn(parsed.headers, parsed.rows);
-      if (offender) {
-        drop({
-          kind: "participant-level",
-          detail:
-            `The column ${offender} holds a different value on every row. ddharmon only accepts metadata ` +
-            "— one row per variable, describing the fields — not the participant records themselves. " +
-            "Nothing was uploaded. Upload the study's data dictionary instead.",
-        });
-        continue;
-      }
-      if (!parsed.rows.length) {
-        drop({
-          kind: "no-rows",
-          detail:
-            "The columns were read but the file has no rows under them, so it describes no variables. " +
-            "Check that the export included the dictionary's body, then drop it here again.",
-        });
-        continue;
-      }
-
-      const prefill = lookupPrefill(parsed.headers);
-      setDicts((prev) =>
-        prev.map((d) =>
-          d.key === key
-            ? {
-                ...d,
-                headers: parsed.headers,
-                rows: parsed.rows,
-                rowCount: parsed.rows.length,
-                roles: initialRoles(parsed.headers),
-                // Provenance for the "prepopulated from…" note, only when the mapping actually came from a
-                // remembered/demo assignment (not from the identity fallback initialRoles applies otherwise).
-                prefill: prefill ? { source: prefill.source, at: prefill.at } : undefined,
-                state: "ready",
-              }
-            : d,
-        ),
-      );
+    if (!parsed.headers.length) {
+      drop({
+        kind: "unreadable",
+        detail:
+          "No header row could be read, so there are no columns to map. ddharmon reads comma- or " +
+          "tab-delimited text with the column names on the first line. Export the dictionary again as " +
+          "CSV or TSV and drop it here.",
+      });
+      return;
     }
+    // Refused BEFORE anything is uploaded, and refused in the browser: this is a standing product
+    // prohibition (metadata only, never participant-level data), so the user should not have to wait on
+    // a round trip to learn the file is the wrong kind. The server refuses it too — this is the second
+    // lock on the same door, not a replacement for it.
+    const offender = participantLevelColumn(parsed.headers, parsed.rows);
+    if (offender) {
+      drop({
+        kind: "participant-level",
+        detail:
+          `The column ${offender} holds a different value on every row. ddharmon only accepts metadata ` +
+          "— one row per variable, describing the fields — not the participant records themselves. " +
+          "Nothing was uploaded. Upload the study's data dictionary instead.",
+      });
+      return;
+    }
+    if (!parsed.rows.length) {
+      drop({
+        kind: "no-rows",
+        detail:
+          "The columns were read but the file has no rows under them, so it describes no variables. " +
+          "Check that the export included the dictionary's body, then drop it here again.",
+      });
+      return;
+    }
+
+    // A re-run's roles are the earlier run's own, and they WIN over the demo manifest and this browser's
+    // cache: "the same column roles" is the whole promise of a re-run, and either lookup could differ.
+    const prefill = seed ? null : lookupPrefill(parsed.headers);
+    setDicts((prev) =>
+      prev.map((d) =>
+        d.key === key
+          ? {
+              ...d,
+              headers: parsed.headers,
+              rows: parsed.rows,
+              rowCount: parsed.rows.length,
+              roles: seed ? carriedRoles(seed.roles, parsed.headers) : initialRoles(parsed.headers),
+              // Provenance for the "prepopulated from…" note, only when the mapping actually came from a
+              // remembered/demo assignment (not from the identity fallback initialRoles applies otherwise).
+              prefill: seed
+                ? { source: "rerun", from: seed.from }
+                : prefill
+                  ? { source: prefill.source, at: prefill.at }
+                  : undefined,
+              state: "ready",
+            }
+          : d,
+      ),
+    );
   }, []);
+
+  const onDrop = useCallback(
+    async (accepted: File[]) => {
+      composed.current = true;
+      for (const file of accepted) await addFile(file);
+    },
+    [addFile],
+  );
+
+  // --- re-run: Setup for a NEW run, prefilled from an earlier one (08-28) ---------------------------------
+
+  /**
+   * RE-RUN IS "A NEW RUN WITH THE LAST ONE'S INPUTS FILLED IN" — never "repeat the last run".
+   *
+   * `?rerun=<id>` on a NEW run's Setup names the run to copy. Its dictionaries are read back from the
+   * server's retained uploads and go through `addFile` like a drop, with the run's own cohort names and
+   * column roles; its options (catalogue, run mode, model, re-adjudication, name) are set on the controls.
+   * Every one of them stays editable and NOTHING STARTS: the run mode in particular is filled in, not
+   * assumed — the reviewer sees it beside the price it changes and presses Start themselves. The shipped
+   * re-run posted a paid run at once, in the old mode, from a Runs-list icon.
+   *
+   * Seeded ONCE per source (the ref), and only while this screen is composing — a started run's Setup is a
+   * read-back and a `?rerun` on it must not rewrite what it shows.
+   */
+  const search = useSearch();
+  const rerunOf = useMemo(() => new URLSearchParams(search).get(RERUN_PARAM), [search]);
+  // The run's SUMMARY row, not its result: it carries everything a re-run copies (config, the roles-only
+  // `dictionaries` projection, the name) without the multi-megabyte payload a finished run's result is.
+  // The same query the Runs page holds, so arriving from there costs no request at all.
+  const rerunJobs = useQuery({ queryKey: ["jobs"], queryFn: listJobs, enabled: Boolean(rerunOf) });
+  const rerunSource = useMemo(
+    () => (rerunOf ? (rerunJobs.data ?? []).find((j) => j.jobId === rerunOf) ?? null : null),
+    [rerunOf, rerunJobs.data],
+  );
+  /** Loaded, and the run is not among the caller's runs (deleted, or not theirs): nothing to copy. */
+  const rerunUnavailable = Boolean(rerunOf) && (rerunJobs.isError || (rerunJobs.isSuccess && !rerunSource));
+  const rerunSeeded = useRef<string | null>(null);
+  useEffect(() => {
+    if (!rerunOf || !rerunSource || runStarted || rerunSeeded.current === rerunOf) return;
+    rerunSeeded.current = rerunOf;
+    composed.current = true;
+    // `run_config` keys — the ones the backend persists — not the create payload's camelCase names.
+    const config = (rerunSource.config ?? {}) as Record<string, unknown>;
+    if (config.cde_set === "endorsed" || config.cde_set === "full") setCdeSet(config.cde_set);
+    if (config.run_mode === "batch" || config.run_mode === "sync" || config.run_mode === "preview") {
+      setRunMode(config.run_mode);
+    }
+    if (typeof config.readjudication === "boolean") setAllowReadjudication(config.readjudication);
+    setDisplayName(rerunNameFor(rerunSource.displayName));
+    const from = rerunSource.displayName || "the earlier run";
+    const declared: RunDictionary[] = Array.isArray(rerunSource.dictionaries) ? rerunSource.dictionaries : [];
+    void (async () => {
+      // In the run's own order, one at a time, so the cards come back in the order the run listed them.
+      for (const d of declared) {
+        let file: File;
+        try {
+          file = await fetchRetainedUpload(rerunOf, d.filename);
+        } catch {
+          setProblems((prev) => [
+            ...prev,
+            {
+              key: `rerun:${d.filename}`,
+              filename: d.filename,
+              kind: "unavailable",
+              detail:
+                "A run keeps its uploads until it is deleted, and this one is no longer there, so it could " +
+                "not be filled in. Drop it here again to include it — the rest of the setup is filled in.",
+            },
+          ]);
+          continue;
+        }
+        await addFile(file, { cohortName: d.cohortName, roles: d.columnRoles ?? {}, from });
+      }
+    })();
+  }, [rerunOf, rerunSource, runStarted, addFile]);
+
+  /**
+   * The earlier run's model, once the catalogue it is chosen from has loaded. Separate from the seed above
+   * because the catalogue is fetched: waiting for it there would hold every dictionary back behind it. A
+   * model that is not in this catalogue is left to the screen's own default rather than forced in.
+   */
+  const rerunModelSeeded = useRef<string | null>(null);
+  useEffect(() => {
+    if (!rerunOf || !rerunSource || runStarted || !models.length || rerunModelSeeded.current === rerunOf) return;
+    rerunModelSeeded.current = rerunOf;
+    const tag = ((rerunSource.config ?? {}) as Record<string, unknown>).model_tag;
+    const match = typeof tag === "string" ? models.find((m) => m.id === tag) : undefined;
+    if (!match) return;
+    setProvider(match.provider);
+    setModel(match.id);
+  }, [rerunOf, rerunSource, runStarted, models]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -1060,15 +1193,23 @@ export default function SetupPage() {
         {problems.map((p) => (
           <div
             key={p.key}
-            data-testid={p.kind === "participant-level" ? "participant-refusal" : "dict-unparseable"}
+            data-testid={
+              p.kind === "participant-level"
+                ? "participant-refusal"
+                : p.kind === "unavailable"
+                  ? "rerun-upload-missing"
+                  : "dict-unparseable"
+            }
             className="flex flex-col gap-1 rounded-card border border-rule-danger bg-surface-danger px-4 py-3"
           >
             <p className="text-sm font-semibold text-on-danger">
               {p.kind === "participant-level"
                 ? `${p.filename} looks like participant data, not a data dictionary.`
-                : p.kind === "no-rows"
-                  ? `${p.filename} was read but describes no variables.`
-                  : `${p.filename} could not be read as a data dictionary.`}
+                : p.kind === "unavailable"
+                  ? `${p.filename}, from the run you are re-running, is no longer on the server.`
+                  : p.kind === "no-rows"
+                    ? `${p.filename} was read but describes no variables.`
+                    : `${p.filename} could not be read as a data dictionary.`}
             </p>
             <p className="max-w-[68ch] text-xs text-on-danger">{p.detail}</p>
             <button
@@ -1166,13 +1307,15 @@ export default function SetupPage() {
                       columns) — never for the identity fallback, which is not a "from a previous run" claim. */}
                   {d.prefill && (
                     <p data-testid="prefill-provenance" className="text-xs text-on-raised-muted">
-                      {d.prefill.source === "demo"
-                        ? "Column assignments prepopulated from the demo mapping for this file. Edit any of them below."
-                        : d.prefill.at
-                          ? `Column assignments prepopulated from your previous mapping of this file (saved ${new Date(
-                              d.prefill.at,
-                            ).toLocaleDateString()}). Edit any of them below.`
-                          : "Column assignments prepopulated from your previous mapping of this file. Edit any of them below."}
+                      {d.prefill.source === "rerun"
+                        ? `Column assignments carried over from “${d.prefill.from}”, the run you are re-running. Edit any of them below.`
+                        : d.prefill.source === "demo"
+                          ? "Column assignments prepopulated from the demo mapping for this file. Edit any of them below."
+                          : d.prefill.at
+                            ? `Column assignments prepopulated from your previous mapping of this file (saved ${new Date(
+                                d.prefill.at,
+                              ).toLocaleDateString()}). Edit any of them below.`
+                            : "Column assignments prepopulated from your previous mapping of this file. Edit any of them below."}
                     </p>
                   )}
                   <DictionaryMappingTable
@@ -1281,6 +1424,45 @@ export default function SetupPage() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         {/* ── left: what the run is ── */}
         <div className="flex min-w-0 flex-col gap-8">
+
+      {/* --- a re-run's provenance (08-28) -------------------------------------------------------------
+
+          FIRST ON THE SCREEN, because it changes how everything under it should be read: these are an
+          earlier run's inputs, not defaults. It says what was carried over, that nothing has started, and
+          names the run mode that run used — the one choice a re-run must not make on the reviewer's behalf.
+          Compose only: a started run's Setup is a read-back, and a `?rerun` on it is ignored. */}
+      {rerunOf && stage === "compose" && (
+        <div
+          data-testid="rerun-prefill"
+          role="status"
+          className="max-w-[68ch] rounded-inner border border-rule-on-field bg-on-field/5 px-4 py-3 text-sm text-on-field"
+        >
+          {rerunUnavailable ? (
+            <>
+              <span className="font-semibold">The run you asked to re-run could not be loaded</span>, so nothing
+              is filled in and nothing has started. Set this run up below, or open{" "}
+              <Link href="/jobs" className="font-semibold text-link-on-field underline underline-offset-2">
+                Runs
+              </Link>{" "}
+              and try again.
+            </>
+          ) : !rerunSource ? (
+            "Loading the setup of the run you are re-running…"
+          ) : (
+            <>
+              <span className="font-semibold">Re-run of “{rerunSource.displayName}”.</span> Its dictionaries,
+              column roles and options are filled in below, and every one of them can still be changed. Nothing
+              has started and nothing is charged: check the run mode — that run used{" "}
+              <span className="font-semibold">
+                {RUN_MODE_WORDS[String(rerunSource.config?.run_mode ?? "")] ?? "its own"}
+              </span>{" "}
+              — then press Start run when you are ready.
+              {!(rerunSource.dictionaries ?? []).length &&
+                " That run kept no record of its dictionaries, so none are filled in — drop them here again."}
+            </>
+          )}
+        </div>
+      )}
 
       {/* --- the free boundary (08-14b, stripped back by 08-14d) -----------------------------------
 
