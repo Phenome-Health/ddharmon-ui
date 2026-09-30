@@ -73,7 +73,8 @@ def test_the_export_carries_the_exact_string_the_next_step_embeds(tmp_path):
     embed_col = header.index("ddharmon_embedding_text")
 
     dd = load_dictionary(src, cohort_name="CohortA", **ROLES)
-    preprocess_dictionary(dd)
+    # Explicitly ON: since 08-14e core prepares nothing unless asked, and this export reports preparation's output.
+    preprocess_dictionary(dd, enabled=True)
     expected = {f.raw_variable_name or f.variable_name: f.to_embedding_text() for f in dd.fields.values()}
 
     for row in rows:

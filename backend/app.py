@@ -457,6 +457,8 @@ async def start_batch(
     key. It is threaded to the pipeline as an in-memory arg for this job only — deliberately NOT written
     into ``run_config`` (which ``store.create`` persists) or any log, so it never touches disk.
     """
+    from backend.engine.adapter import PREPARE_BEFORE_EMBED_DEFAULT
+
     cfg = json.loads(config)
     job_id = str(uuid.uuid4())
     work_dir = _WORK_ROOT / job_id
@@ -535,6 +537,9 @@ async def start_batch(
         # is permission for the re-adjudication endpoint to spend on a re-split the reviewer names.
         "concept_gate": bool(cfg.get("conceptGate", False)),
         "readjudication": bool(cfg.get("allowReadjudication", False)),
+        # 08-14e: whether this run prepares its dictionaries before embedding, recorded so every later leg and a
+        # re-run embed the text the first leg embedded even if the product default moves again (`run_prepares`).
+        "preprocess": PREPARE_BEFORE_EMBED_DEFAULT,
     }
     # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
     # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from

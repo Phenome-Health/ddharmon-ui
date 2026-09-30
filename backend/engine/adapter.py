@@ -785,9 +785,7 @@ def build_prepared_export(
 
     dd = load_dictionary(source_path, cohort_name=cohort_name, **column_roles)
     try:
-        from ddharmon.ingestion.preprocessor import preprocess_dictionary
-
-        preprocess_dictionary(dd)
+        _prepare(dd)
         prepared = True
     except Exception as exc:  # noqa: BLE001 - an export must not fail on the step it is reporting
         logger.warning("prepared export for %s could not preprocess (%s) — exporting the raw load", cohort_name, exc)
@@ -874,7 +872,39 @@ EMBEDDING_EXPORT_COLUMN = "ddharmon_embedding_text"
 #: export's entire claim is "this is the string your run will embed" — so if the two could be set
 #: independently, the first divergence would turn the export from an answer into a confident lie, and
 #: nothing on the screen would look any different. Flipping preparation off is then one edit here.
-PREPARE_BEFORE_EMBED_DEFAULT = True
+#:
+#: OFF since 08-14e (core `preprocess_dictionary(enabled=False)` by default; `08-DECISION-GATE0.md` D-1
+#: reversed on product grounds): ddharmon no longer rewrites an uploaded dictionary's text unasked. A new
+#: run RECORDS this value as `config["preprocess"]` at creation (`start_batch`), so the constant only ever
+#: decides new runs and the job-less export — see :func:`run_prepares` for a run that predates the record.
+PREPARE_BEFORE_EMBED_DEFAULT = False
+
+#: What a run with no recorded `preprocess` did: every run created before 08-14e was prepared, because that
+#: was core's default. Such a run replays its frozen partition on resume, so it must embed the same text again.
+_PREPARED_BEFORE_THE_CHOICE_WAS_RECORDED = True
+
+
+def run_prepares(config: dict[str, Any]) -> bool:
+    """Whether THIS run prepares its dictionaries before embedding — its own recorded choice, else legacy (on)."""
+    return bool(config.get("preprocess", _PREPARED_BEFORE_THE_CHOICE_WAS_RECORDED))
+
+
+def _prepare(dd: Any) -> None:
+    """Run core's rule-based preparation over ``dd`` in place — explicitly ON.
+
+    Every caller here has already decided preparation should happen, so the core master switch (08-14e,
+    default off) is passed as ``enabled=True``; a core older than the switch prepares unconditionally, which
+    is the same answer.
+    """
+    import inspect
+
+    from ddharmon.ingestion.preprocessor import preprocess_dictionary
+
+    if "enabled" in inspect.signature(preprocess_dictionary).parameters:
+        preprocess_dictionary(dd, enabled=True)
+    else:
+        preprocess_dictionary(dd)
+
 
 #: A row index core synthesises when no variable-name column is mapped: one per DATA row, in file order,
 #: so the join stays exact instead of degrading to "we cannot attribute this file at all".
@@ -958,9 +988,7 @@ def build_embedding_export(
         prepare = PREPARE_BEFORE_EMBED_DEFAULT
     if prepare:
         try:
-            from ddharmon.ingestion.preprocessor import preprocess_dictionary
-
-            preprocess_dictionary(dd)
+            _prepare(dd)
         except Exception as exc:  # noqa: BLE001 - an export must not fail on a step it only reports
             logger.warning("embedding export for %s could not prepare (%s) — exporting the raw load", cohort_name, exc)
 
@@ -1308,7 +1336,7 @@ def preprocess_for_run(dd: Any, *, source_path: Path | str | None = None) -> UIP
         # were actually applied to rather than reporting a negative duplicate count.
         n_rows = n_applied_before
     try:
-        from ddharmon.ingestion.preprocessor import preprocess_dictionary
+        from ddharmon.ingestion.preprocessor import preprocess_dictionary  # noqa: F401 - availability probe
     except ImportError as exc:
         logger.warning("this core cannot preprocess (%s) — reporting the step as not run", exc)
         return {
@@ -1339,7 +1367,7 @@ def preprocess_for_run(dd: Any, *, source_path: Path | str | None = None) -> UIP
             "diffTruncated": False,
         }
     try:
-        preprocess_dictionary(dd)
+        _prepare(dd)
     except Exception as exc:  # noqa: BLE001 - a preparation step must not be able to fail a paid run
         logger.warning("preprocessing %s failed: %s", getattr(dd, "cohort_name", None) or dd.name, exc)
         return _failed_report(dd, n_rows, n_applied_before, f"{type(exc).__name__}: {exc}")
@@ -1824,7 +1852,7 @@ def run_pipeline(
     # on changes the embedded text and therefore every downstream result. Source dictionaries only — the
     # CDE backbone is excluded on purpose, with the reasoning recorded there.
     preprocess_reports: list[UIPreprocessReport] = []
-    if config.get("preprocess", PREPARE_BEFORE_EMBED_DEFAULT):
+    if run_prepares(config):
         for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
             preprocess_reports.append(preprocess_for_run(dd, source_path=spec["path"]))
 
@@ -2407,7 +2435,7 @@ def replay_leanb_result(
     # Preprocessing is part of the deterministic front half and it CHANGES the embedded text, so replaying
     # with it configured differently than the original leg would embed different text and cluster differently.
     # The run's own config is the record of what it did.
-    if config.get("preprocess", PREPARE_BEFORE_EMBED_DEFAULT):
+    if run_prepares(config):
         for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
             preprocess_for_run(dd, source_path=spec["path"])
     if provider is None:

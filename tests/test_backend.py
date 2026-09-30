@@ -3242,6 +3242,57 @@ def test_preprocessing_can_be_gated_off(monkeypatch, tmp_path):
     assert result.get("preprocessing", []) == []
 
 
+def test_a_new_run_records_that_it_does_not_prepare(monkeypatch, tmp_path):
+    """08-14e: core no longer prepares unasked, and neither does the product. The choice is RECORDED on the run
+    at creation so every later leg (and a re-run) embeds the text the first leg embedded, whatever the default
+    becomes afterwards."""
+    from backend.engine.adapter import PREPARE_BEFORE_EMBED_DEFAULT
+
+    monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
+    seen: dict = {}
+
+    def fake_runner(store, job_id, dict_specs, cde_spec, config, **kw):
+        seen.update(config)
+        store.update(job_id, status="complete", phase="complete", result=_CANNED_RESULT)
+
+    monkeypatch.setattr(app_module, "run_harmonization", fake_runner)
+    cfg = {
+        "dictionaries": [
+            {"filename": "a.csv", "cohortName": "A", "columnRoles": {"variable_name": "var", "description": "desc"}}
+        ],
+        "cdeSet": "endorsed",
+        "runMode": "batch",
+    }
+    resp = client.post(
+        "/api/harmonize/batch",
+        files=[("files", ("a.csv", b"var,desc\nage,Age in years\n", "text/csv"))],
+        data={"config": json.dumps(cfg)},
+    )
+    assert resp.status_code == 200, resp.text
+    job = app_module.store.get(resp.json()["jobId"])
+    assert PREPARE_BEFORE_EMBED_DEFAULT is False
+    assert job is not None and job.config["preprocess"] is False
+    for _ in range(50):
+        if seen:
+            break
+        time.sleep(0.02)
+    assert seen["preprocess"] is False
+
+
+def test_a_run_that_predates_the_recorded_choice_replays_prepared():
+    """Every run created before 08-14e was prepared (it was core's default). One parked at a gate replays its
+    partition on resume, so it must embed the same prepared text again — a missing key means PREPARED, never
+    the new default."""
+    from backend.engine.adapter import run_prepares
+
+    assert run_prepares({}) is True
+    assert run_prepares({"preprocess": True}) is True
+    assert run_prepares({"preprocess": False}) is False
+
+
 # ── 08-11: Setup's job-independent extraction, the opt-in re-adjudication endpoint, and the upload refusal ──
 
 
