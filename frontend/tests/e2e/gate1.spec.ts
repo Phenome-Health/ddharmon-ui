@@ -20,7 +20,10 @@ import {
   isReviewerGroupId,
   newReviewerGroupId,
   gate1QuoteUsd,
+  reshapedGroupIds,
 } from "@/lib/ledger";
+import { optionSetKey } from "@/lib/gate-decisions";
+import { SANDBOX_PREFIX } from "@/lib/sandbox";
 import {
   componentVerdictFor,
   missingReason,
@@ -1141,15 +1144,11 @@ test.describe("gate1 carve", () => {
   });
 
   /**
-   * ACCEPTING A DIVISION REPLACES THE PARENT WITH ITS CHILDREN (08-23b Task 2, Option A). The accept is
-   * split-only, so what a reviewer sees afterward is the persisted GROUPING: the over-merged parent is
-   * gone from the ledger and in its place stand the child concept-groups it was carved into, each marked
-   * "re-split from <parent>". Assignment is NOT part of this — the children are unassigned until Gate 2.
-   *
-   * Asserted against the RENDERED post-accept state (a fixture carrying the children), because the whole
-   * e2e suite runs against a backend-less static build and the paid accept itself cannot fire there — the
-   * live paid accept is a manual walk, named in the summary. What this pins is the durable contract: a
-   * group carrying `readjudicatedFrom` renders as a re-split child, and the parent it replaced is absent.
+   * A PIPELINE GROUP CARRYING `readjudicatedFrom` renders as a re-split child (08-23b Task 2, Option A's
+   * payload shape). Since 08-28 an accept no longer edits the Gate-1 payload — that edit could not survive the
+   * Gate 2 leg, which rebuilds the groups from the split — and records the division as the reviewer's own
+   * decisions instead ("gate1 accepted division" below). This keeps the payload shape rendering honestly for a
+   * run that carries it: the child marked "re-split from <parent>", the parent it replaced absent.
    */
   test("@gate1 an accepted division shows its children marked 're-split from', and the parent is gone", async ({
     page,
@@ -4655,5 +4654,175 @@ test.describe("gate1 new group helpers", () => {
     const groups = [{ groupId: "c0#g0" }, { groupId: "rev:a" }, { groupId: "rev:b" }];
     expect(gate1QuoteUsd(groups, 0.5, 0.1)).toBeCloseTo(1.5 + 0.2, 10);
     expect(gate1QuoteUsd([], 0.5, 0.1)).toBe(0);
+  });
+});
+
+/**
+ * 08-28 follow-up #1 — an ACCEPTED division, as Gate 1 shows it.
+ *
+ * Accepting the judge's proposed division buys a re-split and records it as the reviewer's own decisions: one New
+ * group per part (`gate1_new_group`, `splitFrom` = the divided group) and a move of each variable into its part
+ * (`gate1_regroup`) — what Continue freezes and every later leg applies. The backend half (the paid re-split
+ * through the real core, the rows it writes) is `tests/test_gate1_division.py`; the static build is
+ * backend-less and cannot fire the accept, so what is asserted here is what those rows RENDER as — seeded
+ * exactly as the endpoint writes them, and read back through the same decision layer after a reload.
+ */
+test.describe("gate1 accepted division", () => {
+  const NEWROW = "[data-testid='ledger-row'][data-reviewer='true']";
+  const PART_A = "rev:00000000-0000-4000-8000-00000000000a";
+  const PART_B = "rev:00000000-0000-4000-8000-00000000000b";
+
+  function divisionRows(): Record<string, Record<string, Record<string, unknown>>> {
+    const members = gate1Fixture().result!.conceptGroupMembers![FLAGGED];
+    const parts = [
+      { groupId: PART_A, name: "Occupational history", members: members.slice(0, 4), at: 2 },
+      { groupId: PART_B, name: "Survey dates", members: members.slice(4), at: 1 },
+    ];
+    const newGroups: Record<string, Record<string, unknown>> = {};
+    const moves: Record<string, Record<string, unknown>> = {};
+    for (const p of parts) {
+      newGroups[p.groupId] = {
+        groupId: p.groupId,
+        chosen: p.name,
+        alternatives: [p.name],
+        optionSetKey: optionSetKey([p.name]),
+        name: p.name,
+        createdAt: p.at,
+        splitFrom: FLAGGED,
+      };
+      for (const m of p.members) {
+        const alts = [FLAGGED, "__unassigned__", p.groupId];
+        moves[m] = { memberId: m, fromGroupId: FLAGGED, chosen: p.groupId, alternatives: alts, optionSetKey: optionSetKey(alts), movedAt: 1 };
+      }
+    }
+    return { gate1_new_group: newGroups, gate1_regroup: moves };
+  }
+
+  async function openDivided(page: Page): Promise<void> {
+    await openGate1(page);
+    await page.evaluate(
+      ({ key, value }) => sessionStorage.setItem(key, value),
+      { key: `${SANDBOX_PREFIX}${PAUSED_JOB}`, value: JSON.stringify({ gateDecisions: divisionRows() }) },
+    );
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+  }
+
+  test("@gate1 each part leads the queue as a group of its own, marked as re-split from the divided group", async ({
+    page,
+  }) => {
+    await openDivided(page);
+    for (const [gid, name, n] of [
+      [PART_A, "Occupational history", 4],
+      [PART_B, "Survey dates", 3],
+    ] as const) {
+      const row = page.locator(`${NEWROW}[data-row-id='${gid}']`);
+      await expect(row).toBeVisible();
+      await expect(row).toContainText(name);
+      await expect(row).toContainText(`${n} vars`);
+      await expect(row.locator("[data-testid='resplit-mark']")).toHaveAttribute("data-parent", FLAGGED);
+      await expect(row.locator("[data-testid='queue-scope']")).toBeChecked();
+    }
+    // The divided group itself is emptied — still listed (so the change can be seen and undone), matching nothing.
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${FLAGGED}']`)).toContainText("0 vars");
+  });
+
+  test("@gate1 the divided group says it was divided, into which parts, and offers no second accept", async ({
+    page,
+  }) => {
+    await openDivided(page);
+    const detail = await expandRow(page, FLAGGED);
+    const divided = detail.locator("[data-testid='group-divided']");
+    await expect(divided).toBeVisible();
+    await expect(divided).toContainText(/accepted the division/i);
+    await expect(divided).toContainText("Occupational history");
+    await expect(divided).toContainText("Survey dates");
+    await expect(detail.locator("[data-testid='group-emptied']")).toHaveCount(0);
+    await expect(detail.locator("[data-testid='carve-proposal']")).toHaveCount(0);
+    // A part names what it was divided out of.
+    await page.locator(`${NEWROW}[data-row-id='${PART_A}']`).click();
+    await expect(page.locator("[data-testid='new-group-detail']")).toContainText(/divided out of/i);
+  });
+
+  test("@gate1 the quote prices each part — its match and its own ideal — and nothing for the emptied group", async ({
+    page,
+  }) => {
+    await openDivided(page);
+    const ideals = page.locator("[data-testid='sum-block'] [data-sum-line='ideals']");
+    await expect(ideals).toBeVisible();
+    await expect(ideals).toContainText(/^2 new ideal descriptions/);
+    const inScope = page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']");
+    await expect(inScope).toContainText(/^2 of /);
+  });
+
+  test("@gate1 undoing the division puts every variable back and removes the parts", async ({ page }) => {
+    await openDivided(page);
+    const detail = await expandRow(page, FLAGGED);
+    await detail.locator("[data-testid='group-divided']").getByRole("button", { name: /undo the division/i }).click();
+    await expect(page.locator(NEWROW)).toHaveCount(0);
+    await expect(page.locator(`[data-testid='ledger-row'][data-row-id='${FLAGGED}']`)).toContainText("7 vars");
+    // A decision, not component state: the undo survives a reload too.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(NEWROW)).toHaveCount(0);
+  });
+});
+
+/**
+ * 08-28 follow-up #4 (Option B, 2026-09-18) — a group whose membership the reviewer changed gets its ideal
+ * description REGENERATED for its final members at Gate 2 (one paid call), so Gate 2's novel/assign verdict is
+ * judged against what the group now holds. The quote says so before the reviewer commits; an unchanged group
+ * keeps its ideal and adds nothing.
+ */
+test.describe("gate1 regenerated ideals", () => {
+  test("@gate1 a changed group is every group whose membership differs from the split's — and only those", () => {
+    const groups = fixtureGroups();
+    const members = gate1Fixture().result!.conceptGroupMembers!;
+    const other = groups.find((g) => g.groupId !== BIG && !g.membersTruncated)!.groupId;
+    const moved = members[BIG][0];
+    const out = effectiveMembers(groups, members, { [moved]: other });
+    expect([...reshapedGroupIds(groups, members, out.byGroup)].sort()).toEqual([BIG, other].sort());
+    // A move back where the variable started changes nothing.
+    const back = effectiveMembers(groups, members, { [moved]: BIG });
+    expect(reshapedGroupIds(groups, members, back.byGroup).size).toBe(0);
+  });
+
+  test("@gate1 the quote adds one ideal per billable group that needs one, and none for the rest", () => {
+    const billable = [{ groupId: "c0#g0" }, { groupId: "c1#g0" }, { groupId: "rev:a" }];
+    // The default rule is Wave 2's: only New groups need an ideal.
+    expect(gate1QuoteUsd(billable, 0.5, 0.1)).toBeCloseTo(1.5 + 0.1, 10);
+    // Option B: a changed group needs one too.
+    const changed = new Set(["c1#g0"]);
+    expect(gate1QuoteUsd(billable, 0.5, 0.1, (id) => isReviewerGroupId(id) || changed.has(id))).toBeCloseTo(1.7, 10);
+  });
+
+  test("@gate1 moving a variable between two in-scope groups adds their two regenerated ideals to the quote", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const members = gate1Fixture().result!.conceptGroupMembers!;
+    const other = fixtureGroups().find((g) => g.groupId !== BIG && !g.membersTruncated && (members[g.groupId]?.length ?? 0) > 1)!.groupId;
+    for (const gid of [BIG, other]) {
+      const box = page.locator(`[data-testid='ledger-row'][data-row-id='${gid}'] [data-testid='queue-scope']`);
+      await box.scrollIntoViewIfNeeded();
+      if (!(await box.isChecked())) await box.click();
+    }
+    const ideals = page.locator("[data-testid='sum-block'] [data-sum-line='ideals']");
+    await expect(ideals).toHaveCount(0); // nothing changed yet: no ideal is regenerated, nothing extra is quoted
+    const detail = await expandRow(page, BIG);
+    const member = detail.locator("[data-testid='member-row']").first();
+    const target = page.locator(`[data-testid='ledger-row'][data-row-id='${other}']`);
+    await target.scrollIntoViewIfNeeded();
+    await member.dragTo(target);
+
+    await expect(ideals).toBeVisible();
+    await expect(ideals).toContainText(/^2 new ideal descriptions/);
+    await expect(ideals).toContainText(/\$/);
+    // (That the total includes them is the quote helper's own assertion above; on this tiny demo corpus one
+    // ideal rounds below the cent the figure is shown to, so the displayed total need not move.)
+    // The changed group's own detail says its description is regenerated, not left stale.
+    const changed = await expandRow(page, BIG);
+    await expect(changed).toContainText(/regenerat/i);
   });
 });

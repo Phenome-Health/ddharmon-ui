@@ -406,13 +406,36 @@ export async function matchDeclaredScore(jobId: string, scoreName: string, apiKe
  * an empty id list — and the opt-in refusal names itself so the caller can render the honest
  * "not enabled for this run" state instead of a generic error.
  */
+/** One part of an accepted division: a New group the reviewer now owns, filled with its share of the members. */
+export interface DivisionPart {
+  groupId: string;
+  name: string;
+  /** The group it was divided out of. */
+  splitFrom: string;
+  members: string[];
+}
+
+/**
+ * What accepting a division returns (08-28 follow-up #1). The division is recorded as the reviewer's own Gate 1
+ * decisions — `decisions` holds the rows the server stored, WITH their versions, for the screen to absorb — so
+ * Continue carries it to every later leg. `nGroups` is the number of parts; 0 means the re-split kept the group
+ * whole and nothing was recorded.
+ */
+export interface DivisionResult {
+  jobId: string;
+  groupIds: string[];
+  nGroups: number;
+  parts: DivisionPart[];
+  decisions: { gate1_new_group?: Record<string, unknown>[]; gate1_regroup?: Record<string, unknown>[] };
+}
+
 export async function readjudicateGroups(
   jobId: string,
   groupIds: string[],
   apiKey?: string,
-): Promise<{ jobId: string; groupIds: string[]; nGroups: number }> {
-  // Split-only: the endpoint re-splits the named groups into child concept-groups and returns how many
-  // children it produced (nGroups). No records are assigned here — that happens later, at Gate 2.
+): Promise<DivisionResult> {
+  // Split-only: the endpoint re-splits the named groups and records each part as a New group of the reviewer's
+  // (see `DivisionResult`). No records are assigned here — that happens later, at Gate 2.
   if (IS_STATIC) throw new Error(STATIC_MSG);
   if (groupIds.length === 0) throw new Error("Name the concept groups to re-adjudicate.");
   const headers = await authed({

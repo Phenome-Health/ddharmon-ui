@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import type { JobResult } from "@/types";
+import type { JobResult, UIRecord } from "@/types";
 import { gate1BillableGroups, gate1ScopePayload, inheritedGate1Scope } from "@/lib/gate-decisions";
 import { mergeSpecEdit } from "@/lib/gate23";
 import { optionSetKey } from "@/lib/gate-decisions";
@@ -1591,5 +1591,60 @@ test.describe("gate1 rename carries forward", () => {
   test("@gate3 the reviewer's group name is what Gate 3 lists", async ({ page }) => {
     await seedRename(page, "gate3");
     await expect(page.locator("[data-testid='gate3-concept']").first()).toContainText("Ever smoked 100 cigarettes");
+  });
+});
+
+/**
+ * 08-28 follow-ups #1 and #4 — what Gate 2 says about a group the reviewer reshaped at Gate 1.
+ *
+ * Option B (2026-09-18): an EDITED group was assigned against an ideal description regenerated for its final
+ * members, and the record says so (`idealRegenerated`, set by the backend only where it happened). A PART of an
+ * accepted division (`readjudicatedFrom`) says it is one. Neither claim is made for a record that lacks the flag.
+ */
+test.describe("gate2 reshaped at gate 1", () => {
+  const GROUP = "c46be33d9a542#g0";
+  const PART = "rev:00000000-0000-4000-8000-00000000000c";
+
+  async function open(page: Page, shape: (r: UIRecord) => UIRecord, touch: string) {
+    await serveFinished(
+      page,
+      (run) => {
+        run.result!.records = [shape(run.result!.records!.find((x) => x.groupId === GROUP)!)];
+        run.config = { ...(run.config as object), gate1_overrides: { moves: {}, newGroups: [] } } as never;
+      },
+      { keep: 0 },
+    );
+    await openGate2(page);
+    const alts = [GROUP, "__unassigned__", touch];
+    const state = withGateDecision({}, "gate1_regroup", "A:x", {
+      memberId: "A:x",
+      fromGroupId: GROUP,
+      chosen: touch,
+      alternatives: alts,
+      optionSetKey: optionSetKey(alts),
+    });
+    await page.evaluate(
+      ({ key, state }) => sessionStorage.setItem(key, JSON.stringify(state)),
+      { key: `${SANDBOX_PREFIX}${FINISHED_JOB}`, state },
+    );
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    return page.locator("[data-testid='membership-changed']");
+  }
+
+  test("@gate2 an edited group whose ideal was regenerated says so", async ({ page }) => {
+    const note = await open(page, (r) => ({ ...r, idealRegenerated: true }), "__unassigned__");
+    await expect(note).toContainText(/ideal description was regenerated/i);
+  });
+
+  test("@gate2 an edited group WITHOUT the flag claims no regeneration", async ({ page }) => {
+    const note = await open(page, (r) => r, "__unassigned__");
+    await expect(note).toBeVisible();
+    await expect(note).not.toContainText(/regenerated/i);
+  });
+
+  test("@gate2 a part of an accepted division says it is one", async ({ page }) => {
+    const note = await open(page, (r) => ({ ...r, groupId: PART, id: PART, readjudicatedFrom: GROUP }), PART);
+    await expect(note).toContainText(/one part of a division you accepted/i);
   });
 });

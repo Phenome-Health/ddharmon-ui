@@ -383,7 +383,10 @@ export function newReviewerGroupId(): string {
  * its coherence is `not_judged` — the judge was never asked, and saying anything else would be a claim.
  */
 export function reviewerGroupRows(
-  decisions: Record<string, { chosen?: unknown; name?: unknown; createdAt?: unknown; groupId?: unknown }>,
+  decisions: Record<
+    string,
+    { chosen?: unknown; name?: unknown; createdAt?: unknown; groupId?: unknown; splitFrom?: unknown }
+  >,
   membersOf: (groupId: string) => string[],
 ): ConceptGroup[] {
   const rows = Object.entries(decisions)
@@ -411,6 +414,9 @@ export function reviewerGroupRows(
         coherenceOutliers: [],
         incoherent: false,
         matrixSuspect: false,
+        // A PART of an accepted division (08-28 follow-up #1): the group it was divided out of, which the queue's
+        // "re-split" mark names. The record it becomes carries the same provenance from Gate 2 on.
+        ...(typeof d.splitFrom === "string" && d.splitFrom ? { readjudicatedFrom: d.splitFrom } : {}),
       };
       return { row, at: typeof d.createdAt === "number" ? d.createdAt : 0 };
     });
@@ -421,15 +427,43 @@ export function reviewerGroupRows(
 
 /**
  * What Gate 1's Continue will cost for the groups it SENDS: each billable group's match (`price`), plus ONE
- * generated ideal for every billable New group (`idealPerNewGroup`) — the only extra call a New group makes.
+ * generated ideal (`idealPerGroup`) for every billable group that `needsIdeal` — the only extra call a group
+ * makes. By default that is a New group (08-28 Wave 2); Gate 1 also passes every group whose membership the
+ * reviewer changed (Option B, 2026-09-18 — its ideal is regenerated for its final members, see
+ * `reshapedGroupIds`).
  */
 export function gate1QuoteUsd(
   billable: readonly { groupId: string }[],
   price: number,
-  idealPerNewGroup: number,
+  idealPerGroup: number,
+  needsIdeal: (groupId: string) => boolean = isReviewerGroupId,
 ): number {
-  const nNew = billable.filter((g) => isReviewerGroupId(g.groupId)).length;
-  return price * billable.length + idealPerNewGroup * nNew;
+  const nIdeals = billable.filter((g) => needsIdeal(g.groupId)).length;
+  return price * billable.length + idealPerGroup * nIdeals;
+}
+
+/**
+ * The pipeline groups whose membership the reviewer CHANGED at Gate 1 — each one's ideal description is
+ * regenerated for its final members before Gate 2 matches it (Option B, 2026-09-18; one paid call each).
+ *
+ * The same rule core applies (`resolve_group_membership`): a group is changed when its effective members differ
+ * from the split's — something moved out, or something moved in. A move back to where a variable started is no
+ * change. An emptied group is changed too, but it is never billable, so it buys nothing. Compared against the
+ * SAME fallback `effectiveMembers` reads (the uncapped list, else the recorded sample), so a truncated group can
+ * never look changed merely because one side saw more of it.
+ */
+export function reshapedGroupIds(
+  groups: readonly ConceptGroup[],
+  membersByGroup: Record<string, string[]>,
+  effective: Record<string, string[]>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const g of groups) {
+    const before = new Set(membersByGroup[g.groupId] ?? g.memberVariableNames);
+    const after = effective[g.groupId] ?? [];
+    if (after.length !== before.size || after.some((m) => !before.has(m))) out.add(g.groupId);
+  }
+  return out;
 }
 
 /**

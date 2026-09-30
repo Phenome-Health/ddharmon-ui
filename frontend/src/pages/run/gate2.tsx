@@ -69,9 +69,11 @@ import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
  * Gate 1's moves (`gate1_regroup`) and New groups (`gate1_new_group`) are APPLIED (08-28 Wave 2): Continue
  * freezes them on the run (`config.gate1_overrides`) and core re-groups before the paid assign, so this
  * concept's candidates were retrieved — and its generated target written — for the members as the reviewer
- * left them. A concept whose membership changed says so, so the reviewer knows why it differs from Gate 1's
- * row. A run that passed Gate 1 BEFORE moves were applied has no frozen regrouping; there the copy says it
- * was matched on the original members, which on that run is still true.
+ * left them. Since Option B (2026-09-18) its ideal description — the anchor of the novel/assign verdict — is
+ * REGENERATED for those members too (`record.idealRegenerated`, set only where it actually was). A concept
+ * whose membership changed says so, so the reviewer knows why it differs from Gate 1's row; a part of an
+ * accepted division (`readjudicatedFrom`) says that. A run that passed Gate 1 BEFORE moves were applied has
+ * no frozen regrouping; there the copy says it was matched on the original members, still true on that run.
  *
  * TWO PANES, ADAPTED FROM CDEMapper (Wang et al., JAMIA 2025;32:1130-1139, doi:10.1093/jamia/ocaf064,
  * Fig. 4) AND CREDITED ON SCREEN. The framing is fixed: convergent method, extended scope — never a recall
@@ -567,8 +569,12 @@ export default function Gate2Page() {
                     className="rounded-inner border-l-4 border-l-accent-action bg-surface-inset px-3 py-2 text-xs text-on-inset"
                   >
                     {isReviewerGroupId(groupId)
-                      ? "You made this group at Gate 1. Its candidates were retrieved, and this target was generated, for exactly the variables you put in it."
-                      : "You changed this concept's members at Gate 1. Its candidates were retrieved, and this target was generated, for the members as you left them."}
+                      ? record.readjudicatedFrom
+                        ? "This group is one part of a division you accepted at Gate 1. Its ideal description was written, its candidates retrieved, and this target generated, for exactly the variables in this part."
+                        : "You made this group at Gate 1. Its ideal description was written, its candidates retrieved, and this target generated, for exactly the variables you put in it."
+                      : record.idealRegenerated
+                        ? "You changed this concept's members at Gate 1. Its ideal description was regenerated, its candidates retrieved, and this target generated, for the members as you left them."
+                        : "You changed this concept's members at Gate 1. Its candidates were retrieved, and this target was generated, for the members as you left them."}
                   </p>
                 ) : (
                   <p

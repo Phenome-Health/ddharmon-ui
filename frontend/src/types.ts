@@ -217,6 +217,8 @@ export interface UIRecord {
   conceptMismatch?: boolean;
   /** Present only on a re-adjudication child: the parent group id it was carved from. */
   readjudicatedFrom?: string;
+  /** Option B: present only when a Gate 1 edit changed this group and its ideal was regenerated for it. */
+  idealRegenerated?: boolean;
   /** 08-27b: present only when the Gate 2 pick CHANGED this record's target (specs regenerated for it). */
   reviewerPick?: ReviewerPick;
 }

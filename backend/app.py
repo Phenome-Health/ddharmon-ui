@@ -30,6 +30,7 @@ import os
 import shutil
 import sys
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -56,6 +57,7 @@ from backend.artifact_kinds import (
     VERDICT,
     accept_gencde,
     derive_staleness,
+    option_set_key,
     reviewer_group_name,
 )
 from backend.artifacts import UPDATED_AT, ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
@@ -914,6 +916,8 @@ def _gate1_overrides(job: Job, subject: str | None, result: dict[str, Any]) -> d
         gid = str(d.get("groupId") or "")
         if gid.startswith(REVIEWER_GROUP_PREFIX) and gid not in existing:
             new_groups[gid] = {"groupId": gid, "name": reviewer_group_name(d)}
+            if d.get("splitFrom"):  # a part of an accepted division: the group it was divided from (provenance)
+                new_groups[gid]["splitFrom"] = str(d["splitFrom"])
     origin = {str(m): gid for gid, members in (result.get("conceptGroupMembers") or {}).items() for m in members or []}
     fields = set(result.get("fieldIndex") or {})
     moves: dict[str, str | None] = {}
@@ -1356,7 +1360,7 @@ class CloneBody(BaseModel):
 
 
 class ReadjudicateBody(BaseModel):
-    """Re-split and re-assign EXACTLY the concept groups a human named.
+    """Divide EXACTLY the concept groups a human named (Gate 1's "Accept the division").
 
     ``groupIds`` is required and must be non-empty. There is deliberately no "all flagged groups" mode: the
     coherence judge FLAGS, and re-splitting every flagged group because it was flagged is an auto-resolution
@@ -1367,6 +1371,23 @@ class ReadjudicateBody(BaseModel):
     groupIds: list[str] = []
 
 
+def _effective_members(result: dict[str, Any], overrides: dict[str, Any] | None, group_id: str) -> list[str]:
+    """A Gate-1 group's members as the reviewer currently sees it: the split's, minus moves out, plus moves in.
+
+    The same rule the Gate 1 screen draws (``effectiveMembers`` in ``frontend/src/lib/ledger.ts``) and core
+    applies (``resolve_group_membership``) — used here only to refuse, before any spend, a division of a group
+    the reviewer has already emptied down to one variable. Core's own resolution is what the re-split uses.
+    """
+    uncapped = (result.get("conceptGroupMembers") or {}).get(group_id)
+    if uncapped is None:  # a payload with no uncapped list for this group: the recorded sample, as the screen does
+        group = next((g for g in result.get("conceptGroups") or [] if g.get("groupId") == group_id), {})
+        uncapped = group.get("memberVariableNames") or []
+    original = [str(m) for m in uncapped]
+    moves = (overrides or {}).get("moves") or {}
+    kept = [m for m in original if moves.get(m, group_id) == group_id]
+    return kept + sorted(m for m, dest in moves.items() if dest == group_id and m not in original)
+
+
 @app.post("/api/harmonize/jobs/{job_id}/readjudicate")
 def readjudicate(
     job_id: str,
@@ -1375,26 +1396,35 @@ def readjudicate(
     x_anthropic_key: Annotated[str | None, Header()] = None,
     x_provider_key: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
-    """Re-adjudicate the named groups (STGD-16). The one gate action that STARTS PAID WORK.
+    """Accept a proposed division at Gate 1 (STGD-16) — the one Gate-1 action that STARTS PAID WORK.
 
     Every other gate decision rides the generic artifact route, because recording a decision is storage. This
-    one buys a re-split from a provider (split-only — accepting a division is a GROUPING change; the child
-    concept-groups are assigned later at Gate 2), so it carries three refusals rather than one, each a
-    prohibition made mechanical:
+    one buys a re-split from a provider, so it carries its refusals up front, each a prohibition made mechanical
+    and each BEFORE anything is bought:
 
     1. **A pinned demo is rejected outright** — checked first, so a demo that happens to carry the opt-in is
        still refused and a guest walk can never spend money.
-    2. **The run must have opted in at creation** (``readjudication``, default false). No run pays for a
-       stage it did not ask for, and the refusal names itself so the UI can render the honest "not enabled
-       for this run" state rather than a generic error.
-    3. **The caller must name explicit group ids.** An empty or absent list is refused, never widened to
-       "everything flagged".
+    2. **The run must have opted in at creation** (``readjudication``, default false), and the refusal names
+       itself so the UI can render the honest "not enabled for this run" state.
+    3. **The caller must name explicit group ids.** An empty or absent list is refused, never widened.
+    4. **The run must be parked AT Gate 1.** Past it the grouping was committed by Gate 1's Continue, and a
+       division now would change nothing any later leg reads.
+    5. **Each group must exist on this Gate 1 and still hold two variables** as the reviewer left it.
+    6. **A provider key must be available** — a keyless re-split used to answer 200 with nothing done.
 
-    Rebuilding core's inputs is FREE: ``replay_leanb_result`` replays the deterministic front half against
-    the frozen substrate and the checkpoint's recorded stage answers (WINDOWS id22). The only new spend is
-    the re-split for the groups the human named — the child groups' assignment is bought later, at Gate 2.
+    WHAT IT PRODUCES (08-28, the silent no-op fixed). The division is written as the REVIEWER'S OWN Gate 1
+    decisions: one ``gate1_new_group`` per part (named for the concept the re-split gave it, ``splitFrom`` =
+    the divided group) and a ``gate1_regroup`` moving each of the part's variables into it. The children core
+    returns exist on one result only — the Gate 2 leg re-runs the split, which keeps the group whole — so the
+    Gate-1 payload is NOT edited: decisions are what Gate 1's Continue freezes and every later leg (and the $0
+    replay) applies. So the parts are listed at Gate 1 at once, survive a reload, are priced by Gate 1's quote
+    like any New group (a match + one ideal each), and are assigned as themselves at Gate 2. The rows written
+    come back, with their versions, so the screen shows them without a reload. A re-split that keeps the group
+    whole writes nothing and says so (``nGroups: 0``).
 
-    BYOK: the key is in-memory for this request only — never written to ``run_config``, the row, or a log.
+    Rebuilding core's inputs is FREE: ``replay_leanb_result`` replays the deterministic front half against the
+    frozen substrate and the checkpoint's recorded stage answers. The only new spend is the re-split, billed to
+    Gate 1. BYOK: the key is in-memory for this request only — never written to ``run_config``, the row, or a log.
     """
     subject = _subject(request)
     job = store.get(job_id)
@@ -1414,7 +1444,7 @@ def readjudicate(
                 "new split pass; start a new run with it enabled to re-split a group."
             ),
         )
-    group_ids = [g.strip() for g in (body.groupIds or []) if g and g.strip()]
+    group_ids = list(dict.fromkeys(g.strip() for g in (body.groupIds or []) if g and g.strip()))
     if not group_ids:
         raise HTTPException(
             status_code=400,
@@ -1424,9 +1454,38 @@ def readjudicate(
                 "would be an auto-resolution of an over-merge."
             ),
         )
+    if job.gate_position != "gate1" or job.status != AWAITING_REVIEW:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Accepting a division is a Gate 1 decision, and this run is not parked at Gate 1 — its grouping "
+                "was committed when Gate 1 was continued, so a division now would change nothing. Nothing was "
+                "charged."
+            ),
+        )
     if not job.dict_specs or not job.config.get("work_dir"):
         raise HTTPException(
             status_code=409, detail="This run predates re-adjudication (no retained source dictionaries)"
+        )
+    artifacts = store.artifacts
+    if artifacts is None:
+        raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    ckpt = _checkpoint_for(job)
+    ckpt_result = ckpt.result if ckpt is not None else {}
+    known = {str(g.get("groupId")) for g in ckpt_result.get("conceptGroups") or []}
+    unknown = [g for g in group_ids if g not in known]
+    if unknown:
+        raise HTTPException(status_code=404, detail=f"No concept group {unknown[0]!r} on this run's Gate 1")
+    # The reviewer's regrouping SO FAR (live decisions, not yet frozen): the group is divided as they see it now.
+    current = _gate1_overrides(job, subject, ckpt_result)
+    too_small = [g for g in group_ids if len(_effective_members(ckpt_result, current, g)) < 2]
+    if too_small:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{too_small[0]!r} has fewer than two variables left in it, so there is nothing to divide. "
+                "Nothing was charged."
+            ),
         )
     cde_set = job.config.get("cde_set", "endorsed")
     cde_path = CDE_FILES.get(cde_set)
@@ -1434,10 +1493,9 @@ def readjudicate(
         raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
     cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
 
-    # A fourth refusal: re-adjudication ALWAYS buys a split + assign, so a missing provider key must fail
-    # loudly HERE, not deep in the paid stage where it returned 200 with zero records — a silent no-op on a
-    # paid button (the accept-the-division finding). No preview exemption: unlike a resume, this endpoint
-    # spends unconditionally. The key clears on a browser reload, which is exactly how the live test hit it.
+    # The paid-action guard: the re-split ALWAYS buys a split, so a missing provider key must fail loudly HERE,
+    # not deep in the paid stage where it once returned 200 with nothing done. No preview exemption. The key
+    # clears on a browser reload, which is exactly how the live test hit it.
     if _no_anthropic_key(job.config, x_provider_key or x_anthropic_key):
         raise HTTPException(
             status_code=400,
@@ -1448,68 +1506,96 @@ def readjudicate(
     from backend.engine import adapter as engine_adapter
     from backend.engine.llm import build_llm_client
 
-    ckpt = _checkpoint_for(job)
+    # A leg that failed parks the run back at Gate 1 with the regrouping it froze still on the config; replaying
+    # with it would reshape the groups the reviewer is dividing a SECOND time. Gate 1 is replayed as displayed.
+    replay_config = {k: v for k, v in job.config.items() if k != GATE1_OVERRIDES_CONFIG_KEY}
     responses = ckpt.responses if ckpt is not None else {}
     try:
         leanb_result, embedded = engine_adapter.replay_leanb_result(
-            job.dict_specs, cde_spec, job.config, replay_responses=responses
+            job.dict_specs, cde_spec, replay_config, replay_responses=responses
         )
     except engine_adapter.ReplayUnavailableError as exc:
         # 409, and the reason is stated: re-deriving core's objects without the recording would re-buy the
         # whole front half, which is not what a request to re-split two groups agreed to pay for.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    cde_cohort = job.config.get("cde_cohort", CDE_COHORT)
+    regrouping = engine_adapter.core_group_overrides(current, engine_adapter.build_field_index(embedded, cde_cohort))
 
     client = build_llm_client(job.config.get("model_tag"), x_provider_key or x_anthropic_key)
-    # Split-only: accepting a division is a GROUPING change, so this buys ONLY the re-split, not an assign.
-    # The children are assigned later at Gate 2 in the normal flow. One generic stage callable, for `split`.
     stage = engine_adapter.specgen_stage_fn(client)
     try:
-        groups, members = engine_adapter.readjudicate_split_only_groups(
+        parts = engine_adapter.divide_groups(
             leanb_result,
             embedded,
             group_ids=group_ids,
             split=stage,
-            cde_cohort=job.config.get("cde_cohort", CDE_COHORT),
+            group_overrides=regrouping,
+            cde_cohort=cde_cohort,
         )
+    except engine_adapter.DivisionUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:  # the seam's own refusal, kept as a 400 rather than a 500
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        # The re-split is billed to the run's Gate 1 line BEFORE the ledger below is written, and that write
-        # re-reads the checkpoint under the lock, so the two edits compose instead of one erasing the other.
         billing.bill_client(store, job_id, billing.READJUDICATE, client)
 
-    # Persist the re-split ledger onto whichever surface holds this run: the row for a finished run, the
-    # checkpoint for a paused one (D-02 keeps a paused run's payload off the row, rewritten whole on write).
-    # conceptGroups/Members are the Gate-1 ledger (the parent replaced by its children); the parent's stale
-    # RECORD is dropped from the stored records because its grouping was rejected — no child records are
-    # added, since the children stay UNASSIGNED until Gate 2. Reviewer decisions live in the decisions store,
-    # not on this payload, so re-deriving the groups does not lose them.
-    parent_ids = set(group_ids)
-    # Re-read under the lock: the paid call above took seconds, and the checkpoint it read may have been
-    # rewritten since — by its own bill, just now, if nothing else. Writing the stale copy back would erase that.
-    with checkpoint_lock(job_id):
-        latest = store.get(job_id) or job
-        fresh = _checkpoint_for(latest) if ckpt is not None else None
-        base_result = fresh.result if fresh is not None else (latest.result or {})
-        kept_records = [
-            r
-            for r in cast("list[dict[str, Any]]", base_result.get("records") or [])
-            if r.get("groupId") not in parent_ids
-        ]
-        new_fields = {"conceptGroups": groups, "conceptGroupMembers": members, "records": kept_records}
-        if fresh is not None:
-            write_checkpoint(
-                fresh.path.parent if fresh.path is not None else Path(job.config["work_dir"]),
-                job_id=fresh.job_id,
-                gate=fresh.gate,
-                result={**fresh.result, **new_fields},
-                responses=fresh.responses,
-                realized_cost=fresh.realized_cost,
+    # Persist the division as the reviewer's decisions (see the docstring). The split is paid for already, so the
+    # writes happen after it — and they are the whole of the effect: the checkpoint is not touched.
+    owner = principal_of(subject, job)
+    origin = {str(m): gid for gid, ms in (ckpt_result.get("conceptGroupMembers") or {}).items() for m in ms or []}
+    now = int(time.time() * 1000)
+    written: dict[str, list[dict[str, Any]]] = {GATE1_NEW_GROUP: [], GATE1_REGROUP: []}
+
+    def _put(kind: str, payload: dict[str, Any]) -> None:
+        stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload)
+        written[kind].append({**payload, UPDATED_AT: stored.updated_at})
+
+    with _writable_run():
+        for i, part in enumerate(parts):
+            name, gid = str(part["name"]), str(part["groupId"])
+            # Newest first is the queue's order, so the FIRST part is stamped newest and leads the list.
+            created = now + (len(parts) - i)
+            _put(
+                GATE1_NEW_GROUP,
+                {
+                    "groupId": gid,
+                    "chosen": name,
+                    "alternatives": [name],
+                    "optionSetKey": option_set_key([name]),
+                    "name": name,
+                    "createdAt": created,
+                    "splitFrom": part["parentGroupId"],
+                },
             )
-        else:
-            store.update(job_id, result={**base_result, **new_fields})
-    n_children = sum(1 for g in groups if g.get("readjudicatedFrom") in parent_ids)
-    return {"jobId": job_id, "groupIds": group_ids, "nGroups": n_children}
+            for member in part["members"]:
+                source = origin.get(str(member), "")
+                alts = list(dict.fromkeys(x for x in (source, UNASSIGNED_GROUP_ID, gid) if x))
+                _put(
+                    GATE1_REGROUP,
+                    {
+                        "memberId": str(member),
+                        "fromGroupId": source,
+                        "chosen": gid,
+                        "alternatives": alts,
+                        "optionSetKey": option_set_key(alts),
+                        "movedAt": now,
+                    },
+                )
+    return {
+        "jobId": job_id,
+        "groupIds": group_ids,
+        "nGroups": len(parts),
+        "parts": [
+            {
+                "groupId": p["groupId"],
+                "name": p["name"],
+                "splitFrom": p["parentGroupId"],
+                "members": list(p["members"]),
+            }
+            for p in parts
+        ],
+        "decisions": written,
+    }
 
 
 @app.post("/api/harmonize/jobs/{job_id}/clone")

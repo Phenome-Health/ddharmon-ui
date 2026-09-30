@@ -194,13 +194,16 @@ def test_every_later_leg_applies_the_regrouping_and_buys_the_new_groups_ideal_on
     assert by[REV]["concept"] == "Reviewer group"
     assert moved_smoke not in by[smoke]["members"], "the move out of the smoking group was not applied"
     assert moved_other in by[smoke]["members"], "the move into the smoking group was not applied"
-    assert calls.get("group_generate") == 1, "each New group buys exactly one ideal"
+    # Option B: the New group, and the two existing groups whose members changed, each buy exactly one ideal.
+    assert calls.get("group_generate") == 3, "each New or edited group buys exactly one ideal"
     for stage in ("generate", "split", "coherence"):
         assert calls.get(stage, 0) == 0, f"the Gate 1 -> Gate 2 leg bought a {stage} prompt"
     assert set(recorded.get("generate") or {}) == set(responses["generate"]), "the New group's ideal hid in generate"
     assert list(recorded["group_generate"]) == [
         p for p in recorded["group_generate"] if p.startswith("leanb:groupideal:")
     ]
+    # A New group has its own ideal by construction; only an EDITED pipeline group is marked "regenerated".
+    assert not by[REV].get("idealRegenerated") and by[smoke].get("idealRegenerated")
 
     # Gate 2 -> Gate 3: the same frozen overrides replay every answer, the New group's ideal included, for $0.
     leg3_calls: dict[str, int] = {}
@@ -355,3 +358,78 @@ def test_no_screen_still_says_moves_are_not_applied():
         src = (root / page).read_text()
         assert "moves-not-applied" not in src, page
         assert not re.search(r"not (yet )?applied to matching", src), f"{page} still says moves are not applied"
+
+
+# ── Option B (2026-09-18): a group EDITED at Gate 1 gets its ideal regenerated, on the same stage ───────────
+
+
+def _moves_only(leg1: dict) -> tuple[dict, str, str, str]:
+    """No New group: one variable moved from one group into another, so BOTH groups' memberships change."""
+    groups = [g["groupId"] for g in leg1["conceptGroups"]]
+    members = leg1["conceptGroupMembers"]
+    src = max(groups, key=lambda g: len(members[g]))
+    dest = next(g for g in groups if g != src)
+    moved = members[src][0]
+    return {"moves": {moved: dest}, "newGroups": []}, src, dest, moved
+
+
+@pytest.mark.usefixtures("_f2_clustering")
+def test_a_moves_only_regrouping_buys_the_changed_groups_ideals_on_their_own_stage(tmp_path):
+    """The ideal anchors the novel decision, so each group whose members changed is assigned against one written
+    for its final members — bought on ``group_generate`` even when the reviewer made no New group. Before, that
+    stage was built only for New groups, so core fell back to the FROZEN ``generate`` and the leg died of
+    "partition drift" over the reviewer's own, sanctioned edit."""
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec, leg1, responses = _f2_leg1(tmp_path)
+    overrides, src, dest, moved = _moves_only(leg1)
+    cfg = {**_f2_base(tmp_path), "gate1_overrides": overrides}
+    calls: dict[str, int] = {}
+    recorded: dict[str, dict] = {}
+    leg2 = run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**cfg, "stop_at_gate": "gate2"},
+        provider=StubProvider(),
+        stage_overrides=_f2_stages(calls),  # no dedicated runner: the production sync/batch paths build their own
+        replay_responses=responses,
+        stage_responses=recorded,
+    )
+    by = {r["groupId"]: r for r in leg2["records"]}
+    assert moved in by[dest]["members"] and moved not in by[src]["members"]
+    assert by[src].get("idealRegenerated") and by[dest].get("idealRegenerated"), "Gate 2 cannot tell it was regenerated"
+    ideals = sorted(recorded.get("group_generate") or {})
+    assert [i.split("@")[0] for i in ideals] == sorted(f"leanb:groupideal:{g}" for g in (src, dest)), ideals
+    assert set(recorded.get("generate") or {}) == set(responses["generate"]), "an edited group's ideal hid in generate"
+
+    leg3_calls: dict[str, int] = {}
+    run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**cfg, "stop_at_gate": None, "park_at_gate": "gate3"},
+        provider=StubProvider(),
+        stage_overrides=_counting(leg3_calls),
+        replay_responses={**responses, **recorded},
+    )
+    assert leg3_calls.get("group_generate", 0) == 0, "the Gate 2 -> Gate 3 leg re-bought a regenerated ideal"
+
+
+@pytest.mark.usefixtures("_f2_clustering")
+def test_an_out_of_scope_edited_group_buys_no_ideal(tmp_path):
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec, leg1, responses = _f2_leg1(tmp_path)
+    overrides, src, dest, _moved = _moves_only(leg1)
+    calls: dict[str, int] = {}
+    recorded: dict[str, dict] = {}
+    run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**_f2_base(tmp_path), "gate1_overrides": overrides, "stop_at_gate": "gate2", "assign_group_ids": [dest]},
+        provider=StubProvider(),
+        stage_overrides=_counting(calls),
+        replay_responses=responses,
+        stage_responses=recorded,
+    )
+    assert [i.split("@")[0] for i in recorded.get("group_generate") or {}] == [f"leanb:groupideal:{dest}"]
+    assert calls.get("group_generate") == 1
