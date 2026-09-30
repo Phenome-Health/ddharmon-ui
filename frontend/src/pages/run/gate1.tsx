@@ -66,6 +66,7 @@ import {
   isReviewerGroupId,
   newReviewerGroupId,
   readjudicationRequest,
+  reshapedGroupIds,
   reviewerGroupRows,
   matchTerms,
   partitionByBreadth,
@@ -1333,8 +1334,13 @@ function ExpandedGroup({
   onIgnoreCarve,
   accepting,
   highlightIds,
+  divisionParts = [],
+  onUndoDivision,
 }: {
   group: ConceptGroup;
+  /** The parts this group was divided into when the reviewer accepted its division (08-28 follow-up #1). */
+  divisionParts?: ConceptGroup[];
+  onUndoDivision?: () => void;
   /** Every OTHER group, as drop destinations beside this one (08-16c Task 6). */
   otherGroups: ConceptGroup[];
   /** A destination group's membership after the reviewer's moves — for the tray's members list. */
@@ -1362,6 +1368,9 @@ function ExpandedGroup({
 }) {
   const [ignored, setIgnored] = useState(false);
   const emptied = canRegroup && members.length === 0;
+  // DIVIDED: the reviewer accepted the judge's division and every variable went to its parts. Said as that, not
+  // as "you moved every variable out" — and the proposal is gone, because it has been acted on.
+  const divided = emptied && divisionParts.length > 0;
   // Does the evidence grid render for this group? If it does it IS the membership view and the tile strip
   // is redundant; if it does not, the chips are the only thing standing between the reviewer and a group
   // with no visible members. Asked of the same expression the grid itself uses, so the two cannot drift.
@@ -1395,6 +1404,39 @@ function ExpandedGroup({
             see, so the move is withheld rather than offered over a partial
             list. The variables below are the sample that was recorded.
           </NotAvailable>
+        ) : divided ? (
+          /* AN ACCEPTED DIVISION. The parts are New groups of the reviewer's, listed at the top of the queue and in
+           scope; this group keeps its row so the change stays visible and can be undone in one step. */
+          <div
+            data-testid="group-divided"
+            className="flex flex-col gap-2 rounded-inner border-l-4 border-l-accent-action bg-surface-inset px-4 py-3"
+          >
+            <p className="text-sm font-semibold text-on-inset">
+              You accepted the division of this group into {divisionParts.length} parts.
+            </p>
+            <ul className="list-disc pl-5 text-sm text-on-inset">
+              {divisionParts.map((p) => (
+                <li key={p.groupId}>
+                  {p.concept}{" "}
+                  <span className="text-on-inset-muted">
+                    ({p.nMembers} {p.nMembers === 1 ? "variable" : "variables"})
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="max-w-[80ch] text-sm text-on-inset-muted">
+              Each part is now a group of its own, at the top of the list and in
+              scope: at Gate 2 it is matched and gets an ideal description of its
+              own. This group is empty, so it will not go on to Gate 2.
+            </p>
+            {onUndoDivision && (
+              <div>
+                <Button type="button" variant="outline" size="sm" onClick={onUndoDivision}>
+                  Undo the division
+                </Button>
+              </div>
+            )}
+          </div>
         ) : emptied ? (
           /* THE LAST VARIABLE LEFT. The row must NOT silently vanish — a reviewer has to be able to see what
            they did and undo it, and a group that disappeared on the move it was emptied by is a change
@@ -1427,7 +1469,7 @@ function ExpandedGroup({
         {/* THE COHERENCE JUDGEMENT — ABOVE the evidence rows (mockup parity). For a flagged group this is the
           judge's carve proposal with its accept / edit / ignore action; for the rest it is the judge's read,
           stated plainly so an unjudged group never reads as one the judge approved. */}
-        {isFlagged(group) && !ignored && (
+        {isFlagged(group) && !ignored && !divided && (
           <div className="flex flex-col gap-2">
             <CarveProposal
               state={group.coherence}
@@ -1695,12 +1737,17 @@ function SumBlock({
   wholeCorpus,
   nInScope,
   nGroups,
+  nIdeals = 0,
+  idealsUsd = 0,
 }: {
   realized: number;
   inScopeTotal: number;
   wholeCorpus: number;
   nInScope: number;
   nGroups: number;
+  /** How many of the groups sent buy a generated ideal (New or reshaped), and what those calls cost. */
+  nIdeals?: number;
+  idealsUsd?: number;
 }) {
   return (
     <div data-testid="sum-block" className="flex flex-col gap-1">
@@ -1733,6 +1780,16 @@ function SumBlock({
         </span>{" "}
         to match them against common data elements at Gate 2.
       </p>
+      {nIdeals > 0 && (
+        /* Named rather than folded in silently: these are calls the reviewer's own edits bought (a New group has
+           no description yet; a reshaped one's was written for other members), so the quote says so. */
+        <p data-sum-line="ideals" className="text-xs font-normal text-on-raised-muted">
+          {nIdeals} new ideal {nIdeals === 1 ? "description" : "descriptions"} — one for
+          each group you made or changed —{" "}
+          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>, included
+          above.
+        </p>
+      )}
       <p
         data-sum-line="whole-corpus"
         className="text-sm font-normal text-on-raised-faint"
@@ -2023,6 +2080,7 @@ function ReviewerGroupDetail({
   onRename,
   onDelete,
   onMove,
+  dividedFrom,
 }: {
   group: ConceptGroup;
   members: string[];
@@ -2034,6 +2092,8 @@ function ReviewerGroupDetail({
   onRename: (next: string) => void;
   onDelete: () => void;
   onMove: (memberId: string, toGroupId: string) => void;
+  /** For a PART of an accepted division: the display name of the group it was divided out of. */
+  dividedFrom?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -2070,6 +2130,7 @@ function ReviewerGroupDetail({
               </h2>
             )}
             {!editing && <NewGroupMark />}
+            {!editing && group.readjudicatedFrom && <ReSplitMark parent={group.readjudicatedFrom} />}
             {!readOnly && !editing && (
               <button
                 type="button"
@@ -2088,7 +2149,14 @@ function ReviewerGroupDetail({
           </div>
           <p className="mt-1.5 text-xs text-on-raised-muted">
             <span className="font-semibold text-on-raised">{count}</span> {count === 1 ? "variable" : "variables"}
-            {group.cohorts.length > 0 && <> · {group.cohorts.join(", ")}</>} · made by you
+            {group.cohorts.length > 0 && <> · {group.cohorts.join(", ")}</>} ·{" "}
+            {dividedFrom ? (
+              <span data-testid="divided-from">
+                divided out of &ldquo;{dividedFrom}&rdquo; when you accepted its division
+              </span>
+            ) : (
+              "made by you"
+            )}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
@@ -2168,10 +2236,11 @@ function ReviewerGroupDetail({
  * The detail-pane WRAPPER around a selected group: its header (name, rename pencil, coherence, scope) and
  * the demoted generated ideal, above the reused `ExpandedGroup` (members, source rows, carve, drag).
  *
- * THE IDEAL IS DEMOTED AND STALE-AWARE. `generate(ideal)` runs once, before the split, and is never
- * regenerated on a membership move — so a description presented as the group's live definition would lie
- * the moment a variable is dragged out. It sits collapsed, labelled "from the original grouping", and
- * opens with a stale warning once the reviewer has edited this group.
+ * THE IDEAL IS DEMOTED AND CHANGE-AWARE. `generate(ideal)` runs once, before the split, on the original
+ * grouping — so a description presented as the group's live definition would lie the moment a variable is
+ * dragged out. It sits collapsed, labelled "from the original grouping". Once the reviewer has edited this
+ * group it opens and says what happens next (Option B, 2026-09-18): Continue REGENERATES it for the members as
+ * they are left here — one model call, in the Continue quote — and Gate 2 judges the group against the new one.
  */
 function GroupDetail({
   group,
@@ -2192,7 +2261,7 @@ function GroupDetail({
   onRename: (next: string) => void;
   inScope: boolean;
   onScopeChange: (inScope: boolean) => void;
-  /** True when the reviewer has changed this group's membership, so the generated ideal is out of date. */
+  /** True when the reviewer has changed this group's membership, so the generated ideal is regenerated. */
   stale: boolean;
   children: React.ReactNode;
 }) {
@@ -2288,18 +2357,22 @@ function GroupDetail({
               — from the original grouping
             </span>
             {stale && (
-              <span className="ml-2 rounded-pill border border-status-warn px-2 py-0.5 text-xs normal-case tracking-normal text-status-warn">
-                stale — membership changed
+              <span
+                data-testid="ideal-regenerated"
+                className="ml-2 rounded-pill border border-accent-action px-2 py-0.5 text-xs normal-case tracking-normal text-accent-on-raised"
+              >
+                membership changed — regenerated at Gate 2
               </span>
             )}
           </summary>
           {stale && (
-            <p className="px-4 pt-2 text-xs leading-relaxed text-status-warn">
-              You changed this group&rsquo;s membership. Gate 2 matches the
-              members as you leave them here, but the description below was
-              generated once, before the split, and is not rewritten for a moved
-              variable — it still describes the original grouping. (A New group
-              you make gets a description of its own at Gate 2.)
+            <p className="px-4 pt-2 text-xs leading-relaxed text-on-raised-muted">
+              You changed this group&rsquo;s membership, so the description
+              below — written once, before the split, for the original grouping
+              — is regenerated for the members as you leave them here when you
+              continue. That is one model call, included in the Continue quote
+              while the group is in scope, and Gate 2 judges the group against
+              the new description.
             </p>
           )}
           <p className="max-w-[90ch] px-4 py-3 text-sm leading-relaxed text-on-raised-muted">
@@ -2588,6 +2661,19 @@ export default function Gate1Page() {
     () => reviewerGroupRows(newGroups.decisions, (id) => membership.byGroup[id] ?? []),
     [newGroups.decisions, membership],
   );
+  /**
+   * The pipeline groups the reviewer RESHAPED (Option B, 2026-09-18). Continue regenerates each one's ideal
+   * description for its final members — one paid call — so Gate 2 judges it against what it now holds. Derived
+   * from the persisted moves on every read (R6), by the same rule core applies.
+   */
+  const reshaped = useMemo(
+    () => reshapedGroupIds(groups, membersByGroup, membership.byGroup),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groups, jobState?.result?.conceptGroupMembers, membership],
+  );
+  /** Does this group buy a generated ideal at Continue? A New group always; a reshaped one that still has members. */
+  const needsIdeal = (groupId: string) =>
+    isReviewerGroupId(groupId) || (reshaped.has(groupId) && (membership.byGroup[groupId]?.length ?? 0) > 0);
   const fieldIndex = jobState?.result?.fieldIndex ?? {};
 
   /**
@@ -2630,13 +2716,14 @@ export default function Gate1Page() {
     return out;
   }, [groups, jobState?.result?.conceptGroupMembers]);
 
-  async function moveMember(memberId: string, toGroupId: string) {
+  /** Record one move, with no acknowledgement — the shared half of a drag and of undoing a division. */
+  async function placeMember(memberId: string, toGroupId: string): Promise<boolean> {
     const from = originalGroupOf[memberId] ?? "";
     if (toGroupId === from) {
       // Back where it started, so the decision is CLEARED rather than written as a no-op. A stored
       // "moved to where it already was" would keep the row marked as changed forever.
       await regroups.clear({ memberId });
-      return;
+      return false;
     }
     await regroups.write(
       { memberId, fromGroupId: from },
@@ -2657,6 +2744,11 @@ export default function Gate1Page() {
         ],
       },
     );
+    return true;
+  }
+
+  async function moveMember(memberId: string, toGroupId: string) {
+    if (!(await placeMember(memberId, toGroupId))) return;
     // Confirm the move (mockup parity) — a drag has no other acknowledgement, and a member that lands in a
     // collapsed group off-screen is otherwise a change with no visible consequence.
     const { variable } = memberParts(memberId, fieldIndex);
@@ -2729,6 +2821,27 @@ export default function Gate1Page() {
     }
   }
 
+  /**
+   * Undo an accepted division: every variable in its parts goes back into the divided group, and the (then
+   * empty) parts are deleted. Decisions only — nothing is bought, and the paid re-split is not refunded.
+   */
+  async function undoDivision(parentId: string) {
+    const parts = reviewerRows.filter((g) => g.readjudicatedFrom === parentId);
+    try {
+      for (const part of parts) {
+        for (const memberId of membership.byGroup[part.groupId] ?? []) await placeMember(memberId, parentId);
+      }
+      for (const part of parts) {
+        await newGroups.clear({ groupId: part.groupId });
+        if (part.groupId in scope.decisions) await scope.clear({ groupId: part.groupId });
+      }
+      if (parts.some((part) => part.groupId === selectedId)) setSelectedId(parentId);
+      toast.success("Division undone — its variables are back in the group");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not undo the division");
+    }
+  }
+
   /** Undo every move out of one group — the "put them back" the emptied state offers. */
   async function restoreGroup(groupId: string) {
     const strayed = Object.entries(moves).filter(
@@ -2787,12 +2900,27 @@ export default function Gate1Page() {
     try {
       // EXACTLY ONE ID, built by a named function so the prohibition has somewhere to be asserted.
       const { groupIds } = readjudicationRequest(groupId);
-      await readjudicateGroups(jobId, groupIds);
-      // The re-split persisted server-side (the parent replaced by its child groups). The stream hook only
-      // refetches /result on a version change, and a Gate-1 accept does not bump the version, so invalidate
-      // the result query explicitly — that refetches the ledger and the children appear, marked "re-split".
+      const res = await readjudicateGroups(jobId, groupIds);
+      // THE DIVISION IS THE REVIEWER'S OWN DECISIONS NOW (08-28 follow-up #1): a New group per part and a move
+      // per variable, written server-side in the same request as the paid re-split, and returned with their
+      // versions. The decision hooks hydrate once per run, so they are absorbed here — the parts appear at once,
+      // and a later edit of one saves against the version the server stored (no false two-tab notice).
+      newGroups.absorb(res.decisions?.gate1_new_group);
+      regroups.absorb(res.decisions?.gate1_regroup);
+      // The re-split was billed to this gate: refetch so the spend readout moves.
       await queryClient.invalidateQueries({ queryKey: ["harmonize-result", jobId] });
-      toast.success("Re-split that group into its parts — they're in the queue, ready to assign at Gate 2");
+      const parts = res.parts ?? [];
+      if (parts.length > 0) {
+        setSelectedId(parts[0].groupId);
+        setPoolSelected(false);
+        toast.success(
+          `Divided into ${parts.length} groups — they lead the list, in scope for Gate 2`,
+        );
+      } else {
+        toast.info(
+          "The re-split found a single concept, so the group was kept whole — nothing changed.",
+        );
+      }
     } catch (e) {
       toast.error(
         e instanceof Error ? e.message : "Could not re-split that group",
@@ -2814,9 +2942,11 @@ export default function Gate1Page() {
   const inScopeGroups = gate1BillableGroups([...reviewerRows, ...groups], isInScope, memberCount);
 
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
-  // A filled New group buys ONE ideal description beside its match (08-28 Wave 2) — in every figure below.
-  const idealPerNewGroup = newGroupIdealUsd(variables, allCohorts.length, mode, clusters);
-  const quote = gate1QuoteUsd(inScopeGroups, price, idealPerNewGroup);
+  // A filled New group (08-28 Wave 2), and a group whose membership the reviewer changed (Option B), buy ONE
+  // ideal description beside their match — in every figure below.
+  const idealPerGroup = newGroupIdealUsd(variables, allCohorts.length, mode, clusters);
+  const quote = gate1QuoteUsd(inScopeGroups, price, idealPerGroup, needsIdeal);
+  const nIdeals = inScopeGroups.filter((g) => needsIdeal(g.groupId)).length;
   const filledReviewerRows = reviewerRows.filter((g) => memberCount(g) > 0);
   const nCrossCohort = groups.filter((g) => g.crossCohort).length;
 
@@ -3316,7 +3446,7 @@ export default function Gate1Page() {
                   key={g.groupId}
                   group={g}
                   reviewer
-                  price={price + idealPerNewGroup}
+                  price={price + idealPerGroup}
                   count={memberCount(g)}
                   inScope={isInScope(g.groupId)}
                   changed
@@ -3390,7 +3520,7 @@ export default function Gate1Page() {
                     key={g.groupId}
                     group={g}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
-                    price={price}
+                    price={needsIdeal(g.groupId) ? price + idealPerGroup : price}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}
                     changed={isChanged(g.groupId)}
@@ -3479,7 +3609,9 @@ export default function Gate1Page() {
               <SumBlock
                 realized={costSoFar}
                 inScopeTotal={quote}
-                wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerNewGroup)}
+                nIdeals={nIdeals}
+                idealsUsd={nIdeals * idealPerGroup}
+                wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerGroup, needsIdeal)}
                 nInScope={inScopeGroups.length}
                 nGroups={groups.length + filledReviewerRows.length}
               />
@@ -3518,6 +3650,10 @@ export default function Gate1Page() {
                 onRename={(next) => void renameGroup(selectedReviewer.groupId, next)}
                 onDelete={() => void deleteGroup(selectedReviewer.groupId)}
                 onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+                dividedFrom={(() => {
+                  const parent = groups.find((g) => g.groupId === selectedReviewer.readjudicatedFrom);
+                  return parent ? groupLabel(parent, renamedOf(parent.groupId)).text : undefined;
+                })()}
               />
             ) : detailGroup ? (
               <GroupDetail
@@ -3559,13 +3695,19 @@ export default function Gate1Page() {
                       This costs money. Re-splitting this group into distinct
                       concepts is paid work — at most about {formatUsd(price * 2)}{" "}
                       for a group this size — and it starts as soon as you press
-                      the button. Assigning the parts to CDEs happens later, at
-                      Gate 2. Your spend so far updates when it finishes.
+                      the button. Each part then joins the list as a group of its
+                      own, in scope: at Gate 2 it is matched and gets an ideal
+                      description of its own, about{" "}
+                      {formatUsd(price + idealPerGroup)} a part, which the Continue
+                      quote shows before you commit. Your spend so far updates when
+                      the re-split finishes.
                     </>
                   }
                   accepting={accepting === detailGroup.groupId}
                   onAcceptCarve={() => void acceptCarve(detailGroup.groupId)}
                   onIgnoreCarve={() => undefined}
+                  divisionParts={reviewerRows.filter((g) => g.readjudicatedFrom === detailGroup.groupId)}
+                  onUndoDivision={frozen ? undefined : () => void undoDivision(detailGroup.groupId)}
                 />
               </GroupDetail>
             ) : (

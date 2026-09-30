@@ -98,6 +98,32 @@ export function seedBases(
   return seeded;
 }
 
+/**
+ * Rows the SERVER wrote on this tab's behalf, as the payloads to show and the versions to save against.
+ *
+ * Accepting a division at Gate 1 is one paid request that also writes the reviewer's decisions (a New group per
+ * part, a move per variable), and returns the rows it stored. The hook hydrates from a read only ONCE per run
+ * (guard 1), so those rows would otherwise appear only after a reload — and this tab, holding no version for
+ * them, would save over them BLIND and report its own accept as another tab's conflict. Taking both from the
+ * returned rows makes them this tab's, exactly as if it had written them itself.
+ */
+export function absorbServedRows(
+  kind: GateDecisionKind,
+  rows: readonly unknown[] | null | undefined,
+): { payloads: Record<string, GateDecision>; versions: Record<string, number> } {
+  const { rows: split, versions } = splitServedRows({ [kind]: [...(rows ?? [])] });
+  const payloads: Record<string, GateDecision> = {};
+  for (const row of (split[kind] as unknown[]) ?? []) {
+    if (!row || typeof row !== "object") continue;
+    try {
+      payloads[decisionItemKey(kind, row as Record<string, unknown>)] = row as GateDecision;
+    } catch {
+      // a row with no identity for this kind is not one this tab can show — skip it, never raise
+    }
+  }
+  return { payloads, versions: versions[kind] ?? {} };
+}
+
 // --- the write: name the version shown, remember the one produced -------------------------------------------
 
 /**

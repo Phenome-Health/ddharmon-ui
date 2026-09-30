@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { decisionItemKey, optionSetKey, type GateDecision } from "@/lib/gate-decisions";
 import {
   GATE_CONFLICT_EVENT,
+  absorbServedRows,
   conflictForJob,
   seedBases,
   splitServedRows,
@@ -121,6 +122,24 @@ test.describe("two tabs on one run — the client's write path", () => {
     await tab(store).save(pick("g1", "CDE:1")); // another tab decides it
     const conflict = await early.save(pick("g1", "CDE:2"));
     expect(conflict).toMatchObject({ sentBase: false });
+  });
+
+  test("@conflict rows the SERVER wrote for this tab are absorbed with their versions, so the next save is quiet", async () => {
+    // An accepted division is written server-side (the paid re-split and its decisions are one request) and the
+    // rows come back. A tab that did not take their versions would save over them BLIND and raise a conflict
+    // nobody caused — the reviewer's own accept, reported as another tab's work.
+    const store = fakeStore();
+    const t = tab(store); // loaded before the server wrote anything
+    const written = await store.put(pick("g1", "CDE:1"), undefined); // the server's write on this tab's behalf
+    const served = [{ ...pick("g1", "CDE:1"), updatedAt: written.updatedAt }];
+    const { payloads, versions } = absorbServedRows(KIND, served);
+    expect(payloads).toEqual({ g1: pick("g1", "CDE:1") }); // the version is not a decision field
+    expect(versions).toEqual({ g1: written.updatedAt });
+    const bases = { ...versions };
+    const next = await writeAgainstBase((p, b) => store.put(p, b), bases, "g1", pick("g1", "CDE:2"), { kind: KIND });
+    expect(next).toBeNull();
+    // ...and without absorbing, the same save is the false alarm this prevents.
+    expect(await t.save(pick("g1", "CDE:1"))).toMatchObject({ sentBase: false });
   });
 
   test("@conflict the notice only answers to its own run", () => {

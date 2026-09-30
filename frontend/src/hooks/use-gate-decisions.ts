@@ -19,6 +19,7 @@ import {
   type GroupedDecisions,
 } from "@/lib/gate-decisions";
 import {
+  absorbServedRows,
   announceConflict,
   seedBases,
   splitServedRows,
@@ -99,6 +100,11 @@ export interface UseGateDecisions {
    */
   write(fields: Record<string, unknown>, options: WriteOptions): Promise<boolean>;
   clear(fields: Record<string, unknown>): Promise<void>;
+  /**
+   * Show rows the SERVER stored for this reviewer (an accepted division's parts and moves), with their versions,
+   * without a reload — see `absorbServedRows`. No write is made: the rows are already stored.
+   */
+  absorb(rows: readonly unknown[] | null | undefined): void;
   conflict: GateDecisionConflict | null;
   dismissConflict(): void;
 }
@@ -267,6 +273,17 @@ export function useGateDecisions(
     [index, kind, persist, frozen],
   );
 
+  const absorb = useCallback(
+    (rows: readonly unknown[] | null | undefined) => {
+      const { payloads, versions } = absorbServedRows(kind, rows);
+      if (Object.keys(payloads).length === 0) return;
+      // The server's version IS the one this tab now shows, so it replaces any base held for the same decision.
+      baseRef.current = { ...baseRef.current, ...versions };
+      setIndex((prev) => ({ ...prev, [kind]: { ...(prev[kind] ?? {}), ...payloads } }));
+    },
+    [kind],
+  );
+
   const decisions = useMemo(() => index[kind] ?? {}, [index, kind]);
 
   return {
@@ -282,6 +299,7 @@ export function useGateDecisions(
     frozen,
     write,
     clear,
+    absorb,
     conflict,
     dismissConflict: () => setConflict(null),
   };
