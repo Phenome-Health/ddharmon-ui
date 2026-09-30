@@ -115,7 +115,14 @@ export function CloneDialog({
   const plural = `${count} change${count === 1 ? "" : "s"}`;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="clone-dialog" data-reason={reason} data-unsaved={count}>
+      {/* `text-on-raised` set HERE: the dialog portals to <body>, whose colour is the chrome's, so an unset title
+          would render in the chrome's foreground on the card — invisible. */}
+      <DialogContent
+        data-testid="clone-dialog"
+        data-reason={reason}
+        data-unsaved={count}
+        className="text-on-raised sm:max-w-xl"
+      >
         <DialogHeader>
           <DialogTitle>{reason === "sign-in" ? "You're signed in — keep your demo work?" : "Keep a copy of the demo"}</DialogTitle>
           <DialogDescription>
@@ -137,7 +144,7 @@ export function CloneDialog({
               setEdited(true);
               setName(e.target.value);
             }}
-            className="min-h-8 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-sm text-on-raised"
+            className="min-h-8 w-full rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-sm text-on-raised"
           />
           {proposal.collided && !edited && (
             <p data-testid="clone-name-collision" role="status" className="text-xs text-on-raised-muted">
@@ -158,7 +165,7 @@ export function CloneDialog({
           </p>
         )}
 
-        <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+        <DialogFooter className="flex-wrap gap-2 sm:flex-row sm:justify-end sm:space-x-0">
           <Button variant="ghost" data-testid="clone-not-now" disabled={!!busy} onClick={() => onOpenChange(false)}>
             Not now
           </Button>
