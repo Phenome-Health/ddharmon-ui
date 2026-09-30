@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import threading
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -164,6 +165,17 @@ def _catalog_values(fld: Any) -> list[str]:
     return vals[:_CANDIDATE_PV_CAP]
 
 
+def _catalog_designation(var: str, fld: Any) -> str:
+    """The catalog's own designation for CDE dictionary key ``var``.
+
+    Core's loader keeps a repeated name's FIRST row as-is and mints ``<name>__<n>`` for each later one, saving the
+    source name on ``short_label`` — so a minted key maps back to that name, and every other key is the name.
+    """
+    source = str(getattr(fld, "short_label", "") or "")
+    minted = source and var.startswith(source + "__") and var[len(source) + 2 :].isdigit()
+    return source if minted else var
+
+
 def build_cde_catalog_index(embedded: list[Any], cde_cohort: str) -> dict[str, CandidateMeta]:
     """``{cde_id -> catalog metadata}`` read off the run's CDE dictionary (08-26, live-test-2 #7).
 
@@ -175,6 +187,10 @@ def build_cde_catalog_index(embedded: list[Any], cde_cohort: str) -> dict[str, C
     Keyed by the CDE dictionary's variable name — that IS the candidate's ``cde_id`` (disambiguated exactly as
     core saw it) — and also by the catalog id (tinyId), which is the candidate's ``cde_external_id``. Only
     non-empty values are kept, so an absent key always means "the catalog does not say".
+
+    ``sharedName`` (08-28 F13) marks a designation more than one catalog element carries — the endorsed catalog
+    repeats "Age", "Age Units" and "Employment Status". Core keeps every row by minting ``Age__2`` for the later
+    ones, which is unique but says nothing to a reviewer, so Gate 2 shows such a name beside its tinyId instead.
     """
     index: dict[str, CandidateMeta] = {}
     for ed in embedded:
@@ -184,8 +200,13 @@ def build_cde_catalog_index(embedded: list[Any], cde_cohort: str) -> dict[str, C
         cohort = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
         if cohort != cde_cohort:
             continue
-        for var, fld in getattr(dd, "fields", {}).items():
+        fields = getattr(dd, "fields", {})
+        names = {var: _catalog_designation(var, fld) for var, fld in fields.items()}
+        repeated = {n for n, count in Counter(names.values()).items() if count > 1}
+        for var, fld in fields.items():
             meta: CandidateMeta = {}
+            if names[var] in repeated:
+                meta["sharedName"] = names[var]
             for key, val in (
                 ("questionText", getattr(fld, "question_text", None)),
                 ("dataType", getattr(fld, "data_type", None)),
@@ -3073,6 +3094,24 @@ def _repick_ids(stage_fn: StageFn) -> StageFn:
     return stage
 
 
+def _resolve_pick(rec: Any, pick: dict[str, Any], cde_fields: dict[str, Any]) -> dict[str, Any]:
+    """The pick with ``chosen`` resolved through its ``externalId`` (the catalog's tinyId) when it carries one.
+
+    08-28 F13: ``chosen`` is the CDE's NAME, and catalog names repeat (the endorsed catalog has two "Age"s), so a
+    name alone can point at the wrong element. The tinyId is the catalog's identity, so when the pick carries one
+    that matches a candidate — or, failing that, a row of this run's catalog — it names the target. A pick with no
+    ``externalId`` (written before 08-28, or "none of these" / the generated element) is read by name as before.
+    """
+    ext = str(pick.get("externalId") or "").strip()
+    chosen = str(pick.get("chosen") or "")
+    if not ext or not chosen or (rec.gencde is not None and chosen == rec.gencde.gencde_id):
+        return pick
+    hit = next((c.cde_id for c in rec.candidates if (c.cde_external_id or "") == ext), None)
+    if hit is None:
+        hit = next((var for var, fld in cde_fields.items() if (getattr(fld, "field_id", "") or "") == ext), None)
+    return {**pick, "chosen": hit} if hit and hit != chosen else pick
+
+
 def _plan_pick(rec: Any, pick: dict[str, Any]) -> tuple[str, str, dict[str, str] | None] | None:
     """``(kind, chosen, edit)`` for a pick that CHANGES the record's target, or None for a no-op pick."""
     chosen = str(pick.get("chosen") or "")
@@ -3168,10 +3207,11 @@ def apply_reviewer_picks(
 ) -> list[str]:
     """Re-target every record whose Gate 2 pick differs from the model's and regenerate its specs.
 
-    ``picks`` is ``{groupId: {"chosen": str, "gencdeEdit": dict | None}}``. Mutates the core records in place
-    and stamps ``rec.raw["reviewer_pick"]`` (the wire's ``reviewerPick``). Returns the group ids it changed.
-    Each changed group costs at most one spec-gen call per unique coded source encoding (+ one arithmetic call
-    per numeric residual), paid through ``stage_fn`` — the caller's ledgered stage.
+    ``picks`` is ``{groupId: {"chosen": str, "gencdeEdit": dict | None, "externalId"?: str}}``. Mutates the core
+    records in place and stamps ``rec.raw["reviewer_pick"]`` (the wire's ``reviewerPick``). Returns the group ids
+    it changed. A pick carrying ``externalId`` is resolved by it first (:func:`_resolve_pick`). Each changed group
+    costs at most one spec-gen call per unique coded source encoding (+ one arithmetic call per numeric
+    residual), paid through ``stage_fn`` — the caller's ledgered stage.
     """
     changed: list[str] = []
     for rec in records:
@@ -3179,7 +3219,7 @@ def apply_reviewer_picks(
         pick = picks.get(key)
         if not isinstance(pick, dict):
             continue
-        plan = _plan_pick(rec, pick)
+        plan = _plan_pick(rec, _resolve_pick(rec, pick, cde_fields))
         if plan is None:
             continue
         kind, chosen, edit = plan

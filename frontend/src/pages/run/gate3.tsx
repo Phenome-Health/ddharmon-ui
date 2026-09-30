@@ -29,7 +29,7 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
-import { isTerminal, resumeTookEffect } from "@/lib/run-state";
+import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
   recodeShape,
@@ -203,6 +203,34 @@ export default function Gate3Page() {
   const anyRow = groups.some((g) => g.rows.length > 0);
   const selected =
     visible.find((g) => g.record.groupId === selectedId) ?? visible[0];
+
+  // A leg STILL RUNNING is not "no specs" (08-28 F4): mid-leg the screen holds an EARLIER checkpoint, whose
+  // records carry no transform specs yet, so an empty list is no evidence that every concept was an adopt.
+  if (!anyRow && isInFlight(jobState?.status)) {
+    return (
+      <Shell
+        jobId={jobId}
+        jobState={jobState}
+        cancel={cancel}
+        costSoFar={costSoFar}
+      >
+        <GateEmptyState
+          heading="This run is still running"
+          nextStep="Nothing to do yet. You can close this tab — the run keeps going and parks at the next gate for you."
+        >
+          <span data-testid="gate3-running">
+            It is{" "}
+            <span className="font-semibold">
+              {jobState?.phase || jobState?.status}
+            </span>{" "}
+            right now. Transform specs are written in the leg after Gate 2;
+            they appear here on their own when the run reaches this gate —
+            no reload needed.
+          </span>
+        </GateEmptyState>
+      </Shell>
+    );
+  }
 
   if (!anyRow) {
     return (

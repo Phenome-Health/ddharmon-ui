@@ -859,11 +859,14 @@ def _gate1_assign_scope(job: Job, subject: str | None, groups: list[dict[str, An
 
 
 def _gate2_picks(job: Job, subject: str | None, in_scope: list[str] | None) -> dict[str, dict[str, Any]]:
-    """The reviewer's persisted Gate 2 picks, ``{groupId: {chosen, gencdeEdit}}`` — what the Gate 3 leg honours.
+    """The reviewer's persisted Gate 2 picks, ``{groupId: {chosen, gencdeEdit, externalId?}}`` — what the Gate 3
+    leg honours.
 
     The adapter decides which of these actually CHANGE a record (a pick naming the model's own CDE is a
     confirmation and costs nothing). A pick on a group Gate 1 scoped out is dropped: that group was never
-    assigned, so re-targeting it would pay for specs on work the reviewer declined.
+    assigned, so re-targeting it would pay for specs on work the reviewer declined. ``externalId`` — the picked
+    catalog element's tinyId, beside its (not necessarily unique) name — is passed on only when the pick has one
+    (08-28 F13).
     """
     keep = set(in_scope) if in_scope is not None else None
     out: dict[str, dict[str, Any]] = {}
@@ -877,6 +880,9 @@ def _gate2_picks(job: Job, subject: str | None, in_scope: list[str] | None) -> d
             "chosen": chosen if isinstance(chosen, str) else "",
             "gencdeEdit": edit if isinstance(edit, dict) else None,
         }
+        ext = d.get("externalId")
+        if isinstance(ext, str) and ext.strip():
+            out[gid]["externalId"] = ext.strip()
     return out
 
 
