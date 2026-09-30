@@ -51,17 +51,26 @@ IGNORE_MARKER = "leak-scan-ignore"
 # Files never scanned (this scanner defines the patterns; binaries can't be grepped).
 SKIP_NAMES = {"leak_scan.py"}
 SKIP_SUFFIXES = (
-    ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".ico", ".svg",
-    ".woff", ".woff2", ".ttf", ".eot", ".zip", ".gz", ".parquet", ".npy",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".pdf",
+    ".ico",
+    ".svg",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".zip",
+    ".gz",
+    ".parquet",
+    ".npy",
 )
 
 
 def _tracked_files(staged: bool) -> list[str]:
-    cmd = (
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"]
-        if staged
-        else ["git", "ls-files"]
-    )
+    cmd = ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"] if staged else ["git", "ls-files"]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     return [f for f in out.splitlines() if f]
 

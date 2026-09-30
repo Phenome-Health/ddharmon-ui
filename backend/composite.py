@@ -67,7 +67,6 @@ def _embedder() -> Any:
         import hashlib
 
         import numpy as np
-
         from ddharmon.embedding.cache import EmbeddingCache
 
         provider = _get_provider()
@@ -79,10 +78,15 @@ def _embedder() -> Any:
             vecs = cache.get_many(provider.model_name, wanted, vector_type="semantic")
             missing = [h for h in wanted if h not in vecs]
             if missing:
-                by_hash = dict(zip(hashes, texts))  # a hash maps back to its (identical) text
+                # `hashes` is built one-per-text above, so these two are equal-length by construction.
+                by_hash = dict(zip(hashes, texts, strict=True))  # a hash maps back to its (identical) text
                 fresh = provider.embed([by_hash[h] for h in missing])
-                cache.put_many(provider.model_name, list(zip(missing, fresh)), vector_type="semantic")
-                for h, v in zip(missing, fresh):
+                # One vector per text asked for. strict=True makes a provider that returns fewer vectors
+                # fail HERE, before anything is cached, rather than caching a silently truncated batch and
+                # surfacing later as a KeyError on the first hash it dropped.
+                pairs = list(zip(missing, fresh, strict=True))
+                cache.put_many(provider.model_name, pairs, vector_type="semantic")
+                for h, v in pairs:
                     vecs[h] = v
         finally:
             cache.close()
