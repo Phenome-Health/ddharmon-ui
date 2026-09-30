@@ -694,6 +694,7 @@ def test_a_keyless_start_is_refused_before_anything_is_created(monkeypatch, tmp_
             r = _start(c, mode)
             assert r.status_code == 400, f"{mode}: {r.status_code} {r.text}"
             assert "key" in r.json()["detail"].lower()
+            assert r.json()["code"] == "key_required", "the refusal is not machine-readable"
         assert spawned == [], "a keyless paid run was started"
         work = tmp_path / "work"
         assert not work.exists() or not any(work.iterdir()), "the refused start still created a run directory"
@@ -730,6 +731,7 @@ def test_a_keyless_rerun_is_refused_before_it_copies_anything(monkeypatch, tmp_p
         r = c.post("/api/harmonize/jobs/src/rerun")
         assert r.status_code == 400, r.text
         assert "key" in r.json()["detail"].lower()
+        assert r.json()["code"] == "key_required", "the refusal is not machine-readable"
         assert sorted(p.name for p in (tmp_path / "work").iterdir()) == ["src"], "the refused re-run copied uploads"
         assert spawned == []
 

@@ -3683,6 +3683,7 @@ def test_readjudicate_refuses_a_keyless_paid_action(monkeypatch, tmp_path):
         resp = c.post(f"/api/harmonize/jobs/{job_id}/readjudicate", json={"groupIds": ["g1"]})  # no key
     assert resp.status_code == 400
     assert "key" in resp.json()["detail"].lower()
+    assert resp.json()["code"] == "key_required", "the refusal is not machine-readable"
     assert calls == []
 
 

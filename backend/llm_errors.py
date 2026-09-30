@@ -20,11 +20,47 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 
 _SDK_MODULES = frozenset({"anthropic", "openai", "litellm"})
 _KEY_RE = re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}")
 _MAX_DETAIL = 400
+
+# --- machine-readable key refusals (08-28, the BYOK-key-on-Continue blocker) ----------------------------------
+#
+# The key lives in the browser tab's memory only, so a reload — or a run opened from the runs list — reaches a
+# paid gate action holding none. The gate screens then reveal an inline key field, and they decide that on a
+# CODE, never by matching the English sentence (a copy edit must not hide the field). The code rides as a
+# top-level sibling of ``detail``: ``detail`` stays the same human string every existing caller reads.
+# Mirrored by ``frontend/src/lib/run-key.ts`` (``tests/test_key_refusal.py`` pins the two to one spelling).
+
+#: No key is available for a paid call (neither the request's BYOK header nor the server's env). Nothing was
+#: committed or charged; the same request with a key goes through.
+KEY_REQUIRED = "key_required"
+#: The provider rejected the key that was used (401/403). The reviewer fixes it the same way: enter a key.
+KEY_REJECTED = "key_rejected"
+
+
+class CodedHTTPException(HTTPException):
+    """An :class:`HTTPException` that also carries a stable ``code``, served beside ``detail`` in the body."""
+
+    def __init__(self, status_code: int, detail: str, code: str, headers: dict[str, str] | None = None) -> None:
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
+        self.code = code
+
+
+def key_required(detail: str) -> CodedHTTPException:
+    """The door refusal for a paid call with no key: a 400 carrying :data:`KEY_REQUIRED` and ``detail``."""
+    return CodedHTTPException(400, detail, KEY_REQUIRED)
+
+
+async def coded_http_error(_request: Request, exc: Exception) -> JSONResponse:
+    """Serve a :class:`CodedHTTPException` as ``{"detail": <str>, "code": <str>}`` (the app registers this)."""
+    assert isinstance(exc, CodedHTTPException)
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code}, headers=exc.headers
+    )
 
 
 def _redact(message: str) -> str:
@@ -59,12 +95,13 @@ def as_http_error(exc: BaseException, *, model: str | None = None) -> HTTPExcept
     detail = _redact(getattr(exc, "message", None) or str(exc))
 
     if status in (401, 403):
-        return HTTPException(
+        return CodedHTTPException(
             status_code=status,
             detail=(
                 f"The model provider rejected the API key ({status}). Check the key you supplied — "
                 "it is used for this request only and is never stored."
             ),
+            code=KEY_REJECTED,
         )
     if status == 404:
         return HTTPException(

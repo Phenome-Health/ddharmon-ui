@@ -334,6 +334,7 @@ def test_no_key_is_refused_before_anything_is_spent(stub_llm, monkeypatch):
         r = c.post(_ROUTE, json=_body())
     assert r.status_code == 400, r.text
     assert "API key" in r.json()["detail"]
+    assert r.json()["code"] == "key_required", "the refusal is not machine-readable"
     assert stub_llm.calls == 0
 
 
@@ -382,3 +383,4 @@ def test_a_provider_rejection_surfaces_as_the_providers_condition(stub_llm, monk
         r = c.post(_ROUTE, json=_body(), headers=_KEY)
     assert r.status_code == 401
     assert "rejected the API key" in r.json()["detail"]
+    assert r.json()["code"] == "key_rejected", "a rejected key must be told apart from a missing one"
