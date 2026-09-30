@@ -1,12 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   PARTICIPANT_ID_HEADERS,
+  REQUIRED_ROLE_GROUPS,
   assignRole,
+  meetsRoleRequirement,
   nameCheck,
   normalizeHeader,
   participantLevelColumn,
+  representableRoles,
+  unmetRoleGroup,
 } from "@/lib/dictionary";
 import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
 import { PROVIDER_KEY_INFO, keyPlaceholderFor } from "@/lib/provider-keys";
@@ -324,8 +328,8 @@ test.describe("Setup — the screen", () => {
     page,
   }) => {
     // An ENABLED button that does nothing is the same defect as a disabled one with no reason, arrived at
-    // from the other side. Static builds cannot start a run at all, so the control stays disabled and the
-    // key blocker names the remaining step — which is what a reviewer on the deployed app would see next.
+    // from the other side. Until the key is entered the control stays disabled and the key blocker names
+    // the remaining step — which is what a reviewer on the deployed app would see next.
     await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");
     await page.getByTestId("dict-upload").setInputFiles({
@@ -872,11 +876,12 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
   //      and a batch run can take a long time. A reviewer who was not told that reads it as a hang.
   //
   // A NOTE ON WHAT CAN BE ASSERTED HERE, because it shapes the two tests below. This gate runs against
-  // the STATIC build, and Setup's Start button is `disabled={… || IS_STATIC}` (setup.tsx) because a
-  // static build has no backend to post files to. So the plan's "click Start, then upload a same-shaped
-  // file and watch it prefill" is NOT reachable in this harness — and the prefill module cannot be
-  // imported into this spec either, because it pulls in the demo-manifest JSON and Playwright's node
-  // loader rejects a bare JSON import.
+  // the STATIC build, which has no backend to post files to. Since 08-28 Start does press there and its
+  // POST is observable (the 08-28 block below reads it), but a static Start always FAILS, and the cache
+  // is written only after a start succeeds — so the plan's "click Start, then upload a same-shaped file
+  // and watch it prefill" is still not reachable in this harness. The prefill module cannot be imported
+  // into this spec either, because it pulls in the demo-manifest JSON and Playwright's node loader
+  // rejects a bare JSON import.
   //
   // The write is therefore pinned from BOTH ENDS of the same contract instead:
   //   - the READ end, in the browser, against a localStorage payload written in exactly the shape
@@ -1646,9 +1651,10 @@ test.describe("Setup — the boundary, with the report retired", () => {
   });
 
   test("@setup the post-Start destination is Gate 1, and no input makes it the retired one", async () => {
-    // ASSERTED AS A PURE FUNCTION because the button that calls it is DISABLED in the static build this
-    // suite runs against (`setup.tsx`'s IS_STATIC guard), so a click-through is untestable here — and an
-    // untestable destination is exactly how this line came to still point at a retired route.
+    // ASSERTED AS A PURE FUNCTION because Start never SUCCEEDS in the static build this suite runs against
+    // (it presses and posts since 08-28, but nothing answers with a run), so a click-through never reaches
+    // the navigation — and an untestable destination is exactly how this line came to still point at a
+    // retired route.
     //
     // IT IS GATE 1 SINCE 08-14f. It used to come back to Setup, into a "pre-flight" state whose Continue
     // was the real first charge. Start IS that charge now, so there is no screen between the press and
@@ -2623,5 +2629,264 @@ test.describe("setup re-split opt-in", () => {
     // Re-split is charged only when USED, so the quote for this run is unchanged — and must not appear to
     // change, in either direction (R8 binds both ways).
     await expect(bar).toHaveAttribute("data-total", before ?? "");
+  });
+});
+
+/**
+ * THE COLUMN-ROLE REQUIREMENT IS CORE'S (08-28). Setup accepted `question_text` alone; core's loader skips every
+ * such row and the run went ahead without that cohort. The rule is now ONE list, `REQUIRED_ROLE_GROUPS` in
+ * `lib/dictionary.ts`, which `tests/test_role_requirement.py` pins to the backend's copy and the backend's copy
+ * to core's real loader.
+ */
+test.describe("Setup — the column-role requirement is core's (08-28)", () => {
+  test("@setup question_text alone is flagged and blocks Start, naming the file and what would fix it", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "questions-only.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["prompt", "kind"], ["How is your health?", "radio"], ["Do you smoke?", "radio"]])),
+    });
+    const select = (column: string) =>
+      page.getByTestId("mapping-row").filter({ has: page.locator(`[data-column="${column}"]`) }).getByTestId("role-select");
+    await select("prompt").selectOption("question_text");
+    await page.getByTestId("run-mode").selectOption("preview");
+    // Core loads ZERO variables from this mapping, so it is not "meaning mapped" and it is not startable.
+    const flag = page.getByTestId("meaning-requirement");
+    await expect(flag).toBeVisible();
+    await expect(flag).toContainText("question_text");
+    await expect(flag).toContainText("description");
+    const blocker = page.getByTestId("blocker").filter({ hasText: "questions-only.csv" });
+    await expect(blocker).toHaveCount(1);
+    await expect(blocker).toContainText("description");
+    await expect(page.getByTestId("start-run")).toBeDisabled();
+    // Giving the rows a name is enough (core then describes each row by it), and both warnings clear.
+    await select("kind").selectOption("variable_name");
+    await expect(page.getByTestId("meaning-requirement")).toHaveCount(0);
+    await expect(page.getByTestId("blocker").filter({ hasText: "questions-only.csv" })).toHaveCount(0);
+  });
+
+  test("@setup the requirement is core's two groups, and question_text satisfies only the first", () => {
+    // Mirrored from backend/role_requirement.py; tests/test_role_requirement.py pins both to core's loader.
+    expect(REQUIRED_ROLE_GROUPS).toEqual([
+      ["variable_name", "description", "question_text"],
+      ["variable_name", "description", "short_label", "field_id"],
+    ]);
+    const meets = (roles: Record<string, string>) => meetsRoleRequirement(roles);
+    expect(meets({})).toBe(false);
+    expect(meets({ question_text: "q" })).toBe(false);
+    expect(unmetRoleGroup({ question_text: "q" })).toEqual(REQUIRED_ROLE_GROUPS[1]);
+    expect(meets({ field_id: "id" })).toBe(false);
+    expect(unmetRoleGroup({ field_id: "id" })).toEqual(REQUIRED_ROLE_GROUPS[0]);
+    for (const ok of [
+      { variable_name: "v" },
+      { description: "d" },
+      { question_text: "q", variable_name: "v" },
+      { question_text: "q", field_id: "id" },
+      { question_text: "q", short_label: "s" },
+    ]) {
+      expect(meets(ok), JSON.stringify(ok)).toBe(true);
+    }
+    // An empty column is not a mapping.
+    expect(meets({ description: "" })).toBe(false);
+  });
+
+});
+
+/**
+ * THE ROLES A RUN IS SENT ARE THE ROLES ON SCREEN (08-28).
+ *
+ * A run was found using roles its reviewer did not remember mapping (UKBB's text roles one slot off, CLSA's
+ * description missing). These tests upload the shipped live-verify fixtures — real AoU / CLSA / UKBB column
+ * shapes — map them, press Start, and compare the `columnRoles` in the POST against what the mapping table
+ * displays, row by row.
+ *
+ * THE POST IS REAL. A static build has no backend, so `startHarmonize` tries the request and only then
+ * reports the static preview — the same network seam the score panel's document calls use — and the gate
+ * fulfils it here. Nothing is started and nothing is charged.
+ */
+test.describe("Setup — the roles the run is sent are the roles on screen (08-28)", () => {
+  /** The shipped live-verify fixture: tiny AoU / CLSA / UKBB dictionaries in their real column shapes. */
+  const fixture = (name: string) =>
+    path.resolve(path.dirname(test.info().file), "..", "..", "..", "tests", "live", "fixture", name);
+  const manifestRoles = (file: string): Record<string, string> => {
+    const manifest = JSON.parse(readFileSync(fixture("manifest.json"), "utf8")) as {
+      cohorts: { file: string; columnRoles: Record<string, string> }[];
+    };
+    return manifest.cohorts.find((c) => c.file === file)!.columnRoles;
+  };
+
+  type Posted = { filename: string; cohortName: string; columnRoles: Record<string, string> };
+
+  /** Capture every Start POST's dictionaries, and refuse the start so nothing navigates or is remembered. */
+  async function captureStarts(page: Page): Promise<Posted[][]> {
+    const starts: Posted[][] = [];
+    await page.route("**/api/harmonize/batch", async (route) => {
+      const body = route.request().postDataBuffer()?.toString("utf8") ?? "";
+      const m = /name="config"\r\n\r\n([\s\S]*?)\r\n--/.exec(body);
+      expect(m, "the Start POST carries a `config` form field").not.toBeNull();
+      starts.push((JSON.parse(m![1]) as { dictionaries: Posted[] }).dictionaries);
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "captured by the e2e gate — no run was started" }),
+      });
+    });
+    return starts;
+  }
+
+  const card = (page: Page, filename: string): Locator =>
+    page.getByTestId("dict-card").filter({ has: page.getByTestId("dict-filename").getByText(filename, { exact: true }) });
+
+  /**
+   * What the table SHOWS, read the way a reviewer reads it: every row's source column against the visible
+   * label of its selected option. A role shown on two rows is a screen that cannot be POSTed faithfully, so
+   * it fails here rather than being folded.
+   */
+  async function rolesOnScreen(dict: Locator): Promise<Record<string, string>> {
+    return dict.getByTestId("mapping-row").evaluateAll((rows) => {
+      const out: Record<string, string> = {};
+      for (const row of rows) {
+        const column = row.querySelector("[data-column]")?.getAttribute("data-column") ?? "";
+        const shown = (row.querySelector("select") as HTMLSelectElement).selectedOptions[0];
+        if (!shown || !shown.value) continue;
+        const label = (shown.textContent ?? "").trim();
+        if (label !== shown.value) throw new Error(`row ${column}: shows "${label}" but holds "${shown.value}"`);
+        if (out[label]) throw new Error(`"${label}" is shown on two rows: ${out[label]} and ${column}`);
+        out[label] = column;
+      }
+      return out;
+    });
+  }
+
+  async function mapColumn(dict: Locator, column: string, role: string): Promise<void> {
+    const row = dict.getByTestId("mapping-row").filter({ has: dict.page().locator(`[data-column="${column}"]`) });
+    await expect(row).toHaveCount(1);
+    await row.getByTestId("role-select").selectOption(role);
+  }
+
+  async function startPreview(page: Page): Promise<void> {
+    await page.getByTestId("run-mode").selectOption("preview");
+    await expect(page.getByTestId("start-blocked")).toHaveCount(0);
+    await page.getByTestId("start-run").click();
+  }
+
+  test("@setup real AoU/CLSA/UKBB shapes: the POSTed columnRoles are exactly the table, before and after hand edits", async ({
+    page,
+  }) => {
+    const starts = await captureStarts(page);
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => localStorage.clear());
+    const files = ["aou.csv", "clsa.csv", "ukbb.csv"];
+    await page.getByTestId("dict-upload").setInputFiles(files.map(fixture));
+    await expect(page.getByTestId("dict-card")).toHaveCount(3);
+    await expect(page.getByTestId("dict-parse-state").filter({ hasText: "read" })).toHaveCount(3);
+
+    // PASS 1 — as prefilled. These files carry the demo manifest's header signatures, so the table opens on
+    // the demo mapping, which is the fixture manifest's mapping; the POST must be that table, file by file.
+    for (const f of files) expect(await rolesOnScreen(card(page, f)), `${f} as prefilled`).toEqual(manifestRoles(f));
+    await startPreview(page);
+    await expect.poll(() => starts.length).toBe(1);
+
+    // PASS 2 — mapped BY HAND, with every gesture a MOVE (a role taken off one row and put on another), which
+    // is where an off-by-one between a row and its role would show. UKBB is walked into exactly the mapping
+    // run 890638d1 ran with (text roles one slot along, no variable name) — whatever lands, POST must equal it.
+    const ukbb = card(page, "ukbb.csv");
+    await mapColumn(ukbb, "field_name", "description");
+    await mapColumn(ukbb, "description", "question_text");
+    const clsa = card(page, "clsa.csv");
+    await mapColumn(clsa, "label:en", "description");
+    const aou = card(page, "aou.csv");
+    await mapColumn(aou, "Section Header", "category");
+    await mapColumn(aou, "Field Label", "description");
+
+    const screen: Record<string, Record<string, string>> = {};
+    for (const f of files) screen[f] = await rolesOnScreen(card(page, f));
+    // The gestures landed on the rows they were made on (the screen agrees with the intent)…
+    expect(screen["ukbb.csv"]).toEqual({
+      description: "field_name",
+      question_text: "description",
+      value_encoding: "value_encoding",
+      units: "units",
+      data_type: "data_type",
+    });
+    expect(screen["clsa.csv"]).toEqual({
+      variable_name: "name",
+      question_text: "question:en",
+      description: "label:en",
+      value_encoding: "value_encoding",
+      units: "unit",
+      data_type: "valueType",
+    });
+    expect(screen["aou.csv"]).toEqual({
+      variable_name: "Item Concept",
+      description: "Field Label",
+      category: "Section Header",
+      value_encoding: "Choices, Calculations, OR Slider Labels",
+      data_type: "Field Type",
+    });
+    await startPreview(page);
+    await expect.poll(() => starts.length).toBe(2);
+
+    // …and the POST is the screen, for both passes. Compared per FILENAME, never by position.
+    const expected = [Object.fromEntries(files.map((f) => [f, manifestRoles(f)])), screen];
+    starts.forEach((posted, i) => {
+      expect(posted.map((d) => d.filename).sort(), `start ${i + 1}: one entry per file`).toEqual(files);
+      for (const d of posted) {
+        expect(d.columnRoles, `start ${i + 1}: ${d.filename} POSTed ≠ shown`).toEqual(expected[i][d.filename]);
+      }
+    });
+  });
+
+  test("@setup a remembered mapping the table cannot show is never POSTed behind the reviewer's back", async ({
+    page,
+  }) => {
+    // The cache this browser keeps is keyed by a header SIGNATURE that folds case, and the New Run form
+    // (role-major: one control per role) can point two roles at one column. Either way a prefill can hold
+    // an assignment the column-major table has no row for, or shows as one role of two. Whatever the table
+    // shows must be the whole of what is sent.
+    const headers = ["code", "label", "prompt", "unit"];
+    const signature = [...headers].sort().join("|");
+    const remembered = { variable_name: "code", description: "code", question_text: "prompt", units: "Unit" };
+    const starts = await captureStarts(page);
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(
+      ([sig, roles]) =>
+        localStorage.setItem("ddharmon:column-assignments:v1", JSON.stringify({ [sig as string]: roles })),
+      [signature, remembered] as const,
+    );
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "remembered.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([headers, ["bmi", "BMI", "What is your BMI?", "kg/m2"], ["age", "Age", "How old are you?", "years"]])),
+    });
+    await expect(page.getByTestId("dict-parse-state").filter({ hasText: "read" })).toHaveCount(1);
+    const shown = await rolesOnScreen(card(page, "remembered.csv"));
+    await startPreview(page);
+    await expect.poll(() => starts.length).toBe(1);
+    expect(starts[0][0].columnRoles, "POSTed ≠ shown").toEqual(shown);
+    // And what is shown is the remembered intent the file can honour: one role per column (the first), and
+    // the case-folded `Unit` re-pointed at this file's own `unit` column rather than sent as a missing one.
+    expect(shown).toEqual({ variable_name: "code", question_text: "prompt", units: "unit" });
+  });
+
+  test("@setup a prefill is narrowed to what the table can show: real headers, one role per column", () => {
+    const headers = ["code", "prompt", "unit"];
+    expect(
+      representableRoles({ variable_name: "code", description: "code", question_text: "prompt", units: "Unit" }, headers),
+    ).toEqual({ variable_name: "code", question_text: "prompt", units: "unit" });
+    // A column the file does not have at all is dropped rather than sent.
+    expect(representableRoles({ description: "gone" }, headers)).toEqual({});
+    // A mapping that already fits is returned unchanged.
+    expect(representableRoles({ variable_name: "code", units: "unit" }, headers)).toEqual({
+      variable_name: "code",
+      units: "unit",
+    });
   });
 });

@@ -902,17 +902,18 @@ export const ROLE_FORMAT: Partial<Record<ColumnRole, string>> = {
 };
 
 // Per-role requirement tier — derived from the pipeline's REAL contract, not a hardcoded star:
-//  - "meaning": at least one meaning-bearing field is required. The loader tries description →
-//    short_label → variable_name and skips the row if none carries usable text, so the semantic group
-//    (not any single field) is the hard requirement. These carry the primary group required marker.
+//  - "meaning": the one role that satisfies the mapping minimum ON ITS OWN. The minimum itself is NOT
+//    decided here: it is `REQUIRED_ROLE_GROUPS` in `lib/dictionary.ts` (mirrored from the backend and pinned
+//    to core's loader), and every gate reads that. question_text is deliberately NOT marked (08-28): core's
+//    loader describes a row from description → short_label → the row's name and skips a row with none, so
+//    question_text alone loads zero variables — it counts only beside a name or a description. variable_name
+//    alone does load (the name becomes the description) but carries the least meaning, so it is unmarked too.
 //  - "conditional": required only for a specific downstream output — value_encoding is the HARD input
 //    for CATEGORICAL transform specs (an empty value_set ⇒ no recode spec).
 //  - "recommended": improves output but never blocks — units let numeric unit specs resolve; when it's
 //    absent the specs are still generated, just flagged needs_units.
-// variable_name is intentionally UNMARKED: the pipeline auto-synthesizes a synthetic row id (_ROW_nnnn)
-// when it's unmapped, so it's optional. data_type and the advanced roles are optional too.
+// data_type and the advanced roles are optional.
 export const ROLE_REQUIREMENT: Partial<Record<ColumnRole, "meaning" | "conditional" | "recommended">> = {
-  question_text: "meaning",
   description: "meaning",
   value_encoding: "conditional",
   units: "recommended",

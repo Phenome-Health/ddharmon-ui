@@ -2666,17 +2666,30 @@ def run_pipeline(
 
     # Guard: an uploaded file with only a header row (or columns that didn't map to a variable/description/
     # question) embeds to ZERO fields. Downstream `get_all_vectors()`/`collect_inputs()` would then `np.stack([])`
-    # -> "need at least one array to stack". Drop such empty dictionaries, and if nothing usable remains, fail
-    # with a clear, actionable message instead of a cryptic numpy error.
+    # -> "need at least one array to stack".
+    #
+    # A SOURCE dictionary that loads nothing FAILS THE RUN, here, before any paid stage. It used to be dropped
+    # with a log line while the other cohorts carried on — so a run the reviewer started for three cohorts
+    # billed for two and said nothing (a question_text-only mapping did exactly this). `/batch` now refuses
+    # such a file at the door (`backend/role_requirement.py`); this is the same refusal for every other way
+    # into the pipeline (a rerun, a resumed leg, a driver). Only the CDE backbone is still dropped when empty
+    # — it is not a cohort, and `_find_cde_dict` reports its absence on its own terms.
     def _n_fields(ed: Any) -> int:
         return len(list(ed.get_variable_names()))
 
+    def _name(ed: Any) -> str:
+        return getattr(ed.dictionary, "cohort_name", None) or getattr(ed.dictionary, "name", "?")
+
     empty = [ed for ed in embedded if _n_fields(ed) == 0]
-    if empty:
-        dropped = sorted(
-            getattr(ed.dictionary, "cohort_name", None) or getattr(ed.dictionary, "name", "?") for ed in empty
+    empty_sources = sorted(_name(ed) for ed in empty if getattr(ed.dictionary, "cohort_name", None) != cde_cohort)
+    if empty_sources:
+        raise ValueError(
+            f"No usable fields in {', '.join(empty_sources)}: the dictionary loaded zero variables, and a run never "
+            "continues without a cohort it was given. Check that the file has data rows and that a column with "
+            "text in it is mapped to variable_name or description (question_text alone names no row)."
         )
-        logger.warning("dropping %d dictionary(ies) with no usable fields: %s", len(empty), ", ".join(dropped))
+    if empty:
+        logger.warning("dropping the empty CDE catalogue: %s", ", ".join(sorted(_name(ed) for ed in empty)))
         embedded = [ed for ed in embedded if _n_fields(ed) > 0]
     if not any(_n_fields(ed) > 0 for ed in embedded if getattr(ed.dictionary, "cohort_name", None) != cde_cohort):
         raise ValueError(

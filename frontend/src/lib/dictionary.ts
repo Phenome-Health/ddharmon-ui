@@ -184,3 +184,82 @@ export function assignRole(
 export function roleOf(roles: Record<string, string>, column: string): string {
   return Object.entries(roles).find(([, c]) => c === column)?.[0] ?? "";
 }
+
+/**
+ * The same mapping, narrowed to what the column-major table can SHOW — so what is shown is what is sent.
+ *
+ * The table renders one row per source column with ONE role each (`roleOf` takes the first). A remembered
+ * mapping can hold more than that: the header-signature cache folds case, so it can name `Unit` for a file
+ * whose column is `unit`; and the role-major New Run form lets two roles point at one column. Either way the
+ * table showed part of the mapping and Start POSTed all of it (08-28, reproduced in `setup.spec.ts`), and core
+ * cannot honour two roles on one column anyway — its column map keeps only the later one.
+ *
+ * So: a role whose column is not a header is re-pointed at the header it case-folds to, or dropped when there is
+ * none; and a column keeps only its FIRST role, the one the table displays. A mapping that already fits is
+ * returned unchanged.
+ */
+export function representableRoles(roles: Record<string, string>, headers: string[]): Record<string, string> {
+  const exact = new Set(headers);
+  const byFolded = new Map<string, string>();
+  for (const h of headers) {
+    const k = h.trim().toLowerCase();
+    if (!byFolded.has(k)) byFolded.set(k, h);
+  }
+  const out: Record<string, string> = {};
+  const taken = new Set<string>();
+  for (const [role, column] of Object.entries(roles)) {
+    if (!column) continue;
+    const header = exact.has(column) ? column : byFolded.get(column.trim().toLowerCase());
+    if (header === undefined || taken.has(header)) continue;
+    taken.add(header);
+    out[role] = header;
+  }
+  return out;
+}
+
+// --- the column-role requirement ----------------------------------------------------------------------
+
+/**
+ * What a mapping must include for core to load ANY variable from the file (08-28). Every group needs at least
+ * one of its roles mapped.
+ *
+ * MIRRORED, NOT RE-DERIVED: this is `REQUIRED_ROLE_GROUPS` in `backend/role_requirement.py`, and
+ * `tests/test_role_requirement.py` pins the two to one list and the backend's to core's real loader over every
+ * combination of the text roles. Setup's blocker, the mapping table's flag and the New Run form all read it,
+ * where they used to carry three hand copies that each accepted `question_text` alone.
+ *
+ *  1. core's `load_dictionary` refuses a mapping with none of the first group;
+ *  2. its parser describes each row from description → short_label → the row's name (variable_name → field_id
+ *     → a synthetic `_ROW_nnnnn` it refuses) and SKIPS a row it cannot describe. `question_text` is not in that
+ *     chain — a question-text-only mapping loads zero variables.
+ */
+export const REQUIRED_ROLE_GROUPS = [
+  ["variable_name", "description", "question_text"],
+  ["variable_name", "description", "short_label", "field_id"],
+] as const;
+
+/** The first requirement group with no role mapped, or null when the mapping is one core can load. */
+export function unmetRoleGroup(roles: Record<string, string>): readonly string[] | null {
+  for (const group of REQUIRED_ROLE_GROUPS) {
+    if (!group.some((r) => Boolean(roles[r]))) return group;
+  }
+  return null;
+}
+
+export const meetsRoleRequirement = (roles: Record<string, string>): boolean => unmetRoleGroup(roles) === null;
+
+/**
+ * The reviewer-facing reason a mapping is not enough, or null. One sentence per group, because the fix differs:
+ * nothing mapped wants any text at all; question_text alone wants something to describe each row with.
+ */
+export function roleRequirementReason(roles: Record<string, string>): string | null {
+  const group = unmetRoleGroup(roles);
+  if (group === null) return null;
+  if (group === REQUIRED_ROLE_GROUPS[0]) {
+    return "map at least one of variable_name, description or question_text, so the pipeline has text to match against common data elements.";
+  }
+  return (
+    "question_text alone loads no variables — the loader describes each row from description, variable_name, " +
+    "field_id or short_label and skips a row with none of them. Map description (or a variable name) as well."
+  );
+}

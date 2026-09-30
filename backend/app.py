@@ -76,6 +76,7 @@ from backend.engine import CONTRACT_VERSION
 from backend.engine.adapter import cost_block
 from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
+from backend.role_requirement import role_requirement_error, zero_variable_error
 from backend.runner import _relative_ref, run_harmonization
 
 logger = logging.getLogger(__name__)
@@ -500,10 +501,12 @@ async def start_batch(
         if fname not in saved:
             raise HTTPException(status_code=400, detail=f"Uploaded file missing for {fname!r}")
         roles = {k: v for k, v in d.get("columnRoles", {}).items() if v}
-        if "variable_name" not in roles and "description" not in roles and "question_text" not in roles:
-            raise HTTPException(
-                status_code=400, detail=f"{fname!r} needs at least variable_name/description/question_text"
-            )
+        # Core's requirement, from the one place it is written down (`backend/role_requirement.py`, pinned to
+        # core's loader and to the frontend's copy). It used to be a hand copy here that took question_text
+        # alone, which core loads as ZERO variables — the cohort was then dropped mid-run and the rest billed.
+        role_error = role_requirement_error(fname, roles)
+        if role_error is not None:
+            raise HTTPException(status_code=400, detail=role_error)
         # Refused BEFORE anything is harmonized, embedded or sent anywhere: this is a standing product
         # prohibition (we accept metadata, never participant-level data), so the check belongs at the door.
         offender = _participant_level_column(saved[fname])
@@ -517,6 +520,12 @@ async def start_batch(
                     "never accepts participant data."
                 ),
             )
+        # The OUTCOME, not just the rule: core's own loader, run on the upload (local, free). A mapping that
+        # meets the rule can still load nothing — its text column empty on every row — and a cohort that
+        # loads nothing is refused here, by name, rather than silently missing from a run that bills.
+        empty_error = zero_variable_error(fname, saved[fname], str(d["cohortName"]), roles)
+        if empty_error is not None:
+            raise HTTPException(status_code=400, detail=empty_error)
         dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
     # The pipeline REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
@@ -1933,7 +1942,7 @@ def _mapped_uploads(files: list[UploadFile], config: str, tmp: Path) -> list[dic
     """Save the uploads under ``tmp`` and pair each with its declared cohort name and column mapping.
 
     THE SAME PAYLOAD SHAPE `/batch` TAKES (``{dictionaries: [{filename, cohortName, columnRoles}]}``), and
-    the same two refusals at the door. Divergence between what the export accepts and what a run accepts
+    the same refusals at the door (role rule, participant-level data, zero variables). Divergence between what the export accepts and what a run accepts
     is how a reviewer gets a clean download for a file the run then rejects.
     """
     try:
@@ -1958,10 +1967,11 @@ def _mapped_uploads(files: list[UploadFile], config: str, tmp: Path) -> list[dic
         if fname not in saved:
             raise HTTPException(status_code=400, detail=f"Uploaded file missing for {fname!r}")
         roles = {k: v for k, v in (d.get("columnRoles") or {}).items() if v}
-        if "variable_name" not in roles and "description" not in roles and "question_text" not in roles:
-            raise HTTPException(
-                status_code=400, detail=f"{fname!r} needs at least variable_name/description/question_text"
-            )
+        # The same rule `/batch` applies, from the same place — an export that took a mapping the run refuses
+        # would hand the reviewer a clean-looking file for a dictionary that cannot be run.
+        role_error = role_requirement_error(fname, roles)
+        if role_error is not None:
+            raise HTTPException(status_code=400, detail=role_error)
         # Refused here as well as at `/batch`: a standing product prohibition belongs at every door, and
         # this one accepts an upload without a run in front of it.
         offender = _participant_level_column(saved[fname])
@@ -1975,11 +1985,17 @@ def _mapped_uploads(files: list[UploadFile], config: str, tmp: Path) -> list[dic
                     "never accepts participant data."
                 ),
             )
+        cohort_name = str(d.get("cohortName") or Path(fname).stem)
+        # And the zero-variable refusal `/batch` makes, for the same reason: a download of a file that loads
+        # nothing is a clean-looking answer to a question the run will refuse.
+        empty_error = zero_variable_error(fname, saved[fname], cohort_name, roles)
+        if empty_error is not None:
+            raise HTTPException(status_code=400, detail=empty_error)
         specs.append(
             {
                 "path": saved[fname],
                 "filename": fname,
-                "cohort_name": str(d.get("cohortName") or Path(fname).stem),
+                "cohort_name": cohort_name,
                 "column_roles": roles,
             }
         )

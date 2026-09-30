@@ -36,7 +36,13 @@ import {
 } from "@/lib/api";
 import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
-import { participantLevelColumn, type DictRow } from "@/lib/dictionary";
+import {
+  meetsRoleRequirement,
+  participantLevelColumn,
+  representableRoles,
+  roleRequirementReason,
+  type DictRow,
+} from "@/lib/dictionary";
 import { preparationProgress } from "@/lib/run-state";
 import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
@@ -396,7 +402,10 @@ function dictionariesFromRun(job: JobResult | null): SetupDict[] {
  */
 function initialRoles(headers: string[]): Record<string, string> {
   const prefilled = lookupPrefill(headers);
-  if (prefilled) return prefilled.roles;
+  // NARROWED TO WHAT THE TABLE CAN SHOW (08-28). A remembered mapping can name a column by a case the file
+  // does not use, or put two roles on one column; the table then showed part of it and Start POSTed all of
+  // it. What the reviewer sees here must be the whole of what the run is sent.
+  if (prefilled) return representableRoles(prefilled.roles, headers);
   const byFolded = new Map(headers.map((h) => [h.trim().toLowerCase(), h]));
   const roles: Record<string, string> = {};
   for (const role of COLUMN_ROLES) {
@@ -406,9 +415,11 @@ function initialRoles(headers: string[]): Record<string, string> {
   return roles;
 }
 
-/** At least one meaning-bearing column, which is the pipeline's real requirement (not any single role). */
-const MEANING_ROLES = ["description", "question_text", "variable_name"] as const;
-const hasMeaning = (roles: Record<string, string>): boolean => MEANING_ROLES.some((r) => Boolean(roles[r]));
+/**
+ * Whether core can load any variable from this mapping — `REQUIRED_ROLE_GROUPS`, the one copy of the rule, which
+ * the backend suite pins to core's loader. The hand copy here accepted question_text alone (08-28).
+ */
+const hasMeaning = (roles: Record<string, string>): boolean => meetsRoleRequirement(roles);
 
 // --- the screen ----------------------------------------------------------------------------------------
 
@@ -1044,12 +1055,8 @@ export default function SetupPage() {
         out.push(`${d.filename} is still being read.`);
         continue;
       }
-      if (!hasMeaning(d.roles)) {
-        out.push(
-          `${d.filename}: map at least one of description, question_text or variable_name, so the ` +
-            "pipeline has meaning to match against common data elements.",
-        );
-      }
+      const reason = roleRequirementReason(d.roles);
+      if (reason !== null) out.push(`${d.filename}: ${reason}`);
     }
     // Batch and synchronous both call a provider; preview calls nothing. A missing key is a blocker rather
     // than a failure at submit time, because the reason belongs beside the disabled control.
@@ -1339,7 +1346,7 @@ export default function SetupPage() {
                   blockedReason={
                     hasMeaning(d.roles)
                       ? undefined
-                      : "Map at least a variable name, a description or the question text before marking this dictionary complete — with none of them there is no text to cluster."
+                      : `Not ready to mark complete: ${roleRequirementReason(d.roles) ?? ""}`
                   }
                   onConfirm={() => confirmMapping(d.key)}
                   onDownload={() => void downloadEmbeddingCsv(d)}
@@ -2310,7 +2317,9 @@ export default function SetupPage() {
           scopeLabel={totalFields === null ? undefined : `${totalFields.toLocaleString()} variables`}
           onCommit={() => void onStart()}
           busy={starting}
-          disabled={blockers.length > 0 || IS_STATIC}
+          // NOT disabled for the static build any more (08-28): `startHarmonize` tries the request there and
+          // answers "static preview" itself, which is the seam the e2e gate reads the Start payload through.
+          disabled={blockers.length > 0}
           className="static"
           recheckNotice={
             isPreview || estimate?.free
