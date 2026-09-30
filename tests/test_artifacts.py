@@ -718,11 +718,12 @@ def test_every_gate_decision_kind_is_registered_with_an_identity(artifacts):
 
     The COUNT is a tripwire, not the invariant. It is here so a new kind cannot be added without a human
     reading this rule and confirming the new kind keys on the thing decided. Raised 7 -> 8 by 08-16c Task 3
-    for ``gate1_rename`` (the reviewer's own name for a concept group, keyed on the group).
+    for ``gate1_rename`` (the reviewer's own name for a concept group, keyed on the group), and 8 -> 9 by 08-28
+    Wave 2 for ``gate1_new_group`` (a group the reviewer made, keyed on that group's own ``rev:<uuid>`` id).
     """
     from backend.artifacts import registry as global_registry
 
-    assert len(GATE_DECISION_KINDS) == 8
+    assert len(GATE_DECISION_KINDS) == 9
     for name in GATE_DECISION_KINDS:
         assert not global_registry.get(name).singleton, f"{name} must key on the thing decided"
 

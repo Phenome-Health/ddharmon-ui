@@ -33,7 +33,7 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
@@ -1862,6 +1862,75 @@ def _use_frozen_substrate(kwargs: dict[str, Any], substrate_path: Path, harmoniz
         kwargs["recover_outliers"] = False
 
 
+# ── the reviewer's Gate-1 regrouping (08-28 Wave 2): moves + New groups, APPLIED by core before assign ──────
+#
+# Gate 1's Continue freezes the regrouping on the run's config (``backend/app.py::_gate1_overrides``) and every
+# later leg — and the $0 replay — hands it to core as ``group_overrides``. The only paid work it adds is ONE
+# generate-ideal call per New group. That call is NOT routed through the ``generate`` stage: past Gate 1 that
+# stage is frozen (a prompt the checkpoint never recorded is partition drift, and the leg fails before buying
+# it — 08-28 F2). It runs on a stage of its own, ``group_generate``, which core addresses under its own id
+# namespace (``leanb:groupideal:<rev id>@<member content id>``). So the drift guard keeps exactly the strictness
+# it had: the cluster ideals must still all be replayed, and the New groups' ideals can only ever reach the one
+# stage built for them. Recorded and replayed like any post-Gate-1 stage: bought once on the Gate 1 -> Gate 2
+# leg, answered from the checkpoint for $0 on every leg after.
+
+#: Where Gate 1's Continue freezes the regrouping on the run's config (``backend/app.py`` writes the same key).
+GATE1_OVERRIDES_CONFIG_KEY = "gate1_overrides"
+
+#: The cost-ledger key a New group's ideal bills under. Gate 1's Continue buys it, in the same leg as the assign,
+#: so it is in Gate 2's figure (``GATE_LEDGER_KEYS`` in the frontend's estimate.ts).
+GROUP_IDEAL_COST_KEY = "new_group_ideal"
+
+#: Its batch cache tag (and replay stage name — ``backend/batch_reconcile.py::TAG_TO_STAGE``).
+GROUP_IDEAL_TAG = "group_generate"
+
+
+def core_group_overrides(raw: Any, known_fields: Collection[str]) -> Any | None:
+    """The frozen regrouping as core's ``GroupOverrides``, or None when there is nothing to apply.
+
+    A move of a variable this run does not have is dropped rather than handed to core, which would refuse the
+    whole leg for it: the decision named something the run cannot honour, and failing a paid leg over it would
+    punish every other decision the reviewer made. Destinations were already checked when the regrouping was
+    frozen, against the groups Gate 1 displayed; core re-checks them against the partition it replays.
+    """
+    if not isinstance(raw, dict):
+        return None
+    from ddharmon.harmonization.overrides import GroupOverrides, ReviewerGroup
+
+    known = set(known_fields)
+    new_groups = tuple(
+        ReviewerGroup(group_id=str(g["groupId"]), name=str(g.get("name") or ""))
+        for g in raw.get("newGroups") or []
+        if isinstance(g, dict) and g.get("groupId")
+    )
+    moves: dict[str, str | None] = {}
+    for member, dest in (raw.get("moves") or {}).items():
+        if str(member) not in known:
+            logger.warning("regrouping: dropped a move of %r, which is not a variable of this run", member)
+            continue
+        moves[str(member)] = str(dest) if dest else None
+    if not moves and not new_groups:
+        return None
+    return GroupOverrides(moves=moves, new_groups=new_groups)
+
+
+def _override_kwargs(overrides: Any, group_generate: StageFn | None, harmonize_leanb: Callable[..., Any]) -> dict:
+    """``harmonize_leanb`` kwargs for a frozen regrouping — refusing, never skipping, on a core without them.
+
+    NOT signature-guarded into a silent skip, like ``stop_after`` and unlike the optional enhancements: the
+    reviewer's moves ARE the grouping this leg must assign, and the screens say they are applied. A core that
+    cannot apply them would run, and charge for, the grouping the reviewer changed.
+    """
+    if overrides is None:
+        return {}
+    if "group_overrides" not in inspect.signature(harmonize_leanb).parameters:
+        raise ValueError(
+            "the pinned ddharmon core has no `group_overrides` parameter, so the reviewer's Gate 1 moves and New "
+            "groups cannot be applied; upgrade core rather than matching the grouping they changed"
+        )
+    return {"group_overrides": overrides, "group_generate": group_generate}
+
+
 # ── staged review: the resumable boundary, and how a resumed leg avoids paying twice ─────────
 #
 # The gate a run stops at is expressed in core's OWN vocabulary; this adapter invents no new stop
@@ -2275,10 +2344,16 @@ def run_pipeline(
     # own stage + cost key, so the spend is visible as its own line; built ONLY when there are picks to apply.
     gate2_picks: dict[str, Any] = config.get("gate2_picks") or {}
     want_repick = bool(gate2_picks) and stop_at_gate is None
+    # 08-28 Wave 2: the frozen Gate-1 regrouping. A New group's ideal is the one paid call it adds, on its own
+    # stage (see GROUP_IDEAL_COST_KEY), built ONLY when a New group exists — otherwise nothing can buy it.
+    regrouping = core_group_overrides(config.get(GATE1_OVERRIDES_CONFIG_KEY), field_index)
+    want_group_ideal = regrouping is not None and bool(regrouping.new_groups)
     if overrides:
         stages: dict[str, StageFn] = dict(overrides)
         if want_repick and "specgen_repick" not in stages and "specgen" in stages:
             stages["specgen_repick"] = stages["specgen"]
+        if want_group_ideal and GROUP_IDEAL_TAG not in stages and "generate" in stages:
+            stages[GROUP_IDEAL_TAG] = stages["generate"]  # same runner, its OWN recorded stage (never frozen)
     elif mode == "sync":
         # Client selection keys off the chosen model tag via the shared builder: Anthropic is pinned to the
         # PICKED Claude model (the SDK client's own default is a stale snapshot that 404s and ignored the
@@ -2301,6 +2376,15 @@ def run_pipeline(
                     )
                 }
                 if want_repick
+                else {}
+            ),
+            **(
+                {
+                    GROUP_IDEAL_TAG: _sync_stage(
+                        "generating", progress, client, ledger, stopping, ledger_key=GROUP_IDEAL_COST_KEY
+                    )
+                }
+                if want_group_ideal
                 else {}
             ),
             # The judge and its R2 second read. One line each, same shape as every stage above (see
@@ -2336,6 +2420,22 @@ def run_pipeline(
                     )
                 }
                 if want_repick
+                else {}
+            ),
+            **(
+                {
+                    GROUP_IDEAL_TAG: _batch_stage(
+                        "generating",
+                        progress,
+                        work_dir,
+                        "group_generate",
+                        ledger,
+                        api_key=api_key,
+                        stopping=stopping,
+                        ledger_key=GROUP_IDEAL_COST_KEY,
+                    )
+                }
+                if want_group_ideal
                 else {}
             ),
             **{
@@ -2457,6 +2557,7 @@ def run_pipeline(
         specgen=stages.get("specgen") if gen_specs else None,
         **({"refine": stages.get("refine")} if refine_cdes else {}),
         **judge_kwargs,
+        **_override_kwargs(regrouping, stages.get(GROUP_IDEAL_TAG), harmonize_leanb),
         **kwargs,
     )
     _save_substrate_if_new(substrate_path, result)
@@ -2767,6 +2868,10 @@ def replay_leanb_result(
         for name in ("gencde", "refine", "coherence", "distinct_kinds", "concept_gate")
         if name in stages and name in core_params
     }
+    # The frozen Gate-1 regrouping, so a replay past Gate 1 rebuilds the groups every later leg assigned (their
+    # prompt ids are content-addressed on the regrouped membership) and answers the New groups' ideals too.
+    regrouping = core_group_overrides(config.get(GATE1_OVERRIDES_CONFIG_KEY), build_field_index(embedded, cde_cohort))
+    group_ideal = stages.get(GROUP_IDEAL_TAG) or _lookup_stage(GROUP_IDEAL_TAG, replay_responses, report)
     result = harmonize_leanb(
         embedded,
         generate=stages.get("generate"),
@@ -2774,6 +2879,7 @@ def replay_leanb_result(
         classify=stages.get("classify"),
         specgen=stages.get("specgen"),
         **optional,
+        **_override_kwargs(regrouping, group_ideal, harmonize_leanb),
         **kwargs,
     )
     return result, embedded

@@ -320,11 +320,14 @@ export function effectiveMembers(
   groups: readonly ConceptGroup[],
   membersByGroup: Record<string, string[]>,
   moves: Record<string, string>,
+  /** The reviewer's New groups (08-28 Wave 2): real destinations that START empty. */
+  newGroupIds: readonly string[] = [],
 ): { byGroup: Record<string, string[]>; unassigned: string[] } {
   const byGroup: Record<string, string[]> = {};
   const unassigned: string[] = [];
   const known = new Set<string>();
   for (const g of groups) byGroup[g.groupId] = [];
+  for (const id of newGroupIds) byGroup[id] = [];
   for (const g of groups) {
     // The UNCAPPED list when the run carries one; the collapsed sample only as a last resort, and a move
     // written against a partial sample is exactly what T-08-89 forbids — which is why the expanded row
@@ -353,6 +356,80 @@ export function effectiveMembers(
     if (destination in byGroup) byGroup[destination].push(memberId);
   }
   return { byGroup, unassigned };
+}
+
+// --- the reviewer's own groups (08-28 Wave 2) -------------------------------------------------------------
+
+/** A New group's id prefix — `REVIEWER_GROUP_PREFIX` in backend/artifact_kinds.py; pipeline ids are `<c>#g<N>`. */
+export const REVIEWER_GROUP_PREFIX = "rev:";
+
+export function isReviewerGroupId(groupId: string): boolean {
+  return groupId.startsWith(REVIEWER_GROUP_PREFIX);
+}
+
+/** Mint a New group's id. Stable for the group's life: every later leg and export names it by this id. */
+export function newReviewerGroupId(): string {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return `${REVIEWER_GROUP_PREFIX}${c.randomUUID()}`;
+  const hex = Array.from(c.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${REVIEWER_GROUP_PREFIX}${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * The reviewer's New groups as queue rows, NEWEST FIRST — built from the persisted `gate1_new_group` decisions
+ * and each group's effective members, so a row survives a reload exactly as the moves into it do (R6).
+ *
+ * A New group was never clustered, split or judged: `conceptIsGenerated` is false (the reviewer named it) and
+ * its coherence is `not_judged` — the judge was never asked, and saying anything else would be a claim.
+ */
+export function reviewerGroupRows(
+  decisions: Record<string, { chosen?: unknown; name?: unknown; createdAt?: unknown; groupId?: unknown }>,
+  membersOf: (groupId: string) => string[],
+): ConceptGroup[] {
+  const rows = Object.entries(decisions)
+    .filter(([id]) => isReviewerGroupId(id))
+    .map(([groupId, d]) => {
+      const members = membersOf(groupId);
+      const cohorts = [...new Set(members.map((m) => m.split(":")[0]))].sort();
+      const name = String((typeof d.name === "string" && d.name.trim() ? d.name : d.chosen) ?? "").trim();
+      const row: ConceptGroup = {
+        groupId,
+        clusterId: groupId,
+        concept: name,
+        conceptIsGenerated: false,
+        idealCde: "",
+        nMembers: members.length,
+        cohorts,
+        crossCohort: cohorts.length >= 2,
+        top1Cos: null,
+        memberVariableNames: members,
+        membersTruncated: false,
+        coherence: "not_judged",
+        coherenceSummary: "",
+        coherenceAxis: "",
+        coherenceDistinctValues: [],
+        coherenceOutliers: [],
+        incoherent: false,
+        matrixSuspect: false,
+      };
+      return { row, at: typeof d.createdAt === "number" ? d.createdAt : 0 };
+    });
+  // Newest first (the one just made is where the reviewer is looking); ties by id so a reload cannot reorder.
+  rows.sort((a, b) => b.at - a.at || (a.row.groupId < b.row.groupId ? -1 : 1));
+  return rows.map((r) => r.row);
+}
+
+/**
+ * What Gate 1's Continue will cost for the groups it SENDS: each billable group's match (`price`), plus ONE
+ * generated ideal for every billable New group (`idealPerNewGroup`) — the only extra call a New group makes.
+ */
+export function gate1QuoteUsd(
+  billable: readonly { groupId: string }[],
+  price: number,
+  idealPerNewGroup: number,
+): number {
+  const nNew = billable.filter((g) => isReviewerGroupId(g.groupId)).length;
+  return price * billable.length + idealPerNewGroup * nNew;
 }
 
 /**

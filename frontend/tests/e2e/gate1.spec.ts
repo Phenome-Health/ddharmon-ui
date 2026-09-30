@@ -16,6 +16,10 @@ import {
   partitionByBreadth,
   readjudicationRequest,
   sortGroups,
+  reviewerGroupRows,
+  isReviewerGroupId,
+  newReviewerGroupId,
+  gate1QuoteUsd,
 } from "@/lib/ledger";
 import {
   componentVerdictFor,
@@ -3829,6 +3833,9 @@ test.describe("gate1 drop highlighting", () => {
     from: Locator,
     to: Locator,
   ): Promise<void> {
+    // The target must be ON SCREEN — a reviewer cannot hold a variable over a row the queue has scrolled out
+    // of view. (Selecting a row can scroll the queue: its list is a bounded scroll area.)
+    await to.scrollIntoViewIfNeeded();
     const a = await centre(from);
     await page.mouse.move(a.x, a.y);
     await page.mouse.down();
@@ -4459,18 +4466,186 @@ test.describe("gate1 score panel placement", () => {
   });
 });
 
-/** 08-27 option C — variable moves are RECORDED but not yet applied to matching; the screen says so. */
-test.describe("gate1 moves are recorded, not applied", () => {
-  test("@gate1 after a move, Gate 1 states that this run matches each group's original members", async ({
+/**
+ * 08-28 Wave 2 — "New group", and Gate 1 moves are APPLIED.
+ *
+ * Until now a move was recorded and never consumed: the paid pipeline matched every group's ORIGINAL members,
+ * and this screen said so in a warning. Continue now freezes the moves and the reviewer's own groups, and the
+ * pipeline re-groups before it matches — so the warning is gone, and a reviewer can make a group of their own:
+ * name it inline, fill it by dragging variables onto its row, and it is matched, spec'd and exported as itself.
+ */
+test.describe("gate1 new group", () => {
+  const NEWROW = "[data-testid='ledger-row'][data-reviewer='true']";
+  const bigRow = (page: Page) => page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`);
+  const varsOf = async (row: Locator) => Number(((await row.textContent()) ?? "").match(/(\d+) vars?\b/)?.[1]);
+
+  async function createGroup(page: Page, name: string): Promise<Locator> {
+    await page.locator("[data-testid='new-group']").click();
+    const input = page.locator("[data-testid='new-group-name']");
+    await expect(input).toBeFocused();
+    await input.fill(name);
+    await input.press("Enter");
+    const row = page.locator(NEWROW, { hasText: name });
+    await expect(row).toBeVisible();
+    return row;
+  }
+
+  async function fillFromBig(page: Page, row: Locator): Promise<string> {
+    const detail = await expandRow(page, BIG);
+    const member = detail.locator("[data-testid='member-row']").first();
+    const memberId = (await member.getAttribute("data-member-id"))!;
+    await member.dragTo(row);
+    await expect(row).toContainText("1 var");
+    return memberId;
+  }
+
+  test("@gate1 a New group is named inline and becomes its own row — empty, in scope, and marked as yours", async ({
     page,
   }) => {
     await openGate1(page);
+    const row = await createGroup(page, "Eye conditions");
+    await expect(row).toContainText("0 vars");
+    await expect(row.locator("[data-testid='queue-scope']")).toBeChecked();
+    await expect(row.locator("[data-testid='new-group-mark']")).toBeVisible();
+    expect(await row.getAttribute("data-row-id")).toMatch(/^rev:[0-9a-f-]{36}$/);
+    // It opens in the detail pane, which says what happens to it next.
+    const detail = page.locator("[data-testid='new-group-detail']");
+    await expect(detail).toContainText("Eye conditions");
+    await expect(detail).toContainText(/drag/i);
+    // A persisted decision, not component state.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(NEWROW, { hasText: "Eye conditions" })).toBeVisible();
+  });
+
+  test("@gate1 Escape, or an empty name, creates nothing", async ({ page }) => {
+    await openGate1(page);
+    await page.locator("[data-testid='new-group']").click();
+    await page.locator("[data-testid='new-group-name']").press("Escape");
+    await page.locator("[data-testid='new-group']").click();
+    await page.locator("[data-testid='new-group-name']").fill("   ");
+    await page.locator("[data-testid='new-group-name']").press("Enter");
+    await expect(page.locator(NEWROW)).toHaveCount(0);
+  });
+
+  test("@gate1 a variable dragged onto the New group's row moves INTO it and OUT of its origin", async ({ page }) => {
+    await openGate1(page);
+    const row = await createGroup(page, "Eye conditions");
+    const before = await varsOf(bigRow(page));
+    const memberId = await fillFromBig(page, row);
+    await expect(bigRow(page)).toContainText(`${before - 1} vars`);
+    await row.click();
+    await expect(
+      page.locator(`[data-testid='new-group-detail'] [data-member-id='${memberId}']`).first(),
+    ).toBeVisible();
+    // The move is applied now — nothing on the screen says otherwise.
     await expect(page.locator("[data-testid='moves-not-applied']")).toHaveCount(0);
-    const row = await expandRow(page, BIG);
-    const chip = row.locator("[data-testid='member-row']").first();
-    await chip.dragTo(row.locator("[data-testid='member-drop-zone'][data-group-id='__unassigned__']"));
-    const note = page.locator("[data-testid='moves-not-applied']");
-    await expect(note).toBeVisible();
-    await expect(note).toContainText(/original members/i);
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(NEWROW, { hasText: "Eye conditions" })).toContainText("1 var");
+  });
+
+  test("@gate1 an empty New group can be deleted; a filled one cannot", async ({ page }) => {
+    await openGate1(page);
+    const doomed = await createGroup(page, "Scratch group");
+    await doomed.click();
+    await page.locator("[data-testid='delete-new-group']").click();
+    await expect(page.locator(NEWROW, { hasText: "Scratch group" })).toHaveCount(0);
+
+    const kept = await createGroup(page, "Eye conditions");
+    await fillFromBig(page, kept);
+    await kept.click();
+    await expect(page.locator("[data-testid='new-group-detail']")).toBeVisible();
+    await expect(page.locator("[data-testid='delete-new-group']")).toHaveCount(0);
+  });
+
+  test("@gate1 renaming a New group renames its row", async ({ page }) => {
+    await openGate1(page);
+    const row = await createGroup(page, "Eye stuff");
+    await row.click();
+    await page.locator("[data-testid='new-group-detail'] [data-testid='rename-group']").click();
+    const input = page.locator("[data-testid='new-group-detail'] input[aria-label='Rename group']");
+    await input.fill("Eye conditions");
+    await input.press("Enter");
+    await expect(page.locator(NEWROW, { hasText: "Eye conditions" })).toBeVisible();
+    await expect(page.locator(NEWROW, { hasText: "Eye stuff" })).toHaveCount(0);
+  });
+
+  test("@gate1 a passed Gate 1 offers no New group — the regrouping was frozen by its Continue", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.gatePosition = "gate2";
+      run.result!.gatePosition = "gate2";
+    });
+    await openGate1(page);
+    await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();
+    await expect(page.locator("[data-testid='new-group']")).toHaveCount(0);
+  });
+
+  test("@gate1 the quote counts a FILLED New group — its match and its one ideal — and not an empty one", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    const line = page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']");
+    const read = async () => {
+      const text = (await line.textContent()) ?? "";
+      return { n: Number(text.match(/^(\d+) of/)?.[1]), usd: text.match(/(<?\$[\d.]+)/)?.[1] ?? "" };
+    };
+    const before = await read();
+    const row = await createGroup(page, "Eye conditions");
+    expect(await read()).toEqual(before); // empty: nothing to match, nothing to describe
+    await fillFromBig(page, row);
+    const after = await read();
+    expect(after.n).toBe(before.n + 1);
+    expect(after.usd).not.toBe(before.usd);
+    await expect(page.locator("[data-testid='commit-bar']")).toContainText(after.usd);
+  });
+});
+
+test.describe("gate1 new group helpers", () => {
+  const d = (groupId: string, name: string, createdAt: number) => ({
+    groupId,
+    name,
+    chosen: name,
+    alternatives: [name],
+    optionSetKey: "k",
+    createdAt,
+  });
+
+  test("@gate1 New groups become rows newest first, sized and cohorted by their effective members", () => {
+    const rows = reviewerGroupRows(
+      { "rev:a": d("rev:a", "Older", 1), "rev:b": d("rev:b", "Newer", 2) },
+      (id) => (id === "rev:a" ? ["UKBB:1", "CLSA:x", "UKBB:2"] : []),
+    );
+    expect(rows.map((r) => r.groupId)).toEqual(["rev:b", "rev:a"]);
+    expect(rows[1]).toMatchObject({
+      concept: "Older",
+      conceptIsGenerated: false,
+      nMembers: 3,
+      cohorts: ["CLSA", "UKBB"],
+      crossCohort: true,
+      coherence: "not_judged",
+      membersTruncated: false,
+    });
+    expect(isReviewerGroupId("rev:a")).toBe(true);
+    expect(isReviewerGroupId("c0#g0")).toBe(false);
+    expect(newReviewerGroupId()).toMatch(/^rev:[0-9a-f-]{36}$/);
+  });
+
+  test("@gate1 a move into a New group lands there, not in the pool", () => {
+    const g = fixtureGroups().find((x) => x.groupId === BIG)!;
+    const members = gate1Fixture().result!.conceptGroupMembers![BIG];
+    const moved = members[0];
+    const out = effectiveMembers([g], { [BIG]: members }, { [moved]: "rev:a", "X:leftover": "rev:a" }, ["rev:a"]);
+    expect(out.byGroup["rev:a"]).toEqual([moved, "X:leftover"]);
+    expect(out.byGroup[BIG]).not.toContain(moved);
+    expect(out.unassigned).not.toContain(moved);
+    const left = [{ cohort: "X", variable: "leftover" }];
+    expect(unplacedFields(left, { "X:leftover": "rev:a" }, [BIG, "rev:a"])).toEqual([]);
+  });
+
+  test("@gate1 the quote is every billable group's match plus one ideal per billable New group", () => {
+    const groups = [{ groupId: "c0#g0" }, { groupId: "rev:a" }, { groupId: "rev:b" }];
+    expect(gate1QuoteUsd(groups, 0.5, 0.1)).toBeCloseTo(1.5 + 0.2, 10);
+    expect(gate1QuoteUsd([], 0.5, 0.1)).toBe(0);
   });
 });

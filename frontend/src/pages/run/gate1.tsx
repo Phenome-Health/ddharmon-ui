@@ -6,10 +6,13 @@ import {
   ChevronRight,
   Grid3x3,
   Pencil,
+  Plus,
   Quote,
   Scissors,
   Search,
+  Trash2,
   Undo2,
+  UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -46,7 +49,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
 import { pathForGate } from "@/lib/gate-routes";
-import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
+import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
 import {
   DEFAULT_BUCKET,
   NO_FILTERS,
@@ -57,8 +60,12 @@ import {
   cohortRoster,
   groupLabel,
   effectiveMembers,
+  gate1QuoteUsd,
   isFlagged,
+  isReviewerGroupId,
+  newReviewerGroupId,
   readjudicationRequest,
+  reviewerGroupRows,
   matchTerms,
   partitionByBreadth,
   pricePerGroup,
@@ -210,6 +217,23 @@ function RenamedMark() {
     >
       <Pencil aria-hidden="true" className="h-3 w-3" />
       your name
+    </span>
+  );
+}
+
+/**
+ * The provenance pill for a group the REVIEWER made (08-28 Wave 2). It replaces the coherence cell on the row:
+ * the judge was never asked about a New group, and a "not judged" cell there would read as a finding.
+ */
+function NewGroupMark() {
+  return (
+    <span
+      data-testid="new-group-mark"
+      title="You made this group. ddharmon did not cluster, split or judge it: it is matched at Gate 2 exactly as you filled it, after writing one ideal description for it."
+      className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
+    >
+      <UserRound aria-hidden="true" className="h-3 w-3" />
+      your group
     </span>
   );
 }
@@ -1736,6 +1760,7 @@ function QueueRow({
   selected,
   readOnly,
   renamedTo,
+  reviewer = false,
   onSelect,
   onScopeChange,
   onDropMember,
@@ -1744,6 +1769,8 @@ function QueueRow({
   /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
    *  as a tag and the reason this row is pinned to the top of the queue. */
   scoreTag?: string[];
+  /** A New group the reviewer made (08-28 Wave 2): marked as theirs, never with a coherence cell. */
+  reviewer?: boolean;
   price: number;
   count: number;
   inScope: boolean;
@@ -1766,6 +1793,7 @@ function QueueRow({
       data-testid="ledger-row"
       data-group-id={group.groupId}
       data-row-id={group.groupId}
+      data-reviewer={reviewer ? "true" : undefined}
       data-spine={
         isFlagged(group) ? "unresolved" : changed ? "changed" : "none"
       }
@@ -1851,14 +1879,14 @@ function QueueRow({
           <span data-label-source={label.source}>{label.text}</span>
           {label.source === "reviewer" && <RenamedMark />}
           {label.source === "judge" && <BorrowedMark />}
-          {changed && (
+          {changed && !reviewer && (
             <span className="ml-1 text-xs font-normal text-status-warn">
               · edited
             </span>
           )}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-          <CoherenceMark state={group.coherence} />
+          {reviewer ? <NewGroupMark /> : <CoherenceMark state={group.coherence} />}
           {group.readjudicatedFrom && (
             <ReSplitMark parent={group.readjudicatedFrom} />
           )}
@@ -1926,6 +1954,210 @@ function QueueSortHeader({
           {sort?.key === c.k ? (sort.dir === "asc" ? " ↑" : " ↓") : " ⇅"}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * "New group" (08-28 Wave 2): a button that opens an inline name field. Enter creates the group; Escape, or an
+ * empty name, creates nothing. The group starts empty — the reviewer fills it by dragging variables onto its
+ * row, the same verb every other group takes.
+ */
+function NewGroupControl({ onCreate }: { onCreate: (name: string) => void }) {
+  const [naming, setNaming] = useState(false);
+  const [draft, setDraft] = useState("");
+  const finish = (create: boolean) => {
+    if (create && draft.trim()) onCreate(draft.trim());
+    setDraft("");
+    setNaming(false);
+  };
+  if (!naming) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="new-group"
+        onClick={() => setNaming(true)}
+        className="w-full justify-start gap-1.5"
+      >
+        <Plus aria-hidden="true" className="h-4 w-4" />
+        New group
+      </Button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      data-testid="new-group-name"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") finish(true);
+        if (e.key === "Escape") finish(false);
+      }}
+      onBlur={() => finish(true)}
+      placeholder="Name the new group, then press Enter"
+      aria-label="Name the new group"
+      className="h-8 w-full rounded-inner border border-rule-control-on-raised bg-surface-raised px-2.5 text-sm text-on-raised placeholder:text-on-raised-faint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+    />
+  );
+}
+
+/**
+ * The detail pane for a NEW group the reviewer made (08-28 Wave 2). Not `GroupDetail` + `ExpandedGroup`: those
+ * speak for a group the pipeline formed — its cluster, its judge's verdict, its generated ideal, "you moved
+ * every variable out" — and none of that is true of a group the reviewer made. This says what IS true: it is
+ * theirs, it holds exactly what they put in it, and what Gate 2 will do with it.
+ */
+function ReviewerGroupDetail({
+  group,
+  members,
+  fieldIndex,
+  movedMembers,
+  readOnly,
+  inScope,
+  onScopeChange,
+  onRename,
+  onDelete,
+  onMove,
+}: {
+  group: ConceptGroup;
+  members: string[];
+  fieldIndex: Record<string, FieldDetail>;
+  movedMembers: Set<string>;
+  readOnly: boolean;
+  inScope: boolean;
+  onScopeChange: (inScope: boolean) => void;
+  onRename: (next: string) => void;
+  onDelete: () => void;
+  onMove: (memberId: string, toGroupId: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const count = members.length;
+  const gridCarriesMembers = hasSourceRows(members, undefined, fieldIndex);
+  const label = `Variables in ${group.concept || group.groupId}`;
+  return (
+    <div data-testid="new-group-detail" className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-rule-on-raised pb-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            {editing ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onRename(draft);
+                    setEditing(false);
+                  }
+                  if (e.key === "Escape") setEditing(false);
+                }}
+                onBlur={() => {
+                  onRename(draft);
+                  setEditing(false);
+                }}
+                aria-label="Rename group"
+                className="min-w-[18rem] rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-xl font-semibold text-on-raised"
+              />
+            ) : (
+              <h2 className="text-xl font-semibold leading-tight text-on-raised" title={group.concept}>
+                {group.concept}
+              </h2>
+            )}
+            {!editing && <NewGroupMark />}
+            {!readOnly && !editing && (
+              <button
+                type="button"
+                data-testid="rename-group"
+                aria-label={`Rename ${group.concept}`}
+                title="Rename this group"
+                onClick={() => {
+                  setDraft(group.concept);
+                  setEditing(true);
+                }}
+                className="shrink-0 rounded p-1 text-on-raised-muted hover:text-accent-on-raised"
+              >
+                <Pencil aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <p className="mt-1.5 text-xs text-on-raised-muted">
+            <span className="font-semibold text-on-raised">{count}</span> {count === 1 ? "variable" : "variables"}
+            {group.cohorts.length > 0 && <> · {group.cohorts.join(", ")}</>} · made by you
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-semibold text-on-raised-muted">
+            <input
+              type="checkbox"
+              checked={inScope}
+              disabled={readOnly}
+              onChange={(e) => onScopeChange(e.target.checked)}
+              className="h-4 w-4 accent-[var(--accent)]"
+            />
+            Send to Gate 2
+          </label>
+          {!readOnly && count === 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="delete-new-group"
+              onClick={onDelete}
+              className="gap-1.5"
+            >
+              <Trash2 aria-hidden="true" className="h-4 w-4" />
+              Delete
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <p className="max-w-[80ch] text-sm text-on-raised-muted">
+        {count === 0
+          ? "It is empty. Drag variables onto its row in the list on the left — from any group, or from “In no group” — to fill it. An empty group does not go on to Gate 2; delete it if you no longer want it."
+          : "Drag more variables onto its row in the list on the left to add them, or drag a row here out of it. At Gate 2 ddharmon writes one ideal description for this group — one model call, included in the price — and matches it against common data elements like any other group."}
+      </p>
+
+      {count > 0 && !gridCarriesMembers && (
+        <MemberList
+          groupId={group.groupId}
+          label={label}
+          onDropMember={readOnly ? undefined : (memberId) => onMove(memberId, group.groupId)}
+        >
+          {members.map((memberId) => {
+            const { cohort, variable } = memberParts(memberId, fieldIndex);
+            return (
+              <MemberChip
+                key={memberId}
+                memberId={memberId}
+                cohort={cohort}
+                variable={variable}
+                moved={movedMembers.has(memberId)}
+                draggable={!readOnly}
+              />
+            );
+          })}
+        </MemberList>
+      )}
+      <SourceRows
+        memberIds={members}
+        fieldIndex={fieldIndex}
+        drag={
+          readOnly
+            ? undefined
+            : {
+                groupId: group.groupId,
+                label,
+                onDropMember: (memberId) => onMove(memberId, group.groupId),
+                action: { kind: "remove", onAct: (memberId) => onMove(memberId, UNASSIGNED_GROUP_ID) },
+                movedMembers,
+              }
+        }
+      />
     </div>
   );
 }
@@ -2061,11 +2293,11 @@ function GroupDetail({
           </summary>
           {stale && (
             <p className="px-4 pt-2 text-xs leading-relaxed text-status-warn">
-              You changed this group&rsquo;s membership. The description below
-              was generated once, before the split, and is not updated by
-              reassignment — it now describes a grouping that no longer exists.
-              It is regenerated only when the group is re-adjudicated (paid) or
-              at Gate 2 on the finalized membership.
+              You changed this group&rsquo;s membership. Gate 2 matches the
+              members as you leave them here, but the description below was
+              generated once, before the split, and is not rewritten for a moved
+              variable — it still describes the original grouping. (A New group
+              you make gets a description of its own at Gate 2.)
             </p>
           )}
           <p className="max-w-[90ch] px-4 py-3 text-sm leading-relaxed text-on-raised-muted">
@@ -2218,6 +2450,12 @@ export default function Gate1Page() {
   });
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned, frozen });
   const renames = useGateDecisions(jobId, "gate1_rename", { pinned, frozen });
+  /** The reviewer's own groups (08-28 Wave 2), filled by ordinary regroup moves whose destination is their id. */
+  const newGroups = useGateDecisions(jobId, "gate1_new_group", { pinned, frozen });
+  const reviewerIds = useMemo(
+    () => Object.keys(newGroups.decisions).filter(isReviewerGroupId),
+    [newGroups.decisions],
+  );
   /** The reviewer's own name for a group, or undefined. Read straight off the persisted decisions. */
   const renamedOf = (groupId: string): string | undefined => {
     const chosen = renames.decisions[groupId]?.chosen;
@@ -2279,6 +2517,8 @@ export default function Gate1Page() {
     const chosen = scope.decisions[groupId]?.chosen;
     if (chosen === IN_SCOPE) return true;
     if (chosen === OUT_OF_SCOPE) return false;
+    // A New group is IN by default: making one is already the deliberate act (08-28 Wave 2).
+    if (isReviewerGroupId(groupId)) return true;
     return scoreSeed.has(groupId);
   };
   /** Write one group's scope — the ONE path, shared by the ledger checkbox and the score panel's. */
@@ -2337,9 +2577,14 @@ export default function Gate1Page() {
 
   const membersByGroup = jobState?.result?.conceptGroupMembers ?? {};
   const membership = useMemo(
-    () => effectiveMembers(groups, membersByGroup, moves),
+    () => effectiveMembers(groups, membersByGroup, moves, reviewerIds),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [groups, jobState?.result?.conceptGroupMembers, moves],
+    [groups, jobState?.result?.conceptGroupMembers, moves, reviewerIds],
+  );
+  /** The reviewer's New groups as queue rows, newest first, sized by what has been dragged into them. */
+  const reviewerRows = useMemo(
+    () => reviewerGroupRows(newGroups.decisions, (id) => membership.byGroup[id] ?? []),
+    [newGroups.decisions, membership],
   );
   const fieldIndex = jobState?.result?.fieldIndex ?? {};
 
@@ -2413,7 +2658,7 @@ export default function Gate1Page() {
     // Confirm the move (mockup parity) — a drag has no other acknowledgement, and a member that lands in a
     // collapsed group off-screen is otherwise a change with no visible consequence.
     const { variable } = memberParts(memberId, fieldIndex);
-    const destGroup = groups.find((g) => g.groupId === toGroupId);
+    const destGroup = [...reviewerRows, ...groups].find((g) => g.groupId === toGroupId);
     const dest =
       toGroupId === UNASSIGNED_GROUP_ID
         ? "In no group"
@@ -2436,6 +2681,52 @@ export default function Gate1Page() {
     await regroups.clear({ memberId });
   }
 
+  /**
+   * Make a New group (08-28 Wave 2). Its id is minted HERE, once, and never changes: Continue freezes it, core
+   * forms the group under it, and every later gate and export names it by it. `createdAt` rides in the payload
+   * (like `movedAt`) so the queue can list the newest first after a reload.
+   */
+  async function createGroup(name: string) {
+    const groupId = newReviewerGroupId();
+    try {
+      await newGroups.write(
+        { groupId },
+        { chosen: name, alternatives: [name], extra: { name, createdAt: Date.now() } },
+      );
+      setSelectedId(groupId);
+      setPoolSelected(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not make that group");
+    }
+  }
+
+  /** Rename a New group: its OWN decision is rewritten (there is no generated name to annotate). */
+  async function renameGroup(groupId: string, next: string) {
+    const name = next.trim();
+    const d = newGroups.decisions[groupId];
+    if (!name || !d || name === String(d.name ?? d.chosen ?? "")) return;
+    try {
+      await newGroups.write(
+        { groupId },
+        { chosen: name, alternatives: [name], extra: { name, createdAt: d.createdAt } },
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not rename this group");
+    }
+  }
+
+  /** Delete a New group — offered only while it is EMPTY, so no move is ever left pointing at nothing. */
+  async function deleteGroup(groupId: string) {
+    if ((membership.byGroup[groupId]?.length ?? 0) > 0) return;
+    try {
+      await newGroups.clear({ groupId });
+      if (groupId in scope.decisions) await scope.clear({ groupId });
+      if (selectedId === groupId) setSelectedId(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not delete this group");
+    }
+  }
+
   /** Undo every move out of one group — the "put them back" the emptied state offers. */
   async function restoreGroup(groupId: string) {
     const strayed = Object.entries(moves).filter(
@@ -2456,12 +2747,11 @@ export default function Gate1Page() {
    */
   const poolFromPipeline = useMemo(
     () =>
-      unplacedFields(
-        unassigned,
-        moves,
-        groups.map((g) => g.groupId),
-      ),
-    [unassigned, moves, groups],
+      unplacedFields(unassigned, moves, [
+        ...groups.map((g) => g.groupId),
+        ...reviewerIds,
+      ]),
+    [unassigned, moves, groups, reviewerIds],
   );
   const poolCount = membership.unassigned.length + poolFromPipeline.length;
 
@@ -2527,9 +2817,13 @@ export default function Gate1Page() {
   // An EMPTIED group buys nothing at Gate 2 — there is no membership left to assign — so it drops out of
   // the price without the reviewer having to also untick it. The row still renders and still says what
   // happened; what it no longer does is quote a charge for work that cannot be done.
-  const inScopeGroups = gate1BillableGroups(groups, isInScope, memberCount);
+  const inScopeGroups = gate1BillableGroups([...reviewerRows, ...groups], isInScope, memberCount);
 
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
+  // A filled New group buys ONE ideal description beside its match (08-28 Wave 2) — in every figure below.
+  const idealPerNewGroup = newGroupIdealUsd(variables, allCohorts.length, mode, clusters);
+  const quote = gate1QuoteUsd(inScopeGroups, price, idealPerNewGroup);
+  const filledReviewerRows = reviewerRows.filter((g) => memberCount(g) > 0);
   const nCrossCohort = groups.filter((g) => g.crossCohort).length;
 
   // PARTITION FIRST, then search, then filter, then sort. The order matters: the partition is a structural
@@ -2645,6 +2939,7 @@ export default function Gate1Page() {
    * what it holds, and goes there in one click.
    */
   // The group whose depth is in the detail pane — the selected one, or the first visible as default.
+  const selectedReviewer = reviewerRows.find((g) => g.groupId === selectedId) ?? null;
   const detailGroup =
     visible.find((g) => g.groupId === selectedId) ?? visible[0] ?? null;
 
@@ -2956,19 +3251,6 @@ export default function Gate1Page() {
           data-testid="ledger"
           className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(340px,384px)_minmax(0,1fr)] lg:items-start"
         >
-          {/* 08-27 option C: a move is recorded (decision log, export) but core has no membership override
-              yet, so the paid match still runs each group's ORIGINAL members. Say so wherever a move exists,
-              rather than let the reviewer believe Gate 2 will see the new grouping. */}
-          {Object.keys(moves).length > 0 && (
-            <p
-              data-testid="moves-not-applied"
-              role="note"
-              className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-3 py-2 text-xs text-on-warn lg:col-span-2"
-            >
-              Your variable moves are recorded in the decision log, but they are not yet applied to matching:
-              Gate 2 will match each group&apos;s original members. A group you emptied is left out of scope.
-            </p>
-          )}
           <aside
             data-testid="gate1-queue"
             className="flex flex-col gap-3 overflow-hidden rounded-card bg-surface-raised py-4 shadow-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)]"
@@ -3018,10 +3300,36 @@ export default function Gate1Page() {
                 onBulk={(t) => void onBulkScope(t)}
               />
             </div>
+            {!frozen && (
+              <div className="px-4">
+                <NewGroupControl onCreate={(name) => void createGroup(name)} />
+              </div>
+            )}
             <div
               data-testid="gate1-rows"
               className="flex-1 divide-y divide-rule-quiet-on-raised overflow-y-auto border-y border-rule-quiet-on-raised"
             >
+              {/* The reviewer's own groups lead the list, outside the search and filters: there are a handful,
+                  they were just made, and they are where the next drag is going. */}
+              {reviewerRows.map((g) => (
+                <QueueRow
+                  key={g.groupId}
+                  group={g}
+                  reviewer
+                  price={price + idealPerNewGroup}
+                  count={memberCount(g)}
+                  inScope={isInScope(g.groupId)}
+                  changed
+                  selected={!poolSelected && selectedReviewer?.groupId === g.groupId}
+                  readOnly={frozen}
+                  onSelect={() => {
+                    setSelectedId(g.groupId);
+                    setPoolSelected(false);
+                  }}
+                  onScopeChange={(next) => setGroupScope(g.groupId, next)}
+                  onDropMember={(memberId) => void moveMember(memberId, g.groupId)}
+                />
+              ))}
               {searchEmptied ? (
                 <p
                   data-testid="search-empty"
@@ -3088,6 +3396,7 @@ export default function Gate1Page() {
                     changed={isChanged(g.groupId)}
                     selected={
                       !poolSelected &&
+                      !selectedReviewer &&
                       g.groupId === (detailGroup?.groupId ?? null)
                     }
                     readOnly={frozen}
@@ -3169,10 +3478,10 @@ export default function Gate1Page() {
             <div className="px-4">
               <SumBlock
                 realized={costSoFar}
-                inScopeTotal={price * inScopeGroups.length}
-                wholeCorpus={price * groups.length}
+                inScopeTotal={quote}
+                wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerNewGroup)}
                 nInScope={inScopeGroups.length}
-                nGroups={groups.length}
+                nGroups={groups.length + filledReviewerRows.length}
               />
             </div>
           </aside>
@@ -3196,6 +3505,19 @@ export default function Gate1Page() {
                 onRestoreMember={(memberId) => void restoreMember(memberId)}
                 readOnly={frozen}
                 defaultOpen
+              />
+            ) : selectedReviewer ? (
+              <ReviewerGroupDetail
+                group={selectedReviewer}
+                members={membership.byGroup[selectedReviewer.groupId] ?? []}
+                fieldIndex={fieldIndex}
+                movedMembers={movedMemberIds}
+                readOnly={frozen}
+                inScope={isInScope(selectedReviewer.groupId)}
+                onScopeChange={(next) => setGroupScope(selectedReviewer.groupId, next)}
+                onRename={(next) => void renameGroup(selectedReviewer.groupId, next)}
+                onDelete={() => void deleteGroup(selectedReviewer.groupId)}
+                onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
               />
             ) : detailGroup ? (
               <GroupDetail
@@ -3273,7 +3595,7 @@ export default function Gate1Page() {
 
       <CommitBar
         action="Continue to Gate 2"
-        total={groups.length > 0 ? price * inScopeGroups.length : undefined}
+        total={groups.length > 0 ? quote : undefined}
         // `spentHere` is DELIBERATELY OMITTED here, and only on this screen. The ledger's sum block
         // directly above already leads with the realized figure — that placement is the requirement, not
         // a preference — so passing it to the bar as well rendered the same fact twice, in two different
