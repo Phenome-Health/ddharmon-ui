@@ -85,7 +85,12 @@ StoppingFn = Callable[[], str | None]
 
 # Same instruction the Batch API appends server-side, so inline (sync) output matches the schema.
 _SCHEMA_PREAMBLE = "\n\nRespond with ONLY valid JSON matching this schema (no markdown fences):\n"
-_SYNC_MAX_TOKENS = 1024
+# SYNC <-> BATCH PARITY (08-28 0b). A sync prompt is sent exactly as core ``submit_batch`` would send it, so a
+# sync run verifies the SAME pipeline as a batch run: the prompt's own output budget (else batch's 2048 — the
+# enforced split has come back EMPTY at the old fixed 1024), temperature 0, the prompt's own model, and a forced
+# tool call where the prompt carries one. See :func:`_complete_like_batch`.
+_BATCH_DEFAULT_MAX_TOKENS = 2048
+_BATCH_TEMPERATURE = 0.0
 # Synchronous stages fan their per-prompt LLM calls across a bounded thread pool so a full sync run finishes
 # in minutes, not the hours a serial loop would take (each call is a network round-trip). The Anthropic SDK
 # client is thread-safe for concurrent requests; the cap keeps us well under per-tier rate limits. Override
@@ -1452,8 +1457,7 @@ def _sync_stage(
         progress(phase, 0, n)
 
         def _run_one(rec: Any) -> tuple[str, Any]:
-            system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
-            return rec.id, client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
+            return rec.id, _complete_like_batch(client, rec)
 
         out: dict[str, Any] = {}
         done = 0
@@ -1488,13 +1492,64 @@ def specgen_stage_fn(client: Any) -> StageFn:
     """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        for rec in prompts:
-            system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
-            out[rec.id] = client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
-        return out
+        return {rec.id: _complete_like_batch(client, rec) for rec in prompts}
 
     return stage
+
+
+def _complete_like_batch(client: Any, rec: Any) -> Any:
+    """Run ONE prompt synchronously, sent and returned the way the Batch API path sends and returns it.
+
+    Sent like core ``submit_batch``: the prompt's ``max_tokens`` (else :data:`_BATCH_DEFAULT_MAX_TOKENS`),
+    temperature 0, the prompt's ``model_tag``, and — for a prompt with a ``tool_schema`` — a forced tool call
+    with the bare system prompt (the tool enforces the shape, so no soft schema is appended). Returned like
+    ``retrieve_batch`` writes it: a tool call's input as-is, text parsed to its JSON object, unparsable text raw.
+
+    A client with only ``complete`` (a non-Anthropic LiteLLM client, or a core older than 0b) cannot take a
+    temperature or a tool, so it keeps the text call — but with the batch budget, which is the difference that
+    stopped the split returning empty.
+    """
+    max_tokens = int(getattr(rec, "max_tokens", None) or _BATCH_DEFAULT_MAX_TOKENS)
+    tool_schema = getattr(rec, "tool_schema", None)
+    complete_request = getattr(client, "complete_request", None)
+    if complete_request is None:
+        system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
+        return client.complete(rec.user_prompt, system=system, max_tokens=max_tokens)
+    model = getattr(rec, "model_tag", None) or None
+    if isinstance(model, str) and model.lower().startswith("anthropic/"):
+        model = model.split("/", 1)[1]  # the anthropic SDK wants the bare id (same rule as build_llm_client)
+    if tool_schema:
+        return complete_request(
+            rec.user_prompt,
+            system=rec.system_prompt,
+            max_tokens=max_tokens,
+            temperature=_BATCH_TEMPERATURE,
+            model=model,
+            tool_schema=tool_schema,
+            tool_name=getattr(rec, "tool_name", None),
+        )
+    text = complete_request(
+        rec.user_prompt,
+        system=rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema,
+        max_tokens=max_tokens,
+        temperature=_BATCH_TEMPERATURE,
+        model=model,
+    )
+    return _parse_like_batch(text)
+
+
+def _parse_like_batch(text: Any) -> Any:
+    """Parse a sync response with the SAME tolerant parser ``retrieve_batch`` applies, else keep the raw text."""
+    if not isinstance(text, str):
+        return text
+    try:
+        from ddharmon.llm.batch import _parse_response_text
+    except ImportError:  # a core without the parser: hand back the text, which every stage already tolerates
+        return text
+    try:
+        return _parse_response_text(text)
+    except Exception:  # noqa: BLE001 - retrieve_batch keeps the raw text on any parse failure; so do we
+        return text
 
 
 def _batch_stage(

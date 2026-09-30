@@ -2046,6 +2046,134 @@ def test_sync_stage_runs_concurrently_and_aggregates_realized_cost():
     assert seen_cost and abs(seen_cost[-1] - 0.0525) < 1e-6  # the live running total was reported
 
 
+class _ParityClient:
+    """A client that can send a prompt the way the Batch API does (core ``complete_request``)."""
+
+    def __init__(self, replies: dict) -> None:
+        self.replies = replies
+        self.calls: dict[str, dict] = {}
+        self.usage_log: list = []
+
+    def complete_request(
+        self, prompt, *, system, max_tokens, temperature, model=None, tool_schema=None, tool_name=None
+    ):
+        self.calls[prompt] = {
+            "system": system,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "model": model,
+            "tool_schema": tool_schema,
+            "tool_name": tool_name,
+        }
+        return self.replies[prompt]
+
+    def drain_usage(self):
+        return []
+
+
+def _parity_prompts():
+    from types import SimpleNamespace
+
+    tool = {"type": "object", "properties": {"kinds": {"type": "string"}}}
+    return tool, [
+        SimpleNamespace(id="text", system_prompt="S", schema="{sch}", user_prompt="u-text", model_tag="m-run"),
+        SimpleNamespace(
+            id="budget", system_prompt="S", schema="{sch}", user_prompt="u-budget", model_tag="m-run", max_tokens=6000
+        ),
+        SimpleNamespace(
+            id="tool",
+            system_prompt="S",
+            schema="{sch}",
+            user_prompt="u-tool",
+            model_tag="m-pinned",
+            tool_schema=tool,
+            tool_name="emit_kinds",
+        ),
+        SimpleNamespace(id="prose", system_prompt="S", schema="{sch}", user_prompt="u-prose", model_tag="m-run"),
+    ]
+
+
+_PARITY_REPLIES = {
+    "u-text": 'Sure — here it is:\n```json\n{"verdict": "adopt"}\n```',
+    "u-budget": '{"groups": []}',
+    "u-tool": {"kinds": "distinct"},
+    "u-prose": "no json at all",
+}
+
+
+def _assert_sent_like_batch(client: _ParityClient, tool: dict, out: dict) -> None:
+    from backend.engine.adapter import _SCHEMA_PREAMBLE
+
+    text, budget, forced = client.calls["u-text"], client.calls["u-budget"], client.calls["u-tool"]
+    assert {c["temperature"] for c in client.calls.values()} == {0.0}, "batch runs at temperature 0"
+    assert text["max_tokens"] == 2048, "a prompt with no budget gets the batch default, not 1024"
+    assert budget["max_tokens"] == 6000, "a prompt's own budget is honoured"
+    assert text["model"] == "m-run" and forced["model"] == "m-pinned", "each prompt runs on its own model"
+    assert text["system"] == "S" + _SCHEMA_PREAMBLE + "{sch}" and text["tool_schema"] is None
+    # A forced tool call carries NO soft schema — the tool enforces the shape, exactly as submit_batch sends it.
+    assert forced["system"] == "S" and forced["tool_schema"] == tool and forced["tool_name"] == "emit_kinds"
+    # Returned in the form retrieve_batch writes: parsed JSON dicts, the tool's input as-is, unparsable text raw.
+    assert out == {
+        "text": {"verdict": "adopt"},
+        "budget": {"groups": []},
+        "tool": {"kinds": "distinct"},
+        "prose": "no json at all",
+    }
+
+
+def test_a_sync_stage_sends_every_prompt_the_way_the_batch_api_would():
+    """08-28 0b. Without parity a sync verify loop checks a DIFFERENT pipeline than a batch run: temperature 1.0 vs
+    0, 1024 tokens vs the per-prompt budget (the enforced split has come back empty at 1024), forced tool calls
+    ignored, and the distinct-kinds prompt run on the run's model instead of the one it is pinned to."""
+    from ddharmon.llm.cost import CostLedger
+
+    from backend.engine import adapter as adapter_mod
+
+    tool, prompts = _parity_prompts()
+    client = _ParityClient(_PARITY_REPLIES)
+    out = adapter_mod._sync_stage("assigning", lambda *a, **k: None, client, CostLedger())(prompts)
+    _assert_sent_like_batch(client, tool, out)
+
+
+def test_the_one_off_spec_stage_sends_its_prompts_the_way_the_batch_api_would():
+    """The targeted spec regeneration (a Gate 2 re-pick / GenCDE edit) runs the same prompts outside a leg."""
+    from backend.engine import adapter as adapter_mod
+
+    tool, prompts = _parity_prompts()
+    client = _ParityClient(_PARITY_REPLIES)
+    out = adapter_mod.specgen_stage_fn(client)(prompts)
+    _assert_sent_like_batch(client, tool, out)
+
+
+def test_a_client_without_the_batch_shaped_call_still_gets_the_batch_budget():
+    """A non-Anthropic (LiteLLM) client, or a core older than 0b, has only ``complete``. It cannot take a
+    temperature or a tool, but it can take the budget — which is what stopped the split coming back empty."""
+    from types import SimpleNamespace
+
+    from ddharmon.llm.cost import CostLedger
+
+    from backend.engine import adapter as adapter_mod
+
+    seen: dict[str, int] = {}
+
+    class _Legacy:
+        usage_log: list = []
+
+        def complete(self, prompt, *, system=None, max_tokens=512):
+            seen[prompt] = max_tokens
+            return "{}"
+
+        def drain_usage(self):
+            return []
+
+    prompts = [
+        SimpleNamespace(id="a", system_prompt="S", schema="{}", user_prompt="ua"),
+        SimpleNamespace(id="b", system_prompt="S", schema="{}", user_prompt="ub", max_tokens=6000),
+    ]
+    adapter_mod._sync_stage("splitting", lambda *a, **k: None, _Legacy(), CostLedger())(prompts)
+    assert seen == {"ua": 2048, "ub": 6000}
+
+
 def test_batch_stage_prices_preserved_usage_at_half(monkeypatch, tmp_path):
     """A batch stage reads the usage the retrieve now preserves in the responses JSONL and prices it at the
     Batch 50% discount, folding it into the ledger."""
