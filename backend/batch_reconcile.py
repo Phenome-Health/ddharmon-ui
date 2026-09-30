@@ -448,6 +448,7 @@ def _reconcile_one(
     api_key: str | None = None,
 ) -> ReconcileOutcome:
     """The body of :func:`reconcile_run`, run under that run's lock. Never call this directly."""
+    from backend.db import _LIVE_WORKER_STATUSES
     from backend.jobs import _is_pinned
 
     fetch = fetch or _retrieve_via_core
@@ -462,6 +463,15 @@ def _reconcile_one(
     work_dir = work_dir_for(job, store)
     if not work_dir.is_dir():
         raise WorkDirMissingError(f"run {job_id!r}: work dir {work_dir} is missing, so its batch output is unreachable")
+    # Checked AFTER the missing-dir refusal, so an absent work dir stays the loud failure whatever the status.
+    if job.status in _LIVE_WORKER_STATUSES:
+        # A worker leg is RUNNING this run (08-28 1a). Its batch stages retrieve their own submissions and are
+        # still polling them; reconciling underneath would race that — duplicate appends to the response cache,
+        # and answers filed into the checkpoint the run is still pointed at but the leg has already left behind
+        # (live verify 3 caught the sweep writing leg 2's gencde into checkpoint_gate1). The status is the
+        # in-memory one while the worker lives; a worker that died with the process is flipped to `error` by
+        # `recover_stale` before the startup sweep, so its paid batch is still recovered.
+        return ReconcileOutcome(job_id=job_id, status="skipped", detail="a worker is running this run")
 
     submissions = outstanding_submissions(work_dir)
     if not submissions:
@@ -538,7 +548,8 @@ def sweep(*, store: Any, fetch: FetchFn | None = None, api_key: str | None = Non
 
     Enumerated from the WORK ROOT rather than from job statuses, deliberately: a run whose row says
     ``error`` because its worker died mid-poll still has a paid, retrievable batch, and a status-based
-    sweep would be exactly the sweep that misses it.
+    sweep would be exactly the sweep that misses it. A run whose worker is ALIVE is skipped (by
+    :func:`reconcile_run`): that worker is polling its own batch and will retrieve it.
 
     Never raises. A sweep that unwound on one bad run would abandon every run after it, and this runs on
     the startup path.

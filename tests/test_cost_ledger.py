@@ -732,3 +732,40 @@ def test_a_keyless_rerun_is_refused_before_it_copies_anything(monkeypatch, tmp_p
         assert "key" in r.json()["detail"].lower()
         assert sorted(p.name for p in (tmp_path / "work").iterdir()) == ["src"], "the refused re-run copied uploads"
         assert spawned == []
+
+
+# ── fix 5: the reconcile sweep keeps its hands off a run whose worker is alive ──────────────────────────
+
+
+def test_the_sweep_skips_a_run_whose_worker_is_still_running(tmp_path):
+    """Live verify 3 side finding: the interval sweep wrote leg 2's gencde into checkpoint_gate1 while leg 2's
+    worker was still polling that very batch. The worker retrieves its own batch; a sweep that also does races
+    it (duplicate appends to the response cache, answers filed into a checkpoint the leg has left behind).
+
+    Only a run with NO live worker — parked, errored after a restart, cancelled — is reconciled.
+    """
+    from backend import batch_reconcile
+    from backend.batch_reconcile import FetchResult
+    from tests.test_checkpoint import FakeUpstream, _paused_with_outstanding_batch
+
+    store, wd = _paused_with_outstanding_batch(tmp_path, job_id="lw", tag="gencde", ids=("g0",))
+    before = read_checkpoint(wd, "gate1").responses
+    # Continue was pressed: leg 2's worker is running and polling the gencde batch it just submitted.
+    store.update("lw", status="gencde", phase="gencde")
+    upstream = FakeUpstream(
+        {"batch_abc": FetchResult(status="available", records=({"id": "g0", "response": {"name": "x"}},))}
+    )
+
+    outcomes = batch_reconcile.sweep(store=store, fetch=upstream)
+    assert upstream.calls == [], "the sweep fetched a batch a live worker is polling"
+    assert all(o.status == "skipped" for o in outcomes)
+    assert read_checkpoint(wd, "gate1").responses == before, "the sweep wrote into the parked checkpoint mid-leg"
+    assert not (wd / "responses_gencde.jsonl").exists()
+    # The on-open path shares the entry point, so a gate screen polled mid-leg cannot race it either.
+    assert batch_reconcile.reconcile_run("lw", store=store, fetch=upstream).status == "skipped"
+    assert upstream.calls == []
+
+    # Once the worker has gone (here: the run re-parked), the same sweep recovers the paid work as before.
+    store.update("lw", status=AWAITING_REVIEW, phase=AWAITING_REVIEW)
+    batch_reconcile.sweep(store=store, fetch=upstream)
+    assert upstream.calls == ["batch_abc"]
