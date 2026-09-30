@@ -2200,6 +2200,7 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
 #: one-shot run exports exactly the legacy header.
 _EITL_STAGED_COLS = [
     "generatedConcept", "modelCdeId", "targetPickedBy", "gencdeEdit", "rejectedTransforms", "transformEdits",
+    "modelVerdict",
 ]  # fmt: skip
 
 
@@ -2386,6 +2387,7 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
                 _clean(json.dumps(r["gencdeEdit"], sort_keys=True)) if r.get("gencdeEdit") else "",
                 ";".join(export_decisions.rejected_sources(r)),
                 _clean(json.dumps(edits, sort_keys=True)) if edits else "",
+                r.get("modelVerdict", ""),
             ]
         )
     return _download(buf.getvalue(), "eitl_tsv", "tsv", job.job_id)

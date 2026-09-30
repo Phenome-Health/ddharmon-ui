@@ -2,7 +2,9 @@ import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import type { DecisionIndex } from "@/lib/gate-decisions";
 import type { HarmonizationResult } from "@/types";
 import {
+  type LegacyVerdicts,
   decisionCount,
+  decisionLogEntryCount,
   decisionLogRows,
   scopeSummary,
   formatRevisionPct,
@@ -31,16 +33,22 @@ export function DecisionLog({
   result,
   coreVersion,
   config,
+  verdicts,
 }: {
   index: DecisionIndex;
   result: HarmonizationResult | null | undefined;
   coreVersion?: string;
   /** The run's config — carries the frozen Gate 1 scope the revision rate denominates over. */
   config?: Record<string, unknown> | null;
+  /** The legacy workbench verdicts — the downloaded log carries them, so its entry count does too. */
+  verdicts?: Record<string, LegacyVerdicts>;
 }) {
   const rows = decisionLogRows(index, result);
   const scope = scopeSummary(index);
   const total = decisionCount(index);
+  // The count shown is the downloaded log's ENTRIES (F21): the raw decision count read "61 decisions" beside a
+  // 62-row file (the frozen scope is a row; a declared score is ONE row, not one per component).
+  const entries = decisionLogEntryCount(index, result, config, verdicts);
   const rr = revisionRate(index, result, coreVersion ?? "", config);
 
   return (
@@ -48,8 +56,8 @@ export function DecisionLog({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold text-on-raised">The decisions behind this export</h2>
         {total > 0 && (
-          <span className="text-xs text-on-raised-muted">
-            {total} {total === 1 ? "decision" : "decisions"}
+          <span data-testid="decision-count" className="text-xs text-on-raised-muted">
+            {entries} {entries === 1 ? "entry" : "entries"} in the decision log
           </span>
         )}
       </div>

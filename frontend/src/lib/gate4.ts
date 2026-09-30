@@ -139,8 +139,8 @@ const ACTION_OF: Record<GateDecisionKind, string> = {
   gate2_relation: "Set a relation",
   gate3_spec_edit: "Edited a transform spec",
   gate4_export_selection: "Chose export inclusion",
-  // The only composite write is the DECLARATION of a component (08-27 audit) — swaps never persisted.
-  composite_swap: "Declared a score component",
+  // The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
+  composite_swap: "Declared a score",
 };
 
 export interface DecisionLogRow {
@@ -181,6 +181,8 @@ export function decisionLogRows(
     if (typeof renamed === "string" && renamed.trim()) return renamed.trim();
     return records.get(gid)?.concept || gid;
   };
+  const specBySource = new Map<string, UITransform>();
+  for (const r of result?.records ?? []) for (const t of r.transforms ?? []) specBySource.set(String(t.sourceVariable ?? ""), t);
   const rows: DecisionLogRow[] = [];
   for (const kind of GATE_DECISION_KINDS) {
     // Scope is summarised, not listed: one row per group buried ~20 real edits under 1,234 scope rows on the
@@ -188,6 +190,25 @@ export function decisionLogRows(
     if (kind === "gate1_group_scope") continue;
     const byItem = index[kind];
     if (!byItem) continue;
+    if (kind === "composite_swap") {
+      // ONE row per declared score (H9): 48 "Declared a score component → none of these" rows read like 48
+      // rejections and buried the real decisions.
+      for (const score of scoreGroups(byItem)) {
+        const names = score.components.map(([, d]) => String(d.componentName ?? ""));
+        const shown = names.slice(0, 6).join(", ");
+        rows.push({
+          kind,
+          gate: GATE_OF[kind],
+          action: ACTION_OF[kind],
+          thing: score.name,
+          chosen: "",
+          label: score.name || undefined,
+          detail: `${componentCount(names.length)}: ${shown}${names.length > 6 ? `, … +${names.length - 6} more` : ""}`,
+          stale: score.components.some(([item]) => stale.has(`${kind}${item}`)),
+        });
+      }
+      continue;
+    }
     for (const [itemKey, decision] of Object.entries(byItem)) {
       const d = decision as GateDecision;
       const gid = typeof d.groupId === "string" ? d.groupId : undefined;
@@ -198,7 +219,7 @@ export function decisionLogRows(
         thing: itemKey,
         chosen: String(d.chosen ?? ""),
         label: gid ? nameOf(gid) : undefined,
-        detail: detailOf(kind, d, nameOf, gid ? records.get(gid) : undefined),
+        detail: detailOf(kind, d, nameOf, gid ? records.get(gid) : undefined, specBySource.get(itemKey)),
         stale: stale.has(`${kind}${itemKey}`),
       });
     }
@@ -219,7 +240,8 @@ function detailOf(
   kind: GateDecisionKind,
   d: GateDecision,
   nameOf: (gid: unknown) => string | undefined,
-  record: { candidates?: { cdeId: string; isChosen?: boolean }[] } | undefined,
+  record: UIRecord | undefined,
+  spec: UITransform | undefined,
 ): string | undefined {
   const q = (t: unknown) => `“${String(t)}”`;
   switch (kind) {
@@ -229,18 +251,21 @@ function detailOf(
       return typeof d.generatedName === "string" ? `${q(d.generatedName)} → ${q(d.chosen)}` : `→ ${q(d.chosen)}`;
     case "gate2_candidate_pick": {
       if (d.chosen === "") return d.gencdeEdit ? "your own CDE, edited" : "none of these";
-      const model = record?.candidates?.find((c) => c.isChosen)?.cdeId;
+      // The MODEL's pick — from the stamp once the Gate 2 -> 3 leg re-targeted the record (F17).
+      const model = record ? modelTarget(record) : "";
       const edited = d.gencdeEdit ? ", anchor edited" : "";
       return model && model !== d.chosen ? `${String(d.chosen)} (model picked ${model})${edited}` : `${String(d.chosen)}${edited}`;
     }
     case "gate3_spec_edit": {
       const parts: string[] = [];
       if (d.rejected === true) parts.push("rejected");
-      if (d.mapping != null) parts.push("value map edited");
+      if (isPlainObject(d.mapping)) parts.push(`value map: ${codeDiff(isPlainObject(spec?.codeMap) ? spec.codeMap : {}, d.mapping)}`);
+      else if (d.mapping != null) parts.push("value map edited");
       if (d.numberMap != null) parts.push("number map edited");
       if (d.bins != null) parts.push("binning edited");
       if (typeof d.note === "string" && d.note.trim()) parts.push(`note: ${q(d.note.trim())}`);
-      return parts.length ? parts.join(" · ") : "saved with no change";
+      // F7: a save with neither an edit nor a note leaves the model's spec standing.
+      return parts.length ? parts.join(" · ") : REVERTED_TO_MODEL;
     }
     default:
       return undefined;
@@ -249,6 +274,44 @@ function detailOf(
 
 export function decisionCount(index: DecisionIndex): number {
   return GATE_DECISION_KINDS.reduce((n, kind) => n + Object.keys(index[kind] ?? {}).length, 0);
+}
+
+/**
+ * How many ENTRIES the downloaded decision log carries (its rows, header excluded) — the number Gate 4 shows
+ * beside the log (F21). `decisionCount` is not it: it counts every declared score component (one log row per
+ * score) and misses the frozen-scope row, so the screen read "61 decisions" beside a 62-row file.
+ */
+export function decisionLogEntryCount(
+  index: DecisionIndex,
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  verdicts: Record<string, LegacyVerdicts> | undefined,
+): number {
+  return decisionLogCsvRows(index, result, config, verdicts).length - 1;
+}
+
+/**
+ * The variables no export carries, split by WHY (F21): `scopedOut` were members of a group the reviewer left
+ * out of scope at Gate 1 (the frozen scope, else the legacy "not out" rule); `noConcept` truly reached no
+ * concept. `unassignedFields` lumps both — live 6c66731c read "506 variables reached no concept" when 497 of
+ * them were scoped out. Membership is the uncapped `conceptGroupMembers`, else the group's collapsed sample.
+ */
+export function unassignedBreakdown(
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  scopeDecisions: Record<string, { chosen?: unknown }> | undefined,
+): { scopedOut: number; noConcept: number } {
+  const inScope = inheritedGate1Scope(config, scopeDecisions ?? {});
+  const full = result?.conceptGroupMembers ?? {};
+  const sample = new Map((result?.conceptGroups ?? []).map((g) => [g.groupId, g.memberVariableNames ?? []]));
+  const scopedOutMembers = new Set<string>();
+  for (const gid of new Set([...Object.keys(full), ...sample.keys()])) {
+    if (inScope(gid)) continue;
+    for (const m of full[gid] ?? sample.get(gid) ?? []) scopedOutMembers.add(m);
+  }
+  const fields = result?.unassignedFields ?? [];
+  const scopedOut = fields.filter((f) => scopedOutMembers.has(`${f.cohort}:${f.variable}`)).length;
+  return { scopedOut, noConcept: fields.length - scopedOut };
 }
 
 // --- the decision-log CSV (08-27) -------------------------------------------------------------------------
@@ -261,6 +324,13 @@ export const DECISION_LOG_CSV_COLS = ["gate", "kind", "action", "item", "before"
 /** The label a cleared choice (`chosen === ""`) reads as — `NONE_OF_THESE` in the backend. */
 const NONE_OF_THESE = "none of these";
 const SPEC_EDIT_FIELDS = ["mapping", "numberMap", "bins"] as const;
+/** A Gate 3 row with neither an edit nor a note — `REVERTED_TO_MODEL` in the backend (08-28 1e, F7). */
+const REVERTED_TO_MODEL = "reverted to model spec";
+/** A pick on a group the results do not have — the backend's `notApplied` detail (F7). */
+const NOT_APPLIED = "no record for this group in the run's results";
+/** What a per-code diff calls a code that yields no value — `MISSING` in the backend. */
+const MISSING = "missing";
+const MISSING_VALUES = new Set(["", "__missing__", MISSING]);
 
 /**
  * Compact, key-sorted JSON — byte-identical to the backend's `_j` (`sort_keys`, no spaces, unescaped), so a
@@ -280,10 +350,145 @@ export function stableJson(value: unknown): string {
 const clean = (s: unknown) => String(s ?? "").replace(/[\t\n\r]/g, " ");
 const chosenLabel = (v: unknown) => String(v ?? "") || NONE_OF_THESE;
 
-function modelPick(record: UIRecord | undefined): string {
+// --- the model's own pick vs what the record targets now (08-28 1e, F17) ---------------------------------
+//
+// Mirrors `backend/export_decisions.py` (`_stamp`, `_catalog_target`, `_current_target`, `model_target`,
+// `_pick_label`). A record the Gate 2 -> 3 leg RE-TARGETED names the reviewer's pick on its candidates / cde /
+// gencde; the model's survives only on the `reviewerPick` stamp.
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function stampOf(record: UIRecord | undefined): Record<string, unknown> | undefined {
+  const stamp = (record as { reviewerPick?: unknown } | undefined)?.reviewerPick;
+  return isPlainObject(stamp) ? stamp : undefined;
+}
+
+function gencdeIdOf(g: unknown): string {
+  return isPlainObject(g) ? String(g.gencdeId || "") : "";
+}
+
+function catalogTarget(record: UIRecord | undefined): string {
   const chosen = record?.candidates?.find((c) => c.isChosen);
-  if (chosen?.cdeId) return chosen.cdeId;
-  return record?.cde?.id ?? "";
+  if (chosen?.cdeId) return String(chosen.cdeId);
+  return String(record?.cde?.id || "");
+}
+
+function currentTarget(record: UIRecord | undefined): string {
+  return catalogTarget(record) || gencdeIdOf(record?.gencde);
+}
+
+/** The id the MODEL chose — a catalog CDE, else its generated element, else "". */
+export function modelTarget(record: UIRecord | undefined): string {
+  const stamp = stampOf(record);
+  if (stamp) return String(stamp.modelTarget || "");
+  return currentTarget(record);
+}
+
+/** The ids that mean "the group's OWN generated element" for a pick: "", its GenCDE id (now, or the model's). */
+function ownIds(record: UIRecord | undefined): Set<string> {
+  const stamp = stampOf(record) ?? {};
+  const own = new Set(["", gencdeIdOf(record?.gencde), gencdeIdOf(stamp.modelGencde)]);
+  if (stamp.kind === "gencde") own.add(String(stamp.target || ""));
+  return own;
+}
+
+/** Whether a pick names what the model chose (the group's own element counts as one target, however named). */
+function sameAsModel(record: UIRecord | undefined, chosen: string): boolean {
+  const model = modelTarget(record);
+  const own = ownIds(record);
+  return chosen === model || (own.has(chosen) && own.has(model));
+}
+
+function pickLabel(record: UIRecord, d: GateDecision): string {
+  const chosen = String(d.chosen || "");
+  if (!ownIds(record).has(chosen)) return chosen;
+  const own = gencdeIdOf(record.gencde) || gencdeIdOf(stampOf(record)?.modelGencde);
+  const edited = isPlainObject(d.gencdeEdit);
+  if (own) return edited ? `${own} (edited)` : own;
+  return edited ? "your own CDE (edited)" : NONE_OF_THESE;
+}
+
+// --- a Gate 3 value-map edit as a per-code diff, in TARGET codes (08-28 Q3) ---------------------------------
+
+const NUMERIC_CODE = /^-?[0-9]+(?:\.[0-9]+)?$/;
+
+/** Numeric codes first, by value (`-818, -121, 0, 1, 10`), then the rest by text — `_code_order` in the backend. */
+function compareCodes(a: string, b: string): number {
+  const na = NUMERIC_CODE.test(a);
+  const nb = NUMERIC_CODE.test(b);
+  if (na !== nb) return na ? -1 : 1;
+  if (na) {
+    const x = Number(a);
+    const y = Number(b);
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function codeValue(map: Record<string, unknown>, code: string): string {
+  const v = Object.prototype.hasOwnProperty.call(map, code) ? map[code] : undefined;
+  if (v === null || v === undefined) return MISSING;
+  const s = typeof v === "string" ? v : stableJson(v);
+  return MISSING_VALUES.has(s) ? MISSING : s;
+}
+
+/**
+ * `-121: 9 → missing; 10: 1 → 0` — each code whose output the reviewer's map changes, against the model's
+ * (`code_diff` in the backend). Replace semantics: a code the reviewer's map does not place yields no value.
+ */
+export function codeDiff(modelMap: Record<string, unknown>, reviewerMap: Record<string, unknown>): string {
+  const codes = [...new Set([...Object.keys(modelMap), ...Object.keys(reviewerMap)])].sort(compareCodes);
+  const changes: string[] = [];
+  for (const code of codes) {
+    const before = codeValue(modelMap, code);
+    const after = codeValue(reviewerMap, code);
+    if (before !== after) changes.push(`${code}: ${before} → ${after}`);
+  }
+  return changes.length ? changes.join("; ") : "no code changed";
+}
+
+function editDetail(spec: UITransform | undefined, edit: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if ("mapping" in edit) {
+    const modelMap = spec?.codeMap;
+    if (isPlainObject(edit.mapping)) parts.push(codeDiff(isPlainObject(modelMap) ? modelMap : {}, edit.mapping));
+    else parts.push(stableJson({ mapping: edit.mapping }));
+  }
+  for (const k of ["numberMap", "bins"] as const) if (k in edit) parts.push(stableJson({ [k]: edit[k] }));
+  return parts.join(" | ");
+}
+
+// --- score declarations, one entry per score (08-28 H9) ------------------------------------------------------
+
+function scoreGroups(byItem: Record<string, GateDecision>): { name: string; components: [string, GateDecision][] }[] {
+  const scores = new Map<string, [string, GateDecision][]>();
+  for (const [item, d] of Object.entries(byItem)) {
+    const name = String(d.scoreName || "");
+    if (!scores.has(name)) scores.set(name, []);
+    scores.get(name)!.push([item, d]);
+  }
+  return [...scores].map(([name, components]) => ({ name, components }));
+}
+
+const componentCount = (n: number) => `${n} component${n === 1 ? "" : "s"}`;
+
+/** `_score_rows` in the backend: one CSV row per declared score, its components (and any matches) in `detail`. */
+function scoreCsvRows(byItem: Record<string, GateDecision>, stale: Set<string>): string[][] {
+  return scoreGroups(byItem).map(({ name, components }) => {
+    const names = components.map(([, d]) => String(d.componentName || ""));
+    const matched: Record<string, string> = {};
+    for (const [, d] of components) if (d.chosen) matched[String(d.componentName || "")] = String(d.chosen);
+    const nMatched = Object.keys(matched).length;
+    const body: Record<string, unknown> = { components: names };
+    if (nMatched) body.matched = matched;
+    const isStale = components.some(([item]) => stale.has(`composite_swap\u001f${item}`));
+    return [
+      GATE_OF.composite_swap, "composite_swap", ACTION_OF.composite_swap, name, "",
+      `${componentCount(names.length)}${nMatched ? `, ${nMatched} matched` : ""}`, "", stableJson(body), String(isStale),
+    ];
+  });
 }
 
 function specSummary(t: UITransform | undefined): string {
@@ -321,6 +526,10 @@ export function decisionLogCsvRows(
     rows.push(["Gate 1", "gate1_scope_frozen", "Continued with this scope", "", "", `${frozen.length} groups in scope`, "", stableJson(frozen), "false"]);
   }
   for (const kind of GATE_DECISION_KINDS) {
+    if (kind === "composite_swap") {
+      rows.push(...scoreCsvRows(index[kind] ?? {}, stale));
+      continue;
+    }
     for (const [item, d] of Object.entries(index[kind] ?? {})) {
       let before = "";
       let after = chosenLabel(d.chosen);
@@ -332,15 +541,25 @@ export function decisionLogCsvRows(
       } else if (kind === "gate1_regroup") {
         before = String(d.fromGroupId || "");
       } else if (kind === "gate2_candidate_pick") {
-        before = byGroup.has(item) ? chosenLabel(modelPick(byGroup.get(item))) : "";
-        if (d.gencdeEdit && typeof d.gencdeEdit === "object") detail = stableJson({ gencdeEdit: d.gencdeEdit });
+        const extra: Record<string, unknown> = {};
+        if (isPlainObject(d.gencdeEdit)) extra.gencdeEdit = d.gencdeEdit;
+        const rec = byGroup.get(item);
+        if (rec === undefined) {
+          extra.notApplied = NOT_APPLIED; // F7: took effect nowhere, and says so
+        } else {
+          before = chosenLabel(modelTarget(rec)); // F17: the model's pick, from the stamp once re-targeted
+          after = pickLabel(rec, d);
+        }
+        detail = Object.keys(extra).length ? stableJson(extra) : "";
       } else if (kind === "gate3_spec_edit") {
-        before = specSummary(specBySource.get(item));
+        const spec = specBySource.get(item);
+        before = specSummary(spec);
         const edit: Record<string, unknown> = {};
         for (const f of SPEC_EDIT_FIELDS) if (isPresent(d[f])) edit[f] = d[f];
         const edited = Object.keys(edit).length > 0;
-        after = d.rejected ? "rejected" : edited ? "edited" : "annotated";
-        if (edited) detail = stableJson(edit);
+        // F7: "annotated" only with a note; neither an edit nor a note is the model's spec standing.
+        after = d.rejected ? "rejected" : edited ? "edited" : note.trim() ? "annotated" : REVERTED_TO_MODEL;
+        if (edited) detail = editDetail(spec, edit);
       }
       rows.push([GATE_OF[kind], kind, ACTION_OF[kind], item, before, after, note, detail, String(stale.has(`${kind}\u001f${item}`))]);
     }
@@ -456,7 +675,7 @@ export function revisionRate(
   // score — so each decision is resolved to the record it edited, and no-op decisions are skipped.
   const groupOfVariable = new Map<string, string>();
   for (const r of records) for (const m of r.members ?? []) if (!groupOfVariable.has(m)) groupOfVariable.set(m, r.groupId);
-  const modelPick = new Map(records.map((r) => [r.groupId, r.candidates?.find((c) => c.isChosen)?.cdeId ?? ""]));
+  const recordOf = new Map(records.map((r) => [r.groupId, r]));
   const editedRecords = new Set<string>();
   const touch = (groupId: unknown) => {
     if (typeof groupId === "string" && shownIds.has(groupId)) editedRecords.add(groupId);
@@ -468,7 +687,10 @@ export function revisionRate(
         excludedCosmetic += 1; // the named P5 cosmetic example
       } else if (kind === "gate2_candidate_pick" || kind === "gate2_relation") {
         const gid = String(d.groupId ?? "");
-        const noop = kind === "gate2_candidate_pick" && d.chosen === modelPick.get(gid) && !d.gencdeEdit;
+        // Against the MODEL's pick (the stamp, once the leg re-targeted the record — F17), never the record's
+        // own isChosen, which after a re-target IS the pick: live 6c66731c read "1 of 8" when it was 2 of 8.
+        const noop =
+          kind === "gate2_candidate_pick" && !d.gencdeEdit && sameAsModel(recordOf.get(gid), String(d.chosen ?? ""));
         if (!noop) touch(gid);
       } else if (kind === "gate1_regroup") {
         if (d.fromGroupId !== d.chosen) {
