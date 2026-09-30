@@ -1,0 +1,901 @@
+{
+  "purpose": "Deterministic staged-review live-verify fixture; see scripts/build_live_verify_fixture.py.",
+  "cdeSet": "endorsed",
+  "cohorts": [
+    {
+      "file": "aou.csv",
+      "cohortName": "AoU",
+      "columnRoles": {
+        "variable_name": "Item Concept",
+        "question_text": "Field Label",
+        "value_encoding": "Choices, Calculations, OR Slider Labels",
+        "data_type": "Field Type"
+      },
+      "rows": 33,
+      "source": {
+        "file": "all_of_us_surveys.csv",
+        "sha256": "083ecef0fbf67b0325eb73c4ae175aa5c5b0d0673a6bc411a168cdf4b3e01d9d"
+      }
+    },
+    {
+      "file": "clsa.csv",
+      "cohortName": "CLSA",
+      "columnRoles": {
+        "variable_name": "name",
+        "short_label": "label:en",
+        "question_text": "question:en",
+        "description": "comment:en",
+        "value_encoding": "value_encoding",
+        "units": "unit",
+        "data_type": "valueType"
+      },
+      "rows": 41,
+      "source": {
+        "file": "clsa_baseline.csv",
+        "sha256": "69a1363f1e2dcfcf7dadc09efd2a78a27bbb1be55e6b53a3e1cc6031e5c28992"
+      }
+    },
+    {
+      "file": "ukbb.csv",
+      "cohortName": "UKBB",
+      "columnRoles": {
+        "variable_name": "field_name",
+        "description": "description",
+        "value_encoding": "value_encoding",
+        "units": "units",
+        "data_type": "data_type"
+      },
+      "rows": 35,
+      "source": {
+        "file": "ukbb_showcase.csv",
+        "sha256": "d8b40ad17cc16d61aa411366b475a23fda5c5ffa2810b9ddbc16882742e8b18d"
+      }
+    }
+  ],
+  "paths": {
+    "heterogeneous_split": {
+      "intent": "1. One cluster the split stage partitions into >= 2 concept groups.",
+      "variables": [
+        {
+          "cohort": "AoU",
+          "variable": "overallhealth_generalhealth",
+          "memberId": "AoU:overallhealth_generalhealth",
+          "sourceKey": "Overall Health/overallhealth_generalhealth",
+          "reason": "self-rated GENERAL health"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "overallhealth_generalphysicalhealth",
+          "memberId": "AoU:overallhealth_generalphysicalhealth",
+          "sourceKey": "Overall Health/overallhealth_generalphysicalhealth",
+          "reason": "self-rated PHYSICAL health"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "overallhealth_generalmentalhealth",
+          "memberId": "AoU:overallhealth_generalmentalhealth",
+          "sourceKey": "Overall Health/overallhealth_generalmentalhealth",
+          "reason": "self-rated MENTAL health"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_HLTH_TRM",
+          "memberId": "CLSA:GEN_HLTH_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/GEN_HLTH_TRM",
+          "reason": "self-rated general health (tracking)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_HLTH_COM",
+          "memberId": "CLSA:GEN_HLTH_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/GEN_HLTH_COM",
+          "reason": "self-rated general health (comprehensive)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_MNTL_TRM",
+          "memberId": "CLSA:GEN_MNTL_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/GEN_MNTL_TRM",
+          "reason": "self-rated mental health (tracking)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_MNTL_COM",
+          "memberId": "CLSA:GEN_MNTL_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/GEN_MNTL_COM",
+          "reason": "self-rated mental health (comprehensive)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Overall health rating",
+          "memberId": "UKBB:Overall health rating",
+          "sourceKey": "2178",
+          "reason": "overall health rating"
+        }
+      ]
+    },
+    "verdict_mix": {
+      "intent": "2. Groups expected to end adopt, refine and novel (novel -> a GenCDE).",
+      "variables": [
+        {
+          "cohort": "AoU",
+          "variable": "overallhealth_generalhealth",
+          "memberId": "AoU:overallhealth_generalhealth",
+          "sourceKey": "Overall Health/overallhealth_generalhealth",
+          "reason": "adopt: Self-Reported Health (walk: adopt)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_HLTH_TRM",
+          "memberId": "CLSA:GEN_HLTH_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/GEN_HLTH_TRM",
+          "reason": "adopt: Self-Reported Health (walk: adopt)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_HLTH_COM",
+          "memberId": "CLSA:GEN_HLTH_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/GEN_HLTH_COM",
+          "reason": "adopt: Self-Reported Health (walk: adopt)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Overall health rating",
+          "memberId": "UKBB:Overall health rating",
+          "sourceKey": "2178",
+          "reason": "adopt: Self-Reported Health (walk: adopt)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_ASTHM_TRM",
+          "memberId": "CLSA:CCT_ASTHM_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_ASTHM_TRM",
+          "reason": "refine: Health Conditions - Disease Disorders (walk: refine)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_ASTHM_COM",
+          "memberId": "CLSA:CCC_ASTHM_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_ASTHM_COM",
+          "reason": "refine: Health Conditions - Disease Disorders (walk: refine)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Doctor diagnosed asthma",
+          "memberId": "UKBB:Doctor diagnosed asthma",
+          "sourceKey": "22127",
+          "reason": "refine: Health Conditions - Disease Disorders (walk: refine)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_COPD_TRM",
+          "memberId": "CLSA:CCT_COPD_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_COPD_TRM",
+          "reason": "refine: Health Conditions - Disease Disorders (walk: refine)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_COPD_COM",
+          "memberId": "CLSA:CCC_COPD_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_COPD_COM",
+          "reason": "refine: Health Conditions - Disease Disorders (walk: refine)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Doctor diagnosed COPD (chronic obstructive pulmonary disease)",
+          "memberId": "UKBB:Doctor diagnosed COPD (chronic obstructive pulmonary disease)",
+          "sourceKey": "22130",
+          "reason": "refine: Health Conditions - Disease Disorders (walk: refine)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_MGRN_TRM",
+          "memberId": "CLSA:CCT_MGRN_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_MGRN_TRM",
+          "reason": "novel -> GenCDE: ever-told migraine (walk: novel)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_MGRN_COM",
+          "memberId": "CLSA:CCC_MGRN_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_MGRN_COM",
+          "reason": "novel -> GenCDE: ever-told migraine (walk: novel)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Ever had migraine",
+          "memberId": "UKBB:Ever had migraine",
+          "sourceKey": "120016",
+          "reason": "novel -> GenCDE: ever-told migraine (walk: novel)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "HRG_NOIS_TRM",
+          "memberId": "CLSA:HRG_NOIS_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/HRG_NOIS_TRM",
+          "reason": "novel -> GenCDE: hearing difficulty (walk: novel)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Hearing difficulty/problems",
+          "memberId": "UKBB:Hearing difficulty/problems",
+          "sourceKey": "2247",
+          "reason": "novel -> GenCDE: hearing difficulty (walk: novel)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Hearing difficulty/problems with background noise",
+          "memberId": "UKBB:Hearing difficulty/problems with background noise",
+          "sourceKey": "2257",
+          "reason": "novel -> GenCDE: hearing difficulty in noise (walk: novel)"
+        }
+      ]
+    },
+    "units_arithmetic": {
+      "intent": "3. Numeric variables whose declared units differ (unit / arithmetic transform specs).",
+      "variables": [
+        {
+          "cohort": "CLSA",
+          "variable": "SPR_INPUT_HEIGHT_COM",
+          "memberId": "CLSA:SPR_INPUT_HEIGHT_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/SPR_INPUT_HEIGHT_COM",
+          "reason": "height declared in m -> a cm target is a x100 unit spec"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "HWT_DHT_M_TRM",
+          "memberId": "CLSA:HWT_DHT_M_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/HWT_DHT_M_TRM",
+          "reason": "height in metres with NO declared unit -> needs-units / arithmetic"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "HGT_HEIGHT_M_COM",
+          "memberId": "CLSA:HGT_HEIGHT_M_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/HGT_HEIGHT_M_COM",
+          "reason": "'Average height in m' but declared cm — a unit/label conflict"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Standing height",
+          "memberId": "UKBB:Standing height",
+          "sourceKey": "50",
+          "reason": "standing height, cm"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Height",
+          "memberId": "UKBB:Height",
+          "sourceKey": "12144",
+          "reason": "height, cm"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Weight",
+          "memberId": "UKBB:Weight",
+          "sourceKey": "21002",
+          "reason": "weight, Kg"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "SPR_INPUT_WEIGHT_COM",
+          "memberId": "CLSA:SPR_INPUT_WEIGHT_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/SPR_INPUT_WEIGHT_COM",
+          "reason": "weight, kg (lower-case spelling)"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "HWT_DWT_K_TRM",
+          "memberId": "CLSA:HWT_DWT_K_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/HWT_DWT_K_TRM",
+          "reason": "self-reported weight in kg with NO declared unit"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Age diabetes diagnosed",
+          "memberId": "UKBB:Age diabetes diagnosed",
+          "sourceKey": "2976",
+          "reason": "age at diagnosis in years vs the unitless catalog Age CDE"
+        }
+      ]
+    },
+    "wide_to_long": {
+      "intent": "4. A repeating measure in numbered columns (positional enumeration -> one wide->long spec).",
+      "variables": [
+        {
+          "cohort": "CLSA",
+          "variable": "MEDI_ID_NAME_SP2_1_COM",
+          "memberId": "CLSA:MEDI_ID_NAME_SP2_1_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/MEDI_ID_NAME_SP2_1_COM",
+          "reason": "medication name, slot 1 of 5"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "MEDI_ID_NAME_SP2_2_COM",
+          "memberId": "CLSA:MEDI_ID_NAME_SP2_2_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/MEDI_ID_NAME_SP2_2_COM",
+          "reason": "medication name, slot 2 of 5"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "MEDI_ID_NAME_SP2_3_COM",
+          "memberId": "CLSA:MEDI_ID_NAME_SP2_3_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/MEDI_ID_NAME_SP2_3_COM",
+          "reason": "medication name, slot 3 of 5"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "MEDI_ID_NAME_SP2_4_COM",
+          "memberId": "CLSA:MEDI_ID_NAME_SP2_4_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/MEDI_ID_NAME_SP2_4_COM",
+          "reason": "medication name, slot 4 of 5"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "MEDI_ID_NAME_SP2_5_COM",
+          "memberId": "CLSA:MEDI_ID_NAME_SP2_5_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/MEDI_ID_NAME_SP2_5_COM",
+          "reason": "medication name, slot 5 of 5"
+        }
+      ]
+    },
+    "missing_data_codes": {
+      "intent": "5. Categorical variables carrying missing-data codes (UKBB -121 / -818 / -1 / -3).",
+      "variables": [
+        {
+          "cohort": "UKBB",
+          "variable": "Ever had migraine",
+          "memberId": "UKBB:Ever had migraine",
+          "sourceKey": "120016",
+          "reason": "-121 Do not know / -818 Prefer not to answer (the walk's edited GenCDE recode)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Ever had diabetes (Type I or Type II)",
+          "memberId": "UKBB:Ever had diabetes (Type I or Type II)",
+          "sourceKey": "120007",
+          "reason": "-121 / -818 on a yes/no diabetes item"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Feeling down, depressed, or hopeless over the last two weeks",
+          "memberId": "UKBB:Feeling down, depressed, or hopeless over the last two weeks",
+          "sourceKey": "120105",
+          "reason": "-818 plus negative ordinal codes (-521..-524)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Frequency of depressed mood in last 2 weeks",
+          "memberId": "UKBB:Frequency of depressed mood in last 2 weeks",
+          "sourceKey": "2050",
+          "reason": "-1 Do not know / -3 Prefer not to answer"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Diabetes diagnosed by doctor",
+          "memberId": "UKBB:Diabetes diagnosed by doctor",
+          "sourceKey": "2443",
+          "reason": "-1 / -3 on a yes/no diabetes item"
+        }
+      ]
+    },
+    "many_to_one_same_cohort": {
+      "intent": "6. Two+ CLSA variables (tracking TRM + comprehensive COM twin) that share one target.",
+      "variables": [
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_HLTH_TRM",
+          "memberId": "CLSA:GEN_HLTH_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/GEN_HLTH_TRM",
+          "reason": "self-rated general health",
+          "pair": "GEN_HLTH"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_HLTH_COM",
+          "memberId": "CLSA:GEN_HLTH_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/GEN_HLTH_COM",
+          "reason": "self-rated general health",
+          "pair": "GEN_HLTH"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_MGRN_TRM",
+          "memberId": "CLSA:CCT_MGRN_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_MGRN_TRM",
+          "reason": "ever-told migraine",
+          "pair": "MGRN"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_MGRN_COM",
+          "memberId": "CLSA:CCC_MGRN_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_MGRN_COM",
+          "reason": "ever-told migraine",
+          "pair": "MGRN"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "DEP_BOTR_TRM",
+          "memberId": "CLSA:DEP_BOTR_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/DEP_BOTR_TRM",
+          "reason": "CES-D: bothered by things",
+          "pair": "DEP_BOTR"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "DEP_BOTR_COM",
+          "memberId": "CLSA:DEP_BOTR_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/DEP_BOTR_COM",
+          "reason": "CES-D: bothered by things",
+          "pair": "DEP_BOTR"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_ASTHM_TRM",
+          "memberId": "CLSA:CCT_ASTHM_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_ASTHM_TRM",
+          "reason": "ever-told asthma",
+          "pair": "ASTHM"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_ASTHM_COM",
+          "memberId": "CLSA:CCC_ASTHM_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_ASTHM_COM",
+          "reason": "ever-told asthma",
+          "pair": "ASTHM"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_DIAB_TRM",
+          "memberId": "CLSA:CCT_DIAB_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_DIAB_TRM",
+          "reason": "ever-told diabetes",
+          "pair": "DIAB"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "DIA_DIAB_COM",
+          "memberId": "CLSA:DIA_DIAB_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/DIA_DIAB_COM",
+          "reason": "ever-told diabetes",
+          "pair": "DIAB"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_MNTL_TRM",
+          "memberId": "CLSA:GEN_MNTL_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/GEN_MNTL_TRM",
+          "reason": "self-rated mental health",
+          "pair": "GEN_MNTL"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "GEN_MNTL_COM",
+          "memberId": "CLSA:GEN_MNTL_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/GEN_MNTL_COM",
+          "reason": "self-rated mental health",
+          "pair": "GEN_MNTL"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_COPD_TRM",
+          "memberId": "CLSA:CCT_COPD_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_COPD_TRM",
+          "reason": "ever-told COPD / emphysema / chronic bronchitis",
+          "pair": "COPD"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_COPD_COM",
+          "memberId": "CLSA:CCC_COPD_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_COPD_COM",
+          "reason": "ever-told COPD / emphysema / chronic bronchitis",
+          "pair": "COPD"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_ALLRG_TRM",
+          "memberId": "CLSA:CCT_ALLRG_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_ALLRG_TRM",
+          "reason": "ever-told allergies",
+          "pair": "ALLRG"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_ALLRG_COM",
+          "memberId": "CLSA:CCC_ALLRG_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_ALLRG_COM",
+          "reason": "ever-told allergies",
+          "pair": "ALLRG"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "DEP_FLDP_TRM",
+          "memberId": "CLSA:DEP_FLDP_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/DEP_FLDP_TRM",
+          "reason": "CES-D: felt depressed",
+          "pair": "DEP_FLDP"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "DEP_FLDP_COM",
+          "memberId": "CLSA:DEP_FLDP_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/DEP_FLDP_COM",
+          "reason": "CES-D: felt depressed",
+          "pair": "DEP_FLDP"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "FAL_NMBR_NB_TRM",
+          "memberId": "CLSA:FAL_NMBR_NB_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/FAL_NMBR_NB_TRM",
+          "reason": "number of falls, past 12 months",
+          "pair": "FAL_NMBR_NB"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "FAL_NMBR_NB_COM",
+          "memberId": "CLSA:FAL_NMBR_NB_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/FAL_NMBR_NB_COM",
+          "reason": "number of falls, past 12 months",
+          "pair": "FAL_NMBR_NB"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_MACDEG_TRM",
+          "memberId": "CLSA:CCT_MACDEG_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_MACDEG_TRM",
+          "reason": "ever-told macular degeneration",
+          "pair": "MACDEG"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCC_MACDEG_COM",
+          "memberId": "CLSA:CCC_MACDEG_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/CCC_MACDEG_COM",
+          "reason": "ever-told macular degeneration",
+          "pair": "MACDEG"
+        }
+      ]
+    },
+    "duplicate_variable_name": {
+      "intent": "7. One repeated variable_name in one file (two distinct UKBB fields both called 'Weight').",
+      "variables": [
+        {
+          "cohort": "UKBB",
+          "variable": "Weight",
+          "memberId": "UKBB:Weight",
+          "sourceKey": "21002",
+          "reason": "first 'Weight' (field 21002) keeps the name"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Weight",
+          "memberId": "UKBB:Weight__2",
+          "sourceKey": "23098",
+          "reason": "second 'Weight' (field 23098) — core now keeps it as 'Weight__2'"
+        }
+      ]
+    },
+    "ungrouped_leftovers": {
+      "intent": "8. Variables that fall out as HDBSCAN outliers and stay out through outlier recovery (M10).",
+      "note": "Leftover-ness is the one FRAGILE path: M10 re-clusters the main pass's outliers, so a leftover must stay noise twice. 'variables' are the leftovers of the reference validation (repeatable run to run on one machine with the same embedding cache); 'candidates' are the rows added to seed them. Assert that at least one leftover exists, not which ones — see tests/live/fixture/VALIDATION.md.",
+      "variables": [
+        {
+          "cohort": "AoU",
+          "variable": "hearingvision_howoldwereyouglaucoma",
+          "memberId": "AoU:hearingvision_howoldwereyouglaucoma",
+          "sourceKey": "Personal Medical History/hearingvision_howoldwereyouglaucoma",
+          "reason": "age first told of glaucoma: between age + eye items"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "hearingvision_rxmedsforglaucoma",
+          "memberId": "AoU:hearingvision_rxmedsforglaucoma",
+          "sourceKey": "Personal Medical History/hearingvision_rxmedsforglaucoma",
+          "reason": "treated for glaucoma: between follow-ups + eye items"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "ROS_PAIN_COM",
+          "memberId": "CLSA:ROS_PAIN_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/ROS_PAIN_COM",
+          "reason": "chest pain — no other cardiac item in the fixture"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Chest pain or discomfort",
+          "memberId": "UKBB:Chest pain or discomfort",
+          "sourceKey": "2335",
+          "reason": "chest pain — no other cardiac item in the fixture"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Felt loved as a child",
+          "memberId": "UKBB:Felt loved as a child",
+          "sourceKey": "20489",
+          "reason": "felt loved as a child — a leftover in the reference walk"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Fractured/broken bones in last 5 years",
+          "memberId": "UKBB:Fractured/broken bones in last 5 years",
+          "sourceKey": "2463",
+          "reason": "fractured bones — a leftover in the reference walk"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Long-standing illness, disability or infirmity",
+          "memberId": "UKBB:Long-standing illness, disability or infirmity",
+          "sourceKey": "2188",
+          "reason": "long-standing illness: between the frailty and condition items"
+        }
+      ],
+      "candidates": [
+        {
+          "cohort": "AoU",
+          "variable": "digestive_howoldwereyouceliacdisease",
+          "memberId": "AoU:digestive_howoldwereyouceliacdisease",
+          "sourceKey": "Personal Medical History/digestive_howoldwereyouceliacdisease",
+          "reason": "walk leftover (age first told, absent condition)"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "infectiousdiseases_howoldwereyouchickenpox",
+          "memberId": "AoU:infectiousdiseases_howoldwereyouchickenpox",
+          "sourceKey": "Personal Medical History/infectiousdiseases_howoldwereyouchickenpox",
+          "reason": "walk leftover (age first told, absent condition)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Felt hated by family member as a child",
+          "memberId": "UKBB:Felt hated by family member as a child",
+          "sourceKey": "20487",
+          "reason": "walk leftover (childhood experience)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Physically abused by family as a child",
+          "memberId": "UKBB:Physically abused by family as a child",
+          "sourceKey": "20488",
+          "reason": "walk leftover (childhood experience)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Felt loved as a child",
+          "memberId": "UKBB:Felt loved as a child",
+          "sourceKey": "20489",
+          "reason": "walk leftover (childhood experience)"
+        }
+      ]
+    },
+    "eg_permissible_values": {
+      "intent": "9. Retrieves a catalog CDE whose permissible values carry '(e.g., ...)' labels.",
+      "variables": [
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_DIAB_TRM",
+          "memberId": "CLSA:CCT_DIAB_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_DIAB_TRM",
+          "reason": "walk re-picked Health Conditions - Disease Disorders for diabetes"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "DIA_DIAB_COM",
+          "memberId": "CLSA:DIA_DIAB_COM",
+          "sourceKey": "Comprehensive_Baseline_v7-2/DIA_DIAB_COM",
+          "reason": "as above"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Diabetes diagnosed by doctor",
+          "memberId": "UKBB:Diabetes diagnosed by doctor",
+          "sourceKey": "2443",
+          "reason": "as above"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Ever had diabetes (Type I or Type II)",
+          "memberId": "UKBB:Ever had diabetes (Type I or Type II)",
+          "sourceKey": "120007",
+          "reason": "diabetes type I/II, same target family"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "endocrine_endocrineconditions",
+          "memberId": "AoU:endocrine_endocrineconditions",
+          "sourceKey": "Personal Medical History/endocrine_endocrineconditions",
+          "reason": "a condition checklist — the CDE is itself a checklist"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "respiratory_respiratoryconditions",
+          "memberId": "AoU:respiratory_respiratoryconditions",
+          "sourceKey": "Personal Medical History/respiratory_respiratoryconditions",
+          "reason": "a condition checklist"
+        }
+      ]
+    },
+    "eye_conditions_spread": {
+      "intent": "10. Eye-condition items spread over >= 2 clusters (the reviewer's 'New group' drag test).",
+      "variables": [
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_GLAUC_TRM",
+          "memberId": "CLSA:CCT_GLAUC_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_GLAUC_TRM",
+          "reason": "ever-told glaucoma"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_CATAR_TRM",
+          "memberId": "CLSA:CCT_CATAR_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_CATAR_TRM",
+          "reason": "ever-told cataracts"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "CCT_MACDEG_TRM",
+          "memberId": "CLSA:CCT_MACDEG_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/CCT_MACDEG_TRM",
+          "reason": "ever-told macular degeneration"
+        },
+        {
+          "cohort": "CLSA",
+          "variable": "VIS_SGHT_TRM",
+          "memberId": "CLSA:VIS_SGHT_TRM",
+          "sourceKey": "Tracking_Baseline_v4-1/VIS_SGHT_TRM",
+          "reason": "eyesight rating (Excellent..Poor scale)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Eye problems/disorders",
+          "memberId": "UKBB:Eye problems/disorders",
+          "sourceKey": "6148",
+          "reason": "eye problems checklist"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Age glaucoma diagnosed",
+          "memberId": "UKBB:Age glaucoma diagnosed",
+          "sourceKey": "4689",
+          "reason": "age glaucoma diagnosed"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Age cataract diagnosed",
+          "memberId": "UKBB:Age cataract diagnosed",
+          "sourceKey": "4700",
+          "reason": "age cataract diagnosed"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Which eye(s) affected by glaucoma",
+          "memberId": "UKBB:Which eye(s) affected by glaucoma",
+          "sourceKey": "6119",
+          "reason": "which eye has glaucoma"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Wears glasses or contact lenses",
+          "memberId": "UKBB:Wears glasses or contact lenses",
+          "sourceKey": "2207",
+          "reason": "wears glasses"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "hearingvision_glaucomacurrently",
+          "memberId": "AoU:hearingvision_glaucomacurrently",
+          "sourceKey": "Personal Medical History/hearingvision_glaucomacurrently",
+          "reason": "still seeing a doctor for glaucoma"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "hearingvision_rxmedsforcataracts",
+          "memberId": "AoU:hearingvision_rxmedsforcataracts",
+          "sourceKey": "Personal Medical History/hearingvision_rxmedsforcataracts",
+          "reason": "treated for cataracts"
+        },
+        {
+          "cohort": "AoU",
+          "variable": "disability_blind",
+          "memberId": "AoU:disability_blind",
+          "sourceKey": "Basics/disability_blind",
+          "reason": "serious difficulty seeing"
+        }
+      ]
+    },
+    "score_components": {
+      "intent": "11. Williams frailty index (UK Biobank) components, for the score-matching path.",
+      "variables": [
+        {
+          "cohort": "UKBB",
+          "variable": "Falls in the last year",
+          "memberId": "UKBB:Falls in the last year",
+          "sourceKey": "2296",
+          "reason": "falls in the last year"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Hearing difficulty/problems",
+          "memberId": "UKBB:Hearing difficulty/problems",
+          "sourceKey": "2247",
+          "reason": "hearing difficulty"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Chest pain or discomfort",
+          "memberId": "UKBB:Chest pain or discomfort",
+          "sourceKey": "2335",
+          "reason": "chest pain or discomfort"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Diabetes diagnosed by doctor",
+          "memberId": "UKBB:Diabetes diagnosed by doctor",
+          "sourceKey": "2443",
+          "reason": "diabetes diagnosed by doctor"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Eye problems/disorders",
+          "memberId": "UKBB:Eye problems/disorders",
+          "sourceKey": "6148",
+          "reason": "eye problems (glaucoma / cataracts)"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Overall health rating",
+          "memberId": "UKBB:Overall health rating",
+          "sourceKey": "2178",
+          "reason": "overall health rating"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Long-standing illness, disability or infirmity",
+          "memberId": "UKBB:Long-standing illness, disability or infirmity",
+          "sourceKey": "2188",
+          "reason": "long-standing illness, disability or infirmity"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Frequency of tiredness / lethargy in last 2 weeks",
+          "memberId": "UKBB:Frequency of tiredness / lethargy in last 2 weeks",
+          "sourceKey": "2080",
+          "reason": "tiredness / lethargy"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Loneliness, isolation",
+          "memberId": "UKBB:Loneliness, isolation",
+          "sourceKey": "2020",
+          "reason": "loneliness"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Nervous feelings",
+          "memberId": "UKBB:Nervous feelings",
+          "sourceKey": "1970",
+          "reason": "nervous feelings"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Sleeplessness / insomnia",
+          "memberId": "UKBB:Sleeplessness / insomnia",
+          "sourceKey": "1200",
+          "reason": "sleeplessness / insomnia"
+        },
+        {
+          "cohort": "UKBB",
+          "variable": "Fractured/broken bones in last 5 years",
+          "memberId": "UKBB:Fractured/broken bones in last 5 years",
+          "sourceKey": "2463",
+          "reason": "fractured / broken bones in last 5 years"
+        }
+      ]
+    }
+  },
+  "totalRows": 109
+}
