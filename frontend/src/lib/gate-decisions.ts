@@ -16,7 +16,7 @@ import type { ArtifactStaleRef } from "@/types";
 
 // --- the registered kinds, mirrored from backend/artifact_kinds.py -------------------------------------
 
-/** The eight gate-decision kinds. Spelled out, exactly as the backend registry spells them out. */
+/** The nine gate-decision kinds. Spelled out, exactly as the backend registry spells them out. */
 export const GATE_DECISION_KINDS = [
   "gate1_group_scope",
   "gate1_regroup",
@@ -24,6 +24,7 @@ export const GATE_DECISION_KINDS = [
   "gate2_candidate_pick",
   "gate2_relation",
   "gate3_spec_edit",
+  "gate3_combine_rule",
   "gate4_export_selection",
   "composite_swap",
 ] as const;
@@ -46,6 +47,7 @@ export const DECISION_IDENTITY_FIELDS: Record<GateDecisionKind, readonly string[
   gate2_candidate_pick: ["groupId"],
   gate2_relation: ["groupId", "targetId"], // a group legitimately relates to several targets
   gate3_spec_edit: ["sourceVariable"],
+  gate3_combine_rule: ["cohort", "targetId"], // the COLUMN several of one cohort's variables land on (08-28 1d)
   gate4_export_selection: ["recordId"],
   composite_swap: ["scoreName", "componentName"],
 };

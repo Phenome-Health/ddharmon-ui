@@ -138,14 +138,21 @@ GATE2_RELATION = "gate2_relation"
 #: transform verdict already uses (one spec per "cohort:var" edge).
 GATE3_SPEC_EDIT = "gate3_spec_edit"
 
+#: Gate 3: how several variables of ONE cohort that land on ONE target column are combined (08-28 1d, Q4).
+#: Keyed on the (cohort, target) pair — the column the rule governs. ``chosen`` is ``coalesce`` (first
+#: non-blank in member order, plus a ``TARGET__source`` provenance column — also the rule when nothing is
+#: chosen), ``separate`` (one ``TARGET__<var>`` column each), or one member id (that variable is the only
+#: writer). ``alternatives`` = the two rule names plus the member ids that were combined.
+GATE3_COMBINE_RULE = "gate3_combine_rule"
+
 #: Gate 4: include / exclude one record from the export. Keyed on the record.
 GATE4_EXPORT_SELECTION = "gate4_export_selection"
 
 #: A composite score's component re-pointed at a different concept. Keyed on the (score, component) edge.
 COMPOSITE_SWAP = "composite_swap"
 
-#: The eight gate-decision kinds, in gate order. Shared payload shape, shared validation, shared staleness
-#: derivation - so a screen plan adding an eighth gets all three by adding one name here.
+#: The nine gate-decision kinds, in gate order. Shared payload shape, shared validation, shared staleness
+#: derivation - so a screen plan adding a tenth gets all three by adding one name here.
 GATE_DECISION_KINDS = (
     GATE1_GROUP_SCOPE,
     GATE1_REGROUP,
@@ -153,6 +160,7 @@ GATE_DECISION_KINDS = (
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
     GATE3_SPEC_EDIT,
+    GATE3_COMBINE_RULE,
     GATE4_EXPORT_SELECTION,
     COMPOSITE_SWAP,
 )
@@ -168,6 +176,7 @@ DECISION_GATE: dict[str, str] = {
     GATE2_CANDIDATE_PICK: "gate2",
     GATE2_RELATION: "gate2",
     GATE3_SPEC_EDIT: "gate3",
+    GATE3_COMBINE_RULE: "gate3",
     GATE4_EXPORT_SELECTION: "gate4",
 }
 
@@ -181,6 +190,7 @@ _DECISION_IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     GATE2_CANDIDATE_PICK: ("groupId",),
     GATE2_RELATION: ("groupId", "targetId"),
     GATE3_SPEC_EDIT: ("sourceVariable",),
+    GATE3_COMBINE_RULE: ("cohort", "targetId"),
     GATE4_EXPORT_SELECTION: ("recordId",),
     COMPOSITE_SWAP: ("scoreName", "componentName"),
 }
@@ -252,6 +262,24 @@ def _decision_validate(payload: dict[str, Any]) -> None:
                 raise ValueError(f"an upstream reference needs a {field_name}")
         if upstream["kind"] not in GATE_DECISION_KINDS:
             raise ValueError(f"upstream.kind {upstream['kind']!r} is not a gate-decision kind")
+
+
+#: The two combine rules a ``gate3_combine_rule`` may name besides a member id (08-28 1d).
+COMBINE_COALESCE = "coalesce"
+COMBINE_SEPARATE = "separate"
+
+
+def _combine_rule_validate(payload: dict[str, Any]) -> None:
+    """A combine rule is a rule name, one of the variables it combines, or "" (the default rule)."""
+    _decision_validate(payload)
+    chosen = payload["chosen"]
+    if chosen in ("", COMBINE_COALESCE, COMBINE_SEPARATE):
+        return
+    if chosen not in payload["alternatives"]:
+        raise ValueError(
+            f"a combine rule names {COMBINE_COALESCE!r}, {COMBINE_SEPARATE!r} or one of the variables it combines "
+            f"(listed in alternatives) — {chosen!r} is none of them"
+        )
 
 
 def derive_staleness(grouped: dict[str, Any]) -> list[dict[str, str]]:
@@ -350,6 +378,13 @@ registry.register(
         name=GATE3_SPEC_EDIT,
         identity=_decision_identity(GATE3_SPEC_EDIT),
         validate=_decision_validate,
+    )
+)
+registry.register(
+    ArtifactKind(
+        name=GATE3_COMBINE_RULE,
+        identity=_decision_identity(GATE3_COMBINE_RULE),
+        validate=_combine_rule_validate,
     )
 )
 registry.register(

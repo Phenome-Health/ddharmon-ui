@@ -18,6 +18,7 @@ import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RecodeDetail, transformSummary } from "@/components/gate/RecodeDetail";
 import { SpecMappingEditor } from "@/components/gate/SpecMappingEditor";
+import { CombineRuleControl } from "@/components/gate/CombineRule";
 import { SpecNumberMap } from "@/components/gate/SpecNumberMap";
 import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
@@ -52,6 +53,7 @@ import {
   withModelTargets,
   type TargetValue,
 } from "@/lib/value-map";
+import { combineAlternatives, combineChoice, combineGroups } from "@/lib/combine-rules";
 import { cn } from "@/lib/utils";
 import { permissibleValueLabels, sourceValueLabels } from "@/types";
 import type { JobResult, UIRecord, GatePosition } from "@/types";
@@ -141,6 +143,8 @@ export default function Gate3Page() {
   }
 
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned, frozen });
+  // 08-28 1d (Q4): how several of one cohort's variables on one target column combine.
+  const combines = useGateDecisions(jobId, "gate3_combine_rule", { pinned, frozen });
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", {
     pinned,
     frozen,
@@ -207,6 +211,20 @@ export default function Gate3Page() {
       .filter((g) => !q || labelOf(g.record).toLowerCase().includes(q));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, arithmeticOnly, query, renames.decisions]);
+
+  // The columns several of one cohort's in-scope variables write (a rejected recode writes nothing) — the only
+  // places the combine control appears. Across records, as the notebook groups them.
+  const combineList = useMemo(() => {
+    const rejected = new Set(
+      Object.values(specs.decisions)
+        .filter((d) => d.rejected === true)
+        .map((d) => String(d.sourceVariable ?? "")),
+    );
+    return combineGroups(
+      groups.map((g) => g.record),
+      rejected,
+    );
+  }, [groups, specs.decisions]);
 
   const anyRow = groups.some((g) => g.rows.length > 0);
   const selected =
@@ -602,6 +620,36 @@ export default function Gate3Page() {
                       </div>
                     </div>
                   </InheritedPanel>
+
+                  {/* 08-28 1d: only where a cohort has two or more variables on one target column. */}
+                  {combineList
+                    .filter((g) => g.members.some((m) => record.members.includes(m)))
+                    .map((g) => {
+                      const key = combines.itemKey({ cohort: g.cohort, targetId: g.targetId });
+                      return (
+                        <CombineRuleControl
+                          key={key}
+                          group={g}
+                          choice={combineChoice(combines.decisions[key], g.members)}
+                          targetLabel={
+                            record.gencde && g.targetId === record.gencde.gencdeId
+                              ? labelOf(record)
+                              : undefined
+                          }
+                          readOnly={frozen}
+                          onChoose={(chosen) =>
+                            void combines.write(
+                              { cohort: g.cohort, targetId: g.targetId },
+                              {
+                                chosen,
+                                alternatives: combineAlternatives(g.members),
+                                upstream: { kind: "gate2_candidate_pick", itemKey: record.groupId },
+                              },
+                            )
+                          }
+                        />
+                      );
+                    })}
 
                   <div className="flex flex-col gap-2">
                     <h3 className="text-sm font-semibold text-on-raised">

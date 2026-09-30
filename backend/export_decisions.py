@@ -27,6 +27,9 @@ WHAT EACH DECISION DOES TO THE EXPORT (and what it deliberately does not):
   transform as ``reviewerEdit`` and is what the notebook applies, in the target's CODES (an edit saved in labels
   before 08-28 is resolved through the target's value table — ``backend/target_codes.py``). Every field is
   optional.
+* ``gate3_combine_rule`` — how several variables of one cohort on one target column become that column
+  (``backend/combine_rules.py``). Every record with a member in such a group carries the resolved rule as
+  ``combineRules`` (the default ``coalesce`` when undecided, said so); the notebook applies it.
 * ``gate4_export_selection`` — per-record inclusion. A record whose decision's ``chosen`` is ``exclude``
   (or ``out``) is absent from every format; any other value, and absence, include it. NO SCREEN WRITES THIS
   KIND TODAY (Gate 4's tile selection is component state), so the filter is a no-op until one does.
@@ -44,6 +47,7 @@ from backend.artifact_kinds import (
     GATE1_RENAME,
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
+    GATE3_COMBINE_RULE,
     GATE3_SPEC_EDIT,
     GATE4_EXPORT_SELECTION,
     GATE_DECISION_KINDS,
@@ -51,6 +55,7 @@ from backend.artifact_kinds import (
     derive_staleness,
 )
 from backend.artifacts import registry
+from backend.combine_rules import attach_combine_rules
 from backend.target_codes import in_target_codes
 
 #: Where Gate 1's Continue freezes the scope it displayed (``backend/app.py::GATE1_SCOPE_CONFIG_KEY``).
@@ -69,6 +74,7 @@ GATE_OF = {
     GATE2_CANDIDATE_PICK: "Gate 2",
     GATE2_RELATION: "Gate 2",
     GATE3_SPEC_EDIT: "Gate 3",
+    GATE3_COMBINE_RULE: "Gate 3",
     GATE4_EXPORT_SELECTION: "Gate 4",
     "composite_swap": "Composite",
 }
@@ -79,6 +85,7 @@ ACTION_OF = {
     GATE2_CANDIDATE_PICK: "Picked a target",
     GATE2_RELATION: "Set a relation",
     GATE3_SPEC_EDIT: "Edited a transform spec",
+    GATE3_COMBINE_RULE: "Chose how variables combine",
     GATE4_EXPORT_SELECTION: "Chose export inclusion",
     "composite_swap": "Swapped a component",
 }
@@ -208,6 +215,8 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
                 # One code space per column (08-28 1c, F18): an edit saved in labels is applied in codes.
                 t["reviewerEdit"] = in_target_codes(edit, r, t)
         out.append(r)
+    # Same-cohort variables on one target column: the rule each export carries and the notebook runs (1d).
+    attach_combine_rules(out, grouped)
     return out
 
 

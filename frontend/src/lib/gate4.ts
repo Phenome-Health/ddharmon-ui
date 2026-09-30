@@ -127,6 +127,7 @@ const GATE_OF: Record<GateDecisionKind, string> = {
   gate2_candidate_pick: "Gate 2",
   gate2_relation: "Gate 2",
   gate3_spec_edit: "Gate 3",
+  gate3_combine_rule: "Gate 3",
   gate4_export_selection: "Gate 4",
   composite_swap: "Composite",
 };
@@ -138,6 +139,7 @@ const ACTION_OF: Record<GateDecisionKind, string> = {
   gate2_candidate_pick: "Picked a target",
   gate2_relation: "Set a relation",
   gate3_spec_edit: "Edited a transform spec",
+  gate3_combine_rule: "Chose how variables combine",
   gate4_export_selection: "Chose export inclusion",
   // The only composite write is the DECLARATION of a component (08-27 audit) — swaps never persisted.
   composite_swap: "Declared a score component",

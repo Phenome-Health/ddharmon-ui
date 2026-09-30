@@ -84,9 +84,14 @@ test.describe("gate decisions", () => {
       "gate1_rename",
       "gate2_candidate_pick",
       "gate2_relation",
+      // Added by 08-28 1d: how several of one cohort's variables become one target column, keyed on the
+      // (cohort, target) COLUMN the rule governs — two columns decided in two tabs are two rows.
+      "gate3_combine_rule",
       "gate3_spec_edit",
       "gate4_export_selection",
     ]);
+    expect(DECISION_IDENTITY_FIELDS.gate3_combine_rule).toEqual(["cohort", "targetId"]);
+    expect(decisionItemKey("gate3_combine_rule", { cohort: "CLSA", targetId: "CDE:9" })).toBe("CLSA|CDE:9");
     expect(DECISION_IDENTITY_FIELDS.gate1_regroup).toEqual(["memberId"]);
     expect(DECISION_IDENTITY_FIELDS.gate1_rename).toEqual(["groupId"]);
     expect(decisionItemKey("gate1_rename", { groupId: "c1#g0" })).toBe("c1#g0");
