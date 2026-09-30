@@ -12,6 +12,7 @@ import {
   SANDBOX_PREFIX,
   cloneRequestFor,
   clonedPathFor,
+  demoExportNote,
   guestAuthCopy,
   hasSandboxWork,
   readSandbox,
@@ -751,5 +752,30 @@ test.describe("guest sandbox — the clone dialog", () => {
     }
     await expect(page.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "2");
     expect(writes).toEqual([]); // the static client refuses before any request
+  });
+});
+
+// --- Gate 4: what a download of the demo does and does not contain ---------------------------------------------
+
+test.describe("guest sandbox — exporting the demo", () => {
+  test("@sandbox the demo's files do not carry the tab's edits, and the bar says so when there are any", () => {
+    expect(demoExportNote(0)).toBeNull();
+    expect(demoExportNote(1)).toBe(
+      "These files are the shared demo's own: the 1 change you made in this tab is not in them. Clone the demo to export your decisions.",
+    );
+    expect(demoExportNote(3)).toMatch(/^These files are the shared demo's own: the 3 changes you made in this tab are not in them\./);
+  });
+
+  test("@sandbox guest sandbox: Gate 4 on the demo tells a visitor holding edits that the download leaves them out", async ({
+    page,
+  }) => {
+    await serveWalkableDemo(page);
+    await open(page, "gate4");
+    // Nothing held: the files and the screen agree, so nothing needs saying.
+    await expect(page.locator("[data-testid='demo-export-note']")).toHaveCount(0);
+    await open(page, "gate1");
+    await page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']").click();
+    await page.locator("[data-testid='rail-link-gate4']").click();
+    await expect(page.locator("[data-testid='commit-bar'] [data-testid='demo-export-note']")).toHaveText(demoExportNote(1)!);
   });
 });

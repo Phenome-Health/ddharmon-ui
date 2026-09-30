@@ -411,3 +411,16 @@ export function guestAuthCopy(action: string): { title: string; body: string } {
  */
 export const DEMO_CONTINUE_NOTE =
   "This is the shared demo: every gate is already computed, so continuing spends nothing and sends nothing — it walks you to the next screen.";
+
+/**
+ * What Gate 4's bar says on the demo when the tab holds edits (08-18), or null when it holds none.
+ *
+ * The screen and the files disagree there, and only this sentence reconciles them: Gate 4's previews and decision
+ * log read the tab's sandbox, but a download is built server-side from the demo's own row, which holds nobody's
+ * work. A visitor who downloaded after deciding things would otherwise believe the file carries what they decided.
+ */
+export function demoExportNote(count: number): string | null {
+  if (count <= 0) return null;
+  const what = count === 1 ? "the 1 change you made in this tab is" : `the ${count} changes you made in this tab are`;
+  return `These files are the shared demo's own: ${what} not in them. Clone the demo to export your decisions.`;
+}

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Copy, FlaskConical, LogIn } from "lucide-react";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { CloneDialog } from "@/components/gate/CloneDialog";
-import { SANDBOX_BANNER_COPY, onSandboxChange, sandboxVerdictCount } from "@/lib/sandbox";
+import { useSandboxCount } from "@/hooks/use-sandbox-count";
+import { SANDBOX_BANNER_COPY, guestAuthCopy } from "@/lib/sandbox";
 
 /**
  * The shared-demo banner every gate screen wears (08-18, UI-SPEC §8.5 "Leaving the demo sandbox").
@@ -24,12 +25,8 @@ import { SANDBOX_BANNER_COPY, onSandboxChange, sandboxVerdictCount } from "@/lib
  */
 export function SandboxBanner({ jobId, sourceName }: { jobId: string; sourceName?: string }) {
   const { isGuest, exitGuest, email } = useAuthState();
-  const [count, setCount] = useState(() => sandboxVerdictCount(jobId));
+  const count = useSandboxCount(jobId);
   const [open, setOpen] = useState(false);
-  useEffect(() => {
-    setCount(sandboxVerdictCount(jobId));
-    return onSandboxChange(jobId, () => setCount(sandboxVerdictCount(jobId)));
-  }, [jobId]);
 
   const guest = AUTH_ENABLED && isGuest;
   return (
@@ -71,5 +68,27 @@ export function SandboxBanner({ jobId, sourceName }: { jobId: string; sourceName
         <CloneDialog open={open} onOpenChange={setOpen} jobId={jobId} sourceName={sourceName ?? "Demo"} />
       )}
     </section>
+  );
+}
+
+/**
+ * A guest at an action that genuinely needs an account (UI-SPEC §8.4): the specific sentence, naming THE action,
+ * plus the way to sign in — never a generic error, and never a hint that the rest of the walk needs one too.
+ * Renders nothing for anyone who is not a guest.
+ */
+export function GuestAuthNotice({ action }: { action: string }) {
+  const { isGuest, exitGuest, email } = useAuthState();
+  if (!AUTH_ENABLED || !isGuest) return null;
+  const { title, body } = guestAuthCopy(action);
+  return (
+    <span data-testid="guest-auth-notice" className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="font-semibold">{title}</span>
+      <span>{body}</span>
+      {!email && (
+        <Button size="sm" variant="outline" className="h-7" onClick={exitGuest}>
+          Sign in
+        </Button>
+      )}
+    </span>
   );
 }
