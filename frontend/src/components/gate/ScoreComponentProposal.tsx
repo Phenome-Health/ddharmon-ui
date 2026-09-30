@@ -2,6 +2,8 @@ import { useState } from "react";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotAvailable } from "@/components/gate/NotAvailable";
+import { RunKeyField } from "@/components/gate/RunKeyField";
+import { keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { cn } from "@/lib/utils";
 import {
   errorOutcome,
@@ -66,6 +68,8 @@ export function ScoreComponentProposal({
   const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [acceptedCount, setAcceptedCount] = useState(0);
+  /** The server refused the extraction for want of a BYOK key (08-28): the field shows here, where it was pressed. */
+  const [keyAsk, setKeyAsk] = useState<KeyRefusal | null>(null);
 
   const refusal = extractionRefusalFor({ nChars: document.nChars, pinned, frozen });
 
@@ -75,12 +79,14 @@ export function ScoreComponentProposal({
     setMessage("");
     try {
       const p = await extract(document);
+      setKeyAsk(null);
       setProposal(p);
       setSelected(initialSelection(p));
       setPhase(proposalOutcome(p));
       setMessage(p.reason);
     } catch (e) {
       const status = (e as { status?: number } | null)?.status;
+      setKeyAsk(keyAskFor(e, { pinned }));
       setProposal(null);
       setPhase(errorOutcome(status));
       setMessage(e instanceof Error ? e.message : String(e));
@@ -155,6 +161,10 @@ export function ScoreComponentProposal({
           Extraction did not produce an answer — that is a failure, not a finding that the document has no
           components. {message} The text you read is still here; retry, or type the components yourself.
         </p>
+      )}
+      {/* A key refusal (08-28): the field sits under the message it answers; the retry is the Extract button. */}
+      {keyAsk && (phase === "refused" || phase === "failed") && (
+        <RunKeyField reason={keyAsk} action="Extract the components" />
       )}
       {phase === "accepted" && (
         <p role="status" className="max-w-[80ch] text-xs text-on-raised">

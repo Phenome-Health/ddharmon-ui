@@ -76,11 +76,20 @@ export async function appendAuthToken(url: string): Promise<string> {
   return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * The error a failed call throws: the server's `detail` as the message (what every caller shows), with the HTTP
+ * status and — when the server sent one — its machine-readable `code` kept beside it (08-28). A missing-key
+ * refusal answers `{detail, code: "key_required"}`; `lib/run-key.ts` reveals the key field on that code, never
+ * on the words.
+ */
+function apiErrorOf(res: Response, body: unknown): ApiError {
+  const b = (body ?? {}) as { detail?: unknown; code?: unknown };
+  const message = typeof b.detail === "string" && b.detail ? b.detail : `${res.status} ${res.statusText}`;
+  return new ApiError(message, res.status, typeof b.code === "string" ? b.code : undefined);
+}
+
 async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error((detail as { detail?: string }).detail || `${res.status} ${res.statusText}`);
-  }
+  if (!res.ok) throw apiErrorOf(res, await res.json().catch(() => ({})));
   return res.json() as Promise<T>;
 }
 
@@ -307,20 +316,25 @@ export async function extractScoreDocument(
   return scoreJson(() => fetch(`${BASE}/score/extract`, { method: "POST", headers, body: form }));
 }
 
-/** An API failure that keeps its HTTP status, so a caller can tell REFUSED (declined) from FAILED. */
+/**
+ * An API failure that keeps its HTTP status, so a caller can tell REFUSED (declined) from FAILED — and the
+ * server's machine-readable `code` when it sent one (`key_required` / `key_rejected`, 08-28).
+ */
 export class ApiError extends Error {
   status?: number;
-  constructor(message: string, status?: number) {
+  code?: string;
+  constructor(message: string, status?: number, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
 /**
- * The score panel's two document calls (and the batch -> sync switch), shared: unpack FastAPI's `detail` with
- * the status kept, and — in a static build — turn "there is no backend" (a network error, or the SPA's HTML
- * fallback) into STATIC_MSG.
+ * The gates' paid calls (the score panel's document calls, Continue, the division) and the batch -> sync switch,
+ * shared: unpack FastAPI's `detail` with the status and `code` kept, and — in a static build — turn "there is no
+ * backend" (a network error, or the SPA's HTML fallback) into STATIC_MSG.
  */
 async function scoreJson<T>(send: () => Promise<Response>): Promise<T> {
   let res: Response;
@@ -332,10 +346,7 @@ async function scoreJson<T>(send: () => Promise<Response>): Promise<T> {
   }
   const isJson = (res.headers.get("content-type") ?? "").includes("json");
   if (IS_STATIC && !isJson) throw new ApiError(STATIC_MSG);
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new ApiError((detail as { detail?: string }).detail || `${res.status} ${res.statusText}`, res.status);
-  }
+  if (!res.ok) throw apiErrorOf(res, await res.json().catch(() => ({})));
   return res.json() as Promise<T>;
 }
 
@@ -436,14 +447,16 @@ export async function readjudicateGroups(
 ): Promise<DivisionResult> {
   // Split-only: the endpoint re-splits the named groups and records each part as a New group of the reviewer's
   // (see `DivisionResult`). No records are assigned here — that happens later, at Gate 2.
-  if (IS_STATIC) throw new Error(STATIC_MSG);
   if (groupIds.length === 0) throw new Error("Name the concept groups to re-adjudicate.");
   const headers = await authed({
     "content-type": "application/json",
     ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
   });
-  return json(
-    await fetch(`${BASE}/jobs/${jobId}/readjudicate`, {
+  // TRIED EVEN IN A STATIC BUILD (08-28): with no backend it still answers STATIC_MSG (`scoreJson`), but the
+  // request is made first — the seam the e2e gate fulfils to show the key it carries and the key field a
+  // missing-key refusal reveals.
+  return scoreJson(() =>
+    fetch(`${BASE}/jobs/${jobId}/readjudicate`, {
       method: "POST",
       headers,
       body: JSON.stringify({ groupIds }),
@@ -464,7 +477,7 @@ export async function getResult(jobId: string): Promise<JobResult> {
  * finished one. Inventing a paused state the fixture does not claim would make the e2e walk assert against
  * something no real run produces.
  */
-export async function getCheckpoint(jobId: string): Promise<CheckpointState> {
+export async function getCheckpoint(jobId: string, apiKey?: string): Promise<CheckpointState> {
   if (IS_STATIC) {
     const job = await getResult(jobId);
     const gate = job.result?.gatePosition ?? job.gatePosition ?? null;
@@ -479,29 +492,38 @@ export async function getCheckpoint(jobId: string): Promise<CheckpointState> {
       result: job.result,
     };
   }
-  return json(await fetch(`${BASE}/checkpoint/${jobId}`, { headers: await authed() }));
+  // The key is optional and never stored: the read reconciles a submitted batch, which is free but still wants a
+  // provider credential, and on a bring-your-own-key server the tab's held key is the only one there is.
+  return json(
+    await fetch(`${BASE}/checkpoint/${jobId}`, { headers: await authed(apiKey ? { "x-anthropic-key": apiKey } : {}) }),
+  );
 }
 
 /**
  * Commit the current gate and continue the run to the next boundary — the Continue action.
  *
- * Disabled in the static build for the same reason `startHarmonize` is: this is the SPEND path, and a
- * preview with no backend has nothing to spend against. The gate walk itself is fully explorable there.
+ * `apiKey` is the tab's held BYOK key (`lib/run-key.ts`), sent whenever the tab holds one; without it the SERVER
+ * decides — one with its own key goes on, a bring-your-own-key one refuses with `code: "key_required"` before
+ * committing anything, and the Continue bar then asks for the key inline (08-28).
+ *
+ * A static build has no backend to spend against, so this still answers STATIC_MSG there — but only AFTER trying
+ * the request (`scoreJson`), the same seam `startHarmonize` gives Start: it is what lets the e2e gate read the key
+ * a Continue carries. The gate walk itself is fully explorable in the static build.
  */
 export async function resumeRun(
   jobId: string,
   apiKey?: string,
   body?: { gate1Scope?: string[] },
 ): Promise<{ jobId: string; target: string }> {
-  if (IS_STATIC) throw new Error(STATIC_MSG);
   const extra: Record<string, string> = {};
   if (apiKey) extra["x-anthropic-key"] = apiKey;
   // Gate 1's Continue carries the scope it SHOWED (08-27 #3), frozen server-side for every later leg.
   if (body) extra["content-type"] = "application/json";
-  return json(
-    await fetch(`${BASE}/resume/${jobId}`, {
+  const headers = await authed(extra);
+  return scoreJson(() =>
+    fetch(`${BASE}/resume/${jobId}`, {
       method: "POST",
-      headers: await authed(extra),
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     }),
   );

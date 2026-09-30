@@ -74,6 +74,11 @@ export interface CarveProposalProps {
   /** The ids accept will send. Surfaced as data so a gate can assert the set is exactly one. */
   acceptGroupIds?: string[];
   accepting?: boolean;
+  /**
+   * The inline key field, after the server refused this division for want of a BYOK key (08-28) — rendered
+   * beside the price, above the accept it unblocks, so the reviewer answers it where they pressed.
+   */
+  keyField?: React.ReactNode;
   onAccept?: () => void;
   onEdit?: () => void;
   onIgnore?: () => void;
@@ -91,6 +96,7 @@ export function CarveProposal({
   acceptPrice,
   acceptGroupIds,
   accepting = false,
+  keyField,
   onAccept,
   onEdit,
   onIgnore,
@@ -174,6 +180,7 @@ export function CarveProposal({
           {acceptPrice}
         </p>
       )}
+      {!advisory && readjudicationEnabled && keyField}
 
       {!advisory && (
       <div className="flex flex-wrap items-center gap-2">

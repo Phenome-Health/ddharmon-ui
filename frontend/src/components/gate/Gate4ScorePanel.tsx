@@ -2,7 +2,9 @@ import { useState } from "react";
 import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotAvailable } from "@/components/gate/NotAvailable";
+import { RunKeyField } from "@/components/gate/RunKeyField";
 import { matchDeclaredScore } from "@/lib/api";
+import { heldRunKey, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateScoreMatchUsd, formatUsd } from "@/lib/estimate";
 import { gate4MatchRefusal, matchActionLabel, type DeclaredScore } from "@/lib/score-match";
 import {
@@ -71,6 +73,8 @@ export interface Gate4ScorePanelProps {
 export function Gate4ScorePanel({ jobId, score, spec, pinned, onMatched }: Gate4ScorePanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  /** The server refused the match for want of a BYOK key (08-28): the field shows here, where it was pressed. */
+  const [keyAsk, setKeyAsk] = useState<KeyRefusal | null>(null);
   const refusal = gate4MatchRefusal({ pinned });
   const n = score.components.length;
 
@@ -84,8 +88,12 @@ export function Gate4ScorePanel({ jobId, score, spec, pinned, onMatched }: Gate4
     setBusy(true);
     setError("");
     try {
-      onMatched(await matchDeclaredScore(jobId, score.scoreName));
+      // The tab's held key rides the match (08-28); with none, the server decides.
+      const matched = await matchDeclaredScore(jobId, score.scoreName, heldRunKey());
+      setKeyAsk(null);
+      onMatched(matched);
     } catch (e) {
+      setKeyAsk(keyAskFor(e, { pinned }));
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -272,6 +280,7 @@ export function Gate4ScorePanel({ jobId, score, spec, pinned, onMatched }: Gate4
             {error}
           </p>
         )}
+        {keyAsk && !refusal && <RunKeyField reason={keyAsk} action={spec ? "Match again" : "Match"} />}
       </div>
     </section>
   );

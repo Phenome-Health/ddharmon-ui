@@ -41,6 +41,7 @@ import {
   UNASSIGNED_GROUP_ID,
 } from "@/components/gate/MemberChip";
 import { NotAvailable } from "@/components/gate/NotAvailable";
+import { RunKeyField } from "@/components/gate/RunKeyField";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { gate1BillableGroups, gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
@@ -50,6 +51,7 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
+import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
 import {
   DEFAULT_BUCKET,
@@ -1333,6 +1335,7 @@ function ExpandedGroup({
   onAcceptCarve,
   onIgnoreCarve,
   accepting,
+  carveKeyField,
   highlightIds,
   divisionParts = [],
   onUndoDivision,
@@ -1363,6 +1366,8 @@ function ExpandedGroup({
   onAcceptCarve: () => void;
   onIgnoreCarve: () => void;
   accepting: boolean;
+  /** The inline key field, after the server refused this group's division for want of a BYOK key (08-28). */
+  carveKeyField?: React.ReactNode;
   /** The score builder's matched variables, when this group was opened from the score panel. */
   highlightIds?: ReadonlySet<string>;
 }) {
@@ -1495,6 +1500,7 @@ function ExpandedGroup({
               acceptPrice={carvePrice}
               accepting={accepting}
               acceptGroupIds={readjudicationRequest(group.groupId).groupIds}
+              keyField={carveKeyField}
               onAccept={onAcceptCarve}
               onIgnore={() => {
                 setIgnored(true);
@@ -2407,6 +2413,13 @@ export default function Gate1Page() {
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const [resuming, setResuming] = useState(false);
+  /**
+   * The server refused a paid press for want of a BYOK key (08-28) — Continue, or one group's division — so the
+   * key field shows where it was pressed. The tab's key is shared (`lib/run-key.ts`): entered at either place,
+   * it is what both presses send next.
+   */
+  const [continueKeyAsk, setContinueKeyAsk] = useState<KeyRefusal | null>(null);
+  const [carveKeyAsk, setCarveKeyAsk] = useState<{ groupId: string; reason: KeyRefusal } | null>(null);
 
   // Cross-cohort-only replaces the bucket partition: on = the harmonization subset, off = every group.
   const [xcOnly, setXcOnly] = useState(false);
@@ -2901,7 +2914,9 @@ export default function Gate1Page() {
     try {
       // EXACTLY ONE ID, built by a named function so the prohibition has somewhere to be asserted.
       const { groupIds } = readjudicationRequest(groupId);
-      const res = await readjudicateGroups(jobId, groupIds);
+      // The tab's held key rides the re-split (08-28); with none, the server decides.
+      const res = await readjudicateGroups(jobId, groupIds, heldRunKey());
+      setCarveKeyAsk(null);
       // THE DIVISION IS THE REVIEWER'S OWN DECISIONS NOW (08-28 follow-up #1): a New group per part and a move
       // per variable, written server-side in the same request as the paid re-split, and returned with their
       // versions. The decision hooks hydrate once per run, so they are absorbed here — the parts appear at once,
@@ -2923,6 +2938,9 @@ export default function Gate1Page() {
         );
       }
     } catch (e) {
+      // No preview exemption here: a division is a paid re-split whatever mode the run was started in.
+      const reason = keyAskFor(e, { pinned: pinned === true });
+      setCarveKeyAsk(reason ? { groupId, reason } : null);
       toast.error(
         e instanceof Error ? e.message : "Could not re-split that group",
       );
@@ -3135,13 +3153,15 @@ export default function Gate1Page() {
     try {
       const { target } = await resumeRun(
         jobId,
-        undefined,
+        // The tab's held key rides every Continue (08-28); with none, the server decides.
+        heldRunKey(),
         // the SAME list the commit bar prices (08-27 audit B3)
         gate1ScopePayload(
           inScopeGroups.map((g) => g.groupId),
           isInScope,
         ),
       );
+      setContinueKeyAsk(null);
       /**
        * CONFIRM BEFORE MOVING. A 200 from this route is not proof the run advanced — see
        * `resumeTookEffect` for the defect and its reproduction. Navigating on the body alone would land
@@ -3152,7 +3172,7 @@ export default function Gate1Page() {
        * the response is sent. FAIL-OPEN if the check itself cannot be made — a transient GET failure is
        * not evidence that the resume failed, and the server did say yes.
        */
-      const after = await getCheckpoint(jobId).catch(() => null);
+      const after = await getCheckpoint(jobId, heldRunKey()).catch(() => null);
       if (after && !resumeTookEffect(after, target)) {
         toast.error(
           "The server accepted Continue, but this run has not started — it is still parked at this gate. Nothing was charged. Please report this run id.",
@@ -3164,6 +3184,7 @@ export default function Gate1Page() {
       );
       navigate(pathForGate(jobId, target));
     } catch (e) {
+      setContinueKeyAsk(keyAskFor(e, { pinned: !!pinned, preview: isPreviewRun(runConfig) }));
       toast.error(
         e instanceof Error ? e.message : "Could not continue this run",
       );
@@ -3705,6 +3726,11 @@ export default function Gate1Page() {
                     </>
                   }
                   accepting={accepting === detailGroup.groupId}
+                  carveKeyField={
+                    carveKeyAsk?.groupId === detailGroup.groupId ? (
+                      <RunKeyField reason={carveKeyAsk.reason} action="Accept this division" />
+                    ) : undefined
+                  }
                   onAcceptCarve={() => void acceptCarve(detailGroup.groupId)}
                   onIgnoreCarve={() => undefined}
                   divisionParts={reviewerRows.filter((g) => g.readjudicatedFrom === detailGroup.groupId)}
@@ -3738,6 +3764,9 @@ export default function Gate1Page() {
 
       <CommitBar
         action="Continue to Gate 2"
+        keyField={
+          continueKeyAsk ? <RunKeyField reason={continueKeyAsk} action="Continue to Gate 2" /> : undefined
+        }
         // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
         // cost there would claim a purchase that does not happen.
         total={pinned !== true && groups.length > 0 ? quote : undefined}
