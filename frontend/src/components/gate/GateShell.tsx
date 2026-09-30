@@ -10,6 +10,7 @@ import { GATE_LABELS, GATE_SEQUENCE, GateRail, type GateRailItem } from "@/compo
 import { HowToPanel } from "@/components/gate/HowToPanel";
 import { RunProgress } from "@/components/gate/RunProgress";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
+import { ConflictNotice } from "@/components/gate/ConflictNotice";
 import { realizedSpendByGate, stopCostSplit } from "@/lib/estimate";
 import { isInFlight } from "@/lib/run-state";
 
@@ -28,7 +29,8 @@ import { isInFlight } from "@/lib/run-state";
  *  3. **Gate rail** — five columns, always. See `GateRail`.
  *  4. **How-to panel** — on the ground, above the working surface. See `HowToPanel`.
  *  5. **Banner slots** — the sandbox banner (passed in by the page, since only it knows whether the run is
- *     the shared demo) and the resume banner (rendered here from `resumed`).
+ *     the shared demo) and the resume banner (rendered here from `resumed`). Plus the two-tab conflict notice
+ *     (`ConflictNotice`), which every decision hook on the screen feeds — see `lib/gate-conflicts.ts`.
  *
  * PLUS THE STOP CONTROL, and it is HERE rather than on a page on purpose (08-14 Task 4). Before this,
  * no screen under `pages/run/` or `components/gate/` offered a cancel: with a run in flight the only way
@@ -202,6 +204,9 @@ export function GateShell({
 
       {sandboxBanner}
       {resumed && <ResumeBanner gate={gate} costSoFar={costSoFar} />}
+      {/* The two-tab notice (UI-SPEC §8.4, 08-28 3f): ONE placement, every screen — fixed to the viewport, so it
+          renders nothing here in the flow and nothing at all until a save on this run replaced an unseen one. */}
+      {jobId && <ConflictNotice jobId={jobId} />}
 
       {/* (2) Masthead. */}
       <header className="flex flex-col gap-2">

@@ -990,6 +990,82 @@ def test_a_blind_write_over_an_existing_decision_is_reported(tmp_path, monkeypat
     assert blind.json()["conflict"] is not None
 
 
+def test_the_list_route_serves_each_rows_updated_at(tmp_path, monkeypatch):
+    """08-28 3f (audit Theme C): a client seeds its conflict base from a READ, so the read must carry the version.
+
+    Before, ``GET .../artifacts`` served payloads without ``updatedAt``, so the first save after every reload was
+    blind and reported a conflict nobody had caused - the notice a reviewer learns to dismiss.
+    """
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        put = c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        served = c.get("/api/harmonize/jobs/j1/artifacts").json()["artifacts"][GATE2_CANDIDATE_PICK]
+        assert [row["updatedAt"] for row in served] == [put.json()["updatedAt"]]
+
+        # The reload-then-save case: a base seeded from the read is the version stored, so it is not a conflict.
+        again = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(chosen="CDE:2"),
+            params={"base": served[0]["updatedAt"]},
+        )
+    assert again.json()["conflict"] is None, "the first save after a reload is not a conflict"
+
+
+def test_two_tabs_seeded_from_the_same_read_the_second_save_is_the_conflict(tmp_path, monkeypatch):
+    """Two writers holding the SAME base: the first replaces what it saw (quiet); the second replaces a version it
+    never saw, and that save carries the notice - with the version it replaced, so the client can say so."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        c.put("/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick", json=_decision_payload())
+        # Both tabs loaded the page, so both seeded the same base from the same read.
+        base = c.get("/api/harmonize/jobs/j1/artifacts").json()["artifacts"][GATE2_CANDIDATE_PICK][0]["updatedAt"]
+        tab_a = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(chosen="CDE:2"),
+            params={"base": base},
+        )
+        tab_b = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json=_decision_payload(chosen="CDE:1"),
+            params={"base": base},
+        )
+    assert tab_a.json()["conflict"] is None
+    conflict = tab_b.json()["conflict"]
+    assert conflict is not None, "tab B silently replaced tab A's decision"
+    assert conflict["replacedUpdatedAt"] == tab_a.json()["updatedAt"]
+    assert "another tab" in conflict["message"].lower()
+
+
+def test_updated_at_is_server_owned_and_never_stored_from_a_write(tmp_path, monkeypatch):
+    """A client that echoes a served row back must not plant its own ``updatedAt`` in the payload: the version is
+    the ROW's, and a stale copy riding inside the payload is a second, wrong answer to "which version is this"."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _completed_job("j1")
+        put = c.put(
+            "/api/harmonize/jobs/j1/artifacts/gate2_candidate_pick",
+            json={**_decision_payload(), "updatedAt": 1.0},
+        )
+        served = c.get("/api/harmonize/jobs/j1/artifacts").json()["artifacts"][GATE2_CANDIDATE_PICK]
+        stored = app_module.store.artifacts.get_one(
+            owner=LOCAL_PRINCIPAL, job_id="j1", kind=GATE2_CANDIDATE_PICK, item_key="g1"
+        )
+    assert served[0]["updatedAt"] == put.json()["updatedAt"] != 1.0
+    assert stored is not None and "updatedAt" not in stored.payload
+
+
+def test_other_readers_of_a_runs_artifacts_get_plain_payloads(artifacts):
+    """Only the list route serves the version. Every other reader (exports, the job payload) folds decisions into
+    results, and a timestamp there would be noise in every file a reviewer downloads."""
+    artifacts.put(owner=USER_A, job_id="run-1", kind=GATE2_CANDIDATE_PICK, payload=_decision_payload())
+    plain = artifacts.get_all(owner=USER_A, job_id="run-1")[GATE2_CANDIDATE_PICK]
+    versioned = artifacts.get_all(owner=USER_A, job_id="run-1", with_updated_at=True)[GATE2_CANDIDATE_PICK]
+    assert "updatedAt" not in plain[0]
+    assert isinstance(versioned[0]["updatedAt"], float)
+
+
 def test_a_non_decision_kind_is_never_given_a_conflict_notice(tmp_path, monkeypatch):
     """The shipped writers (verdicts, composites) do not carry a version and were never asked to. Reporting
     a conflict on every one of their re-saves would be pure noise."""

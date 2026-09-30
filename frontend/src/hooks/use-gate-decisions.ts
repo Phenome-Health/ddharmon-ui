@@ -18,6 +18,13 @@ import {
   type GateDecisionKind,
   type GroupedDecisions,
 } from "@/lib/gate-decisions";
+import {
+  announceConflict,
+  seedBases,
+  splitServedRows,
+  writeAgainstBase,
+  type GateDecisionConflict,
+} from "@/lib/gate-conflicts";
 import { gateDecisionsOf, readSandbox, withGateDecision, writeSandbox } from "@/lib/sandbox";
 
 /**
@@ -48,23 +55,11 @@ import { gateDecisionsOf, readSandbox, withGateDecision, writeSandbox } from "@/
  * import and the logic still has a test.
  */
 export * from "@/lib/gate-decisions";
+// The two-tab half (08-28 3f): the version each decision was SHOWN at, carried into its next save, and the
+// notice a replaced-unseen save raises. `GateDecisionConflict` lives there now; re-exported so imports hold.
+export * from "@/lib/gate-conflicts";
 
 // --- the hook -----------------------------------------------------------------------------------------
-
-/** The two-tab notice, as the backend returns it (UI-SPEC §8.4 copy, verbatim, server-side). */
-export interface GateDecisionConflict {
-  replacedUpdatedAt: number;
-  message: string;
-  /**
-   * Whether this client told the server which version it was replacing.
-   *
-   * `false` means the write was blind — which the server reports as a conflict by design, and which is
-   * also what every first write after a reload looks like, because `GET .../artifacts` serves payloads
-   * without their `updatedAt`. A screen should treat a blind conflict as weaker evidence than a
-   * versioned one rather than showing the same alarm for both.
-   */
-  sentBase: boolean;
-}
 
 export interface WriteOptions {
   /** The identifier taken. `""` means "none of these". */
@@ -142,7 +137,11 @@ export function useGateDecisions(
   );
   const [conflict, setConflict] = useState<GateDecisionConflict | null>(null);
   const hydratedRef = useRef<string | null>(null);
-  /** The `updatedAt` this client last saw per identity — a ref, because no render depends on it. */
+  /**
+   * The `updatedAt` this client last saw per identity — a ref, because no render depends on it. Seeded from the
+   * read at hydration (each served row carries its version) and moved by every save, so a save names the version
+   * the reviewer was looking at: the first save after a reload is no longer blind.
+   */
   const baseRef = useRef<Record<string, number>>({});
 
   const { data, isLoading, refetch } = useQuery({
@@ -159,11 +158,16 @@ export function useGateDecisions(
   const serverStale = useMemo(() => data?.stale ?? [], [data]);
 
   useEffect(() => {
-    const payload = data?.artifacts as GroupedDecisions;
+    const { rows, versions } = splitServedRows(data?.artifacts);
+    const payload = rows as GroupedDecisions;
     if (!shouldHydrate({ jobId, hydratedJobId: hydratedRef.current, payload })) return;
     hydratedRef.current = jobId;
+    // ONLY at hydration: a later refetch's rows are not merged into what the screen shows (guard 1), so a version
+    // taken from one would claim this tab had seen a decision it never displayed — and hide the very conflict the
+    // notice exists for.
+    baseRef.current = seedBases(baseRef.current, versions[kind]);
     setIndex((prev) => mergeDecisionIndex(indexDecisions(payload), prev));
-  }, [jobId, data]);
+  }, [jobId, data, kind]);
 
   const stale = useMemo(() => {
     const derived = deriveStaleness(index);
@@ -189,10 +193,19 @@ export function useGateDecisions(
           await deleteArtifact(jobId, kind, itemKey);
           delete baseRef.current[itemKey];
         } else {
-          const sentBase = baseRef.current[itemKey];
-          const stored = await putArtifact(jobId, kind, payload, sentBase);
-          baseRef.current[itemKey] = stored.updatedAt;
-          if (stored.conflict) setConflict({ ...stored.conflict, sentBase: sentBase !== undefined });
+          const replaced = await writeAgainstBase(
+            (body, base) => putArtifact(jobId, kind, body, base),
+            baseRef.current,
+            itemKey,
+            payload,
+            { kind },
+          );
+          if (replaced) {
+            setConflict(replaced);
+            // Told to the SCREEN, not only held here: a screen mounts several of these hooks, and one notice in
+            // `GateShell` hears them all. Stored-but-unshown was the defect (audit Theme C).
+            announceConflict(jobId, replaced);
+          }
         }
         await refetch();
         return true;
