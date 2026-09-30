@@ -31,6 +31,15 @@ WHAT EACH DECISION DOES TO THE EXPORT (and what it deliberately does not):
   it and regenerated its specs), the record already names the reviewer's target and its specs were built for
   it, so nothing is flagged; the MODEL's pick is read from that stamp (``modelCde`` / ``modelVerdict`` /
   ``modelGencde``), never from the re-targeted record, which says the pick (08-28 1e, F17).
+* ``gate2_relation`` — the SKOS predicate the reviewer asserts between the group and ONE target (keyed on that
+  edge), plus a free-text ``note``. Every record carries the relation on its EFFECTIVE target (the pick, else
+  the model's) as ``relation``, who asserted it as ``relationBy`` (``reviewer`` / ``model`` / ``""`` for nobody),
+  the note as ``relationNote``, and the MODEL's relation to its own target as ``modelRelation`` — so an override
+  is visible and the model's claim is never erased. The model implies a relation only for its own catalog
+  target: an adopt is ``skos:exactMatch`` (the element taken as-is), a refine carries the predicate core stamped
+  on its derived element. A target the reviewer picked instead was never judged by the model, and the group's
+  own generated element has no relation to assert. A relation set on a target the group no longer takes stays
+  in the log, marked not applied, and reaches no record. ``chosen: ""`` is a note with no relation asserted.
 * ``gate3_spec_edit`` — ``rejected: true`` marks the recode rejected: excluded from the notebook, marked in
   the TSV and the records JSON, logged. An edited ``mapping`` / ``numberMap`` / ``bins`` rides on the
   transform as ``reviewerEdit`` and is what the notebook applies, in the target's CODES (an edit saved in labels
@@ -63,6 +72,7 @@ from backend.artifact_kinds import (
     GATE3_SPEC_EDIT,
     GATE4_EXPORT_SELECTION,
     GATE_DECISION_KINDS,
+    SKOS_RELATIONS,
     VERDICT,
     derive_staleness,
 )
@@ -116,6 +126,17 @@ NONE_OF_THESE = "none of these"
 
 #: A Gate 3 row that carries neither an edit nor a note: the model's spec is what stands (08-28 1e, F7).
 REVERTED_TO_MODEL = "reverted to model spec"
+
+#: What a Gate 2 relation row with no relation asserted (``chosen == ""`` — a note only) reads as.
+NO_RELATION = "no relation asserted"
+
+#: A relation's ``targetId`` for the group's OWN element when it has no GenCDE id (a reviewer authored one on a
+#: concept core generated nothing for, so the pick's ``chosen`` is ""). Mirrored in ``frontend/src/lib/gate23.ts``.
+OWN_TARGET = "own"
+
+#: Why a decision reached no record — the group is not in the results, or the edge is not the group's target.
+NOT_APPLIED_ABSENT = "no record for this group in the run's results"
+NOT_APPLIED_TARGET = "not this group's current target"
 
 #: What a per-code diff calls a code that yields no value (absent from the map, or the missing sentinel).
 MISSING = "missing"
@@ -207,6 +228,54 @@ def model_verdict(record: dict[str, Any]) -> str:
     return str(stamp.get("modelVerdict") or "")
 
 
+def own_ids(record: dict[str, Any]) -> set[str]:
+    """Every id that names the group's OWN generated element: "", :data:`OWN_TARGET`, its GenCDE id now, the
+    model's (from the stamp), and the stamped target when the applied pick was the group's own element."""
+    stamp = _stamp(record) or {}
+    ids = {"", OWN_TARGET, _gencde_id(record.get("gencde")), _gencde_id(stamp.get("modelGencde"))}
+    if stamp.get("kind") == "gencde":
+        ids.add(str(stamp.get("target") or ""))
+    return ids
+
+
+def same_target(record: dict[str, Any], a: str, b: str) -> bool:
+    """Whether two target ids name one target — the group's own element counts as one, however it is named."""
+    own = own_ids(record)
+    return a == b or (a in own and b in own)
+
+
+def effective_target(record: dict[str, Any], pick: dict[str, Any] | None) -> str:
+    """The id the group targets as the reviewer left it: the pick (resolved by its tinyId), else the record's own."""
+    if pick is None or not isinstance(pick.get("chosen"), str):
+        return _current_target(record)
+    ref = _catalog_ref(record, pick["chosen"], str(pick.get("externalId") or "").strip())
+    return ref["id"] if ref else pick["chosen"]
+
+
+def model_relation(record: dict[str, Any], target_id: str) -> str:
+    """The SKOS relation the PIPELINE implies between the group and ``target_id`` — "" when it implies none.
+
+    Only the model's own CATALOG target carries one: an adopt is ``skos:exactMatch`` (the element taken as-is), a
+    refine the predicate core stamped on its derived element (``GenCDE.relation``, vs the parent it refines). Read
+    from the stamp once the Gate 2 -> 3 leg re-targeted the record (F17). Mirrored by ``modelRelation`` in
+    ``frontend/src/lib/gate4.ts``.
+    """
+    model = model_target(record)
+    if not model or model in own_ids(record) or target_id != model:
+        return ""
+    if model_verdict(record) == "adopt":
+        return SKOS_RELATIONS[0]
+    stamp = _stamp(record)
+    gencde = stamp.get("modelGencde") if stamp is not None else record.get("gencde")
+    stamped = str((gencde or {}).get("relation") or "") if isinstance(gencde, dict) else ""
+    return stamped if stamped in SKOS_RELATIONS else ""
+
+
+def relation_on(record: dict[str, Any], relations: list[dict[str, Any]], target_id: str) -> dict[str, Any] | None:
+    """The reviewer's relation decision on the (group, ``target_id``) edge, if one was written."""
+    return next((d for d in relations if same_target(record, str(d.get("targetId") or ""), target_id)), None)
+
+
 def _catalog_ref(record: dict[str, Any], cde_id: str, external_id: str = "") -> dict[str, str] | None:
     """The CdeRef for a picked id: a catalog candidate, or None for "no catalog target".
 
@@ -250,6 +319,9 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
     renames = _by_key(grouped, GATE1_RENAME)
     picks = _by_key(grouped, GATE2_CANDIDATE_PICK)
     specs = _by_key(grouped, GATE3_SPEC_EDIT)
+    relations: dict[str, list[dict[str, Any]]] = {}
+    for d in _by_key(grouped, GATE2_RELATION).values():
+        relations.setdefault(str(d.get("groupId") or ""), []).append(d)
 
     out: list[dict[str, Any]] = []
     for raw in result.get("records") or []:
@@ -290,6 +362,16 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
             if isinstance(pick.get("gencdeEdit"), dict):
                 r["gencdeEdit"] = pick["gencdeEdit"]
         new_target = (r.get("cde") or {}).get("id") or ""
+
+        # The relation on the target the group now takes: the reviewer's when asserted, else the model's (3f).
+        target = effective_target(raw, pick)
+        rel = relation_on(raw, relations.get(gid, []), target)
+        asserted = str((rel or {}).get("chosen") or "")
+        implied = model_relation(raw, target)
+        r["relation"] = asserted or implied
+        r["relationBy"] = "reviewer" if asserted else ("model" if implied else "")
+        r["modelRelation"] = model_relation(raw, model_target(raw))
+        r["relationNote"] = str((rel or {}).get("note") or "")
 
         for t in r.get("transforms") or []:
             decision = specs.get(str(t.get("sourceVariable") or ""))
