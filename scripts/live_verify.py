@@ -70,6 +70,25 @@ INVARIANTS = {
 # --- reporting ------------------------------------------------------------------------------------------------
 
 
+def playwright_log_name(stage: str, tag: str | None = None) -> str:
+    """One log per live Playwright run. The in-flight watch runs once per leg, so it is tagged with the leg — an
+    untagged name let each leg overwrite the last, and the Gate 4 leg (it parks in 0 s) always erased the evidence."""
+    return f"playwright_{stage}_{tag}.log" if tag else f"playwright_{stage}.log"
+
+
+def inflight_outcome(log_text: str) -> str:
+    """``pass`` / ``fail`` / ``skip`` for one in-flight watch, from the line reporter's summary.
+
+    ``LIVE_STAGE=inflight`` skips every other live spec, so the in-flight spec's own result decides it; it skips
+    itself when the leg parked before the page could be looked at.
+    """
+    if re.search(r"^\s*\d+ failed\b", log_text, re.M):
+        return "fail"
+    if re.search(r"^\s*\d+ passed\b", log_text, re.M):
+        return "pass"
+    return "skip"
+
+
 @dataclass
 class Check:
     ok: bool
@@ -333,7 +352,7 @@ class Driver:
 
         playwright_inflight = None
         if self.args.playwright and label != "leg1":
-            playwright_inflight = self.playwright_async("inflight")
+            playwright_inflight = self.playwright_async("inflight", tag=label)
         last = self.api.stream(self.job_id, on_frame)
         if last.get("status") not in ("awaiting_review", "complete"):
             # the stream can end on a transient frame; poll the job until it settles
@@ -350,7 +369,14 @@ class Driver:
         leg["tapUsd"] = tap_usd(tap_rows(self.tap, t0, leg["t1"]))
         leg["tapCalls"] = len(tap_rows(self.tap, t0, leg["t1"]))
         if playwright_inflight is not None:
-            leg["playwrightInflight"] = playwright_inflight.wait()
+            res = playwright_inflight.wait()
+            leg["playwrightInflight"] = res
+            outcome = inflight_outcome(Path(res["log"]).read_text(errors="replace"))
+            if outcome == "skip":
+                self.report.note("I12", f"{label}: parked before the in-flight watch could look")
+            else:
+                self.report.check("I12", outcome == "pass", f"{label}: no false empty state while the leg ran",
+                                  res["log"])  # fmt: skip
         self.save()
         print(f"· {label}: {leg['status']} at {leg['gate']} in {leg['t1'] - t0:.0f}s, tap ${leg['tapUsd']:.4f}")
         if leg["status"] not in ("awaiting_review", "complete"):
@@ -397,10 +423,11 @@ class Driver:
 
     # -- playwright ----------------------------------------------------------------------------------------------
 
-    def playwright_async(self, stage: str) -> Any:
+    def playwright_async(self, stage: str, tag: str | None = None) -> Any:
         env = {**os.environ, "LIVE_BASE_URL": self.args.base_url, "LIVE_JOB": self.job_id, "LIVE_STAGE": stage,
                "LIVE_OUT": str(self.out.resolve())}  # fmt: skip
-        log = open(self.out / f"playwright_{stage}.log", "w")  # noqa: SIM115 - closed by the waiter
+        log_path = self.out / playwright_log_name(stage, tag)
+        log = open(log_path, "w")  # noqa: SIM115 - closed by the waiter
         proc = subprocess.Popen(
             ["npx", "playwright", "test", "--config", "playwright.live.config.ts", "--reporter=line"],
             cwd=ROOT / "frontend",
@@ -409,13 +436,11 @@ class Driver:
             stderr=subprocess.STDOUT,
         )
 
-        out = self.out
-
         class _Waiter:
             def wait(self) -> dict[str, Any]:
                 code = proc.wait(timeout=900)
                 log.close()
-                return {"stage": stage, "exit": code, "log": str(out / f"playwright_{stage}.log")}
+                return {"stage": stage, "exit": code, "log": str(log_path)}
 
         return _Waiter()
 
