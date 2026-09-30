@@ -1,5 +1,5 @@
 {
- "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations. 08-28 1e adds: an APPLIED re-pick (reviewerPick stamp), a pick on an absent group, an empty Gate 3 row, a per-code mapping diff, and score declarations collapsed to one row per score.",
+ "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations. 08-28 1e adds: an APPLIED re-pick (reviewerPick stamp), a pick on an absent group, an empty Gate 3 row, a per-code mapping diff, and score declarations collapsed to one row per score. 08-28 3f adds Gate 2 relations: one on the picked target, one on the model's (now not current) target, note-only rows on an applied pick and on the group's own element, and one on an absent group.",
  "result": {
   "records": [
    {
@@ -403,6 +403,76 @@
     "optionSetKey": "k9"
    }
   ],
+  "gate2_relation": [
+   {
+    "groupId": "c0#g0",
+    "targetId": "AgeAtVisitCDE",
+    "chosen": "skos:broadMatch",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe",
+    "note": "visit age, broader"
+   },
+   {
+    "groupId": "c0#g0",
+    "targetId": "AgeCDE",
+    "chosen": "skos:closeMatch",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe"
+   },
+   {
+    "groupId": "c3#g0",
+    "targetId": "DiabetesCDE",
+    "chosen": "",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe",
+    "note": "checked, fine"
+   },
+   {
+    "groupId": "c2#g0",
+    "targetId": "GEN:hair",
+    "chosen": "",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe",
+    "note": "definition checked"
+   },
+   {
+    "groupId": "zz#g9",
+    "targetId": "AgeCDE",
+    "chosen": "skos:exactMatch",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe"
+   }
+  ],
   "gate3_spec_edit": [
    {
     "sourceVariable": "A:smoke",
@@ -613,6 +683,61 @@
    "zz#g9",
    "",
    "AgeCDE",
+   "",
+   "{\"notApplied\":\"no record for this group in the run's results\"}",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c0#g0|AgeAtVisitCDE",
+   "",
+   "skos:broadMatch",
+   "visit age, broader",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c0#g0|AgeCDE",
+   "skos:exactMatch",
+   "skos:closeMatch",
+   "",
+   "{\"notApplied\":\"not this group's current target\"}",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c3#g0|DiabetesCDE",
+   "",
+   "no relation asserted",
+   "checked, fine",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c2#g0|GEN:hair",
+   "",
+   "no relation asserted",
+   "definition checked",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "zz#g9|AgeCDE",
+   "",
+   "skos:exactMatch",
    "",
    "{\"notApplied\":\"no record for this group in the run's results\"}",
    "false"

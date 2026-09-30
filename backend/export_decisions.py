@@ -536,6 +536,7 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
     spec_by_source = {str(t.get("sourceVariable") or ""): t for r in records for t in r.get("transforms") or []}
     groups = {str(g.get("groupId") or ""): g for g in result.get("conceptGroups") or []}
     stale = {(s["kind"], s["itemKey"]) for s in derive_staleness(grouped)}
+    picks = _by_key(grouped, GATE2_CANDIDATE_PICK)
     regrouping = (config or {}).get(GATE1_OVERRIDES_CONFIG_KEY)
     applied_moves = set((regrouping or {}).get("moves") or {}) if isinstance(regrouping, dict) else set()
     passed_gate1 = isinstance((config or {}).get(GATE1_SCOPE_CONFIG_KEY), list) or isinstance(regrouping, dict)
@@ -576,12 +577,23 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                 rec = by_group.get(item)
                 if rec is None:
                     # F7: a pick on a group the results do not have took effect nowhere, and says so.
-                    extra["notApplied"] = "no record for this group in the run's results"
+                    extra["notApplied"] = NOT_APPLIED_ABSENT
                 else:
                     # F17: the MODEL's pick (from the stamp once the leg re-targeted the record) -> the reviewer's.
                     before = _chosen_label(model_target(rec))
                     after = _pick_label(rec, d)
                 detail = _j(extra) if extra else ""
+            elif kind == GATE2_RELATION:
+                # 3f: the model's relation for this edge ("" where it implied none) -> the reviewer's; "" is a note.
+                gid, target = str(d.get("groupId") or ""), str(d.get("targetId") or "")
+                after = str(d.get("chosen") or "") or NO_RELATION
+                rec = by_group.get(gid)
+                if rec is None:
+                    detail = _j({"notApplied": NOT_APPLIED_ABSENT})
+                else:
+                    before = model_relation(rec, target)
+                    if not same_target(rec, target, effective_target(rec, picks.get(gid))):
+                        detail = _j({"notApplied": NOT_APPLIED_TARGET})
             elif kind == GATE3_SPEC_EDIT:
                 spec = spec_by_source.get(item)
                 before = _spec_summary(spec)

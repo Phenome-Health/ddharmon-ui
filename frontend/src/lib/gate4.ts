@@ -7,6 +7,7 @@ import {
   deriveStaleness,
   inheritedGate1Scope,
 } from "@/lib/gate-decisions";
+import { OWN_TARGET, SKOS_RELATIONS } from "@/lib/gate23";
 
 /**
  * Gate 4's pure logic — the export catalog, the download-label rule, the decision-log rows, and the E3
@@ -228,7 +229,14 @@ export function decisionLogRows(
         thing: itemKey,
         chosen: String(d.chosen ?? ""),
         label: gid ? nameOf(gid) : undefined,
-        detail: detailOf(kind, d, nameOf, gid ? records.get(gid) : undefined, specBySource.get(itemKey)),
+        detail: detailOf(
+          kind,
+          d,
+          nameOf,
+          gid ? records.get(gid) : undefined,
+          specBySource.get(itemKey),
+          gid ? index.gate2_candidate_pick?.[gid] : undefined,
+        ),
         stale: stale.has(`${kind}${itemKey}`),
       });
     }
@@ -251,6 +259,7 @@ function detailOf(
   nameOf: (gid: unknown) => string | undefined,
   record: UIRecord | undefined,
   spec: UITransform | undefined,
+  pick: GateDecision | undefined,
 ): string | undefined {
   const q = (t: unknown) => `“${String(t)}”`;
   switch (kind) {
@@ -264,6 +273,21 @@ function detailOf(
       const model = record ? modelTarget(record) : "";
       const edited = d.gencdeEdit ? ", anchor edited" : "";
       return model && model !== d.chosen ? `${String(d.chosen)} (model picked ${model})${edited}` : `${String(d.chosen)}${edited}`;
+    }
+    case "gate2_relation": {
+      // 3f: the reviewer's predicate against the model's for the same edge, the note, and whether it applied.
+      const chosen = String(d.chosen ?? "");
+      const target = String(d.targetId ?? "");
+      const model = record ? modelRelation(record, target) : "";
+      const parts = [chosen ? (model && model !== chosen ? `${chosen} (model: ${model})` : chosen) : NO_RELATION];
+      if (typeof d.note === "string" && d.note.trim()) parts.push(`note: ${q(d.note.trim())}`);
+      const notApplied = !record
+        ? NOT_APPLIED
+        : !sameTarget(record, target, effectiveTarget(record, pick))
+          ? NOT_APPLIED_TARGET
+          : "";
+      if (notApplied) parts.push(`not applied: ${notApplied}`);
+      return parts.join(" · ");
     }
     case "gate3_spec_edit": {
       const parts: string[] = [];
@@ -337,6 +361,10 @@ const SPEC_EDIT_FIELDS = ["mapping", "numberMap", "bins"] as const;
 const REVERTED_TO_MODEL = "reverted to model spec";
 /** A pick on a group the results do not have — the backend's `notApplied` detail (F7). */
 const NOT_APPLIED = "no record for this group in the run's results";
+/** A relation on a target the group no longer takes — `NOT_APPLIED_TARGET` in the backend (3f). */
+const NOT_APPLIED_TARGET = "not this group's current target";
+/** A Gate 2 relation row that asserts no relation (a note only) — `NO_RELATION` in the backend (3f). */
+const NO_RELATION = "no relation asserted";
 /** What a per-code diff calls a code that yields no value — `MISSING` in the backend. */
 const MISSING = "missing";
 const MISSING_VALUES = new Set(["", "__missing__", MISSING]);
@@ -417,6 +445,54 @@ function pickLabel(record: UIRecord, d: GateDecision): string {
   const edited = isPlainObject(d.gencdeEdit);
   if (own) return edited ? `${own} (edited)` : own;
   return edited ? "your own CDE (edited)" : NONE_OF_THESE;
+}
+
+// --- the Gate 2 relation: the model's, and which target a group takes (08-28 3f) ---------------------------------
+//
+// Mirrors `backend/export_decisions.py` (`own_ids`, `same_target`, `effective_target`, `model_relation`).
+
+/** The model's verdict — from the stamp once the leg re-targeted the record (`model_verdict` in the backend). */
+function modelVerdictOf(record: UIRecord): string {
+  const stamp = stampOf(record);
+  return stamp ? String(stamp.modelVerdict || "") : String(record.verdict || "");
+}
+
+/** Whether two target ids name one target — the group's own element counts as one, however it is named. */
+function sameTarget(record: UIRecord, a: string, b: string): boolean {
+  const own = new Set([...ownIds(record), OWN_TARGET]);
+  return a === b || (own.has(a) && own.has(b));
+}
+
+/** The id a pick names, resolved by its tinyId when it carries one (`_catalog_ref` in the backend). */
+function resolvedPick(record: UIRecord, chosen: string, externalId: string): string {
+  if (!chosen || chosen === gencdeIdOf(record.gencde)) return chosen;
+  if (!externalId) return chosen;
+  const model = record.cde as { id?: string; externalId?: string } | null | undefined;
+  if (model?.id && model.externalId === externalId) return String(model.id);
+  const hit = record.candidates?.find((c) => c.cdeExternalId === externalId);
+  return String(hit?.cdeId || chosen);
+}
+
+/** The id the group targets as the reviewer left it: the pick, else the record's own current target. */
+function effectiveTarget(record: UIRecord, pick: GateDecision | undefined): string {
+  if (!pick || typeof pick.chosen !== "string") return currentTarget(record);
+  return resolvedPick(record, pick.chosen, String(pick.externalId ?? "").trim());
+}
+
+/**
+ * The SKOS relation the PIPELINE implies between a group and `targetId` — "" when it implies none. Only the
+ * model's own CATALOG target carries one: an adopt is `skos:exactMatch` (the element taken as-is), a refine the
+ * predicate core stamped on its derived element. A target the reviewer picked instead was never judged by the
+ * model, and the group's own generated element has nothing to assert.
+ */
+export function modelRelation(record: UIRecord, targetId: string): string {
+  const model = modelTarget(record);
+  if (!model || ownIds(record).has(model) || targetId !== model) return "";
+  if (modelVerdictOf(record) === "adopt") return SKOS_RELATIONS[0];
+  const stamp = stampOf(record);
+  const gencde = stamp ? stamp.modelGencde : record.gencde;
+  const stamped = isPlainObject(gencde) ? String(gencde.relation || "") : "";
+  return (SKOS_RELATIONS as readonly string[]).includes(stamped) ? stamped : "";
 }
 
 // --- a Gate 3 value-map edit as a per-code diff, in TARGET codes (08-28 Q3) ---------------------------------
@@ -528,6 +604,7 @@ export function decisionLogCsvRows(
   for (const r of records) for (const t of r.transforms ?? []) specBySource.set(String(t.sourceVariable ?? ""), t);
   const groups = new Map((result?.conceptGroups ?? []).map((g) => [String(g.groupId ?? ""), g]));
   const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}\u001f${s.itemKey}`));
+  const picks = index.gate2_candidate_pick ?? {};
 
   const rows: string[][] = [DECISION_LOG_CSV_COLS];
   // Past Gate 1 the regrouping is frozen (`config.gate1_overrides`): a move in it was APPLIED by the pipeline, one
@@ -567,6 +644,18 @@ export function decisionLogCsvRows(
           after = pickLabel(rec, d);
         }
         detail = Object.keys(extra).length ? stableJson(extra) : "";
+      } else if (kind === "gate2_relation") {
+        // 3f: the model's relation for this edge ("" where it implied none) -> the reviewer's; "" is a note.
+        const gid = String(d.groupId || "");
+        const target = String(d.targetId || "");
+        after = String(d.chosen || "") || NO_RELATION;
+        const rec = byGroup.get(gid);
+        if (rec === undefined) {
+          detail = stableJson({ notApplied: NOT_APPLIED });
+        } else {
+          before = modelRelation(rec, target);
+          if (!sameTarget(rec, target, effectiveTarget(rec, picks[gid]))) detail = stableJson({ notApplied: NOT_APPLIED_TARGET });
+        }
       } else if (kind === "gate3_spec_edit") {
         const spec = specBySource.get(item);
         before = specSummary(spec);
@@ -703,10 +792,16 @@ export function revisionRate(
         excludedCosmetic += 1; // the named P5 cosmetic example
       } else if (kind === "gate2_candidate_pick" || kind === "gate2_relation") {
         const gid = String(d.groupId ?? "");
+        const rec = recordOf.get(gid);
         // Against the MODEL's pick (the stamp, once the leg re-targeted the record — F17), never the record's
         // own isChosen, which after a re-target IS the pick: live 6c66731c read "1 of 8" when it was 2 of 8.
+        // A relation restating the model's for the same edge, with no note, is an acceptance too (3f) — a note is
+        // substantive, as on Gate 3.
         const noop =
-          kind === "gate2_candidate_pick" && !d.gencdeEdit && sameAsModel(recordOf.get(gid), String(d.chosen ?? ""));
+          kind === "gate2_candidate_pick"
+            ? !d.gencdeEdit && sameAsModel(rec, String(d.chosen ?? ""))
+            : !(typeof d.note === "string" && d.note.trim()) &&
+              (!d.chosen || (!!rec && d.chosen === modelRelation(rec, String(d.targetId ?? ""))));
         if (!noop) touch(gid);
       } else if (kind === "gate1_regroup") {
         if (d.fromGroupId !== d.chosen) {

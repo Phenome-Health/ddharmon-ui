@@ -847,3 +847,53 @@ def test_an_applied_repick_reads_the_models_relation_from_the_stamp(parked):
     assert (recs["c0#g0"]["relation"], recs["c0#g0"]["relationBy"]) == ("", ""), "AgeAtVisitCDE was never judged"
     assert recs["c3#g0"]["modelRelation"] == "", "the model's target was its own generated element"
     assert (recs["c3#g0"]["relation"], recs["c3#g0"]["relationBy"]) == ("skos:narrowMatch", "reviewer")
+
+
+def _rel_rows(result: dict, grouped: dict) -> dict[str, list[str]]:
+    from backend.export_decisions import decision_log_rows
+
+    return {r[3]: r for r in decision_log_rows(result, {}, grouped) if r[1] == _REL}
+
+
+def _logged(chosen: str, group: str, target: str, **extra) -> dict:
+    return {**_relation(group, target, chosen, **extra), "optionSetKey": option_set_key(_SKOS)}
+
+
+def test_the_decision_log_reads_a_relation_as_the_models_then_the_reviewers():
+    """``before`` is the model's relation for that edge ("" where it implied none), ``after`` the reviewer's, the note
+    in ``note`` — and a note with no relation reads as exactly that, never as "none of these"."""
+    grouped = {
+        _REL: [
+            _logged("skos:closeMatch", "c0#g0", "AgeCDE", note="consent age"),
+            _logged("", "c1#g0", "SmokeCDE", note="unsure"),
+            _logged("", "c2#g0", "GEN:hair", note="definition checked"),
+        ]
+    }
+    by = _rel_rows(_refined_result(), grouped)
+    age = by["c0#g0|AgeCDE"]
+    assert age[:3] == ["Gate 2", _REL, "Set a relation"]
+    assert (age[4], age[5], age[6], age[7]) == ("skos:exactMatch", "skos:closeMatch", "consent age", "")
+    smoke = by["c1#g0|SmokeCDE"]
+    assert (smoke[4], smoke[5], smoke[6]) == ("skos:narrowMatch", "no relation asserted", "unsure")
+    hair = by["c2#g0|GEN:hair"]
+    assert (hair[4], hair[5], hair[7]) == ("", "no relation asserted", ""), "the own element is the current target"
+
+
+def test_a_relation_that_reaches_no_record_is_logged_as_not_applied():
+    """F7's rule for picks, applied to relations: a row that took effect nowhere says so — the group is absent, or the
+    edge is not the target the group takes (the reviewer re-picked after setting it)."""
+    grouped = {
+        _REL: [
+            _logged("skos:closeMatch", "c0#g0", "AgeCDE"),
+            _logged("skos:broadMatch", "c0#g0", "AgeAtVisitCDE"),
+            _logged("skos:exactMatch", "zz#g9", "AgeCDE"),
+        ],
+        "gate2_candidate_pick": [
+            {"groupId": "c0#g0", "chosen": "AgeAtVisitCDE", "alternatives": ["AgeCDE", "AgeAtVisitCDE"], "optionSetKey": "k"}
+        ],
+    }  # fmt: skip
+    by = _rel_rows(_result(), grouped)
+    assert json.loads(by["c0#g0|AgeCDE"][7]) == {"notApplied": "not this group's current target"}
+    assert by["c0#g0|AgeCDE"][4] == "skos:exactMatch", "the model's relation to its own target is still the before"
+    assert (by["c0#g0|AgeAtVisitCDE"][4], by["c0#g0|AgeAtVisitCDE"][7]) == ("", ""), "the pick: applied, never judged"
+    assert json.loads(by["zz#g9|AgeCDE"][7]) == {"notApplied": "no record for this group in the run's results"}
