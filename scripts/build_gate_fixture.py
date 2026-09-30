@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import sys
 import tempfile
 from collections import Counter
@@ -49,15 +50,10 @@ STATIC = REPO / "frontend" / "public" / "static-data"
 SOURCE = STATIC / "result-demo-aireadi_aou_clsa_mesa_ukbb.json"
 OUT = STATIC / "result-demo-staged-gate1.json"
 
-#: The judge's verdicts on this same demo corpus. INTERNAL and gitignored, hence a sibling-repo path and a
-#: graceful absence: a checkout without it still builds a valid (fully unjudged) fixture.
-COHERENCE = (
-    REPO.parent
-    / "ph-arpa-data-harmonization"
-    / "harmonization_artifacts_coherence_ab"
-    / "demo_judge_aireadi_aou_clsa_mesa_ukbb"
-    / "records_coherence.json"
-)
+#: The judge's verdicts on this same demo corpus. INTERNAL and gitignored, so it is named by the environment
+#: (``DDHARMON_COHERENCE_RECORDS`` = the ``records_coherence.json`` of the demo judge run) and absent otherwise:
+#: a checkout without it still builds a valid (fully unjudged) fixture.
+COHERENCE = Path(os.environ.get("DDHARMON_COHERENCE_RECORDS") or "/nonexistent/records_coherence.json")
 
 #: How many UNJUDGED groups ride along, largest first. Every JUDGED group is carried unconditionally (there
 #: are 26 and they are the only source of three of the four coherence states); this caps the tail. The real
@@ -298,9 +294,7 @@ def main() -> int:
     # The UNCAPPED membership per group — the expanded row's source, and the one a regroup writes back
     # against. Emitted for every carried group even where it equals the collapsed sample, so the read path
     # is exercised rather than accidentally satisfied by the capped list.
-    group_members = {
-        str(rec.get("groupId") or ""): list(rec.get("members") or []) for rec in selected
-    }
+    group_members = {str(rec.get("groupId") or ""): list(rec.get("members") or []) for rec in selected}
     # `fieldIndex` restricted to the members actually carried: the raw dictionary rows behind a group, which
     # the expanded row renders as its evidence layer. The full demo index is 1000 entries and most of them
     # belong to groups this fixture does not carry.

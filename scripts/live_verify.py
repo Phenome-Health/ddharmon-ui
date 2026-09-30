@@ -1093,7 +1093,9 @@ def main() -> int:
     ap.add_argument("--base-url", default="http://127.0.0.1:8018")
     ap.add_argument("--fixture", default=str(ROOT / "tests/live/fixture"))
     ap.add_argument("--rig-dir", default=str(ROOT / ".ddharmon_ui/rig"))
-    ap.add_argument("--core", default=str(ROOT.parent / "ph-arpa-data-harmonization-0828"))
+    ap.add_argument(
+        "--core", default=os.environ.get("LIVE_CORE_DIR", ""), help="core checkout, for the report's commit"
+    )
     ap.add_argument("--out", required=True, help="iteration directory (state.json makes it resumable)")
     ap.add_argument("--run-mode", default="sync", choices=("sync", "batch"))
     ap.add_argument("--cde-set", default="endorsed", choices=("endorsed", "full"))

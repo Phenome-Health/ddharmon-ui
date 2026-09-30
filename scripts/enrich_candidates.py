@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]  # ddharmon-ui-gate23/
 FIXTURE = REPO / "frontend" / "public" / "static-data" / "result-demo-aireadi_aou_clsa_mesa_ukbb.json"
-CATALOG = REPO.parent / "ph-arpa-data-harmonization" / "data" / "examples" / "all_cdes_flat.tsv"
+# The full flattened CDE catalog (internal to the dev repo, gitignored here): named by the environment, else the
+# ui's own data/cde copy that a deploy supplies.
+CATALOG = Path(os.environ.get("DDHARMON_CDE_CATALOG") or REPO / "data" / "cde" / "all_cdes_flat.tsv")
 
 PV_CAP = 60  # a very long value list is capped in the fixture; the repo link has the full one.
 
