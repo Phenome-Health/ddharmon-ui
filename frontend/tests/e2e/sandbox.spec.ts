@@ -460,3 +460,296 @@ test.describe("guest sandbox — on screen", () => {
     expect(writes).toEqual([]);
   });
 });
+
+const BIG = "c8331409f61e1#g0"; // a large refine concept: 17 variables, 20 ranked candidates
+
+/** The shared-demo banner is on this screen, persistent and in the flow — never a dialog. */
+async function expectBanner(page: Page, screen: string): Promise<void> {
+  const banner = page.locator("[data-testid='sandbox-banner']");
+  await expect(banner, `${screen} carries no sandbox banner`).toBeVisible();
+  await expect(banner.locator("[data-testid='sandbox-banner-copy']")).toHaveText(SANDBOX_BANNER_COPY);
+  // Not a modal: no dialog role, not inside one, and the page behind it is not inert.
+  expect(await banner.evaluate((el) => !!el.closest("[role='dialog'],[role='alertdialog'],[aria-modal='true']"))).toBe(
+    false,
+  );
+  await expect(page.locator("[role='dialog']")).toHaveCount(0);
+}
+
+test.describe("guest sandbox — the walk, on screen", () => {
+  test("@sandbox guest sandbox: a guest walks every gate on the demo, edits at each, and nothing leaves the browser", async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await serveWalkableDemo(page);
+    const writes = watchWrites(page);
+    const unsaved = page.locator("[data-testid='sandbox-banner']");
+
+    // --- Setup: a read-back of the demo's parameters, banner and all.
+    await open(page, "setup");
+    await expectBanner(page, "Setup");
+    await expect(unsaved).toHaveAttribute("data-unsaved", "0");
+
+    // --- Gate 1: scope, rename, a New group, a move out of a group, and a declared score.
+    await page.locator("[data-testid='rail-link-gate1']").click();
+    await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+    await expectBanner(page, "Gate 1");
+    await page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']").click();
+    await expect(unsaved).toHaveAttribute("data-unsaved", "1"); // the count is LIVE, not one click behind
+
+    await page.locator(`[data-testid='ledger-row'][data-row-id='${BIG}']`).click();
+    const detail = page.locator("[data-testid='gate1-detail']");
+    await detail.locator("[data-testid='rename-group']").click();
+    const renameInput = detail.getByRole("textbox", { name: "Rename group" });
+    await renameInput.fill("Smoking — my working set");
+    await renameInput.press("Enter");
+
+    const member = detail.locator("[data-testid='member-row']").first();
+    const memberId = await member.getAttribute("data-member-id");
+    await detail.locator(`[data-testid='member-remove'][data-member-id='${memberId}']`).click();
+
+    await page.locator("[data-testid='new-group']").click();
+    const nameInput = page.locator("[data-testid='new-group-name']");
+    await nameInput.fill("Guest group");
+    await nameInput.press("Enter");
+    await expect(page.locator("[data-testid='ledger-row'][data-reviewer='true']", { hasText: "Guest group" })).toBeVisible();
+
+    await page.locator("[data-testid='score-panel-toggle']").click();
+    await page.locator("[data-testid='score-components']").fill("Weak grip strength\nSlow walking speed");
+    await page.getByRole("button", { name: "Declare these components" }).click();
+    await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
+
+    // --- Gate 2: re-pick a candidate for the renamed concept.
+    await page.locator("[data-testid='commit-bar']").getByRole("button", { name: /Continue to Gate 2/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate2$`));
+    await expectBanner(page, "Gate 2");
+    await page.locator(`[data-testid='gate2-concept'][data-concept-id='${BIG}']`).click();
+    // Keyed on `data-chosen`, which an expand does not move (the chosen row's "Selected" mark does).
+    const unchosen = page.locator("[data-testid='candidate-row']:not([data-chosen='true'])").first();
+    await unchosen.locator("[data-testid='candidate-expand']").click();
+    await unchosen.locator("[data-testid='candidate-select']").click();
+    const confirm = page.locator("[data-testid='repick-confirm']");
+    if (await confirm.isVisible().catch(() => false)) await page.locator("[data-testid='repick-accept']").click();
+
+    // --- Gate 3: a combine rule on the one column two AoU variables share, and a note on a spec.
+    await page.locator("[data-testid='gate2-continue']").click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate3$`));
+    await expectBanner(page, "Gate 3");
+    await page.locator(`[data-testid='gate3-concept'][data-concept-id='${PAIR}']`).click();
+    await page.getByTestId("combine-rule-select").selectOption("separate");
+    await expect(page.getByTestId("combine-rule")).toHaveAttribute("data-rule", "separate");
+    await page.locator("[data-testid='spec-note-input']").first().fill("Checked against the source dictionary.");
+    await page.locator("[data-testid='spec-save']").first().click();
+
+    // --- Gate 4: choose what to take away, and read it before it leaves.
+    await page.locator("[data-testid='gate3-continue']").click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate4$`));
+    await expectBanner(page, "Gate 4");
+    const tile = page.locator("[data-testid='artifact-tile']").first();
+    await tile.locator("[data-testid='artifact-checkbox']").click();
+    await expect(tile.locator("[data-testid='artifact-checkbox']")).not.toBeChecked();
+
+    // THE PROJECTION: every kind this walk exercised is what "clone with my changes" would carry.
+    const state = await heldState(page);
+    const carried = new Set(sandboxArtifactsOf(state).map((a) => a.kind));
+    for (const kind of [
+      "gate1_group_scope",
+      "gate1_rename",
+      "gate1_regroup",
+      "gate1_new_group",
+      "composite_swap",
+      "gate2_candidate_pick",
+      "gate3_combine_rule",
+      "gate3_spec_edit",
+    ]) {
+      expect(carried.has(kind), `${kind} was decided on the walk but is not in the clone projection`).toBe(true);
+    }
+    // The banner reports exactly what would be carried.
+    await expect(unsaved).toHaveAttribute("data-unsaved", String(sandboxWorkCount(state)));
+
+    // NOTHING LEFT THE BROWSER: no write of any kind, and no API call at all on the static demo.
+    expect(writes).toEqual([]);
+    // A guest's writes never reach a store, so they can never come back as a two-tab conflict.
+    await expect(page.locator("[data-testid='gate-conflict']")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test("@sandbox guest sandbox: a refresh keeps the edits; a new tab starts from none", async ({ page, context }) => {
+    await serveWalkableDemo(page);
+    await open(page, "gate1");
+    await page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']").click();
+    const banner = page.locator("[data-testid='sandbox-banner']");
+    await expect(banner).toHaveAttribute("data-unsaved", "1");
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(banner).toHaveAttribute("data-unsaved", "1");
+    await expect(page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']")).toBeChecked();
+
+    // sessionStorage is per tab: a second tab on the same demo holds none of it — "not saved" is literally true.
+    const other = await context.newPage();
+    await serveWalkableDemo(other);
+    await open(other, "gate1");
+    await expect(other.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "0");
+    expect(await other.evaluate((k) => sessionStorage.getItem(k), `${SANDBOX_PREFIX}${FINISHED_JOB}`)).toBeNull();
+  });
+
+  test("@sandbox guest sandbox: storage that throws leaves every screen working; the edit simply is not kept", async ({
+    page,
+  }) => {
+    // Private-mode Safari and a full quota both THROW from sessionStorage. Every access in the sandbox is
+    // best-effort, so the page must render, take the click and show it — only the refresh-survival is lost.
+    await page.addInitScript(() => {
+      const session = window.sessionStorage;
+      const boom = () => {
+        throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      };
+      for (const m of ["getItem", "setItem", "removeItem", "key", "clear"] as const) {
+        const original = Storage.prototype[m] as (...a: unknown[]) => unknown;
+        Storage.prototype[m] = function (this: Storage, ...args: unknown[]) {
+          if (this === session) boom();
+          return original.apply(this, args);
+        } as never;
+      }
+    });
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await serveWalkableDemo(page);
+    for (const gate of RAIL_SEQUENCE) {
+      await open(page, gate);
+      await expectBanner(page, gate);
+    }
+    await open(page, "gate1");
+    const scope = page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']");
+    await scope.click();
+    await expect(scope).toBeChecked(); // the screen still shows the decision it was given
+    expect(errors).toEqual([]);
+  });
+
+  test("@sandbox guest sandbox: storage cleared mid-walk continues from an empty sandbox", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await serveWalkableDemo(page);
+    await open(page, "gate1");
+    const scopeOf = (i: number) => page.locator("[data-testid='ledger-row']").nth(i).locator("[data-testid='queue-scope']");
+    await scopeOf(0).click();
+    await expect(page.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "1");
+
+    // The visitor clears site data (or the browser evicts it) between two screens.
+    await page.evaluate(() => sessionStorage.clear());
+    await page.locator("[data-testid='rail-link-gate2']").click();
+    await expect(page.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "0");
+    await page.locator("[data-testid='rail-link-gate1']").click();
+    await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+    await expect(scopeOf(0)).not.toBeChecked(); // nothing held, nothing shown — and no error
+    await scopeOf(1).click();
+    await expect(page.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "1");
+    expect(errors).toEqual([]);
+  });
+
+  test("@sandbox guest sandbox: a corrupt sandbox entry is read as empty, not as a crash", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await serveWalkableDemo(page);
+    await page.addInitScript(
+      ({ key }) => sessionStorage.setItem(key, JSON.stringify({ gateDecisions: { gate1_group_scope: "broken" } })),
+      { key: `${SANDBOX_PREFIX}${FINISHED_JOB}` },
+    );
+    await open(page, "gate1");
+    await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+    await expect(page.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "0");
+    expect(errors).toEqual([]);
+  });
+});
+
+/**
+ * The clone dialog, on screen. The static build has no auth, so the viewer is treated as able to own a run and the
+ * banner opens the dialog directly; the SIGN-IN route to the same dialog is `signInCloneOffer`, asserted in Node
+ * above, because no static build can sign anyone in. The clone POST itself cannot complete here (the static
+ * client refuses it before any request) — which makes it the honest place to prove a FAILED clone loses nothing.
+ */
+test.describe("guest sandbox — the clone dialog", () => {
+  const DEMO_NAME = "Demo · AI-READI + AoU + CLSA + MESA + UKBB";
+
+  async function withEdits(page: Page): Promise<void> {
+    await open(page, "gate1");
+    await page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']").click();
+    await page.locator("[data-testid='ledger-row']").nth(1).locator("[data-testid='queue-scope']").click();
+    await expect(page.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "2");
+  }
+
+  test("@sandbox guest sandbox: with edits, BOTH flavours are offered and neither is picked for you", async ({ page }) => {
+    await serveWalkableDemo(page);
+    await withEdits(page);
+    await page.locator("[data-testid='sandbox-keep']").click();
+    const dialog = page.locator("[data-testid='clone-dialog']");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute("data-unsaved", "2");
+    await expect(dialog.locator("[data-testid='clone-fresh']")).toHaveText(/Clone fresh/);
+    await expect(dialog.locator("[data-testid='clone-with-changes']")).toHaveText(/Clone with my changes \(2\)/);
+    await expect(dialog.locator("[data-testid='clone-name']")).toHaveValue(`${DEMO_NAME} (my copy)`);
+    // "Not now" keeps everything exactly as it was.
+    await dialog.locator("[data-testid='clone-not-now']").click();
+    await expect(dialog).toHaveCount(0);
+    expect(sandboxWorkCount(await heldState(page))).toBe(2);
+  });
+
+  test("@sandbox guest sandbox: with no edits there is nothing to carry, so only a clean copy is offered", async ({
+    page,
+  }) => {
+    await serveWalkableDemo(page);
+    await open(page, "gate2");
+    await expect(page.locator("[data-testid='sandbox-keep']")).toHaveText(/Make my own copy/);
+    await page.locator("[data-testid='sandbox-keep']").click();
+    const dialog = page.locator("[data-testid='clone-dialog']");
+    await expect(dialog.locator("[data-testid='clone-fresh']")).toBeVisible();
+    await expect(dialog.locator("[data-testid='clone-with-changes']")).toHaveCount(0);
+  });
+
+  test("@sandbox guest sandbox: a clone-name collision is surfaced and resolved in the open, never silently", async ({
+    page,
+  }) => {
+    // One of the reviewer's runs already carries the default copy name.
+    await page.route("**/static-data/jobs.json", async (route) => {
+      const jobs = JSON.parse(readFileSync(resolve(REPO, "frontend/public/static-data/jobs.json"), "utf8"));
+      jobs.push({ ...jobs[0], jobId: "mine-1", displayName: `${DEMO_NAME} (my copy)`, config: {} });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(jobs) });
+    });
+    await serveWalkableDemo(page);
+    await withEdits(page);
+    await page.locator("[data-testid='sandbox-keep']").click();
+    const dialog = page.locator("[data-testid='clone-dialog']");
+    const name = dialog.locator("[data-testid='clone-name']");
+    await expect(name).toHaveValue(`${DEMO_NAME} (my copy 2)`);
+    await expect(dialog.locator("[data-testid='clone-name-collision']")).toContainText(
+      `You already have a run called “${DEMO_NAME} (my copy)”`,
+    );
+    // Typing the taken name back is refused in place — both flavours wait for a free name.
+    await name.fill(`${DEMO_NAME} (my copy)`);
+    await expect(dialog.locator("[data-testid='clone-name-taken']")).toBeVisible();
+    await expect(dialog.locator("[data-testid='clone-fresh']")).toBeDisabled();
+    await expect(dialog.locator("[data-testid='clone-with-changes']")).toBeDisabled();
+    await name.fill("My frailty review");
+    await expect(dialog.locator("[data-testid='clone-name-taken']")).toHaveCount(0);
+    await expect(dialog.locator("[data-testid='clone-with-changes']")).toBeEnabled();
+  });
+
+  test("@sandbox guest sandbox: a clone that fails clears nothing — the tab is the only place the work exists", async ({
+    page,
+  }) => {
+    await serveWalkableDemo(page);
+    await withEdits(page);
+    const writes = watchWrites(page);
+    for (const flavour of ["clone-with-changes", "clone-fresh"]) {
+      await page.locator("[data-testid='sandbox-keep']").click();
+      const dialog = page.locator("[data-testid='clone-dialog']");
+      await dialog.locator(`[data-testid='${flavour}']`).click();
+      await expect(dialog.locator("[data-testid='clone-error']")).toContainText("Your changes are still here");
+      await expect(dialog).toBeVisible(); // still open, still offering both
+      expect(sandboxWorkCount(await heldState(page)), flavour).toBe(2);
+      await dialog.locator("[data-testid='clone-not-now']").click();
+    }
+    await expect(page.locator("[data-testid='sandbox-banner']")).toHaveAttribute("data-unsaved", "2");
+    expect(writes).toEqual([]); // the static client refuses before any request
+  });
+});
