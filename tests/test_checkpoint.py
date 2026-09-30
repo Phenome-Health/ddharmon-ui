@@ -22,6 +22,7 @@ costs ``generate(ideal)`` + ``split`` + the judge (UI-SPEC §0.1), and no test h
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -1764,3 +1765,279 @@ def test_continuing_to_gate_4_does_not_need_the_cde_catalog(monkeypatch, tmp_pat
         r = c.post("/api/harmonize/resume/nc", headers={"x-anthropic-key": "sk-test"})
     assert r.status_code == 200, r.text
     assert r.json()["target"] == "gate4"
+
+
+# ── 08-28 F2: a resumed leg replays the partition Gate 1 SHOWED, and cannot buy a pre-Gate-1 prompt ────────
+#
+# Live-verify 3: the Gate 1 -> Gate 2 leg loaded the Gate-1 substrate (already post-recovery: 60 clusters and
+# 11 leftover outliers) and core RE-RAN M10 outlier recovery on it. `recluster_residual`'s small-n rule lumps
+# any residual of <= 15 rows into one group, so the 9 leftover source variables became a cluster Gate 1 never
+# showed (`cc73e37cabddf`), and the leg paid a generate + a split call for it before splitting it into three
+# new concept groups. Two defences: a leg that LOADS the frozen substrate asks core for no recovery, and a
+# prompt for a stage that finished before Gate 1 which the checkpoint does not hold fails the leg rather than
+# being bought, because it can only mean the partition differs from the one the reviewer decided against.
+
+
+def _f2_specs(tmp_path):
+    """Eight smoking variables (one cluster, big enough for the judge) plus six unrelated ones (the outliers)."""
+    rows = {
+        "a": [(f"SMOKE_A{i}", f"Do you currently smoke cigarettes, item {i}", "1=Yes|0=No") for i in range(4)]
+        + [("AGE_A", "Age in years", ""), ("ZIP_A", "Home ZIP code", ""), ("HT_A", "Standing height in cm", "")],
+        "b": [(f"SMOKE_B{i}", f"Current cigarette smoker, question {i}", "Y=Yes|N=No") for i in range(4)]
+        + [("AGE_B", "Age at visit", ""), ("ZIP_B", "Postal code of residence", ""), ("HT_B", "Body height", "")],
+    }
+    roles = {"variable_name": "var", "description": "desc", "value_encoding": "enc"}
+    specs = []
+    for key, cohort in (("a", "CohortA"), ("b", "CohortB")):
+        path = tmp_path / f"f2_{key}.tsv"  # not a.tsv/b.tsv: _fixture_specs below writes those
+        path.write_text("var\tdesc\tenc\n" + "".join(f"{v}\t{d}\t{e}\n" for v, d, e in rows[key]))
+        specs.append({"path": str(path), "cohort_name": cohort, "column_roles": roles})
+    _dicts, cde_spec = _fixture_specs(tmp_path)
+    return specs, cde_spec
+
+
+@pytest.fixture
+def _f2_clustering(monkeypatch):
+    """A fresh clustering of one smoking cluster + six outliers, and an outlier recoverer that is NOT idempotent.
+
+    The recoverer stands in for the UMAP pass on a large residual (recovers all but three rows) and hands a
+    small one to the REAL ``recluster_residual``, whose small-n rule lumps it into one group. That is F2's
+    mechanism exactly: applied again to its own leftovers, recovery grows a new cluster.
+    """
+    import ddharmon.clustering.topic_engine as te
+
+    real = te.recluster_residual
+
+    def fake_topic_model(embedded, **kwargs):
+        docs, embeddings, field_refs, cohorts = collect_inputs(embedded)
+        src = [r for r in field_refs if r.dictionary_name != "NIH_CDE"]
+        smoke = [r for r in src if r.variable_name.startswith("SMOKE")]
+        rest = [r for r in src if not r.variable_name.startswith("SMOKE")]
+        return TopicModelResult(
+            model=None,
+            docs=docs,
+            embeddings=embeddings,
+            field_refs=field_refs,
+            clusters=[FieldCluster(cluster_id=0, label="smoke", members=smoke)],
+            outlier_cluster=FieldCluster(cluster_id=-1, label="noise", members=rest),
+            all_cohort_names=cohorts,
+        )
+
+    def drifting_recluster(embeddings, field_refs, residual_indices, *, min_cluster_size=8, **_kw):
+        idx = list(residual_indices)
+        if len(idx) <= 3:
+            return real(embeddings, field_refs, idx, min_cluster_size=min_cluster_size)
+        refs = [field_refs[i] for i in idx]
+        cohorts = list(dict.fromkeys(r.dictionary_name for r in refs))
+        return te.extract_topic_clusters([0] * (len(idx) - 3) + [-1] * 3, refs, cohorts)
+
+    monkeypatch.setattr(te, "topic_model_dictionaries", fake_topic_model)
+    monkeypatch.setattr(te, "recluster_residual", drifting_recluster)
+
+
+def _f2_stages(sink):
+    """Counting stand-ins for every stage a staged run reaches (the judge included). No provider anywhere."""
+
+    def _count(name, fn):
+        def stage(prompts):
+            sink[name] = sink.get(name, 0) + len(prompts)
+            return fn(prompts)
+
+        return stage
+
+    return {
+        "generate": _count("generate", lambda recs: {r.id: {"ideal_cde": "Smoking status"} for r in recs}),
+        "split": _count("split", lambda recs: {}),
+        "coherence": _count(
+            "coherence",
+            lambda recs: {
+                r.id: {"coherent": True, "summary": "one concept", "granularity": {"verdict": "single"}} for r in recs
+            },
+        ),
+        "classify": _count("classify", lambda recs: {r.id: {"verdict": "adopt", "cde_id": "1"} for r in recs}),
+        "gencde": _count("gencde", lambda recs: {}),
+        "specgen": _count("specgen", lambda recs: {}),
+    }
+
+
+def _f2_base(tmp_path):
+    return {
+        "run_mode": "batch",
+        "cde_cohort": "NIH_CDE",
+        "work_dir": str(tmp_path / "work"),
+        "min_cluster_size": 2,
+        "retrieval_floor": 0.0,
+    }
+
+
+def _f2_leg1(tmp_path):
+    """Leg 1 (fresh clustering, recovery applied once) to Gate 1, checkpointed and read back as a new process would."""
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec = _f2_specs(tmp_path)
+    recorded: dict[str, dict] = {}
+    leg1 = run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**_f2_base(tmp_path), "stop_at_gate": "gate1"},
+        provider=StubProvider(),
+        stage_overrides=_f2_stages({}),
+        stage_responses=recorded,
+    )
+    ckpt = write_checkpoint(
+        tmp_path / "work", job_id="f2", gate="gate1", result=leg1, responses=recorded, realized_cost=1.0
+    )
+    return dict_specs, cde_spec, leg1, load_checkpoint(ckpt.path).responses
+
+
+def test_a_resumed_leg_replays_the_partition_gate_1_showed(tmp_path, _f2_clustering):
+    """F2 end to end: Gate 1 -> Gate 2 must neither grow a cluster nor buy a generate/split/judge call."""
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec, leg1, responses = _f2_leg1(tmp_path)
+    shown = {g["clusterId"] for g in leg1["conceptGroups"]}
+    assert len(shown) == 2, "fixture: Gate 1 should show the smoking cluster and one recovered cluster"
+    assert responses.get("coherence"), "fixture: the judge should have been asked about the smoking group"
+
+    calls: dict[str, int] = {}
+    leg2 = run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**_f2_base(tmp_path), "stop_at_gate": "gate2"},
+        provider=StubProvider(),
+        stage_overrides=_f2_stages(calls),
+        replay_responses=responses,
+    )
+    assert {
+        g["clusterId"] for g in leg2["conceptGroups"]
+    } == shown, "the resumed leg grew a cluster Gate 1 never showed"
+    for stage in ("generate", "split", "coherence"):
+        assert calls.get(stage, 0) == 0, f"the resumed leg bought {calls[stage]} {stage} prompt(s) Gate 1 had not asked"
+    assert calls.get("classify", 0) > 0, "the resumed leg did no new work at all"
+
+
+def test_a_leg_that_loads_the_frozen_substrate_asks_core_for_no_outlier_recovery(tmp_path, _f2_clustering, monkeypatch):
+    """The adapter half: whenever a substrate is LOADED (a resumed leg, or the $0 front-half replay) the frozen
+    partition is used as-is. Holds on a pinned core that predates core's own at-most-once rule, too."""
+    import functools
+
+    import ddharmon.harmonization as core
+
+    from backend.engine.adapter import replay_leanb_result, run_pipeline
+
+    seen: list[dict] = []
+    orig = core.harmonize_leanb
+
+    @functools.wraps(orig)  # keeps the real signature, which the adapter's inspect guards read
+    def spy(embedded, **kw):
+        seen.append(dict(kw))
+        return orig(embedded, **kw)
+
+    monkeypatch.setattr(core, "harmonize_leanb", spy)
+    dict_specs, cde_spec, _leg1, responses = _f2_leg1(tmp_path)
+    assert (
+        "substrate" not in seen[0] and seen[0].get("recover_outliers", True) is True
+    ), "a FRESH leg is the one place recovery runs; the adapter must not switch it off there"
+
+    run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**_f2_base(tmp_path), "stop_at_gate": "gate2"},
+        provider=StubProvider(),
+        stage_overrides=_f2_stages({}),
+        replay_responses=responses,
+    )
+    assert seen[1].get("substrate") is not None
+    assert seen[1].get("recover_outliers") is False, "a resumed leg let core re-run outlier recovery"
+
+    replay_leanb_result(dict_specs, cde_spec, _f2_base(tmp_path), replay_responses=responses, provider=StubProvider())
+    assert seen[2].get("recover_outliers") is False, "the $0 replay let core re-run outlier recovery"
+
+
+@pytest.mark.parametrize("stage", ["generate", "split", "coherence"])
+def test_a_pre_gate_1_prompt_missing_from_the_checkpoint_fails_the_leg_instead_of_buying_it(
+    tmp_path, _f2_clustering, stage
+):
+    """The guard: past Gate 1, generate/split/the judge are finished work. A prompt for one of them that the
+    checkpoint never recorded means THIS leg's partition is not the one Gate 1 displayed, so the leg must fail
+    loudly, naming the prompt, and must not buy it. (Simulated by dropping one recorded answer.)"""
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec, _leg1, responses = _f2_leg1(tmp_path)
+    dropped = sorted(responses[stage])[0]
+    drifted = {**responses, stage: {k: v for k, v in responses[stage].items() if k != dropped}}
+
+    calls: dict[str, int] = {}
+    with pytest.raises(RuntimeError, match=re.escape(dropped)) as excinfo:
+        run_pipeline(
+            dict_specs,
+            cde_spec,
+            {**_f2_base(tmp_path), "stop_at_gate": "gate2"},
+            provider=StubProvider(),
+            stage_overrides=_f2_stages(calls),
+            replay_responses=drifted,
+        )
+    assert excinfo.type.__name__ == "PartitionDriftError"
+    assert "drift" in str(excinfo.value).lower()
+    assert calls.get(stage, 0) == 0, f"the drifted {stage} prompt was bought"
+    assert "classify" not in calls, "the leg carried on past the drift into the paid assign"
+
+
+def test_a_post_gate_1_stage_still_buys_the_prompts_it_has_not_answered(tmp_path, _f2_clustering):
+    """The guard covers ONLY the stages that finished before Gate 1. Assign (and everything after it) is new
+    work on the leg that first reaches it, and a later leg may re-buy one it lacks, so it must not raise."""
+    from backend.engine.adapter import run_pipeline
+
+    dict_specs, cde_spec, _leg1, responses = _f2_leg1(tmp_path)
+    recorded: dict[str, dict] = {}
+    leg2_calls: dict[str, int] = {}
+    run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**_f2_base(tmp_path), "stop_at_gate": "gate2"},
+        provider=StubProvider(),
+        stage_overrides=_f2_stages(leg2_calls),
+        replay_responses=responses,
+        stage_responses=recorded,
+    )
+    assert leg2_calls.get("classify", 0) > 0, "Gate 1 -> Gate 2 must be allowed to buy the assign"
+
+    dropped = sorted(recorded["classify"])[0]
+    partial = {**recorded, "classify": {k: v for k, v in recorded["classify"].items() if k != dropped}}
+    leg3_calls: dict[str, int] = {}
+    run_pipeline(
+        dict_specs,
+        cde_spec,
+        {**_f2_base(tmp_path), "stop_at_gate": None, "park_at_gate": "gate3"},
+        provider=StubProvider(),
+        stage_overrides=_f2_stages(leg3_calls),
+        replay_responses=partial,
+    )
+    assert leg3_calls.get("classify") == 1, "only the one unanswered assign prompt should have been bought"
+    for stage in ("generate", "split", "coherence"):
+        assert leg3_calls.get(stage, 0) == 0
+
+
+def test_a_drifted_resumed_leg_stays_parked_with_the_drift_named(tmp_path, _f2_clustering):
+    """Through the runner: the drift error is what the reviewer sees, and the run stays parked at its gate."""
+    dict_specs, cde_spec, _leg1, responses = _f2_leg1(tmp_path)
+    dropped = sorted(responses["generate"])[0]
+    drifted = {**responses, "generate": {k: v for k, v in responses["generate"].items() if k != dropped}}
+    store = JobStore(work_root=tmp_path / "work", db=None)
+    store.create("f2", "F2", _f2_base(tmp_path))
+    store.checkpoint("f2", gate="gate1", checkpoint_ref="f2/checkpoint_gate1.json", realized_cost=1.0)
+    store.update("f2", status="pending", phase="pending")
+
+    runner_module.run_harmonization(
+        store,
+        "f2",
+        dict_specs,
+        cde_spec,
+        {**_f2_base(tmp_path), "stop_at_gate": "gate2", "park_at_gate": "gate2"},
+        provider=StubProvider(),
+        stage_overrides=_f2_stages({}),
+        replay_responses=drifted,
+    )
+    job = store.get("f2")
+    assert job.status == AWAITING_REVIEW and job.gate_position == "gate1"
+    assert dropped in (job.error_message or ""), job.error_message

@@ -1663,6 +1663,24 @@ def _save_substrate_if_new(substrate_path: Path | None, result: Any) -> None:
         save_substrate(result.substrate, substrate_path)
 
 
+def _use_frozen_substrate(kwargs: dict[str, Any], substrate_path: Path, harmonize_leanb: Callable[..., Any]) -> None:
+    """Load the frozen partition into ``kwargs`` and tell core to replay it AS-IS (08-28 F2).
+
+    What :func:`_save_substrate_if_new` saved is the substrate core returned AFTER M10 outlier recovery: the
+    recovered clusters are already in it and its outlier list is the leftover noise. Letting core recover
+    again on load re-clusters those leftovers (``recluster_residual`` lumps a residual of <= 15 rows into one
+    group), which is how a live Gate 1 -> Gate 2 leg formed, and paid for, a cluster Gate 1 never showed.
+    Current core applies recovery to a partition at most once on its own; this ALSO says so explicitly,
+    because the dev channel pins other core refs and one that predates that rule would drift again.
+    Signature-guarded like the other flags: a core with no M10 has nothing to switch off.
+    """
+    from ddharmon.harmonization.substrate import load_substrate
+
+    kwargs["substrate"] = load_substrate(substrate_path)
+    if "recover_outliers" in inspect.signature(harmonize_leanb).parameters:
+        kwargs["recover_outliers"] = False
+
+
 # ── staged review: the resumable boundary, and how a resumed leg avoids paying twice ─────────
 #
 # The gate a run stops at is expressed in core's OWN vocabulary; this adapter invents no new stop
@@ -1767,11 +1785,32 @@ def _recording_stage(name: str, fn: StageFn, sink: dict[str, dict[str, Any]]) ->
     return stage
 
 
+#: The stages that have FINISHED by the time a run reaches Gate 1: the ideal description and the split
+#: (per cluster) and the judge's verdict pass (per concept group) all run before the ``classify=None``
+#: boundary Gate 1 pauses at. Assign and everything after it (gencde, specgen, refine, distinct_kinds,
+#: concept_gate, the re-pick) is NOT in here: that is new work on the leg that first reaches it, and a later
+#: leg may legitimately buy a prompt of those stages that it lacks. ``distinct_kinds`` is absent although
+#: it belongs to the judge, because core runs it after assign (it reads the assigned records).
+_PRE_GATE1_STAGES = frozenset({"generate", "split", "coherence"})
+
+
+class PartitionDriftError(RuntimeError):
+    """A resumed leg asked a pre-Gate-1 stage a question the Gate-1 leg never asked (08-28 F2).
+
+    Every prompt id of those stages is content-addressed on the frozen partition, so a new one can only
+    mean this leg's clusters or concept groups differ from the ones Gate 1 displayed and the reviewer
+    decided against. Buying the answer would pay for work nobody reviewed, and would apply the reviewer's
+    decisions to a different set of groups. So the leg fails, before the call, and names the prompts.
+    """
+
+
 def _replaying_stage(
     name: str,
     fn: StageFn,
     replay: dict[str, dict[str, Any]],
     sink: dict[str, dict[str, Any]],
+    *,
+    frozen: bool = False,
 ) -> StageFn:
     """Answer a stage's prompts from the checkpoint where possible, and call ``fn`` only for the rest.
 
@@ -1783,6 +1822,8 @@ def _replaying_stage(
 
     A prompt id absent from the checkpoint is genuinely NEW work — a group the previous leg never asked
     about — and is passed through to the real stage. Partial replay is the normal case, not an error.
+    EXCEPT when ``frozen``: the stage finished before a gate the checkpoint is past, so a missing id is
+    partition drift, not new work, and :class:`PartitionDriftError` is raised before ``fn`` is called.
 
     An id recorded as :data:`_NO_ANSWER` counts as ASKED and is not re-issued; it is simply omitted from
     the returned mapping, which reproduces exactly what the first leg's stage handed core.
@@ -1795,6 +1836,15 @@ def _replaying_stage(
         }
         replayed = sum(1 for p in prompts if str(p.id) in cached)
         missing = [p for p in prompts if str(p.id) not in cached]
+        if missing and frozen:
+            ids = sorted(str(p.id) for p in missing)
+            shown = ", ".join(ids[:10]) + (f", ... (+{len(ids) - 10} more)" if len(ids) > 10 else "")
+            raise PartitionDriftError(
+                f"partition drift: this resumed leg asked the {name!r} stage about {len(ids)} prompt(s) the "
+                f"Gate 1 leg never asked ({shown}). That stage finished before Gate 1, so its prompts are fixed "
+                "by the frozen clustering; a new one means this leg's clusters differ from the ones Gate 1 "
+                "showed. Refusing to buy them - nothing was charged for these prompts."
+            )
         if missing:
             logger.info("stage %s: replaying %d, running %d", name, replayed, len(missing))
             answers.update({str(k): v for k, v in (fn(missing) or {}).items()})
@@ -1998,9 +2048,7 @@ def run_pipeline(
         # local and costs a file. Legacy one-shot runs are unchanged (no path -> no freeze).
         substrate_path = work_dir / "substrate.joblib"
     if substrate_path and substrate_path.exists():
-        from ddharmon.harmonization.substrate import load_substrate
-
-        kwargs["substrate"] = load_substrate(substrate_path)
+        _use_frozen_substrate(kwargs, substrate_path, harmonize_leanb)  # as saved: no second outlier recovery
 
     # --- preview: no LLM. generate=None makes harmonize_leanb stop after building the generate prompts. ---
     if mode == "preview" and not overrides:
@@ -2120,8 +2168,19 @@ def run_pipeline(
     # An advisory stage is made failure-tolerant BEFORE it is made recordable, so what the checkpoint
     # captures is what core actually received (``{}`` on a failure), not an exception that never got there.
     stages = {name: (_resilient_stage(name, fn) if name in _JUDGE_STAGES else fn) for name, fn in stages.items()}
+    # 08-28 F2: on a leg resumed from a checkpoint at Gate 1 or later, the pre-Gate-1 stages are FROZEN — a
+    # prompt of theirs the checkpoint does not hold is partition drift and fails the leg (PartitionDriftError)
+    # instead of being bought. "At Gate 1 or later" is read off the recording itself: core calls `generate`
+    # unconditionally once a run gets that far (even with no prompts) and the recorder keys every stage it is
+    # handed, while a Gate 0 checkpoint records no stage at all. A frozen stage the checkpoint has no entry
+    # for (the judge had no group to judge) is still frozen: being asked anything now is the same drift.
+    past_gate1 = "generate" in replay
     stages = {
-        name: (_replaying_stage(name, fn, replay, recorded) if name in replay else _recording_stage(name, fn, recorded))
+        name: (
+            _replaying_stage(name, fn, replay, recorded, frozen=past_gate1 and name in _PRE_GATE1_STAGES)
+            if name in replay or (past_gate1 and name in _PRE_GATE1_STAGES)
+            else _recording_stage(name, fn, recorded)
+        )
         for name, fn in stages.items()
     }
 
@@ -2482,7 +2541,6 @@ def replay_leanb_result(
             f"the frozen clustering substrate is missing ({path}), so the exact partition this run's group "
             "ids refer to cannot be reproduced"
         )
-    from ddharmon.harmonization.substrate import load_substrate
 
     cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
     specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
@@ -2500,7 +2558,8 @@ def replay_leanb_result(
     embedded = [embed_dictionary(dd, provider=provider) for dd in dictionaries]
     embedded = [ed for ed in embedded if len(list(ed.get_variable_names())) > 0]
 
-    kwargs: dict[str, Any] = {"cde_cohort": cde_cohort, "substrate": load_substrate(path)}
+    kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}
+    _use_frozen_substrate(kwargs, path, harmonize_leanb)  # the partition the reviewer's group ids name, as saved
     for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
         if config.get(key) is not None:
             kwargs[key] = config[key]
