@@ -1454,7 +1454,8 @@ def cost_block(raw: Any) -> UICost:
             "outputTokens": int(line.get("outputTokens") or 0),
             "calls": int(line.get("calls") or 0),
         }
-    tokens = raw.get("tokens") if isinstance(raw.get("tokens"), dict) else {}
+    raw_tokens = raw.get("tokens")
+    tokens: dict[str, Any] = raw_tokens if isinstance(raw_tokens, dict) else {}
     return cast(
         UICost,
         {

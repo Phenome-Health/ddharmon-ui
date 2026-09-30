@@ -69,7 +69,8 @@ def drained(client: Any) -> list[Any]:
     if not callable(drain):
         return []
     try:
-        return list(drain() or [])
+        captured: Any = drain()
+        return list(captured or [])
     except Exception:  # noqa: BLE001 — accounting must never fail the action it accounts for
         logger.warning("could not read a client's captured usage; this action is billed $0", exc_info=True)
         return []
