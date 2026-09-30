@@ -219,13 +219,59 @@ def _op_lines(op: _Op, lang: Lang) -> list[str]:
 # --- per-op code lines (language-specific) ---------------------------------------------------
 
 
+def _unproduced(t: dict[str, Any] | None) -> str:
+    """Why this spec could not be produced, or ``""`` when it can be applied (08-28 1c, F16).
+
+    * kind ``none`` — the model produced an EMPTY code map (nothing could be mapped). Copying the raw column
+      would put the source's codes into the target's value domain with no recode at all.
+    * a ``unit`` spec with no conversion factor — the units could not be reconciled (core's ``needs_units``
+      residual). Applying ``* 1.0 + 0.0`` would pass a number in the wrong units off as converted.
+    """
+    kind = (t or {}).get("kind")
+    if kind == "none":
+        return "no mapping could be produced for this variable's values"
+    if kind == "unit" and not isinstance((t or {}).get("factor"), (int, float)):
+        su, tu = (t or {}).get("sourceUnit") or "?", (t or {}).get("targetUnit") or "?"
+        return f"no unit conversion could be authored ({su} → {tu})"
+    return ""
+
+
+def _unknown_kind_stub(op: _Op, dest: str, src: str, assign: str = "=") -> list[str]:
+    """A kind this notebook has no recipe for (e.g. a wide→long reshape): named and left for review, never a
+    copy — copying the raw column would claim the values already fit the target."""
+    kind = (op.transform or {}).get("kind") or "?"
+    return [
+        f"# {op.concept}  ·  {op.verdict} — REVIEW REQUIRED: a {kind} transform is not applied automatically",
+        f"# {dest} {assign} ...  # TODO: apply the {kind} transform to {src}",
+        "",
+    ]
+
+
+def _unproduced_stub(op: _Op, dest: str, src: str, assign: str = "=") -> list[str] | None:
+    """A commented REVIEW REQUIRED stub for a spec that could not be produced — never a copy."""
+    why = _unproduced(op.transform)
+    if not why:
+        return None
+    rationale = str((op.transform or {}).get("rationale") or "").strip()
+    return [
+        f"# {op.concept}  ·  {op.verdict} — REVIEW REQUIRED: {why}",
+        *([f"# pipeline: {rationale}"] if rationale else []),
+        "# Nothing is applied here. Map this variable at Gate 3 and re-export, or write the recode by hand:",
+        f"# {dest} {assign} ...  # TODO: recode {src} onto {op.target}",
+        "",
+    ]
+
+
 def _op_lines_py(op: _Op) -> list[str]:
     t = op.transform
     tgt, var = _pylit(op.target), _pylit(op.var)
     head = f"# {op.concept}  ·  {op.verdict}"
     kind = (t or {}).get("kind", "identity")
-    if t is None or kind in ("identity", "none"):
+    if t is None or kind == "identity":
         return [f"{head} (copy)", f"h[{tgt}] = raw[{var}]", ""]
+    stub = _unproduced_stub(op, f"h[{tgt}]", f"raw[{var}]")
+    if stub is not None:
+        return stub
     if kind == "categorical":
         code_map = {str(k): str(v) for k, v in (t.get("codeMap") or {}).items()}
         unmapped = t.get("unmappedSourceCodes") or []
@@ -256,7 +302,7 @@ def _op_lines_py(op: _Op) -> list[str]:
             f"# h[{tgt}] = ...  # TODO: derive from the data distribution",
             "",
         ]
-    return [f"{head} (copy)", f"h[{tgt}] = raw[{var}]", ""]
+    return _unknown_kind_stub(op, f"h[{tgt}]", f"raw[{var}]")
 
 
 def _op_lines_r(op: _Op) -> list[str]:
@@ -264,8 +310,11 @@ def _op_lines_r(op: _Op) -> list[str]:
     tgt, var = _pylit(op.target), _pylit(op.var)
     head = f"# {op.concept}  ·  {op.verdict}"
     kind = (t or {}).get("kind", "identity")
-    if t is None or kind in ("identity", "none"):
+    if t is None or kind == "identity":
         return [f"{head} (copy)", f"h[[{tgt}]] <- raw[[{var}]]", ""]
+    stub = _unproduced_stub(op, f"h[[{tgt}]]", f"raw[[{var}]]", assign="<-")
+    if stub is not None:
+        return stub
     if kind == "categorical":
         code_map = {str(k): str(v) for k, v in (t.get("codeMap") or {}).items()}
         pairs = ", ".join(f"{_pylit(k)}={_pylit(v)}" for k, v in code_map.items())
@@ -297,7 +346,7 @@ def _op_lines_r(op: _Op) -> list[str]:
             f"# h[[{tgt}]] <- ...  # TODO: derive from the data distribution",
             "",
         ]
-    return [f"{head} (copy)", f"h[[{tgt}]] <- raw[[{var}]]", ""]
+    return _unknown_kind_stub(op, f"h[[{tgt}]]", f"raw[[{var}]]", assign="<-")
 
 
 # --- notebook assembly -----------------------------------------------------------------------

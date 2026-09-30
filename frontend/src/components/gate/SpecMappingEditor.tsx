@@ -2,6 +2,13 @@ import { useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  DROP_BUCKET,
+  MISSING_BUCKET,
+  mappingForSave,
+  type SourceOption,
+  type TargetValue,
+} from "@/lib/value-map";
 
 /**
  * The editable value-mapping surface for a transform spec (08-16g) — a drag-and-drop card-sort in the Gate
@@ -19,16 +26,16 @@ import { cn } from "@/lib/utils";
  *
  * The editor owns no persistence — every change calls `onChange(mapping)`; the caller writes the
  * `gate3_spec_edit` decision so the edit survives a reload (R6), exactly like a Gate 1 move.
+ *
+ * ONE CODE SPACE (08-28 1c). A bucket is a target VALUE keyed by its CODE (`data-bucket` = the code; for a
+ * catalog CDE the code is the label), so the model's code map lands where the model put it and every change
+ * the reviewer makes is saved in the target's codes (`lib/value-map.ts`). A change saves the WHOLE mapping,
+ * with any code left unplaced written as an explicit Missing (Q3).
  */
 
-export const MISSING_BUCKET = "__missing__";
-export const DROP_BUCKET = "__drop__";
+export { DROP_BUCKET, MISSING_BUCKET };
+export type { SourceOption };
 const DRAG_TYPE = "application/x-ddharmon-spec-value";
-
-export interface SourceOption {
-  code: string;
-  label: string;
-}
 
 /** A chip for one source value — draggable between buckets. */
 function ValueChip({ code, label, readOnly }: { code: string; label: string; readOnly?: boolean }) {
@@ -57,6 +64,7 @@ function ValueChip({ code, label, readOnly }: { code: string; label: string; rea
 function Bucket({
   id,
   title,
+  code,
   hint,
   chips,
   readOnly,
@@ -64,6 +72,8 @@ function Bucket({
 }: {
   id: string;
   title: string;
+  /** The target value's code, shown beside its label when the two differ. */
+  code?: string;
   hint?: string;
   chips: React.ReactNode;
   readOnly?: boolean;
@@ -104,7 +114,12 @@ function Bucket({
       )}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-semibold text-on-raised">{title}</span>
+        <span className="text-xs font-semibold text-on-raised">
+          {code !== undefined && code !== title && (
+            <span className="mr-1 font-mono font-normal text-on-raised-muted">{code}</span>
+          )}
+          {title}
+        </span>
         {hint && <span className="text-xs text-on-raised-faint">{hint}</span>}
       </div>
       <div className="flex flex-wrap gap-1">{chips}</div>
@@ -117,26 +132,34 @@ export function SpecMappingEditor({
   targetValues,
   value,
   recommended,
+  recommendedFrom,
   onChange,
   readOnly,
 }: {
   /** The source variable's response options — the chips to place. */
   sourceOptions: SourceOption[];
-  /** The target CDE's permissible values — the primary drop buckets. */
-  targetValues: string[];
-  /** Current mapping: source code -> target value | MISSING_BUCKET | DROP_BUCKET. Absent = Unmapped. */
+  /** The target's values (code + label) — the primary drop buckets, keyed by CODE. */
+  targetValues: TargetValue[];
+  /** Current mapping: source code -> target CODE | MISSING_BUCKET | DROP_BUCKET. Absent = Unmapped. */
   value: Record<string, string>;
-  /** ddharmon's recommendation, for the edited badge + "reset to recommended". */
+  /** The starting point, for the edited badge + "reset to recommended". */
   recommended: Record<string, string>;
+  /** `model` = the model's own code map; `heuristic` = no model map, a $0 label match. Said on screen. */
+  recommendedFrom: "model" | "heuristic";
   onChange: (mapping: Record<string, string>) => void;
   readOnly?: boolean;
 }) {
+  const sourceCodes = sourceOptions.map((o) => o.code);
+  // Every change saves the WHOLE mapping, unplaced codes as an explicit Missing (08-28 Q3).
+  const save = (mapping: Record<string, string>) => onChange(mappingForSave(sourceCodes, mapping));
   const assign = (code: string, bucket: string) => {
-    if (value[code] === bucket) return;
-    onChange({ ...value, [code]: bucket });
+    if ((value[code] ?? "") === bucket) return;
+    save({ ...value, [code]: bucket });
   };
 
-  const edited = sourceOptions.some((o) => (value[o.code] ?? "") !== (recommended[o.code] ?? ""));
+  const saved = mappingForSave(sourceCodes, value);
+  const baseline = mappingForSave(sourceCodes, recommended);
+  const edited = sourceCodes.some((c) => saved[c] !== baseline[c]);
   const codesIn = (bucket: string) => sourceOptions.filter((o) => (value[o.code] ?? "") === bucket);
   const unmapped = sourceOptions.filter((o) => !value[o.code]);
 
@@ -146,8 +169,15 @@ export function SpecMappingEditor({
   return (
     <div data-testid="spec-mapping-editor" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-on-raised-muted">
-          ddharmon&apos;s recommended mapping{edited && <span className="ml-1 font-semibold text-status-warn">· edited</span>}
+        <span
+          data-testid="spec-mapping-source"
+          data-from={recommendedFrom}
+          className="text-xs text-on-raised-muted"
+        >
+          {recommendedFrom === "model"
+            ? "ddharmon's recommended mapping (the model's recode)"
+            : "The model produced no mapping — a $0 starting point matched on value labels"}
+          {edited && <span className="ml-1 font-semibold text-status-warn">· edited</span>}
           {!readOnly && " — drag a value to change where it lands"}
         </span>
         {edited && !readOnly && (
@@ -156,18 +186,23 @@ export function SpecMappingEditor({
             size="sm"
             variant="ghost"
             className="h-6 gap-1 text-xs"
-            onClick={() => onChange({ ...recommended })}
+            onClick={() => save({ ...recommended })}
           >
             <RotateCcw className="h-3 w-3" /> Reset to recommended
           </Button>
         )}
       </div>
 
-      {/* Source values not yet mapped — the tray you drag OUT of. */}
+      {/* Source values not yet mapped — the tray you drag OUT of. Counted, because a code left here is exported
+          as missing: stated, never a silent NaN (Q3). */}
       <Bucket
         id=""
         title="Unmapped source values"
-        hint={unmapped.length === 0 ? "all placed" : `${unmapped.length} to place`}
+        hint={
+          unmapped.length === 0
+            ? "all placed"
+            : `${unmapped.length} to place — exported as missing if left here`
+        }
         readOnly={readOnly}
         onDropCode={assign}
         chips={
@@ -179,10 +214,19 @@ export function SpecMappingEditor({
         }
       />
 
-      {/* Target permissible values — the primary destinations. */}
+      {/* Target permissible values — the primary destinations, keyed by CODE. */}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {targetValues.map((t) => (
-          <Bucket key={t} id={t} title={t} chips={chipsFor(t)} readOnly={readOnly} onDropCode={assign} />
+          <Bucket
+            key={t.code}
+            id={t.code}
+            title={t.label}
+            code={t.code}
+            hint={t.listed ? undefined : "used by the recode, not in the listed values"}
+            chips={chipsFor(t.code)}
+            readOnly={readOnly}
+            onDropCode={assign}
+          />
         ))}
       </div>
 
@@ -207,50 +251,4 @@ export function SpecMappingEditor({
       </div>
     </div>
   );
-}
-
-/**
- * Seed the recommended mapping when the model produced no usable code map — a $0 heuristic so a FAILED spec
- * still opens with a sensible starting point rather than a blank grid:
- *  - exact (case-insensitive) label match to a target value → that target,
- *  - a label that reads as a missing-data convention → the Missing bucket,
- *  - otherwise Unmapped, for the reviewer to place.
- */
-const MISSING_HINTS = ["prefer not", "don't know", "dont know", "unknown", "refused", "not answer", "missing", "n/a"];
-
-export function seedRecommendedMapping(
-  sourceOptions: SourceOption[],
-  targetValues: string[],
-  existing?: Record<string, string>,
-): Record<string, string> {
-  const targetByLower = new Map(targetValues.map((t) => [t.toLowerCase(), t]));
-  const out: Record<string, string> = {};
-  // Heuristic base — exact label match, then missing-data hints.
-  for (const o of sourceOptions) {
-    const label = (o.label || o.code).toLowerCase();
-    const exact = targetByLower.get(label);
-    if (exact) {
-      out[o.code] = exact;
-    } else if (MISSING_HINTS.some((h) => label.includes(h))) {
-      out[o.code] = MISSING_BUCKET;
-    }
-  }
-  // Overlay the model's own code map where it gave one (partial maps merge over the heuristic).
-  if (existing) for (const [k, v] of Object.entries(existing)) if (v) out[k] = v;
-  return out;
-}
-
-/** Translate a transform's `codeMap` (source code -> target CODE) into target-VALUE buckets, keeping only
- *  entries whose target lands on a known permissible value (others fall through to the heuristic). */
-export function codeMapToBuckets(
-  codeMap: Record<string, string> | undefined,
-  targetValues: string[],
-): Record<string, string> {
-  const byLower = new Map(targetValues.map((t) => [t.toLowerCase(), t]));
-  const out: Record<string, string> = {};
-  for (const [src, tgt] of Object.entries(codeMap ?? {})) {
-    const hit = byLower.get(String(tgt).toLowerCase());
-    if (hit) out[src] = hit;
-  }
-  return out;
 }

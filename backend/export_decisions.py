@@ -24,7 +24,9 @@ WHAT EACH DECISION DOES TO THE EXPORT (and what it deliberately does not):
   flagged ``targetRepicked`` — its codes were written for a different target (audit Theme B #3).
 * ``gate3_spec_edit`` — ``rejected: true`` marks the recode rejected: excluded from the notebook, marked in
   the TSV and the records JSON, logged. An edited ``mapping`` / ``numberMap`` / ``bins`` rides on the
-  transform as ``reviewerEdit`` and is what the notebook applies. Every field is optional.
+  transform as ``reviewerEdit`` and is what the notebook applies, in the target's CODES (an edit saved in labels
+  before 08-28 is resolved through the target's value table — ``backend/target_codes.py``). Every field is
+  optional.
 * ``gate4_export_selection`` — per-record inclusion. A record whose decision's ``chosen`` is ``exclude``
   (or ``out``) is absent from every format; any other value, and absence, include it. NO SCREEN WRITES THIS
   KIND TODAY (Gate 4's tile selection is component state), so the filter is a no-op until one does.
@@ -49,6 +51,7 @@ from backend.artifact_kinds import (
     derive_staleness,
 )
 from backend.artifacts import registry
+from backend.target_codes import in_target_codes
 
 #: Where Gate 1's Continue freezes the scope it displayed (``backend/app.py::GATE1_SCOPE_CONFIG_KEY``).
 GATE1_SCOPE_CONFIG_KEY = "gate1_scope"
@@ -201,6 +204,9 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
                 # re-mapped them after the re-pick.
                 if not any(k in edit for k in SPEC_EDIT_FIELDS):
                     t["targetRepicked"] = True
+            if edit:
+                # One code space per column (08-28 1c, F18): an edit saved in labels is applied in codes.
+                t["reviewerEdit"] = in_target_codes(edit, r, t)
         out.append(r)
     return out
 
