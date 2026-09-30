@@ -41,7 +41,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
-from backend import batch_reconcile, export_decisions
+from backend import batch_reconcile, billing, export_decisions
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
     GATE1_GROUP_SCOPE,
@@ -57,6 +57,7 @@ from backend.checkpoint import (
     GATE_ORDER,
     Checkpoint,
     CheckpointMissingError,
+    checkpoint_lock,
     checkpoint_path,
     load_checkpoint,
     next_gate,
@@ -910,7 +911,26 @@ def resume_run(
     # Reconcile before the replay fuel is read, not after: a late batch result that is attached now is a
     # stage this leg replays for $0, and one attached a minute later is a stage it pays for twice.
     _reconcile_on_open(job, api_key=x_anthropic_key)
-    job = store.get(job_id) or job
+    # Everything from reading the checkpoint to handing it to the next leg happens under the run's
+    # checkpoint lock (08-28 1a). A paid action billed onto this checkpoint AFTER it is read as the seed but
+    # BEFORE the run leaves `awaiting_review` would land in a file the new leg never reads again, and drop
+    # out of every later figure; under the lock it instead waits and is queued for the new leg's checkpoint.
+    with checkpoint_lock(job_id):
+        return _resume_locked(job_id, target, subject, x_anthropic_key, body)
+
+
+def _resume_locked(
+    job_id: str,
+    target: str,
+    subject: str | None,
+    x_anthropic_key: str | None,
+    body: ResumeBody | None,
+) -> dict[str, Any]:
+    """The body of :func:`resume_run`, run under the run's checkpoint lock. Never call this directly."""
+    job = store.get(job_id)
+    if job is None or job.status != AWAITING_REVIEW or not job.gate_position or next_gate(job.gate_position) != target:
+        # Re-checked under the lock: a second Continue that waited on the first must not spawn a second leg.
+        raise HTTPException(status_code=409, detail="This run is not paused at a gate")
     ckpt = _checkpoint_for(job)
     if ckpt is None:
         raise HTTPException(status_code=409, detail="This run has no saved state to resume from")
@@ -1112,8 +1132,12 @@ def analysis_ideas(
     model_tag = job.config.get("model_tag")
     client = build_llm_client(model_tag, x_anthropic_key)
     # A rejected key or an overloaded provider is an expected condition, not a crash — surface it as such.
-    with llm_call(model=model_tag):
-        out = generate_analysis_ideas(records, client.complete)
+    try:
+        with llm_call(model=model_tag):
+            out = generate_analysis_ideas(records, client.complete)
+    finally:
+        # Billed to the run whether or not the reply was usable: the call was charged either way (08-28 1a).
+        billing.bill_client(store, job_id, billing.ANALYSIS_IDEAS, client)
     store.set_analysis_ideas(job_id, out["ideas"], subject=_subject(request))
     return {"ideas": out["ideas"], "nConcepts": out["nConcepts"], "cached": False}
 
@@ -1251,6 +1275,10 @@ def readjudicate(
         )
     except ValueError as exc:  # the seam's own refusal, kept as a 400 rather than a 500
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        # The re-split is billed to the run's Gate 1 line BEFORE the ledger below is written, and that write
+        # re-reads the checkpoint under the lock, so the two edits compose instead of one erasing the other.
+        billing.bill_client(store, job_id, billing.READJUDICATE, client)
 
     # Persist the re-split ledger onto whichever surface holds this run: the row for a finished run, the
     # checkpoint for a paused one (D-02 keeps a paused run's payload off the row, rewritten whole on write).
@@ -1259,22 +1287,29 @@ def readjudicate(
     # added, since the children stay UNASSIGNED until Gate 2. Reviewer decisions live in the decisions store,
     # not on this payload, so re-deriving the groups does not lose them.
     parent_ids = set(group_ids)
-    base_result = ckpt.result if ckpt is not None else (job.result or {})
-    kept_records = [
-        r for r in cast("list[dict[str, Any]]", base_result.get("records") or []) if r.get("groupId") not in parent_ids
-    ]
-    new_fields = {"conceptGroups": groups, "conceptGroupMembers": members, "records": kept_records}
-    if ckpt is not None:
-        write_checkpoint(
-            ckpt.path.parent if ckpt.path is not None else Path(job.config["work_dir"]),
-            job_id=ckpt.job_id,
-            gate=ckpt.gate,
-            result={**ckpt.result, **new_fields},
-            responses=ckpt.responses,
-            realized_cost=ckpt.realized_cost,
-        )
-    else:
-        store.update(job_id, result={**(job.result or {}), **new_fields})
+    # Re-read under the lock: the paid call above took seconds, and the checkpoint it read may have been
+    # rewritten since — by its own bill, just now, if nothing else. Writing the stale copy back would erase that.
+    with checkpoint_lock(job_id):
+        latest = store.get(job_id) or job
+        fresh = _checkpoint_for(latest) if ckpt is not None else None
+        base_result = fresh.result if fresh is not None else (latest.result or {})
+        kept_records = [
+            r
+            for r in cast("list[dict[str, Any]]", base_result.get("records") or [])
+            if r.get("groupId") not in parent_ids
+        ]
+        new_fields = {"conceptGroups": groups, "conceptGroupMembers": members, "records": kept_records}
+        if fresh is not None:
+            write_checkpoint(
+                fresh.path.parent if fresh.path is not None else Path(job.config["work_dir"]),
+                job_id=fresh.job_id,
+                gate=fresh.gate,
+                result={**fresh.result, **new_fields},
+                responses=fresh.responses,
+                realized_cost=fresh.realized_cost,
+            )
+        else:
+            store.update(job_id, result={**base_result, **new_fields})
     n_children = sum(1 for g in groups if g.get("readjudicatedFrom") in parent_ids)
     return {"jobId": job_id, "groupIds": group_ids, "nGroups": n_children}
 
@@ -1624,6 +1659,10 @@ def score_components(
             proposal = propose_components(text, client.complete, provenance=body.provenance)
     except UnreadableReplyError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        # The one paid call is billed to the run (Gate 1's line) — also when its reply was unreadable, since
+        # it was charged all the same. A cached repeat returned above and never reaches here (08-28 1a, F5).
+        billing.bill_client(store, job_id, billing.SCORE_COMPONENTS, client)
 
     payload = {
         **proposal,
@@ -1886,6 +1925,9 @@ def composite(
     except ValueError as exc:
         # e.g. the document defines no score, or its text extraction came back empty — a 400, not a 500.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        # Whatever the derivation's calls cost is billed to the run (a free re-derive drains nothing).
+        billing.bill_client(store, job_id, billing.COMPOSITE, client)
     # Durable home is the per-user artifact store, keyed by the score's name — so a re-derive REPLACES that
     # score for THIS user (what `composite.upsert` used to do by hand) and one user's derivation is never
     # visible to another on a shared run. A pinned run raises here rather than silently discarding the spec,
@@ -2044,6 +2086,8 @@ def regenerate_specs(
         )
     except RuntimeError as exc:  # e.g. a core build lacking the GenCDE spec-gen seams
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        billing.bill_client(store, job_id, billing.SPECS_REGEN, client)  # the regeneration's calls (08-28 1a)
     store.replace_result_record(job_id, record_id, cast("dict[str, Any]", updated))
     return {"record": updated}
 

@@ -236,7 +236,9 @@ def test_the_runner_hands_the_prior_cost_to_the_pipeline(tmp_path, monkeypatch):
         replay_responses={"generate": {}},
         prior_cost=prior,
     )
-    assert seen.get("prior_cost") == prior
+    from backend.engine.adapter import merge_costs
+
+    assert seen["ledger"].to_dict() == merge_costs(prior), "the leg ledger was not seeded with the prior cost"
 
 
 def _parked(monkeypatch, tmp_path, job_id: str, gate: str, *, cost: dict, realized: float, job_cost: float):
@@ -417,3 +419,230 @@ def test_a_gap_submitted_from_the_sidecar_is_still_reconcilable(tmp_path):
     from backend.engine.adapter import BATCH_GAP_SUFFIX
 
     assert batch_reconcile._SIDECAR_SUFFIX == BATCH_GAP_SUFFIX, "the reconciler no longer knows the sidecar name"
+
+
+# ── fix 3: a paid action outside a leg is billed to the run, and survives the next Continue ─────────────
+
+_KEY = {"x-anthropic-key": "sk-test"}
+
+
+class _ScriptedClient:
+    """A client with a fixed reply that logs one priced usage per call (so billing has something to drain)."""
+
+    def __init__(self, reply: str) -> None:
+        self.reply = reply
+        self.log: list[TokenUsage] = []
+
+    def complete(self, prompt, *, system=None, max_tokens=512):  # noqa: ARG002
+        self.log.append(TokenUsage(_MODEL, 1000, 500))
+        return self.reply
+
+    def drain_usage(self):
+        log, self.log = self.log, []
+        return log
+
+
+def test_the_score_extraction_is_billed_to_the_run_and_survives_the_next_continue(monkeypatch, tmp_path):
+    """F5: the paid component extraction was recorded nowhere — costSoFar unchanged, no ledger line.
+
+    It is billed to the parked Gate 1 checkpoint under its own key, so the rail attributes it, Gate 1's
+    figure includes it, and the next Continue's seeded ledger carries it forward instead of dropping it.
+    """
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from tests.test_score_components import _TRANSCRIBED, _body
+
+    app_module, wd, spawned = _parked(
+        monkeypatch, tmp_path, "sc", "gate1", cost=_GATE1_COST, realized=0.6992, job_cost=0.6992
+    )
+    client = _ScriptedClient(json.dumps(_TRANSCRIBED))
+    monkeypatch.setattr("backend.engine.llm.build_llm_client", lambda *a, **k: client)
+    total = 0.6992 + _PER_CALL
+    with TestClient(app_module.app) as c:
+        r = c.post("/api/harmonize/jobs/sc/score/components", json=_body(), headers=_KEY)
+        assert r.status_code == 200, r.text
+        g1 = read_checkpoint(wd, "gate1")
+        line = g1.result["cost"]["perStage"].get("score_components")
+        assert line is not None, "the extraction's spend reached no ledger line (F5)"
+        assert line["calls"] == 1 and line["usd"] == pytest.approx(_PER_CALL)
+        assert g1.result["cost"]["actualUsd"] == pytest.approx(total)
+        assert g1.realized_cost == pytest.approx(total)
+        assert app_module.store.get("sc").cost_so_far == pytest.approx(total)
+
+        # A cached repeat costs nothing and bills nothing.
+        again = c.post("/api/harmonize/jobs/sc/score/components", json=_body(), headers=_KEY).json()
+        assert again["cached"] is True
+        assert read_checkpoint(wd, "gate1").result["cost"]["actualUsd"] == pytest.approx(total)
+
+        r = c.post("/api/harmonize/resume/sc", headers=_KEY, json={"gate1Scope": ["g0"]})
+        assert r.status_code == 200, r.text
+    assert spawned[-1]["prior_cost"]["perStage"]["score_components"]["calls"] == 1, "lost on the next Continue"
+
+
+def test_a_paid_action_on_a_finished_run_lands_in_its_result_cost(monkeypatch, tmp_path):
+    """A finished (legacy one-shot) run holds its payload in the row: the bill goes into ``result.cost``."""
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from backend import app as app_module
+
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    client = _ScriptedClient(json.dumps({"ideas": []}))
+    monkeypatch.setattr("backend.engine.llm.build_llm_client", lambda *a, **k: client)
+    prior = {"actualUsd": 0.3, "tokens": {"input": 1, "output": 1}, "perStage": {"assigning": {"usd": 0.3}}}
+    with TestClient(app_module.app) as c:
+        app_module.store.create("done", "Done", {}, owner_subject=None)
+        records = [{"concept": "BP", "cohorts": ["A", "B"], "verdict": "adopt", "cde": None, "nMembers": 2}]
+        app_module.store.update("done", status="complete", result={"records": records, "cost": prior})
+        app_module.store.update("done", cost_so_far=0.3)
+        r = c.post("/api/harmonize/jobs/done/analysis-ideas", headers=_KEY)
+        assert r.status_code == 200, r.text
+    job = app_module.store.get("done")
+    assert job.result["cost"]["perStage"]["analysis_ideas"]["calls"] == 1
+    assert job.result["cost"]["actualUsd"] == pytest.approx(0.3 + _PER_CALL)
+    assert job.cost_so_far == pytest.approx(0.3 + _PER_CALL)
+
+
+def test_the_runs_own_analysis_ideas_pass_is_billed(tmp_path, monkeypatch):
+    """``runner._generate_ideas`` is one more paid call; it lands in the finished run's cost like the route's."""
+    import json
+
+    client = _ScriptedClient(json.dumps({"ideas": []}))
+    monkeypatch.setattr("backend.engine.llm.build_llm_client", lambda *a, **k: client)
+    store = JobStore(work_root=tmp_path / "work")
+    store.create("ai", "AI", {})
+    records = [{"concept": "BP", "cohorts": ["A", "B"], "verdict": "adopt", "cde": None, "nMembers": 2}]
+    leg = {"actualUsd": 0.3, "tokens": {"input": 1, "output": 1}, "perStage": {"assigning": {"usd": 0.3}}}
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kwargs):
+        return {"records": records, "cost": leg}
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    config = {"work_dir": str(tmp_path / "work" / "ai"), "gen_analysis_ideas": True, "run_mode": "sync"}
+    runner_module.run_harmonization(store, "ai", [], None, config)
+    job = store.get("ai")
+    assert job.status == "complete"
+    assert job.result["cost"]["perStage"]["analysis_ideas"]["calls"] == 1
+    assert job.result["cost"]["actualUsd"] == pytest.approx(0.3 + _PER_CALL)
+    assert job.cost_so_far == pytest.approx(0.3 + _PER_CALL)
+
+
+def test_a_paid_action_during_a_running_leg_reaches_that_legs_checkpoint(tmp_path, monkeypatch):
+    """A bill that lands while a worker is mid-leg cannot go into the checkpoint the leg already read, so it
+    waits beside it and the leg folds it into the checkpoint it writes next — never lost, never counted twice."""
+    from backend import billing
+
+    store = JobStore(work_root=tmp_path / "work")
+    wd = tmp_path / "work" / "lv"
+    store.create("lv", "Live", {"work_dir": str(wd)})
+    store.update("lv", status="assigning", phase="assigning", cost_so_far=0.2)
+    leg = {"actualUsd": 0.5, "tokens": {"input": 1, "output": 1}, "perStage": {"assigning": {"usd": 0.5}}}
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kwargs):
+        billing.bill_usage(store, "lv", billing.SCORE_COMPONENTS, [TokenUsage(_MODEL, 1000, 500)])
+        assert store.get("lv").cost_so_far == pytest.approx(0.2 + _PER_CALL), "the live counter missed the bill"
+        return {"gatePosition": "gate2", "records": [], "cost": leg}
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    runner_module.run_harmonization(
+        store, "lv", [], None, {"work_dir": str(wd), "stop_at_gate": "gate2"}, replay_responses={"generate": {}}
+    )
+    g2 = read_checkpoint(wd, "gate2")
+    assert g2.result["cost"]["perStage"]["score_components"]["calls"] == 1
+    assert g2.result["cost"]["actualUsd"] == pytest.approx(0.5 + _PER_CALL)
+    assert g2.realized_cost == pytest.approx(0.5 + _PER_CALL)
+    assert store.get("lv").cost_so_far == pytest.approx(0.5 + _PER_CALL)
+    assert not list(wd.glob("cost_pending*")), "the absorbed bill was left queued (it would be counted twice)"
+
+
+def test_a_failed_resumed_legs_spend_is_kept_on_the_parked_checkpoint(tmp_path, monkeypatch):
+    """A resumed leg that fails stays parked at its old gate — and what it already bought stays on the bill.
+
+    Before 1a a retry re-priced the whole batch cache and so re-counted the failed attempt by accident; pricing
+    only new answers (fix 2) removes that accident, so the failed leg's spend must be recorded on purpose.
+    """
+    from backend.checkpoint import write_checkpoint
+
+    store = JobStore(work_root=tmp_path / "work")
+    wd = tmp_path / "work" / "fl"
+    write_checkpoint(
+        wd, job_id="fl", gate="gate1", result={"cost": _GATE1_COST}, responses={"generate": {}}, realized_cost=0.6992
+    )
+    store.create("fl", "Failed leg", {"work_dir": str(wd)})
+    store.checkpoint("fl", gate="gate1", checkpoint_ref="fl/checkpoint_gate1.json", realized_cost=0.6992)
+    store.update("fl", status="pending", phase="pending")
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kwargs):
+        kwargs["ledger"].add("assigning", [TokenUsage(_MODEL, 1000, 500)])
+        progress("assigning", 1, 1, kwargs["ledger"].total_usd)
+        raise RuntimeError("gencde failed")
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    runner_module.run_harmonization(
+        store,
+        "fl",
+        [],
+        None,
+        {"work_dir": str(wd), "stop_at_gate": "gate2"},
+        replay_responses={"generate": {}},
+        prior_cost=_GATE1_COST,
+    )
+    job = store.get("fl")
+    assert job.status == AWAITING_REVIEW and job.gate_position == "gate1"
+    g1 = read_checkpoint(wd, "gate1")
+    assert g1.result["cost"]["perStage"]["assigning"]["calls"] == 1, "the failed leg's paid work vanished"
+    assert g1.result["cost"]["actualUsd"] == pytest.approx(0.6992 + _PER_CALL)
+    assert job.cost_so_far == pytest.approx(0.6992 + _PER_CALL), "the live counter double-counted the leg"
+
+
+def test_every_paid_route_bills_under_its_own_key():
+    """Wiring guard: each paid action outside a leg calls the ONE billing helper with its own ledger key.
+
+    Read from the source, like the tag-to-stage drift test, because the failure it prevents is silent — a new
+    or edited paid route that forgets to bill leaves the money spent and no figure anywhere showing it.
+    """
+    import ast
+    from pathlib import Path
+
+    from backend import billing
+
+    repo = Path(__file__).resolve().parents[1]
+    expected = {
+        ("app.py", "score_components"): "SCORE_COMPONENTS",
+        ("app.py", "analysis_ideas"): "ANALYSIS_IDEAS",
+        ("app.py", "composite"): "COMPOSITE",
+        ("app.py", "regenerate_specs"): "SPECS_REGEN",
+        ("app.py", "readjudicate"): "READJUDICATE",
+        ("runner.py", "_generate_ideas"): "ANALYSIS_IDEAS",
+    }
+    found: dict[tuple[str, str], set[str]] = {}
+    for fname in ("app.py", "runner.py"):
+        tree = ast.parse((repo / "backend" / fname).read_text())
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call) and getattr(node.func, "attr", None) in ("bill_client", "bill_usage"):
+                    keys = {a.attr for a in node.args if isinstance(a, ast.Attribute)}
+                    found.setdefault((fname, fn.name), set()).update(keys)
+    for site, key in expected.items():
+        assert key in found.get(site, set()), f"{site[0]}:{site[1]} does not bill under billing.{key}"
+        assert getattr(billing, key) in billing.BILLING_KEYS
+
+
+def test_every_billing_key_is_attributed_to_a_gate():
+    """R8: a billed key no gate claims shows up in no gate's figure. Pinned against the frontend's table."""
+    import re
+    from pathlib import Path
+
+    from backend import billing
+
+    repo = Path(__file__).resolve().parents[1]
+    src = (repo / "frontend" / "src" / "lib" / "estimate.ts").read_text()
+    m = re.search(r"GATE_LEDGER_KEYS[^=]*=\s*\{(.*?)\n\};", src, re.S)
+    assert m
+    attributed = set(re.findall(r'"([a-z_]+)"', m.group(1)))
+    assert set(billing.BILLING_KEYS) <= attributed, sorted(set(billing.BILLING_KEYS) - attributed)

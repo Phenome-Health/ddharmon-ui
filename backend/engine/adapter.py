@@ -1526,10 +1526,9 @@ class CumulativeLedger:
     def total_usd(self) -> float:
         return self._prior["actualUsd"] + self._leg.total_usd
 
-    @property
-    def leg_usd(self) -> float:
+    def leg_cost(self) -> UICost:
         """What THIS leg has priced so far — the part of the total not carried from an earlier leg."""
-        return self._leg.total_usd
+        return merge_costs(self._leg.to_dict())
 
     def to_dict(self) -> UICost:
         return merge_costs(self._prior, self._leg.to_dict())
@@ -2004,6 +2003,7 @@ def run_pipeline(
     stage_responses: dict[str, dict[str, Any]] | None = None,
     replay_responses: dict[str, dict[str, Any]] | None = None,
     prior_cost: Any = None,
+    ledger: CumulativeLedger | None = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -2036,6 +2036,9 @@ def run_pipeline(
                     result's ``cost`` (and every live cost the stages report) is the RUN's cumulative spend,
                     not this leg's: replayed answers add $0, untouched lines carry forward, touched lines add
                     only the new spend (08-28 1a — F14/F10/F3).
+        ledger:     a caller-owned leg ledger (already seeded) to price into instead of building one from
+                    ``prior_cost``. The runner passes its own so that what a leg bought before it FAILED is
+                    still readable afterwards and can be kept on the parked run's bill.
 
     A staged run (``config["stop_at_gate"]`` set to ``"gate1"`` or ``"gate2"``) returns a PARTIAL result
     carrying ``gatePosition`` plus whatever the stages before that boundary produced.
@@ -2081,7 +2084,7 @@ def run_pipeline(
     # Realized-cost accumulator: each LLM stage folds its captured token usage in (sync = full price, batch =
     # 50%), so build_ui_result can emit real spend (UIResult.cost) and the stages can stream a live total.
     # SEEDED with the earlier legs' spend, so both are the run's figures rather than this leg's (08-28 1a).
-    ledger = CumulativeLedger(prior_cost)
+    ledger = ledger if ledger is not None else CumulativeLedger(prior_cost)
 
     # --- load ---
     progress("loading", 0, 0)

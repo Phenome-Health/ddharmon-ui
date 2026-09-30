@@ -62,7 +62,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from backend.checkpoint import load_checkpoint, write_checkpoint
+from backend.checkpoint import checkpoint_lock, load_checkpoint, write_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +345,14 @@ def _attach_to_checkpoint(work_dir: Path, job: Any, by_stage: dict[str, dict[str
     answer is never overwritten. A run with no readable checkpoint attaches nothing here; its retrieved
     records are still on disk, where a re-run replays them for free.
     """
+    # Under the run's checkpoint lock: a paid action billing this checkpoint (backend.billing) is the other
+    # read-modify-write of this file, and interleaving the two would silently drop one of the edits (08-28 1a).
+    with checkpoint_lock(job.job_id):
+        return _attach_locked(work_dir, job, by_stage)
+
+
+def _attach_locked(work_dir: Path, job: Any, by_stage: dict[str, dict[str, Any]]) -> dict[str, int]:
+    """The body of :func:`_attach_to_checkpoint`, run under the run's checkpoint lock."""
     ref = getattr(job, "checkpoint_ref", None)
     gate = getattr(job, "gate_position", None)
     if not ref or not gate:

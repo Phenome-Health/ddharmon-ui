@@ -102,11 +102,38 @@ test.describe("run estimate", () => {
     expect(b.firstCharge).toBe(b.byGate.gate1.forecast);
     // Each gate's realized cost is attributed by LEDGER KEY, never by inventing a progress phase — the
     // judge reports under an existing phase and carries its own cost key (WINDOWS id20).
-    expect(GATE_LEDGER_KEYS.gate1).toEqual(["generating", "splitting", "judging", "kinds"]);
+    // 08-28 1a: paid actions OUTSIDE a leg bill under their own keys, attributed to the gate they are
+    // pressed on (score extraction + re-split at Gate 1, recode regeneration at Gate 3, composite + ideas
+    // at Gate 4). backend/billing.py's BILLING_KEYS is pinned to this table by a backend test.
+    expect(GATE_LEDGER_KEYS.gate1).toEqual([
+      "generating",
+      "splitting",
+      "judging",
+      "kinds",
+      "score_components",
+      "readjudicate",
+    ]);
     expect(GATE_LEDGER_KEYS.gate2).toEqual(["assigning", "gencde"]);
-    expect(GATE_LEDGER_KEYS.gate3).toEqual(["specs", "specs_repick", "refine", "concept_gate"]);
+    expect(GATE_LEDGER_KEYS.gate3).toEqual(["specs", "specs_repick", "refine", "concept_gate", "specs_regen"]);
     expect(GATE_LEDGER_KEYS.gate0).toEqual([]);
-    expect(GATE_LEDGER_KEYS.gate4).toEqual([]);
+    expect(GATE_LEDGER_KEYS.gate4).toEqual(["composite", "analysis_ideas"]);
+  });
+
+  test("@estimate a paid action outside a leg is attributed to its gate, not left unattributed", () => {
+    // Live verify 3 F5: the score extraction's spend reached no figure. It now bills under its own key, and
+    // that key must land in Gate 1's realized figure rather than in the unattributed remainder.
+    const realized = realizedSpendByGate({
+      actualUsd: 0.7102,
+      tokens: { input: 0, output: 0 },
+      perStage: {
+        generating: { usd: 0.127, inputTokens: 0, outputTokens: 0, calls: 1 },
+        splitting: { usd: 0.528, inputTokens: 0, outputTokens: 0, calls: 1 },
+        judging: { usd: 0.0442, inputTokens: 0, outputTokens: 0, calls: 1 },
+        score_components: { usd: 0.011, inputTokens: 0, outputTokens: 0, calls: 1 },
+      },
+    });
+    expect(realized.byGate.gate1).toBeCloseTo(0.7102, 6);
+    expect(realized.unattributed).toBe(0);
   });
 
   test("@estimate the split/assign division follows measured call volume, not an even split", () => {
