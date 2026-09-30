@@ -511,6 +511,12 @@ class JobStore:
             if job is None:
                 return False
             for key, value in fields.items():
+                if key == "cost_so_far":
+                    # MONOTONIC (08-28 1a, F3). Money already charged cannot be un-spent, so the live counter
+                    # never goes backwards — whichever writer reports a smaller figure (a resumed leg whose
+                    # ledger could not be seeded, a progress tick racing a paid action's bill). Enforced here,
+                    # under the lock, so no writer has to read-then-write and race another.
+                    value = max(float(job.cost_so_far or 0.0), float(value or 0.0))
                 setattr(job, key, value)
             # Stamp the first entry into each phase (incl. the terminal complete/error) so the run view can
             # show a per-stage timeline + a live ETA. setdefault → the START time; later ticks don't reset it.
@@ -560,7 +566,9 @@ class JobStore:
             job.gate_position = gate
             job.checkpoint_ref = checkpoint_ref
             if realized_cost is not None:
-                job.cost_so_far = float(realized_cost)
+                # Monotonic, like `update`: a park figure below what the run has already been charged (a legacy
+                # per-leg checkpoint, say) must not rewind the counter a reviewer has watched climb.
+                job.cost_so_far = max(float(job.cost_so_far or 0.0), float(realized_cost))
             job.result_version += 1
             job.phase_timings.setdefault(AWAITING_REVIEW, time.time())
             job.updated_at = time.time()

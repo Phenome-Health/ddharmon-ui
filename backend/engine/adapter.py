@@ -1426,6 +1426,115 @@ def preprocess_for_run(dd: Any, *, source_path: Path | str | None = None) -> UIP
     }
 
 
+# ── realized cost: ONE figure per run, cumulative across its legs (08-28 1a) ─────────────────
+#
+# A staged run is several worker legs, and each leg used to build a fresh `CostLedger`. The checkpoint a leg
+# writes therefore carried that leg's spend only, so Gate 3 told a reviewer they had spent $0.05 on a run that
+# had cost $0.82 (live verify 3, F14), and a stage a leg merely REPLAYED — $0, so no ledger line — vanished from
+# the next checkpoint altogether (F10). The fix is a ledger SEEDED with the earlier legs' breakdown: replayed
+# answers still add nothing, keys this leg never touches carry forward unchanged, and keys it does touch add
+# only the new spend. The helpers below are the cost-block arithmetic every writer of a run's cost shares.
+
+
+def cost_block(raw: Any) -> UICost:
+    """A well-formed :class:`UICost` from whatever a checkpoint or payload carries (tolerant of old shapes).
+
+    ``None``, a non-dict, or a block missing fields reads as zeros rather than raising: a legacy checkpoint
+    written before the cost block existed must still seed a leg, and "no recorded cost" is exactly zero.
+    """
+    if not isinstance(raw, dict):
+        return empty_cost()
+    per: dict[str, Any] = {}
+    for key, line in (raw.get("perStage") or {}).items():
+        if not isinstance(line, dict):
+            continue
+        per[str(key)] = {
+            "usd": float(line.get("usd") or 0.0),
+            "inputTokens": int(line.get("inputTokens") or 0),
+            "outputTokens": int(line.get("outputTokens") or 0),
+            "calls": int(line.get("calls") or 0),
+        }
+    tokens = raw.get("tokens") if isinstance(raw.get("tokens"), dict) else {}
+    return cast(
+        UICost,
+        {
+            "actualUsd": float(raw.get("actualUsd") or 0.0),
+            "tokens": {"input": int(tokens.get("input") or 0), "output": int(tokens.get("output") or 0)},
+            "perStage": per,
+        },
+    )
+
+
+def merge_costs(*blocks: Any) -> UICost:
+    """Sum cost blocks: per-stage lines add key by key, and the totals add. Pure; never mutates its inputs.
+
+    The total is the sum of the blocks' own ``actualUsd`` — not a re-sum of the lines — so a legacy block
+    whose total covers spend no line names is carried rather than silently dropped.
+    """
+    out = empty_cost()
+    per: dict[str, Any] = {}
+    total = 0.0
+    tin = tout = 0
+    for raw in blocks:
+        block = cost_block(raw)
+        total += block["actualUsd"]
+        tin += block["tokens"]["input"]
+        tout += block["tokens"]["output"]
+        for key, line in block["perStage"].items():
+            acc = per.setdefault(key, {"usd": 0.0, "inputTokens": 0, "outputTokens": 0, "calls": 0})
+            acc["usd"] = round(acc["usd"] + line["usd"], 6)
+            acc["inputTokens"] += line["inputTokens"]
+            acc["outputTokens"] += line["outputTokens"]
+            acc["calls"] += line["calls"]
+    out["actualUsd"] = round(total, 6)
+    out["tokens"] = {"input": tin, "output": tout}
+    out["perStage"] = per
+    return out
+
+
+def usage_cost(key: str, usages: Sequence[Any], *, batch: bool = False) -> UICost:
+    """Price one paid action's captured usage into a one-line cost block, keyed ``key``.
+
+    Priced by core's ``CostLedger`` (LiteLLM's price map; Batch at 50%) — the same arithmetic as a stage, so a
+    paid action outside a leg can never be priced by a second, drifting formula.
+    """
+    from ddharmon.llm.cost import CostLedger
+
+    ledger = CostLedger()
+    ledger.add(key, list(usages), batch=batch)
+    return cast(UICost, ledger.to_dict())
+
+
+class CumulativeLedger:
+    """The leg's ``CostLedger``, SEEDED with every earlier leg's breakdown so its figures are the run's.
+
+    Duck-types the three members the stages use (``add``, ``total_usd``, ``to_dict``). Composes a core ledger
+    rather than reaching into its private state, so a core that reshapes ``CostLedger`` internals cannot break
+    the seed. ``add`` returns only what it newly priced; ``total_usd`` and ``to_dict`` are cumulative.
+    """
+
+    def __init__(self, prior: Any = None) -> None:
+        from ddharmon.llm.cost import CostLedger
+
+        self._prior = cost_block(prior)
+        self._leg = CostLedger()
+
+    def add(self, stage: str, usages: list[Any], *, batch: bool = False) -> float:
+        return self._leg.add(stage, usages, batch=batch)
+
+    @property
+    def total_usd(self) -> float:
+        return self._prior["actualUsd"] + self._leg.total_usd
+
+    @property
+    def leg_usd(self) -> float:
+        """What THIS leg has priced so far — the part of the total not carried from an earlier leg."""
+        return self._leg.total_usd
+
+    def to_dict(self) -> UICost:
+        return merge_costs(self._prior, self._leg.to_dict())
+
+
 # ── stage execution strategies (sync inline / Batch API) ──────────────────────────────────
 
 
@@ -1822,6 +1931,7 @@ def run_pipeline(
     substrate_path: str | Path | None = None,
     stage_responses: dict[str, dict[str, Any]] | None = None,
     replay_responses: dict[str, dict[str, Any]] | None = None,
+    prior_cost: Any = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -1850,6 +1960,10 @@ def run_pipeline(
                     not grow a raw-LLM-response field.
         replay_responses: the same structure read back OUT of a checkpoint. Any prompt id present here is
                     answered from it and never sent to a provider — the "no re-charge on resume" mechanism.
+        prior_cost: the previous checkpoint's ``cost`` block. The leg's ledger is SEEDED with it, so the
+                    result's ``cost`` (and every live cost the stages report) is the RUN's cumulative spend,
+                    not this leg's: replayed answers add $0, untouched lines carry forward, touched lines add
+                    only the new spend (08-28 1a — F14/F10/F3).
 
     A staged run (``config["stop_at_gate"]`` set to ``"gate1"`` or ``"gate2"``) returns a PARTIAL result
     carrying ``gatePosition`` plus whatever the stages before that boundary produced.
@@ -1857,7 +1971,6 @@ def run_pipeline(
     from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
     from ddharmon.ingestion import load_dictionary
-    from ddharmon.llm.cost import CostLedger
 
     progress = progress or _noop_progress
     overrides = stage_overrides or {}
@@ -1895,7 +2008,8 @@ def run_pipeline(
     replay: dict[str, dict[str, Any]] = replay_responses or {}
     # Realized-cost accumulator: each LLM stage folds its captured token usage in (sync = full price, batch =
     # 50%), so build_ui_result can emit real spend (UIResult.cost) and the stages can stream a live total.
-    ledger = CostLedger()
+    # SEEDED with the earlier legs' spend, so both are the run's figures rather than this leg's (08-28 1a).
+    ledger = CumulativeLedger(prior_cost)
 
     # --- load ---
     progress("loading", 0, 0)

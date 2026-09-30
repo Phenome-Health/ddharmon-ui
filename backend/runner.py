@@ -40,6 +40,7 @@ def run_harmonization(
     stage_overrides: dict[str, StageFn] | None = None,
     api_key: str | None = None,
     replay_responses: dict[str, dict[str, Any]] | None = None,
+    prior_cost: dict[str, Any] | None = None,
 ) -> None:
     """Run a job to completion, reporting phase progress to ``store``. Safe to run in a thread.
 
@@ -52,6 +53,9 @@ def run_harmonization(
 
     ``replay_responses`` is a resumed leg's already-paid stage answers, read out of the previous gate's
     checkpoint and handed to the adapter so no prompt is bought twice.
+
+    ``prior_cost`` is that checkpoint's ``cost`` block. It seeds the leg's ledger, so the live counter and the
+    checkpoint this leg writes carry the RUN's cumulative spend, never one leg's share (08-28 1a, F14).
 
     STAGED RUNS. When ``config['stop_at_gate']`` names a boundary, the adapter stops there and the result
     carries ``gatePosition``. This function then writes the checkpoint, parks the run at
@@ -72,6 +76,8 @@ def run_harmonization(
         fields: dict[str, Any] = {"status": phase, "phase": phase, "completed": completed, "total": total}
         # The LLM stages pass the run's realized cost-so-far (USD) after pricing their usage; fold it into the
         # job for the live "spent so far" counter. Pre-LLM phases call with 3 args (cost=None) -> not touched.
+        # The store keeps it monotonic (max with what the job already shows), so a figure below what the run
+        # has been charged can never rewind the counter.
         if cost is not None:
             fields["cost_so_far"] = cost
         store.update(job_id, **fields)
@@ -85,6 +91,8 @@ def run_harmonization(
         staged["stage_responses"] = recorded
     if replay_responses:
         staged["replay_responses"] = replay_responses
+    if prior_cost:
+        staged["prior_cost"] = prior_cost
     try:
         result = run_pipeline(
             dict_specs,

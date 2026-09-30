@@ -65,6 +65,7 @@ from backend.checkpoint import (
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
+from backend.engine.adapter import cost_block
 from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.notebook import build_notebook
 from backend.runner import _relative_ref, run_harmonization
@@ -923,19 +924,23 @@ def resume_run(
     # result already on disk.
     if target == "gate4":
         work_dir = Path(job.config["work_dir"])
+        # The CUMULATIVE figure, and one the carried result agrees with: the rail reads `result.cost`, the
+        # Gate 4 copy reads the realized cost, and a legacy Gate 3 checkpoint could carry a per-leg realized
+        # figure its own cost block contradicts (08-28 1a, F14). The larger is the one money was spent on.
+        realized = max(ckpt.realized_cost, cost_block(ckpt.result.get("cost")).get("actualUsd", 0.0))
         carried = write_checkpoint(
             work_dir,
             job_id=job_id,
             gate=target,
             result=ckpt.result,
             responses=ckpt.responses,
-            realized_cost=ckpt.realized_cost,
+            realized_cost=realized,
         )
         store.checkpoint(
             job_id,
             gate=target,
             checkpoint_ref=_relative_ref(store, job_id, carried.path or checkpoint_path(work_dir, target)),
-            realized_cost=ckpt.realized_cost,
+            realized_cost=realized,
         )
         return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
     # The catalog is needed only by a leg that spawns a worker — checked AFTER the Gate 4 pure-read branch, so a
@@ -997,7 +1002,9 @@ def resume_run(
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, job.dict_specs, cde_spec, run_config),
-        kwargs={"api_key": x_anthropic_key, "replay_responses": ckpt.responses},
+        # `prior_cost` seeds the leg's ledger with everything the run has spent so far, so the checkpoint this
+        # leg writes carries the run's cumulative cost rather than the leg's own share (08-28 1a, F14/F10).
+        kwargs={"api_key": x_anthropic_key, "replay_responses": ckpt.responses, "prior_cost": ckpt.result.get("cost")},
         daemon=True,
     ).start()
     return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
