@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { InfoTip, RoleInfo } from "@/components/ui/info-tip";
 import { IS_STATIC, listModels, startHarmonize } from "@/lib/api";
 import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
+import { roleRequirementReason } from "@/lib/dictionary";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { useAuthState } from "@/auth";
 import {
@@ -179,9 +180,11 @@ export default function HomePage() {
       return;
     }
     for (const d of dicts) {
-      const hasKey = ["variable_name", "description", "question_text"].some((r) => d.roles[r] && d.roles[r] !== NONE);
-      if (!hasKey) {
-        toast.error(`${d.file.name}: map at least variable_name, description, or question_text.`);
+      // The one copy of core's rule (`lib/dictionary.ts`), not a hand list: question_text alone loads nothing.
+      const mapped = Object.fromEntries(Object.entries(d.roles).filter(([, col]) => col && col !== NONE));
+      const reason = roleRequirementReason(mapped);
+      if (reason !== null) {
+        toast.error(`${d.file.name}: ${reason}`);
         return;
       }
     }
@@ -308,7 +311,7 @@ export default function HomePage() {
                   <span className="inline-flex items-center gap-1 font-normal normal-case text-status-destructive">
                     <span aria-hidden>★</span> at least one required
                     <InfoTip
-                      text="Map at least one meaning-bearing field so the pipeline can match your variables to CDEs. description and question_text are the primary semantic signals; variable_name alone works but carries the least meaning (and is auto-generated if you skip it)."
+                      text="Map at least one meaning-bearing field so the pipeline can match your variables to CDEs. description and question_text are the primary semantic signals; variable_name alone works but carries the least meaning (and is auto-generated if you skip it). question_text needs a description or variable_name beside it — on its own it loads no variables."
                       label="About the required fields"
                     />
                   </span>

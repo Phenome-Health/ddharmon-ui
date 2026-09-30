@@ -3,10 +3,13 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   PARTICIPANT_ID_HEADERS,
+  REQUIRED_ROLE_GROUPS,
   assignRole,
+  meetsRoleRequirement,
   nameCheck,
   normalizeHeader,
   participantLevelColumn,
+  unmetRoleGroup,
 } from "@/lib/dictionary";
 import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
 import { PROVIDER_KEY_INFO, keyPlaceholderFor } from "@/lib/provider-keys";
@@ -2624,4 +2627,67 @@ test.describe("setup re-split opt-in", () => {
     // change, in either direction (R8 binds both ways).
     await expect(bar).toHaveAttribute("data-total", before ?? "");
   });
+});
+
+/**
+ * THE COLUMN-ROLE REQUIREMENT IS CORE'S (08-28). Setup accepted `question_text` alone; core's loader skips every
+ * such row and the run went ahead without that cohort. The rule is now ONE list, `REQUIRED_ROLE_GROUPS` in
+ * `lib/dictionary.ts`, which `tests/test_role_requirement.py` pins to the backend's copy and the backend's copy
+ * to core's real loader.
+ */
+test.describe("Setup — the column-role requirement is core's (08-28)", () => {
+  test("@setup question_text alone is flagged and blocks Start, naming the file and what would fix it", async ({
+    page,
+  }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "questions-only.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv([["prompt", "kind"], ["How is your health?", "radio"], ["Do you smoke?", "radio"]])),
+    });
+    const select = (column: string) =>
+      page.getByTestId("mapping-row").filter({ has: page.locator(`[data-column="${column}"]`) }).getByTestId("role-select");
+    await select("prompt").selectOption("question_text");
+    await page.getByTestId("run-mode").selectOption("preview");
+    // Core loads ZERO variables from this mapping, so it is not "meaning mapped" and it is not startable.
+    const flag = page.getByTestId("meaning-requirement");
+    await expect(flag).toBeVisible();
+    await expect(flag).toContainText("question_text");
+    await expect(flag).toContainText("description");
+    const blocker = page.getByTestId("blocker").filter({ hasText: "questions-only.csv" });
+    await expect(blocker).toHaveCount(1);
+    await expect(blocker).toContainText("description");
+    await expect(page.getByTestId("start-run")).toBeDisabled();
+    // Giving the rows a name is enough (core then describes each row by it), and both warnings clear.
+    await select("kind").selectOption("variable_name");
+    await expect(page.getByTestId("meaning-requirement")).toHaveCount(0);
+    await expect(page.getByTestId("blocker").filter({ hasText: "questions-only.csv" })).toHaveCount(0);
+  });
+
+  test("@setup the requirement is core's two groups, and question_text satisfies only the first", () => {
+    // Mirrored from backend/role_requirement.py; tests/test_role_requirement.py pins both to core's loader.
+    expect(REQUIRED_ROLE_GROUPS).toEqual([
+      ["variable_name", "description", "question_text"],
+      ["variable_name", "description", "short_label", "field_id"],
+    ]);
+    const meets = (roles: Record<string, string>) => meetsRoleRequirement(roles);
+    expect(meets({})).toBe(false);
+    expect(meets({ question_text: "q" })).toBe(false);
+    expect(unmetRoleGroup({ question_text: "q" })).toEqual(REQUIRED_ROLE_GROUPS[1]);
+    expect(meets({ field_id: "id" })).toBe(false);
+    expect(unmetRoleGroup({ field_id: "id" })).toEqual(REQUIRED_ROLE_GROUPS[0]);
+    for (const ok of [
+      { variable_name: "v" },
+      { description: "d" },
+      { question_text: "q", variable_name: "v" },
+      { question_text: "q", field_id: "id" },
+      { question_text: "q", short_label: "s" },
+    ]) {
+      expect(meets(ok), JSON.stringify(ok)).toBe(true);
+    }
+    // An empty column is not a mapping.
+    expect(meets({ description: "" })).toBe(false);
+  });
+
 });

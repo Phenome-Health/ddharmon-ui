@@ -8,7 +8,15 @@ import {
   type ColumnRole,
 } from "@/types";
 import { InfoTip } from "@/components/ui/info-tip";
-import { assignRole, nameCheck, roleOf, type DictRow, type NameCheck } from "@/lib/dictionary";
+import {
+  REQUIRED_ROLE_GROUPS,
+  assignRole,
+  nameCheck,
+  roleOf,
+  unmetRoleGroup,
+  type DictRow,
+  type NameCheck,
+} from "@/lib/dictionary";
 
 /**
  * One dictionary's column mapping — one row per SOURCE COLUMN, choosing what that column is (08-13).
@@ -106,8 +114,11 @@ export function DictionaryMappingTable({
   /** First non-empty value for a column — what this column looks like, from the file itself. */
   const sample = (column: string): string =>
     (rows ?? []).map((r) => (r[column] ?? "").trim()).find(Boolean) ?? "";
-  /** The pipeline's real floor: at least one of the semantic roles must point at a column. */
-  const meaningMapped = SEMANTIC_ROLES.some((r) => Boolean(roles[r]));
+  /**
+   * Core's real floor — `REQUIRED_ROLE_GROUPS`, pinned to core's loader by the backend suite. It used to be
+   * "any semantic role", which let `question_text` alone through; core loads that mapping as zero variables.
+   */
+  const unmet = unmetRoleGroup(roles);
 
   return (
     <div className="flex flex-col gap-3">
@@ -181,15 +192,26 @@ export function DictionaryMappingTable({
           a permanent "2 of 3 / 3 of 3" line restated what the selects already show and competed with the
           name-check for the same attention. A requirement the user is meeting needs no banner; one they
           are not does. */}
-      {!meaningMapped && (
+      {unmet !== null && (
         <p
           data-testid="meaning-requirement"
+          data-unmet={unmet.join(" ")}
           className="rounded-inner border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
         >
-          <span className="font-semibold">No meaning-bearing column is mapped.</span> Point one column at
-          description or question_text — without one the pipeline has nothing to match against, so this
-          dictionary cannot reach a common data element. variable_name alone will not do it: it is an
-          identifier, not a meaning.
+          {unmet === REQUIRED_ROLE_GROUPS[0] ? (
+            <>
+              <span className="font-semibold">No meaning-bearing column is mapped.</span> Point one column at
+              description, question_text or variable_name — without one the pipeline has nothing to match
+              against, so this dictionary cannot reach a common data element.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">question_text alone loads no variables.</span> The loader
+              describes each row from description, variable_name, field_id or short_label and skips a row
+              with none of them, so this file would reach the run empty. Map description (or a variable
+              name) as well.
+            </>
+          )}
         </p>
       )}
 
