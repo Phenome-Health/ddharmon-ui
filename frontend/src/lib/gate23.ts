@@ -115,6 +115,23 @@ export const SKOS_RELATION_LABEL: Record<SkosRelation, string> = {
 };
 
 /**
+ * A relation's `targetId` for the group's OWN element when that element has no GenCDE id — a reviewer authored
+ * one on a concept core generated nothing for, so the pick's `chosen` is "". `OWN_TARGET` in the backend's
+ * `export_decisions.py`, which reads every id of the own element (this, "", its GenCDE id) as one target.
+ */
+export const OWN_TARGET = "own";
+
+/**
+ * The target a relation decision is keyed on (with the group): the chosen catalog element's id, or — when the
+ * group takes its OWN element — that element's GenCDE id, else `OWN_TARGET`. One id per target, so re-picking
+ * the own element under another name ("" vs its id) cannot split its note across two rows.
+ */
+export function relationTargetId(chosenId: string, ownGencdeId: string | undefined, targetIsOwn: boolean): string {
+  if (targetIsOwn) return ownGencdeId || OWN_TARGET;
+  return chosenId || OWN_TARGET;
+}
+
+/**
  * The relation the pipeline's own verdict implies, used as the control's initial position.
  *
  * A SUGGESTION, NEVER A RECORDED DECISION. Nothing is persisted until the reviewer picks, so a run the

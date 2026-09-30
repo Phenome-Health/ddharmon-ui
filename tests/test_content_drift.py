@@ -910,6 +910,24 @@ def test_the_gate_decision_identity_table_matches_the_frontend() -> None:
     )
 
 
+GATE23_TS = REPO / "frontend" / "src" / "lib" / "gate23.ts"
+
+
+def test_the_skos_relation_vocabulary_matches_the_frontend() -> None:
+    """Gate 2 offers exactly the predicates the store accepts, in the same order (08-28 3f).
+
+    The browser draws the relation control from `SKOS_RELATIONS` in `gate23.ts`; the server refuses any other
+    value. A predicate added on one side only is either a button whose every click is refused, or a value the
+    store takes that no screen can show.
+    """
+    from backend.artifact_kinds import SKOS_RELATIONS
+
+    src = GATE23_TS.read_text()
+    m = re.search(r"export const SKOS_RELATIONS\s*=\s*\[(.*?)\]\s*as const", src, re.S)
+    assert m, "could not find the SKOS_RELATIONS const in the frontend's gate23 module"
+    assert re.findall(r'"(skos:[A-Za-z]+)"', m.group(1)) == list(SKOS_RELATIONS)
+
+
 def test_the_gate_decision_content_keys_are_pinned_on_both_sides() -> None:
     """The two literals the frontend spec asserts are the values these functions actually produce.
 

@@ -145,8 +145,20 @@ GATE1_RENAME = "gate1_rename"
 GATE2_CANDIDATE_PICK = "gate2_candidate_pick"
 
 #: Gate 2: the SKOS/SSSOM relation asserted between a group and one target. Keyed on the (group, target)
-#: EDGE - a group legitimately carries relations to several targets.
+#: EDGE - a group legitimately carries relations to several targets. ``chosen`` is one of
+#: :data:`SKOS_RELATIONS`, or ``""`` when the reviewer wrote a ``note`` without asserting a relation.
 GATE2_RELATION = "gate2_relation"
+
+#: The relation vocabulary Gate 2 offers (``SKOS_RELATIONS`` in ``frontend/src/lib/gate23.ts``, pinned by
+#: ``tests/test_content_drift.py``). Core's own: it stamps these on a refined element (``GenCDE.relation``),
+#: since the CDE model has no predicate of its own. Order is the order a reviewer reasons in.
+SKOS_RELATIONS = (
+    "skos:exactMatch",
+    "skos:closeMatch",
+    "skos:narrowMatch",
+    "skos:broadMatch",
+    "skos:relatedMatch",
+)
 
 #: Gate 3: an edited transform spec. Keyed on the spec's source variable, which is the granularity a
 #: transform verdict already uses (one spec per "cohort:var" edge).
@@ -299,6 +311,17 @@ def _combine_rule_validate(payload: dict[str, Any]) -> None:
         )
 
 
+def _relation_validate(payload: dict[str, Any]) -> None:
+    """A relation is a SKOS predicate, or "" (a note with no relation asserted) - it reaches the export as the
+    crosswalk's predicate, so a value outside the vocabulary is refused rather than exported unreadable."""
+    _decision_validate(payload)
+    if payload["chosen"] not in ("", *SKOS_RELATIONS):
+        raise ValueError(
+            f"a relation is one of {', '.join(SKOS_RELATIONS)} (or empty, for a note with no relation asserted) - "
+            f"{payload['chosen']!r} is none of them"
+        )
+
+
 def reviewer_group_name(payload: dict[str, Any]) -> str:
     """A New group's name: its ``name`` field, else the ``chosen`` it also carries. Stripped; ``""`` if neither."""
     return str(payload.get("name") or payload.get("chosen") or "").strip()
@@ -411,7 +434,7 @@ registry.register(
     ArtifactKind(
         name=GATE2_RELATION,
         identity=_decision_identity(GATE2_RELATION),
-        validate=_decision_validate,
+        validate=_relation_validate,
     )
 )
 registry.register(

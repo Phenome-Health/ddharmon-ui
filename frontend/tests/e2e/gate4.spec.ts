@@ -12,6 +12,7 @@ import {
   decisionLogCsvRows,
   decisionLogEntryCount,
   decisionLogRows,
+  modelRelation,
   scopeSummary,
   downloadLabel,
   previewFor,
@@ -238,8 +239,9 @@ test("@gate4 the decision-log CSV preview on a staged run reads gate decisions, 
   expect(lines[0]).toBe(PARITY.columns.join(","));
   expect(preview).toContain("gate1_rename");
   expect(preview).toContain("Participant âge");
-  // A field carrying the separator is quoted, the way the downloaded CSV quotes it.
-  expect(preview).toContain('"checked, ok"');
+  // A field carrying the separator is quoted, the way the downloaded CSV quotes it. (A Gate 2 relation note since
+  // 3f: the fixture's relation rows moved the Gate 3 "checked, ok" row past the preview's 12-row cap.)
+  expect(preview).toContain('"visit age, broader"');
   // A legacy one-shot run (no gate position, no gate decisions) keeps the per-record verdict preview.
   const legacy = previewFor("decisions_csv", "py", PARITY.result, PARITY.legacyDecisions, {
     index: {},
@@ -571,4 +573,61 @@ test("@gate4 the decision log adds no backend endpoint — it is a pure frontend
   expect(log).not.toContain("fetch(");
   expect(log).not.toMatch(/\/api\/harmonize/);
   expect(page).not.toMatch(/\/api\/harmonize\/jobs\/[^"]*\/(log|decision-log)/);
+});
+
+// --- 08-28 3f: the Gate 2 relation in the log and the revision rate ----------------------------------------
+
+/** An adopt (the model's target taken as-is) and a refine whose derived element carries core's stamped predicate. */
+const REL_RESULT = {
+  records: [
+    {
+      groupId: "g0", concept: "Age", verdict: "adopt", members: ["A:age"], cde: { id: "AgeCDE", externalId: "" },
+      gencde: null, candidates: [{ cdeId: "AgeCDE", isChosen: true }, { cdeId: "VisitCDE", isChosen: false }],
+    },
+    {
+      groupId: "g1", concept: "Smoking", verdict: "refine", members: ["A:smk"], cde: { id: "SmokeCDE", externalId: "" },
+      gencde: { gencdeId: "GEN:smk", parentCdeId: "SmokeCDE", relation: "skos:narrowMatch" },
+      candidates: [{ cdeId: "SmokeCDE", isChosen: true }],
+    },
+  ],
+} as unknown as HarmonizationResult;
+
+test("@gate4 3f the model implies a relation only for its own catalog target", () => {
+  const [age, smoke] = REL_RESULT.records!;
+  expect(modelRelation(age, "AgeCDE")).toBe("skos:exactMatch"); // an adopt: the element taken as-is
+  expect(modelRelation(age, "VisitCDE")).toBe(""); // a target the model never judged
+  expect(modelRelation(smoke, "SmokeCDE")).toBe("skos:narrowMatch"); // core's own stamp on the refinement
+  expect(modelRelation(smoke, "GEN:smk")).toBe(""); // the group's own element: nothing to assert
+  // Re-targeted by the Gate 2 -> 3 leg: the model's target (from the stamp) was its own generated element.
+  expect(modelRelation(REPICKED as never, "CDE:pick")).toBe("");
+});
+
+test("@gate4 3f the in-app log reads a relation against the model's, with its note, and says when it took no effect", () => {
+  const index: DecisionIndex = {
+    gate2_relation: {
+      "g0|AgeCDE": dd({ groupId: "g0", targetId: "AgeCDE", chosen: "skos:closeMatch", note: "consent age" }),
+      "g1|SmokeCDE": dd({ groupId: "g1", targetId: "SmokeCDE", chosen: "skos:narrowMatch" }),
+      "g0|VisitCDE": dd({ groupId: "g0", targetId: "VisitCDE", chosen: "", note: "maybe" }),
+    },
+  };
+  const rows = decisionLogRows(index, REL_RESULT);
+  const by = (thing: string) => rows.find((r) => r.thing === thing)!;
+  expect(by("g0|AgeCDE").action).toBe("Set a relation");
+  expect(by("g0|AgeCDE").label).toBe("Age");
+  expect(by("g0|AgeCDE").detail).toBe("skos:closeMatch (model: skos:exactMatch) · note: “consent age”");
+  expect(by("g1|SmokeCDE").detail).toBe("skos:narrowMatch"); // agrees with the model: nothing to contrast
+  expect(by("g0|VisitCDE").detail).toBe(
+    "no relation asserted · note: “maybe” · not applied: not this group's current target",
+  );
+});
+
+test("@gate4 3f a relation that restates the model's with no note is not an edit; an override or a note is", () => {
+  const same = dd({ groupId: "g1", targetId: "SmokeCDE", chosen: "skos:narrowMatch" });
+  expect(revisionRate({ gate2_relation: { "g1|SmokeCDE": same } }, REL_RESULT, "1").edited).toBe(0);
+  const overridden = dd({ groupId: "g0", targetId: "AgeCDE", chosen: "skos:closeMatch" });
+  expect(
+    revisionRate({ gate2_relation: { "g1|SmokeCDE": same, "g0|AgeCDE": overridden } }, REL_RESULT, "1").edited,
+  ).toBe(1);
+  const noted = { ...same, note: "checked against the codebook" };
+  expect(revisionRate({ gate2_relation: { "g1|SmokeCDE": noted } }, REL_RESULT, "1").edited).toBe(1);
 });

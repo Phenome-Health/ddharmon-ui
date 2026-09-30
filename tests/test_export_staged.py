@@ -726,3 +726,174 @@ def test_a_score_declaration_is_one_log_row_per_score_not_one_per_component():
     assert frailty[5] == "3 components, 1 matched"
     assert json.loads(frailty[7]) == {"components": ["grip", "gait", "weight loss"], "matched": {"gait": "c1#g0"}}
     assert rows[1][5] == "1 component" and json.loads(rows[1][7]) == {"components": ["mood"]}
+
+
+# --- 08-28 3f: the Gate 2 relation (SKOS predicate + note) reaches every export ----------------------------
+#
+# ``gate2_relation`` was a registered kind no screen wrote and no export read. A relation is a claim about ONE
+# (group, target) edge: the export carries the one on the group's EFFECTIVE target (the reviewer's pick, else
+# the model's), who asserted it, and the model's own relation beside it so the override never erases it.
+
+_REL = "gate2_relation"
+_SKOS = [
+    "skos:exactMatch",
+    "skos:closeMatch",
+    "skos:narrowMatch",
+    "skos:broadMatch",
+    "skos:relatedMatch",
+]
+
+
+def _relation(group: str, target: str, chosen: str, **extra) -> dict:
+    return {"groupId": group, "targetId": target, "chosen": chosen, "alternatives": list(_SKOS), **extra}
+
+
+def _refined_result() -> dict:
+    """``_result()`` with the refine group carrying core's derived element — the one place core STAMPS a relation."""
+    res = _result()
+    res["records"][1]["gencde"] = {
+        "isGenerated": True,
+        "gencdeId": "GEN:smoke",
+        "preferredName": "Current smoking status",
+        "parentCdeId": "SmokeCDE",
+        "relation": "skos:narrowMatch",
+    }
+    return res
+
+
+def _records(client, job_id: str) -> dict[str, dict]:
+    return {r["id"]: r for r in _export(client, job_id, "records_json").json()}
+
+
+def test_the_reviewers_relation_exports_over_the_models_with_the_models_alongside(parked):
+    client, park = parked
+    job_id = park("gate4", result=_refined_result())
+    _put(client, job_id, _REL, _relation("c0#g0", "AgeCDE", "skos:closeMatch", note="age at consent, not at visit"))
+
+    recs = _records(client, job_id)
+    assert recs["c0#g0"]["relation"] == "skos:closeMatch" and recs["c0#g0"]["relationBy"] == "reviewer"
+    assert recs["c0#g0"]["modelRelation"] == "skos:exactMatch", "an adopt is the element taken as-is"
+    assert recs["c0#g0"]["relationNote"] == "age at consent, not at visit"
+    # Untouched: the relation core stamped on the refinement, and said to be the model's.
+    assert (recs["c1#g0"]["relation"], recs["c1#g0"]["relationBy"]) == ("skos:narrowMatch", "model")
+    assert recs["c1#g0"]["modelRelation"] == "skos:narrowMatch"
+    # A novel's own element: nobody asserted a relation, and the export does not invent one.
+    assert (recs["c2#g0"]["relation"], recs["c2#g0"]["relationBy"], recs["c2#g0"]["modelRelation"]) == ("", "", "")
+
+    rows = {r["recordId"]: r for r in _rows(_export(client, job_id, "eitl_tsv").text, "\t")}
+    c0 = rows["c0#g0"]
+    assert (c0["relation"], c0["relationBy"], c0["modelRelation"]) == ("skos:closeMatch", "reviewer", "skos:exactMatch")
+    assert c0["relationNote"] == "age at consent, not at visit"
+    assert rows["c1#g0"]["relationBy"] == "model" and rows["c1#g0"]["relationNote"] == ""
+    header = _export(client, job_id, "eitl_tsv").text.splitlines()[0].split("\t")
+    assert header[-4:] == ["relation", "relationBy", "modelRelation", "relationNote"], "appended, so no index moves"
+
+
+def test_a_relation_follows_the_target_it_was_set_on(parked):
+    """After a re-pick the relation set on the OLD target does not describe the new one — and the model never judged
+    the new one, so it has no model relation either. One set on the new target is what exports."""
+    client, park = parked
+    job_id = park("gate4")
+    _put(client, job_id, _REL, _relation("c0#g0", "AgeCDE", "skos:closeMatch", note="on the old target"))
+    _put(
+        client,
+        job_id,
+        "gate2_candidate_pick",
+        {"groupId": "c0#g0", "chosen": "AgeAtVisitCDE", "alternatives": ["AgeCDE", "AgeAtVisitCDE"]},
+    )
+    rec = _records(client, job_id)["c0#g0"]
+    assert rec["cde"]["id"] == "AgeAtVisitCDE"
+    assert (rec["relation"], rec["relationBy"], rec["relationNote"]) == ("", "", "")
+    assert rec["modelRelation"] == "skos:exactMatch", "the model's relation is to ITS target, kept discoverable"
+
+    _put(client, job_id, _REL, _relation("c0#g0", "AgeAtVisitCDE", "skos:broadMatch"))
+    rec = _records(client, job_id)["c0#g0"]
+    assert (rec["relation"], rec["relationBy"]) == ("skos:broadMatch", "reviewer")
+
+
+def test_a_note_with_no_relation_asserted_keeps_the_models_relation(parked):
+    """``chosen: ""`` is a note, not a relation — it must not blank the model's predicate or claim the reviewer's."""
+    client, park = parked
+    job_id = park("gate4")
+    _put(client, job_id, _REL, _relation("c0#g0", "AgeCDE", "", note="unsure between exact and close"))
+    rec = _records(client, job_id)["c0#g0"]
+    assert (rec["relation"], rec["relationBy"]) == ("skos:exactMatch", "model")
+    assert rec["relationNote"] == "unsure between exact and close"
+
+
+def test_a_note_on_the_groups_own_element_exports_under_either_of_its_ids(parked):
+    """The group's own element is one target however it is named: its GenCDE id, or ``own`` when the reviewer
+    authored one on a concept core generated nothing for (the pick's ``chosen`` is then "")."""
+    client, park = parked
+    job_id = park("gate4")
+    _put(client, job_id, _REL, _relation("c2#g0", "GEN:hair", "", note="definition checked with the PI"))
+    _put(client, job_id, "gate2_candidate_pick", {"groupId": "c0#g0", "chosen": "", "alternatives": ["AgeCDE"]})
+    _put(client, job_id, _REL, _relation("c0#g0", "own", "", note="no catalog age fits this cohort"))
+    recs = _records(client, job_id)
+    assert recs["c2#g0"]["relationNote"] == "definition checked with the PI" and recs["c2#g0"]["relation"] == ""
+    assert recs["c0#g0"]["cde"] is None and recs["c0#g0"]["relationNote"] == "no catalog age fits this cohort"
+    assert recs["c0#g0"]["relation"] == "" and recs["c0#g0"]["modelRelation"] == "skos:exactMatch"
+
+
+def test_an_applied_repick_reads_the_models_relation_from_the_stamp(parked):
+    """Once the Gate 2 -> 3 leg re-targets a record, its own verdict / cde say the PICK (F17). The model's relation
+    is read from the ``reviewerPick`` stamp — an adopt of AgeCDE stays exact to AgeCDE, a novel stays none."""
+    client, park = parked
+    job_id = park("gate4", result=_applied_result())
+    _put_applied_picks(client, job_id)
+    _put(client, job_id, _REL, _relation("c3#g0", "DiabetesCDE", "skos:narrowMatch"))
+    recs = _records(client, job_id)
+    assert recs["c0#g0"]["modelRelation"] == "skos:exactMatch"
+    assert (recs["c0#g0"]["relation"], recs["c0#g0"]["relationBy"]) == ("", ""), "AgeAtVisitCDE was never judged"
+    assert recs["c3#g0"]["modelRelation"] == "", "the model's target was its own generated element"
+    assert (recs["c3#g0"]["relation"], recs["c3#g0"]["relationBy"]) == ("skos:narrowMatch", "reviewer")
+
+
+def _rel_rows(result: dict, grouped: dict) -> dict[str, list[str]]:
+    from backend.export_decisions import decision_log_rows
+
+    return {r[3]: r for r in decision_log_rows(result, {}, grouped) if r[1] == _REL}
+
+
+def _logged(chosen: str, group: str, target: str, **extra) -> dict:
+    return {**_relation(group, target, chosen, **extra), "optionSetKey": option_set_key(_SKOS)}
+
+
+def test_the_decision_log_reads_a_relation_as_the_models_then_the_reviewers():
+    """``before`` is the model's relation for that edge ("" where it implied none), ``after`` the reviewer's, the note
+    in ``note`` — and a note with no relation reads as exactly that, never as "none of these"."""
+    grouped = {
+        _REL: [
+            _logged("skos:closeMatch", "c0#g0", "AgeCDE", note="consent age"),
+            _logged("", "c1#g0", "SmokeCDE", note="unsure"),
+            _logged("", "c2#g0", "GEN:hair", note="definition checked"),
+        ]
+    }
+    by = _rel_rows(_refined_result(), grouped)
+    age = by["c0#g0|AgeCDE"]
+    assert age[:3] == ["Gate 2", _REL, "Set a relation"]
+    assert (age[4], age[5], age[6], age[7]) == ("skos:exactMatch", "skos:closeMatch", "consent age", "")
+    smoke = by["c1#g0|SmokeCDE"]
+    assert (smoke[4], smoke[5], smoke[6]) == ("skos:narrowMatch", "no relation asserted", "unsure")
+    hair = by["c2#g0|GEN:hair"]
+    assert (hair[4], hair[5], hair[7]) == ("", "no relation asserted", ""), "the own element is the current target"
+
+
+def test_a_relation_that_reaches_no_record_is_logged_as_not_applied():
+    """F7's rule for picks, applied to relations: a row that took effect nowhere says so — the group is absent, or the
+    edge is not the target the group takes (the reviewer re-picked after setting it)."""
+    grouped = {
+        _REL: [
+            _logged("skos:closeMatch", "c0#g0", "AgeCDE"),
+            _logged("skos:broadMatch", "c0#g0", "AgeAtVisitCDE"),
+            _logged("skos:exactMatch", "zz#g9", "AgeCDE"),
+        ],
+        "gate2_candidate_pick": [
+            {"groupId": "c0#g0", "chosen": "AgeAtVisitCDE", "alternatives": ["AgeCDE", "AgeAtVisitCDE"], "optionSetKey": "k"}
+        ],
+    }  # fmt: skip
+    by = _rel_rows(_result(), grouped)
+    assert json.loads(by["c0#g0|AgeCDE"][7]) == {"notApplied": "not this group's current target"}
+    assert by["c0#g0|AgeCDE"][4] == "skos:exactMatch", "the model's relation to its own target is still the before"
+    assert (by["c0#g0|AgeAtVisitCDE"][4], by["c0#g0|AgeAtVisitCDE"][7]) == ("", ""), "the pick: applied, never judged"
+    assert json.loads(by["zz#g9|AgeCDE"][7]) == {"notApplied": "no record for this group in the run's results"}
