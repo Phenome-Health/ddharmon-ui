@@ -104,9 +104,11 @@ test.describe("Runs page — a parked run is not a running run", () => {
     await expect(link).toHaveAttribute("href", "/run/parked-nowhere/setup");
   });
 
-  test("@jobs a complete run still opens its results and an in-flight run still opens the dashboard", async ({
+  test("@jobs a complete run still opens its results and an in-flight run opens the gate it is heading for", async ({
     page,
   }) => {
+    // 08-28: an in-flight run used to open the legacy dashboard, which has no way into the gates. Every real
+    // run is staged now, so its link goes to the gate its leg is running toward (a first leg: Gate 1).
     await withJobs(page, [completeRun(), inFlightRun()]);
     await page.goto("/jobs");
     await page.waitForLoadState("networkidle");
@@ -116,7 +118,7 @@ test.describe("Runs page — a parked run is not a running run", () => {
     );
     await expect(row(page, "in-flight").getByRole("link", { name: "Still clustering" })).toHaveAttribute(
       "href",
-      "/job/in-flight",
+      "/run/in-flight/gate1",
     );
   });
 
@@ -157,7 +159,8 @@ test.describe("Runs page — a parked run is not a running run", () => {
     await page.waitForLoadState("networkidle");
     await expect(row(page, "in-flight").getByRole("button", { name: "Stop" })).toHaveCount(1);
     await expect(row(page, "in-flight").getByTestId("resume-review")).toHaveCount(0);
-    await expect(row(page, "finished").getByRole("button", { name: "Re-run" })).toHaveCount(1);
+    // A LINK since 08-28: re-run opens Setup prefilled for the reviewer to start, and buys nothing itself.
+    await expect(row(page, "finished").getByRole("link", { name: "Re-run" })).toHaveCount(1);
     await expect(row(page, "finished").getByRole("button", { name: "Stop" })).toHaveCount(0);
   });
 

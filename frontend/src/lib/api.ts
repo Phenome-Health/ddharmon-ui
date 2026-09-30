@@ -135,14 +135,30 @@ export async function startHarmonize(
   return json(await fetch(`${BASE}/batch`, { method: "POST", body: fd, headers }));
 }
 
-export async function rerunJob(jobId: string, apiKey?: string): Promise<{ jobId: string }> {
-  // Re-execute a past run from its server-retained uploads as a NEW owned run. BYOK: batch/sync runs need
-  // the key re-supplied (it's never persisted, so the Runs page can't have it cached) — sent transport-only,
-  // exactly like startHarmonize; preview runs need none. Guests (gate on, no token) must sign in first.
-  if (IS_STATIC) throw new Error(STATIC_MSG);
-  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to re-run.");
-  const headers = await authed(apiKey ? { "x-anthropic-key": apiKey } : {});
-  return json(await fetch(`${BASE}/jobs/${jobId}/rerun`, { method: "POST", headers }));
+/**
+ * One of a run's retained uploads, as a `File` — what Setup's prefilled re-run reads back (08-28).
+ *
+ * Re-run no longer POSTs `/jobs/{id}/rerun` (which starts a paid run at once, in the old mode; the route
+ * stays for API callers). It opens Setup prefilled instead, and Setup posts FILES: so each dictionary the
+ * earlier run was started from is fetched back from the server's retained copy and goes through the same
+ * in-browser checks as a dropped file.
+ *
+ * An HTML answer is treated as MISSING, not as a file. A static host answers an unknown path with the
+ * app's own `index.html` and a 200, and parsing that as a dictionary would put a page of markup into
+ * clustering. In the static build this reads `static-data/uploads/<run>/<file>`, like every other fixture.
+ */
+export async function fetchRetainedUpload(jobId: string, filename: string): Promise<File> {
+  const url = IS_STATIC
+    ? `${STATIC_BASE}/uploads/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`
+    : `${BASE}/jobs/${encodeURIComponent(jobId)}/uploads/${encodeURIComponent(filename)}`;
+  const res = await fetch(url, IS_STATIC ? undefined : { headers: await authed() });
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || type.includes("text/html")) {
+    const detail = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(detail.detail || `${filename} is no longer available on the server`);
+  }
+  const blob = await res.blob();
+  return new File([blob], filename, { type: blob.type || "text/csv" });
 }
 
 export async function cancelJob(jobId: string, mode: "keep" | "discard" = "discard"): Promise<{ cancelled: boolean }> {

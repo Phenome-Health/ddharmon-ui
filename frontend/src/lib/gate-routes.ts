@@ -1,4 +1,4 @@
-import { isParked } from "@/lib/run-state";
+import { isInFlight, isParked } from "@/lib/run-state";
 import type { GatePosition } from "@/types";
 
 /**
@@ -167,4 +167,61 @@ export function isGateReachable(gate: GatePosition, runPosition: GatePosition | 
   const at = runPosition ? RAIL_SEQUENCE.indexOf(runPosition) : -1;
   if (here < 0 || at < 0) return false;
   return here <= at;
+}
+
+/**
+ * The query parameter that turns a NEW run's Setup into a re-run of an earlier one (08-28).
+ *
+ * Re-run means "start a new run, with the last one's inputs filled in" — not "repeat the last run". The
+ * shipped control used to POST the re-run at once, in the old run's mode, which bought a paid run the
+ * reviewer never got to look at, and then landed them on the legacy run page with no way into the gates.
+ * Setup is where a run is set up and where its first charge is consented to, so a re-run starts there too.
+ */
+export const RERUN_PARAM = "rerun";
+
+/**
+ * Where a Re-run control goes: Setup for a NEW run, prefilled from the named one.
+ *
+ * `new` is the draft id every other "New run" link in the app already uses. The source id rides as a
+ * query value, encoded, so no run id can turn this URL into a different route.
+ */
+export function rerunSetupPathFor(sourceJobId: string): string {
+  return `${setupPathFor("new")}?${RERUN_PARAM}=${encodeURIComponent(sourceJobId)}`;
+}
+
+/**
+ * The gate an IN-FLIGHT run's current leg is running toward.
+ *
+ * A first leg carries no position yet (it is heading for Gate 1, where Start lands the reviewer). A resumed
+ * leg still carries the position it LEFT, because the resume route flips only `status`/`phase` — so the
+ * destination is the next screen on the rail after it. The retired position and Setup both precede Gate 1.
+ */
+export function inFlightGateOf(gatePosition: GatePosition | string | null | undefined): GatePosition {
+  if (!gatePosition || gatePosition === "setup" || gatePosition === RETIRED_GATE) return "gate1";
+  const at = RAIL_SEQUENCE.indexOf(gatePosition as GatePosition);
+  if (at < 0) return "gate1";
+  return RAIL_SEQUENCE[Math.min(at + 1, RAIL_SEQUENCE.length - 1)];
+}
+
+/**
+ * Where a link to THIS RUN should go — the one answer every surface that lists runs reads (08-28).
+ *
+ * Every real run is a staged run now (Start and the API re-run both park at Gate 1), so a run that is not
+ * over belongs in the gates: a PARKED run at the gate it waits on, an IN-FLIGHT one at the gate its leg is
+ * running toward (that screen carries the live progress and the Stop). Only an ENDED run goes to the legacy
+ * run page, which is where a finished result and the error / stopped recovery live. The shipped demo is a
+ * client-side replay with no gates to enter, so it keeps its results link unchanged.
+ */
+export function runPathFor(job: {
+  jobId: string;
+  status?: string | null;
+  gatePosition?: GatePosition | null;
+  config?: Record<string, unknown> | null;
+}): string {
+  const isDemo = Boolean((job.config as { demo?: boolean } | null | undefined)?.demo);
+  if (isDemo || job.status === "complete") return `/job/${job.jobId}?results=1`;
+  const parked = resumePathFor(job);
+  if (parked) return parked;
+  if (isInFlight(job.status)) return pathForGate(job.jobId, inFlightGateOf(job.gatePosition));
+  return `/job/${job.jobId}`;
 }

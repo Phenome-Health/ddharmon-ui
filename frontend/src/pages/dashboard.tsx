@@ -36,13 +36,13 @@ import { EmbeddingAtlas } from "@/components/embedding-atlas";
 import { PlotInfo } from "@/components/plot-info";
 import { exportUrl, submitVerdict } from "@/lib/api";
 import { buildRunIssueUrl } from "@/lib/links";
-import { isParked } from "@/lib/run-state";
+import { isInFlight, isParked } from "@/lib/run-state";
 // Both LIFTED OUT OF THIS FILE by 08-14h Task 1, where they were module-local and therefore reachable only
 // from a screen 08-14f stopped routing anyone through. The gate chrome now renders the same readout from
 // the same code rather than growing a second answer to "how far has this run got".
 import { elapsedSeconds, etaSeconds, legStartedAt, phasePercent } from "@/lib/run-progress";
 import { RunTimeline } from "@/components/gate/RunProgress";
-import { resumeGateOf } from "@/lib/gate-routes";
+import { inFlightGateOf, pathForGate, resumeGateOf, resumePathFor } from "@/lib/gate-routes";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { DemoBanner } from "@/components/demo-banner";
 import { readSandbox, writeSandbox } from "@/lib/sandbox";
@@ -328,6 +328,12 @@ export default function DashboardPage() {
   // it replaces had one parked run at 109 HOURS for 6.6 seconds of work.
   const parked = isParked(jobState.status);
   const parkedGate = resumeGateOf(jobState);
+  // THE GATES, NOT THIS PAGE, are where a staged run lives (08-28). This legacy run page is still reachable
+  // for one (an old link, the run-ended toast), and it used to offer no way into them. A parked run is
+  // offered the resume at its gate; an in-flight one a link to the gate its leg is running toward.
+  const resumeHref = isDemo ? null : resumePathFor(jobState);
+  const inFlight = isInFlight(jobState.status);
+  const headingFor = inFlight && !isDemo ? inFlightGateOf(jobState.gatePosition) : null;
   // COMPUTED BY `lib/run-progress.ts`, NOT HERE (08-14h Task 2). The freeze rule above is now needed by
   // the gate chrome as well, and two copies of it is how the 109-hour figure came to differ per surface
   // in the first place. The formula is unchanged; only its home is.
@@ -465,8 +471,17 @@ export default function DashboardPage() {
         <Card>
           <CardContent className="space-y-2 py-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="font-semibold capitalize text-on-raised">
-                {error ? "Error" : `Phase: ${jobState.phase}`}
+              {/* A parked run's phase is the wire token `awaiting_review`; under `capitalize` it read
+                  "Phase: Awaiting_review". It is said in words, naming the gate, like the readout below. */}
+              <span
+                data-testid="run-phase"
+                className={`font-semibold text-on-raised ${error || parked ? "" : "capitalize"}`}
+              >
+                {error
+                  ? "Error"
+                  : parked
+                    ? `Awaiting review · ${parkedGate ? GATE_LABELS[parkedGate] : "a review gate"}`
+                    : `Phase: ${jobState.phase}`}
               </span>
               <span className="text-on-raised-muted">{jobState.total > 0 ? `${jobState.completed}/${jobState.total}` : ""}</span>
             </div>
@@ -507,21 +522,47 @@ export default function DashboardPage() {
                 )}
                 {/* Stop the run: real cost/time is accruing, so this is the escape hatch (confirm-guarded,
                     keep-or-discard). Once a stop is acknowledged the run reports `stopping` until it reaches its
-                    checkpoint — swap the control for a "Stopping…" indicator so it can't be re-fired. */}
-                <div className="flex justify-end pt-1">
-                  {jobState.stopping ? (
-                    <span className="flex items-center gap-1.5 text-xs text-on-raised-muted">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Stopping…
-                    </span>
-                  ) : (
-                    <StopRunAction
-                      labeled
-                      displayName={jobState.displayName}
-                      costNote={stopCostSplit(jobState.config, jobState.phase)}
-                      onKeep={() => cancel("keep")}
-                      onDiscard={() => cancel("discard")}
-                    />
-                  )}
+                    checkpoint — swap the control for a "Stopping…" indicator so it can't be re-fired.
+
+                    ONLY WHILE A WORKER IS RUNNING (`isInFlight`), never merely "not finished" (08-28). A parked
+                    run is non-terminal but has no worker — a pause is an EXIT (08 D-01) — so a Stop there
+                    offered to save money that was not being spent, and the flag it left ended the reviewer's
+                    NEXT Continue `cancelled`. A parked run is offered its gate instead. */}
+                <div className="flex items-center justify-end gap-3 pt-1">
+                  {parked ? (
+                    resumeHref && (
+                      <Button size="sm" asChild>
+                        <Link href={resumeHref} data-testid="resume-review">
+                          Resume review at {parkedGate ? GATE_LABELS[parkedGate] : "its gate"}
+                        </Link>
+                      </Button>
+                    )
+                  ) : inFlight ? (
+                    <>
+                      {headingFor && (
+                        <Link
+                          href={pathForGate(jobId, headingFor)}
+                          data-testid="open-at-gate"
+                          className="text-xs font-semibold text-link-on-raised underline-offset-2 hover:underline"
+                        >
+                          Follow this run at {GATE_LABELS[headingFor]} →
+                        </Link>
+                      )}
+                      {jobState.stopping ? (
+                        <span className="flex items-center gap-1.5 text-xs text-on-raised-muted">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Stopping…
+                        </span>
+                      ) : (
+                        <StopRunAction
+                          labeled
+                          displayName={jobState.displayName}
+                          costNote={stopCostSplit(jobState.config, jobState.phase)}
+                          onKeep={() => cancel("keep")}
+                          onDiscard={() => cancel("discard")}
+                        />
+                      )}
+                    </>
+                  ) : null}
                 </div>
               </>
             )}
@@ -664,7 +705,8 @@ export default function DashboardPage() {
             </Card>
           )}
 
-          {/* Promote CTA — RerunAction offers the full/batch/sync modes, carrying inputs forward. */}
+          {/* Promote CTA — RerunAction opens Setup prefilled with this run's inputs, where the reviewer picks
+              batch or sync (08-28: re-run never assumes the mode). */}
           <Card>
             <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm text-on-raised">
               <span>

@@ -8,6 +8,7 @@ Endpoints (all under /api/harmonize):
     GET  /jobs              list jobs (summaries)
     DELETE /jobs/{job_id}   delete a job
     POST /jobs/{job_id}/cancel    request a stop for an in-flight run (-> cancelled)
+    GET  /jobs/{job_id}/uploads/{filename}  a run's retained upload, for its owner (prefilled re-run)
     POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision (by recordId)
     POST /jobs/{job_id}/records/{record_id}/regenerate-specs  regenerate member->GenCDE recodes after a refine
     GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv | notebook_py | notebook_r
@@ -37,7 +38,7 @@ from typing import Annotated, Any, cast
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
@@ -1028,7 +1029,13 @@ def _resume_locked(
     # stamped with setdefault, so the first leg's loading/embedding/clustering stamps (and the park stamp) would
     # otherwise survive, this leg's own entries into those phases would be dropped, and the progress panel
     # would list the first leg's stages and durations — plus the days the run sat parked — under this leg.
-    store.update(job_id, status="pending", phase="pending", phase_timings={})
+    #
+    # `cancel_mode=None` in the SAME locked write as the flip to `pending` (08-28): a stop flag belongs to one
+    # worker, and this leg's worker does not exist yet. A flag that survived the park (a Stop pressed on the
+    # parked run by an older build, or one that raced the park) was read by this leg's first progress tick and
+    # ended the reviewer's paid Continue `cancelled`. Cleared atomically with the flip, so a Stop pressed a
+    # moment later sees an in-flight run and is honoured by the new leg, as it should be.
+    store.update(job_id, status="pending", phase="pending", phase_timings={}, cancel_mode=None)
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, job.dict_specs, cde_spec, run_config),
@@ -1061,11 +1068,52 @@ def cancel_job(job_id: str, request: Request, mode: str = "discard") -> dict[str
     """Request a stop for an in-flight run the caller owns. ``mode`` is ``keep`` (finish the current stage,
     keep its partial result, skip the rest — no further LLM cost) or ``discard`` (abort ASAP, no result).
     Cooperative: flags the job; the worker acts at its next checkpoint (-> ``cancelled``). Idempotent —
-    ``cancelled`` is False when the run is unknown to the caller (404) or already terminal (nothing to stop)."""
+    ``cancelled`` is False when the run is unknown to the caller (404) or already terminal (nothing to stop).
+
+    A run PARKED at a review gate is refused with a 409 that says why (08-28). A pause is an exit (08 D-01):
+    there is no worker to stop and nothing is being spent. Flagging it anyway was not a harmless no-op — the
+    flag survived to the next Continue, whose fresh worker raised on it and ended the run ``cancelled``. The
+    store refuses the flag too (under its lock), so a Stop that loses a race to the park answers False."""
     job = store.get(job_id)
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.status == AWAITING_REVIEW:
+        raise HTTPException(
+            status_code=409,
+            detail="This run is paused at a review gate, so nothing is running and nothing is being spent — "
+            "there is nothing to stop. Continue it from its gate, or delete it.",
+        )
     return {"cancelled": store.request_cancel(job_id, mode)}
+
+
+@app.get("/api/harmonize/jobs/{job_id}/uploads/{filename}")
+def retained_upload(job_id: str, filename: str, request: Request) -> FileResponse:
+    """One of a run's retained uploads, handed back to the run's OWNER — what a prefilled re-run reads.
+
+    Re-run in the UI opens Setup prefilled with the earlier run's dictionaries, column roles and options for
+    the reviewer to check and start (08-28), rather than firing a paid run in the old mode. Setup posts
+    FILES, and a browser does not keep the file a run was started from, so the run's own retained copy is
+    read back here and goes through exactly the checks a freshly dropped file does.
+
+    Three refusals, each the difference between this and a file server: only a caller who can see the run
+    (404 otherwise, never a 403 that confirms the run exists), only a filename the run itself DECLARED in
+    its dict_specs, and only a bare name — a path that walks out of the uploads directory is not a name any
+    run declared. The shared demo keeps no uploads and is refused like an unknown run.
+    """
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, _subject(request)) or _is_pinned(job):
+        raise HTTPException(status_code=404, detail="Job not found")
+    declared = {Path(str(s.get("path", ""))).name for s in (job.dict_specs or [])}
+    if Path(filename).name != filename or filename not in declared:
+        raise HTTPException(status_code=404, detail="This run has no uploaded dictionary by that name")
+    work_dir = job.config.get("work_dir")
+    path = Path(work_dir) / "uploads" / filename if work_dir else None
+    if path is None or not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"The uploaded file {filename!r} is no longer available on the server — add it again.",
+        )
+    return FileResponse(path, filename=filename)
 
 
 @app.post("/api/harmonize/jobs/{job_id}/rerun")
@@ -1075,6 +1123,11 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     Copies the source job's uploaded dictionaries into a fresh work dir and restarts the pipeline with the
     same config. BYOK: batch/sync modes need the ``X-Anthropic-Key`` header re-supplied (never persisted);
     preview mode needs none.
+
+    KEPT FOR API CALLERS; THE UI NO LONGER CALLS IT (08-28). It starts a paid run immediately in the source
+    run's mode, and a re-run in the UI is "start a new run with the last one's inputs filled in" — so the UI
+    opens Setup prefilled (reading the uploads back through :func:`retained_upload`) and the reviewer starts
+    it there, choosing the mode consciously.
     """
     subject = _subject(request)
     src = store.get(job_id)

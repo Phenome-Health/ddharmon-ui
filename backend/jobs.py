@@ -156,7 +156,9 @@ class Job:
     #   "keep"    — finish the in-flight stage (deliver work already paid for), then skip the remaining stages;
     #               the run ends ``cancelled`` WITH whatever partial result the pipeline produced.
     # Transient (live-job only): never persisted, never serialized as a raw value by to_dict (only the derived
-    # ``stopping`` bool is) — a re-hydrated run starts None.
+    # ``stopping`` bool is) — a re-hydrated run starts None. It belongs to ONE worker: a parked run refuses it
+    # (``request_cancel``), a park clears it (``checkpoint``) and a resumed leg starts with it cleared
+    # (``resume_run``), so a stop can never outlive the leg it was aimed at and kill the next one.
     cancel_mode: str | None = None
 
     @classmethod
@@ -565,6 +567,11 @@ class JobStore:
             job.phase = AWAITING_REVIEW
             job.gate_position = gate
             job.checkpoint_ref = checkpoint_ref
+            # A park is an EXIT (08 D-01): nothing is spent past it, so a stop that raced it has had its
+            # effect. The runner parks only when no stop is set, but it reads that before writing the
+            # checkpoint, and a Stop can land in between. Left set, that flag reads as "Stopping…" forever and
+            # is the stale "discard" that killed the next Continue's worker at its first progress tick.
+            job.cancel_mode = None
             if realized_cost is not None:
                 # Monotonic, like `update`: a park figure below what the run has already been charged (a legacy
                 # per-leg checkpoint, say) must not rewind the counter a reviewer has watched climb.
@@ -612,14 +619,20 @@ class JobStore:
         """Flag a live, in-flight run to stop. ``mode`` is "keep" (finish the current stage, keep its partial
         result, skip the rest) or "discard" (abort ASAP, no result); an unknown mode falls back to "discard".
 
-        Returns True when a running job was flagged; False when it's unknown or already terminal (nothing to
-        stop). Idempotent — the LAST mode set wins, so a user can escalate a "keep" to a "discard".
+        Returns True when a running job was flagged; False when it's unknown, already terminal, or PARKED at a
+        review gate (nothing to stop). Idempotent — the LAST mode set wins, so a user can escalate a "keep" to
+        a "discard".
+
+        A PARKED run is refused, not flagged. A pause is an exit (08 D-01), so there is no worker for the flag
+        to reach — and the next thing to read it would be the NEXT leg's fresh worker, which raised on it at
+        its first progress tick and ended the reviewer's paid Continue ``cancelled``. Checked under the lock,
+        so a Stop that saw an in-flight run and lost the race to the park is refused here too.
         """
         if mode not in ("keep", "discard"):
             mode = "discard"
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.status in TERMINAL_STATES:
+            if job is None or job.status in TERMINAL_STATES or job.status == AWAITING_REVIEW:
                 return False
             job.cancel_mode = mode
             return True
