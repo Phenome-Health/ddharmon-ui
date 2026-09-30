@@ -403,3 +403,11 @@ export function guestAuthCopy(action: string): { title: string; body: string } {
     body: `You can walk every gate on the demo without an account — ${action} needs one.`,
   };
 }
+
+/**
+ * What the shared demo's commit bar says instead of a price (08-18). The demo is precomputed, so its Continue is
+ * a walk to the next screen — no resume, no request, no charge — and a bar that quoted the next gate's cost would
+ * be claiming a purchase that does not happen.
+ */
+export const DEMO_CONTINUE_NOTE =
+  "This is the shared demo: every gate is already computed, so continuing spends nothing and sends nothing — it walks you to the next screen.";

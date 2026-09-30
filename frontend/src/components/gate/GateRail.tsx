@@ -82,6 +82,7 @@ export const GATE_SEQUENCE: GatePosition[] = ["setup", "gate1", "gate2", "gate3"
 function Inner({
   linkable,
   unreachable,
+  ahead = false,
   href,
   label,
   gate,
@@ -89,6 +90,8 @@ function Inner({
 }: {
   linkable: boolean;
   unreachable: boolean;
+  /** The gate is AFTER the current screen — reachable on a finished run, so its link says "Go to", not "Back to". */
+  ahead?: boolean;
   href: string;
   label: string;
   gate: GatePosition;
@@ -100,7 +103,7 @@ function Inner({
       <Link
         href={href}
         data-testid={`rail-link-${gate}`}
-        aria-label={`Back to ${name}`}
+        aria-label={`${ahead ? "Go to" : "Back to"} ${name}`}
         className="flex flex-col gap-1 rounded-inner focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
       >
         {children}
@@ -180,6 +183,7 @@ export function GateRail({
             <Inner
               linkable={linkable}
               unreachable={unreachable}
+              ahead={i > currentIndex}
               href={jobId ? pathForGate(jobId, item.gate) : ""}
               label={item.label}
               gate={item.gate}

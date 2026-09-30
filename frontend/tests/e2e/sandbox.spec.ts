@@ -1,9 +1,13 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { GATE_DECISION_KINDS, optionSetKey, type GateDecision } from "@/lib/gate-decisions";
+import { RAIL_SEQUENCE, nextRailGate, railReachOf } from "@/lib/gate-routes";
+import type { JobResult } from "@/types";
+import { FINISHED_JOB, PAUSED_JOB, finishedFixture, pausedFixture } from "./gate23-fixture";
 import {
+  DEMO_CONTINUE_NOTE,
   SANDBOX_BANNER_COPY,
   SANDBOX_PREFIX,
   cloneRequestFor,
@@ -349,5 +353,110 @@ test.describe("guest sandbox — the sign-in prompt", () => {
     expect(SANDBOX_BANNER_COPY).toBe(
       "This is the shared demo. Your changes are yours alone, are not saved, and disappear when you close the tab — clone it to keep them.",
     );
+  });
+});
+
+// --- the walk: every gate of the demo is reachable, and moving forward spends and sends nothing --------------
+
+test.describe("guest sandbox — the walk", () => {
+  test("@sandbox a finished run has reached every gate; a parked one has reached only its own", () => {
+    // A FINISHED run carries no gate position, and "unknown position" used to read as "reached nothing" — so the
+    // finished shared demo, the one every guest sees, drew all four gates as "this run has not reached this gate
+    // yet": a false statement, and no way forward. Reachability is about what the run HAS, so complete = all.
+    expect(railReachOf({ status: "complete", gatePosition: null })).toBe("gate4");
+    expect(railReachOf({ status: "complete" })).toBe("gate4");
+    expect(railReachOf({ status: "awaiting_review", gatePosition: "gate2" })).toBe("gate2");
+    expect(railReachOf({ status: "running", gatePosition: null })).toBeNull();
+    expect(railReachOf(null)).toBeNull();
+  });
+
+  test("@sandbox the demo's Continue walks to the next screen on the rail, and Gate 4 is the end", () => {
+    expect(RAIL_SEQUENCE.map(nextRailGate)).toEqual(["gate1", "gate2", "gate3", "gate4", null]);
+    expect(DEMO_CONTINUE_NOTE).toMatch(/spends nothing/);
+  });
+});
+
+/**
+ * The shared demo, walkable end to end: the FINISHED demo (records, candidates, specs for Gates 2–4) carrying the
+ * Gate 1 projection the paused fixture was derived from it with (all 54 of its groups are the finished demo's own
+ * group ids — `scripts/build_gate_fixture.py`). Constructed here rather than committed, per the fixture rule in
+ * `gate1-fixture.ts`: the prod demo snapshot does not carry the Gate 1 projection yet (08-21 regenerates it), so a
+ * committed file claiming it does would describe no run that exists. Records are trimmed to the 54 grouped
+ * concepts plus the combine-rule pair so every gate renders quickly.
+ */
+const PAIR = "c46be33d9a542#g5"; // two AoU variables on one CDE — the one place a combine rule is offered
+function walkableDemo(): JobResult {
+  const run = finishedFixture();
+  const paused = pausedFixture().result!;
+  const grouped = new Set((paused.conceptGroups ?? []).map((g) => g.groupId));
+  run.result!.records = run.result!.records.filter((r) => grouped.has(r.groupId) || r.groupId === PAIR);
+  run.result!.conceptGroups = paused.conceptGroups;
+  run.result!.conceptGroupMembers = paused.conceptGroupMembers;
+  run.result!.preprocessing = paused.preprocessing;
+  return run;
+}
+
+async function serveWalkableDemo(page: Page, mutate?: (run: JobResult) => void): Promise<void> {
+  await page.route(`**/static-data/result-${FINISHED_JOB}.json`, async (route) => {
+    const run = walkableDemo();
+    mutate?.(run);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(run) });
+  });
+}
+
+/** Every request that is not a plain read of the static bundle — what "nothing reached the server" rules out. */
+function watchWrites(page: Page): string[] {
+  const writes: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() !== "GET" || r.url().includes("/api/")) writes.push(`${r.method()} ${r.url()}`);
+  });
+  return writes;
+}
+
+async function open(page: Page, gate: string, job = FINISHED_JOB): Promise<void> {
+  await page.goto(`/run/${job}/${gate}`);
+  await page.waitForLoadState("networkidle");
+}
+
+async function heldState(page: Page, job = FINISHED_JOB): Promise<SandboxState> {
+  return sandboxStateFrom(await page.evaluate((k) => sessionStorage.getItem(k), `${SANDBOX_PREFIX}${job}`));
+}
+
+test.describe("guest sandbox — on screen", () => {
+  test("@sandbox guest sandbox: on the finished demo every gate on the rail is a link, from every screen", async ({ page }) => {
+    await serveWalkableDemo(page);
+    for (const gate of RAIL_SEQUENCE) {
+      await open(page, gate);
+      for (const other of RAIL_SEQUENCE.filter((g) => g !== gate)) {
+        await expect(page.locator(`[data-testid='rail-link-${other}']`), `${gate} → ${other}`).toBeVisible();
+        await expect(page.locator(`[data-testid='rail-ahead-${other}']`)).toHaveCount(0);
+      }
+    }
+    // Direction-aware names: a gate ahead is "Go to", not "Back to".
+    await open(page, "gate1");
+    await expect(page.locator("[data-testid='rail-link-gate3']")).toHaveAttribute("aria-label", /^Go to Gate 3/);
+    await expect(page.locator("[data-testid='rail-link-setup']")).toHaveAttribute("aria-label", /^Back to Set up/);
+  });
+
+  test("@sandbox guest sandbox: the demo's Continue walks forward without a price and without a request", async ({ page }) => {
+    await serveWalkableDemo(page);
+    const writes = watchWrites(page);
+    await open(page, "gate1");
+    await page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']").click();
+    const bar = page.locator("[data-testid='commit-bar']");
+    // No amount on the demo's bar: the press buys nothing, so quoting one would be a false claim.
+    await expect(bar).toHaveAttribute("data-total", "");
+    await expect(bar).toContainText(DEMO_CONTINUE_NOTE);
+    await bar.getByRole("button", { name: /Continue to Gate 2/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate2$`));
+
+    await page.waitForLoadState("networkidle");
+    await page.locator("[data-testid='gate2-continue']").click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate3$`));
+
+    await page.waitForLoadState("networkidle");
+    await page.locator("[data-testid='commit-bar']").getByRole("button", { name: /Continue to Gate 4/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate4$`));
+    expect(writes).toEqual([]);
   });
 });

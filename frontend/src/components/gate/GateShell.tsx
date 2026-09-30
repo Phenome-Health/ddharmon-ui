@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
-import { isGatePast, pathForGate } from "@/lib/gate-routes";
+import { isGatePast, pathForGate, railReachOf } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult, type RunCost } from "@/types";
 import { PhMark } from "@/components/ph-logo";
@@ -223,7 +223,9 @@ export function GateShell({
       </header>
 
       {/* (3) The rail, then (4) the how-to panel — both on the ground, above the working surface. */}
-      <GateRail current={gate} items={rail} jobId={jobId} runPosition={runPosition} />
+      {/* Reachability reads `railReachOf`, not the raw position: a FINISHED run (the shared demo every guest walks)
+          carries none, and has reached every gate (08-18). Freezing above still reads the raw position. */}
+      <GateRail current={gate} items={rail} jobId={jobId} runPosition={railReachOf(job)} />
 
       {frozen && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
 

@@ -25,7 +25,8 @@ import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
-import { isGatePast, pathForGate } from "@/lib/gate-routes";
+import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
@@ -123,6 +124,11 @@ export default function Gate3Page() {
     !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
 
   async function onContinue() {
+    // The shared demo is walked, not resumed (08-18) — see Gate 1's `onContinue`.
+    if (pinned === true) {
+      navigate(pathForGate(jobId, nextRailGate("gate3") ?? "gate4"));
+      return;
+    }
     setResuming(true);
     try {
       const { target } = await resumeRun(jobId);
@@ -1087,10 +1093,14 @@ export default function Gate3Page() {
             ? "The last attempt to continue this run did not finish. Nothing further was charged — press Retry to run the same step again."
             : undefined
         }
-        assurance="Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
+        assurance={
+          pinned === true
+            ? DEMO_CONTINUE_NOTE
+            : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
+        }
         onCommit={onContinue}
         busy={resuming}
-        disabled={frozen || (!parkedHere && !failedLeg)}
+        disabled={frozen || (pinned !== true && !parkedHere && !failedLeg)}
       />
     </Shell>
   );

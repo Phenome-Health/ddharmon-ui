@@ -40,6 +40,7 @@ import {
   PAUSED_JOB,
   fixtureGroups,
   gate1Fixture,
+  asOwnedRun,
   serveRun,
 } from "./gate1-fixture";
 
@@ -2496,6 +2497,8 @@ test.describe("gate1 continue", () => {
   test("@gate1 a refused continue leaves the reviewer on Gate 1 and repeats what the server said", async ({
     page,
   }) => {
+    // An OWNED run: the shared demo's Continue is a free walk and never asks the server (08-18).
+    await serveRun(page, asOwnedRun);
     await openGate1(page);
     // NEW DEFAULT is deselected, so scope one group in to enable Continue before exercising the refusal.
     await page
@@ -2521,6 +2524,7 @@ test.describe("gate1 continue", () => {
   test("@gate1 continue cannot be pressed twice while it is in flight", async ({
     page,
   }) => {
+    await serveRun(page, asOwnedRun); // the spend path is an owned run's (08-18)
     await openGate1(page);
     // NEW DEFAULT is deselected, so scope one group in to enable Continue.
     await page
@@ -2871,6 +2875,7 @@ test.describe("gate1 bulk scope", () => {
   test("@gate1 taking all out drops the price by exactly the rows it affected, and no more", async ({
     page,
   }) => {
+    await serveRun(page, asOwnedRun); // an owned run: the shared demo's bar quotes no price (08-18)
     await openGate1(page);
     const bar = page.locator("[data-testid='commit-bar']");
     // NEW DEFAULT is deselected: select everything first, so there is a full price to erode.
@@ -4586,6 +4591,7 @@ test.describe("gate1 new group", () => {
   test("@gate1 the quote counts a FILLED New group — its match and its one ideal — and not an empty one", async ({
     page,
   }) => {
+    await serveRun(page, asOwnedRun); // an owned run: the shared demo's bar quotes no price (08-18)
     await openGate1(page);
     const line = page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']");
     const read = async () => {
