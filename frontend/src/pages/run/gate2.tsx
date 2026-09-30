@@ -26,7 +26,7 @@ import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } fr
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, pathForGate } from "@/lib/gate-routes";
-import { isTerminal, resumeTookEffect } from "@/lib/run-state";
+import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
 import {
   affectedSpecCount,
@@ -223,6 +223,27 @@ export default function Gate2Page() {
           {error
             ? error.message
             : "Fetching the assignment result. If this persists, reload — nothing here is lost."}
+        </GateEmptyState>
+      </Shell>
+    );
+  }
+
+  // A leg STILL RUNNING is a third fact (08-28 F4). Mid-leg the screen holds the PREVIOUS checkpoint — Gate 1's
+  // carries no records, since assign is this leg's own work — so an empty list says nothing about the scope.
+  // "Nothing was passed … tick at least one group" was a false claim pointing at a gate already frozen. Derived
+  // from the streamed status every render, so the concepts appear on their own when the leg parks here.
+  if (records.length === 0 && isInFlight(jobState?.status)) {
+    return (
+      <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
+        <GateEmptyState
+          heading="This run is still running"
+          nextStep="Nothing to do yet. You can close this tab — the run keeps going and parks at this gate for you."
+        >
+          <span data-testid="gate2-running">
+            It is <span className="font-semibold">{jobState?.phase || jobState?.status}</span> right now. The
+            groups you passed on from Gate 1 are matched to catalog elements in this leg, and they appear here on
+            their own when it finishes — no reload needed.
+          </span>
         </GateEmptyState>
       </Shell>
     );
