@@ -1,4 +1,5 @@
-import type { RunMode } from "@/types";
+import type { BatchInFlight, RunMode } from "@/types";
+import { formatUsd } from "@/lib/estimate";
 import { isInFlight } from "@/lib/run-state";
 
 /**
@@ -200,8 +201,50 @@ export function runModeOf(config: Record<string, unknown> | null | undefined): R
 export function isAwaitingProviderQueue(
   config: Record<string, unknown> | null | undefined,
   phase: string,
+  transport?: string | null,
 ): boolean {
+  // 08-28 0e: a leg that switched to sync is sending its calls NOW, whatever the run was started as — its
+  // progress is real again. `transport` is absent on older servers, which keeps the config-only reading.
+  if (transport === "sync") return false;
   return runModeOf(config) === "batch" && PROVIDER_STAGES.includes(phase);
+}
+
+/**
+ * Where the batch -> sync switch stands for this run (08-28 0e), or null when there is nothing to show.
+ *
+ *  - `offer`     — the leg is batch and its batch is still `in_progress` and switchable: offer to finish now,
+ *                  with the sync remainder's estimate in the label. An estimate that could not be priced is
+ *                  left OUT of the label rather than shown as "+$0", which would be an under-quote (R8).
+ *  - `requested` — pressed; the server has marked the batch un-switchable and the stage acts at its next
+ *                  heartbeat. Rendered as an acknowledgement, never as a second offer.
+ *  - `switching` — the batch was cancelled and is handing back what it had already finished; the rest runs
+ *                  sync once it has.
+ *
+ * Only `in_progress` is ever offered: that is the one batch state a cancel can act on, and the Batches API's
+ * per-item counts are 0 until a batch ends, so "how much is left" cannot be read mid-batch — the estimate is
+ * for everything the batch was sent.
+ */
+export type SyncSwitchState =
+  | { kind: "offer"; label: string; estimateUsd: number | null; nItems: number }
+  | { kind: "requested" }
+  | { kind: "switching" }
+  | null;
+
+export function syncSwitchState(
+  run: { transport?: string | null; batch?: BatchInFlight | null } | null | undefined,
+): SyncSwitchState {
+  const batch = run?.batch;
+  if (!run || !batch) return null;
+  if (run.transport === "sync") return { kind: "switching" };
+  if (run.transport !== "batch" || batch.status !== "in_progress") return null;
+  if (!batch.switchable) return { kind: "requested" };
+  const est = typeof batch.syncEstimateUsd === "number" && batch.syncEstimateUsd > 0 ? batch.syncEstimateUsd : null;
+  return {
+    kind: "offer",
+    label: est === null ? "Finish now with sync" : `Finish now with sync (+${formatUsd(est)})`,
+    estimateUsd: est,
+    nItems: batch.nItems,
+  };
 }
 
 /**
@@ -255,17 +298,20 @@ export function etaSeconds({
   status,
   phase,
   config,
+  transport,
   elapsed,
   pct,
 }: {
   status?: string | null;
   phase: string;
   config: Record<string, unknown> | null | undefined;
+  /** The leg's live transport (08-28 0e); a switched leg is progressing, not queued. */
+  transport?: string | null;
   elapsed: number;
   pct: number;
 }): number | null {
   if (!isInFlight(status)) return null;
-  if (isAwaitingProviderQueue(config, phase)) return null;
+  if (isAwaitingProviderQueue(config, phase, transport)) return null;
   if (!(elapsed > 3 && pct >= 12 && pct < 100)) return null;
   return (elapsed * (100 - pct)) / pct;
 }

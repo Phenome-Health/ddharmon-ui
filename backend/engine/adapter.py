@@ -27,12 +27,14 @@ The pipeline **requires a CDE backbone** (assignment to the given CDE catalog is
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import inspect
 import json
 import logging
 import os
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -100,6 +102,10 @@ _SYNC_MAX_WORKERS = max(1, int(os.environ.get("DDHARMON_SYNC_WORKERS", "8") or "
 # How often a batch stage re-checks for a Stop while the Batch API poll blocks (see _batch_stage). Small
 # enough that a user's Stop takes effect in seconds, not after the whole batch returns.
 _BATCH_POLL_SECS = 3.0
+# How often a batch stage asks the provider for its in-flight batch's ``processing_status`` (a free read), so
+# the run view can offer the batch -> sync switch while — and only while — the batch is still ``in_progress``
+# (08-28 0e). A pending switch request is acted on at the next heartbeat regardless of this interval.
+_BATCH_STATUS_SECS = 15.0
 
 
 def _noop_progress(phase: str, completed: int = 0, total: int = 0, cost: float | None = None) -> None:
@@ -1728,6 +1734,359 @@ def _record_asked(submitted: Path, record: Path) -> None:
             f.write("\n".join(fresh) + "\n")
 
 
+# ── the batch -> sync switch (08-28 0e) ─────────────────────────────────────────────────────
+#
+# A batch run spends most of its wall clock in the provider's queue. The switch lets a reviewer — or the
+# operator's ``batch_patience_seconds`` — stop waiting: the in-flight batch is CANCELLED, whatever it still hands
+# back is kept (priced at the batch rate, like any returned item), and only the ids still missing are run
+# synchronously (full rate) under the SAME ledger key. The leg then stays sync for its remaining stages. The
+# next leg starts in batch again: each Continue is a fresh cost decision (08-28 "defaults taken").
+#
+# v1 triggers on ``processing_status == "in_progress"`` (todo 2026-09-15, amendment 2026-09-30): the Batches
+# API reports its per-item counts as 0 until the whole batch ENDS, so "nothing has returned yet" cannot be
+# observed mid-batch and is not the guard.
+
+#: A manifest written up to this long BEFORE a call started still counts as that call's own. A filesystem with
+#: whole-second timestamps can stamp a manifest written a moment after the call began with an mtime just below
+#: the call's start; a stale manifest from an earlier call is minutes-to-hours old, so a second is no ambiguity.
+_MANIFEST_MTIME_SLACK_SECS = 1.0
+_MANIFEST_SUFFIX = ".batch_manifest.json"
+
+#: The sync-remainder estimate's token model. Deliberately HIGH (R8: never quote below what will be charged):
+#: three characters per input token where English prose runs nearer four, and a reply half the prompt's size,
+#: floored — against the ~0.26 output/input ratio the observed full run measured (``lib/estimate.ts``).
+_EST_CHARS_PER_TOKEN = 3
+_EST_OUTPUT_FRACTION = 0.5
+_EST_MIN_OUTPUT_TOKENS = 128
+
+
+def _bare_model(model: Any) -> Any:
+    """``anthropic/<id>`` -> ``<id>``, the form the Anthropic SDK and its usage records carry."""
+    if isinstance(model, str) and model.lower().startswith("anthropic/"):
+        return model.split("/", 1)[1]
+    return model or None
+
+
+class LegTransport:
+    """ONE leg's batch -> sync switch, shared by every batch stage that leg builds (08-28 0e).
+
+    Built per leg by the runner (like the leg's ledger), so the switch is STICKY for the rest of the leg — once
+    a stage switched, every later batch stage of the leg runs sync from the start — and is NOT carried into the
+    next leg, which builds a new one. Nothing here is persisted.
+
+    ``requested`` reads the run's switch flag (set by the reviewer's ``POST .../switch-to-sync``); ``report``
+    tells the run view what is in flight (``(transport, batch_info | None)``); ``patience_seconds`` is the
+    operator-only auto-switch (off when ``None``); ``client_factory`` builds the sync client, lazily — a leg that
+    never switches never builds one.
+    """
+
+    def __init__(
+        self,
+        *,
+        requested: Callable[[], bool] | None = None,
+        report: Callable[[str, dict[str, Any] | None], None] | None = None,
+        patience_seconds: float | None = None,
+        client_factory: Callable[[], Any] | None = None,
+    ) -> None:
+        self._requested = requested
+        self._report = report
+        self.patience_seconds = float(patience_seconds) if patience_seconds and float(patience_seconds) > 0 else None
+        self.client_factory = client_factory
+        self._client: Any = None
+        self._auto = False
+        self._lock = threading.Lock()
+        #: The leg is sync for good. Set by :meth:`commit`, never cleared.
+        self.switched = False
+
+    def requested(self) -> bool:
+        """Whether a switch has been asked for — by the reviewer, by patience, or by an earlier stage."""
+        if self.switched or self._auto:
+            return True
+        if self._requested is None:
+            return False
+        try:
+            return bool(self._requested())
+        except Exception:  # noqa: BLE001 — a flag read that fails is "not requested", never a crashed stage
+            logger.warning("reading the batch->sync switch flag failed", exc_info=True)
+            return False
+
+    def request(self) -> None:
+        """Raise the switch from inside the leg — ``batch_patience_seconds`` sets the same flag a press does."""
+        self._auto = True
+
+    def commit(self) -> None:
+        """The leg is sync from here on."""
+        self.switched = True
+
+    @property
+    def mode(self) -> str:
+        return "sync" if self.switched else "batch"
+
+    def report(self, batch: dict[str, Any] | None) -> None:
+        """Tell the run view what is in flight. Never raises: it is display state."""
+        if self._report is None:
+            return
+        try:
+            self._report(self.mode, batch)
+        except Exception:  # noqa: BLE001
+            logger.debug("reporting the in-flight batch failed", exc_info=True)
+
+    def client(self) -> Any:
+        """The leg's sync client, built on first use and shared by every stage that runs sync after the switch."""
+        with self._lock:
+            if self._client is None:
+                if self.client_factory is None:
+                    raise RuntimeError("this leg switched to sync but has no sync client to run the rest with")
+                self._client = self.client_factory()
+            return self._client
+
+
+def _batches_api(api_key: str | None = None) -> Any:
+    """The Message Batches resource, for the two FREE calls the switch makes: ``retrieve`` and ``cancel``.
+
+    Built like core's ``submit_batch`` builds its client (``api_key=None`` -> the SDK's env default), so the
+    switch talks to the same account the batch was submitted from. Never submits anything.
+    """
+    import anthropic
+
+    return anthropic.Anthropic(api_key=api_key).messages.batches
+
+
+def _sync_estimate_usd(prompts: Sequence[Any]) -> float | None:
+    """What running ``prompts`` synchronously would cost, estimated high (R8). ``None`` when it cannot be priced.
+
+    Input tokens from the prompt's own text (system + schema preamble + schema + user, and a tool schema where
+    one is sent); output from :data:`_EST_OUTPUT_FRACTION` of that, floored, capped at the prompt's own budget;
+    priced at the full (non-batch) rate by core's ``price_usage``. A prompt whose model has no known rate makes
+    the whole figure unknown rather than quietly $0 — a "+$0.00" on a paid action is an under-quote.
+    """
+    if not prompts:
+        return None
+    from ddharmon.llm.cost import price_usage
+
+    total = 0.0
+    for rec in prompts:
+        text = (
+            str(getattr(rec, "system_prompt", "") or "")
+            + _SCHEMA_PREAMBLE
+            + str(getattr(rec, "schema", "") or "")
+            + str(getattr(rec, "user_prompt", "") or "")
+        )
+        tool_schema = getattr(rec, "tool_schema", None)
+        if tool_schema:
+            text += json.dumps(tool_schema)
+        tokens_in = -(-len(text) // _EST_CHARS_PER_TOKEN)
+        budget = int(getattr(rec, "max_tokens", None) or _BATCH_DEFAULT_MAX_TOKENS)
+        tokens_out = min(budget, max(_EST_MIN_OUTPUT_TOKENS, int(tokens_in * _EST_OUTPUT_FRACTION) + 1))
+        usd = price_usage(_bare_model(getattr(rec, "model_tag", None)), tokens_in, tokens_out, batch=False)
+        if usd <= 0:
+            return None
+        total += usd
+    return round(total, 6)
+
+
+class _BatchWatch:
+    """What one batch-stage CALL knows about the batch it submitted: which one, its status, the switch.
+
+    Finds its manifest by name — core writes ``<submitted file>.batch_manifest.json`` on a first submit and
+    ``<submitted file>.resume.batch_manifest.json`` for a gap — and only one stamped at or after THIS call's
+    start (less :data:`_MANIFEST_MTIME_SLACK_SECS`): the adapter's gap sidecar is reused by every later call for
+    the tag and core deletes only the ``.resume`` manifests, so an earlier call's manifest, naming a batch that
+    has long ended, can be sitting under the same name.
+    """
+
+    def __init__(
+        self,
+        *,
+        work_dir: Path,
+        submit_path: Path,
+        started: float,
+        tag: str,
+        prompts: Sequence[Any],
+        already: set[str],
+        api_key: str | None,
+    ) -> None:
+        self.work_dir = work_dir
+        self.candidates = [
+            work_dir / f"{submit_path.name}{_MANIFEST_SUFFIX}",
+            work_dir / f"{submit_path.name}.resume{_MANIFEST_SUFFIX}",
+        ]
+        self.started = started
+        self.tag = tag
+        self.prompts = list(prompts)
+        self.already = already
+        self.api_key = api_key
+        self.watch_started = time.monotonic()
+        self.last_probe = float("-inf")
+        self.batch_id: str | None = None
+        self.submitted: set[str] = set()
+        self.estimate: float | None = None
+        self.status: str | None = None
+        #: The switch has been acted on for this call (cancelled, or found already ending).
+        self.acted = False
+        self._api: Any = None
+
+    def _locate(self) -> bool:
+        if self.batch_id is not None:
+            return True
+        found: tuple[float, Path] | None = None
+        for path in self.candidates:
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < self.started - _MANIFEST_MTIME_SLACK_SECS:
+                continue  # an earlier call's manifest — never this call's batch
+            if found is None or mtime > found[0]:
+                found = (mtime, path)
+        if found is None:
+            return False
+        try:
+            manifest = json.loads(found[1].read_text())
+        except (OSError, ValueError):
+            return False  # being written right now; the next heartbeat reads it whole
+        batch_id = str(manifest.get("batch_id") or "")
+        if not batch_id:
+            return False
+        id_map = manifest.get("id_map") or {}
+        asked = {str(p.id) for p in self.prompts}
+        submitted = {str(v) for v in id_map.values()} if isinstance(id_map, dict) and id_map else asked - self.already
+        self.batch_id = batch_id
+        self.submitted = submitted
+        # The remainder a switch would buy is everything this batch was sent: nothing is observable as returned
+        # until the batch ends (see the section header), so this is the honest upper bound.
+        self.estimate = _sync_estimate_usd([p for p in self.prompts if str(p.id) in submitted])
+        return True
+
+    def _batches(self) -> Any:
+        if self._api is None:
+            self._api = _batches_api(self.api_key)
+        return self._api
+
+    def _probe_status(self) -> str | None:
+        try:
+            return str(self._batches().retrieve(self.batch_id).processing_status)
+        except Exception as exc:  # noqa: BLE001 — a free status read that fails is retried next heartbeat
+            logger.warning("batch %s: status read failed (%s: %s)", self.batch_id, type(exc).__name__, exc)
+            return None
+
+    def info(self, transport: LegTransport) -> dict[str, Any]:
+        """The ``batch`` block the run view renders the switch from."""
+        return {
+            "tag": self.tag,
+            "nItems": len(self.submitted),
+            "status": self.status,
+            "switchable": self.status == "in_progress" and not transport.requested(),
+            "syncEstimateUsd": self.estimate,
+        }
+
+    def tick(self, transport: LegTransport) -> None:
+        """One heartbeat: apply patience, read the status when due, act on a switch request, report."""
+        now = time.monotonic()
+        if (
+            transport.patience_seconds is not None
+            and not transport.requested()
+            and now - self.watch_started >= transport.patience_seconds
+        ):
+            logger.info(
+                "batch %s: patience (%.0fs) elapsed — switching this leg to sync", self.tag, transport.patience_seconds
+            )
+            transport.request()
+        want = transport.requested() and not self.acted
+        if not want and now - self.last_probe < _BATCH_STATUS_SECS:
+            return
+        self.last_probe = now
+        if not self._locate():
+            return  # not submitted yet — a pending request is retried at the next heartbeat
+        status = self._probe_status()
+        if status is None:
+            return
+        self.status = status
+        if want:
+            if status == "in_progress":
+                try:
+                    self._batches().cancel(self.batch_id)
+                except Exception as exc:  # noqa: BLE001 — retried at the next heartbeat
+                    logger.warning("batch %s: cancel failed (%s: %s)", self.batch_id, type(exc).__name__, exc)
+                    return
+                self.status = "canceling"
+                logger.info("batch %s (%s): cancelled — the rest of this leg runs sync", self.batch_id, self.tag)
+            # Not in_progress means it is already ending on its own: nothing to cancel, and whatever it still
+            # hands back is kept. The switch holds for the rest of the leg either way.
+            self.acted = True
+            transport.commit()
+        transport.report(self.info(transport))
+
+
+def _answers_on_disk(responses_path: Path, asked: set[str]) -> dict[str, Any]:
+    """The asked ids' answers already in ``responses_<tag>.jsonl`` — free, whoever paid for them."""
+    out: dict[str, Any] = {}
+    if not responses_path.exists():
+        return out
+    with open(responses_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if str(rec.get("id")) in asked:
+                out[str(rec["id"])] = rec.get("response")
+    return out
+
+
+def _sync_remainder(
+    phase: str,
+    progress: ProgressFn,
+    transport: LegTransport,
+    prompts: Sequence[Any],
+    out: dict[str, Any],
+    responses_path: Path,
+    ledger: Any,
+    key: str,
+) -> None:
+    """Run synchronously ONLY the prompts ``out`` has no answer for, and append each answer to the stage's file.
+
+    Sent exactly as a batch request would be (:func:`_complete_like_batch`, the 0b parity path). Every answer is
+    APPENDED to ``responses_<tag>.jsonl`` with ``"transport": "sync"`` as it lands — that file is what the
+    reconciler derives its gap from, so an answer kept anywhere else would read as a stage the cancelled batch
+    still owes, and the reviewer would be told a required step failed. Callers guarantee the batch worker has
+    EXITED first: core's ``retrieve_batch`` opens this file with ``"w"``.
+
+    Priced at the full rate under ``key`` — the stage's own ledger key — in a ``finally``, so calls that were
+    answered before a Stop are billed too (they were charged).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    missing = [p for p in prompts if str(p.id) not in out]
+    if not missing:
+        return
+    n = len(prompts)
+    done = n - len(missing)
+    client = transport.client()
+    progress(phase, done, n)
+    try:
+        with ThreadPoolExecutor(max_workers=min(_SYNC_MAX_WORKERS, len(missing))) as ex:
+            futures = {ex.submit(_complete_like_batch, client, rec): rec for rec in missing}
+            try:
+                for fut in as_completed(futures):
+                    rec = futures[fut]
+                    resp = fut.result()
+                    out[str(rec.id)] = resp
+                    with open(responses_path, "a") as f:
+                        f.write(json.dumps({"id": rec.id, "response": resp, "transport": "sync"}, default=str) + "\n")
+                    done += 1
+                    progress(phase, done, n)  # raises on a "discard" stop -> abort promptly
+            except BaseException:
+                for f in futures:  # a discard-stop stops paying for calls not yet sent
+                    f.cancel()
+                raise
+    finally:
+        ledger.add(key, client.drain_usage(), batch=False)
+
+
 def _batch_stage(
     phase: str,
     progress: ProgressFn,
@@ -1737,6 +2096,7 @@ def _batch_stage(
     api_key: str | None = None,
     stopping: StoppingFn | None = None,
     ledger_key: str | None = None,
+    transport: LegTransport | None = None,
 ) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
@@ -1760,6 +2120,15 @@ def _batch_stage(
     within ``_BATCH_POLL_SECS`` instead of minutes. The abandoned thread finishes its poll and exits on its
     own; the already-submitted batch still completes server-side (it can't be un-submitted), but we stop
     consuming it and NO downstream stage is submitted after the Stop — which is where the cost is.
+
+    THE BATCH -> SYNC SWITCH (08-28 0e), when ``transport`` is given. Each heartbeat reads this call's batch
+    status (every :data:`_BATCH_STATUS_SECS`) and reports it for the run view. On a switch request — the
+    reviewer's, or ``batch_patience_seconds`` elapsing — a batch still ``in_progress`` is cancelled; the worker is
+    then JOINED like any other wait (it sees the batch end, retrieves what finished and exits), the returned
+    items are priced at the batch rate as usual, and only the ids still missing are run sync
+    (:func:`_sync_remainder`, full rate, same ledger key). Nothing is written to the responses file while the
+    worker lives, because core's retrieve opens it with ``"w"``. A leg that has switched runs every later batch
+    stage sync from the start (answers already on disk are still free).
     """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
@@ -1771,6 +2140,7 @@ def _batch_stage(
         from ddharmon.llm.batch import resume_and_wait
 
         n = len(prompts)
+        key = ledger_key or phase
         progress(phase, 0, n)
         work_dir.mkdir(parents=True, exist_ok=True)
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
@@ -1778,6 +2148,7 @@ def _batch_stage(
         asked = {str(p.id) for p in prompts}
         # Answers already on disk BEFORE this call were paid for by whoever wrote them — never by this call.
         already = _jsonl_ids(responses_path)
+        call_started = time.time()
         if prompts_path.exists():
             submit_path = work_dir / f"prompts_{tag}.jsonl{BATCH_GAP_SUFFIX}"
             write_prompts_jsonl(prompts, submit_path)
@@ -1785,6 +2156,13 @@ def _batch_stage(
         else:
             submit_path = prompts_path
             write_prompts_jsonl(prompts, prompts_path)
+        if transport is not None and transport.switched:
+            # This leg already switched (08-28 0e): no batch for the rest of it. Answers on disk stay free.
+            transport.report(None)
+            cached = _answers_on_disk(responses_path, asked)
+            _sync_remainder(phase, progress, transport, prompts, cached, responses_path, ledger, key)
+            progress(phase, n, n, ledger.total_usd)
+            return cached
         # Run the blocking Batch API wait off-thread so we can honor a mid-poll Stop (see docstring).
         holder: dict[str, BaseException] = {}
 
@@ -1794,19 +2172,44 @@ def _batch_stage(
             except BaseException as exc:  # noqa: BLE001 — captured and re-raised on the calling thread
                 holder["exc"] = exc
 
+        watch = (
+            _BatchWatch(
+                work_dir=work_dir,
+                submit_path=submit_path,
+                started=call_started,
+                tag=tag,
+                prompts=prompts,
+                already=already,
+                api_key=api_key,
+            )
+            if transport is not None
+            else None
+        )
         worker = threading.Thread(target=_wait, name=f"ddharmon-batch-{tag}", daemon=True)
         worker.start()
         while worker.is_alive():
             worker.join(timeout=_BATCH_POLL_SECS)
             progress(phase, 0, n)  # heartbeat + cancellation checkpoint (raises on Stop -> abort the poll)
+            if watch is not None and transport is not None and worker.is_alive():
+                watch.tick(transport)
+        # The worker has EXITED past this point — the only point a sync answer may be written (see docstring).
+        switching = transport is not None and transport.requested()
+        if transport is not None:
+            if switching:
+                transport.commit()  # asked for while the batch ended on its own: still sync for the rest of the leg
+            transport.report(None)
         if "exc" in holder:
-            raise holder["exc"]
+            if not switching:
+                raise holder["exc"]
+            # A switched leg does not need the cancelled batch's retrieve to have worked: what is missing is
+            # bought sync below, which is exactly what the reviewer asked for.
+            logger.warning("batch %s: the cancelled batch's wait failed (%s) — finishing sync", tag, holder["exc"])
         from ddharmon.llm.cost import TokenUsage
 
         out: dict[str, Any] = {}
         usages: list[Any] = []
         priced: set[str] = set()
-        with open(responses_path) as f:
+        with open(responses_path) if responses_path.exists() else contextlib.nullcontext([]) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -1831,7 +2234,10 @@ def _batch_stage(
                         )
                     )
         # Keyed on `ledger_key` (default: the phase) — see _sync_stage.
-        ledger.add(ledger_key or phase, usages, batch=True)  # Batch bills at 50% (applied in price_usage).
+        ledger.add(key, usages, batch=True)  # Batch bills at 50% (applied in price_usage).
+        if switching and transport is not None:
+            # Only the ids the cancelled batch did NOT hand back, at the full rate, under the same key.
+            _sync_remainder(phase, progress, transport, prompts, out, responses_path, ledger, key)
         progress(phase, n, n, ledger.total_usd)
         return out
 
@@ -2076,6 +2482,7 @@ def run_pipeline(
     replay_responses: dict[str, dict[str, Any]] | None = None,
     prior_cost: Any = None,
     ledger: CumulativeLedger | None = None,
+    transport: LegTransport | None = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -2111,6 +2518,10 @@ def run_pipeline(
         ledger:     a caller-owned leg ledger (already seeded) to price into instead of building one from
                     ``prior_cost``. The runner passes its own so that what a leg bought before it FAILED is
                     still readable afterwards and can be kept on the parked run's bill.
+        transport:  the leg's batch -> sync switch (08-28 0e), built by the runner per leg. Handed to every
+                    batch stage, so a switch in one stage holds for the rest of the leg; given a sync client
+                    factory here (the same client a sync run would build) when it has none. Batch mode only;
+                    ``None`` keeps every batch stage exactly as it was.
 
     A staged run (``config["stop_at_gate"]`` set to ``"gate1"`` or ``"gate2"``) returns a PARTIAL result
     carrying ``gatePosition`` plus whatever the stages before that boundary produced.
@@ -2332,17 +2743,35 @@ def run_pipeline(
             },
         }
     else:  # batch (default)
+        # 08-28 0e: ONE transport for the leg, shared by every batch stage below, so a switch holds for the rest
+        # of the leg. Passed only when the runner built one, so a caller without it gets the stages unchanged.
+        leg: dict[str, Any] = {}
+        if transport is not None:
+            if transport.client_factory is None:
+                from backend.engine.llm import build_llm_client
+
+                model_tag = kwargs.get("model_tag")
+                transport.client_factory = lambda: build_llm_client(model_tag, api_key)
+            leg["transport"] = transport
         stages = {
             "generate": _batch_stage(
-                "generating", progress, work_dir, "generate", ledger, api_key=api_key, stopping=stopping
+                "generating", progress, work_dir, "generate", ledger, api_key=api_key, stopping=stopping, **leg
             ),
-            "split": _batch_stage("splitting", progress, work_dir, "split", ledger, api_key=api_key, stopping=stopping),
+            "split": _batch_stage(
+                "splitting", progress, work_dir, "split", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
             "classify": _batch_stage(
-                "assigning", progress, work_dir, "assign", ledger, api_key=api_key, stopping=stopping
+                "assigning", progress, work_dir, "assign", ledger, api_key=api_key, stopping=stopping, **leg
             ),
-            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping),
-            "specgen": _batch_stage("specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping),
-            "refine": _batch_stage("refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping),
+            "gencde": _batch_stage(
+                "gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "specgen": _batch_stage(
+                "specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "refine": _batch_stage(
+                "refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
             **(
                 {
                     "specgen_repick": _batch_stage(
@@ -2354,6 +2783,7 @@ def run_pipeline(
                         api_key=api_key,
                         stopping=stopping,
                         ledger_key=_REPICK_COST_KEY,
+                        **leg,
                     )
                 }
                 if want_repick
@@ -2369,6 +2799,7 @@ def run_pipeline(
                     api_key=api_key,
                     stopping=stopping,
                     ledger_key=w["cost"],
+                    **leg,
                 )
                 for name, w in judge_specs.items()
             },

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { switchToSync } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { formatDuration, type JobResult } from "@/types";
+import { formatDuration, formatUsd, type JobResult } from "@/types";
 import { isInFlight } from "@/lib/run-state";
 import {
   elapsedSeconds,
@@ -9,7 +11,9 @@ import {
   isAwaitingProviderQueue,
   legStartedAt,
   phasePercent,
+  syncSwitchState,
   timelineSegments,
+  type SyncSwitchState,
 } from "@/lib/run-progress";
 
 /**
@@ -105,8 +109,11 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
   // The CURRENT leg's clock (#5): a resumed run's createdAt is the first leg's start, days ago.
   const elapsed = elapsedSeconds(job, now, legStartedAt(job.phaseStartedAt));
   const pct = phasePercent(job.phase, job.completed, job.total);
-  const queued = isAwaitingProviderQueue(config, job.phase);
-  const eta = etaSeconds({ status: job.status, phase: job.phase, config, elapsed, pct });
+  // 08-28 0e: the leg's LIVE transport, so a leg switched to sync stops reading as a queue wait.
+  const transport = job.transport ?? null;
+  const queued = isAwaitingProviderQueue(config, job.phase, transport);
+  const eta = etaSeconds({ status: job.status, phase: job.phase, config, transport, elapsed, pct });
+  const sw = syncSwitchState(job);
 
   return (
     <section
@@ -145,7 +152,15 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
         </p>
       </div>
 
-      {queued ? (
+      {sw?.kind === "switching" ? (
+        /* 08-28 0e. The batch was cancelled and is handing back what it had already finished; the rest runs
+           sync the moment it has. Still no bar: nothing is being counted until then. */
+        <p data-testid="run-progress-switching" className="max-w-[80ch] text-sm text-on-raised-muted">
+          <span className="font-semibold text-on-raised">Switching to sync.</span> The queued batch is cancelled
+          and is handing back anything it had already finished (kept at the batch rate); the rest runs right after,
+          at the full rate.
+        </p>
+      ) : queued ? (
         /* NO BAR HERE, DELIBERATELY. The percentage is standing still because the work is with the
            provider, and rendering it would present a stalled number as progress. */
 <>
@@ -168,6 +183,9 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
           >
             Watch it in the Anthropic Console →
           </a>
+          {/* 08-28 0e — the escape hatch, BESIDE the reassurance rather than instead of it: waiting is still
+              the cheap default, and this is a paid choice that says what it costs. */}
+          {sw && <SyncSwitch jobId={job.jobId} state={sw} />}
         </>
       ) : (
         <div
@@ -190,5 +208,73 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
           historical run stays clean, and it reuses the tick this section already owns. */}
       <RunTimeline phaseStartedAt={job.phaseStartedAt} currentPhase={job.phase} now={now} />
     </section>
+  );
+}
+
+/**
+ * "Finish now with sync" (08-28 0e): cancel the queued batch, keep what it already finished, run the rest now.
+ *
+ * THE PRICE IS PART OF THE CONTROL, because this re-buys queued work at twice the batch rate. The label carries
+ * the server's estimate for everything the batch was sent — deliberately high, and absent (never "+$0") when it
+ * could not be priced — and the caption says the two things a reviewer needs to agree to it: finished items
+ * keep the batch rate, and only THIS leg switches (the next Continue is a fresh choice, back in batch).
+ *
+ * ONE PRESS. The server is idempotent anyway, but a second live button beside an acknowledgement reads as
+ * "it did not work". Once pressed — here, or in another tab, which the stream reports as an un-switchable
+ * batch still in progress — the offer is replaced by the acknowledgement. A refusal (409: the batch stopped
+ * being queued in the meantime) is said out loud and the offer stays usable.
+ */
+function SyncSwitch({ jobId, state }: { jobId: string; state: NonNullable<SyncSwitchState> }) {
+  const [phase, setPhase] = useState<"idle" | "sending" | "sent">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  if (state.kind === "switching") return null; // the readout's own line covers it
+  if (state.kind === "requested" || phase === "sent") {
+    return (
+      <p data-testid="run-progress-switch-requested" className="max-w-[80ch] text-sm text-on-raised">
+        <span className="font-semibold">Switch requested.</span> The batch is being cancelled; what it has already
+        finished is kept, and the rest runs now at the full rate.
+      </p>
+    );
+  }
+
+  async function press() {
+    setPhase("sending");
+    setError(null);
+    try {
+      await switchToSync(jobId);
+      setPhase("sent");
+    } catch (e) {
+      setPhase("idle");
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const price = state.estimateUsd === null ? null : formatUsd(state.estimateUsd);
+  return (
+    <div data-testid="run-progress-switch" className="flex max-w-[80ch] flex-col items-start gap-1.5">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="run-progress-switch-sync"
+        onClick={() => void press()}
+        disabled={phase === "sending"}
+      >
+        {phase === "sending" && <Loader2 aria-hidden="true" className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+        {state.label}
+      </Button>
+      <p data-testid="run-progress-switch-caption" className="text-xs text-on-raised-muted">
+        Cancels the queued batch. Anything it has already finished is kept at the batch rate; the rest of its{" "}
+        {state.nItems} requests run now at the full rate
+        {price ? ` — at most about ${price}` : " (the price could not be estimated)"}. Only this leg switches: your
+        next Continue starts in batch again.
+      </p>
+      {error && (
+        <p data-testid="run-progress-switch-error" role="alert" className="text-xs font-semibold text-status-danger">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

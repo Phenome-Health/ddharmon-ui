@@ -9,16 +9,37 @@ and catches failures so a worker thread never dies silently. The SSE endpoint po
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 from backend import billing
 from backend.checkpoint import checkpoint_lock, checkpoint_path, write_checkpoint
 from backend.engine import run_pipeline
-from backend.engine.adapter import CumulativeLedger, StageFn, cost_block, merge_costs
+from backend.engine.adapter import CumulativeLedger, LegTransport, StageFn, cost_block, merge_costs
 from backend.jobs import AWAITING_REVIEW, JobStore
 
 logger = logging.getLogger(__name__)
+
+#: OPERATOR-ONLY (08-28 0e): once a batch stage has waited this many seconds, switch the leg to sync — the same
+#: flag a reviewer's "Finish now with sync" raises. For the verification loop, which cannot sit in a provider
+#: queue for an hour per iteration. Read from the SERVER's environment and never from a run's config: a run's
+#: config is user-submitted, and a user-settable timer that re-buys queued work at twice the price is a spend
+#: path nobody consented to. Unset, empty, non-numeric or <= 0 means OFF, which is the default.
+BATCH_PATIENCE_ENV = "DDHARMON_BATCH_PATIENCE_SECONDS"
+
+
+def batch_patience_seconds() -> float | None:
+    """The operator's batch patience, or ``None`` (off)."""
+    raw = os.environ.get(BATCH_PATIENCE_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number of seconds — batch patience stays off", BATCH_PATIENCE_ENV, raw)
+        return None
+    return value if value > 0 else None
 
 
 class RunCancelledError(Exception):
@@ -101,6 +122,18 @@ def run_harmonization(
     if staged:
         staged["ledger"] = leg_ledger
     work_dir = Path(config.get("work_dir", "."))
+    # The leg's batch -> sync switch (08-28 0e). ONE per leg, built here like the ledger: a switch is sticky for
+    # the leg it was pressed in, and the next leg — a fresh worker, a fresh transport, the run's flag reset — is a
+    # fresh cost decision. Only a batch leg has a batch to switch away from, so only it is handed one.
+    mode = config.get("run_mode", "batch")
+    store.reset_transport(job_id, mode if mode in ("batch", "sync") else None)
+    leg: dict[str, Any] = {}
+    if mode == "batch":
+        leg["transport"] = LegTransport(
+            requested=lambda: store.switch_requested(job_id),
+            report=lambda transport, batch: store.set_transport(job_id, transport, batch),
+            patience_seconds=batch_patience_seconds(),
+        )
     try:
         result = run_pipeline(
             dict_specs,
@@ -112,6 +145,7 @@ def run_harmonization(
             api_key=api_key,
             stopping=lambda: store.cancel_mode(job_id),
             **staged,
+            **leg,
         )
         # A plain dict view of the contract result. `UIResult` is a TypedDict, so it is not assignable to
         # `dict[str, Any]`; taking one copy here keeps the checkpoint writer and the ideas pass honest about
@@ -202,6 +236,9 @@ def run_harmonization(
         else:
             store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)
         _keep_leg_spend(store, job_id, leg_ledger, work_dir)
+    finally:
+        # The leg is over, however it ended: its switch and its in-flight batch end with it.
+        store.reset_transport(job_id)
 
 
 def _total(payload: dict[str, Any]) -> float:

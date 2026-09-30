@@ -158,6 +158,16 @@ class Job:
     # Transient (live-job only): never persisted, never serialized as a raw value by to_dict (only the derived
     # ``stopping`` bool is) — a re-hydrated run starts None.
     cancel_mode: str | None = None
+    # --- the batch -> sync switch (08-28 0e). All three are LIVE-ONLY display/control state for the CURRENT
+    # leg: never persisted, reset at every leg boundary by the runner (``reset_transport``), so a switch is
+    # sticky for the leg it was pressed in and never carried into the next one. ---
+    # How the leg's LLM stages are being sent right now: "batch" | "sync" (None for a run with no leg running).
+    transport: str | None = None
+    # The batch a batch stage is polling, as the adapter reports it: {tag, nItems, status, switchable,
+    # syncEstimateUsd}. None when no batch stage is in flight.
+    batch: dict[str, Any] | None = None
+    # The reviewer asked this leg to stop waiting on the batch (``POST .../switch-to-sync``).
+    switch_to_sync: bool = False
 
     @classmethod
     def from_db_row(cls, d: dict[str, Any]) -> Job:
@@ -278,6 +288,10 @@ class Job:
             "costSoFar": self.cost_so_far,
             "gatePosition": self.gate_position,
             "resultVersion": self.result_version,
+            # 08-28 0e: how the leg is sending its stages, and the batch in flight (None when there is none) —
+            # what the run view's "Finish now with sync" control renders from. Small and bounded by design.
+            "transport": self.transport,
+            "batch": self.batch if self.status not in TERMINAL_STATES else None,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -623,6 +637,64 @@ class JobStore:
                 return False
             job.cancel_mode = mode
             return True
+
+    # --- the batch -> sync switch (08-28 0e) -------------------------------------------------------------
+
+    def request_switch_to_sync(self, job_id: str) -> str:
+        """Ask the run's in-flight leg to stop waiting on its batch and finish the stage synchronously.
+
+        Returns ``"requested"`` when the flag was raised, ``"already"`` when this leg already has it (idempotent:
+        a second press changes nothing), ``"unavailable"`` when there is nothing to switch — no live leg, or no
+        batch stage in flight, or a batch the provider no longer reports as ``in_progress`` (only a queued or
+        running batch can be cancelled; one that is ending hands back everything anyway) — and ``"unknown"``
+        for a run not in memory. Decided under the lock against what the adapter last reported, so a press
+        cannot race the report it was offered from. The flag itself is read by the leg's batch stages.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return "unknown"
+            if job.switch_to_sync:
+                return "already"
+            live = job.status not in TERMINAL_STATES and job.status != AWAITING_REVIEW
+            batch = job.batch or {}
+            if not live or job.transport != "batch" or batch.get("status") != "in_progress":
+                return "unavailable"
+            job.switch_to_sync = True
+            job.batch = {**batch, "switchable": False}
+            return "requested"
+
+    def switch_requested(self, job_id: str) -> bool:
+        """Whether the run's current leg was asked to switch. Read by the adapter's batch stages."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return bool(job and job.switch_to_sync)
+
+    def set_transport(self, job_id: str, transport: str | None, batch: dict[str, Any] | None) -> None:
+        """Record what the adapter reports about the leg's transport. Display state: it never persists and never
+        moves ``updated_at`` (the frozen-elapsed rule reads that at the park). A switch already requested stays
+        un-offered, whatever a late report says."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.transport = transport
+            if batch is not None and job.switch_to_sync:
+                batch = {**batch, "switchable": False}
+            job.batch = batch
+
+    def reset_transport(self, job_id: str, transport: str | None = None) -> None:
+        """A leg boundary: clear the switch flag and the in-flight batch, and set the new leg's transport.
+
+        Called by the runner when a leg starts and again when it ends, so a switch pressed in one leg is never
+        read by the next (each Continue is a fresh cost decision)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.switch_to_sync = False
+            job.batch = None
+            job.transport = transport
 
     def is_cancel_requested(self, job_id: str) -> bool:
         """Whether a stop (either mode) has been requested for a live job."""

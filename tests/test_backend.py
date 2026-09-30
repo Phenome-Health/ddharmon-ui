@@ -1831,7 +1831,16 @@ def test_runner_captures_failing_phase(monkeypatch):
     from backend import runner as runner_module
 
     def boom(
-        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+        dict_specs,
+        cde_spec,
+        config,
+        *,
+        progress,
+        provider=None,
+        stage_overrides=None,
+        api_key=None,
+        stopping=None,
+        **_leg,  # 08-28 0e: a batch leg is also handed its batch -> sync transport
     ):
         progress("assigning", 3, 10)  # got partway before dying
         raise RuntimeError("assign stage exploded")
@@ -1878,7 +1887,16 @@ def test_runner_cancellation_marks_cancelled(monkeypatch):
     reached: list[str] = []
 
     def pipeline(
-        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+        dict_specs,
+        cde_spec,
+        config,
+        *,
+        progress,
+        provider=None,
+        stage_overrides=None,
+        api_key=None,
+        stopping=None,
+        **_leg,  # 08-28 0e: a batch leg is also handed its batch -> sync transport
     ):
         progress("embedding", 1, 3)  # first checkpoint: not yet cancelled -> proceeds
         reached.append("embedding")
@@ -1936,7 +1954,16 @@ def test_runner_keep_stop_preserves_partial_result(monkeypatch):
     partial = {"records": [{"id": "r1"}, {"id": "r2"}]}
 
     def pipeline(
-        dict_specs, cde_spec, config, *, progress, provider=None, stage_overrides=None, api_key=None, stopping=None
+        dict_specs,
+        cde_spec,
+        config,
+        *,
+        progress,
+        provider=None,
+        stage_overrides=None,
+        api_key=None,
+        stopping=None,
+        **_leg,  # 08-28 0e: a batch leg is also handed its batch -> sync transport
     ):
         progress("generating", 0, 1)  # keep mode -> progress does NOT raise; the stage finishes
         assert stopping() == "keep"  # the runner threaded the live stop mode through
