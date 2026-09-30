@@ -14,6 +14,9 @@ division in ``test_backend.py``, extraction in ``test_score_components.py``, the
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -112,3 +115,11 @@ def test_a_rejected_key_carries_its_own_code(status):
 def test_other_provider_conditions_carry_no_key_code(status):
     http = as_http_error(_sdk_error(status))
     assert http is not None and getattr(http, "code", None) is None
+
+
+def test_the_frontend_branches_on_the_same_codes():
+    """The screen decides on these strings; a rename on one side only would silently hide the key field."""
+    src = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "lib" / "run-key.ts").read_text()
+    assert re.search(rf'export const KEY_REQUIRED\s*=\s*"{KEY_REQUIRED}"', src)
+    assert re.search(rf'export const KEY_REJECTED\s*=\s*"{KEY_REJECTED}"', src)
+    assert (KEY_REQUIRED, KEY_REJECTED) == ("key_required", "key_rejected")
