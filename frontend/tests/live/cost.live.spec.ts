@@ -31,18 +31,24 @@ test.describe("I2 spend display", () => {
     const chip = page.getByTestId("run-chip");
     await expect(chip).toBeVisible();
     const header = usd(await chip.textContent());
-    expect.soft(header, "the header chip shows the run's cost").toBeCloseTo(Number(run.costSoFar ?? 0), 3);
+    // Every screen amount is rounded to the cent, so "equal" means within half a cent of the unrounded figure,
+    // and a sum of N rounded cells may differ from the rounded total by up to N half-cents.
+    const cent = 0.005 + 1e-9;
+    expect.soft(Math.abs(header - Number(run.costSoFar ?? 0)), `header ${header} vs run ${run.costSoFar}`).toBeLessThanOrEqual(cent);
 
     const byGate = await railByGate(page);
     const railSum = Object.values(byGate)
       .filter((v) => Number.isFinite(v))
       .reduce((s, v) => s + v, 0);
-    expect.soft(railSum, `rail realized ${JSON.stringify(byGate)} sums to the header`).toBeCloseTo(header, 2);
+    const cells = Object.values(byGate).filter((v) => Number.isFinite(v)).length;
+    expect
+      .soft(Math.abs(railSum - Number(run.costSoFar ?? 0)), `rail realized ${JSON.stringify(byGate)} sums to the run`)
+      .toBeLessThanOrEqual(cent * Math.max(1, cells));
 
     const spentHere = page.getByText(/Already spent to reach this gate/);
     if (await spentHere.count()) {
       const said = usd(await spentHere.first().textContent());
-      if (Number.isFinite(said)) expect.soft(said, "'Already spent' == header").toBeCloseTo(header, 2);
+      if (Number.isFinite(said)) expect.soft(Math.abs(said - header), "'Already spent' == header").toBeLessThanOrEqual(cent);
     }
 
     if (RAIL_LOG) {

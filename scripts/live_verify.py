@@ -265,7 +265,6 @@ class Driver:
         self.out = Path(args.out)
         self.out.mkdir(parents=True, exist_ok=True)
         self.report = Report(self.out)
-        self._restore_checks()
         self.tap = Path(args.rig_dir) / "tap.jsonl"
         self.work_root = Path(args.rig_dir) / "work"
         self.state_path = self.out / "state.json"
@@ -276,6 +275,7 @@ class Driver:
         self.state.setdefault("decisions", {})
         self.state.setdefault("startedAt", time.time())
         self.manifest = json.loads((Path(args.fixture) / "manifest.json").read_text())
+        self._restore_checks()
 
     # -- persistence ---------------------------------------------------------------------------------------------
 
