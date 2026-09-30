@@ -99,6 +99,10 @@ TAG_TO_STAGE: dict[str, str] = {
 
 _MANIFEST_SUFFIX = ".batch_manifest.json"
 _GAP_SUFFIX = ".resume"  # core's sidecar for a gap re-submission; survives a kill mid-poll
+#: The adapter's own submission sidecar (``BATCH_GAP_SUFFIX`` there): a later call for a tag submits from
+#: ``prompts_<tag>.jsonl.gap`` rather than overwriting the first call's prompt record (08-28 1a). Held as a
+#: literal so this module stays free of the engine; a test pins it to the adapter's constant.
+_SIDECAR_SUFFIX = ".gap"
 _PROMPTS_PREFIX = "prompts_"
 _JSONL = ".jsonl"
 
@@ -194,6 +198,8 @@ def _tag_of_manifest(manifest: Path) -> str | None:
     name = manifest.name[: -len(_MANIFEST_SUFFIX)]
     if name.endswith(_GAP_SUFFIX):  # core's gap sidecar, left behind when a kill skipped its cleanup
         name = name[: -len(_GAP_SUFFIX)]
+    if name.endswith(_SIDECAR_SUFFIX):  # the adapter's submission sidecar for a later call on the same tag
+        name = name[: -len(_SIDECAR_SUFFIX)]
     if not (name.startswith(_PROMPTS_PREFIX) and name.endswith(_JSONL)):
         return None
     return name[len(_PROMPTS_PREFIX) : -len(_JSONL)] or None

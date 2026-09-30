@@ -311,3 +311,109 @@ def test_the_gate_4_hop_carries_the_cumulative_cost_and_never_lowers_it(monkeypa
     assert g4.realized_cost == pytest.approx(0.82), "Gate 4 carried a per-leg figure the result contradicts"
     assert g4.result["cost"] == gate3_cost
     assert app_module.store.get("c4").cost_so_far == pytest.approx(0.85), "a pure read rewound the counter"
+
+
+# ── fix 2: a batch stage prices only what THIS call bought ──────────────────────────────────────────────
+
+
+def _prompt(pid: str):
+    from ddharmon.harmonization.pipeline import PromptRecord
+
+    return PromptRecord(id=pid, system_prompt="sys", user_prompt=f"u-{pid}", schema="{}", model_tag=_MODEL)
+
+
+def _line(pid: str) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "id": pid,
+            "response": {"ok": pid},
+            "usage": {"input_tokens": 2000, "output_tokens": 1000},
+            "model": _MODEL,
+        }
+    )
+
+
+def _fake_core_resume(submitted: list):
+    """Core's cache-aware ``resume_and_wait``, minus the provider: append a response for each MISSING id."""
+    import json
+
+    def resume_and_wait(prompts_path, output_path, *, api_key=None, **kw):  # noqa: ARG001
+        have = set()
+        try:
+            with open(output_path) as f:
+                have = {json.loads(ln)["id"] for ln in f if ln.strip()}
+        except FileNotFoundError:
+            pass
+        with open(prompts_path) as f:
+            ids = [json.loads(ln)["id"] for ln in f if ln.strip()]
+        missing = [i for i in ids if i not in have]
+        submitted.append({"prompts_path": str(prompts_path), "missing": missing})
+        with open(output_path, "a") as f:
+            for i in missing:
+                f.write(_line(i) + "\n")
+        return len(missing)
+
+    return resume_and_wait
+
+
+def test_a_batch_stage_prices_only_the_ids_new_in_this_call(monkeypatch, tmp_path):
+    """The side finding: ``_batch_stage`` priced EVERY id in ``responses_<tag>.jsonl``, not only the new ones.
+
+    A resumed leg (or a recursive split level) asking for two new prompts re-billed every answer the earlier
+    leg had already paid for — and rewrote ``prompts_<tag>.jsonl`` with the two-prompt gap, erasing leg 1's
+    record of what it asked. Only the new ids may be priced, and leg 1's prompt record must survive.
+    """
+    from ddharmon.harmonization import write_prompts_jsonl
+
+    from backend.engine import adapter as adapter_mod
+
+    wd = tmp_path / "w"
+    wd.mkdir()
+    leg1_ids = ["c0", "c1", "c2"]
+    write_prompts_jsonl([_prompt(i) for i in leg1_ids], wd / "prompts_generate.jsonl")
+    (wd / "responses_generate.jsonl").write_text("".join(_line(i) + "\n" for i in leg1_ids))
+    leg1_record = (wd / "prompts_generate.jsonl").read_text()
+
+    submitted: list = []
+    monkeypatch.setattr("ddharmon.llm.batch.resume_and_wait", _fake_core_resume(submitted))
+    ledger = adapter_mod.CumulativeLedger()
+    stage = adapter_mod._batch_stage("generating", lambda *a, **k: None, wd, "generate", ledger)
+    out = stage([_prompt("c3"), _prompt("c4")])
+
+    per_call = price_usage(_MODEL, 2000, 1000, batch=True)
+    line = ledger.to_dict()["perStage"]["generating"]
+    assert line["calls"] == 2, f"priced {line['calls']} answers for a 2-prompt call (re-billed the cache)"
+    assert out == {"c3": {"ok": "c3"}, "c4": {"ok": "c4"}}, "the stage answered prompts it was not asked"
+    assert ledger.total_usd == pytest.approx(2 * per_call)
+    assert submitted and submitted[-1]["missing"] == ["c3", "c4"]
+    assert (wd / "prompts_generate.jsonl").read_text().startswith(leg1_record), "leg 1's prompt record was erased"
+
+    # The $0 replay property is untouched: asking again for the same prompts submits and prices nothing.
+    again = stage([_prompt("c3"), _prompt("c4")])
+    assert again == out
+    assert submitted[-1]["missing"] == []
+    assert ledger.total_usd == pytest.approx(2 * per_call), "a cache replay was priced"
+
+
+def test_a_gap_submitted_from_the_sidecar_is_still_reconcilable(tmp_path):
+    """A gap batch submitted from the sidecar leaves its manifest under the sidecar's name; the reconciler
+    must still route it to the stage, or a kill mid-poll strands paid work under a tag nobody replays."""
+    import json
+
+    from backend.batch_reconcile import outstanding_submissions
+
+    wd = tmp_path / "w"
+    wd.mkdir()
+    (wd / "responses_split.jsonl").write_text(_line("0:0") + "\n")
+    for name in ("prompts_split.jsonl.gap.resume.batch_manifest.json", "prompts_split.jsonl.gap.batch_manifest.json"):
+        (wd / name).write_text(json.dumps({"batch_id": f"b-{name}", "id_map": {"r0": "0:1"}}))
+    subs = outstanding_submissions(wd)
+    assert sorted(s.tag for s in subs) == ["split", "split"]
+    assert {s.stage for s in subs} == {"split"}
+
+    from backend import batch_reconcile
+    from backend.engine.adapter import BATCH_GAP_SUFFIX
+
+    assert batch_reconcile._SIDECAR_SUFFIX == BATCH_GAP_SUFFIX, "the reconciler no longer knows the sidecar name"

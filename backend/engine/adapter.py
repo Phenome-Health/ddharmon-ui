@@ -1661,6 +1661,52 @@ def _parse_like_batch(text: Any) -> Any:
         return text
 
 
+#: Suffix of the file a batch stage submits from once ``prompts_<tag>.jsonl`` already exists (08-28 1a). A later
+#: call for the same tag — a resumed leg's gap, a recursive split level — used to OVERWRITE that file with its
+#: own few prompts, erasing the earlier leg's record of what it asked. The submission now goes through this
+#: sidecar and the main file only ever grows. ``backend.batch_reconcile`` strips the same suffix when it maps a
+#: manifest back to its tag (pinned together by test), so a gap killed mid-poll is still reconciled.
+BATCH_GAP_SUFFIX = ".gap"
+
+
+def _jsonl_ids(path: Path) -> set[str]:
+    """Record ids in a jsonl file; an absent file or an unreadable line is simply not present."""
+    ids: set[str] = set()
+    if not path.exists():
+        return ids
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ids.add(str(json.loads(line)["id"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+    return ids
+
+
+def _record_asked(submitted: Path, record: Path) -> None:
+    """Append to ``record`` every prompt line in ``submitted`` whose id it does not hold yet. Append-only."""
+    if not submitted.exists():
+        return
+    have = _jsonl_ids(record)
+    fresh = []
+    for line in submitted.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            pid = str(json.loads(line)["id"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if pid not in have:
+            have.add(pid)
+            fresh.append(line)
+    if fresh:
+        with open(record, "a") as f:
+            f.write("\n".join(fresh) + "\n")
+
+
 def _batch_stage(
     phase: str,
     progress: ProgressFn,
@@ -1676,6 +1722,16 @@ def _batch_stage(
     Uses ``resume_and_wait`` (cache-aware): an existing ``responses_<tag>.jsonl`` is reused as-is and only
     missing ids are (re)submitted — so a re-run over a frozen work_dir is a byte-identical, $0 replay, and an
     interrupted batch resumes instead of re-paying. ``api_key`` (optional) is the per-request BYOK key.
+
+    PRICES ONLY WHAT THIS CALL BOUGHT (08-28 1a). The responses file is shared by every call for the tag — every
+    leg, every recursive split level — so pricing each id in it re-billed an earlier leg's answers on every
+    later call. Only ids that were NOT in the file before this call, and that this call asked for, are priced;
+    an answer already on disk costs this call nothing, which is also what keeps a cache replay at $0. The
+    mapping returned is restricted to the prompts asked, for the same reason.
+
+    NEVER ERASES AN EARLIER CALL'S PROMPT RECORD. The first call for a tag writes ``prompts_<tag>.jsonl`` as
+    before; a later one submits from the ``prompts_<tag>.jsonl.gap`` sidecar (:data:`BATCH_GAP_SUFFIX`) and
+    appends its unrecorded prompts to the main file, which therefore holds every prompt the run ever asked.
 
     Cancellation: ``resume_and_wait`` blocks polling the Batch API until the batch ends, so a naive call would
     make a user's Stop wait out the whole batch. Instead we run it on a daemon thread and call ``progress`` on
@@ -1698,13 +1754,22 @@ def _batch_stage(
         work_dir.mkdir(parents=True, exist_ok=True)
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
         responses_path = work_dir / f"responses_{tag}.jsonl"
-        write_prompts_jsonl(prompts, prompts_path)
+        asked = {str(p.id) for p in prompts}
+        # Answers already on disk BEFORE this call were paid for by whoever wrote them — never by this call.
+        already = _jsonl_ids(responses_path)
+        if prompts_path.exists():
+            submit_path = work_dir / f"prompts_{tag}.jsonl{BATCH_GAP_SUFFIX}"
+            write_prompts_jsonl(prompts, submit_path)
+            _record_asked(submit_path, prompts_path)
+        else:
+            submit_path = prompts_path
+            write_prompts_jsonl(prompts, prompts_path)
         # Run the blocking Batch API wait off-thread so we can honor a mid-poll Stop (see docstring).
         holder: dict[str, BaseException] = {}
 
         def _wait() -> None:
             try:
-                resume_and_wait(prompts_path, responses_path, api_key=api_key)
+                resume_and_wait(submit_path, responses_path, api_key=api_key)
             except BaseException as exc:  # noqa: BLE001 — captured and re-raised on the calling thread
                 holder["exc"] = exc
 
@@ -1719,13 +1784,20 @@ def _batch_stage(
 
         out: dict[str, Any] = {}
         usages: list[Any] = []
+        priced: set[str] = set()
         with open(responses_path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 rec = json.loads(line)
+                rid = str(rec["id"])
+                if rid not in asked:
+                    continue
                 out[rec["id"]] = rec["response"]
+                if rid in already or rid in priced:
+                    continue  # an answer this call did not buy (or a duplicate line) is not priced again
+                priced.add(rid)
                 # Realized usage the retrieve preserved (older cached response files predate it -> just skip;
                 # that stage prices to $0, which is honest for a cache replay that re-paid nothing).
                 u = rec.get("usage")
