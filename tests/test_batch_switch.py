@@ -528,3 +528,116 @@ def test_the_switch_endpoint_is_owner_scoped():
     assert r.status_code == 404
     assert not app_module.store.switch_requested("theirs")
     assert TestClient(app_module.app).post("/api/harmonize/jobs/nope/switch-to-sync").status_code == 404
+
+
+# ── one transport per LEG: the runner builds it, run_pipeline hands it to every batch stage ────────────
+
+
+def test_run_pipeline_hands_every_batch_stage_the_legs_one_transport(monkeypatch, tmp_path):
+    from tests.test_backend import StubProvider, _judge_fixture
+
+    dict_specs, cde_spec, config = _judge_fixture(tmp_path, monkeypatch)
+    got: list = []
+
+    def fake_batch_stage(
+        phase, progress, work_dir, tag, ledger, api_key=None, stopping=None, ledger_key=None, transport=None
+    ):
+        got.append((tag, transport))
+        return lambda prompts: {}
+
+    monkeypatch.setattr(adapter_mod, "_batch_stage", fake_batch_stage)
+    transport = adapter_mod.LegTransport()
+    adapter_mod.run_pipeline(dict_specs, cde_spec, config, provider=StubProvider(), transport=transport)
+    assert got, "no batch stage was built"
+    assert all(t is transport for _, t in got), f"a batch stage got another transport: {got}"
+    assert transport.client_factory is not None, "a switched leg would have no sync client to finish with"
+
+
+def _leg_config(tmp_path, **over):
+    return {"run_mode": "batch", "work_dir": str(tmp_path), **over}
+
+
+def test_each_leg_gets_its_own_transport_and_the_switch_ends_with_the_leg(monkeypatch, tmp_path):
+    """Sticky for the leg it was pressed in; never read by the next one (each Continue is a fresh decision)."""
+    from backend import runner as runner_module
+    from backend.jobs import JobStore
+
+    s = JobStore()
+    s.create("j", "J", {"run_mode": "batch"})
+    seen: list = []
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kw):
+        t = kw["transport"]
+        seen.append(t)
+        progress("generating", 0, 1)
+        assert s.get("j").transport == "batch"
+        assert not t.requested(), "a switch pressed in an earlier leg reached this one"
+        _in_flight_report = {"tag": "generate", "nItems": 1, "status": "in_progress", "switchable": True}
+        t.report({**_in_flight_report, "syncEstimateUsd": 0.1})  # what the batch stage reports
+        assert s.get("j").progress_dict()["batch"]["switchable"] is True
+        assert s.request_switch_to_sync("j") == "requested"
+        assert t.requested(), "the leg's stages cannot see the reviewer's press"
+        return {"records": [], "cost": {}}
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    runner_module.run_harmonization(s, "j", [], None, _leg_config(tmp_path))
+    job = s.get("j")
+    assert not s.switch_requested("j") and job.batch is None and job.transport is None, "the leg left its switch up"
+
+    s.update("j", status="pending", phase="pending")  # the next Continue
+    runner_module.run_harmonization(s, "j", [], None, _leg_config(tmp_path))
+    assert len(seen) == 2 and seen[0] is not seen[1], "two legs shared one transport"
+
+
+def test_a_sync_leg_is_handed_no_transport(monkeypatch, tmp_path):
+    from backend import runner as runner_module
+    from backend.jobs import JobStore
+
+    s = JobStore()
+    s.create("j", "J", {"run_mode": "sync"})
+    seen: dict = {}
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kw):
+        seen.update(kw)
+        seen["during"] = s.get("j").transport
+        return {"records": [], "cost": {}}
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    runner_module.run_harmonization(s, "j", [], None, _leg_config(tmp_path, run_mode="sync"))
+    assert "transport" not in seen, "a sync leg has no batch to switch away from"
+    assert seen["during"] == "sync"
+
+
+def test_batch_patience_is_the_servers_setting_never_a_runs_config(monkeypatch, tmp_path):
+    """T-08-56's spirit: a timer that re-buys queued work at twice the price is an OPERATOR knob. A run's config
+    is user-submitted, so it can never carry one; the server's environment can. Off by default."""
+    from backend import runner as runner_module
+    from backend.jobs import JobStore
+
+    s = JobStore()
+    s.create("j", "J", {"run_mode": "batch"})
+    seen: list = []
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kw):
+        seen.append(kw["transport"].patience_seconds)
+        return {"records": [], "cost": {}}
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    env = runner_module.BATCH_PATIENCE_ENV
+    for value, expected in ((None, None), ("90", 90.0), ("0", None), ("-5", None), ("soon", None)):
+        if value is None:
+            monkeypatch.delenv(env, raising=False)
+        else:
+            monkeypatch.setenv(env, value)
+        runner_module.run_harmonization(s, "j", [], None, _leg_config(tmp_path, batch_patience_seconds=1))
+        assert seen[-1] == expected, f"{env}={value!r} gave patience {seen[-1]!r}"
+
+
+def test_the_reconciler_never_raises_the_switch():
+    """T-08-56: a background sweep able to spend a user's money with nobody in the loop is the one thing the
+    reconciler must never be. Cancelling a batch and re-buying it sync is exactly that, so it has no path to it."""
+    from backend import batch_reconcile
+
+    src = Path(batch_reconcile.__file__).read_text().lower()
+    for banned in ("switch", "cancel(", "patience", "legtransport", "request_switch_to_sync"):
+        assert banned not in src, f"backend/batch_reconcile.py mentions {banned!r}"

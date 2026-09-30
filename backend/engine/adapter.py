@@ -2461,6 +2461,7 @@ def run_pipeline(
     replay_responses: dict[str, dict[str, Any]] | None = None,
     prior_cost: Any = None,
     ledger: CumulativeLedger | None = None,
+    transport: LegTransport | None = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -2496,6 +2497,10 @@ def run_pipeline(
         ledger:     a caller-owned leg ledger (already seeded) to price into instead of building one from
                     ``prior_cost``. The runner passes its own so that what a leg bought before it FAILED is
                     still readable afterwards and can be kept on the parked run's bill.
+        transport:  the leg's batch -> sync switch (08-28 0e), built by the runner per leg. Handed to every
+                    batch stage, so a switch in one stage holds for the rest of the leg; given a sync client
+                    factory here (the same client a sync run would build) when it has none. Batch mode only;
+                    ``None`` keeps every batch stage exactly as it was.
 
     A staged run (``config["stop_at_gate"]`` set to ``"gate1"`` or ``"gate2"``) returns a PARTIAL result
     carrying ``gatePosition`` plus whatever the stages before that boundary produced.
@@ -2717,17 +2722,35 @@ def run_pipeline(
             },
         }
     else:  # batch (default)
+        # 08-28 0e: ONE transport for the leg, shared by every batch stage below, so a switch holds for the rest
+        # of the leg. Passed only when the runner built one, so a caller without it gets the stages unchanged.
+        leg: dict[str, Any] = {}
+        if transport is not None:
+            if transport.client_factory is None:
+                from backend.engine.llm import build_llm_client
+
+                model_tag = kwargs.get("model_tag")
+                transport.client_factory = lambda: build_llm_client(model_tag, api_key)
+            leg["transport"] = transport
         stages = {
             "generate": _batch_stage(
-                "generating", progress, work_dir, "generate", ledger, api_key=api_key, stopping=stopping
+                "generating", progress, work_dir, "generate", ledger, api_key=api_key, stopping=stopping, **leg
             ),
-            "split": _batch_stage("splitting", progress, work_dir, "split", ledger, api_key=api_key, stopping=stopping),
+            "split": _batch_stage(
+                "splitting", progress, work_dir, "split", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
             "classify": _batch_stage(
-                "assigning", progress, work_dir, "assign", ledger, api_key=api_key, stopping=stopping
+                "assigning", progress, work_dir, "assign", ledger, api_key=api_key, stopping=stopping, **leg
             ),
-            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping),
-            "specgen": _batch_stage("specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping),
-            "refine": _batch_stage("refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping),
+            "gencde": _batch_stage(
+                "gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "specgen": _batch_stage(
+                "specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "refine": _batch_stage(
+                "refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
             **(
                 {
                     "specgen_repick": _batch_stage(
@@ -2739,6 +2762,7 @@ def run_pipeline(
                         api_key=api_key,
                         stopping=stopping,
                         ledger_key=_REPICK_COST_KEY,
+                        **leg,
                     )
                 }
                 if want_repick
@@ -2754,6 +2778,7 @@ def run_pipeline(
                     api_key=api_key,
                     stopping=stopping,
                     ledger_key=w["cost"],
+                    **leg,
                 )
                 for name, w in judge_specs.items()
             },
