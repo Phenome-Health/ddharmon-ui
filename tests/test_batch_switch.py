@@ -417,3 +417,114 @@ def test_the_reconciler_sees_the_sync_answered_ids_so_nothing_reads_as_failed(mo
     outcome = reconcile_run("j", store=store, fetch=fetch)
     assert outcome.status == "noop" and outcome.failed == () and fetched == []
     assert not (wd / "reconcile_failures.jsonl").exists()
+
+
+# ── the run's switch flag, the progress frame, and the endpoint that raises the flag ──────────────────
+
+
+def _in_flight(store, job_id: str, *, status: str = "in_progress", owner: str | None = None) -> None:
+    """A run whose batch stage is polling a batch the provider reports as ``status``."""
+    store.create(job_id, "Batch run", {"run_mode": "batch"}, owner_subject=owner)
+    store.update(job_id, status="generating", phase="generating")
+    store.set_transport(
+        job_id,
+        "batch",
+        {
+            "tag": "generate",
+            "nItems": 3,
+            "status": status,
+            "switchable": status == "in_progress",
+            "syncEstimateUsd": 0.12,
+        },
+    )
+
+
+def test_the_progress_frame_carries_the_transport_and_the_in_flight_batch():
+    from backend.jobs import Job, JobStore
+
+    assert {"transport", "batch"} <= set(Job(job_id="x", display_name="X").progress_dict())
+    fresh = Job(job_id="x", display_name="X").progress_dict()
+    assert fresh["transport"] is None and fresh["batch"] is None
+
+    s = JobStore()
+    _in_flight(s, "j")
+    frame = s.get("j").progress_dict()
+    assert frame["transport"] == "batch"
+    assert frame["batch"] == {
+        "tag": "generate",
+        "nItems": 3,
+        "status": "in_progress",
+        "switchable": True,
+        "syncEstimateUsd": 0.12,
+    }
+    s.set_transport("j", "sync", None)
+    frame = s.get("j").progress_dict()
+    assert frame["transport"] == "sync" and frame["batch"] is None
+
+
+def test_reporting_the_batch_is_display_state_it_never_moves_updated_at_or_persists():
+    """The frozen-elapsed rule reads ``updatedAt`` at the park; a transport report must never move it."""
+    from backend.jobs import JobStore
+
+    s = JobStore()
+    _in_flight(s, "j")
+    before = s.get("j").updated_at
+    time.sleep(0.01)
+    s.set_transport("j", "batch", None)
+    s.reset_transport("j")
+    assert s.get("j").updated_at == before
+
+
+def test_the_switch_endpoint_raises_the_flag_while_the_batch_is_in_progress_and_is_idempotent():
+    from fastapi.testclient import TestClient
+
+    from backend import app as app_module
+
+    client = TestClient(app_module.app)
+    _in_flight(app_module.store, "sw")
+    r = client.post("/api/harmonize/jobs/sw/switch-to-sync")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"switched": True, "alreadyRequested": False}
+    assert app_module.store.switch_requested("sw")
+    assert app_module.store.get("sw").progress_dict()["batch"]["switchable"] is False, "the control stayed offered"
+
+    again = client.post("/api/harmonize/jobs/sw/switch-to-sync")
+    assert again.status_code == 200 and again.json() == {"switched": True, "alreadyRequested": True}
+    assert app_module.store.switch_requested("sw")
+
+
+def test_the_switch_endpoint_is_409_unless_a_batch_stage_is_in_flight_and_in_progress():
+    from fastapi.testclient import TestClient
+
+    from backend import app as app_module
+    from backend.jobs import AWAITING_REVIEW
+
+    store = app_module.store
+    client = TestClient(app_module.app)
+
+    store.create("no-batch", "No batch yet", {"run_mode": "batch"})
+    store.update("no-batch", status="embedding", phase="embedding")
+    _in_flight(store, "ending", status="canceling")
+    _in_flight(store, "ended", status="ended")
+    _in_flight(store, "parked")
+    store.update("parked", status=AWAITING_REVIEW, phase=AWAITING_REVIEW)  # a stale report on a parked run
+    _in_flight(store, "done")
+    store.update("done", status="complete", phase="complete")
+
+    for job_id in ("no-batch", "ending", "ended", "parked", "done"):
+        r = client.post(f"/api/harmonize/jobs/{job_id}/switch-to-sync")
+        assert r.status_code == 409, f"{job_id}: {r.status_code} {r.text}"
+        assert not store.switch_requested(job_id), f"{job_id}: a refused switch still raised the flag"
+
+
+def test_the_switch_endpoint_is_owner_scoped():
+    """It spends the owner's money, so a run the caller does not own is not found — not even acknowledged."""
+    from fastapi.testclient import TestClient
+
+    from backend import app as app_module
+
+    _in_flight(app_module.store, "theirs", owner="user_somebody_else")
+    r = TestClient(app_module.app).post("/api/harmonize/jobs/theirs/switch-to-sync")
+    assert r.status_code == 404
+    assert not app_module.store.switch_requested("theirs")
+    assert TestClient(app_module.app).post("/api/harmonize/jobs/nope/switch-to-sync").status_code == 404

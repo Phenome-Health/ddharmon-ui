@@ -8,6 +8,7 @@ Endpoints (all under /api/harmonize):
     GET  /jobs              list jobs (summaries)
     DELETE /jobs/{job_id}   delete a job
     POST /jobs/{job_id}/cancel    request a stop for an in-flight run (-> cancelled)
+    POST /jobs/{job_id}/switch-to-sync  stop waiting on the in-flight batch; finish the stage sync (08-28 0e)
     POST /jobs/{job_id}/verdict   persist a human approve/refine/reject decision (by recordId)
     POST /jobs/{job_id}/records/{record_id}/regenerate-specs  regenerate member->GenCDE recodes after a refine
     GET  /jobs/{job_id}/export    eitl_tsv | records_json | decisions_csv | notebook_py | notebook_r
@@ -1066,6 +1067,36 @@ def cancel_job(job_id: str, request: Request, mode: str = "discard") -> dict[str
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"cancelled": store.request_cancel(job_id, mode)}
+
+
+@app.post("/api/harmonize/jobs/{job_id}/switch-to-sync")
+def switch_to_sync(job_id: str, request: Request) -> dict[str, bool]:
+    """Stop waiting on the in-flight batch: cancel it and finish the stage synchronously (08-28 0e, v1).
+
+    What the reviewer is agreeing to: whatever the cancelled batch still hands back is kept at the batch rate,
+    and every id it does not is bought again at the full (sync) rate — which is why the offer carries its own
+    estimate. The rest of THIS leg then runs sync; the next Continue starts in batch again.
+
+    OWNER-SCOPED, stricter than visibility: it spends the owner's money, so a run the caller does not own —
+    the shared demo included — is not found (404, never revealing that someone else's run exists).
+    409 unless a batch stage is in flight AND the provider still reports that batch ``in_progress``: only
+    that batch can be cancelled, and an ending one hands back everything anyway. IDEMPOTENT: a second press
+    in the same leg is a 200 that changes nothing (``alreadyRequested``). The flag is read by the leg's batch
+    stage at its next heartbeat; nothing here talks to the provider.
+    """
+    job = store.get(job_id)
+    if job is None or _is_pinned(job) or job.owner_subject != _subject(request):
+        raise HTTPException(status_code=404, detail="Job not found")
+    outcome = store.request_switch_to_sync(job_id)
+    if outcome == "already":
+        return {"switched": True, "alreadyRequested": True}
+    if outcome == "requested":
+        logger.info("job %s: switch to sync requested", job_id)
+        return {"switched": True, "alreadyRequested": False}
+    raise HTTPException(
+        status_code=409,
+        detail="There is no batch in the provider's queue to switch: the run is not waiting on one right now.",
+    )
 
 
 @app.post("/api/harmonize/jobs/{job_id}/rerun")

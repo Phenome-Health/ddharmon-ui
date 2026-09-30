@@ -1164,7 +1164,9 @@ def test_no_reconcile_http_route_was_added():
     # same reason `/score/extract` is a POST. Bumped deliberately: this assertion exists so a POST appears
     # only when a plan says so, not so the number never moves. 17 after 08-16e added
     # `/jobs/{id}/score/components` — the paid, job-scoped component PROPOSAL (a model call, so a POST).
-    assert posts == 17, f"the POST surface changed ({posts} != 17)"
+    # 18 after 08-28 0e added `/jobs/{id}/switch-to-sync` — the owner-scoped batch -> sync switch, which
+    # raises a flag the run's own batch stage acts on (it makes no provider call itself).
+    assert posts == 18, f"the POST surface changed ({posts} != 18)"
 
 
 # ── Gate 0: the boundary that lets a run ENTER the staged flow ───────────────────────────────
