@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { railCosts } from "@/lib/gate-rail";
+import { frozenContinue, railCosts } from "@/lib/gate-rail";
 import type { GatePosition, JobResult } from "@/types";
 import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
 import { PAUSED_JOB, asOwnedRun, serveRun } from "./gate1-fixture";
@@ -136,4 +136,70 @@ test.describe("finished run — the rail", () => {
       expect(sum).toBeCloseTo(usd(chip), 10);
     });
   }
+});
+
+// --- O2: a frozen gate's bar says what happened --------------------------------------------------------------
+
+test.describe("finished run — the Continue bar on a past gate", () => {
+  test("@finished-chrome @commit-bar the past-gate bar says the step is done and what the work behind the next gate cost", () => {
+    const realizedByGate = { gate1: 0.26, gate2: 0.14, gate3: 0.02, gate4: 0.06 };
+    expect(frozenContinue("gate1", realizedByGate)).toEqual({
+      action: "Continued to Gate 2",
+      note: "This step is done. The run went on to Gate 2, and the work behind it cost $0.14 — money already spent, not an estimate.",
+    });
+    expect(frozenContinue("gate2", realizedByGate).note).toBe(
+      "This step is done. The run went on to Gate 3, and the work behind it cost $0.02 — money already spent, not an estimate.",
+    );
+    // Gate 4 is a free read: the step bought nothing, and the bar says so rather than quoting $0.
+    expect(frozenContinue("gate3", realizedByGate)).toEqual({
+      action: "Continued to Gate 4",
+      note: "This step is done. The run went on to Gate 4, which bought nothing — Gate 4 is a read of what this run already produced.",
+    });
+    // No per-stage ledger: the amount is not attributable, so it is not invented.
+    expect(frozenContinue("gate2", undefined).note).toBe(
+      "This step is done. The run went on to Gate 3; what that cost is part of the run's total spend.",
+    );
+  });
+
+  for (const [gate, testId, next] of [
+    ["gate1", undefined, "Gate 2"],
+    ["gate2", "gate2-continue", "Gate 3"],
+    ["gate3", "gate3-continue", "Gate 4"],
+  ] as const) {
+    test(`@finished-chrome @commit-bar a frozen ${gate} keeps its bar, but it describes what happened rather than offering a purchase`, async ({
+      page,
+    }) => {
+      await openParkedAtGate4(page, gate);
+      await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();
+      const bar = page.locator("[data-testid='commit-bar']");
+      await expect(bar).toBeVisible();
+      await expect(bar.locator("[data-testid='commit-done']")).toContainText("This step is done.");
+      await expect(bar.locator("[data-testid='commit-done']")).toContainText(`went on to ${next}`);
+      // Nothing in it offers to buy anything.
+      await expect(bar).not.toContainText("Pressing");
+      await expect(bar).not.toContainText("not refundable");
+      await expect(bar).not.toContainText(/\bbuys\b/);
+      // ...nor claims the whole run's total was spent to reach THIS gate.
+      await expect(bar).not.toContainText("Already spent to reach this gate");
+      const button = testId ? page.getByTestId(testId) : bar.locator("button");
+      await expect(button).toBeDisabled();
+      await expect(button).toHaveText(`Continued to ${next}`);
+      await expect(bar).toHaveAttribute("data-total", "");
+    });
+  }
+
+  test("@finished-chrome @commit-bar the LIVE gate's bar is unchanged — it still prices the purchase", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      run.status = "awaiting_review";
+      run.gatePosition = "gate2";
+      withLedger(run);
+      return asOwnedRun(run);
+    });
+    await page.goto(`/run/${FINISHED_JOB}/gate2`);
+    await page.waitForLoadState("networkidle");
+    const bar = page.locator("[data-testid='commit-bar']");
+    await expect(bar).toContainText(/Pressing Continue to Gate 3 buys \$[0-9.]+ of work for \d+ concepts?, and it is not refundable\./);
+    await expect(bar.locator("[data-testid='commit-done']")).toHaveCount(0);
+    await expect(page.getByTestId("gate2-continue")).toBeEnabled();
+  });
 });

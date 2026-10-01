@@ -28,6 +28,7 @@ import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } fr
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
@@ -128,6 +129,10 @@ export default function Gate3Page() {
   const failedLeg =
     !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
   const continueAction = failedLeg ? "Retry — continue this run" : "Continue to Gate 4";
+  // A frozen Gate 3 keeps its bar, but says what its Continue did instead of offering it again (O2).
+  const pastBar = frozen
+    ? frozenContinue("gate3", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+    : null;
 
   async function onContinue() {
     // The shared demo is walked, not resumed (08-18) — see Gate 1's `onContinue`.
@@ -1094,7 +1099,8 @@ export default function Gate3Page() {
         }
       />
       <CommitBar
-        action={continueAction}
+        action={pastBar ? pastBar.action : continueAction}
+        done={pastBar?.note}
         actionTestId="gate3-continue"
         spentHere={costSoFar}
         recheckNotice={
@@ -1103,9 +1109,11 @@ export default function Gate3Page() {
             : undefined
         }
         assurance={
-          pinned === true
-            ? DEMO_CONTINUE_NOTE
-            : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
+          pastBar
+            ? undefined
+            : pinned === true
+              ? DEMO_CONTINUE_NOTE
+              : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
         }
         keyField={keyAsk ? <RunKeyField reason={keyAsk} action={continueAction} /> : undefined}
         onCommit={onContinue}

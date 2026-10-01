@@ -27,6 +27,7 @@ import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } fr
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
@@ -121,6 +122,10 @@ export default function Gate2Page() {
   const parkedHere = jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate2";
   const failedLeg = !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
   const continueAction = failedLeg ? "Retry — continue this run" : "Continue to Gate 3";
+  // A frozen Gate 2 keeps its bar, but says what its Continue did instead of offering it again (O2).
+  const pastBar = frozen
+    ? frozenContinue("gate2", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+    : null;
 
   // What pressing Continue BUYS: continuing from Gate 2 runs the work whose results Gate 3 shows (spec-gen,
   // plus the concept-match check if the run opted in), so the forecast is Gate 3's — priced on THIS run's
@@ -705,7 +710,8 @@ export default function Gate2Page() {
         }
       />
       <CommitBar
-        action={continueAction}
+        action={pastBar ? pastBar.action : continueAction}
+        done={pastBar?.note}
         actionTestId="gate2-continue"
         total={pinned === true ? undefined : continueCost}
         spentHere={costSoFar}

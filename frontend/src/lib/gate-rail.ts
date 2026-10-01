@@ -1,5 +1,5 @@
 import { formatUsd, realizedSpendByGate } from "@/lib/estimate";
-import { RAIL_SEQUENCE } from "@/lib/gate-routes";
+import { RAIL_SEQUENCE, nextRailGate } from "@/lib/gate-routes";
 import type { GatePosition, RunCost } from "@/types";
 
 /**
@@ -95,4 +95,41 @@ export function realizedRailArgs(
   const spend = realizedSpendByGate(cost, costSoFar);
   const hasLedger = !!cost?.perStage && Object.keys(cost.perStage).length > 0;
   return hasLedger ? { realizedByGate: spend.byGate, totalRealized: spend.total } : { totalRealized: spend.total };
+}
+
+/**
+ * What a PAST gate's Continue bar says, in place of the purchase it once offered (phase-8 final review, O2).
+ *
+ * A frozen gate kept its bar reading "Pressing Continue to Gate 3 buys $0.02 of work for 11 concepts, and it is
+ * not refundable." under a notice saying nothing on the screen can be changed — an offer the screen cannot make,
+ * priced in the present tense for work bought long ago. The bar STAYS (it is where the reviewer looks for what
+ * this step cost), but it says what HAPPENED: the step is done, the run went on, and what the work behind the
+ * next gate cost.
+ *
+ * THE AMOUNT IS THE NEXT GATE'S RAIL COLUMN, deliberately: Continue on Gate N buys the work Gate N+1 shows, and
+ * quoting that column means the bar and the rail can never state two figures for one step. Without a per-stage
+ * ledger nothing is attributable per gate, so no figure is invented. Gate 4 is a free read, so the step from
+ * Gate 3 says it bought nothing rather than quoting $0.
+ */
+export function frozenContinue(
+  gate: GatePosition,
+  realizedByGate: Partial<Record<GatePosition, number>> | undefined,
+): { action: string; note: string } {
+  const next = nextRailGate(gate) ?? gate;
+  const name = `Gate ${next.slice(4)}`;
+  const action = `Continued to ${name}`;
+  if (next === "gate4") {
+    return {
+      action,
+      note: `This step is done. The run went on to ${name}, which bought nothing — ${name} is a read of what this run already produced.`,
+    };
+  }
+  const spent = realizedByGate?.[next];
+  if (spent === undefined) {
+    return { action, note: `This step is done. The run went on to ${name}; what that cost is part of the run's total spend.` };
+  }
+  return {
+    action,
+    note: `This step is done. The run went on to ${name}, and the work behind it cost ${formatUsd(spent)} — money already spent, not an estimate.`,
+  };
 }

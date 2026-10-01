@@ -50,6 +50,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
@@ -2536,6 +2537,10 @@ export default function Gate1Page() {
     "gate1",
     (jobState?.gatePosition ?? null) as GatePosition | null,
   );
+  // What a frozen Gate 1's bar says in place of the purchase (O2): the step is done, and what it bought.
+  const pastBar = frozen
+    ? frozenContinue("gate1", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+    : null;
   const scope = useGateDecisions(jobId, "gate1_group_scope", {
     pinned,
     frozen,
@@ -3780,7 +3785,9 @@ export default function Gate1Page() {
       )}
 
       <CommitBar
-        action="Continue to Gate 2"
+        action={pastBar ? pastBar.action : "Continue to Gate 2"}
+        // A frozen Gate 1 keeps its bar, but says what its Continue did instead of offering it again (O2).
+        done={pastBar?.note}
         keyField={
           continueKeyAsk ? <RunKeyField reason={continueKeyAsk} action="Continue to Gate 2" /> : undefined
         }
