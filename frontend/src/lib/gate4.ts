@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import type { ExportFormat, HarmonizationResult, UIRecord, UITransform } from "@/types";
+import type { CdeRef, ExportFormat, HarmonizationResult, UIRecord, UITransform } from "@/types";
 import {
   GATE_DECISION_KINDS,
   type DecisionIndex,
@@ -1029,40 +1029,123 @@ export function previewFor(
   return preview.kind === "table" && preview.note ? `${preview.text}\n${preview.note}` : preview.text;
 }
 
-// --- the records the export carries (final review round 2: the Sankey on Gate 4) -------------------------------
+// --- the records the export carries (final review round 2: Gate 4's Sankey and previews) ------------------------
 
 /** The Gate 4 export-selection values that leave a record OUT — `EXCLUDE_VALUES` in the backend. */
 const EXPORT_EXCLUDE = new Set(["exclude", "out"]);
 
+/** A transform as the export carries it: `rejected` when the reviewer rejected that recode at Gate 3. */
+export type ExportedTransform = UITransform & { rejected?: boolean };
+
+/** A record as the export carries it — `removedMembers` names the variables Gate 3 took out (`[]` for none). */
+export type ExportedRecord = UIRecord & { transforms: ExportedTransform[]; removedMembers: string[] };
+
+/** The CdeRef a Gate 2 pick names, or null for "no catalog target" — `_catalog_ref` in the backend. */
+function catalogRef(record: UIRecord, cdeId: string, externalId: string): CdeRef | null {
+  if (!cdeId || cdeId === gencdeIdOf(record.gencde)) return null;
+  const model = record.cde;
+  const cands = record.candidates ?? [];
+  if (externalId) {
+    if (model?.id && model.externalId === externalId) return { id: String(model.id), externalId };
+    const hit = cands.find((c) => c.cdeExternalId === externalId);
+    return { id: String(hit?.cdeId || cdeId), externalId };
+  }
+  if (model?.id === cdeId) return { id: cdeId, externalId: String(model.externalId || "") };
+  const cand = cands.find((c) => c.cdeId === cdeId);
+  return { id: cdeId, externalId: String(cand?.cdeExternalId || "") };
+}
+
+/** `groupId -> [memberId, …]` removed at Gate 3, in row order — `removed_members` in the backend (every row counts). */
+function removedMembersByGroup(index: DecisionIndex): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const d of Object.values(index.gate3_member_exclusion ?? {})) {
+    const gid = String(d.groupId || "");
+    const list = out.get(gid) ?? [];
+    const member = String(d.memberId || "");
+    if (!list.includes(member)) list.push(member);
+    out.set(gid, list);
+  }
+  return out;
+}
+
+const cohortOfMember = (m: string) => m.split(":")[0];
+
 /**
  * The concept records as the EXPORT carries them — the client half of `backend/export_decisions.py::
- * effective_records`, for the parts that decide WHICH records leave the tool and what they are called: the Gate 1
- * scope (the frozen list first, else the legacy "not scoped out" rule), the Gate 4 export selection, and the
- * reviewer's name for the group. A Gate 2 pick needs nothing here: the Gate 2 -> 3 leg already re-targeted the
- * record (its verdict, cde and candidates name the reviewer's target), and an export reads the record's own
- * verdict either way.
+ * effective_records`, for every field Gate 4 draws from them: the Gate 1 scope (the frozen list first, else the
+ * legacy "not scoped out" rule), the Gate 4 export selection, the reviewer's name for the group, a Gate 2 pick the
+ * Gate 2 -> 3 leg did not apply (the record's `cde` becomes the pick, or null for "none of these"), a Gate 3 removal
+ * (the variable leaves `members`, `memberDetails`, the transform specs and the generated element's sources;
+ * `nMembers` / `cohorts` / `crossCohort` follow what remains; `removedMembers` names it), and a rejected recode
+ * (`rejected: true` on its spec, as every file marks it). What it does NOT mirror, because nothing on Gate 4 reads
+ * it: a recode edit's `reviewerEdit`, the relation and model-provenance stamps, and the combine rules.
  *
- * WHY IT EXISTS (Bhargav, review round 2: surface the run view's Sankey on Gate 4). A chart drawn from the raw
- * pipeline output would show flows the files do not carry — a scoped-out group's variables, an excluded record —
- * on the very screen that says "this is what leaves the tool". Pinned against the backend by
- * `fixtures/exported-records-parity.json`, from both sides. Returns new objects only where a name changed; the
- * run result is never mutated.
+ * WHY IT EXISTS (Bhargav, review round 2). A chart or a preview drawn from the raw pipeline output shows what the
+ * files do not carry — a scoped-out group, a removed variable, a rejected recode — on the very screen that says
+ * "this is what leaves the tool". Pinned against the backend by `fixtures/exported-records-parity.json`, from both
+ * sides. Copies only what it changes; the run result is never mutated.
  */
 export function exportedRecords(
   result: HarmonizationResult | null | undefined,
   config: Record<string, unknown> | null | undefined,
   index: DecisionIndex,
-): UIRecord[] {
+): ExportedRecord[] {
   const keep = inheritedGate1Scope(config, index.gate1_group_scope ?? {});
   const selection = index.gate4_export_selection ?? {};
   const renames = index.gate1_rename ?? {};
-  const out: UIRecord[] = [];
+  const picks = index.gate2_candidate_pick ?? {};
+  const specs = index.gate3_spec_edit ?? {};
+  const removals = removedMembersByGroup(index);
+  const out: ExportedRecord[] = [];
   for (const raw of result?.records ?? []) {
     const gid = String(raw.groupId || raw.id || "");
     if (!keep(gid)) continue;
     if (EXPORT_EXCLUDE.has(String(selection[String(raw.id || "")]?.chosen ?? ""))) continue;
+    const r: ExportedRecord = { ...raw, transforms: raw.transforms ?? [], removedMembers: [] };
+
+    // FIRST, as the backend does, so nothing below sees a removed variable as one of the concept's.
+    const members = raw.members ?? [];
+    const gone = (removals.get(gid) ?? []).filter((m) => members.includes(m));
+    r.removedMembers = gone;
+    if (gone.length > 0) {
+      const removed = new Set(gone);
+      r.members = members.filter((m) => !removed.has(m));
+      r.memberDetails = (raw.memberDetails ?? []).filter((d) => !removed.has(String(d?.id ?? "")));
+      r.transforms = r.transforms.filter((t) => !removed.has(String(t.sourceVariable ?? "")));
+      r.nMembers = r.members.length;
+      const left = new Set(r.members.map(cohortOfMember));
+      r.cohorts = (raw.cohorts ?? []).filter((c) => left.has(c));
+      r.crossCohort = r.cohorts.length > 1;
+      const g = raw.gencde;
+      if (g && Array.isArray(g.sourceVariables)) {
+        const sourceVariables = g.sourceVariables.filter((v) => !removed.has(v));
+        const sources = new Set(sourceVariables.map(cohortOfMember));
+        r.gencde = {
+          ...g,
+          sourceVariables,
+          ...(Array.isArray(g.sourceCohorts) ? { sourceCohorts: g.sourceCohorts.filter((c) => sources.has(c)) } : {}),
+        };
+      }
+    }
+
     const name = String(renames[gid]?.chosen ?? "").trim();
-    out.push(name ? { ...raw, concept: name } : raw);
+    if (name) r.concept = name;
+
+    // A pick the leg did NOT apply (a Gate 2-parked export, or one made after it), against what the record targets now.
+    const pick = picks[gid];
+    if (pick && typeof pick.chosen === "string") {
+      const ref = catalogRef(raw, pick.chosen, String(pick.externalId ?? "").trim());
+      const chosen = ref ? ref.id : pick.chosen;
+      const current = currentTarget(raw);
+      const own = new Set(["", gencdeIdOf(raw.gencde)]);
+      if (!(chosen === current || (own.has(chosen) && own.has(current)))) r.cde = ref;
+    }
+
+    // A rejected recode stays in the record, marked — every file says it was rejected rather than dropping it.
+    if (r.transforms.some((t) => specs[String(t.sourceVariable ?? "")]?.rejected)) {
+      r.transforms = r.transforms.map((t) => (specs[String(t.sourceVariable ?? "")]?.rejected ? { ...t, rejected: true } : t));
+    }
+    out.push(r);
   }
   return out;
 }

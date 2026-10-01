@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { indexDecisions, type DecisionIndex, type GroupedDecisions } from "@/lib/gate-decisions";
-import type { HarmonizationResult } from "@/types";
+import type { HarmonizationResult, UIRecord } from "@/types";
 import {
   DECISION_LOG_CSV_COLS,
   NOT_AVAILABLE_GAPS,
@@ -268,28 +268,49 @@ const EXPORTED = JSON.parse(readFileSync(resolve(HERE, "fixtures/exported-record
   cases: {
     name: string;
     useParityDecisions?: boolean;
+    result?: HarmonizationResult;
     config?: Record<string, unknown>;
     grouped?: GroupedDecisions;
-    expected: { groupId: string; concept: string; verdict: string; cohorts: string[]; members: string[] }[];
+    expected: Record<string, unknown>[];
   }[];
 };
 
-test("@gate4 review 2 — the exported records match the backend's effective records, case for case", () => {
-  for (const c of EXPORTED.cases) {
-    const config = c.useParityDecisions ? PARITY.config : (c.config ?? {});
-    const index = indexDecisions(c.useParityDecisions ? PARITY.grouped : (c.grouped ?? {}));
-    const got = exportedRecords(PARITY.result, config, index).map((r) => ({
+/** The fields the mirror must agree on — `_exported_projection` in `tests/test_export_staged.py`. */
+function exportedProjection(records: UIRecord[]): Record<string, unknown>[] {
+  return records.map((r) => {
+    const gencde = r.gencde as { sourceVariables?: unknown; sourceCohorts?: unknown } | null;
+    return {
       groupId: r.groupId,
       concept: r.concept,
       verdict: r.verdict,
+      cdeId: r.cde?.id ?? null,
       cohorts: r.cohorts,
       members: r.members,
-    }));
-    expect(got, c.name).toEqual(c.expected);
+      nMembers: r.nMembers ?? null,
+      crossCohort: r.crossCohort ?? null,
+      removedMembers: (r as { removedMembers?: string[] }).removedMembers ?? null,
+      memberDetailIds: (r.memberDetails ?? []).map((d) => (d as { id?: string }).id ?? null),
+      transforms: (r.transforms ?? []).map((t) => ({ sourceVariable: t.sourceVariable ?? null, rejected: !!t.rejected })),
+      gencdeSources: gencde?.sourceVariables ?? null,
+      gencdeCohorts: gencde?.sourceCohorts ?? null,
+    };
+  });
+}
+
+test("@gate4 review 2 — the exported records match the backend's effective records, case for case", () => {
+  const before = JSON.stringify(PARITY.result);
+  for (const c of EXPORTED.cases) {
+    const result = c.result ?? PARITY.result;
+    const config = c.useParityDecisions ? PARITY.config : (c.config ?? {});
+    const index = indexDecisions(c.useParityDecisions ? PARITY.grouped : (c.grouped ?? {}));
+    expect(exportedProjection(exportedRecords(result, config, index)), c.name).toEqual(c.expected);
   }
-  // Never the raw pipeline output: the input is not mutated, and the raw run carries the group the scope dropped.
+  // Never the raw pipeline output, and never by mutating it: the run result is byte-for-byte what it was, and it
+  // still carries the group the scope dropped, the generated name, and the variable Gate 3 removed.
+  expect(JSON.stringify(PARITY.result)).toBe(before);
   expect(PARITY.result.records.map((r) => r.groupId)).toContain("c2#g0");
   expect(PARITY.result.records.find((r) => r.groupId === "c0#g0")?.concept).toBe("Age in years");
+  expect(PARITY.result.records.find((r) => r.groupId === "c1#g0")?.members).toContain("B:smk");
 });
 
 test("@gate4 review 2 — the Sankey's flows are the exported records': a scoped-out novel group draws no Novel flow", () => {
@@ -303,8 +324,10 @@ test("@gate4 review 2 — the Sankey's flows are the exported records': a scoped
   expect(flow("A", "Adopt")).toBe(2); // A:age, A:dm
   expect(flow("B", "Adopt")).toBe(2); // B:age_yrs, B:dm
   expect(flow("A", "Refine")).toBe(1);
+  // B:smk was REMOVED from c1 at Gate 3, so B draws no Refine flow at all.
+  expect(flow("B", "Refine")).toBe(0);
   expect(flow("Adopt", "Existing CDE")).toBe(4);
-  expect(flow("Refine", "Existing CDE")).toBe(2);
+  expect(flow("Refine", "Existing CDE")).toBe(1);
   // The raw run would have drawn the scoped-out group.
   expect(buildSankeyData(PARITY.result.records).nodes.map((n) => n.name)).toContain("Novel");
 });

@@ -1,15 +1,16 @@
 {
-  "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py::effective_records) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts::exportedRecords): Gate 4's Sankey (final review round 2) draws the records the EXPORT carries — Gate 1 scope (frozen list first, else the legacy 'not out' rule), the Gate 4 export selection, and the reviewer's names — so its flows cannot drift from the files. Every case reads its result from decision-log-parity.json; a case with useParityDecisions reads that file's config and decisions too, so a change to the shared inputs must be reflected here. Regenerate only by changing both implementations.",
+  "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py::effective_records) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts::exportedRecords): Gate 4's Sankey and its previews (final review round 2) read the records the EXPORT carries — Gate 1 scope (frozen list first, else the legacy 'not out' rule), the Gate 4 export selection, the reviewer's names, an unapplied Gate 2 pick's target, Gate 3 removals (members, member details, specs, the generated element's sources, counts and cohorts re-derived) and rejected recodes — so neither can drift from the files. A case reads decision-log-parity.json's result unless it carries its own; one with useParityDecisions reads that file's config and decisions too, so a change to the shared inputs must be reflected here. `expected` is the backend's output, projected; regenerate it from the backend, and only by changing both implementations.",
   "source": "decision-log-parity.json",
   "cases": [
     {
-      "name": "the parity run as walked: frozen scope drops c2, a rename, an applied and an unapplied re-pick",
+      "name": "the parity run as walked: frozen scope drops c2, a rename, an applied and an unapplied re-pick, a Gate 3 removal (and two that apply nowhere)",
       "useParityDecisions": true,
       "expected": [
         {
           "groupId": "c0#g0",
           "concept": "Participant âge",
           "verdict": "adopt",
+          "cdeId": "AgeAtVisitCDE",
           "cohorts": [
             "A",
             "B"
@@ -17,25 +18,46 @@
           "members": [
             "A:age",
             "B:age_yrs"
-          ]
+          ],
+          "nMembers": 2,
+          "crossCohort": true,
+          "removedMembers": [],
+          "memberDetailIds": [],
+          "transforms": [],
+          "gencdeSources": null,
+          "gencdeCohorts": null
         },
         {
           "groupId": "c1#g0",
           "concept": "Smoking status",
           "verdict": "refine",
+          "cdeId": "TobaccoCDE",
           "cohorts": [
-            "A",
-            "B"
+            "A"
           ],
           "members": [
-            "A:smoke",
+            "A:smoke"
+          ],
+          "nMembers": 1,
+          "crossCohort": false,
+          "removedMembers": [
             "B:smk"
-          ]
+          ],
+          "memberDetailIds": [],
+          "transforms": [
+            {
+              "sourceVariable": "A:smoke",
+              "rejected": false
+            }
+          ],
+          "gencdeSources": null,
+          "gencdeCohorts": null
         },
         {
           "groupId": "c3#g0",
           "concept": "Diabetes",
           "verdict": "adopt",
+          "cdeId": "DiabetesCDE",
           "cohorts": [
             "A",
             "B"
@@ -43,44 +65,75 @@
           "members": [
             "A:dm",
             "B:dm"
-          ]
+          ],
+          "nMembers": 2,
+          "crossCohort": true,
+          "removedMembers": [],
+          "memberDetailIds": [],
+          "transforms": [
+            {
+              "sourceVariable": "A:dm",
+              "rejected": false
+            },
+            {
+              "sourceVariable": "B:dm",
+              "rejected": false
+            }
+          ],
+          "gencdeSources": null,
+          "gencdeCohorts": null
         }
       ]
     },
     {
-      "name": "no frozen scope: an explicit out, an export-selection exclude, a padded rename",
+      "name": "no frozen scope: an explicit out, an export-selection exclude, a padded rename, an unapplied catalog pick on a novel group, a removal that leaves one cohort",
       "config": {},
       "grouped": {
         "gate1_group_scope": [
           {
-            "groupId": "c1#g0",
-            "chosen": "out",
             "alternatives": [
               "in",
               "out"
             ],
-            "optionSetKey": "s"
+            "optionSetKey": "k",
+            "groupId": "c1#g0",
+            "chosen": "out"
           }
         ],
         "gate4_export_selection": [
           {
-            "recordId": "c3#g0",
-            "chosen": "exclude",
             "alternatives": [
               "include",
               "exclude"
             ],
-            "optionSetKey": "x"
+            "optionSetKey": "k",
+            "recordId": "c3#g0",
+            "chosen": "exclude"
           }
         ],
         "gate1_rename": [
           {
+            "alternatives": [],
+            "optionSetKey": "k",
             "groupId": "c2#g0",
-            "chosen": "  Hair colour  ",
-            "alternatives": [
-              "Hair colour"
-            ],
-            "optionSetKey": "r"
+            "chosen": "  Hair colour  "
+          }
+        ],
+        "gate2_candidate_pick": [
+          {
+            "alternatives": [],
+            "optionSetKey": "k",
+            "groupId": "c2#g0",
+            "chosen": "HairCDE"
+          }
+        ],
+        "gate3_member_exclusion": [
+          {
+            "alternatives": [],
+            "optionSetKey": "k",
+            "groupId": "c0#g0",
+            "memberId": "B:age_yrs",
+            "chosen": "exclude"
           }
         ]
       },
@@ -89,24 +142,251 @@
           "groupId": "c0#g0",
           "concept": "Age in years",
           "verdict": "adopt",
+          "cdeId": "AgeCDE",
           "cohorts": [
-            "A",
-            "B"
+            "A"
           ],
           "members": [
-            "A:age",
+            "A:age"
+          ],
+          "nMembers": 1,
+          "crossCohort": false,
+          "removedMembers": [
             "B:age_yrs"
-          ]
+          ],
+          "memberDetailIds": [],
+          "transforms": [],
+          "gencdeSources": null,
+          "gencdeCohorts": null
         },
         {
           "groupId": "c2#g0",
           "concept": "Hair colour",
           "verdict": "novel",
+          "cdeId": "HairCDE",
           "cohorts": [
             "A"
           ],
           "members": [
             "A:hair"
+          ],
+          "nMembers": 1,
+          "crossCohort": true,
+          "removedMembers": [],
+          "memberDetailIds": [],
+          "transforms": [],
+          "gencdeSources": null,
+          "gencdeCohorts": null
+        }
+      ]
+    },
+    {
+      "name": "frozen scope [c1, c3]: a removal, 'none of these', a tinyId pick naming the model's own, a rejected recode",
+      "config": {
+        "gate1_scope": [
+          "c1#g0",
+          "c3#g0"
+        ]
+      },
+      "grouped": {
+        "gate3_member_exclusion": [
+          {
+            "alternatives": [],
+            "optionSetKey": "k",
+            "groupId": "c1#g0",
+            "memberId": "A:smoke",
+            "chosen": "exclude"
+          }
+        ],
+        "gate2_candidate_pick": [
+          {
+            "alternatives": [],
+            "optionSetKey": "k",
+            "groupId": "c1#g0",
+            "chosen": ""
+          },
+          {
+            "alternatives": [],
+            "optionSetKey": "k",
+            "groupId": "c3#g0",
+            "chosen": "Diabetes (renamed)",
+            "externalId": "tiny-dm"
+          }
+        ],
+        "gate3_spec_edit": [
+          {
+            "alternatives": [],
+            "optionSetKey": "k",
+            "sourceVariable": "A:dm",
+            "chosen": "",
+            "rejected": true
+          }
+        ]
+      },
+      "expected": [
+        {
+          "groupId": "c1#g0",
+          "concept": "Smoking status",
+          "verdict": "refine",
+          "cdeId": null,
+          "cohorts": [
+            "B"
+          ],
+          "members": [
+            "B:smk"
+          ],
+          "nMembers": 1,
+          "crossCohort": false,
+          "removedMembers": [
+            "A:smoke"
+          ],
+          "memberDetailIds": [],
+          "transforms": [
+            {
+              "sourceVariable": "B:smk",
+              "rejected": false
+            }
+          ],
+          "gencdeSources": null,
+          "gencdeCohorts": null
+        },
+        {
+          "groupId": "c3#g0",
+          "concept": "Diabetes",
+          "verdict": "adopt",
+          "cdeId": "DiabetesCDE",
+          "cohorts": [
+            "A",
+            "B"
+          ],
+          "members": [
+            "A:dm",
+            "B:dm"
+          ],
+          "nMembers": 2,
+          "crossCohort": true,
+          "removedMembers": [],
+          "memberDetailIds": [],
+          "transforms": [
+            {
+              "sourceVariable": "A:dm",
+              "rejected": true
+            },
+            {
+              "sourceVariable": "B:dm",
+              "rejected": false
+            }
+          ],
+          "gencdeSources": null,
+          "gencdeCohorts": null
+        }
+      ]
+    },
+    {
+      "name": "its own result: a removal from a novel group takes the variable out of the generated element's sources",
+      "result": {
+        "records": [
+          {
+            "id": "n#g0",
+            "clusterId": "n",
+            "groupId": "n#g0",
+            "concept": "Hair colour",
+            "verdict": "novel",
+            "route": "gencde_residual",
+            "cde": null,
+            "gencde": {
+              "gencdeId": "GEN:n",
+              "sourceVariables": [
+                "A:hair",
+                "B:hair_c"
+              ],
+              "sourceCohorts": [
+                "A",
+                "B"
+              ]
+            },
+            "cosines": {
+              "top1": 0.3,
+              "chosen": null
+            },
+            "coverageGap": false,
+            "floored": false,
+            "crossCohort": true,
+            "nMembers": 2,
+            "cohorts": [
+              "A",
+              "B"
+            ],
+            "members": [
+              "A:hair",
+              "B:hair_c"
+            ],
+            "memberDetails": [
+              {
+                "id": "A:hair",
+                "name": "hair",
+                "text": "hair"
+              },
+              {
+                "id": "B:hair_c",
+                "name": "hair_c",
+                "text": "hair colour"
+              }
+            ],
+            "transforms": [
+              {
+                "sourceVariable": "B:hair_c",
+                "targetCdeId": "GEN:n",
+                "kind": "categorical",
+                "codeMap": {
+                  "1": "Brown"
+                }
+              }
+            ],
+            "candidates": [],
+            "rationale": "",
+            "idealCde": ""
+          }
+        ]
+      },
+      "config": {},
+      "grouped": {
+        "gate3_member_exclusion": [
+          {
+            "alternatives": [],
+            "optionSetKey": "k",
+            "groupId": "n#g0",
+            "memberId": "B:hair_c",
+            "chosen": "exclude"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "groupId": "n#g0",
+          "concept": "Hair colour",
+          "verdict": "novel",
+          "cdeId": null,
+          "cohorts": [
+            "A"
+          ],
+          "members": [
+            "A:hair"
+          ],
+          "nMembers": 1,
+          "crossCohort": false,
+          "removedMembers": [
+            "B:hair_c"
+          ],
+          "memberDetailIds": [
+            "A:hair"
+          ],
+          "transforms": [],
+          "gencdeSources": [
+            "A:hair"
+          ],
+          "gencdeCohorts": [
+            "A"
           ]
         }
       ]
