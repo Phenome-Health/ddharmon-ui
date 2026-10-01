@@ -99,7 +99,8 @@ export interface UseGateDecisions {
    * toasted). A screen confirms a save off this value, never off having called it (08-26 #12).
    */
   write(fields: Record<string, unknown>, options: WriteOptions): Promise<boolean>;
-  clear(fields: Record<string, unknown>): Promise<void>;
+  /** Resolves TRUE once the row is gone (store or sandbox), FALSE when the delete failed and was rolled back. */
+  clear(fields: Record<string, unknown>): Promise<boolean>;
   /**
    * Show rows the SERVER stored for this reviewer (an accepted division's parts and moves), with their versions,
    * without a reload — see `absorbServedRows`. No write is made: the rows are already stored.
@@ -268,7 +269,7 @@ export function useGateDecisions(
         delete byItem[itemKey];
         return { ...prev, [kind]: byItem };
       });
-      await persist(itemKey, null, previous);
+      return persist(itemKey, null, previous);
     },
     [index, kind, persist, frozen],
   );

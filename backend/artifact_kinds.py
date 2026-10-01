@@ -171,13 +171,20 @@ GATE3_SPEC_EDIT = "gate3_spec_edit"
 #: writer). ``alternatives`` = the two rule names plus the member ids that were combined.
 GATE3_COMBINE_RULE = "gate3_combine_rule"
 
+#: Gate 3: the reviewer REMOVES one source variable from one concept (review round 2 — a self-reported weight
+#: variable sat in the general-health group of the final run). Keyed on the (group, variable) pair it removes, so
+#: two variables removed in two tabs are two rows. A row MEANS "out": ``chosen`` is always :data:`MEMBER_EXCLUDE`,
+#: and Undo deletes the row. The variable is dropped from that concept's transform specs and from every export
+#: (``backend/export_decisions.py::effective_records``) and logged as a removal. Nothing is re-run; it is free.
+GATE3_MEMBER_EXCLUSION = "gate3_member_exclusion"
+
 #: Gate 4: include / exclude one record from the export. Keyed on the record.
 GATE4_EXPORT_SELECTION = "gate4_export_selection"
 
 #: A composite score's component re-pointed at a different concept. Keyed on the (score, component) edge.
 COMPOSITE_SWAP = "composite_swap"
 
-#: The nine gate-decision kinds, in gate order. Shared payload shape, shared validation, shared staleness
+#: The eleven gate-decision kinds, in gate order. Shared payload shape, shared validation, shared staleness
 #: derivation - so a screen plan adding a tenth gets all three by adding one name here.
 GATE_DECISION_KINDS = (
     GATE1_GROUP_SCOPE,
@@ -188,6 +195,7 @@ GATE_DECISION_KINDS = (
     GATE2_RELATION,
     GATE3_SPEC_EDIT,
     GATE3_COMBINE_RULE,
+    GATE3_MEMBER_EXCLUSION,
     GATE4_EXPORT_SELECTION,
     COMPOSITE_SWAP,
 )
@@ -205,6 +213,7 @@ DECISION_GATE: dict[str, str] = {
     GATE2_RELATION: "gate2",
     GATE3_SPEC_EDIT: "gate3",
     GATE3_COMBINE_RULE: "gate3",
+    GATE3_MEMBER_EXCLUSION: "gate3",
     GATE4_EXPORT_SELECTION: "gate4",
 }
 
@@ -220,6 +229,7 @@ _DECISION_IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     GATE2_RELATION: ("groupId", "targetId"),
     GATE3_SPEC_EDIT: ("sourceVariable",),
     GATE3_COMBINE_RULE: ("cohort", "targetId"),
+    GATE3_MEMBER_EXCLUSION: ("groupId", "memberId"),
     GATE4_EXPORT_SELECTION: ("recordId",),
     COMPOSITE_SWAP: ("scoreName", "componentName"),
 }
@@ -308,6 +318,25 @@ def _combine_rule_validate(payload: dict[str, Any]) -> None:
         raise ValueError(
             f"a combine rule names {COMBINE_COALESCE!r}, {COMBINE_SEPARATE!r} or one of the variables it combines "
             f"(listed in alternatives) — {chosen!r} is none of them"
+        )
+
+
+#: The option space a ``gate3_member_exclusion`` records; only :data:`MEMBER_EXCLUDE` is ever stored.
+MEMBER_KEEP = "keep"
+MEMBER_EXCLUDE = "exclude"
+
+
+def _member_exclusion_validate(payload: dict[str, Any]) -> None:
+    """A removal row says exactly one thing — this variable is out of this concept — or it is refused.
+
+    Every reader treats a row of this kind as a removal, so a row carrying anything else (a "keep", an empty
+    choice) would remove a variable nobody removed. Undo is a DELETE of the row, never a "keep" written over it.
+    """
+    _decision_validate(payload)
+    if payload["chosen"] != MEMBER_EXCLUDE:
+        raise ValueError(
+            f"a {GATE3_MEMBER_EXCLUSION} row records a removal: chosen must be {MEMBER_EXCLUDE!r} "
+            f"(undo deletes the row) — {payload['chosen']!r} is not"
         )
 
 
@@ -449,6 +478,13 @@ registry.register(
         name=GATE3_COMBINE_RULE,
         identity=_decision_identity(GATE3_COMBINE_RULE),
         validate=_combine_rule_validate,
+    )
+)
+registry.register(
+    ArtifactKind(
+        name=GATE3_MEMBER_EXCLUSION,
+        identity=_decision_identity(GATE3_MEMBER_EXCLUSION),
+        validate=_member_exclusion_validate,
     )
 )
 registry.register(

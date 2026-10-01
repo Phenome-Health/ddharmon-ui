@@ -86,3 +86,20 @@ export const REF = {
 export function cdeDetailUrl(tinyId: string): string {
   return `${REF.cde}deView?tinyId=${encodeURIComponent(tinyId)}`;
 }
+
+/**
+ * Whether a target a gate NAMES becomes a link to its repository page — and to which (review round 2, Gate 3
+ * note 1: "adopt CDEs should have hyperlink to repo").
+ *
+ * The one rule every gate's target name goes through, so Gate 2 and Gate 3 cannot disagree about it: a catalog
+ * element with a tinyId links to `cdeDetailUrl`; a GENERATED element (a GenCDE, a refine's derived element, or
+ * the reviewer's own) never does — it has no catalog page — and neither does an element whose tinyId never
+ * reached the wire. `null` means "render the name as plain text".
+ */
+export function catalogPageFor(
+  target: { externalId?: string | null; generated?: boolean } | null | undefined,
+): string | null {
+  if (!target || target.generated) return null;
+  const tinyId = (target.externalId ?? "").trim();
+  return tinyId ? cdeDetailUrl(tinyId) : null;
+}

@@ -16,6 +16,7 @@ import {
   InheritedPanel,
 } from "@/components/gate/ConceptWorkbench";
 import { CandidateTable } from "@/components/gate/CandidateTable";
+import { CatalogLink } from "@/components/gate/CatalogLink";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { RunKeyField } from "@/components/gate/RunKeyField";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
@@ -455,11 +456,18 @@ export default function Gate2Page() {
                   {record.route ? <> · route {record.route}</> : null} ·{" "}
                   <span data-testid="current-target">
                     target:{" "}
-                    {targetIsOwn
-                      ? "your own CDE"
-                      : chosenCandidate
-                        ? candidateLabel(chosenCandidate, record.candidates)
-                        : chosenId || "none chosen"}
+                    {targetIsOwn ? (
+                      "your own CDE"
+                    ) : chosenCandidate ? (
+                      // The same repository link Gate 3 puts on this target (review round 2) — one rule,
+                      // `catalogPageFor`, so a generated element is never linked on either screen.
+                      <CatalogLink
+                        name={candidateLabel(chosenCandidate, record.candidates)}
+                        externalId={chosenCandidate.cdeExternalId}
+                      />
+                    ) : (
+                      chosenId || "none chosen"
+                    )}
                   </span>
                 </>
               }

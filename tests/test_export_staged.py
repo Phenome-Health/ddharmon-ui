@@ -511,7 +511,8 @@ def test_the_decision_log_matches_the_pinned_parity_fixture():
     assert fixture["columns"] == DECISION_LOG_COLS
     assert decision_log_rows(fixture["result"], fixture["config"], fixture["grouped"]) == fixture["expectedRows"]
     kinds = {r[1] for r in fixture["expectedRows"]}
-    assert {"gate1_scope_frozen", "gate1_rename", "gate1_regroup", "gate2_candidate_pick", "gate3_spec_edit"} <= kinds
+    assert {"gate1_scope_frozen", "gate1_rename", "gate1_regroup", "gate2_candidate_pick", "gate3_spec_edit",
+            "gate3_member_exclusion"} <= kinds  # fmt: skip
     assert any(r[-1] == "true" for r in fixture["expectedRows"]), "the fixture must exercise a stale decision"
 
 
@@ -786,7 +787,10 @@ def test_the_reviewers_relation_exports_over_the_models_with_the_models_alongsid
     assert c0["relationNote"] == "age at consent, not at visit"
     assert rows["c1#g0"]["relationBy"] == "model" and rows["c1#g0"]["relationNote"] == ""
     header = _export(client, job_id, "eitl_tsv").text.splitlines()[0].split("\t")
-    assert header[-4:] == ["relation", "relationBy", "modelRelation", "relationNote"], "appended, so no index moves"
+    # Appended after combineRules, so no index moves; review round 2's removedMembers was appended after them.
+    relation_at = header.index("combineRules") + 1
+    assert header[relation_at : relation_at + 4] == ["relation", "relationBy", "modelRelation", "relationNote"]
+    assert header[relation_at + 4 :] == ["removedMembers"], "appended, so no index moves"
 
 
 def test_a_relation_follows_the_target_it_was_set_on(parked):

@@ -130,6 +130,7 @@ const GATE_OF: Record<GateDecisionKind, string> = {
   gate2_relation: "Gate 2",
   gate3_spec_edit: "Gate 3",
   gate3_combine_rule: "Gate 3",
+  gate3_member_exclusion: "Gate 3",
   gate4_export_selection: "Gate 4",
   composite_swap: "Composite",
 };
@@ -143,6 +144,7 @@ const ACTION_OF: Record<GateDecisionKind, string> = {
   gate2_relation: "Set a relation",
   gate3_spec_edit: "Edited a transform spec",
   gate3_combine_rule: "Chose how variables combine",
+  gate3_member_exclusion: "Removed a variable from a concept",
   gate4_export_selection: "Chose export inclusion",
   // The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
   composite_swap: "Declared a score",
@@ -300,6 +302,9 @@ function detailOf(
       // F7: a save with neither an edit nor a note leaves the model's spec standing.
       return parts.length ? parts.join(" · ") : REVERTED_TO_MODEL;
     }
+    case "gate3_member_exclusion":
+      // Review round 2: the concept is the row's label; what the decision did is the variable it took out.
+      return `removed ${String(d.memberId ?? "")}`;
     default:
       return undefined;
   }
@@ -363,6 +368,8 @@ const REVERTED_TO_MODEL = "reverted to model spec";
 const NOT_APPLIED = "no record for this group in the run's results";
 /** A relation on a target the group no longer takes — `NOT_APPLIED_TARGET` in the backend (3f). */
 const NOT_APPLIED_TARGET = "not this group's current target";
+/** Why a Gate 3 removal reached no record (`backend/export_decisions.py::NOT_APPLIED_MEMBER`). */
+const NOT_APPLIED_MEMBER = "not a variable of this group in the run's results";
 /** A Gate 2 relation row that asserts no relation (a note only) — `NO_RELATION` in the backend (3f). */
 const NO_RELATION = "no relation asserted";
 /** What a per-code diff calls a code that yields no value — `MISSING` in the backend. */
@@ -665,6 +672,14 @@ export function decisionLogCsvRows(
         // F7: "annotated" only with a note; neither an edit nor a note is the model's spec standing.
         after = d.rejected ? "rejected" : edited ? "edited" : note.trim() ? "annotated" : REVERTED_TO_MODEL;
         if (edited) detail = editDetail(spec, edit);
+      } else if (kind === "gate3_member_exclusion") {
+        // The concept the variable was removed from -> "removed"; one that reached no record says so.
+        const gid = String(d.groupId || "");
+        before = gid;
+        after = "removed";
+        const rec = byGroup.get(gid);
+        if (rec === undefined) detail = stableJson({ notApplied: NOT_APPLIED });
+        else if (!(rec.members ?? []).includes(String(d.memberId || ""))) detail = stableJson({ notApplied: NOT_APPLIED_MEMBER });
       }
       rows.push([GATE_OF[kind], kind, ACTION_OF[kind], item, before, after, note, detail, String(stale.has(`${kind}\u001f${item}`))]);
     }
