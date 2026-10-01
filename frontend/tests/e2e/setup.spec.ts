@@ -1867,6 +1867,57 @@ test.describe("Setup — the run's first charge", () => {
     expect(src).toMatch(/not only the ones that changed/i);
   });
 
+  /**
+   * FINAL REVIEW ROUND 1, ITEM 1 — *"missing the multi sheet excel files of post-embedding text data dicts"*.
+   *
+   * The one-sheet-per-dictionary workbook existed (08-14f) but only in the COMPOSE stage, because its POST needs
+   * the files in the request body. Once a run existed this card offered per-dictionary CSVs only, so the
+   * workbook a reviewer had before Start was gone after it. The run keeps its uploads, so the card now offers
+   * the job-scoped `GET /jobs/{id}/embedding.xlsx` FIRST, with the CSVs after it.
+   *
+   * The available branch is unreachable in a static build (`IS_STATIC` is compile-time), so it is asserted
+   * from source, exactly as the export's own copy is above; the static branch is asserted in the browser.
+   */
+  test("@setup a started run's export card offers the whole set as ONE workbook, before the per-file CSVs", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+    const api = readFileSync(resolve(root, "src/lib/api.ts"), "utf8");
+    const at = api.indexOf("export function runEmbeddingWorkbookUrl(");
+    expect(at, "no job-scoped workbook URL builder in lib/api.ts").toBeGreaterThanOrEqual(0);
+    const fn = api.slice(at);
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    expect(body).toContain("/jobs/${jobId}/embedding.xlsx");
+    // No server in the static preview: null, so the card states the absence instead of a dead link.
+    expect(body).toMatch(/if \(IS_STATIC\) return null;/);
+
+    const card = readFileSync(resolve(root, "src/components/gate/PreparedExport.tsx"), "utf8");
+    const exportFn = card.slice(
+      card.indexOf("export function PreparedExport("),
+      card.indexOf("export function DictionaryEmbeddingExport("),
+    );
+    expect(exportFn).toContain("runEmbeddingWorkbookUrl(jobId)");
+    expect(exportFn).toContain('data-testid="prepared-workbook-link"');
+    expect(exportFn).toMatch(/one workbook/i);
+    expect(exportFn).toMatch(/one sheet per dictionary/i);
+    // FIRST: the workbook is the answer to "what does the whole run look like?"; the CSVs follow it.
+    expect(exportFn.indexOf('data-testid="prepared-workbook-link"')).toBeLessThan(
+      exportFn.indexOf('data-testid="prepared-export-link"'),
+    );
+  });
+
+  test("@setup in the static preview the card says the workbook is unavailable too, with no dead link", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const exp = page.getByTestId("prepared-export").first();
+    await expect(exp.getByTestId("prepared-export-unavailable")).toContainText(/workbook/i);
+    await expect(exp.getByTestId("prepared-workbook-link")).toHaveCount(0);
+    await expect(exp.getByRole("link")).toHaveCount(0);
+  });
+
   test("@setup nothing on Setup claims the staged flow is free until you pick what to buy", async ({
     page,
   }) => {
