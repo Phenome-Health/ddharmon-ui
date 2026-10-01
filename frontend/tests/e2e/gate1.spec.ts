@@ -1092,6 +1092,33 @@ test.describe("gate1 carve", () => {
     expect(requests).toEqual([]);
   });
 
+  /**
+   * FINAL REVIEW ROUND 1, ITEM 2: re-splitting is always available on a NEW run, so Setup has no checkbox any more.
+   * The only run that can reach the not-enabled branch is one created BEFORE that, which recorded the old opt-in as
+   * off and replays as recorded. Its refusal must say so and point at a new run — never at a Setup control that no
+   * longer exists.
+   */
+  test("@gate1 an old run that recorded re-splitting off says so, and points at a new run, not a Setup control", async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/readjudicate")) requests.push(r.url());
+    });
+    await serveRun(page, (run) => {
+      run.config = { ...(run.config as object), demo: false, readjudication: false } as never;
+    });
+    await openGate1(page);
+    const carve = (await expandRow(page, FLAGGED)).locator("[data-testid='carve-proposal']");
+    const na = carve.locator("[data-testid='not-available'][data-claim='not-enabled']");
+    await expect(na).toBeVisible();
+    await expect(na).toContainText(/created before/i);
+    await expect(na).toContainText(/new run/i);
+    await expect(na).not.toContainText(/set up|turn it on/i);
+    await expect(carve.getByRole("button", { name: /edit/i })).toBeEnabled();
+    expect(requests).toEqual([]);
+  });
+
   test("@gate1 the request is exactly one group id, and never an empty list", () => {
     // ASSERTED ON THE BUILDER, IN NODE, because the whole e2e suite runs against a backend-less static
     // build and no request can leave it. That is a real limit and it is named in the summary — what is

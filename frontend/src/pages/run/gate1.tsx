@@ -572,13 +572,16 @@ function readjudicationRefusal({
         "use it. Ignoring the proposal or editing it by hand still works here.",
     };
   }
+  // ONLY AN OLD RUN REACHES THIS (final review round 1): every new run records re-splitting ON, so `optedIn` is false
+  // only for a run created before that, which recorded the old Setup opt-in as off and replays as recorded. There is
+  // no Setup control to point at any more, so the copy points at a new run instead.
   if (!optedIn) {
     return {
       claim: "not-enabled",
       reason:
-        "Accepting a division re-splits the group into distinct concepts, which costs money, so it is " +
-        "off unless a run asks for it. Turn it on at Set up when you start a run to enable it. Ignoring " +
-        "the proposal or editing it by hand still works.",
+        "Re-splitting is not enabled for this run: it was created before re-splitting became available on " +
+        "every run, and recorded it as off. Start a new run to re-split a group — every new run can. " +
+        "Ignoring the proposal or editing it by hand still works.",
     };
   }
   // NO BUILD-MODE ARM HERE, deliberately. A backend-less static build only ever serves the PINNED sample

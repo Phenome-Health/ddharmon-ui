@@ -228,7 +228,9 @@ test.describe("Setup — a re-run opens prefilled, and nothing starts until Star
     await expect(page.getByTestId("run-mode")).toHaveValue("sync");
     await expect(page.getByTestId("run-mode")).toBeEnabled();
     await expect(page.getByTestId("cde-set")).toHaveValue("full");
-    await expect(page.getByTestId("allow-readjudication")).toBeChecked();
+    // Re-splitting is not an option to copy any more (final review round 1): every new run can re-split, and
+    // the reviewer decides per group at Gate 1 — so there is no control here, whatever the source recorded.
+    await expect(page.getByTestId("allow-readjudication")).toHaveCount(0);
     await expect(page.getByTestId("run-name")).toHaveValue("Spring run (re-run)");
 
     // And nothing was started: still on Setup, with Start as the reviewer's own decision.

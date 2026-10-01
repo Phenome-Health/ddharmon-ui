@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   COHERENCE_MIN_MEMBERS,
   GATE_LEDGER_KEYS,
+  RESPLIT_PER_USE_USD,
   SPLIT_ASSIGN_DIVISION,
   STAGE_SHARES,
   estimateRunCostBreakdown,
@@ -192,6 +193,48 @@ test.describe("run estimate", () => {
         }
       }
     }
+  });
+
+  /**
+   * RE-SPLITTING IS ALWAYS AVAILABLE, AND PRICED PER USE (final review round 1, item 2). Setup's opt-in checkbox
+   * is gone: the reviewer decides at Gate 1, per group, on a priced proposal. So the quote carries it as a
+   * PER-USE term under Gate 1 — never inside a total or a gate figure, because no Continue buys it and a run
+   * that never re-splits is never charged for it.
+   */
+  test("@estimate re-splitting is a per-use term under Gate 1, priced but never added to any total", () => {
+    for (const fields of [200, 1000, 7451]) {
+      for (const mode of ["batch", "sync"] as const) {
+        for (const { genSpecs, suggestIdeas, conceptGate } of FLAG_COMBINATIONS) {
+          const b = estimateRunCostBreakdown(fields, 5, mode, genSpecs, suggestIdeas, { conceptGate });
+          const label = `${fields}/${mode}/${JSON.stringify({ genSpecs, suggestIdeas, conceptGate })}`;
+          const resplit = b.onUse.find((l) => l.id === "resplit");
+          expect(resplit, label).toBeDefined();
+          expect(resplit!.gate, label).toBe("gate1");
+          expect(resplit!.perUse, label).toBeGreaterThan(0);
+          // Not a cost line: the total is the sum of the cost lines, and Gate 1's figure is its own lines only.
+          expect(b.lines.some((l) => l.id === "resplit"), label).toBe(false);
+          expect(b.total.mid, label).toBeCloseTo(b.lines.reduce((s, l) => s + l.cost, 0), 9);
+          const gate1Lines = b.lines.filter((l) => l.gate === "gate1").reduce((s, l) => s + l.cost, 0);
+          expect(b.byGate.gate1.forecast, label).toBeCloseTo(gate1Lines, 9);
+          expect(b.firstCharge, label).toBe(b.byGate.gate1.forecast);
+        }
+      }
+    }
+    // Preview runs no coherence judge, so no group is ever flagged and no division is ever proposed.
+    expect(estimateRunCostBreakdown(1000, 5, "preview", true).onUse).toEqual([]);
+  });
+
+  test("@estimate one re-split is priced at or above a measured split call, at the rates it is billed at", () => {
+    // `/readjudicate` calls the provider DIRECTLY (never the Batch API), whatever mode the run uses — so the
+    // price is the same in both modes, and at full synchronous rates.
+    const batch = estimateRunCostBreakdown(1000, 5, "batch", true).onUse.find((l) => l.id === "resplit")!;
+    const sync = estimateRunCostBreakdown(1000, 5, "sync", true).onUse.find((l) => l.id === "resplit")!;
+    expect(batch.perUse).toBe(sync.perUse);
+    expect(batch.perUse).toBe(RESPLIT_PER_USE_USD);
+    // R8: never below the MEASURED mean split call (full-5 stack: 926 calls, 2,652,860 input and 233,695 output
+    // tokens) at Sonnet's synchronous $3 / $15 per million.
+    const measuredMean = (2_652_860 / 926) * (3 / 1_000_000) + (233_695 / 926) * (15 / 1_000_000);
+    expect(RESPLIT_PER_USE_USD).toBeGreaterThanOrEqual(measuredMean);
   });
 
   test("@estimate realized spend and a forecast cannot be read for each other", () => {
