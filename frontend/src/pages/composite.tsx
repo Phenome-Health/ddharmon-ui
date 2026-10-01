@@ -244,8 +244,8 @@ export default function CompositePage() {
 }
 
 // Builder-level: a concept group is auto-selected (and auto-tagged for Gate 2) when its aggregate
-// confidence is at/above this threshold. Provisional 0.80 — to be tuned against the 49×UKBB FI benchmark;
-// set once for the whole builder, never per component.
+// confidence is at/above `GROUP_SELECT_THRESHOLD` (0.80 — not yet tuned against the 49×UKBB FI benchmark; an
+// internal note, not reviewer copy); one value for the whole builder, never per component.
 
 export function SpecView({
   spec,
@@ -461,12 +461,11 @@ export function SpecView({
               </li>
             </ul>
             <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
+              {/* The threshold is NOT TUNED yet — an INTERNAL note (see `GROUP_SELECT_THRESHOLD`), deliberately not
+                  printed here (final review round 1, item 3). */}
               Auto-select &amp; tag every group scoring{" "}
               <span className="font-mono text-on-raised">{GROUP_SELECT_THRESHOLD.toFixed(2)}</span> or higher —
-              set once here, applies to all components.
-              <span className="mt-0.5 block text-on-raised-muted/80">
-                Provisional — to be tuned against the 49×UKBB FI benchmark.
-              </span>
+              one threshold for the whole builder, applied to every component.
             </p>
           </div>
           {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).

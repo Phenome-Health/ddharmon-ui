@@ -1324,25 +1324,11 @@ test.describe("Setup — the key field and the disclosure polish (08-13b)", () =
       els.map((e) => e.getAttribute("data-testid") ?? e.getAttribute("id") ?? "").filter(Boolean),
     );
     /**
-     * `allow-readjudication` JOINED THIS LIST IN 08-16c, and it is worth saying why it is not the thing
-     * this test exists to prevent.
-     *
-     * The knobs above are MODEL AND ALGORITHM HYPERPARAMETERS — temperature, top-k, min_cluster_size,
-     * retrieval_floor — and the objection to them is that their right value cannot be known "before any
-     * dictionary has been read". This is not one of those. It is a SPEND PERMISSION: it decides whether
-     * the run is allowed to buy a further split-and-assign pass if the reviewer asks for one at Gate 1.
-     * The reviewer knows the answer at creation time, because it is a question about their own budget
-     * rather than about their corpus.
-     *
-     * It is also the sibling of `conceptGate` — `backend/app.py` records the pair together as "STGD-16's
-     * two opt-ins, recorded at CREATION and never flipped afterwards: a run resumed with a different
-     * answer would stop matching the cost it was quoted" — and Setup is the ONLY place it can live: the
-     * `/readjudicate` route's own 409 says "start a new run with it enabled to re-split a group".
-     *
-     * The tuning-knob assertions above still pass untouched, which is the part that matters: this control
-     * was added without any tuning vocabulary reaching the screen.
+     * `allow-readjudication` LEFT THIS LIST in final review round 1. It was a spend permission rather than a
+     * tuning knob, and it is gone because the permission moved to where the spend is decided: Gate 1, per group,
+     * on a priced proposal. Every new run can re-split; Setup's bill carries it as a per-use term instead.
      */
-    const expected = ["cde-set", "run-mode", "run-name", "provider", "model", "api-key", "allow-readjudication"];
+    const expected = ["cde-set", "run-mode", "run-name", "provider", "model", "api-key"];
     for (const id of expected) expect(ids).toContain(id);
     // Everything else on the screen is a role select in a mapping table, never a knob.
     const unexpected = ids.filter((id) => !expected.includes(id) && id !== "role-select");
@@ -1865,6 +1851,57 @@ test.describe("Setup — the run's first charge", () => {
     expect(src).toMatch(/EVERY variable/i);
     expect(src).toContain("ddharmon_embedding_text");
     expect(src).toMatch(/not only the ones that changed/i);
+  });
+
+  /**
+   * FINAL REVIEW ROUND 1, ITEM 1 — *"missing the multi sheet excel files of post-embedding text data dicts"*.
+   *
+   * The one-sheet-per-dictionary workbook existed (08-14f) but only in the COMPOSE stage, because its POST needs
+   * the files in the request body. Once a run existed this card offered per-dictionary CSVs only, so the
+   * workbook a reviewer had before Start was gone after it. The run keeps its uploads, so the card now offers
+   * the job-scoped `GET /jobs/{id}/embedding.xlsx` FIRST, with the CSVs after it.
+   *
+   * The available branch is unreachable in a static build (`IS_STATIC` is compile-time), so it is asserted
+   * from source, exactly as the export's own copy is above; the static branch is asserted in the browser.
+   */
+  test("@setup a started run's export card offers the whole set as ONE workbook, before the per-file CSVs", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+    const api = readFileSync(resolve(root, "src/lib/api.ts"), "utf8");
+    const at = api.indexOf("export function runEmbeddingWorkbookUrl(");
+    expect(at, "no job-scoped workbook URL builder in lib/api.ts").toBeGreaterThanOrEqual(0);
+    const fn = api.slice(at);
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    expect(body).toContain("/jobs/${jobId}/embedding.xlsx");
+    // No server in the static preview: null, so the card states the absence instead of a dead link.
+    expect(body).toMatch(/if \(IS_STATIC\) return null;/);
+
+    const card = readFileSync(resolve(root, "src/components/gate/PreparedExport.tsx"), "utf8");
+    const exportFn = card.slice(
+      card.indexOf("export function PreparedExport("),
+      card.indexOf("export function DictionaryEmbeddingExport("),
+    );
+    expect(exportFn).toContain("runEmbeddingWorkbookUrl(jobId)");
+    expect(exportFn).toContain('data-testid="prepared-workbook-link"');
+    expect(exportFn).toMatch(/one workbook/i);
+    expect(exportFn).toMatch(/one sheet per dictionary/i);
+    // FIRST: the workbook is the answer to "what does the whole run look like?"; the CSVs follow it.
+    expect(exportFn.indexOf('data-testid="prepared-workbook-link"')).toBeLessThan(
+      exportFn.indexOf('data-testid="prepared-export-link"'),
+    );
+  });
+
+  test("@setup in the static preview the card says the workbook is unavailable too, with no dead link", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+    const exp = page.getByTestId("prepared-export").first();
+    await expect(exp.getByTestId("prepared-export-unavailable")).toContainText(/workbook/i);
+    await expect(exp.getByTestId("prepared-workbook-link")).toHaveCount(0);
+    await expect(exp.getByRole("link")).toHaveCount(0);
   });
 
   test("@setup nothing on Setup claims the staged flow is free until you pick what to buy", async ({
@@ -2590,45 +2627,64 @@ test.describe("Setup — the repeated-name escape hatch (08-14g)", () => {
 });
 
 /**
- * The re-split opt-in (08-16c Task 4).
+ * Re-splitting is ALWAYS AVAILABLE, and priced per use (final review round 1, item 2).
  *
- * Bhargav asked *"where does user get to enable re-split for a run?"* — the honest answer was nowhere.
- * The backend reads `allowReadjudication` at run creation, `/readjudicate` 409s without it, and
- * `CarveProposal` already renders both branches; nothing in `frontend/src` ever SET it, so every run was
- * created with it off and Gate 1's carve proposal could never fire.
+ * History: 08-16c added an opt-in checkbox because nothing set `allowReadjudication`, so Gate 1's carve proposal
+ * could never fire. Bhargav's round-1 review: *"should be on by default since user can decide for themselves
+ * whether to use it or not at gate 1. doesnt need a checkbox, can be included in cost estimate w/ tooltip"*. A
+ * re-split is never bought by the run — the reviewer buys one group at a time at Gate 1, on a priced proposal —
+ * so the blind opt-in at Setup only made that informed decision unreachable. The server records it ON for every
+ * new run (`tests/test_resplit_always_on.py`); the quote carries it as a per-use term under Gate 1.
  */
-test.describe("setup re-split opt-in", () => {
-  test("@setup the reviewer can enable re-adjudication, and it is OFF by default", async ({ page }) => {
-    await page.goto(DRAFT);
-    await page.waitForLoadState("networkidle");
-    const box = page.getByTestId("allow-readjudication");
-    await expect(box).toBeVisible();
-    // A run only pays for a stage it asked for; the control makes the choice available, not the default.
-    await expect(box).not.toBeChecked();
-    await box.check();
-    await expect(box).toBeChecked();
+test.describe("Setup — re-splitting is always available, priced per use", () => {
+  test("@setup there is no re-split checkbox: the decision is the reviewer's, per group, at Gate 1", async ({
+    page,
+  }) => {
+    for (const url of [DRAFT, SETUP]) {
+      await page.goto(url);
+      await page.waitForLoadState("networkidle");
+      await expect(page.getByTestId("allow-readjudication"), url).toHaveCount(0);
+      await expect(page.locator("body"), url).not.toContainText(/Allow re-splitting/i);
+    }
   });
 
-  test("@setup the control says it costs money, without quoting a figure it cannot honour", async ({ page }) => {
-    await page.goto(DRAFT);
+  test("@setup the bill carries re-splitting under Concept groups as a per-use term, with a tooltip", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
-    const label = page.getByTestId("allow-readjudication").locator("xpath=ancestor::div[1]");
-    // Names the unit of charge — a split-and-assign pass, per re-split — rather than a number that
-    // depends on how many groups the reviewer sends back and how big they are.
-    await expect(label).toContainText(/split-and-assign pass/i);
-    await expect(label).toContainText(/costs money/i);
-    await expect(label).toContainText(/off by default/i);
+    const line = page.locator("[data-gate-forecast='gate1']").locator("[data-cost-line='resplit']");
+    await expect(line).toHaveCount(1);
+    await expect(line).toHaveAttribute("data-on-use", "true");
+    await expect(line).toContainText(/only if you use it/i);
+    // A figure PER USE, never a "~$x" that reads as part of the gate's sum.
+    await expect(line).toContainText(/~\$\d+(\.\d+)? per re-split/);
+
+    const tip = line.getByRole("button", { name: /about re-splitting a group/i });
+    await expect(tip).toHaveCount(1);
+    await tip.hover();
+    const tipText = page.getByRole("tooltip");
+    // What it is, that it is bought only when used, at Gate 1, and what one use buys.
+    await expect(tipText).toContainText(/distinct concepts/i);
+    await expect(tipText).toContainText(/Gate 1/);
+    await expect(tipText).toContainText(/only when you press/i);
+    await expect(tipText).toContainText(/each re-split/i);
   });
 
-  test("@setup enabling it does not silently move the run's cost estimate", async ({ page }) => {
-    await page.goto(DRAFT);
+  test("@setup the per-use term moves no figure: Gate 1's row is still the sum of its priced lines", async ({
+    page,
+  }) => {
+    await page.goto(SETUP);
     await page.waitForLoadState("networkidle");
-    const bar = page.getByTestId("commit-bar");
-    const before = await bar.getAttribute("data-total");
-    await page.getByTestId("allow-readjudication").check();
-    // Re-split is charged only when USED, so the quote for this run is unchanged — and must not appear to
-    // change, in either direction (R8 binds both ways).
-    await expect(bar).toHaveAttribute("data-total", before ?? "");
+    const gate1 = page.locator("[data-gate-forecast='gate1']");
+    const usd = (t: string) => Number(/\$([\d.]+)/.exec(t)?.[1] ?? "NaN");
+    const row = await gate1.locator(":scope > div").first().innerText();
+    const priced = await gate1.locator("[data-cost-line]:not([data-on-use])").allInnerTexts();
+    const sum = priced.reduce((s, t) => s + usd(t.split("\n").at(-1) ?? t), 0);
+    // Rounded per line on screen, so compared to the cent rather than exactly.
+    expect(Math.abs(usd(row) - sum)).toBeLessThan(0.02 * priced.length);
+    // And the first charge on Start still equals Gate 1's figure, untouched by a term nobody has bought yet.
+    await expect(page.getByTestId("first-charge")).toContainText(row.match(/\$[\d.]+/)![0]);
   });
 });
 

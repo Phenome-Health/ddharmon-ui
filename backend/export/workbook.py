@@ -98,11 +98,16 @@ def fit_cell(value: str) -> str:
     return text[:CELL_CHAR_LIMIT]
 
 
-def build_embedding_workbook(specs: list[dict[str, Any]]) -> bytes:
+def build_embedding_workbook(specs: list[dict[str, Any]], *, prepare: bool | None = None) -> bytes:
     """The ``.xlsx`` bytes for a whole upload set — one sheet per dictionary, in the order given.
 
     ``specs`` are the mapped uploads: ``{path, filename, cohort_name, column_roles}``, the shape
-    ``_mapped_uploads`` produces, so the endpoint does no translation of its own.
+    ``_mapped_uploads`` produces (and a run's own ``dict_specs`` carry), so neither endpoint does any
+    translation of its own.
+
+    ``prepare`` is passed straight to :func:`build_embedding_export`: ``None`` (the pre-Start workbook) means
+    the product default a run started now would apply; a STARTED run passes its own recorded choice
+    (``run_prepares``), so its workbook shows the text that run embedded rather than today's default.
 
     A dictionary that cannot be loaded raises rather than producing a workbook with a missing sheet: a
     workbook whose sheet count silently disagrees with the number of dictionaries uploaded is the failure
@@ -116,7 +121,10 @@ def build_embedding_workbook(specs: list[dict[str, Any]]) -> bytes:
     wb = Workbook(write_only=True)
     for spec, title in zip(specs, titles, strict=True):
         export = build_embedding_export(
-            spec["path"], cohort_name=str(spec["cohort_name"]), column_roles=dict(spec["column_roles"])
+            spec["path"],
+            cohort_name=str(spec["cohort_name"]),
+            column_roles=dict(spec["column_roles"]),
+            prepare=prepare,
         )
         ws = wb.create_sheet(title=title)
         ws.append([fit_cell(c) for c in export.header])

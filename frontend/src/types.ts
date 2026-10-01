@@ -829,7 +829,7 @@ export interface RunConfig {
   // Generate "analysis ideas" during the run (one extra LLM pass, same model/provider/key). No-op in preview.
   suggestAnalysisIdeas: boolean;
   /**
-   * The opt-in concept-match gate and re-adjudication (STGD-16), default off.
+   * The opt-in concept-match gate (STGD-16), default off.
    *
    * The backend has read this since 08-11 (`backend/app.py`: `"concept_gate": bool(cfg.get("conceptGate",
    * False))`) — the field was simply missing from this type, so a caller setting it had to cast. Declared
@@ -837,18 +837,13 @@ export interface RunConfig {
    */
   conceptGate?: boolean;
   /**
-   * Permission for the re-adjudication endpoint to spend on a re-split the reviewer names (08-16c Task 4).
+   * SERVED config key: permission for `/readjudicate` to spend on a re-split the reviewer names at Gate 1.
    *
-   * The backend has read this since 08-11 (`"readjudication": bool(cfg.get("allowReadjudication", False))`)
-   * and `/readjudicate` 409s without it, and `CarveProposal` has branched on the resulting
-   * `readjudicationEnabled` all along — but NOTHING in `frontend/src` ever set it, so every run was created
-   * with it off and Gate 1's carve proposal could never fire. Setup's checkbox is the missing end.
-   *
-   * DEFAULT OFF, and it is recorded at CREATION and never flipped afterwards: a run resumed with a
-   * different answer would stop matching the cost it was quoted (T-08-69).
+   * The server records it TRUE for every new run (final review round 1) — the create payload has no field for it
+   * any more (the old `allowReadjudication` opt-in and Setup's checkbox are gone). Only a run created before then
+   * can carry `false`, and Gate 1 then shows the honest "not enabled for this run" state. Read this on
+   * `JobResult.config`.
    */
-  allowReadjudication?: boolean;
-  /** SERVED config key. app.py:521 stores the create-payload `allowReadjudication` under this name; read THIS on JobResult.config, not the create key. */
   readjudication?: boolean;
   displayName?: string;
   // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when

@@ -128,6 +128,15 @@ const LINE_HELP: Record<string, { help: string; optIn?: { on: boolean; decidedAt
       "suspect recodes at Gate 3; never changes a verdict on its own.",
     optIn: { on: false, decidedAt: "Gate 2" },
   },
+  resplit: {
+    help:
+      "Divides one group that the coherence check flagged as mixing concepts into the distinct concepts it " +
+      "is really made of — a further split pass by the model, on that group alone. It is always available, " +
+      "and it is bought only when you press Accept this division on a flagged group at Gate 1: never by the " +
+      "run itself, so it is in none of the figures in this estimate. Each re-split is one model call, priced " +
+      "here for a large group. The parts it creates then join Gate 1's list, and Gate 1's own quote prices " +
+      "them before you continue.",
+  },
   analysisIdeas: {
     help:
       "One pass over the finished concepts, proposing cross-cohort analyses this harmonization makes " +
@@ -446,19 +455,14 @@ export default function SetupPage() {
   const [genSpecs] = useState(true);
   const [suggestIdeas] = useState(true);
   const [conceptGate] = useState(false);
-  /**
-   * Re-adjudication: OFF by default, and a real control rather than a fixed default (08-16c Task 4).
-   *
-   * Bhargav asked *"where does user get to enable re-split for a run?"* and the honest answer was nowhere.
-   * Everything downstream is built — the backend reads `allowReadjudication` at creation, `/readjudicate`
-   * 409s without it, and `CarveProposal` already renders both branches — so the checkbox was the only
-   * missing piece.
-   *
-   * IT STAYS OFF BY DEFAULT. The backend's own reasoning is that a run only pays for a stage it asked for,
-   * and the endpoint carries three separate refusals precisely so a flagged group is never auto-resolved.
-   * The control makes the choice AVAILABLE; it does not make it the default.
+  /*
+   * RE-SPLITTING HAS NO CONTROL HERE (final review round 1, item 2). 08-16c added an opt-in checkbox, OFF by
+   * default; Bhargav's review: the reviewer decides for themselves whether to use it at Gate 1, so it needs no
+   * checkbox. A re-split is never bought by the run — the reviewer buys one group at a time by pressing a priced
+   * "Accept this division" at Gate 1 — so the server records it ON for every new run (`start_batch`), and the
+   * bill below carries it as a per-use term under Gate 1 (`estimate.onUse`) with a tooltip. Nothing is sent for
+   * it at Start. A run created before this keeps the answer it recorded (`/readjudicate` refuses one recorded off).
    */
-  const [allowReadjudication, setAllowReadjudication] = useState(false);
   const [displayName, setDisplayName] = useState("");
   // BYOK: memory only. Never persisted, never echoed back, cleared on reload. Pre-filled from the TAB's held key
   // (`lib/run-key.ts`) when there is one — a second run in the same tab need not ask again — and put there on
@@ -918,7 +922,6 @@ export default function SetupPage() {
     if (config.run_mode === "batch" || config.run_mode === "sync" || config.run_mode === "preview") {
       setRunMode(config.run_mode);
     }
-    if (typeof config.readjudication === "boolean") setAllowReadjudication(config.readjudication);
     setDisplayName(rerunNameFor(rerunSource.displayName));
     const from = rerunSource.displayName || "the earlier run";
     const declared: RunDictionary[] = Array.isArray(rerunSource.dictionaries) ? rerunSource.dictionaries : [];
@@ -1096,7 +1099,6 @@ export default function SetupPage() {
           genTransformSpecs: genSpecs,
           suggestAnalysisIdeas: suggestIdeas,
           conceptGate,
-          allowReadjudication,
           displayName: displayName || undefined,
           provider,
           modelTag: model || undefined,
@@ -1757,34 +1759,6 @@ export default function SetupPage() {
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="allow-readjudication" className="flex items-center gap-2 text-xs font-semibold text-on-raised">
-              <input
-                id="allow-readjudication"
-                data-testid="allow-readjudication"
-                type="checkbox"
-                  checked={allowReadjudication}
-                onChange={(e) => setAllowReadjudication(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-rule-control-on-raised"
-              />
-              Allow re-splitting a group during review
-            </label>
-            <p className="text-xs leading-relaxed text-on-raised-muted">
-              {/*
-                SAYS WHAT IT BUYS, IN WORDS, NOT A NUMBER. The cost depends on how many groups the reviewer
-                re-splits and how large they are — neither is known here — so quoting a figure this screen
-                cannot honour would repeat the error already corrected once on this page (batch quoted as
-                faster than sync). It states the unit of charge instead, which is the part that is knowable.
-              */}
-              Off by default. When on, Gate 1 can send a group back for a further{" "}
-              <strong className="font-semibold text-on-raised">split-and-assign pass</strong>, which calls
-              the model again and <strong className="font-semibold text-on-raised">costs money each time
-              you use it</strong> — charged per re-split, on top of the estimate below, and only when you
-              ask for one. Leaving this off does not change what this run costs. It cannot be turned on
-              later: the answer is recorded when the run is created so the run keeps matching the price it
-              was quoted.
-            </p>
-          </div>
-          <div className="flex flex-col gap-1.5">
             <label htmlFor="run-name" className="text-xs font-semibold text-on-raised">
               Run name (optional)
             </label>
@@ -2120,6 +2094,11 @@ export default function SetupPage() {
                   gate === "gate3" && !conceptGate
                     ? ([{ id: "conceptGate", label: "Concept-match check" }] as const)
                     : ([] as const);
+                // BOUGHT PER USE, NOT BY THIS GATE'S CONTINUE (final review round 1): re-splitting a group is
+                // always available and charged only when the reviewer presses it at Gate 1. It renders under
+                // the gate it is used on, priced per use, and is in none of the figures — `estimate.onUse`
+                // has no `cost` for a sum to reach for.
+                const onUse = estimate.onUse.filter((u) => u.gate === gate);
                 const free = GATE_FREE_REASON[gate];
                 return (
                   <li key={gate} data-gate-forecast={gate} className="flex flex-col gap-0.5">
@@ -2129,7 +2108,7 @@ export default function SetupPage() {
                         {free ?? `est. ${formatUsd(g.forecast)}`}
                       </span>
                     </div>
-                    {(own.length > 0 || offer.length > 0) && (
+                    {(own.length > 0 || offer.length > 0 || onUse.length > 0) && (
                       <ul className="flex flex-col gap-0.5 pl-3">
                         {own.map((l) => {
                           const meta = LINE_HELP[l.id];
@@ -2184,6 +2163,28 @@ export default function SetupPage() {
                               </span>
                               <span className="shrink-0 tabular-nums text-on-raised-muted">
                                 not included
+                              </span>
+                            </li>
+                          );
+                        })}
+                        {onUse.map((u) => {
+                          const meta = LINE_HELP[u.id];
+                          return (
+                            <li
+                              key={u.id}
+                              data-cost-line={u.id}
+                              data-on-use="true"
+                              className="flex items-baseline justify-between gap-4 text-xs"
+                            >
+                              <span className="text-on-raised-muted">
+                                <span className="inline-flex items-baseline gap-1">
+                                  {u.label}
+                                  {meta && <InfoTip text={meta.help} label={`About ${u.label}`} />}
+                                </span>
+                                <span className="ml-1">· only if you use it</span>
+                              </span>
+                              <span className="shrink-0 tabular-nums text-on-raised-muted">
+                                ~{formatUsd(u.perUse)} per re-split
                               </span>
                             </li>
                           );

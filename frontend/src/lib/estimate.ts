@@ -189,6 +189,41 @@ const JUDGE_ELIGIBLE_GROUPS_PER_VARIABLE = 0.052;
 const CONCEPT_GATE_CALL_BATCH_USD = JUDGE_CALL_BATCH_USD;
 const GROUPS_PER_VARIABLE = 0.485;
 
+// --- re-splitting a group at Gate 1: always available, bought per use ------------------------------------
+
+/**
+ * Input tokens priced for ONE re-split: the MEASURED mean split call, doubled.
+ *
+ * Measured off the full-5 stack run's frozen artifacts (the same count `SPLIT_ASSIGN_DIVISION` comes from): 926
+ * split calls, 2,652,860 input tokens — ~2,865 a call. Doubled because a re-split is only ever offered on a
+ * coherence-FLAGGED group, and the judge only reads groups of six or more variables, so the group being divided
+ * is larger than the average split call's. The direction is R8's.
+ */
+const RESPLIT_INPUT_TOKENS = 5_800;
+/**
+ * Output tokens priced for ONE re-split: the split stage's own output CAP (core `SPLIT_ENFORCE_MAX_TOKENS`), not
+ * the measured mean (~252). A ceiling, not a guess — the provider cannot bill more output than this for the call.
+ */
+const RESPLIT_OUTPUT_TOKENS = 4_096;
+
+/**
+ * What ONE re-split costs — "Accept this division" on one group at Gate 1 (final review round 1, item 2).
+ *
+ * ONE SPLIT CALL, AT SYNCHRONOUS RATES, IN EVERY RUN MODE. `/readjudicate` calls the provider directly for the one
+ * group the reviewer named; it never rides the Batch API, so the batch half-price does not apply to it.
+ *
+ * PER USE, NEVER IN A TOTAL. Re-splitting is always available on a new run, but no Continue buys it: the reviewer
+ * buys one group at a time by pressing a priced button at Gate 1, and a run that never re-splits is never charged
+ * for it. So it is quoted as a per-use term (`CostBreakdown.onUse`) — adding it to a gate figure would quote a
+ * charge for work nobody has asked for, and leaving it off the bill would hide a price the reviewer can incur.
+ *
+ * What it does NOT include: each part the division creates then joins Gate 1's list as a group of its own and is
+ * matched at Gate 2 like any group — that is priced by Gate 1's Continue quote, which re-quotes from the groups the
+ * reviewer actually has.
+ */
+export const RESPLIT_PER_USE_USD =
+  RESPLIT_INPUT_TOKENS * USD_PER_INPUT_TOKEN + RESPLIT_OUTPUT_TOKENS * USD_PER_OUTPUT_TOKEN;
+
 // --- shapes ------------------------------------------------------------------------------------------
 
 export interface CostEstimate {
@@ -219,6 +254,21 @@ export interface CostLine {
   gate: GatePosition | "after";
 }
 
+/**
+ * A charge the reviewer can incur at a gate by USING something there — priced per use, never part of a total.
+ *
+ * Distinct from `CostLine` on purpose: a `CostLine` is summed into its gate's forecast and the run total, and a
+ * consumer that summed this by mistake would quote a charge nobody has asked for. Different shape, no `cost` field.
+ */
+export interface OnUseLine {
+  id: string;
+  label: string;
+  /** What ONE use costs. */
+  perUse: number;
+  /** The gate the reviewer uses it ON — the screen where the button that buys it lives. */
+  gate: GatePosition;
+}
+
 /** What reaching one gate is FORECAST to cost. Carries no realized figure, deliberately. */
 export interface GateForecast {
   gate: GatePosition;
@@ -247,6 +297,12 @@ export interface CostBreakdown {
    * field, so the two amounts a reviewer can see for one press cannot disagree.
    */
   firstCharge: number;
+  /**
+   * Charges bought per USE at a gate rather than by a Continue — today, re-splitting a group at Gate 1. Never
+   * summed into `lines`, `total`, `byGate` or `firstCharge`. Empty for a free (preview) run, where no coherence
+   * judge runs, so no group is flagged and no division is ever proposed.
+   */
+  onUse: OnUseLine[];
   /** How many coherence-judge calls the quote is priced for — the work behind the money. */
   judgeCalls: number;
   /** False only when real group sizes were supplied, in which case the count is exact. */
@@ -354,6 +410,7 @@ export function estimateRunCostBreakdown(
       batchSavings: 0,
       byGate: noGates,
       firstCharge: 0,
+      onUse: [],
       judgeCalls: 0,
       judgeCallsEstimated: !groupSizes,
     };
@@ -466,6 +523,7 @@ export function estimateRunCostBreakdown(
     batchSavings: mode === "batch" ? mid : 0, // sync would cost ~2×, so batch saves ≈ mid
     byGate,
     firstCharge: gate1,
+    onUse: [{ id: "resplit", label: "Re-splitting a group", perUse: RESPLIT_PER_USE_USD, gate: "gate1" }],
     judgeCalls,
     judgeCallsEstimated: !groupSizes,
   };

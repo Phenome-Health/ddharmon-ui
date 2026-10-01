@@ -663,6 +663,20 @@ export function preparedExportUrl(jobId: string, cohort: string): string | null 
 }
 
 /**
+ * A STARTED run's dictionaries as ONE workbook — a sheet each, with the exact text every variable embedded.
+ *
+ * The job-scoped sibling of `embeddingWorkbook` (the pre-Start POST, which needs the files in the browser): a GET
+ * over the run's retained uploads, $0. `null` in the static preview for the same reason as `preparedExportUrl` —
+ * a dead link that downloads a 404 page named `.xlsx` is worse than a stated absence.
+ */
+export function runEmbeddingWorkbookUrl(jobId: string): string | null {
+  if (IS_STATIC) return null;
+  const base = `${BASE}/jobs/${jobId}/embedding.xlsx`;
+  // Same reason as `exportUrl`: a download href cannot carry an Authorization header.
+  return _lastToken ? `${base}?token=${encodeURIComponent(_lastToken)}` : base;
+}
+
+/**
  * One mapped dictionary, as it is described to the pre-Start export endpoints.
  *
  * The SAME payload shape `/batch` takes, deliberately: an export that accepts a mapping the run would

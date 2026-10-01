@@ -567,12 +567,17 @@ async def start_batch(
         # view's Stop dialog can show a committed-vs-avoided cost estimate (run_config keeps no dictionaries).
         "est_fields": int(cfg["estFields"]) if cfg.get("estFields") is not None else None,
         "est_cohorts": int(cfg["estCohorts"]) if cfg.get("estCohorts") is not None else None,
-        # STGD-16's two opt-ins, recorded at CREATION and never flipped afterwards: a run resumed with a
-        # different answer would stop matching the cost it was quoted (T-08-69). Both default off, so a run
-        # can only pay for a stage it asked for. `concept_gate` is the M7 advisory stage; `readjudication`
-        # is permission for the re-adjudication endpoint to spend on a re-split the reviewer names.
+        # STGD-16's two switches, recorded at CREATION and never flipped afterwards: a run resumed with a
+        # different answer would stop matching the cost it was quoted (T-08-69). `concept_gate` is the M7
+        # advisory stage — opt-in, default off, so a run only pays for a stage it asked for.
         "concept_gate": bool(cfg.get("conceptGate", False)),
-        "readjudication": bool(cfg.get("allowReadjudication", False)),
+        # `readjudication` is permission for the re-adjudication endpoint to spend on a re-split the reviewer
+        # names at Gate 1. ALWAYS ON for a new run (final review round 1): no run ever buys a re-split by
+        # itself — the reviewer buys one group at a time by pressing a priced "Accept this division", so a
+        # blind opt-in at Setup only made that informed decision unreachable. Setup's quote carries it as a
+        # per-use line. The create payload's `allowReadjudication` is no longer read. A run created before this
+        # recorded its own answer and keeps it (`/readjudicate` still refuses one that recorded off).
+        "readjudication": True,
         # 08-14e: whether this run prepares its dictionaries before embedding, recorded so every later leg and a
         # re-run embed the text the first leg embedded even if the product default moves again (`run_prepares`).
         "preprocess": PREPARE_BEFORE_EMBED_DEFAULT,
@@ -1292,7 +1297,9 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     # Remap each dict_spec path (same filenames) into the new uploads dir.
     new_specs = [{**s, "path": str(new_uploads / Path(s["path"]).name)} for s in src.dict_specs]
     cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
-    run_config = {**src.config, "work_dir": str(new_work)}
+    # A re-run is a NEW run, so it gets what every new run gets: re-splitting on (see `start_batch`), even when the
+    # run it copies predates that and recorded it off. The source run is untouched and replays as recorded.
+    run_config = {**src.config, "work_dir": str(new_work), "readjudication": True}
 
     display = f"{src.display_name} (re-run)"
     store.create(new_id, display, run_config, owner_subject=subject, dict_specs=new_specs)
@@ -1405,8 +1412,9 @@ def readjudicate(
 
     1. **A pinned demo is rejected outright** — checked first, so a demo that happens to carry the opt-in is
        still refused and a guest walk can never spend money.
-    2. **The run must have opted in at creation** (``readjudication``, default false), and the refusal names
-       itself so the UI can render the honest "not enabled for this run" state.
+    2. **The run must have recorded ``readjudication`` at creation.** Every new run records it ON (final review
+       round 1); only a run created before then can carry it off, and the refusal names itself so the UI can
+       render the honest "not enabled for this run" state.
     3. **The caller must name explicit group ids.** An empty or absent list is refused, never widened.
     4. **The run must be parked AT Gate 1.** Past it the grouping was committed by Gate 1's Continue, and a
        division now would change nothing any later leg reads.
@@ -1438,11 +1446,14 @@ def readjudicate(
                 f"{job_id} is the shared demo and cannot be re-adjudicated — clone it into a run of your own"
             )
     if not job.config.get("readjudication"):
+        # Only a run created before re-splitting became always-on can reach this: it recorded the old opt-in as
+        # off, and its quote never included the capability, so it replays as recorded. There is no Setup control
+        # to point at any more — every new run has it.
         raise HTTPException(
             status_code=409,
             detail=(
-                "Re-adjudication is not enabled for this run. It is opt-in at run creation because it buys a "
-                "new split pass; start a new run with it enabled to re-split a group."
+                "Re-splitting is not enabled for this run: it was created before re-splitting became available on "
+                "every run, and recorded it as off. Start a new run to re-split a group — every new run can."
             ),
         )
     group_ids = list(dict.fromkeys(g.strip() for g in (body.groupIds or []) if g and g.strip()))
@@ -2561,7 +2572,7 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
     Available BEFORE the run has a result, deliberately: Gate 0 is where the question is asked, and the run
     is parked there with no result by construction.
     """
-    from backend.engine.adapter import build_prepared_export
+    from backend.engine.adapter import build_prepared_export, run_prepares
 
     subject = _subject(request)
     job = store.get(job_id)
@@ -2580,6 +2591,9 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
         source,
         cohort_name=cohort,
         column_roles=dict(spec.get("column_roles") or {}),
+        # The run's OWN recorded choice: since 08-14e a run does not prepare, and its embedding column must be
+        # the text it embedded — the same string the run workbook below carries for that variable.
+        prepare=run_prepares(job.config),
     )
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -2592,6 +2606,64 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
         iter([buf.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{stem}_prepared.csv"'},
+    )
+
+
+@app.get("/api/harmonize/jobs/{job_id}/embedding.xlsx")
+def run_embedding_workbook(job_id: str, request: Request) -> StreamingResponse:
+    """A STARTED run's dictionaries as ONE workbook — a sheet each, with the exact text every variable embedded.
+
+    The job-scoped sibling of the pre-Start ``POST /dictionary/embedding.xlsx``. That one exists only while the
+    files are still in the browser (Setup's compose stage); once a run exists Setup's export card offered only
+    per-dictionary CSVs, so the workbook a reviewer had before Start was gone after it (phase-8 final review,
+    round 1). The run retains its uploads, so this re-reads them — the same reasoning as ``prepared.csv``.
+
+    A GET, and free: no model is called, nothing is embedded, no run state is touched. The SAME builder as the
+    pre-Start workbook, so the two cannot disagree — except that the text follows the run's own recorded
+    ``preprocess`` (``run_prepares``) rather than the product default, because it is a claim about what THIS
+    run embedded.
+
+    Refuses rather than dropping a sheet: a workbook whose sheet count silently disagrees with the run's
+    dictionaries is the failure a reviewer is least likely to notice.
+    """
+    from backend.engine.adapter import run_prepares
+    from backend.export.workbook import build_embedding_workbook
+
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    specs = [
+        {
+            "path": Path(str(d.get("path", ""))),
+            "filename": Path(str(d.get("path", ""))).name,
+            "cohort_name": str(d.get("cohort_name") or Path(str(d.get("path", ""))).stem),
+            "column_roles": dict(d.get("column_roles") or {}),
+        }
+        for d in (job.dict_specs or [])
+    ]
+    if not specs:
+        raise HTTPException(status_code=409, detail="This run kept no record of its dictionaries")
+    gone = [s["cohort_name"] for s in specs if not s["path"].exists()]
+    if gone:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The uploaded file for {gone[0]!r} is no longer available, so the workbook would be missing it",
+        )
+    try:
+        data = build_embedding_workbook(specs, prepare=run_prepares(job.config))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Named for the run rather than the pre-Start file's fixed name, so two runs' workbooks do not overwrite each
+    # other in a Downloads folder. The id is rebuilt from the safe alphabet like every other echoed filename.
+    stem = "".join(c if (c.isalnum() or c in "_-") else "_" for c in job_id[:8]) or "run"
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="ddharmon_{stem}_embedding_text.xlsx"',
+            "X-Ddharmon-Sheets": str(len(specs)),
+        },
     )
 
 

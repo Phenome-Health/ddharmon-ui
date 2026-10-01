@@ -200,8 +200,14 @@ export function coveredCohorts(m: {
 
 /**
  * The builder-level AUTO-SELECT threshold: a concept group whose aggregate confidence is at/above this is
- * checked in the score panel and seeded into Gate 1 scope (so it reaches Gate 2). Provisional — tuning it
- * on the 49×UKBB FI benchmark is a filed todo. Distinct from the core's per-MEMBER 0.50 coverage floor.
+ * checked in the score panel and seeded into Gate 1 scope (so it reaches Gate 2). Distinct from the core's
+ * per-MEMBER 0.50 coverage floor.
+ *
+ * INTERNAL NOTE — NOT REVIEWER COPY (final review round 1, item 3): 0.80 is NOT TUNED. Tuning it against the
+ * 49-item UKBB frailty-index benchmark is a filed todo. Bhargav asked for this caveat to live here rather than on
+ * the score builder, which used to print "Provisional — to be tuned against the 49×UKBB FI benchmark".
+ * `tests/e2e/score-auto-select.spec.ts` pins that the RULE works (the selection moves with the threshold); what is
+ * unproven is only whether 0.80 is the right value.
  */
 export const GROUP_SELECT_THRESHOLD = 0.8;
 
@@ -221,19 +227,24 @@ export function offeredGroups(m: {
 }
 
 /**
- * groupId → the components whose score match AUTO-SELECTS it (confidence ≥ GROUP_SELECT_THRESHOLD).
+ * groupId → the components whose score match AUTO-SELECTS it (confidence ≥ `threshold`, default
+ * `GROUP_SELECT_THRESHOLD`).
  *
  * THE ONE RULE for "the score builder put this group in scope". Gate 1's scope default and the score panel's
  * initial check state both read it, so the panel's "Gate 2 ✓" can never name a group Gate 2 does not get.
  * An explicit `gate1_group_scope` decision still overrides it, in either place.
+ *
+ * `threshold` is a parameter so the rule can be PROVED to move with it (final review round 1 asked whether the
+ * threshold is functional at all); the product passes nothing and gets the one builder-level value.
  */
 export function scoreSeededGroups(
   matches: readonly (Parameters<typeof offeredGroups>[0] & { component: string })[],
+  threshold: number = GROUP_SELECT_THRESHOLD,
 ): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const m of matches) {
     for (const g of offeredGroups(m)) {
-      if (g.confidence < GROUP_SELECT_THRESHOLD) continue;
+      if (g.confidence < threshold) continue;
       const arr = out.get(g.groupId) ?? [];
       if (!arr.includes(m.component)) arr.push(m.component);
       out.set(g.groupId, arr);
