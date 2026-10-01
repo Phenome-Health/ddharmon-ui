@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frozenContinue, railCosts } from "@/lib/gate-rail";
+import { isParkedAt } from "@/lib/run-state";
 import type { GatePosition, JobResult } from "@/types";
 import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
 import { PAUSED_JOB, asOwnedRun, serveRun } from "./gate1-fixture";
@@ -201,5 +202,31 @@ test.describe("finished run — the Continue bar on a past gate", () => {
     await expect(bar).toContainText(/Pressing Continue to Gate 3 buys \$[0-9.]+ of work for \d+ concepts?, and it is not refundable\./);
     await expect(bar.locator("[data-testid='commit-done']")).toHaveCount(0);
     await expect(page.getByTestId("gate2-continue")).toBeEnabled();
+  });
+});
+
+// --- O3: the resume banner is where the run is parked ---------------------------------------------------------
+
+test.describe("finished run — the resume banner", () => {
+  test("@finished-chrome @resume a run is parked AT a gate only when it waits there", () => {
+    const parked = { status: "awaiting_review", gatePosition: "gate4" as GatePosition };
+    expect(isParkedAt(parked, "gate4")).toBe(true);
+    for (const g of ["setup", "gate1", "gate2", "gate3"] as GatePosition[]) expect(isParkedAt(parked, g)).toBe(false);
+    expect(isParkedAt({ status: "complete", gatePosition: null }, "gate4")).toBe(false);
+    expect(isParkedAt({ status: "assigning", gatePosition: "gate1" }, "gate1")).toBe(false);
+    expect(isParkedAt(null, "gate1")).toBe(false);
+  });
+
+  for (const gate of ["gate1", "gate2", "gate3"] as const) {
+    test(`@finished-chrome @resume a frozen ${gate} of a run parked at Gate 4 shows no resume banner`, async ({ page }) => {
+      await openParkedAtGate4(page, gate);
+      await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();
+      await expect(page.locator("[data-testid='resume-banner']")).toHaveCount(0);
+    });
+  }
+
+  test("@finished-chrome @resume Gate 4, where the run IS parked, still shows it", async ({ page }) => {
+    await openParkedAtGate4(page, "gate4");
+    await expect(page.locator("[data-testid='resume-banner']")).toContainText("Paused at Gate 4");
   });
 });

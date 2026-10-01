@@ -177,3 +177,18 @@ export function resumeTookEffect(
   if (observed.gatePosition === target) return true;
   return !isParked(observed.status);
 }
+
+/**
+ * The run is parked AT this gate — waiting there for the reviewer, not merely parked somewhere.
+ *
+ * The resume banner's question (phase-8 final review, O3). Gate 1 asked only `isParked`, so a run parked at
+ * Gate 4 told the reviewer who clicked back to Gate 1 "Paused at Gate 1 · resume any time. You stopped on the
+ * concept groups screen." — directly above the notice saying the run has moved on from there. A run waits at
+ * ONE gate, and only that gate says so.
+ */
+export function isParkedAt(
+  job: { status?: JobStatus | string | null; gatePosition?: string | null } | null | undefined,
+  gate: string,
+): boolean {
+  return !!job && isParked(job.status) && job.gatePosition === gate;
+}

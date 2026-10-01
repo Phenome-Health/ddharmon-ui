@@ -30,7 +30,7 @@ import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
-import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
+import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
   recodeShape,
@@ -1146,10 +1146,7 @@ function Shell({
       costSoFar={costSoFar}
       job={jobState}
       onStop={cancel}
-      resumed={
-        jobState?.status === "awaiting_review" &&
-        jobState?.gatePosition === "gate3"
-      }
+      resumed={isParkedAt(jobState, "gate3")}
     >
       <span
         data-testid="run-status"

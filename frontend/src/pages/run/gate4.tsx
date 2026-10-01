@@ -17,6 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { exportUrl } from "@/lib/api";
+import { isParkedAt } from "@/lib/run-state";
 import { cn } from "@/lib/utils";
 import {
   NOT_AVAILABLE_GAPS,
@@ -147,7 +148,7 @@ export default function Gate4Page() {
       costSoFar={costSoFar}
       job={jobState}
       onStop={cancel}
-      resumed={jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate4"}
+      resumed={isParkedAt(jobState, "gate4")}
     >
       <div className="flex flex-col gap-6">
         {/* Surface 1 — notebook language, + the lifted reproducibility disclosure. */}

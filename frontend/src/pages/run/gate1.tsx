@@ -83,7 +83,7 @@ import {
 } from "@/lib/ledger";
 import {
   isInFlight,
-  isParked,
+  isParkedAt,
   isTerminal,
   resumeTookEffect,
 } from "@/lib/run-state";
@@ -3228,8 +3228,9 @@ export default function Gate1Page() {
       // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
       job={jobState}
       onStop={cancel}
-      // The shared answer to "is this run parked?", not a fourth local copy of the predicate.
-      resumed={isParked(jobState?.status)}
+      // Parked HERE, not merely parked: a run waiting at Gate 4 must not say "Paused at Gate 1" on a frozen
+      // Gate 1 (O3). The shared predicate, not a local copy.
+      resumed={isParkedAt(jobState, "gate1")}
     >
       {reconnecting && (
         <p
