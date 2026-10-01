@@ -51,7 +51,7 @@ import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatD
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { RunKeyField } from "@/components/gate/RunKeyField";
-import type { CdeSet, GatePosition, JobResult, RunDictionary, RunMode } from "@/types";
+import { DEFAULT_CDE_SET, type CdeSet, type GatePosition, type JobResult, type RunDictionary, type RunMode } from "@/types";
 
 /**
  * PER-LINE DETAIL FOR THE CONSOLIDATED BILL (review 2026-08-26).
@@ -445,7 +445,7 @@ export default function SetupPage() {
 
   // --- run configuration. Same vocabulary as the shipped New Run form, so a run described here and a run
   // described there are the same object. `conceptGate` is the one addition (STGD-16) and defaults OFF.
-  const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
+  const [cdeSet, setCdeSet] = useState<CdeSet>(DEFAULT_CDE_SET);
   const [runMode, setRunMode] = useState<RunMode>("batch");
   // THE RUN'S DEFAULTS, not controls. All three decisions moved to the gate that owns them (08-16
   // amendment for the first and third, 08-17 for the second), and the 2026-08-26 review then removed the
@@ -1682,7 +1682,7 @@ export default function SetupPage() {
             <label htmlFor="cde-set" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
               CDE catalogue
               <InfoTip
-                text="Which Common Data Element catalogue your variables are matched against. NIH-endorsed is a small curated high-signal set; the full repository is the whole catalogue — broader coverage, but many more candidates to weigh per concept."
+                text="Which Common Data Element catalogue your variables are matched against. The full repository (the default) is the whole catalogue — broader coverage, including common measures such as body weight, PHQ and PROMIS, with more candidates to weigh per concept. NIH-endorsed is a small curated set that lacks those, so they would come out as generated elements."
                 label="About the CDE catalogue options"
               />
             </label>

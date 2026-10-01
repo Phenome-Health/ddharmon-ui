@@ -1150,6 +1150,11 @@ def test_byok_key_threaded_to_runner_and_never_persisted(monkeypatch, tmp_path):
 def test_batch_rejects_missing_required_role(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "_WORK_ROOT", tmp_path)
     monkeypatch.setattr(app_module, "run_harmonization", lambda *a, **k: None)
+    # A catalog that EXISTS: the door checks it before the dictionaries, so without one (data/cde is gitignored)
+    # this would be refused for the catalog and never reach the role check it is here to pin.
+    cde = tmp_path / "cde.tsv"
+    cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
+    monkeypatch.setattr(app_module, "CDE_FILES", {"endorsed": cde, "full": cde})
     cfg = {"dictionaries": [{"filename": "x.csv", "cohortName": "X", "columnRoles": {}}], "cdeSet": "endorsed"}
     resp = client.post(
         "/api/harmonize/batch",
@@ -1158,6 +1163,7 @@ def test_batch_rejects_missing_required_role(monkeypatch, tmp_path):
         headers={"x-anthropic-key": "sk-test"},
     )
     assert resp.status_code == 400
+    assert "x.csv" in resp.json()["detail"]  # the ROLE refusal names the file — not a catalog refusal
 
 
 def test_batch_rejects_missing_cde_catalog(monkeypatch, tmp_path):

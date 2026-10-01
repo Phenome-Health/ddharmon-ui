@@ -2185,6 +2185,25 @@ test.describe("Setup — per-dictionary confirmation and the embedding export", 
 // --- Start is the first charge, and it lands on Gate 1 (08-14f) -----------------------------------------
 
 test.describe("Setup — Start is the charge, Gate 1 is the destination", () => {
+  /**
+   * WAIT FOR THE FILE TO BE READ before reading an amount. The card appears while the file is still being
+   * parsed, and until it is read the corpus size is unknown, so there is no estimate: the button carries NO
+   * amount (`data-total=""`) and the bill is not rendered. A one-shot read of the button in that window saw
+   * `""`, which `Number()` turns into 0, while the bill's `innerText` waited for the bill to render and read
+   * the settled $0.06 — "Expected 0, Received 0.06", reproduced 10/10 on a CPU-throttled page with or without
+   * any change to the screen. The two surfaces never disagreed; the test read one of them before it existed.
+   */
+  async function fileIsRead(page: Page): Promise<void> {
+    await expect(page.getByTestId("dict-parse-state")).toHaveText("read");
+  }
+
+  /** The button's amount once the file is read — and it IS an amount: an empty attribute must not pass as 0. */
+  async function settledTotal(page: Page): Promise<string> {
+    const raw = (await page.getByTestId("commit-bar").getAttribute("data-total")) ?? "";
+    expect(raw, "the Start control carries an amount once the file is read").toMatch(/^\d/);
+    return raw;
+  }
+
   /** Serve a MUTATED copy of the committed fixture — one fact substituted on a real payload. */
   async function withParkedRun(page: import("@playwright/test").Page): Promise<void> {
     const res = await page.request.get(`/static-data/result-${PAUSED_RUN_FIXTURE}.json`);
@@ -2212,11 +2231,12 @@ test.describe("Setup — Start is the charge, Gate 1 is the destination", () => 
       buffer: Buffer.from(dictionaryCsv(40)),
     });
     await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    await fileIsRead(page);
 
     const bar = page.getByTestId("commit-bar");
     await expect(bar).toBeVisible();
     // THE AMOUNT AS DATA, so this reads the figure rather than parsing it back out of a sentence.
-    expect(Number(await bar.getAttribute("data-total"))).toBeGreaterThan(0);
+    expect(Number(await settledTotal(page))).toBeGreaterThan(0);
     await expect(bar).toHaveAttribute("data-first-charge", "true");
     await expect(bar).toContainText(/not refundable/i);
     await expect(bar).toContainText(/spending begins/i);
@@ -2237,7 +2257,8 @@ test.describe("Setup — Start is the charge, Gate 1 is the destination", () => 
       buffer: Buffer.from(dictionaryCsv(40)),
     });
     await expect(page.getByTestId("dict-card")).toHaveCount(1);
-    const onButton = Number(await page.getByTestId("commit-bar").getAttribute("data-total"));
+    await fileIsRead(page);
+    const onButton = Number(await settledTotal(page));
     const inBill = ((await page.getByTestId("first-charge").innerText()) ?? "").match(/\$([\d,.]+)/);
     expect(inBill, "the bill must still quote a first charge").not.toBeNull();
     expect(Number(inBill![1].replace(/,/g, ""))).toBeCloseTo(onButton, 2);
@@ -2944,5 +2965,82 @@ test.describe("Setup — the roles the run is sent are the roles on screen (08-2
       variable_name: "code",
       units: "unit",
     });
+  });
+});
+
+/**
+ * A NEW RUN MATCHES AGAINST THE FULL CDE CATALOGUE (08-28 Decision 7).
+ *
+ * The NIH-endorsed catalogue (177 elements) has no body weight, no PHQ and no PROMIS, so common measures came
+ * out "novel" — no element fits, so one is generated — even though the full repository (22,743 elements) has
+ * a good one for each; and every benchmark and the validation run used the full catalogue. So both screens
+ * that start a run open on Full, and NIH-endorsed stays one choice away. What is asserted is what the run is
+ * SENT, not only what the control shows: a select reading "Full" over a payload saying "endorsed" would be
+ * the worst version of this change.
+ */
+test.describe("Setup — a new run matches against the full CDE catalogue (08-28 Decision 7)", () => {
+  /** Capture every Start POST's `cdeSet`, and refuse the start so nothing navigates or is remembered. */
+  async function captureCdeSets(page: Page): Promise<(string | undefined)[]> {
+    const sent: (string | undefined)[] = [];
+    await page.route("**/api/harmonize/batch", async (route) => {
+      const body = route.request().postDataBuffer()?.toString("utf8") ?? "";
+      const m = /name="config"\r\n\r\n([\s\S]*?)\r\n--/.exec(body);
+      expect(m, "the Start POST carries a `config` form field").not.toBeNull();
+      sent.push((JSON.parse(m![1]) as { cdeSet?: string }).cdeSet);
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "captured by the e2e gate — no run was started" }),
+      });
+    });
+    return sent;
+  }
+
+  test("@setup Setup opens on the full catalogue, with NIH-endorsed still selectable", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const sel = page.getByTestId("cde-set");
+    await expect(sel).toHaveValue("full");
+    await expect(sel.locator("option:checked")).toContainText("Full NIH CDE Repository");
+    await expect(sel.locator('option[value="endorsed"]')).toBeEnabled();
+    await sel.selectOption("endorsed");
+    await expect(sel).toHaveValue("endorsed");
+  });
+
+  test("@setup Start sends the full catalogue by default, and NIH-endorsed when it is chosen", async ({ page }) => {
+    const sent = await captureCdeSets(page);
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => localStorage.clear());
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "catalogue.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(12)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    // Preview buys nothing and needs no key; the catalogue is sent the same way in every mode.
+    await page.getByTestId("run-mode").selectOption("preview");
+    await expect(page.getByTestId("start-blocked")).toHaveCount(0);
+
+    await page.getByTestId("start-run").click();
+    await expect.poll(() => sent.length).toBe(1);
+    expect(sent[0]).toBe("full");
+
+    await page.getByTestId("cde-set").selectOption("endorsed");
+    await page.getByTestId("start-run").click();
+    await expect.poll(() => sent.length).toBe(2);
+    expect(sent[1]).toBe("endorsed");
+  });
+
+  test("@setup the older New Run page opens on the full catalogue too", async ({ page }) => {
+    await page.goto("/new");
+    await page.waitForLoadState("networkidle");
+    const catalogue = page.getByRole("combobox").filter({ hasText: /Full repo|NIH-endorsed/ });
+    await expect(catalogue).toHaveCount(1);
+    await expect(catalogue).toContainText("Full repo");
+    // ...and NIH-endorsed is one choice away.
+    await catalogue.click();
+    await page.getByRole("option", { name: /NIH-endorsed/ }).click();
+    await expect(catalogue).toContainText("NIH-endorsed");
   });
 });

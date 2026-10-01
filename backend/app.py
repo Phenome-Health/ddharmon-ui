@@ -103,6 +103,59 @@ while True:
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CDE_DIR = Path(os.environ.get("DDHARMON_CDE_DIR", _REPO_ROOT / "data" / "cde"))
 CDE_FILES = {"endorsed": _CDE_DIR / "nih_endorsed_flat.tsv", "full": _CDE_DIR / "all_cdes_flat.tsv"}
+CDE_SET_LABELS = {"endorsed": "NIH-endorsed", "full": "full NIH CDE Repository"}
+# The catalog a NEW run matches against when its create payload names none (08-28 Decision 7): the full
+# catalog. The endorsed one (177 elements) has no body weight, PHQ or PROMIS, so those common measures came out
+# "novel" although the full catalog has a good element for each — and every benchmark and the validation run
+# used `full`. `endorsed` stays selectable.
+DEFAULT_CDE_SET = "full"
+# The catalog a STORED run is read back as when its config has no `cde_set` — deliberately NOT the creation
+# default above, so moving that default can never switch a run's catalog mid-run. In practice no run reaching a
+# read-back lacks the key: every leg that reads it first requires retained `dict_specs` (added 2026-07-10), and
+# every run carrying those was created by `start_batch` — which has recorded `cde_set` since 2026-07-01 — or
+# copied from one by `/rerun`. If one ever did lack it, it was created while the default was `endorsed`, so that
+# is what it ran with.
+RECORDED_CDE_SET_FALLBACK = "endorsed"
+
+
+def _recorded_cde_set(config: dict[str, Any]) -> str:
+    """The catalog a stored run recorded at creation — never the current creation default (see above)."""
+    return str(config.get("cde_set", RECORDED_CDE_SET_FALLBACK))
+
+
+def _catalog_path_or_refuse(cde_set: str, *, starting: bool) -> Path:
+    """The catalog file for ``cde_set``, or a refusal that names the missing FILE and the setting that fixes it.
+
+    Never a fallback to the other catalog: matching against a different catalog than the one a run asked for
+    (or recorded) changes what every variable can map to. A NEW run (``starting``) is refused 400 before
+    anything is created, and is told which catalog it could choose instead; a stored run's leg is refused 409
+    and stays exactly where it is.
+    """
+    if cde_set not in CDE_FILES:
+        if starting:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cdeSet must be one of {sorted(CDE_FILES)} — harmonization requires a CDE catalog",
+            )
+        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
+    path = CDE_FILES[cde_set]
+    if path.exists():
+        return path
+    logger.warning("CDE catalog %r unavailable: %s does not exist", cde_set, path)
+    missing = (
+        f"CDE catalog {cde_set!r} is unavailable on the server: {path.name} is missing. Set DDHARMON_CDE_DIR to "
+        f"the directory that holds {path.name}."
+    )
+    if not starting:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{missing} This run keeps the catalog it was started with; nothing was changed or charged.",
+        )
+    others = [CDE_SET_LABELS.get(k, k) for k, p in CDE_FILES.items() if k != cde_set and p.exists()]
+    alternative = f" Or choose the {others[0]} catalog for this run instead." if others else ""
+    raise HTTPException(status_code=400, detail=f"{missing} Nothing was created or charged.{alternative}")
+
+
 CDE_COLUMN_ROLES = {
     "variable_name": "designation",
     "field_id": "tinyId",
@@ -467,7 +520,8 @@ async def start_batch(
        topK?: int, retrievalFloor?: float, modelTag?: str, displayName?}``
 
     The pipeline requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
-    ``endorsed`` or ``full``. ``runMode`` defaults to ``batch`` (the deployed default).
+    ``endorsed`` or ``full``, and defaults to ``full`` (:data:`DEFAULT_CDE_SET`). ``runMode`` defaults to
+    ``batch`` (the deployed default).
 
     BYOK: the ``X-Anthropic-Key`` header (frontend ``x-anthropic-key``) carries a per-request Anthropic
     key. It is threaded to the pipeline as an in-memory arg for this job only — deliberately NOT written
@@ -488,6 +542,12 @@ async def start_batch(
             "Enter your Anthropic API key to start this run — its first step is a paid model call and the "
             "key clears on reload. Nothing was created or charged; re-enter the key and press Start again."
         )
+    # The pipeline REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
+    # A run that names none gets the full catalog (DEFAULT_CDE_SET, 08-28 Decision 7). Checked at the door like
+    # the key, before anything is created: a server missing the requested file refuses by name, never by quietly
+    # matching against the other catalog.
+    cde_set = cfg.get("cdeSet", DEFAULT_CDE_SET)
+    cde_path = _catalog_path_or_refuse(cde_set, starting=True)
     job_id = str(uuid.uuid4())
     work_dir = _WORK_ROOT / job_id
     uploads = work_dir / "uploads"
@@ -533,18 +593,6 @@ async def start_batch(
             raise HTTPException(status_code=400, detail=empty_error)
         dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
-    # The pipeline REQUIRES a CDE backbone (assignment to the given catalog is the thesis) — no cdeSet=none path.
-    cde_set = cfg.get("cdeSet", "endorsed")
-    if cde_set not in CDE_FILES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"cdeSet must be one of {sorted(CDE_FILES)} — harmonization requires a CDE catalog",
-        )
-    cde_path = CDE_FILES[cde_set]
-    if not cde_path.exists():
-        raise HTTPException(
-            status_code=400, detail=f"CDE file not found: {cde_path} (set DDHARMON_CDE_DIR to the catalog directory)"
-        )
     cde_spec: dict[str, Any] = {
         "path": str(cde_path),
         "cohort_name": CDE_COHORT,
@@ -1070,10 +1118,8 @@ def _resume_locked(
         return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
     # The catalog is needed only by a leg that spawns a worker — checked AFTER the Gate 4 pure-read branch, so a
     # server without a catalog can still carry a finished run to its export screen.
-    cde_set = job.config.get("cde_set", "endorsed")
-    cde_path = CDE_FILES.get(cde_set)
-    if cde_path is None or not cde_path.exists():
-        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
+    # The catalog the run RECORDED at creation — never the current creation default (`_recorded_cde_set`).
+    cde_path = _catalog_path_or_refuse(_recorded_cde_set(job.config), starting=False)
     cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
     # Pre-flight the provider key BEFORE committing the gate and spawning the worker. Past Gate 4 this leg
     # makes a PAID call, and the BYOK key clears on a browser reload — discovering it missing deep in the
@@ -1285,10 +1331,8 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
         )
 
     # Rebuild the CDE backbone from the stored cdeSet (catalog files live server-side, not in the job dir).
-    cde_set = src.config.get("cde_set", "endorsed")
-    cde_path = CDE_FILES.get(cde_set)
-    if cde_path is None or not cde_path.exists():
-        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
+    # The source run's RECORDED catalog (`_recorded_cde_set`): an API re-run repeats the run it copies.
+    cde_path = _catalog_path_or_refuse(_recorded_cde_set(src.config), starting=False)
 
     new_id = str(uuid.uuid4())
     new_work = _WORK_ROOT / new_id
@@ -1499,10 +1543,8 @@ def readjudicate(
                 "Nothing was charged."
             ),
         )
-    cde_set = job.config.get("cde_set", "endorsed")
-    cde_path = CDE_FILES.get(cde_set)
-    if cde_path is None or not cde_path.exists():
-        raise HTTPException(status_code=409, detail=f"CDE catalog {cde_set!r} is unavailable on the server")
+    # The catalog the run RECORDED at creation — never the current creation default (`_recorded_cde_set`).
+    cde_path = _catalog_path_or_refuse(_recorded_cde_set(job.config), starting=False)
     cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
 
     # The paid-action guard: the re-split ALWAYS buys a split, so a missing provider key must fail loudly HERE,

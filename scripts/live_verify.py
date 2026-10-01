@@ -45,6 +45,8 @@ sys.path.insert(0, str(ROOT))
 from backend.artifact_kinds import content_key, option_set_key  # noqa: E402
 
 GATES = ("gate1", "gate2", "gate3", "gate4")
+CDE_SETS = ("endorsed", "full")
+NEW_RUN_CDE_SET = "full"  # backend/app.py DEFAULT_CDE_SET: what a run gets when it names no catalog
 UNASSIGNED_GROUP_ID = "__unassigned__"  # frontend/src/components/gate/MemberChip.tsx
 IN_SCOPE, OUT_OF_SCOPE = "in", "out"
 SCOPE_OPTIONS = [IN_SCOPE, OUT_OF_SCOPE]
@@ -65,6 +67,18 @@ INVARIANTS = {
     "I13": "permissible-value labels round-trip intact",
     "I14": "every Gate 1 move is applied (member absent from its origin group downstream)",
 }
+
+
+def fixture_cde_set(manifest: dict[str, Any]) -> str:
+    """The catalog a run on this fixture uses when ``--cde-set`` is not given: the one the fixture RECORDS.
+
+    A fixture keeps the catalog it was captured with. The committed one was designed and validated against
+    ``endorsed`` (``tests/live/fixture/VALIDATION.md``), and the catalog's rows are part of the clustered matrix,
+    so starting it on another catalog changes the partition its paths were built to land in. A fixture that
+    records no catalog is a new run like any other and gets the product default (``full``).
+    """
+    recorded = manifest.get("cdeSet")
+    return recorded if recorded in CDE_SETS else NEW_RUN_CDE_SET
 
 
 # --- reporting ------------------------------------------------------------------------------------------------
@@ -479,7 +493,7 @@ class Driver:
             "dictionaries": [
                 {"filename": d["file"], "cohortName": d["cohortName"], "columnRoles": d["columnRoles"]} for d in dicts
             ],
-            "cdeSet": self.args.cde_set,
+            "cdeSet": self.args.cde_set or fixture_cde_set(self.manifest),
             "runMode": self.args.run_mode,
             "displayName": f"live-verify {time.strftime('%Y-%m-%d %H:%M')}",
             "estFields": sum(int(d.get("rows") or 0) for d in dicts) or None,
@@ -494,7 +508,7 @@ class Driver:
             r = self.api.post("/batch", files=files, data={"config": json.dumps(cfg)})
             self.state["jobId"] = r["jobId"]
             self.save()
-            print(f"· started job {r['jobId']}")
+            print(f"· started job {r['jobId']} on the {cfg['cdeSet']!r} CDE catalog")
             return r
 
         self.run_leg("leg1", go)
@@ -1193,7 +1207,12 @@ def main() -> int:
     )
     ap.add_argument("--out", required=True, help="iteration directory (state.json makes it resumable)")
     ap.add_argument("--run-mode", default="sync", choices=("sync", "batch"))
-    ap.add_argument("--cde-set", default="endorsed", choices=("endorsed", "full"))
+    ap.add_argument(
+        "--cde-set",
+        default=None,
+        choices=CDE_SETS,
+        help="default: the catalog the fixture records (manifest cdeSet), else full — the default for a new run",
+    )
     ap.add_argument("--model", default=None)
     ap.add_argument("--job", default=None, help="drive an existing parked run instead of starting one")
     ap.add_argument("--until", default=None, choices=GATES, help="stop after making this gate's decisions")

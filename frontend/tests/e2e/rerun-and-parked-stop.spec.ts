@@ -179,7 +179,9 @@ const dictionaryCsv = (prefix: string, n: number) =>
 
 const SOURCE = {
   ...stopped({ jobId: "src-run", displayName: "Spring run" }),
-  config: { run_mode: "sync", cde_set: "full", readjudication: true },
+  // `endorsed`, not the default (`full`, 08-28 Decision 7): only a NON-default catalog proves the prefill copied
+  // the source run's choice rather than landing on the default by itself.
+  config: { run_mode: "sync", cde_set: "endorsed", readjudication: true },
   dictionaries: [
     { filename: "alpha.csv", cohortName: "Cohort Alpha", columnRoles: ROLES },
     { filename: "beta.csv", cohortName: "Cohort Beta", columnRoles: { variable_name: "varname", description: "desc" } },
@@ -227,7 +229,7 @@ test.describe("Setup — a re-run opens prefilled, and nothing starts until Star
     // The same options — every one of them still an editable control, including the run mode.
     await expect(page.getByTestId("run-mode")).toHaveValue("sync");
     await expect(page.getByTestId("run-mode")).toBeEnabled();
-    await expect(page.getByTestId("cde-set")).toHaveValue("full");
+    await expect(page.getByTestId("cde-set")).toHaveValue("endorsed");
     // Re-splitting is not an option to copy any more (final review round 1): every new run can re-split, and
     // the reviewer decides per group at Gate 1 — so there is no control here, whatever the source recorded.
     await expect(page.getByTestId("allow-readjudication")).toHaveCount(0);
@@ -268,5 +270,6 @@ test.describe("Setup — a re-run opens prefilled, and nothing starts until Star
     await expect(page.getByTestId("rerun-prefill")).toHaveCount(0);
     await expect(page.getByTestId("dict-card")).toHaveCount(0);
     await expect(page.getByTestId("run-mode")).toHaveValue("batch");
+    await expect(page.getByTestId("cde-set")).toHaveValue("full"); // 08-28 Decision 7
   });
 });

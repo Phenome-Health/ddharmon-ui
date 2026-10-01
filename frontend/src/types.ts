@@ -5,6 +5,14 @@
 
 export type RunMode = "batch" | "sync" | "preview";
 export type CdeSet = "endorsed" | "full";
+/**
+ * The catalog a NEW run matches against unless the reviewer picks another (08-28 Decision 7; the backend's
+ * `DEFAULT_CDE_SET` is the same value). The NIH-endorsed set has no body weight, PHQ or PROMIS, so those common
+ * measures came out "novel" although the full repository has a good element for each — and every benchmark and
+ * the validation run used `full`. NIH-endorsed stays selectable, and a re-run's Setup opens on the catalog its
+ * source recorded.
+ */
+export const DEFAULT_CDE_SET: CdeSet = "full";
 
 // Job lifecycle phases are REPORTED by the engine (data-driven) — this union is for hints only; the UI
 // renders whatever phase string a run reports and reads result.phases for the sequence.
