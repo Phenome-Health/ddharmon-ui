@@ -516,6 +516,60 @@ def test_the_decision_log_matches_the_pinned_parity_fixture():
     assert any(r[-1] == "true" for r in fixture["expectedRows"]), "the fixture must exercise a stale decision"
 
 
+def _exported_projection(records: list[dict]) -> list[dict]:
+    """What the client mirror must agree on — the fields Gate 4's Sankey and previews read (``gate4.spec.ts`` twin)."""
+    return [
+        {
+            "groupId": r["groupId"],
+            "concept": r["concept"],
+            "verdict": r["verdict"],
+            "cdeId": (r.get("cde") or {}).get("id"),
+            "cohorts": r["cohorts"],
+            "members": r["members"],
+            "nMembers": r.get("nMembers"),
+            "crossCohort": r.get("crossCohort"),
+            "removedMembers": r.get("removedMembers"),
+            "memberDetailIds": [d.get("id") for d in r.get("memberDetails") or []],
+            "transforms": [
+                {"sourceVariable": t.get("sourceVariable"), "rejected": bool(t.get("rejected"))}
+                for t in r.get("transforms") or []
+            ],
+            "gencdeSources": (r.get("gencde") or {}).get("sourceVariables"),
+            "gencdeCohorts": (r.get("gencde") or {}).get("sourceCohorts"),
+        }
+        for r in records
+    ]
+
+
+def test_the_exported_records_match_the_pinned_parity_fixture():
+    """Gate 4's Sankey and previews (final review round 2) read the records the EXPORT carries, re-derived on the
+    client (``frontend/src/lib/gate4.ts::exportedRecords``) so they work in the backend-less build. Both sides are
+    pinned to the same literal projection of :func:`effective_records`, so neither can drift from the files (the e2e
+    twin is in ``gate4.spec.ts``)."""
+    from pathlib import Path
+
+    from backend.export_decisions import effective_records
+
+    here = Path(__file__).parent.parent / "frontend/tests/e2e/fixtures"
+    parity = json.loads((here / "decision-log-parity.json").read_text("utf-8"))
+    fixture = json.loads((here / "exported-records-parity.json").read_text("utf-8"))
+    assert fixture["source"] == "decision-log-parity.json"
+    for case in fixture["cases"]:
+        result = case.get("result") or parity["result"]
+        config = parity["config"] if case.get("useParityDecisions") else case["config"]
+        grouped = parity["grouped"] if case.get("useParityDecisions") else case["grouped"]
+        assert _exported_projection(effective_records(result, config, grouped)) == case["expected"], case["name"]
+    # The cases exercise every rule the client mirrors: a frozen scope, an explicit "out", an export exclude, a
+    # Gate 3 removal (incl. a generated element's sources), an unapplied pick, "none of these", a rejected recode.
+    expected = [c["expected"] for c in fixture["cases"]]
+    names = [[r["groupId"] for r in e] for e in expected]
+    assert "c2#g0" not in names[0] and "c1#g0" not in names[1] and "c3#g0" not in names[1]
+    removed = [m for e in expected for r in e for m in r["removedMembers"]]
+    assert {"B:smk", "B:age_yrs", "A:smoke", "B:hair_c"} <= set(removed)
+    assert any(t["rejected"] for e in expected for r in e for t in r["transforms"])
+    assert expected[3][0]["gencdeSources"] == ["A:hair"]
+
+
 # --- 08-28 1e: provenance & the decision log ---------------------------------------------------------------
 #
 # The walk of run 6c66731c (08-LIVE-VERIFY-3 F17) found that once the Gate 2 -> 3 leg APPLIES a pick (the

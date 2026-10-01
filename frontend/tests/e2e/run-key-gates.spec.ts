@@ -389,6 +389,8 @@ test.describe("run key on the gates' paid actions", () => {
     await page.goto(`/run/${FINISHED_JOB}/gate4`);
     await page.waitForLoadState("networkidle");
     const panel = page.getByTestId("gate4-score");
+    // The score panel is a disclosure, folded by default (final review round 2).
+    await panel.getByTestId("gate4-score-toggle").click();
     await press(panel.getByTestId("gate4-score-match"));
     await expect.poll(() => matches.length).toBe(1);
     expect(keyOf(matches[0])).toBeNull();

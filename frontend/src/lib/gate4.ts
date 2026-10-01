@@ -1,4 +1,5 @@
-import type { ExportFormat, HarmonizationResult, UIRecord, UITransform } from "@/types";
+import Papa from "papaparse";
+import type { CdeRef, ExportFormat, HarmonizationResult, UIRecord, UITransform } from "@/types";
 import {
   GATE_DECISION_KINDS,
   type DecisionIndex,
@@ -876,6 +877,40 @@ export function verdictBreakdown(result: HarmonizationResult | null | undefined)
 // --- artifact previews (UI-SPEC §0.2 Surface 2) -------------------------------------------------------
 
 /**
+ * What the preview drawer renders for one artifact (final review round 2): a TABLE for the two delimited files,
+ * CODE for the JSON and the notebook, and a sentence when the run has nothing to put in the file.
+ *
+ * `text` is always the file's own text, exactly as excerpted — the table is PARSED from it, so the drawer shows
+ * what the file says rather than a second rendering that could disagree. `note` is the drawer's own line under
+ * the excerpt (the row cap, stated); it is never part of the file.
+ */
+export type ArtifactPreview =
+  | { kind: "table"; delimiter: "," | "\t"; text: string; note?: string }
+  | { kind: "code"; text: string }
+  | { kind: "empty"; text: string };
+
+/** The concepts a legacy preview excerpts — the cap the CSV / TSV / JSON / notebook previews have always had. */
+const PREVIEW_RECORDS = 3;
+/** The decision-log preview's row cap: the header plus twelve decisions. */
+const PREVIEW_LOG_ROWS = 13;
+
+/** One TSV line quoted the way Python's `csv.writer(delimiter="\t")` quotes it — what the EITL download is. */
+export function tsvLine(row: string[]): string {
+  return row.map((c) => (/["\t\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join("\t");
+}
+
+/**
+ * Parse a delimited preview into its header and rows with a REAL CSV parser (Papa Parse, RFC 4180 quoting): a
+ * quoted cell carrying the delimiter, a doubled quote or a newline stays ONE cell. `split(",")` would cut the
+ * decision log's quoted notes — and the demo's own concept names, which carry commas — into extra columns.
+ */
+export function previewTable(text: string, delimiter: "," | "\t"): { columns: string[]; rows: string[][] } {
+  const parsed = Papa.parse<string[]>(text, { delimiter, skipEmptyLines: true });
+  const [columns = [], ...rows] = parsed.data;
+  return { columns, rows };
+}
+
+/**
  * A faithful preview of what an artifact CONTAINS, derived from the run result on the client.
  *
  * DERIVED, NOT FETCHED, and that is deliberate. The preview must show real generated content, never a
@@ -884,41 +919,71 @@ export function verdictBreakdown(result: HarmonizationResult | null | undefined)
  * available in the backend-less build the e2e suite runs against, where fetching the file would 404. The
  * DOWNLOAD still pulls the byte-exact file from the export route; this is an excerpt of the same data.
  */
-export function previewFor(
+export function artifactPreview(
   id: RealArtifact["id"],
   lang: NotebookLang,
   result: HarmonizationResult | null | undefined,
   decisions: Record<string, LegacyVerdicts> | undefined,
   gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
-): string {
-  const records = (result?.records ?? []).slice(0, 3);
+): ArtifactPreview {
+  if ((result?.records ?? []).length === 0) {
+    return { kind: "empty", text: "This run produced no concept records, so this artifact would be empty." };
+  }
   const dec = decisions ?? {};
-  if (records.length === 0) return "This run produced no concept records, so this artifact would be empty.";
+  // A STAGED run's files carry the records as the REVIEWER left them (`_export_staged` reads `effective_records`),
+  // so its previews read the same (review round 2): no scoped-out group, no removed variable, the reviewer's names
+  // and targets, rejected recodes marked. A legacy one-shot run's files are its raw records, and so are its previews.
+  const staged = !!gateLog && isStagedExport(gateLog.gatePosition, gateLog.index);
+  const all: (UIRecord | ExportedRecord)[] =
+    staged && gateLog ? exportedRecords(result, gateLog.config, gateLog.index) : (result?.records ?? []);
+  const records = all.slice(0, PREVIEW_RECORDS);
+  // The excerpts are the first few concepts; the file carries every one, and the drawer says so.
+  const recordsNote =
+    all.length > records.length
+      ? `The first ${records.length} of ${all.length} concepts — the file carries every one.`
+      : undefined;
 
   // 08-27: on a staged run the download is the gate decision LOG, so the preview reads the same decisions
-  // (never the legacy verdict mirror, which no gate writes) through the backend's own row rule.
-  if (id === "decisions_csv" && gateLog && isStagedExport(gateLog.gatePosition, gateLog.index)) {
+  // (never the legacy verdict mirror, which no gate writes) through the backend's own row rule — over the RAW
+  // run, as the backend's `decision_log_rows` does: the log says what each decision did to what the model made.
+  if (id === "decisions_csv" && gateLog && staged) {
     const rows = decisionLogCsvRows(gateLog.index, result, gateLog.config, decisions);
-    const shown = rows.slice(0, 13).map(csvLine);
-    if (rows.length === 1) shown.push("(no decisions recorded yet — the file will carry only this header)");
-    else if (rows.length > 13) shown.push(`… ${rows.length - 13} more decision(s) in the file`);
-    return shown.join("\n");
+    const text = rows.slice(0, PREVIEW_LOG_ROWS).map(csvLine).join("\n");
+    const note =
+      rows.length === 1
+        ? "(no decisions recorded yet — the file will carry only this header)"
+        : rows.length > PREVIEW_LOG_ROWS
+          ? `… ${rows.length - PREVIEW_LOG_ROWS} more decision(s) in the file`
+          : undefined;
+    return { kind: "table", delimiter: ",", text, note };
+  }
+
+  if (records.length === 0) {
+    return {
+      kind: "empty",
+      text: "Nothing is in this export — every concept was scoped out or excluded — so this file carries no concepts.",
+    };
   }
 
   if (id === "records_json") {
-    return JSON.stringify(
-      records.map((r) => ({
-        id: r.id,
-        concept: r.concept,
-        verdict: r.verdict,
-        cde: r.cde?.id ?? null,
-        nMembers: r.nMembers,
-        cohorts: r.cohorts,
-        transforms: r.transforms?.length ?? 0,
-      })),
-      null,
-      2,
-    );
+    return {
+      kind: "code",
+      text: JSON.stringify(
+        records.map((r) => ({
+          id: r.id,
+          concept: r.concept,
+          verdict: r.verdict,
+          cde: r.cde?.id ?? null,
+          nMembers: r.nMembers,
+          cohorts: r.cohorts,
+          transforms: r.transforms?.length ?? 0,
+          // Every staged record names what Gate 3 removed from it (`[]` for nothing), as the file does.
+          ...("removedMembers" in r ? { removedMembers: r.removedMembers } : {}),
+        })),
+        null,
+        2,
+      ),
+    };
   }
 
   if (id === "decisions_csv") {
@@ -931,7 +996,8 @@ export function previewFor(
       dec[r.id]?.decision ?? "",
       dec[r.id]?.note ?? "",
     ]);
-    return [header, ...rows].map((row) => row.join(",")).join("\n");
+    // QUOTED, as the download is: a bare `join(",")` cut every concept name carrying a comma into extra columns.
+    return { kind: "table", delimiter: ",", text: [header, ...rows].map(csvLine).join("\n"), note: recordsNote };
   }
 
   if (id === "eitl_tsv") {
@@ -944,15 +1010,17 @@ export function previewFor(
       String(r.nMembers),
       r.cohorts.join(";"),
     ]);
-    return [header, ...rows].map((row) => row.join("\t")).join("\n");
+    return { kind: "table", delimiter: "\t", text: [header, ...rows].map(tsvLine).join("\n"), note: recordsNote };
   }
 
   // notebook: a faithful excerpt of what the notebook applies — the transforms, in the chosen language.
   const langName = lang === "r" ? "R" : "Python";
+  // A rejected recode is left out of the notebook, and listed as left out — as the backend's notebook does.
+  const isRejected = (t: UITransform) => !!(t as ExportedTransform).rejected;
   const lines: string[] = [
     `# Harmonization transform notebook (${langName})`,
-    `# Applies ${records.reduce((n, r) => n + (r.transforms?.length ?? 0), 0)} transform(s) across ${
-      result?.records?.length ?? 0
+    `# Applies ${records.reduce((n, r) => n + (r.transforms ?? []).filter((t) => !isRejected(t)).length, 0)} transform(s) across ${
+      all.length
     } concept(s).`,
     "# The notebook runs where your data already lives; your data never enters ddharmon.",
     "",
@@ -960,8 +1028,145 @@ export function previewFor(
   for (const r of records) {
     lines.push(`# ${r.concept} — ${r.verdict}${r.cde?.id ? ` → ${r.cde.id}` : ""}`);
     for (const t of r.transforms ?? []) {
-      lines.push(`#   transform: ${t.kind ?? "recode"} on ${t.sourceVariable ?? r.id}`);
+      lines.push(
+        isRejected(t)
+          ? `#   left out (recode rejected at Gate 3): ${t.sourceVariable ?? r.id}`
+          : `#   transform: ${t.kind ?? "recode"} on ${t.sourceVariable ?? r.id}`,
+      );
     }
   }
-  return lines.join("\n");
+  return { kind: "code", text: lines.join("\n") };
+}
+
+/** {@link artifactPreview} flattened to one string: the file's excerpt, then the drawer's note under it. */
+export function previewFor(
+  id: RealArtifact["id"],
+  lang: NotebookLang,
+  result: HarmonizationResult | null | undefined,
+  decisions: Record<string, LegacyVerdicts> | undefined,
+  gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
+): string {
+  const preview = artifactPreview(id, lang, result, decisions, gateLog);
+  return preview.kind === "table" && preview.note ? `${preview.text}\n${preview.note}` : preview.text;
+}
+
+// --- the records the export carries (final review round 2: Gate 4's Sankey and previews) ------------------------
+
+/** The Gate 4 export-selection values that leave a record OUT — `EXCLUDE_VALUES` in the backend. */
+const EXPORT_EXCLUDE = new Set(["exclude", "out"]);
+
+/** A transform as the export carries it: `rejected` when the reviewer rejected that recode at Gate 3. */
+export type ExportedTransform = UITransform & { rejected?: boolean };
+
+/** A record as the export carries it — `removedMembers` names the variables Gate 3 took out (`[]` for none). */
+export type ExportedRecord = UIRecord & { transforms: ExportedTransform[]; removedMembers: string[] };
+
+/** The CdeRef a Gate 2 pick names, or null for "no catalog target" — `_catalog_ref` in the backend. */
+function catalogRef(record: UIRecord, cdeId: string, externalId: string): CdeRef | null {
+  if (!cdeId || cdeId === gencdeIdOf(record.gencde)) return null;
+  const model = record.cde;
+  const cands = record.candidates ?? [];
+  if (externalId) {
+    if (model?.id && model.externalId === externalId) return { id: String(model.id), externalId };
+    const hit = cands.find((c) => c.cdeExternalId === externalId);
+    return { id: String(hit?.cdeId || cdeId), externalId };
+  }
+  if (model?.id === cdeId) return { id: cdeId, externalId: String(model.externalId || "") };
+  const cand = cands.find((c) => c.cdeId === cdeId);
+  return { id: cdeId, externalId: String(cand?.cdeExternalId || "") };
+}
+
+/** `groupId -> [memberId, …]` removed at Gate 3, in row order — `removed_members` in the backend (every row counts). */
+function removedMembersByGroup(index: DecisionIndex): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const d of Object.values(index.gate3_member_exclusion ?? {})) {
+    const gid = String(d.groupId || "");
+    const list = out.get(gid) ?? [];
+    const member = String(d.memberId || "");
+    if (!list.includes(member)) list.push(member);
+    out.set(gid, list);
+  }
+  return out;
+}
+
+const cohortOfMember = (m: string) => m.split(":")[0];
+
+/**
+ * The concept records as the EXPORT carries them — the client half of `backend/export_decisions.py::
+ * effective_records`, for every field Gate 4 draws from them: the Gate 1 scope (the frozen list first, else the
+ * legacy "not scoped out" rule), the Gate 4 export selection, the reviewer's name for the group, a Gate 2 pick the
+ * Gate 2 -> 3 leg did not apply (the record's `cde` becomes the pick, or null for "none of these"), a Gate 3 removal
+ * (the variable leaves `members`, `memberDetails`, the transform specs and the generated element's sources;
+ * `nMembers` / `cohorts` / `crossCohort` follow what remains; `removedMembers` names it), and a rejected recode
+ * (`rejected: true` on its spec, as every file marks it). What it does NOT mirror, because nothing on Gate 4 reads
+ * it: a recode edit's `reviewerEdit`, the relation and model-provenance stamps, and the combine rules.
+ *
+ * WHY IT EXISTS (Bhargav, review round 2). A chart or a preview drawn from the raw pipeline output shows what the
+ * files do not carry — a scoped-out group, a removed variable, a rejected recode — on the very screen that says
+ * "this is what leaves the tool". Pinned against the backend by `fixtures/exported-records-parity.json`, from both
+ * sides. Copies only what it changes; the run result is never mutated.
+ */
+export function exportedRecords(
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  index: DecisionIndex,
+): ExportedRecord[] {
+  const keep = inheritedGate1Scope(config, index.gate1_group_scope ?? {});
+  const selection = index.gate4_export_selection ?? {};
+  const renames = index.gate1_rename ?? {};
+  const picks = index.gate2_candidate_pick ?? {};
+  const specs = index.gate3_spec_edit ?? {};
+  const removals = removedMembersByGroup(index);
+  const out: ExportedRecord[] = [];
+  for (const raw of result?.records ?? []) {
+    const gid = String(raw.groupId || raw.id || "");
+    if (!keep(gid)) continue;
+    if (EXPORT_EXCLUDE.has(String(selection[String(raw.id || "")]?.chosen ?? ""))) continue;
+    const r: ExportedRecord = { ...raw, transforms: raw.transforms ?? [], removedMembers: [] };
+
+    // FIRST, as the backend does, so nothing below sees a removed variable as one of the concept's.
+    const members = raw.members ?? [];
+    const gone = (removals.get(gid) ?? []).filter((m) => members.includes(m));
+    r.removedMembers = gone;
+    if (gone.length > 0) {
+      const removed = new Set(gone);
+      r.members = members.filter((m) => !removed.has(m));
+      r.memberDetails = (raw.memberDetails ?? []).filter((d) => !removed.has(String(d?.id ?? "")));
+      r.transforms = r.transforms.filter((t) => !removed.has(String(t.sourceVariable ?? "")));
+      r.nMembers = r.members.length;
+      const left = new Set(r.members.map(cohortOfMember));
+      r.cohorts = (raw.cohorts ?? []).filter((c) => left.has(c));
+      r.crossCohort = r.cohorts.length > 1;
+      const g = raw.gencde;
+      if (g && Array.isArray(g.sourceVariables)) {
+        const sourceVariables = g.sourceVariables.filter((v) => !removed.has(v));
+        const sources = new Set(sourceVariables.map(cohortOfMember));
+        r.gencde = {
+          ...g,
+          sourceVariables,
+          ...(Array.isArray(g.sourceCohorts) ? { sourceCohorts: g.sourceCohorts.filter((c) => sources.has(c)) } : {}),
+        };
+      }
+    }
+
+    const name = String(renames[gid]?.chosen ?? "").trim();
+    if (name) r.concept = name;
+
+    // A pick the leg did NOT apply (a Gate 2-parked export, or one made after it), against what the record targets now.
+    const pick = picks[gid];
+    if (pick && typeof pick.chosen === "string") {
+      const ref = catalogRef(raw, pick.chosen, String(pick.externalId ?? "").trim());
+      const chosen = ref ? ref.id : pick.chosen;
+      const current = currentTarget(raw);
+      const own = new Set(["", gencdeIdOf(raw.gencde)]);
+      if (!(chosen === current || (own.has(chosen) && own.has(current)))) r.cde = ref;
+    }
+
+    // A rejected recode stays in the record, marked — every file says it was rejected rather than dropping it.
+    if (r.transforms.some((t) => specs[String(t.sourceVariable ?? "")]?.rejected)) {
+      r.transforms = r.transforms.map((t) => (specs[String(t.sourceVariable ?? "")]?.rejected ? { ...t, rejected: true } : t));
+    }
+    out.push(r);
+  }
+  return out;
 }

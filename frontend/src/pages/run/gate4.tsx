@@ -9,14 +9,17 @@ import { demoExportNote } from "@/lib/sandbox";
 import { ArtifactTile } from "@/components/gate/ArtifactTile";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DecisionLog } from "@/components/gate/DecisionLog";
+import { ExportFlows } from "@/components/gate/ExportFlows";
 import { Gate4ScorePanel } from "@/components/gate/Gate4ScorePanel";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ReproducibilityInfo } from "@/components/gate/ReproducibilityInfo";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ArtifactPreviewBody } from "@/components/gate/ArtifactPreviewBody";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { exportUrl } from "@/lib/api";
+import { analysisPathFor } from "@/lib/gate-routes";
 import { isParkedAt } from "@/lib/run-state";
 import { cn } from "@/lib/utils";
 import {
@@ -25,8 +28,9 @@ import {
   type ArtifactState,
   type NotebookLang,
   type RealArtifact,
+  artifactPreview,
   downloadLabel,
-  previewFor,
+  exportedRecords,
   resolveFormat,
   unassignedBreakdown,
   verdictBreakdown,
@@ -136,6 +140,11 @@ export default function Gate4Page() {
     gate.all.gate1_group_scope,
   );
   const unassignedCount = unassigned.scopedOut + unassigned.noConcept;
+  // The records every file carries — scope, export selection and names applied (`effective_records` on the server).
+  const exported = useMemo(
+    () => exportedRecords(result, jobState?.config as Record<string, unknown> | undefined, gate.all),
+    [result, jobState?.config, gate.all],
+  );
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const filenameFor = (a: RealArtifact) => (a.id === "notebook" ? `harmonization.${lang}.ipynb` : a.filename);
 
@@ -191,6 +200,10 @@ export default function Gate4Page() {
             }}
           />
         ))}
+
+        {/* Where the exported variables go (review 2) — the run view's Sankey, drawn from the records the files
+            carry, above the files themselves: the summary of what is about to leave. */}
+        <ExportFlows records={exported} runHasRecords={records.length > 0} outsideCount={unassignedCount} />
 
         {/* Surface 2 — what ships: the real artifacts, then the honest gaps. */}
         <section className="flex flex-col gap-3" data-testid="export-set">
@@ -283,7 +296,7 @@ export default function Gate4Page() {
         {/* Terminal next-actions: analysis ideas (Task 4, existing route) and run again (Task 5). */}
         <div data-testid="gate4-next-actions" className="flex flex-wrap items-center gap-4 text-sm">
           <Link
-            href={`/job/${jobId}/analysis`}
+            href={analysisPathFor(jobId, "gate4")}
             data-testid="analysis-ideas-link"
             className="font-semibold text-link-on-field underline underline-offset-2"
           >
@@ -323,25 +336,30 @@ export default function Gate4Page() {
         className="mt-6"
       />
 
-      {/* The preview drawer — real generated content at the wider width, not a description of it. */}
+      {/* The preview drawer — real generated content at the wider width, not a description of it. A delimited
+          file is drawn as a table (review 2); the drawer is a column so the table scrolls in its own box. */}
       <Sheet open={preview !== null} onOpenChange={(o) => !o && setPreview(null)}>
-        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
-          <SheetHeader>
+        <SheetContent side="right" className="flex w-full flex-col sm:max-w-4xl">
+          <SheetHeader className="pr-10">
             <SheetTitle>{preview?.name ?? "Preview"}</SheetTitle>
+            {preview && (
+              <SheetDescription data-testid="artifact-preview-filename" className="font-mono text-xs text-on-raised-muted">
+                {filenameFor(preview)}
+              </SheetDescription>
+            )}
           </SheetHeader>
           {preview && (
-            <pre
-              data-testid="artifact-preview-content"
-              className="mt-4 max-h-[calc(100vh-8rem)] overflow-auto whitespace-pre-wrap break-words rounded-inner bg-surface-inset p-4 font-mono text-xs text-on-inset"
-            >
-              {preview.id === "score_json"
-                ? JSON.stringify(scoreExport(scores, composites), null, 2)
-                : previewFor(preview.id, lang, result, jobState?.decisions, {
-                    index: gate.all,
-                    config: jobState?.config as Record<string, unknown> | undefined,
-                    gatePosition: jobState?.gatePosition,
-                  })}
-            </pre>
+            <ArtifactPreviewBody
+              preview={
+                preview.id === "score_json"
+                  ? { kind: "code", text: JSON.stringify(scoreExport(scores, composites), null, 2) }
+                  : artifactPreview(preview.id, lang, result, jobState?.decisions, {
+                      index: gate.all,
+                      config: jobState?.config as Record<string, unknown> | undefined,
+                      gatePosition: jobState?.gatePosition,
+                    })
+              }
+            />
           )}
         </SheetContent>
       </Sheet>

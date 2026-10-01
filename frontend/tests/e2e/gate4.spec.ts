@@ -3,8 +3,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { indexDecisions, type DecisionIndex, type GroupedDecisions } from "@/lib/gate-decisions";
-import type { HarmonizationResult } from "@/types";
+import type { HarmonizationResult, UIRecord } from "@/types";
 import {
+  DECISION_LOG_CSV_COLS,
   NOT_AVAILABLE_GAPS,
   REAL_ARTIFACTS,
   SUBSTANTIVE_EDIT_KINDS,
@@ -14,13 +15,18 @@ import {
   decisionLogRows,
   modelRelation,
   scopeSummary,
+  artifactPreview,
   downloadLabel,
+  exportedRecords,
   previewFor,
+  previewTable,
   resolveFormat,
   revisionRate,
   unassignedBreakdown,
   verdictBreakdown,
 } from "@/lib/gate4";
+import { analysisBackPathFor, analysisPathFor } from "@/lib/gate-routes";
+import { buildSankeyData } from "@/lib/sankey";
 import { FINISHED_JOB, finishedFixture, serveFinished } from "./gate23-fixture";
 
 /**
@@ -251,6 +257,201 @@ test("@gate4 the decision-log CSV preview on a staged run reads gate decisions, 
   expect(legacy.split("\n")[0]).toBe("record_id,concept,verdict,chosen_cde,your_decision,note");
 });
 
+// --- final review round 2: the Sankey on Gate 4 draws the records the EXPORT carries -------------------------
+
+/**
+ * Pinned by BOTH sides: `tests/test_export_staged.py` asserts the backend's `effective_records` projects to each
+ * case's `expected`, and this asserts the client's `exportedRecords` does too — so the chart Gate 4 draws cannot
+ * show a flow the downloaded files do not carry.
+ */
+const EXPORTED = JSON.parse(readFileSync(resolve(HERE, "fixtures/exported-records-parity.json"), "utf8")) as {
+  cases: {
+    name: string;
+    useParityDecisions?: boolean;
+    result?: HarmonizationResult;
+    config?: Record<string, unknown>;
+    grouped?: GroupedDecisions;
+    expected: Record<string, unknown>[];
+  }[];
+};
+
+/** The fields the mirror must agree on — `_exported_projection` in `tests/test_export_staged.py`. */
+function exportedProjection(records: UIRecord[]): Record<string, unknown>[] {
+  return records.map((r) => {
+    const gencde = r.gencde as { sourceVariables?: unknown; sourceCohorts?: unknown } | null;
+    return {
+      groupId: r.groupId,
+      concept: r.concept,
+      verdict: r.verdict,
+      cdeId: r.cde?.id ?? null,
+      cohorts: r.cohorts,
+      members: r.members,
+      nMembers: r.nMembers ?? null,
+      crossCohort: r.crossCohort ?? null,
+      removedMembers: (r as { removedMembers?: string[] }).removedMembers ?? null,
+      memberDetailIds: (r.memberDetails ?? []).map((d) => (d as { id?: string }).id ?? null),
+      transforms: (r.transforms ?? []).map((t) => ({ sourceVariable: t.sourceVariable ?? null, rejected: !!t.rejected })),
+      gencdeSources: gencde?.sourceVariables ?? null,
+      gencdeCohorts: gencde?.sourceCohorts ?? null,
+    };
+  });
+}
+
+test("@gate4 review 2 — the exported records match the backend's effective records, case for case", () => {
+  const before = JSON.stringify(PARITY.result);
+  for (const c of EXPORTED.cases) {
+    const result = c.result ?? PARITY.result;
+    const config = c.useParityDecisions ? PARITY.config : (c.config ?? {});
+    const index = indexDecisions(c.useParityDecisions ? PARITY.grouped : (c.grouped ?? {}));
+    expect(exportedProjection(exportedRecords(result, config, index)), c.name).toEqual(c.expected);
+  }
+  // Never the raw pipeline output, and never by mutating it: the run result is byte-for-byte what it was, and it
+  // still carries the group the scope dropped, the generated name, and the variable Gate 3 removed.
+  expect(JSON.stringify(PARITY.result)).toBe(before);
+  expect(PARITY.result.records.map((r) => r.groupId)).toContain("c2#g0");
+  expect(PARITY.result.records.find((r) => r.groupId === "c0#g0")?.concept).toBe("Age in years");
+  expect(PARITY.result.records.find((r) => r.groupId === "c1#g0")?.members).toContain("B:smk");
+});
+
+test("@gate4 review 2 — on a staged run every preview reads the records the export carries, not the raw run", () => {
+  // The Gate 3 agent's note: the previews still showed removed variables and rejected recodes after round 2.
+  const gateLog = { index: indexDecisions(PARITY.grouped), config: PARITY.config, gatePosition: "gate4" };
+  const json = JSON.parse(artifactPreview("records_json", "py", PARITY.result, {}, gateLog).text) as Record<string, unknown>[];
+  // c2 was scoped out; c0 carries its reviewer name and its unapplied pick; c1 lost B:smk at Gate 3.
+  expect(json.map((r) => r.id)).toEqual(["c0#g0", "c1#g0", "c3#g0"]);
+  expect(json[0]).toMatchObject({ concept: "Participant âge", cde: "AgeAtVisitCDE" });
+  expect(json[1]).toMatchObject({ nMembers: 1, cohorts: ["A"], removedMembers: ["B:smk"], transforms: 1 });
+  const tsv = artifactPreview("eitl_tsv", "py", PARITY.result, {}, gateLog);
+  if (tsv.kind !== "table") throw new Error("expected a table");
+  const { columns, rows } = previewTable(tsv.text, tsv.delimiter);
+  const c1 = rows.find((r) => r[0] === "c1#g0")!;
+  expect([c1[columns.indexOf("n_members")], c1[columns.indexOf("cohorts")]]).toEqual(["1", "A"]);
+  expect(rows.map((r) => r[columns.indexOf("concept")])).toEqual(["Participant âge", "Smoking status", "Diabetes"]);
+  // The notebook excerpt applies no removed variable.
+  expect(artifactPreview("notebook", "py", PARITY.result, {}, gateLog).text).not.toContain("B:smk");
+  // A LEGACY one-shot run (no gate position, no decisions) previews its raw records, exactly as its files do.
+  const legacy = JSON.parse(
+    artifactPreview("records_json", "py", PARITY.result, {}, { index: {}, config: {}, gatePosition: null }).text,
+  ) as Record<string, unknown>[];
+  expect(legacy.map((r) => r.id)).toEqual(["c0#g0", "c1#g0", "c2#g0"]);
+  expect(legacy[0]).not.toHaveProperty("removedMembers");
+});
+
+test("@gate4 review 2 — the notebook preview leaves a rejected recode out and says so", () => {
+  const d = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
+  const index: DecisionIndex = { gate3_spec_edit: { "A:dm": d({ sourceVariable: "A:dm", chosen: "", rejected: true }) } };
+  const result = { ...PARITY.result, records: PARITY.result.records.filter((r) => r.groupId === "c3#g0") };
+  const nb = artifactPreview("notebook", "py", result, {}, { index, config: {}, gatePosition: "gate4" }).text;
+  expect(nb).toContain("#   transform: categorical on B:dm");
+  expect(nb).not.toContain("#   transform: categorical on A:dm");
+  expect(nb).toContain("#   left out (recode rejected at Gate 3): A:dm");
+  expect(nb).toContain("# Applies 1 transform(s) across 1 concept(s).");
+});
+
+test("@gate4 review 2 — with every concept out of the export, a record preview says so; the log still previews", () => {
+  const index = indexDecisions(PARITY.grouped);
+  const gateLog = { index, config: { ...PARITY.config, gate1_scope: [] }, gatePosition: "gate4" };
+  const json = artifactPreview("records_json", "py", PARITY.result, {}, gateLog);
+  expect(json.kind).toBe("empty");
+  expect(json.text).toMatch(/Nothing is in this export/);
+  expect(artifactPreview("decisions_csv", "py", PARITY.result, {}, gateLog).kind).toBe("table");
+});
+
+test("@gate4 review 2 — the Sankey's flows are the exported records': a scoped-out novel group draws no Novel flow", () => {
+  const exported = exportedRecords(PARITY.result, PARITY.config, indexDecisions(PARITY.grouped));
+  const data = buildSankeyData(exported);
+  const names = data.nodes.map((n) => n.name);
+  // c2 (the only novel group) was scoped out at Gate 1, and c3's applied re-pick took it from novel to adopt.
+  expect(names).toEqual(["A", "B", "Adopt", "Refine", "Existing CDE"]);
+  const flow = (from: string, to: string) =>
+    data.links.find((l) => names[l.source] === from && names[l.target] === to)?.value ?? 0;
+  expect(flow("A", "Adopt")).toBe(2); // A:age, A:dm
+  expect(flow("B", "Adopt")).toBe(2); // B:age_yrs, B:dm
+  expect(flow("A", "Refine")).toBe(1);
+  // B:smk was REMOVED from c1 at Gate 3, so B draws no Refine flow at all.
+  expect(flow("B", "Refine")).toBe(0);
+  expect(flow("Adopt", "Existing CDE")).toBe(4);
+  expect(flow("Refine", "Existing CDE")).toBe(1);
+  // The raw run would have drawn the scoped-out group.
+  expect(buildSankeyData(PARITY.result.records).nodes.map((n) => n.name)).toContain("Novel");
+});
+
+// --- final review round 2: CSV / TSV previews render as a table, parsed by a real CSV parser -----------------
+
+test("@gate4 review 2 — the table parser keeps a quoted field with a comma and a newline as ONE cell", () => {
+  const { columns, rows } = previewTable('gate,note\nGate 3,"line one, with a comma\nline two"\nGate 1,""\n', ",");
+  expect(columns).toEqual(["gate", "note"]);
+  expect(rows).toEqual([
+    ["Gate 3", "line one, with a comma\nline two"],
+    ["Gate 1", ""],
+  ]);
+  expect(previewTable("a\tb\n1\t2\n", "\t")).toEqual({ columns: ["a", "b"], rows: [["1", "2"]] });
+});
+
+test("@gate4 review 2 — the decision-log preview's TABLE is the backend's rows, cell for cell", () => {
+  const index = indexDecisions(PARITY.grouped);
+  const preview = artifactPreview("decisions_csv", "py", PARITY.result, PARITY.legacyDecisions, {
+    index,
+    config: PARITY.config,
+    gatePosition: "gate4",
+  });
+  expect(preview.kind).toBe("table");
+  if (preview.kind !== "table") return;
+  const { columns, rows } = previewTable(preview.text, preview.delimiter);
+  expect(columns).toEqual(PARITY.columns);
+  // The cap is unchanged (12 decisions); every cell — quoted notes included — survives the round trip.
+  expect(rows).toEqual(PARITY.expectedRows.slice(0, 12));
+  expect(preview.note).toBe(`… ${PARITY.expectedRows.length - 12} more decision(s) in the file`);
+});
+
+test("@gate4 review 2 — a note with a comma stays one cell of the decision-log table (a newline is flattened, as the file does)", () => {
+  const d = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
+  const index: DecisionIndex = {
+    gate3_spec_edit: { "A:y": d({ sourceVariable: "A:y", chosen: "", rejected: true, note: "wrong target,\nsee codebook" }) },
+  };
+  const preview = artifactPreview("decisions_csv", "py", PARITY.result, {}, { index, config: {}, gatePosition: "gate4" });
+  if (preview.kind !== "table") throw new Error("expected a table");
+  const { columns, rows } = previewTable(preview.text, preview.delimiter);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toHaveLength(columns.length);
+  // The downloaded log writes every cell on one line (`clean` in both implementations), so the file — and its
+  // preview — carries the note's newline as a space; its comma is what the quoting has to survive.
+  expect(rows[0][columns.indexOf("note")]).toBe("wrong target, see codebook");
+});
+
+test("@gate4 review 2 — a legacy CSV / TSV preview quotes a concept with a comma, so every row keeps its columns", () => {
+  const run = finishedFixture().result as HarmonizationResult;
+  // The shipped demo's own concepts carry commas ("… (marijuana, cocaine, prescription stimulants, …)").
+  expect(run.records.slice(0, 3).some((r) => r.concept.includes(","))).toBe(true);
+  const legacy = { index: {}, config: {}, gatePosition: null };
+  for (const id of ["decisions_csv", "eitl_tsv"] as const) {
+    const preview = artifactPreview(id, "py", run, {}, legacy);
+    if (preview.kind !== "table") throw new Error(`expected ${id} to preview as a table`);
+    expect(preview.delimiter).toBe(id === "eitl_tsv" ? "\t" : ",");
+    const { columns, rows } = previewTable(preview.text, preview.delimiter);
+    expect(rows).toHaveLength(3);
+    for (const [i, row] of rows.entries()) {
+      expect(row, `${id} row ${i}`).toHaveLength(columns.length);
+      expect(row[columns.indexOf("concept")]).toBe(run.records[i].concept);
+    }
+    // The cap is stated, not silent.
+    expect(preview.note).toBe(`The first 3 of ${run.records.length} concepts — the file carries every one.`);
+  }
+});
+
+test("@gate4 review 2 — JSON and the notebook stay code; an empty run says so instead of drawing an empty table", () => {
+  const run = finishedFixture().result as HarmonizationResult;
+  const json = artifactPreview("records_json", "py", run, {});
+  expect(json.kind).toBe("code");
+  expect(JSON.parse(json.text)).toHaveLength(3);
+  expect(artifactPreview("notebook", "r", run, {}).kind).toBe("code");
+  const empty = artifactPreview("eitl_tsv", "py", { ...run, records: [] }, {});
+  expect(empty.kind).toBe("empty");
+  // `previewFor` is the same content flattened to one string (the file's text, then its note).
+  const table = artifactPreview("eitl_tsv", "py", run, {});
+  expect(previewFor("eitl_tsv", "py", run, {})).toBe(`${table.text}\n${table.kind === "table" ? table.note : ""}`);
+});
+
 // --- 08-28 1e: provenance & the decision log (08-LIVE-VERIFY-3 F7 F17 F21 H9) ------------------------------
 
 const dd = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
@@ -396,6 +597,110 @@ test.describe("Gate 4 screen", () => {
     await expect(content).toContainText("{");
   });
 
+  test("@gate4 the preview drawer's close X is drawn against the drawer, not inherited from the chrome (review 2)", async ({
+    page,
+  }) => {
+    // Bhargav, final review round 2: "the close X on the preview sidebar is not rendering properly". The drawer
+    // is portalled to <body>, whose text colour is the navy CHROME's white — so an X with no colour of its own
+    // was drawn white on the white drawer, and all that showed was its focus outline: an empty box.
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="records_json"] [data-testid="artifact-preview"]').click();
+    const dialog = page.getByRole("dialog");
+    const close = dialog.getByRole("button", { name: "Close" });
+    await expect(close).toBeVisible();
+    const { ratio, icon, button, drawer } = await close.evaluate((btn) => {
+      // Normalise any computed colour (rgb, color(srgb …), oklch …) through a canvas, painted OVER the colour
+      // beneath it — the X's role is translucent, so its own channels alone would overstate the contrast.
+      const ctx = document.createElement("canvas").getContext("2d")!;
+      const rgb = (css: string, under = "#fff") => {
+        ctx.fillStyle = under;
+        ctx.fillRect(0, 0, 1, 1);
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+        return [r, g, b];
+      };
+      const lum = ([r, g, b]: number[]) => {
+        const ch = (x: number) => {
+          const s = x / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+      };
+      const svg = btn.querySelector("svg")!;
+      const dlg = btn.closest('[role="dialog"]')!;
+      const bg = getComputedStyle(dlg).backgroundColor;
+      const a = lum(rgb(getComputedStyle(svg).color, bg));
+      const b = lum(rgb(bg));
+      const box = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+      };
+      return {
+        ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
+        icon: box(svg),
+        button: box(btn),
+        drawer: box(dlg),
+      };
+    });
+    // A control's glyph is non-text UI: WCAG 1.4.11 asks 3:1 against what it sits on.
+    expect(ratio, "the close X must be visible against the drawer").toBeGreaterThanOrEqual(3);
+    expect(icon.w).toBeGreaterThan(0);
+    // Inside the drawer, at its top right, and a target a pointer can actually hit.
+    expect(button.x + button.w).toBeLessThanOrEqual(drawer.x + drawer.w);
+    expect(button.x).toBeGreaterThan(drawer.x + drawer.w / 2);
+    expect(button.y).toBeGreaterThanOrEqual(drawer.y);
+    expect(button.w).toBeGreaterThanOrEqual(24);
+    expect(button.h).toBeGreaterThanOrEqual(24);
+    await close.click();
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test("@gate4 review 2 — Gate 4 draws the run's Sankey from the records the export carries, not the raw run", async ({
+    page,
+  }) => {
+    // Bhargav, review round 2: the run view's Sankey was only reachable by accident (analysis ideas -> back), so it
+    // is surfaced here. It must draw what LEAVES THE TOOL: freeze the scope to five of the served twelve groups.
+    let kept = 0;
+    let variables = 0;
+    await serveFinished(page, (run) => {
+      const recs = run.result?.records ?? [];
+      const inScope = recs.slice(0, 5);
+      run.config = { ...(run.config ?? {}), gate1_scope: inScope.map((r) => r.groupId) };
+      kept = inScope.length;
+      variables = inScope.reduce((n, r) => n + (r.members.length || r.cohorts.length), 0);
+    });
+    await gotoGate4(page);
+    const flows = page.getByTestId("gate4-sankey");
+    await expect(flows).toBeVisible();
+    await expect(flows).toHaveAttribute("data-concepts", String(kept));
+    await expect(flows).toHaveAttribute("data-variables", String(variables));
+    await expect(flows).toContainText(`${kept} concepts`);
+    // The existing chart, drawn: recharts' surface with one path per flow. (A path is not asserted `visible`: a
+    // flow that runs dead level has a zero-height box, which Playwright calls hidden.)
+    await expect(flows.locator(".recharts-surface")).toBeVisible();
+    expect(await flows.locator(".recharts-surface path").count()).toBeGreaterThan(0);
+    // It sits above the export set — surfaced, not buried under the decision log.
+    const [chartY, exportY] = await Promise.all([
+      flows.evaluate((el) => el.getBoundingClientRect().top),
+      page.getByTestId("export-set").evaluate((el) => el.getBoundingClientRect().top),
+    ]);
+    expect(chartY).toBeLessThan(exportY);
+  });
+
+  test("@gate4 review 2 — with nothing in the export, the Sankey says so instead of drawing an empty chart", async ({
+    page,
+  }) => {
+    await serveFinished(page, (run) => {
+      run.config = { ...(run.config ?? {}), gate1_scope: [] };
+    });
+    await gotoGate4(page);
+    const flows = page.getByTestId("gate4-sankey");
+    await expect(flows).toHaveAttribute("data-concepts", "0");
+    await expect(flows.getByTestId("gate4-sankey-empty")).toContainText("Nothing is in this export");
+    await expect(flows.locator(".recharts-surface")).toHaveCount(0);
+  });
+
   test("@gate4 the download label reflects only ready artifacts and disables at zero", async ({ page }) => {
     await gotoGate4(page);
     const action = page.getByTestId("download-artifacts");
@@ -468,11 +773,52 @@ test.describe("Gate 4 screen", () => {
     );
     await gotoGate4(page);
     await page.locator('[data-testid="artifact-tile"][data-thing="decisions_csv"] [data-testid="artifact-preview"]').click();
-    const content = page.getByTestId("artifact-preview-content");
-    await expect(content).toContainText("gate,kind,action,item,before,after,note,detail,stale");
-    await expect(content).toContainText("Gate 1,gate1_rename,Renamed a group,seed-group,Gen,My name");
+    // Review 2: a TABLE of the file's cells, not its raw comma-joined text.
+    const table = page.getByTestId("artifact-preview-table");
+    await expect(table.locator("thead th")).toHaveText(DECISION_LOG_CSV_COLS);
+    const row = table.locator("tbody tr").filter({ hasText: "gate1_rename" });
+    await expect(row.locator("td")).toHaveText(["Gate 1", "gate1_rename", "Renamed a group", "seed-group", "Gen", "My name", "", "", "false"]);
     // Not the legacy per-record verdict header, which no gate writes to.
-    await expect(content).not.toContainText("your_decision");
+    await expect(page.getByTestId("artifact-preview-content")).not.toContainText("your_decision");
+  });
+
+  test("@gate4 review 2 — a CSV / TSV preview is a table: sticky header, aligned columns, sideways scroll inside the drawer", async ({
+    page,
+  }) => {
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="eitl_tsv"] [data-testid="artifact-preview"]').click();
+    const content = page.getByTestId("artifact-preview-content");
+    await expect(content).toHaveAttribute("data-kind", "table");
+    const table = page.getByTestId("artifact-preview-table");
+    await expect(table.locator("thead th")).toHaveText(["record_id", "concept", "verdict", "top_candidate", "n_members", "cohorts"]);
+    // The row cap is today's (3 concepts), and it is stated under the table rather than left silent.
+    const rows = table.locator("tbody tr");
+    await expect(rows).toHaveCount(3);
+    for (let i = 0; i < 3; i++) await expect(rows.nth(i).locator("td")).toHaveCount(6);
+    await expect(page.getByTestId("artifact-preview-note")).toContainText(/^The first 3 of \d+ concepts/);
+    const layout = await content.evaluate((el) => {
+      const th = el.querySelector("thead th")!;
+      const dialog = el.closest('[role="dialog"]')!;
+      return {
+        sticky: getComputedStyle(th).position,
+        overflowX: getComputedStyle(el).overflowX,
+        dialogScrolls: dialog.scrollWidth - dialog.clientWidth,
+      };
+    });
+    expect(layout.sticky).toBe("sticky");
+    // A wide file scrolls INSIDE its own box; the drawer itself never scrolls sideways.
+    expect(["auto", "scroll"]).toContain(layout.overflowX);
+    expect(layout.dialogScrolls).toBe(0);
+  });
+
+  test("@gate4 review 2 — the JSON preview stays code, indented as the file is", async ({ page }) => {
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="records_json"] [data-testid="artifact-preview"]').click();
+    const content = page.getByTestId("artifact-preview-content");
+    await expect(content).toHaveAttribute("data-kind", "code");
+    await expect(page.getByTestId("artifact-preview-table")).toHaveCount(0);
+    // Indentation survives: no wrapping that would push a nested key under its parent.
+    expect(await content.evaluate((el) => getComputedStyle(el).whiteSpace)).toBe("pre");
   });
 
   test("@gate4 a run with no decisions shows the log's empty state rather than a blank panel", async ({ page }) => {
@@ -545,9 +891,47 @@ test.describe("Gate 4 screen", () => {
 
   test("@gate4 the terminal next-actions route to analysis ideas and a new run", async ({ page }) => {
     await gotoGate4(page);
-    await expect(page.getByTestId("analysis-ideas-link")).toHaveAttribute("href", `/job/${FINISHED_JOB}/analysis`);
+    await expect(page.getByTestId("analysis-ideas-link")).toHaveAttribute("href", `/job/${FINISHED_JOB}/analysis?from=gate4`);
     await expect(page.getByTestId("rerun-action")).toHaveAttribute("href", "/run/new/setup");
   });
+
+  test("@gate4 review 2 — analysis ideas, then back to the run, lands on Gate 4 — not the legacy run page", async ({ page }) => {
+    await gotoGate4(page);
+    await page.getByTestId("analysis-ideas-link").click();
+    await expect(page).toHaveURL(new RegExp(`/job/${FINISHED_JOB}/analysis\\?from=gate4$`));
+    const back = page.getByTestId("analysis-back").first();
+    await expect(back).toHaveAttribute("href", `/run/${FINISHED_JOB}/gate4`);
+    await back.click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate4$`));
+    await expect(page.getByTestId("export-set")).toBeVisible();
+  });
+
+  test("@gate4 review 2 — a staged run's analysis page goes back to Gate 4 even without an origin", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      run.gatePosition = "gate4";
+    });
+    await page.goto(`/job/${FINISHED_JOB}/analysis`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("analysis-back").first()).toHaveAttribute("href", `/run/${FINISHED_JOB}/gate4`);
+  });
+});
+
+// --- final review round 2: analysis ideas -> "back to the run" returns to Gate 4 for a staged run ---------------
+
+test("@gate4 review 2 — analysis ideas' back link returns to the gate it came from, else Gate 4 for a staged run", () => {
+  // Bhargav: "clicking 'Explore analysis ideas' then 'back to the run' takes me to the sankey diagram page" — the
+  // LEGACY run view, which a staged run has no business landing on.
+  expect(analysisPathFor("r1", "gate4")).toBe("/job/r1/analysis?from=gate4");
+  expect(analysisPathFor("r1")).toBe("/job/r1/analysis");
+  // Came from Gate 4: back to Gate 4 (the shared demo's server row can sit at gate1 while the guest walked on).
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: "gate1" }, "gate4")).toBe("/run/r1/gate4");
+  // No origin named, staged run: Gate 4 — the screen the ideas are reached from, and a pure read.
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: "gate4" }, null)).toBe("/run/r1/gate4");
+  // A legacy one-shot run keeps its run page.
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: null }, null)).toBe("/job/r1");
+  // `from` is only ever a rail screen — never a URL to follow somewhere else.
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: null }, "https://evil.example")).toBe("/job/r1");
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: null }, "gate0")).toBe("/job/r1");
 });
 
 // --- source assertions (statically decidable) ---------------------------------------------------------
