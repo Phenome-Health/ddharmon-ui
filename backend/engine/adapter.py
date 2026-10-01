@@ -804,8 +804,14 @@ def build_prepared_export(
     *,
     cohort_name: str,
     column_roles: dict[str, str],
+    prepare: bool = True,
 ) -> tuple[list[str], list[list[str]]]:
     """The reviewer's own dictionary with the preparation step's output appended, row for row.
+
+    ``prepare`` is whether THIS run prepared its dictionaries (``run_prepares``). The job-scoped route passes the
+    run's own record: since 08-14e a run does not prepare, and reporting preparation's output for it would put
+    text in ``ddharmon_embedding_text`` the run never embedded — contradicting the run's embedding workbook on
+    the same Setup card. ``True`` keeps the original Gate 0 meaning for a caller that asks for preparation.
 
     Returns ``(header, rows)``. The header is the FILE's own columns in the file's own order, followed by
     :data:`PREPARED_EXPORT_COLUMNS`. Nothing is renamed, reordered or dropped: the export exists so the
@@ -835,12 +841,15 @@ def build_prepared_export(
     header, data_rows = file_rows[0], file_rows[1:]
 
     dd = load_dictionary(source_path, cohort_name=cohort_name, **column_roles)
-    try:
-        _prepare(dd)
-        prepared = True
-    except Exception as exc:  # noqa: BLE001 - an export must not fail on the step it is reporting
-        logger.warning("prepared export for %s could not preprocess (%s) — exporting the raw load", cohort_name, exc)
-        prepared = False
+    prepared = False
+    if prepare:
+        try:
+            _prepare(dd)
+            prepared = True
+        except Exception as exc:  # noqa: BLE001 - an export must not fail on the step it is reporting
+            logger.warning(
+                "prepared export for %s could not preprocess (%s) — exporting the raw load", cohort_name, exc
+            )
 
     by_raw_name: dict[str, Any] = {}
     for f in dd.fields.values():

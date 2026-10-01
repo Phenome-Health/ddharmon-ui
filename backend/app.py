@@ -2561,7 +2561,7 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
     Available BEFORE the run has a result, deliberately: Gate 0 is where the question is asked, and the run
     is parked there with no result by construction.
     """
-    from backend.engine.adapter import build_prepared_export
+    from backend.engine.adapter import build_prepared_export, run_prepares
 
     subject = _subject(request)
     job = store.get(job_id)
@@ -2580,6 +2580,9 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
         source,
         cohort_name=cohort,
         column_roles=dict(spec.get("column_roles") or {}),
+        # The run's OWN recorded choice: since 08-14e a run does not prepare, and its embedding column must be
+        # the text it embedded — the same string the run workbook below carries for that variable.
+        prepare=run_prepares(job.config),
     )
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -2592,6 +2595,64 @@ def prepared_export(job_id: str, request: Request, cohort: str) -> StreamingResp
         iter([buf.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{stem}_prepared.csv"'},
+    )
+
+
+@app.get("/api/harmonize/jobs/{job_id}/embedding.xlsx")
+def run_embedding_workbook(job_id: str, request: Request) -> StreamingResponse:
+    """A STARTED run's dictionaries as ONE workbook — a sheet each, with the exact text every variable embedded.
+
+    The job-scoped sibling of the pre-Start ``POST /dictionary/embedding.xlsx``. That one exists only while the
+    files are still in the browser (Setup's compose stage); once a run exists Setup's export card offered only
+    per-dictionary CSVs, so the workbook a reviewer had before Start was gone after it (phase-8 final review,
+    round 1). The run retains its uploads, so this re-reads them — the same reasoning as ``prepared.csv``.
+
+    A GET, and free: no model is called, nothing is embedded, no run state is touched. The SAME builder as the
+    pre-Start workbook, so the two cannot disagree — except that the text follows the run's own recorded
+    ``preprocess`` (``run_prepares``) rather than the product default, because it is a claim about what THIS
+    run embedded.
+
+    Refuses rather than dropping a sheet: a workbook whose sheet count silently disagrees with the run's
+    dictionaries is the failure a reviewer is least likely to notice.
+    """
+    from backend.engine.adapter import run_prepares
+    from backend.export.workbook import build_embedding_workbook
+
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    specs = [
+        {
+            "path": Path(str(d.get("path", ""))),
+            "filename": Path(str(d.get("path", ""))).name,
+            "cohort_name": str(d.get("cohort_name") or Path(str(d.get("path", ""))).stem),
+            "column_roles": dict(d.get("column_roles") or {}),
+        }
+        for d in (job.dict_specs or [])
+    ]
+    if not specs:
+        raise HTTPException(status_code=409, detail="This run kept no record of its dictionaries")
+    gone = [s["cohort_name"] for s in specs if not s["path"].exists()]
+    if gone:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The uploaded file for {gone[0]!r} is no longer available, so the workbook would be missing it",
+        )
+    try:
+        data = build_embedding_workbook(specs, prepare=run_prepares(job.config))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Named for the run rather than the pre-Start file's fixed name, so two runs' workbooks do not overwrite each
+    # other in a Downloads folder. The id is rebuilt from the safe alphabet like every other echoed filename.
+    stem = "".join(c if (c.isalnum() or c in "_-") else "_" for c in job_id[:8]) or "run"
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="ddharmon_{stem}_embedding_text.xlsx"',
+            "X-Ddharmon-Sheets": str(len(specs)),
+        },
     )
 
 
