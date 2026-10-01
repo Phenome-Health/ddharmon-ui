@@ -567,12 +567,17 @@ async def start_batch(
         # view's Stop dialog can show a committed-vs-avoided cost estimate (run_config keeps no dictionaries).
         "est_fields": int(cfg["estFields"]) if cfg.get("estFields") is not None else None,
         "est_cohorts": int(cfg["estCohorts"]) if cfg.get("estCohorts") is not None else None,
-        # STGD-16's two opt-ins, recorded at CREATION and never flipped afterwards: a run resumed with a
-        # different answer would stop matching the cost it was quoted (T-08-69). Both default off, so a run
-        # can only pay for a stage it asked for. `concept_gate` is the M7 advisory stage; `readjudication`
-        # is permission for the re-adjudication endpoint to spend on a re-split the reviewer names.
+        # STGD-16's two switches, recorded at CREATION and never flipped afterwards: a run resumed with a
+        # different answer would stop matching the cost it was quoted (T-08-69). `concept_gate` is the M7
+        # advisory stage — opt-in, default off, so a run only pays for a stage it asked for.
         "concept_gate": bool(cfg.get("conceptGate", False)),
-        "readjudication": bool(cfg.get("allowReadjudication", False)),
+        # `readjudication` is permission for the re-adjudication endpoint to spend on a re-split the reviewer
+        # names at Gate 1. ALWAYS ON for a new run (final review round 1): no run ever buys a re-split by
+        # itself — the reviewer buys one group at a time by pressing a priced "Accept this division", so a
+        # blind opt-in at Setup only made that informed decision unreachable. Setup's quote carries it as a
+        # per-use line. The create payload's `allowReadjudication` is no longer read. A run created before this
+        # recorded its own answer and keeps it (`/readjudicate` still refuses one that recorded off).
+        "readjudication": True,
         # 08-14e: whether this run prepares its dictionaries before embedding, recorded so every later leg and a
         # re-run embed the text the first leg embedded even if the product default moves again (`run_prepares`).
         "preprocess": PREPARE_BEFORE_EMBED_DEFAULT,
@@ -1292,7 +1297,9 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     # Remap each dict_spec path (same filenames) into the new uploads dir.
     new_specs = [{**s, "path": str(new_uploads / Path(s["path"]).name)} for s in src.dict_specs]
     cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
-    run_config = {**src.config, "work_dir": str(new_work)}
+    # A re-run is a NEW run, so it gets what every new run gets: re-splitting on (see `start_batch`), even when the
+    # run it copies predates that and recorded it off. The source run is untouched and replays as recorded.
+    run_config = {**src.config, "work_dir": str(new_work), "readjudication": True}
 
     display = f"{src.display_name} (re-run)"
     store.create(new_id, display, run_config, owner_subject=subject, dict_specs=new_specs)
@@ -1405,8 +1412,9 @@ def readjudicate(
 
     1. **A pinned demo is rejected outright** — checked first, so a demo that happens to carry the opt-in is
        still refused and a guest walk can never spend money.
-    2. **The run must have opted in at creation** (``readjudication``, default false), and the refusal names
-       itself so the UI can render the honest "not enabled for this run" state.
+    2. **The run must have recorded ``readjudication`` at creation.** Every new run records it ON (final review
+       round 1); only a run created before then can carry it off, and the refusal names itself so the UI can
+       render the honest "not enabled for this run" state.
     3. **The caller must name explicit group ids.** An empty or absent list is refused, never widened.
     4. **The run must be parked AT Gate 1.** Past it the grouping was committed by Gate 1's Continue, and a
        division now would change nothing any later leg reads.
@@ -1438,11 +1446,14 @@ def readjudicate(
                 f"{job_id} is the shared demo and cannot be re-adjudicated — clone it into a run of your own"
             )
     if not job.config.get("readjudication"):
+        # Only a run created before re-splitting became always-on can reach this: it recorded the old opt-in as
+        # off, and its quote never included the capability, so it replays as recorded. There is no Setup control
+        # to point at any more — every new run has it.
         raise HTTPException(
             status_code=409,
             detail=(
-                "Re-adjudication is not enabled for this run. It is opt-in at run creation because it buys a "
-                "new split pass; start a new run with it enabled to re-split a group."
+                "Re-splitting is not enabled for this run: it was created before re-splitting became available on "
+                "every run, and recorded it as off. Start a new run to re-split a group — every new run can."
             ),
         )
     group_ids = list(dict.fromkeys(g.strip() for g in (body.groupIds or []) if g and g.strip()))
