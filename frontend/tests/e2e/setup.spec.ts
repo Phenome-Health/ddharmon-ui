@@ -2185,6 +2185,25 @@ test.describe("Setup — per-dictionary confirmation and the embedding export", 
 // --- Start is the first charge, and it lands on Gate 1 (08-14f) -----------------------------------------
 
 test.describe("Setup — Start is the charge, Gate 1 is the destination", () => {
+  /**
+   * WAIT FOR THE FILE TO BE READ before reading an amount. The card appears while the file is still being
+   * parsed, and until it is read the corpus size is unknown, so there is no estimate: the button carries NO
+   * amount (`data-total=""`) and the bill is not rendered. A one-shot read of the button in that window saw
+   * `""`, which `Number()` turns into 0, while the bill's `innerText` waited for the bill to render and read
+   * the settled $0.06 — "Expected 0, Received 0.06", reproduced 10/10 on a CPU-throttled page with or without
+   * any change to the screen. The two surfaces never disagreed; the test read one of them before it existed.
+   */
+  async function fileIsRead(page: Page): Promise<void> {
+    await expect(page.getByTestId("dict-parse-state")).toHaveText("read");
+  }
+
+  /** The button's amount once the file is read — and it IS an amount: an empty attribute must not pass as 0. */
+  async function settledTotal(page: Page): Promise<string> {
+    const raw = (await page.getByTestId("commit-bar").getAttribute("data-total")) ?? "";
+    expect(raw, "the Start control carries an amount once the file is read").toMatch(/^\d/);
+    return raw;
+  }
+
   /** Serve a MUTATED copy of the committed fixture — one fact substituted on a real payload. */
   async function withParkedRun(page: import("@playwright/test").Page): Promise<void> {
     const res = await page.request.get(`/static-data/result-${PAUSED_RUN_FIXTURE}.json`);
@@ -2212,11 +2231,12 @@ test.describe("Setup — Start is the charge, Gate 1 is the destination", () => 
       buffer: Buffer.from(dictionaryCsv(40)),
     });
     await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    await fileIsRead(page);
 
     const bar = page.getByTestId("commit-bar");
     await expect(bar).toBeVisible();
     // THE AMOUNT AS DATA, so this reads the figure rather than parsing it back out of a sentence.
-    expect(Number(await bar.getAttribute("data-total"))).toBeGreaterThan(0);
+    expect(Number(await settledTotal(page))).toBeGreaterThan(0);
     await expect(bar).toHaveAttribute("data-first-charge", "true");
     await expect(bar).toContainText(/not refundable/i);
     await expect(bar).toContainText(/spending begins/i);
@@ -2237,7 +2257,8 @@ test.describe("Setup — Start is the charge, Gate 1 is the destination", () => 
       buffer: Buffer.from(dictionaryCsv(40)),
     });
     await expect(page.getByTestId("dict-card")).toHaveCount(1);
-    const onButton = Number(await page.getByTestId("commit-bar").getAttribute("data-total"));
+    await fileIsRead(page);
+    const onButton = Number(await settledTotal(page));
     const inBill = ((await page.getByTestId("first-charge").innerText()) ?? "").match(/\$([\d,.]+)/);
     expect(inBill, "the bill must still quote a first charge").not.toBeNull();
     expect(Number(inBill![1].replace(/,/g, ""))).toBeCloseTo(onButton, 2);
