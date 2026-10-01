@@ -21,6 +21,14 @@ import { useGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
 import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
+import {
+  declarationSource,
+  isLongRecord,
+  pastedRecords,
+  recordSize,
+  stripStatus,
+  type PastedRecord,
+} from "@/lib/score-declaration";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
 import type { NamedGroup } from "@/lib/ledger";
@@ -300,6 +308,14 @@ export function DeclaredScorePanel({
     });
   }, [declared, spec]);
 
+  /**
+   * The CLOSED strip's status when a score is declared (H4), else `null` and the invitation stands. Read from the
+   * persisted rows (`swaps.all`) and the derived spec — never from the draft — so it is what a reload shows too.
+   */
+  const status = stripStatus(swaps.all, spec);
+  /** What was entered, for each declared score whose newest declaration was PASTED — from the persisted rows. */
+  const pasted = useMemo(() => pastedRecords(swaps.all), [swaps.all]);
+
   const verdict = scopeVerdictFor(evidence);
   const style = VERDICT_STYLE[verdict];
   const codingFor = (name: string) =>
@@ -330,6 +346,9 @@ export function DeclaredScorePanel({
   async function onDeclare() {
     const name = scoreName.trim() || UNNAMED_SCORE;
     const components = declaredComponents(draft);
+    // WHERE THE LIST CAME FROM, on every row (final review round 2): the box exactly as entered when no document
+    // was read — the record of a pasted source — or the read document's handle (never its text) when one was.
+    const source = declarationSource(draft, document, Date.now());
     await Promise.all(
       components.map((componentName) =>
         swaps.write(
@@ -339,6 +358,7 @@ export function DeclaredScorePanel({
             // having been made would be the panel asserting the very thing it is asking to be paid for.
             chosen: "",
             alternatives: components,
+            extra: { source },
           },
         ),
       ),
@@ -353,6 +373,7 @@ export function DeclaredScorePanel({
       // reaching for it through the collapsible's markup — and so "is it the same height as the other
       // strip?" compares a container with a container.
       data-testid="score-strip"
+      data-declared={status ? "true" : "false"}
       // The how-to strip's geometry, verbatim: ground surface, inner radius, same padding. This is the
       // difference between a second orientation strip and a fourth panel competing for the top of Gate 1.
       className={cn("rounded-inner bg-on-field/5 px-4 py-3", className)}
@@ -361,11 +382,9 @@ export function DeclaredScorePanel({
         data-testid="score-panel-toggle"
         // An icon-only control names the ACTION and its OBJECT; this one is not icon-only, but the same
         // rule governs what the name has to say.
-        aria-label={
-          open
-            ? "Hide the declared-score panel"
-            : "Show the declared-score panel"
-        }
+        // The status rides the accessible name too (H4): an aria-label REPLACES the content, so without it a
+        // screen reader would hear "show the panel" while the screen says a score is declared.
+        aria-label={`${open ? "Hide" : "Show"} the declared-score panel${status ? ` — ${status}` : ""}`}
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         {/*
@@ -379,15 +398,34 @@ export function DeclaredScorePanel({
           <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
             A score you want to build from this run
           </span>
-          {/*
-            THE FREE/PAID SPLIT, ON THE CLOSED STRIP. Collapsing this panel must not make the reviewer
-            meet the charge later than they did when it was expanded at the foot of the page — so the
-            summary states both halves here, where it is visible without opening anything. The priced
-            copy inside is unchanged and still sits immediately above the control it prices.
-          */}
-          <span className="min-w-0 text-xs text-on-field-muted">
-            {STRIP_SUMMARY}
-          </span>
+          {status ? (
+            /*
+              A DECLARED SCORE SAYS SO ON THE CLOSED STRIP (H4, final review round 2 — *"still there — fix
+              now"*). It used to read as the same invitation whether 48 components were declared or none, so a
+              reviewer coming back to Gate 1 could not see from the top of the screen that their score was there.
+              The status REPLACES the invitation rather than joining it: both would wrap the strip onto a second
+              line, and this strip is one line at the how-to's height by design. The charge is not lost — every
+              paid control inside is still priced inline, above the control — and the reviewer who declared has
+              already met it. ONE LINE, truncated: a long score name ellipsizes, and the full line is the title.
+            */
+            <span
+              data-testid="score-strip-status"
+              title={status}
+              className="min-w-0 flex-1 truncate text-xs font-semibold text-on-field"
+            >
+              {status}
+            </span>
+          ) : (
+            /*
+              THE FREE/PAID SPLIT, ON THE CLOSED STRIP. Collapsing this panel must not make the reviewer
+              meet the charge later than they did when it was expanded at the foot of the page — so the
+              summary states both halves here, where it is visible without opening anything. The priced
+              copy inside is unchanged and still sits immediately above the control it prices.
+            */
+            <span className="min-w-0 text-xs text-on-field-muted">
+              {STRIP_SUMMARY}
+            </span>
+          )}
         </span>
         <ChevronDown
           aria-hidden="true"
@@ -550,6 +588,23 @@ export function DeclaredScorePanel({
             </button>
           )}
 
+          {/*
+            THE RECORD OF A PASTED SOURCE (final review round 2). Bhargav: *"if score builder source is pasted text,
+            we should show a record of whatever was entered, same way we would for a doc. make it collapsible if
+            it's long"*. A read document's text is shown read-only above; a declaration typed or pasted into the
+            components box left nothing but the split-up names — and a matched one read only "Source: pasted text".
+            Shown whether or not a match exists, and on a passed gate: it is a record, so nothing in it writes.
+          */}
+          {pasted.map((record) => (
+            <PastedSourceRecord
+              // Keyed on the TEXT too: a re-declaration with a new paste is a new record, and must start open or
+              // closed by ITS length rather than inherit the old one's toggle.
+              key={`${record.scoreName}\u001f${record.text}`}
+              record={record}
+              showScore={pasted.length > 1}
+            />
+          ))}
+
           {spec ? (
             <SpecView
               spec={spec}
@@ -647,6 +702,62 @@ export function DeclaredScorePanel({
         </section>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+/**
+ * What was entered for one declared score, when it was pasted text — the pasted-source twin of the document record
+ * ("What was read"): the same read-only monospace box, attributed as pasted text and stating its size.
+ *
+ * COLLAPSIBLE ONLY WHEN LONG, and then CLOSED by default: a record past what the document box shows unscrolled
+ * (`isLongRecord`) would otherwise push the declaration's verdict and components a screen down. A short one is
+ * shown whole, with nothing to open. The toggle is a view control, so it works on a passed gate too.
+ */
+function PastedSourceRecord({ record, showScore }: { record: PastedRecord; showScore: boolean }) {
+  const long = isLongRecord(record.text);
+  const [open, setOpen] = useState(!long);
+  const textId = `score-paste-text-${record.scoreName.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+  return (
+    <div
+      data-testid="score-paste-record"
+      data-score={record.scoreName}
+      data-long={long ? "true" : "false"}
+      className="flex min-w-0 flex-col gap-1"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+          What was entered — pasted text
+        </span>
+        {showScore && <span className="text-xs font-semibold text-on-raised">{record.scoreName}</span>}
+        <span className="font-mono text-[11px] tabular-nums text-on-raised-muted">{recordSize(record.text)}</span>
+        {long && (
+          <button
+            type="button"
+            data-testid="score-paste-toggle"
+            aria-expanded={open}
+            aria-controls={open ? textId : undefined}
+            onClick={() => setOpen((o) => !o)}
+            className="flex items-center gap-1 text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
+          >
+            {open ? "Hide what was entered" : "Show what was entered"}
+            <ChevronDown
+              aria-hidden="true"
+              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
+            />
+          </button>
+        )}
+      </div>
+      {open && (
+        <pre
+          id={textId}
+          data-testid="score-paste-text"
+          aria-label={`The text entered for ${record.scoreName}`}
+          className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] text-on-raised-muted"
+        >
+          {record.text}
+        </pre>
+      )}
+    </div>
   );
 }
 
