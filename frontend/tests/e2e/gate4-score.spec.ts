@@ -11,6 +11,7 @@ import {
   specForScore,
 } from "@/lib/score-match";
 import { SCOPE_VERDICT_COPY } from "@/lib/score-scope";
+import { gate4ScoreHeader } from "@/lib/gate4-score";
 import type { CompositeSpec } from "@/types";
 import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
 import { PAUSED_JOB } from "./gate1-fixture";
@@ -202,6 +203,26 @@ test.describe("declared score algebra", () => {
     expect(SCOPE_VERDICT_COPY.indeterminate).toMatch(/cannot be determined/i);
   });
 
+  test("@gate4 review 2 — the collapsed header says there is a score and whether it is matched, priced", () => {
+    // Bhargav, final review round 2: "score builder section should be collapsible". Folded, the header still has to
+    // say a score was declared and where it stands — and, unmatched, what matching costs (the price is never hidden
+    // behind the disclosure).
+    const before = gate4ScoreHeader(DECLARED.length, null, { refused: false });
+    expect(before.state).toBe("unmatched");
+    expect(before.text).toBe(
+      `3 components · Not matched yet — matching is one model call, about ${formatUsd(estimateScoreMatchUsd(3))}`,
+    );
+    // The shared demo never spends, so the header does not price a call it will refuse.
+    expect(gate4ScoreHeader(1, null, { refused: true }).text).toBe("1 component · Not matched yet — not available on the shared demo");
+    const after = gate4ScoreHeader(DECLARED.length, spec(), { refused: false });
+    expect(after.state).toBe("partial");
+    expect(after.text).toBe("3 components · Matched: Some components are present (2/3)");
+    // An unrecognized verdict reads as indeterminate, never as the negative claim.
+    const odd = gate4ScoreHeader(3, spec({ verdict: "nonsense" as never }), { refused: false });
+    expect(odd.state).toBe("indeterminate");
+    expect(odd.text).toBe("3 components · Matched: Cannot be determined yet (2/3)");
+  });
+
   test("@gate4 Gate 1's promise points at Gate 4 instead of a verdict that never arrives", () => {
     expect(GATE1_MATCH_DEFERRED).toMatch(/Gate 4/);
     expect(GATE1_MATCH_DEFERRED).not.toMatch(/fills in once the run has got that far/i);
@@ -232,6 +253,13 @@ async function openGate4(
   await page.waitForLoadState("networkidle");
 }
 
+/** Unfold the declared-score panel (review 2: it is a disclosure, folded by default). */
+async function unfoldScore(page: Page): Promise<void> {
+  const toggle = page.getByTestId("gate4-score-toggle");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 async function routeMatch(page: Page, answer: { status: number; body: unknown }): Promise<unknown[]> {
   const sent: unknown[] = [];
   await page.route("**/api/harmonize/jobs/*/composite", async (route: Route) => {
@@ -248,6 +276,35 @@ test.describe("Gate 4 declared score", () => {
     await expect(page.getByTestId("artifact-tile")).toHaveCount(REAL_ARTIFACTS.length);
   });
 
+  test("@gate4 review 2 — the score panel is a disclosure: folded, its header still names the score and its state", async ({
+    page,
+  }) => {
+    const sent = await routeMatch(page, { status: 200, body: spec() });
+    await openGate4(page);
+    const panel = page.getByTestId("gate4-score");
+    const toggle = panel.getByTestId("gate4-score-toggle");
+    // Folded by default, like the how-to strip and Gate 1's score strip — and the header still says it all.
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toContainText(SCORE);
+    const state = panel.getByTestId("gate4-score-state");
+    await expect(state).toHaveAttribute("data-state", "unmatched");
+    await expect(state).toHaveText(gate4ScoreHeader(DECLARED.length, null, { refused: false }).text);
+    await expect(panel.getByTestId("gate4-score-component")).toHaveCount(0);
+    await expect(panel.getByTestId("gate4-score-match")).toHaveCount(0);
+    // Unfolding shows the declaration; folding again hides it. Nothing is spent by either.
+    await unfoldScore(page);
+    await expect(panel.getByTestId("gate4-score-component")).toHaveCount(DECLARED.length);
+    await panel.getByTestId("gate4-score-match").click();
+    // Matched: the header now says so, with the verdict and its coverage.
+    await expect(state).toHaveAttribute("data-state", "partial");
+    await expect(state).toHaveText(gate4ScoreHeader(DECLARED.length, spec(), { refused: false }).text);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(panel.getByTestId("gate4-score-component")).toHaveCount(0);
+    await expect(state).toContainText("Matched: Some components are present (2/3)");
+    expect(sent).toHaveLength(1);
+  });
+
   test("@gate4 the declaration is shown READ-ONLY, in declared order, with the price before the press", async ({
     page,
   }) => {
@@ -255,6 +312,7 @@ test.describe("Gate 4 declared score", () => {
     await openGate4(page);
     const panel = page.getByTestId("gate4-score");
     await expect(panel).toBeVisible();
+    await unfoldScore(page);
     await expect(panel).toContainText(SCORE);
     await expect(panel.getByTestId("gate4-score-component")).toHaveText(DECLARED.map((c) => new RegExp(c)));
     // A record, not a form: nothing here edits the declaration.
@@ -275,6 +333,7 @@ test.describe("Gate 4 declared score", () => {
     const sent = await routeMatch(page, { status: 200, body: { ...spec(), billedUsd: 0.12 } });
     await openGate4(page);
     const panel = page.getByTestId("gate4-score");
+    await unfoldScore(page);
     await panel.getByTestId("gate4-score-match").click();
     await expect(panel.getByTestId("gate4-score-verdict")).toHaveAttribute("data-verdict", "partial");
     expect(sent).toEqual([{ declaredScore: SCORE }]);
@@ -307,6 +366,7 @@ test.describe("Gate 4 declared score", () => {
     await routeMatch(page, { status: 502, body: { detail: "The provider is overloaded." } });
     await openGate4(page);
     const panel = page.getByTestId("gate4-score");
+    await unfoldScore(page);
     await panel.getByTestId("gate4-score-match").click();
     await expect(panel.getByTestId("gate4-score-error")).toContainText("overloaded");
     await expect(panel.getByTestId("gate4-score-verdict")).toHaveAttribute("data-verdict", "indeterminate");
@@ -316,6 +376,8 @@ test.describe("Gate 4 declared score", () => {
     const sent = await routeMatch(page, { status: 200, body: spec() });
     await openGate4(page, { pinned: true });
     const panel = page.getByTestId("gate4-score");
+    await expect(panel.getByTestId("gate4-score-state")).toContainText("not available on the shared demo");
+    await unfoldScore(page);
     await expect(panel.getByTestId("gate4-score-component")).toHaveCount(DECLARED.length);
     await expect(panel.getByTestId("gate4-score-match")).toHaveCount(0);
     await expect(panel.getByTestId("not-available")).toContainText(/demo/i);
