@@ -23,7 +23,7 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
@@ -33,7 +33,7 @@ import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-
 import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
-import { isReviewerGroupId } from "@/lib/ledger";
+import { conceptTitle, isReviewerGroupId } from "@/lib/ledger";
 import {
   affectedSpecCount,
   candidateAlternatives,
@@ -85,10 +85,6 @@ import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
  */
 
 type Gate2SortKey = "concept" | "verdict" | "vars";
-
-function conceptLabel(r: UIRecord): string {
-  return r.gencde?.preferredName || r.concept || r.idealCde || r.groupId;
-}
 
 /** The reviewer's in-progress edit to the anchor, tagged with the concept it belongs to (Gate 2/3 pattern:
  *  no effect, so no reset to mis-order the draft when the selection changes). */
@@ -175,9 +171,10 @@ export default function Gate2Page() {
   // Read-only inheritance from Gate 1: scope decides which groups reach this screen; regroups decide which
   // groups' anchors lag their membership. Neither is written here.
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
-  // A Gate 1 rename is the group's name from here on (08-27 option C) — it only ever showed on Gate 1.
+  // A concept is titled by its Gate 1 GROUP name — the reviewer's rename if any (08-27 option C), else the name
+  // Gate 1 showed — never by its target's name, which is shown as the target (phase-8 final review; `conceptTitle`).
   const renames = useGateDecisions(jobId, "gate1_rename", { pinned });
-  const labelOf = (r: UIRecord) => renamedLabel(conceptLabel(r), renames.decisions[r.groupId]);
+  const labelOf = (r: UIRecord) => conceptTitle(r, renames.decisions[r.groupId]);
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
 
   // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.

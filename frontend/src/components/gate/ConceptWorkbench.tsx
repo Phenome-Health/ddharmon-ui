@@ -203,6 +203,7 @@ export function ConceptDetailHeader({
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <h2
+            data-testid="concept-title"
             className="text-xl font-semibold leading-tight text-on-raised"
             title={title}
           >
