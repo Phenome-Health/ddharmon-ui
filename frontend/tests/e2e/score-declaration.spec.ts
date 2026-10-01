@@ -1,7 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import { decisionItemKey, optionSetKey, type DecisionIndex, type GateDecision } from "@/lib/gate-decisions";
 import { SANDBOX_PREFIX } from "@/lib/sandbox";
-import { stripStatus } from "@/lib/score-declaration";
+import {
+  RECORD_OPEN_CHARS,
+  RECORD_OPEN_LINES,
+  declarationSource,
+  isLongRecord,
+  pastedRecords,
+  recordSize,
+  stripStatus,
+} from "@/lib/score-declaration";
 import { STRIP_SUMMARY } from "@/lib/score-proposal";
 import { declaredComponents } from "@/lib/score-scope";
 import type { CompositeSpec } from "@/types";
@@ -12,6 +20,9 @@ import { PAUSED_JOB, serveRun } from "./gate1-fixture";
  *
  *  - H4, Bhargav: *"still there — fix now"*: the COLLAPSED score strip gave no hint that a score was already
  *    declared. Closed, it read as the same invitation whether the reviewer had declared 48 components or none.
+ *  - Bhargav: *"if score builder source is pasted text, we should show a record of whatever was entered, same way
+ *    we would for a doc. make it collapsible if it's long"*. A read document's text is shown read-only ("What was
+ *    read"); a declaration typed or pasted into the components box left no record of what was entered.
  *
  *   run: npx playwright test tests/e2e/score-declaration.spec.ts
  */
@@ -124,6 +135,73 @@ test.describe("score strip status (H4)", () => {
     expect(stripStatus(index, null)).toBe(`${SCORE} · 3 components declared · not matched yet · and 1 more score`);
     const three = indexOf(declared(SCORE, THREE), declared("SES index", ["Income"]), declared("IC score", ["Gait"]));
     expect(stripStatus(three, null)).toMatch(/· and 2 more scores$/);
+  });
+});
+
+// --- the record of a pasted source --------------------------------------------------------------------------
+
+const PASTED = "Weak grip strength\n\n  Slow walking speed\nUnintentional weight loss\n";
+
+test.describe("pasted source record", () => {
+  test("@gate1 a declaration with no document read is PASTED text, kept exactly as entered", () => {
+    expect(declarationSource(PASTED, null, 10)).toEqual({ kind: "paste", text: PASTED, at: 10 });
+  });
+
+  test("@gate1 a declaration made with a document read is that DOCUMENT's — its handle only, never its text", () => {
+    const doc = { text: "the whole paper", provenance: "searle-2008.pdf", sha256: "a".repeat(64), nChars: 15 };
+    const source = declarationSource("Help Bathing", doc, 11);
+    expect(source).toEqual({ kind: "document", provenance: "searle-2008.pdf", sha256: "a".repeat(64), at: 11 });
+    expect(JSON.stringify(source)).not.toContain("the whole paper");
+  });
+
+  test("@gate1 a pasted declaration reads back as its record; rows with no source make none", () => {
+    const pasted = declared(SCORE, THREE, { source: declarationSource(PASTED, null, 10) });
+    expect(pastedRecords(indexOf(pasted))).toEqual([{ scoreName: SCORE, text: PASTED }]);
+    // Declared before sources were recorded: nothing to show, and nothing is reconstructed.
+    expect(pastedRecords(indexOf(declared(SCORE, THREE)))).toEqual([]);
+    expect(pastedRecords(null)).toEqual([]);
+    expect(pastedRecords({})).toEqual([]);
+  });
+
+  test("@gate1 the NEWEST declaration of a score decides: a later document declaration has no pasted record", () => {
+    const first = declared(SCORE, THREE, { source: declarationSource(PASTED, null, 10) });
+    // Re-declared from a document: the rows it rewrites carry the document; a row only the paste named keeps its
+    // older paste source, and must not resurrect the record.
+    const doc = { text: "t", provenance: "searle-2008.pdf", sha256: "b".repeat(64), nChars: 1 };
+    const second = declared(SCORE, THREE.slice(0, 2), { source: declarationSource("x", doc, 20) });
+    expect(pastedRecords(indexOf(first, second))).toEqual([]);
+    // A later PASTE replaces the earlier one's text.
+    const third = declared(SCORE, THREE.slice(0, 2), { source: declarationSource("Weak grip strength\nSlow walking speed", null, 30) });
+    expect(pastedRecords(indexOf(first, second, third))).toEqual([
+      { scoreName: SCORE, text: "Weak grip strength\nSlow walking speed" },
+    ]);
+  });
+
+  test("@gate1 one record per declared score, in declared order; a malformed source is ignored", () => {
+    const a = declared(SCORE, THREE, { source: declarationSource(PASTED, null, 10) });
+    const b = declared("SES index", ["Income"], { source: declarationSource("Income", null, 12) });
+    const bad = declared("IC score", ["Gait"], { source: { kind: "paste", text: 42, at: 13 } });
+    expect(pastedRecords(indexOf(a, b, bad))).toEqual([
+      { scoreName: SCORE, text: PASTED },
+      { scoreName: "SES index", text: "Income" },
+    ]);
+  });
+
+  test("@gate1 LONG is more than the document record's box shows before it scrolls", () => {
+    const lines = (n: number) => Array.from({ length: n }, (_, i) => `Component ${i + 1}`).join("\n");
+    expect(RECORD_OPEN_LINES).toBe(18);
+    expect(isLongRecord(lines(RECORD_OPEN_LINES))).toBe(false);
+    expect(isLongRecord(`${lines(RECORD_OPEN_LINES)}\n\n`)).toBe(false); // trailing newlines are not lines
+    expect(isLongRecord(lines(RECORD_OPEN_LINES + 1))).toBe(true);
+    // A paragraph wraps: few lines, but long.
+    expect(isLongRecord("x".repeat(RECORD_OPEN_CHARS))).toBe(false);
+    expect(isLongRecord("x".repeat(RECORD_OPEN_CHARS + 1))).toBe(true);
+  });
+
+  test("@gate1 the record states its size", () => {
+    expect(recordSize("Weak grip strength\nSlow walking speed\n")).toBe("2 lines · 37 characters");
+    expect(recordSize("Income")).toBe("1 line · 6 characters");
+    expect(recordSize("x".repeat(1234))).toBe("1 line · 1,234 characters");
   });
 });
 
