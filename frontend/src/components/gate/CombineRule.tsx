@@ -37,9 +37,12 @@ export function CombineRuleControl({
       data-decided-by={choice.decidedBy}
       className="flex flex-col gap-2 rounded-inner border border-rule-on-raised px-4 py-3"
     >
+      {/* Review round 2: "land on one column" read as jargon. The plain version says what happened (several of
+          one cohort's variables map to the same target), then why it needs a choice (the harmonized data has ONE
+          column for that target per cohort, so their values must become one). */}
       <p className="max-w-[80ch] text-xs text-on-raised">
         <span className="font-semibold">
-          {group.members.length} {group.cohort} variables land on one column
+          {group.members.length} {group.cohort} variables map to the same target,
         </span>{" "}
         <span className="font-mono">{column}</span>:{" "}
         {group.members.map((m, i) => (
@@ -48,7 +51,8 @@ export function CombineRuleControl({
             <span className="font-mono">{varName(m)}</span>
           </span>
         ))}
-        . Choose how the export fills that column for {group.cohort}.
+        . The harmonized data has one <span className="font-mono">{column}</span> column for {group.cohort}, so
+        choose how their values are combined into it.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <select

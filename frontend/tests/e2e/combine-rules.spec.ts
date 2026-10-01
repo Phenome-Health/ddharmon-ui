@@ -102,6 +102,23 @@ test.describe("gate3 combine rule on screen (08-28 1d)", () => {
     await expect(control).toContainText("attemptquitsmoking_completelyquitage");
   });
 
+  /**
+   * Review round 2 (Gate 3 note 3): "'X cohort variables land on one column' — this copy is confusing". What it
+   * means is that several of ONE cohort's variables map to the SAME target, and the harmonized data has ONE
+   * column for that target per cohort — so their values have to be combined. Said plainly, in that order.
+   */
+  test("@gate3 the combine prompt says plainly why a choice is needed", async ({ page }) => {
+    await open(page, PAIR);
+    const control = page.getByTestId("combine-rule");
+    await expect(control).toContainText(
+      "2 AoU variables map to the same target, Age when stopped smoking cigarettes completely:",
+    );
+    await expect(control).toContainText(
+      "The harmonized data has one Age when stopped smoking cigarettes completely column for AoU, so choose how their values are combined into it.",
+    );
+    await expect(control).not.toContainText("land on one column");
+  });
+
   test("@gate3 choosing a rule records a gate3_combine_rule decision that survives a reload", async ({ page }) => {
     await open(page, PAIR);
     const control = page.getByTestId("combine-rule");
