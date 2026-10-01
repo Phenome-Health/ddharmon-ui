@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Star, ExternalLink, Check, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { candidateLabel } from "@/lib/cde-identity";
+import { cdeDetailUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import type { UICandidate } from "@/types";
 
@@ -22,8 +23,6 @@ import type { UICandidate } from "@/types";
  * Catalog metadata is optional on the wire (older runs / the current core contract omit it). Absent → the
  * row shows what it can and points at the repo; the candidate-enrichment join fills it for real runs.
  */
-
-const NIH_CDE_URL = "https://cde.nlm.nih.gov/deView?tinyId=";
 
 // THE `accent` UTILITY IS NOT THE ACCENT (08-26, live-test-2 #2). `bg-accent` / `fill-accent` / `text-accent`
 // are shadcn's HOVER-wash slot (`--color-accent: var(--surface-inset)`, the pale inset), so the model's-pick
@@ -295,9 +294,9 @@ export function CandidateTable({
                       ))}
                     {c.cdeExternalId && (
                       <a
-                        href={`${NIH_CDE_URL}${encodeURIComponent(c.cdeExternalId)}`}
+                        href={cdeDetailUrl(c.cdeExternalId)}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 text-sm text-link-on-raised hover:underline"
                       >
                         Full record on the repo <ExternalLink className="h-3.5 w-3.5" />

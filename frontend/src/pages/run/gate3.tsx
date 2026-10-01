@@ -20,6 +20,7 @@ import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RecodeDetail, transformSummary } from "@/components/gate/RecodeDetail";
 import { SpecMappingEditor } from "@/components/gate/SpecMappingEditor";
 import { CombineRuleControl } from "@/components/gate/CombineRule";
+import { CatalogLink } from "@/components/gate/CatalogLink";
 import { SpecNumberMap } from "@/components/gate/SpecNumberMap";
 import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
@@ -452,6 +453,15 @@ export default function Gate3Page() {
               const targetDef = targetIsOwn
                 ? (gencdeEdit?.definition ?? record.gencde?.definition ?? "")
                 : (chosenCandidate?.definition ?? "");
+              // The catalog element's tinyId, for its repository link (review round 2): the pick's own when it
+              // recorded one (a repeated name is told apart by it, 08-28 F13), else the candidate's, else the
+              // record's CDE. A generated target has none — `CatalogLink` never links it.
+              const targetExternalId = targetIsOwn
+                ? ""
+                : (typeof pick?.externalId === "string" ? pick.externalId.trim() : "") ||
+                  chosenCandidate?.cdeExternalId ||
+                  (record.cde?.id === chosenTargetId ? record.cde.externalId : "") ||
+                  "";
               // The target's value domain (08-16g) — carried into Gate 3 so recodes can be built and judged
               // against it. Adopt -> the chosen catalog candidate's enriched metadata; own/novel -> the GenCDE.
               // A TABLE of code + label (08-28 1c): a GenCDE's codes differ from its labels, and the recodes
@@ -582,9 +592,14 @@ export default function Gate3Page() {
                           <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
                             {targetIsOwn ? "Synthesized CDE" : "Selected CDE"}
                           </span>
-                          <span className="text-sm font-semibold text-on-raised">
-                            {targetName}
-                          </span>
+                          {/* An adopt's / a refine's catalog CDE links to its repository page; a
+                              generated target stays plain text (review round 2). */}
+                          <CatalogLink
+                            name={targetName}
+                            externalId={targetExternalId}
+                            generated={targetIsOwn}
+                            className="text-sm font-semibold text-on-raised"
+                          />
                           <VerdictPill verdict={record.verdict} />
                         </div>
                         {targetDef && (
