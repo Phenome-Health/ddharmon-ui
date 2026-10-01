@@ -126,4 +126,19 @@ test.describe("Gate 2 titles", () => {
     await expect(row).not.toContainText("transportation_via_company_involvement_ind");
     await expect(page.getByTestId("concept-title")).toHaveText(conceptOf(NOVEL));
   });
+
+  test("@names @gate3 Gate 3 lists the same Gate 1 group name", async ({ page }) => {
+    await serveFinished(
+      page,
+      (run) => {
+        run.result!.records = run.result!.records!.filter((r) => r.groupId === NOVEL);
+      },
+      { keep: 0 },
+    );
+    await page.goto(`/run/${FINISHED_JOB}/gate3`);
+    await page.waitForLoadState("networkidle");
+    const row = page.locator(`[data-testid='gate3-concept'][data-concept-id='${NOVEL}']`);
+    await expect(row).toContainText(conceptOf(NOVEL));
+    await expect(row).not.toContainText("transportation_via_company_involvement_ind");
+  });
 });

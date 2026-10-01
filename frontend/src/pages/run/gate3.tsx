@@ -24,11 +24,12 @@ import { SpecNumberMap } from "@/components/gate/SpecNumberMap";
 import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
+import { conceptTitle } from "@/lib/ledger";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
@@ -94,9 +95,6 @@ const REJECT_CONFIRMATION =
   "Reject this recode? It will be excluded from the notebook and the mapping table, and recorded as " +
   "rejected in the decision log.";
 
-function conceptLabel(r: UIRecord): string {
-  return r.gencde?.preferredName || r.concept || r.idealCde || r.groupId;
-}
 
 export default function Gate3Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
@@ -171,9 +169,10 @@ export default function Gate3Page() {
   });
   // Read-only inheritance from Gate 1: only in-scope groups reach this screen.
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
-  // A Gate 1 rename is the group's name from here on (08-27 option C) — it only ever showed on Gate 1.
+  // A concept is titled by its Gate 1 GROUP name — the reviewer's rename if any (08-27 option C), else the name
+  // Gate 1 showed — never by its target's name, the same rule as Gate 2 (phase-8 final review; `conceptTitle`).
   const renames = useGateDecisions(jobId, "gate1_rename", { pinned });
-  const labelOf = (r: UIRecord) => renamedLabel(conceptLabel(r), renames.decisions[r.groupId]);
+  const labelOf = (r: UIRecord) => conceptTitle(r, renames.decisions[r.groupId]);
   // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.
   const inScope = inheritedGate1Scope(runConfig, scope.decisions);
 
@@ -679,9 +678,11 @@ export default function Gate3Page() {
                           key={key}
                           group={g}
                           choice={combineChoice(combines.decisions[key], g.members)}
+                          // The COLUMN is the target, so it is named as the target — the generated element's own
+                          // name — not by the concept's (group) title.
                           targetLabel={
                             record.gencde && g.targetId === record.gencde.gencdeId
-                              ? labelOf(record)
+                              ? record.gencde.preferredName || labelOf(record)
                               : undefined
                           }
                           readOnly={frozen}
