@@ -15,6 +15,7 @@ import type {
   ModelInfo,
   RunConfig,
   ScoreDefinition,
+  ScoreSuggestions,
   UIRecord,
 } from "@/types";
 import type { ComponentProposal, ReadDocument } from "@/lib/score-proposal";
@@ -402,6 +403,20 @@ export async function matchDeclaredScore(jobId: string, scoreName: string, apiKe
       body: JSON.stringify({ declaredScore: scoreName }),
     }),
   );
+}
+
+/**
+ * Gate 1's SUGGESTIONS for the declared score(s) — the FREE half of the match (08-28 Decision 6): retrieval only,
+ * no model call, nothing billed. A GET with no key: there is nothing to pay for.
+ *
+ * The server reads the declaration and the reviewer's regrouping itself (its `composite_swap`, `gate1_regroup` and
+ * `gate1_new_group` rows), so what it searches is what Gate 1 shows. TRIED EVEN IN A STATIC BUILD, like the score
+ * panel's other calls (`scoreJson`): with no backend it answers STATIC_MSG, and the request is the seam the e2e
+ * gate fulfils.
+ */
+export async function getScoreSuggestions(jobId: string): Promise<ScoreSuggestions> {
+  const headers = await authed();
+  return scoreJson(() => fetch(`${BASE}/jobs/${jobId}/score/suggestions`, { headers }));
 }
 
 /**
