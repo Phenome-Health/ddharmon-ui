@@ -2605,7 +2605,22 @@ export default function Gate1Page() {
   // (those are the ones a reviewer building a score cares about). No composite -> nothing is pre-selected,
   // and Continue stays disabled until the reviewer scopes something (the empty-in-scope guard already does
   // this). The checkbox now ADMITS a group rather than removing one.
+  /**
+   * A PASSED Gate 1 shows the scope its Continue SENT (`config.gate1_scope`), never a re-derivation of it.
+   *
+   * Found answering "is the auto-select threshold functional?" (final review round 1, item 3): the score-seeded
+   * default below reads the LATEST derived score, and since 08-28 1f a score is matched at Gate 4 — AFTER Gate 1 was
+   * continued. Re-deriving on a passed Gate 1 therefore printed groups the later score reached as "in scope" at
+   * Gate 1, which Gate 1 never sent and Gate 2 never received. The frozen list is exactly what the reviewer saw at
+   * Continue, score-seeded defaults included. A run that passed Gate 1 before 08-27 carries no list and keeps the
+   * old derivation.
+   */
+  const frozenScope = useMemo(() => {
+    const sent = frozen ? runConfig?.gate1_scope : undefined;
+    return Array.isArray(sent) ? new Set(sent.filter((g): g is string => typeof g === "string")) : null;
+  }, [frozen, runConfig]);
   const isInScope = (groupId: string) => {
+    if (frozenScope) return frozenScope.has(groupId);
     const chosen = scope.decisions[groupId]?.chosen;
     if (chosen === IN_SCOPE) return true;
     if (chosen === OUT_OF_SCOPE) return false;
