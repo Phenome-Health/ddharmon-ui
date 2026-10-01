@@ -219,12 +219,14 @@ export default function GuidePage() {
             <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">CDE catalog</div>
             <ul className="space-y-1">
               <li>
-                <span className="font-semibold text-on-raised">NIH-endorsed</span> — a focused, curated set. Fewer,
-                higher-signal candidates.
+                <span className="font-semibold text-on-raised">Full repo</span> (the default) — the complete catalog
+                (~22.7k). Broader coverage, including common measures such as body weight, PHQ and PROMIS; more
+                candidates to weigh.
               </li>
               <li>
-                <span className="font-semibold text-on-raised">Full repo</span> — the complete catalog (~22.7k). Broader
-                coverage, more candidates to weigh.
+                <span className="font-semibold text-on-raised">NIH-endorsed</span> — a focused, curated set. Fewer,
+                higher-signal candidates, but without those common measures, which then come out as generated
+                elements.
               </li>
             </ul>
           </div>

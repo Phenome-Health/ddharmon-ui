@@ -29,6 +29,7 @@ import {
   estimateRunTime,
   formatUsd,
   formatDurationRange,
+  DEFAULT_CDE_SET,
   type CdeSet,
   type ColumnRole,
   type CostBreakdown,
@@ -76,7 +77,7 @@ export default function HomePage() {
   const qc = useQueryClient();
   const { isGuest } = useAuthState();
   const [dicts, setDicts] = useState<DictFile[]>([]);
-  const [cdeSet, setCdeSet] = useState<CdeSet>("endorsed");
+  const [cdeSet, setCdeSet] = useState<CdeSet>(DEFAULT_CDE_SET);
   const [runMode, setRunMode] = useState<RunMode>("batch");
   const [provider, setProvider] = useState("anthropic");
   const [model, setModel] = useState("");
@@ -685,7 +686,7 @@ function RoleField({
 // Help text for the run-option controls (mirrors the Guide's "Choosing run options" section).
 const OPTION_HELP: Record<string, string> = {
   cdeSet:
-    "Which Common Data Element catalog your variables are matched against. NIH-endorsed is a small, curated, high-signal set (~174); Full repo is the complete catalog (~22.7k) — broader coverage, but more candidates to weigh per concept.",
+    "Which Common Data Element catalog your variables are matched against. Full repo (the default) is the complete catalog (~22.7k) — broader coverage, including common measures such as body weight, PHQ and PROMIS, with more candidates to weigh per concept. NIH-endorsed is a small, curated set (~174) that lacks those, so they would come out as generated elements.",
   runMode:
     "How the run executes. Batch: the LLM stages run asynchronously via the Anthropic Batch API — ~50% cheaper, but results can take a while (worst case, hours). Synchronous: the same pipeline with immediate LLM calls — finishes in minutes with predictable wall-clock, at roughly 2× the batch cost. Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits. Batch and Synchronous both need your API key below.",
   provider:

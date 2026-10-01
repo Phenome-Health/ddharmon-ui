@@ -40,8 +40,10 @@ serve.sh     prod-ish: build the SPA once, then serve SPA + API from one uvicorn
   Because `ddharmon` is a **private** repo, `pip install` needs git auth (SSH deploy key or a
   token) on whatever machine installs it.
 - **Node 20+** and npm.
-- **CDE catalog** flat TSVs only if you'll run `cdeSet` = `endorsed`/`full` — not shipped in this
-  repo; put them under `data/cde/` (or point `DDHARMON_CDE_DIR` at them). `cdeSet = none` needs nothing.
+- **CDE catalog** flat TSVs — every run needs one, and they are not shipped in this repo; put them under
+  `data/cde/` (or point `DDHARMON_CDE_DIR` at them). New runs default to `cdeSet` = `full`
+  (`all_cdes_flat.tsv`); `endorsed` (`nih_endorsed_flat.tsv`) is the opt-in alternative. A server
+  missing the requested file refuses the run by name — it never falls back to the other catalog.
 - **`ANTHROPIC_API_KEY`** only for `classifyMode` = `sync`/`batch` (the default `none` runs the full
   clustering + anchoring with no LLM and no key).
 

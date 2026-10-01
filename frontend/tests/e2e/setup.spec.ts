@@ -2946,3 +2946,80 @@ test.describe("Setup — the roles the run is sent are the roles on screen (08-2
     });
   });
 });
+
+/**
+ * A NEW RUN MATCHES AGAINST THE FULL CDE CATALOGUE (08-28 Decision 7).
+ *
+ * The NIH-endorsed catalogue (177 elements) has no body weight, no PHQ and no PROMIS, so common measures came
+ * out "novel" — no element fits, so one is generated — even though the full repository (22,743 elements) has
+ * a good one for each; and every benchmark and the validation run used the full catalogue. So both screens
+ * that start a run open on Full, and NIH-endorsed stays one choice away. What is asserted is what the run is
+ * SENT, not only what the control shows: a select reading "Full" over a payload saying "endorsed" would be
+ * the worst version of this change.
+ */
+test.describe("Setup — a new run matches against the full CDE catalogue (08-28 Decision 7)", () => {
+  /** Capture every Start POST's `cdeSet`, and refuse the start so nothing navigates or is remembered. */
+  async function captureCdeSets(page: Page): Promise<(string | undefined)[]> {
+    const sent: (string | undefined)[] = [];
+    await page.route("**/api/harmonize/batch", async (route) => {
+      const body = route.request().postDataBuffer()?.toString("utf8") ?? "";
+      const m = /name="config"\r\n\r\n([\s\S]*?)\r\n--/.exec(body);
+      expect(m, "the Start POST carries a `config` form field").not.toBeNull();
+      sent.push((JSON.parse(m![1]) as { cdeSet?: string }).cdeSet);
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "captured by the e2e gate — no run was started" }),
+      });
+    });
+    return sent;
+  }
+
+  test("@setup Setup opens on the full catalogue, with NIH-endorsed still selectable", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    const sel = page.getByTestId("cde-set");
+    await expect(sel).toHaveValue("full");
+    await expect(sel.locator("option:checked")).toContainText("Full NIH CDE Repository");
+    await expect(sel.locator('option[value="endorsed"]')).toBeEnabled();
+    await sel.selectOption("endorsed");
+    await expect(sel).toHaveValue("endorsed");
+  });
+
+  test("@setup Start sends the full catalogue by default, and NIH-endorsed when it is chosen", async ({ page }) => {
+    const sent = await captureCdeSets(page);
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => localStorage.clear());
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "catalogue.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(dictionaryCsv(12)),
+    });
+    await expect(page.getByTestId("dict-card")).toHaveCount(1);
+    // Preview buys nothing and needs no key; the catalogue is sent the same way in every mode.
+    await page.getByTestId("run-mode").selectOption("preview");
+    await expect(page.getByTestId("start-blocked")).toHaveCount(0);
+
+    await page.getByTestId("start-run").click();
+    await expect.poll(() => sent.length).toBe(1);
+    expect(sent[0]).toBe("full");
+
+    await page.getByTestId("cde-set").selectOption("endorsed");
+    await page.getByTestId("start-run").click();
+    await expect.poll(() => sent.length).toBe(2);
+    expect(sent[1]).toBe("endorsed");
+  });
+
+  test("@setup the older New Run page opens on the full catalogue too", async ({ page }) => {
+    await page.goto("/new");
+    await page.waitForLoadState("networkidle");
+    const catalogue = page.getByRole("combobox").filter({ hasText: /Full repo|NIH-endorsed/ });
+    await expect(catalogue).toHaveCount(1);
+    await expect(catalogue).toContainText("Full repo");
+    // ...and NIH-endorsed is one choice away.
+    await catalogue.click();
+    await page.getByRole("option", { name: /NIH-endorsed/ }).click();
+    await expect(catalogue).toContainText("NIH-endorsed");
+  });
+});
