@@ -597,7 +597,9 @@ export function DeclaredScorePanel({
           */}
           {pasted.map((record) => (
             <PastedSourceRecord
-              key={record.scoreName}
+              // Keyed on the TEXT too: a re-declaration with a new paste is a new record, and must start open or
+              // closed by ITS length rather than inherit the old one's toggle.
+              key={`${record.scoreName}\u001f${record.text}`}
               record={record}
               showScore={pasted.length > 1}
             />

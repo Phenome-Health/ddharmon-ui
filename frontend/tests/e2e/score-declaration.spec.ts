@@ -352,6 +352,21 @@ test.describe("pasted source record on the static build", () => {
     await expect(page.locator(TEXT)).toHaveCount(0);
   });
 
+  test("@gate1 re-declaring with a long paste after a short one starts collapsed, by the NEW text's length", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    await declareThroughPanel(page, SCORE, "Weak grip strength");
+    await expect(page.locator(RECORD)).toHaveAttribute("data-long", "false");
+    await expect(page.locator(TEXT)).toBeVisible();
+    // The same score, declared again from a longer paste: the record is the new text, and it is long.
+    await page.locator("[data-testid='score-components']").fill(lines(30));
+    await page.getByRole("button", { name: "Declare these components" }).click();
+    await expect(page.locator(RECORD)).toHaveCount(1);
+    await expect(page.locator(RECORD)).toHaveAttribute("data-long", "true");
+    await expect(page.locator(TEXT)).toHaveCount(0);
+  });
+
   test("@gate1 the collapse threshold is the document box's: 15 lines fit it unscrolled, 16 would not", async ({
     page,
   }) => {
