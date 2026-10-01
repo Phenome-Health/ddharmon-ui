@@ -20,11 +20,17 @@ WHY A FILE OF ITS OWN, not a key on the records JSON: a score is RUN-level (one 
 many concepts), while ``records_json`` is a bare array of per-concept records that consumers index into.
 Putting the score there would either change that file's top-level shape or copy the score onto every record;
 a separate file changes nothing that already ships.
+
+AND ITS FREE HALF ON GATE 1 (08-28 Decision 6, option A). Because the match moved to Gate 4, Gate 1 had nothing to
+seed its score-scoped default from. :func:`gate1_suggestions` runs ONLY core's retrieval half (``suggest_groups``:
+no judge, $0) for each declaration, against the groups as the reviewer currently has them, and returns each reached
+group with the dense cosine of its best member and core's calibrated cut-off. These are SUGGESTIONS for scoping;
+the verdict is still Gate 4's.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from backend.artifact_kinds import COMPOSITE, COMPOSITE_SWAP
@@ -114,6 +120,48 @@ def scoped_field_index(
     return {k: v for k, v in field_index.items() if k in members}
 
 
+def gate1_suggestions(
+    declared: Iterable[Mapping[str, Any]],
+    field_index: Mapping[str, Any] | None,
+    membership: Mapping[str, Sequence[str]],
+    *,
+    embed: Any | None,
+) -> dict[str, Any]:
+    """Gate 1's score suggestions: for each declaration, the groups each component's FREE search reached.
+
+    ``membership`` is Gate 1's effective grouping (``{groupId: [variable ids]}``, moves and New groups applied);
+    ``embed`` is the run's cache-backed embedder, or ``None`` when no dense encoder is available — core then
+    returns no suggestions and says why, because a lexical score is not comparable across components and is never
+    thresholded. Pure: no store, no request, no model call. ``billedUsd`` is always 0 — nothing here is paid for.
+
+    ``{"scored", "scoreKind", "threshold", "reason", "billedUsd", "scores": [{"scoreName", "components":
+    [{"component", "groups": [{"groupId", "score", "bestMember", "bestOption"?}]}], "nVariablesIndexed"}]}``
+    """
+    from ddharmon.harmonization.composite import GATE1_SUGGEST_MIN_COSINE, suggest_groups, suggestions_to_dict
+
+    payload: dict[str, Any] = {
+        "scored": embed is not None,
+        "scoreKind": "dense_cosine",
+        "threshold": GATE1_SUGGEST_MIN_COSINE,
+        "reason": "",
+        "billedUsd": 0.0,
+        "scores": [],
+    }
+    for declaration in declared:
+        definition = definition_for(declaration)
+        result = suggestions_to_dict(suggest_groups(definition.components, field_index or {}, membership, embed=embed))
+        payload.update(scored=result["scored"], scoreKind=result["scoreKind"], threshold=result["threshold"])
+        payload["reason"] = payload["reason"] or result["reason"]
+        payload["scores"].append(
+            {
+                "scoreName": definition.name,
+                "components": result["components"],
+                "nVariablesIndexed": result["nVariablesIndexed"],
+            }
+        )
+    return payload
+
+
 def _spec_for(composites: Iterable[Mapping[str, Any]], score_name: str) -> dict[str, Any] | None:
     """The newest derived spec named ``score_name`` (case-insensitive — the ``composite`` kind's identity)."""
     wanted = score_name.strip().lower()
@@ -164,6 +212,7 @@ __all__ = [
     "declared_scores",
     "definition_for",
     "find_declared",
+    "gate1_suggestions",
     "score_export",
     "scoped_field_index",
 ]

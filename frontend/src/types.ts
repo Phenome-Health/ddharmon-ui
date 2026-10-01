@@ -815,6 +815,30 @@ export interface CompositeSpec {
   billedUsd?: number;
 }
 
+/**
+ * Gate 1's score SUGGESTIONS (08-28 Decision 6) — `GET /jobs/{id}/score/suggestions`, the free half of the match.
+ *
+ * Retrieval only, no judge, $0: per declared component, the Gate 1 groups its search reached, each scored by the
+ * DENSE COSINE of its best-matching member (`scoreKind`), with core's calibrated cut-off (`threshold`). NOT a
+ * verdict and not the judge's confidence — the verdict is the Gate 4 match. `scored: false` (no dense encoder)
+ * means nothing is suggested, and `reason` says why.
+ */
+export interface ScoreSuggestions {
+  scored: boolean;
+  scoreKind: "dense_cosine";
+  threshold: number;
+  reason: string;
+  billedUsd: number;
+  scores: {
+    scoreName: string;
+    nVariablesIndexed: number;
+    components: {
+      component: string;
+      groups: { groupId: string; score: number; bestMember: string; bestOption?: string }[];
+    }[];
+  }[];
+}
+
 export interface DictSpec {
   filename: string;
   cohortName: string;

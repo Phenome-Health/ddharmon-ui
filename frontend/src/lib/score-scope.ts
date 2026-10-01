@@ -36,6 +36,8 @@
  * forbids: a negative claim where only positive-or-indeterminate is determinable.
  */
 
+import type { ScoreSuggestions } from "@/types";
+
 /** How Setup names the four feasibility states. Mirrors `backend/composite.py::presentation_verdict`. */
 export type ScopeVerdict = "full" | "partial" | "infeasible" | "indeterminate";
 
@@ -245,6 +247,82 @@ export function scoreSeededGroups(
   for (const m of matches) {
     for (const g of offeredGroups(m)) {
       if (g.confidence < threshold) continue;
+      const arr = out.get(g.groupId) ?? [];
+      if (!arr.includes(m.component)) arr.push(m.component);
+      out.set(g.groupId, arr);
+    }
+  }
+  return out;
+}
+
+// --- Gate 1's free SUGGESTIONS: the same rule, fed by the retrieval half (08-28 Decision 6) ---------------------
+
+/** A component's score evidence in the one shape the scope rule reads — a Gate 4 match, or a suggestion. */
+export type ScoreScopeMatch = Parameters<typeof offeredGroups>[0] & { component: string };
+
+/**
+ * What a suggestion tag says (its title, and the panel's note). Two claims, both load-bearing: it came from a FREE
+ * search (retrieval only, no model call, nothing billed), and it is NOT the verdict — the verdict is the paid match
+ * on Gate 4, which is the only thing that ever says a group measures a component.
+ */
+export const SUGGESTION_TAG_COPY = "Suggested by your score — a free search; the verdict is on Gate 4";
+
+/**
+ * Gate 1's suggestions as score evidence: one entry per declared component, OFFERING only the groups whose
+ * best-member cosine clears the payload's OWN cut-off (`threshold`, core's calibrated value — never a copy kept
+ * here, and never the judge's 0.80, which is a different scale).
+ *
+ * Filtered HERE, so "offered" means "suggested" for a suggestion: the tag map (every offered group) and the seed
+ * (`scoreSeededGroups` at the same cut-off) then name exactly the same groups, and a group below the cut-off is
+ * neither tagged nor seeded. `scored: false` (no dense encoder) offers nothing — a lexical score is not comparable
+ * across components and is never thresholded in its place.
+ */
+export function suggestionMatches(s: ScoreSuggestions | null | undefined): ScoreScopeMatch[] {
+  if (!s?.scored) return [];
+  const out: ScoreScopeMatch[] = [];
+  for (const score of s.scores ?? []) {
+    for (const c of score.components ?? []) {
+      const groups = (c.groups ?? []).filter((g) => g.score >= s.threshold);
+      if (groups.length === 0) continue;
+      out.push({
+        component: c.component,
+        conceptId: null,
+        confidence: groups[0]!.score,
+        groupCandidates: groups.map((g) => ({ groupId: g.groupId, confidence: g.score })),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * THE ONE INPUT to Gate 1's score-seeded scope and tags: the Gate 4 match when the run has one (the latest derived
+ * spec — a verdict), else Gate 1's free suggestions, else nothing. Never a blend: once a match exists it is the
+ * evidence, and a free search is not consulted beside it.
+ *
+ * `threshold` travels with `matches` because the two sources are on different scales — the judge's group
+ * confidence (`GROUP_SELECT_THRESHOLD`) and the free search's cosine (the payload's own cut-off) — and both go
+ * through the SAME `scoreSeededGroups` rule.
+ */
+export function scoreScopeInput(
+  spec: { matches: readonly ScoreScopeMatch[] } | null | undefined,
+  suggestions: ScoreSuggestions | null | undefined,
+): { source: "match" | "suggestion" | "none"; matches: readonly ScoreScopeMatch[]; threshold: number } {
+  if (spec) return { source: "match", matches: spec.matches ?? [], threshold: GROUP_SELECT_THRESHOLD };
+  const matches = suggestionMatches(suggestions);
+  if (matches.length > 0) return { source: "suggestion", matches, threshold: suggestions!.threshold };
+  return { source: "none", matches: [], threshold: GROUP_SELECT_THRESHOLD };
+}
+
+/**
+ * groupId → the component(s) whose evidence OFFERS it — the queue's tag (and pin-to-top) map. Every offered group is
+ * tagged; only the auto-selected subset (`scoreSeededGroups`) starts in scope. For a suggestion the two coincide
+ * (see `suggestionMatches`).
+ */
+export function scoreTaggedGroups(matches: readonly ScoreScopeMatch[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const m of matches) {
+    for (const g of offeredGroups(m)) {
       const arr = out.get(g.groupId) ?? [];
       if (!arr.includes(m.component)) arr.push(m.component);
       out.set(g.groupId, arr);

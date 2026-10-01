@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
-import { useGateDecisions } from "@/hooks/use-gate-decisions";
+import { useGateDecisions, type UseGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
 import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
@@ -37,6 +37,7 @@ import {
   PARTIAL_IS_NOT_THE_SCORE,
   PRESENCE_IS_PER_DICTIONARY,
   SCOPE_VERDICT_COPY,
+  SUGGESTION_TAG_COPY,
   componentVerdictFor,
   declaredComponents,
   missingReason,
@@ -153,6 +154,17 @@ export interface DeclaredScorePanelProps {
   /** True on the shared demo, which writes to the browser rather than the store. */
   pinned?: boolean;
   /**
+   * The screen's own `composite_swap` decisions hook, when it reads the declaration too (Gate 1 does, to ask for
+   * suggestions). ONE instance, shared: a second would hydrate once and never see this panel's later writes.
+   * Absent → the panel keeps its own.
+   */
+  swaps?: UseGateDecisions;
+  /**
+   * Gate 1's free score SUGGESTIONS (08-28 Decision 6), when they are what seeds the scope: how many groups they put
+   * in scope, for how many components — or, when none could be made, why (`unavailable`). `null` hides the note.
+   */
+  suggestionNote?: { nGroups: number; nComponents: number; unavailable: string } | null;
+  /**
    * A composite spec already derived for this run, when one exists. This is the ONLY source of match
    * evidence — the panel never infers a match, because inferring one is what `match_components` is paid
    * to do properly.
@@ -197,6 +209,8 @@ export interface DeclaredScorePanelProps {
 export function DeclaredScorePanel({
   jobId,
   pinned,
+  swaps: sharedSwaps,
+  suggestionNote = null,
   spec,
   matchRefusal,
   onMatch,
@@ -210,7 +224,8 @@ export function DeclaredScorePanel({
   frozen = false,
   className,
 }: DeclaredScorePanelProps) {
-  const swaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen });
+  const ownSwaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen, enabled: !sharedSwaps });
+  const swaps = sharedSwaps ?? ownSwaps;
   /** Closed by default (08-16c item E) — the charge it carries is stated on the trigger, not behind it. */
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -658,6 +673,34 @@ export function DeclaredScorePanel({
                   />
                 ))}
               </ul>
+
+              {/*
+                GATE 1'S FREE SUGGESTIONS (08-28 Decision 6). Said here, beside the declaration they come from: what
+                put groups in scope, that it cost nothing, and that it is NOT the verdict. Never phrased as a match —
+                a suggestion is a search result, and only Gate 4's match says a group measures a component.
+              */}
+              {suggestionNote && (
+                <p
+                  data-testid="score-suggestions-note"
+                  className="max-w-[80ch] rounded-inner border border-dashed border-rule-on-raised px-4 py-3 text-xs text-on-raised"
+                >
+                  {suggestionNote.unavailable ? (
+                    suggestionNote.unavailable
+                  ) : suggestionNote.nGroups > 0 ? (
+                    <>
+                      {SUGGESTION_TAG_COPY}. It reached {suggestionNote.nGroups} group
+                      {suggestionNote.nGroups === 1 ? "" : "s"} for {suggestionNote.nComponents} of these components;
+                      they start in scope and are tagged “Suggested” in the list. Uncheck any you do not want — your
+                      choice always wins.
+                    </>
+                  ) : (
+                    <>
+                      {SUGGESTION_TAG_COPY}. It reached no group closely enough to suggest one, so nothing was put in
+                      scope for you — choose the groups yourself.
+                    </>
+                  )}
+                </p>
+              )}
             </>
           ) : null}
 

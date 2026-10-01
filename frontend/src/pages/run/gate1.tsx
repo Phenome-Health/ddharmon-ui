@@ -46,9 +46,9 @@ import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { gate1BillableGroups, gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
-import { useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
+import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
@@ -89,8 +89,8 @@ import {
   resumeTookEffect,
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
-import { offeredGroups, scoreSeededGroups } from "@/lib/score-scope";
-import { GATE1_MATCH_DEFERRED } from "@/lib/score-match";
+import { SUGGESTION_TAG_COPY, scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
+import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
 import { cn } from "@/lib/utils";
 import type {
   CoherenceState,
@@ -1825,6 +1825,7 @@ function SumBlock({
 function QueueRow({
   group,
   scoreTag,
+  scoreTagSource = "match",
   price,
   count,
   inScope,
@@ -1841,6 +1842,9 @@ function QueueRow({
   /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
    *  as a tag and the reason this row is pinned to the top of the queue. */
   scoreTag?: string[];
+  /** Where `scoreTag` came from: the Gate 4 MATCH (a verdict), or Gate 1's free SUGGESTION (08-28 Decision 6) —
+   *  drawn differently, and saying so, because a suggestion is not a finding that the group measures it. */
+  scoreTagSource?: "match" | "suggestion";
   /** A New group the reviewer made (08-28 Wave 2): marked as theirs, never with a coherence cell. */
   reviewer?: boolean;
   price: number;
@@ -1928,17 +1932,33 @@ function QueueRow({
       <div className="min-w-0">
         {scoreTag && scoreTag.length > 0 && (
           <div className="mb-1 flex flex-wrap gap-1">
-            {scoreTag.map((name) => (
-              <span
-                key={name}
-                data-testid="queue-score-tag"
-                className="inline-flex max-w-full items-center gap-1 rounded-pill border border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
-                title={`Matched to the “${name}” component of a declared score`}
-              >
-                <Calculator className="h-2.5 w-2.5 shrink-0" />
-                <span className="truncate">{name}</span>
-              </span>
-            ))}
+            {scoreTag.map((name) =>
+              scoreTagSource === "suggestion" ? (
+                // A SUGGESTION, drawn by form (dashed) and named as one: a free search reached this group, and the
+                // verdict is still Gate 4's. The title carries the whole claim, the face carries "Suggested".
+                <span
+                  key={name}
+                  data-testid="queue-score-tag"
+                  data-tag-source="suggestion"
+                  className="inline-flex max-w-full items-center gap-1 rounded-pill border border-dashed border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
+                  title={`${SUGGESTION_TAG_COPY} (the “${name}” component)`}
+                >
+                  <Search className="h-2.5 w-2.5 shrink-0" />
+                  <span className="truncate">Suggested · {name}</span>
+                </span>
+              ) : (
+                <span
+                  key={name}
+                  data-testid="queue-score-tag"
+                  data-tag-source="match"
+                  className="inline-flex max-w-full items-center gap-1 rounded-pill border border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
+                  title={`Matched to the “${name}” component of a declared score`}
+                >
+                  <Calculator className="h-2.5 w-2.5 shrink-0" />
+                  <span className="truncate">{name}</span>
+                </span>
+              ),
+            )}
           </div>
         )}
         <div
@@ -2470,26 +2490,6 @@ export default function Gate1Page() {
     }
     return m;
   }, [jobState?.result?.conceptGroupMembers]);
-  // groupId → the declared-score component(s) this run matched onto it, from the latest derived spec. Drives
-  // the queue's "pinned to the top + tagged" treatment: a reviewer building a score wants its groups first
-  // and named. Empty when the run has no composite, so the queue's order and rows are unchanged without one.
-  // Every group the score OFFERS (the multi-group panel's list, not just the legacy `conceptId` winner) is
-  // tagged; only the AUTO-SELECTED subset (`scoreSeed`) starts in scope — the same rule the panel checks by.
-  const scoreTagByGroup = useMemo(() => {
-    const m = new Map<string, string[]>();
-    for (const match of jobState?.composites?.at(-1)?.matches ?? []) {
-      for (const g of offeredGroups(match)) {
-        const arr = m.get(g.groupId) ?? [];
-        if (!arr.includes(match.component)) arr.push(match.component);
-        m.set(g.groupId, arr);
-      }
-    }
-    return m;
-  }, [jobState?.composites]);
-  const scoreSeed = useMemo(
-    () => scoreSeededGroups(jobState?.composites?.at(-1)?.matches ?? []),
-    [jobState?.composites],
-  );
   /**
    * The coverage column's denominator. `summary.cohorts` is EMPTY at a Gate 1 park on a real run, so
    * reading it directly drew a column of nothing — see `cohortRoster` for the measurement and the
@@ -2550,6 +2550,81 @@ export default function Gate1Page() {
     () => Object.keys(newGroups.decisions).filter(isReviewerGroupId),
     [newGroups.decisions],
   );
+  /**
+   * The declared score's rows — ONE hook instance, handed to the score panel, so a declaration made there is seen
+   * here at once (a second instance would hydrate once and never see the panel's later writes).
+   */
+  const swaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen });
+  const declared = useMemo(() => declaredScores(swaps.all), [swaps.all]);
+  const latestSpec = jobState?.composites?.at(-1) ?? null;
+  /**
+   * Gate 1's FREE score suggestions (08-28 Decision 6, option A): the retrieval half of the match, $0, no judge.
+   *
+   * The paid match is on Gate 4, after this gate is continued, so a live Gate 1 has no match to seed from. Asked for
+   * only while it can matter — a declaration exists, no Gate 4 match does, and this gate is still open (a PASSED
+   * Gate 1 shows the scope it sent, so a suggestion could only contradict the record). Keyed on everything that
+   * changes the answer: the declarations, the reviewer's moves and their New groups; the server reads those rows
+   * itself. A failure is silent — no suggestion is the same as no evidence, never a claim.
+   */
+  const suggestionKey = useMemo(
+    () =>
+      JSON.stringify([
+        declared,
+        Object.entries(regroups.decisions)
+          .map(([member, d]) => [member, d.chosen])
+          .sort(),
+        [...reviewerIds].sort(),
+      ]),
+    [declared, regroups.decisions, reviewerIds],
+  );
+  const suggestionsQuery = useQuery({
+    queryKey: ["score-suggestions", jobId, suggestionKey],
+    queryFn: () => getScoreSuggestions(jobId),
+    // `result` first: until the run's payload has landed, neither "is there a Gate 4 match?" nor "is this gate
+    // passed?" has an answer, and asking early would fetch for a screen that then never uses the reply. And only
+    // on a run that is DEFINITELY the reviewer's own (`pinned === false`): the shared demo keeps its declaration in
+    // this browser, which the server never sees, and nothing a guest does there leaves the browser.
+    enabled:
+      !!jobId && !!jobState?.result && pinned === false && !frozen && !latestSpec && declared.length > 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+    // A move re-asks (the key changes); until the new answer lands, keep the last one rather than un-seeding every
+    // suggested group for the length of a request.
+    placeholderData: keepPreviousData,
+  });
+  /**
+   * THE ONE INPUT to the score-seeded scope and the queue's score tags: the Gate 4 match when the run has one, else
+   * the free suggestions (`scoreScopeInput`). Both go through `scoreSeededGroups`, each at its own scale's cut-off.
+   * Every OFFERED group is tagged and pinned to the top; only the auto-selected subset (`scoreSeed`) starts in scope
+   * — for a suggestion the two are the same set. No declaration and no match → nothing changes in the queue.
+   */
+  const scoreInput = useMemo(
+    () =>
+      scoreScopeInput(
+        latestSpec,
+        frozen || latestSpec ? null : suggestionsQuery.data,
+      ),
+    [latestSpec, frozen, suggestionsQuery.data],
+  );
+  const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
+  const scoreSeed = useMemo(
+    () => scoreSeededGroups(scoreInput.matches, scoreInput.threshold),
+    [scoreInput],
+  );
+  /** What the score panel says about the suggestions, when they are the input (or could not be made). */
+  const suggestionNote = useMemo(() => {
+    const s = !frozen && !latestSpec ? suggestionsQuery.data : undefined;
+    // No score searched for: the server holds no declaration for this run (the shared demo keeps its declaration in
+    // this browser, which the server never sees) — so there is nothing to say, not "nothing was found".
+    if (!s || s.scores.length === 0) return null;
+    if (!s.scored) return { nGroups: 0, nComponents: 0, unavailable: s.reason };
+    return {
+      nGroups: scoreSeed.size,
+      nComponents: scoreInput.source === "suggestion" ? scoreInput.matches.length : 0,
+      unavailable: "",
+    };
+  }, [frozen, latestSpec, suggestionsQuery.data, scoreSeed, scoreInput]);
   /** The reviewer's own name for a group, or undefined. Read straight off the persisted decisions. */
   const renamedOf = (groupId: string): string | undefined => {
     const chosen = renames.decisions[groupId]?.chosen;
@@ -3273,7 +3348,9 @@ export default function Gate1Page() {
       <DeclaredScorePanel
         jobId={jobId}
         pinned={pinned}
-        spec={jobState?.composites?.at(-1) ?? null}
+        swaps={swaps}
+        suggestionNote={suggestionNote}
+        spec={latestSpec}
         matchRefusal={matchRefusal}
         groupsById={groupsById}
         groupByVariable={groupByVariable}
@@ -3499,6 +3576,8 @@ export default function Gate1Page() {
                   key={g.groupId}
                   group={g}
                   reviewer
+                  scoreTag={scoreTagByGroup.get(g.groupId)}
+                  scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
                   price={price + idealPerGroup}
                   count={memberCount(g)}
                   inScope={isInScope(g.groupId)}
@@ -3573,6 +3652,7 @@ export default function Gate1Page() {
                     key={g.groupId}
                     group={g}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
+                    scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
                     price={needsIdeal(g.groupId) ? price + idealPerGroup : price}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}
