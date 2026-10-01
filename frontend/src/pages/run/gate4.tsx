@@ -13,7 +13,8 @@ import { Gate4ScorePanel } from "@/components/gate/Gate4ScorePanel";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ReproducibilityInfo } from "@/components/gate/ReproducibilityInfo";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ArtifactPreviewBody } from "@/components/gate/ArtifactPreviewBody";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { exportUrl } from "@/lib/api";
@@ -25,8 +26,8 @@ import {
   type ArtifactState,
   type NotebookLang,
   type RealArtifact,
+  artifactPreview,
   downloadLabel,
-  previewFor,
   resolveFormat,
   unassignedBreakdown,
   verdictBreakdown,
@@ -323,25 +324,30 @@ export default function Gate4Page() {
         className="mt-6"
       />
 
-      {/* The preview drawer — real generated content at the wider width, not a description of it. */}
+      {/* The preview drawer — real generated content at the wider width, not a description of it. A delimited
+          file is drawn as a table (review 2); the drawer is a column so the table scrolls in its own box. */}
       <Sheet open={preview !== null} onOpenChange={(o) => !o && setPreview(null)}>
-        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
-          <SheetHeader>
+        <SheetContent side="right" className="flex w-full flex-col sm:max-w-4xl">
+          <SheetHeader className="pr-10">
             <SheetTitle>{preview?.name ?? "Preview"}</SheetTitle>
+            {preview && (
+              <SheetDescription data-testid="artifact-preview-filename" className="font-mono text-xs text-on-raised-muted">
+                {filenameFor(preview)}
+              </SheetDescription>
+            )}
           </SheetHeader>
           {preview && (
-            <pre
-              data-testid="artifact-preview-content"
-              className="mt-4 max-h-[calc(100vh-8rem)] overflow-auto whitespace-pre-wrap break-words rounded-inner bg-surface-inset p-4 font-mono text-xs text-on-inset"
-            >
-              {preview.id === "score_json"
-                ? JSON.stringify(scoreExport(scores, composites), null, 2)
-                : previewFor(preview.id, lang, result, jobState?.decisions, {
-                    index: gate.all,
-                    config: jobState?.config as Record<string, unknown> | undefined,
-                    gatePosition: jobState?.gatePosition,
-                  })}
-            </pre>
+            <ArtifactPreviewBody
+              preview={
+                preview.id === "score_json"
+                  ? { kind: "code", text: JSON.stringify(scoreExport(scores, composites), null, 2) }
+                  : artifactPreview(preview.id, lang, result, jobState?.decisions, {
+                      index: gate.all,
+                      config: jobState?.config as Record<string, unknown> | undefined,
+                      gatePosition: jobState?.gatePosition,
+                    })
+              }
+            />
           )}
         </SheetContent>
       </Sheet>

@@ -5,6 +5,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { indexDecisions, type DecisionIndex, type GroupedDecisions } from "@/lib/gate-decisions";
 import type { HarmonizationResult } from "@/types";
 import {
+  DECISION_LOG_CSV_COLS,
   NOT_AVAILABLE_GAPS,
   REAL_ARTIFACTS,
   SUBSTANTIVE_EDIT_KINDS,
@@ -605,11 +606,52 @@ test.describe("Gate 4 screen", () => {
     );
     await gotoGate4(page);
     await page.locator('[data-testid="artifact-tile"][data-thing="decisions_csv"] [data-testid="artifact-preview"]').click();
-    const content = page.getByTestId("artifact-preview-content");
-    await expect(content).toContainText("gate,kind,action,item,before,after,note,detail,stale");
-    await expect(content).toContainText("Gate 1,gate1_rename,Renamed a group,seed-group,Gen,My name");
+    // Review 2: a TABLE of the file's cells, not its raw comma-joined text.
+    const table = page.getByTestId("artifact-preview-table");
+    await expect(table.locator("thead th")).toHaveText(DECISION_LOG_CSV_COLS);
+    const row = table.locator("tbody tr").filter({ hasText: "gate1_rename" });
+    await expect(row.locator("td")).toHaveText(["Gate 1", "gate1_rename", "Renamed a group", "seed-group", "Gen", "My name", "", "", "false"]);
     // Not the legacy per-record verdict header, which no gate writes to.
-    await expect(content).not.toContainText("your_decision");
+    await expect(page.getByTestId("artifact-preview-content")).not.toContainText("your_decision");
+  });
+
+  test("@gate4 review 2 — a CSV / TSV preview is a table: sticky header, aligned columns, sideways scroll inside the drawer", async ({
+    page,
+  }) => {
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="eitl_tsv"] [data-testid="artifact-preview"]').click();
+    const content = page.getByTestId("artifact-preview-content");
+    await expect(content).toHaveAttribute("data-kind", "table");
+    const table = page.getByTestId("artifact-preview-table");
+    await expect(table.locator("thead th")).toHaveText(["record_id", "concept", "verdict", "top_candidate", "n_members", "cohorts"]);
+    // The row cap is today's (3 concepts), and it is stated under the table rather than left silent.
+    const rows = table.locator("tbody tr");
+    await expect(rows).toHaveCount(3);
+    for (let i = 0; i < 3; i++) await expect(rows.nth(i).locator("td")).toHaveCount(6);
+    await expect(page.getByTestId("artifact-preview-note")).toContainText(/^The first 3 of \d+ concepts/);
+    const layout = await content.evaluate((el) => {
+      const th = el.querySelector("thead th")!;
+      const dialog = el.closest('[role="dialog"]')!;
+      return {
+        sticky: getComputedStyle(th).position,
+        overflowX: getComputedStyle(el).overflowX,
+        dialogScrolls: dialog.scrollWidth - dialog.clientWidth,
+      };
+    });
+    expect(layout.sticky).toBe("sticky");
+    // A wide file scrolls INSIDE its own box; the drawer itself never scrolls sideways.
+    expect(["auto", "scroll"]).toContain(layout.overflowX);
+    expect(layout.dialogScrolls).toBe(0);
+  });
+
+  test("@gate4 review 2 — the JSON preview stays code, indented as the file is", async ({ page }) => {
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="records_json"] [data-testid="artifact-preview"]').click();
+    const content = page.getByTestId("artifact-preview-content");
+    await expect(content).toHaveAttribute("data-kind", "code");
+    await expect(page.getByTestId("artifact-preview-table")).toHaveCount(0);
+    // Indentation survives: no wrapping that would push a nested key under its parent.
+    expect(await content.evaluate((el) => getComputedStyle(el).whiteSpace)).toBe("pre");
   });
 
   test("@gate4 a run with no decisions shows the log's empty state rather than a blank panel", async ({ page }) => {
