@@ -396,6 +396,65 @@ test.describe("Gate 4 screen", () => {
     await expect(content).toContainText("{");
   });
 
+  test("@gate4 the preview drawer's close X is drawn against the drawer, not inherited from the chrome (review 2)", async ({
+    page,
+  }) => {
+    // Bhargav, final review round 2: "the close X on the preview sidebar is not rendering properly". The drawer
+    // is portalled to <body>, whose text colour is the navy CHROME's white — so an X with no colour of its own
+    // was drawn white on the white drawer, and all that showed was its focus outline: an empty box.
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="records_json"] [data-testid="artifact-preview"]').click();
+    const dialog = page.getByRole("dialog");
+    const close = dialog.getByRole("button", { name: "Close" });
+    await expect(close).toBeVisible();
+    const { ratio, icon, button, drawer } = await close.evaluate((btn) => {
+      // Normalise any computed colour (rgb, color(srgb …), oklch …) through a canvas, painted OVER the colour
+      // beneath it — the X's role is translucent, so its own channels alone would overstate the contrast.
+      const ctx = document.createElement("canvas").getContext("2d")!;
+      const rgb = (css: string, under = "#fff") => {
+        ctx.fillStyle = under;
+        ctx.fillRect(0, 0, 1, 1);
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+        return [r, g, b];
+      };
+      const lum = ([r, g, b]: number[]) => {
+        const ch = (x: number) => {
+          const s = x / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+      };
+      const svg = btn.querySelector("svg")!;
+      const dlg = btn.closest('[role="dialog"]')!;
+      const bg = getComputedStyle(dlg).backgroundColor;
+      const a = lum(rgb(getComputedStyle(svg).color, bg));
+      const b = lum(rgb(bg));
+      const box = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+      };
+      return {
+        ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
+        icon: box(svg),
+        button: box(btn),
+        drawer: box(dlg),
+      };
+    });
+    // A control's glyph is non-text UI: WCAG 1.4.11 asks 3:1 against what it sits on.
+    expect(ratio, "the close X must be visible against the drawer").toBeGreaterThanOrEqual(3);
+    expect(icon.w).toBeGreaterThan(0);
+    // Inside the drawer, at its top right, and a target a pointer can actually hit.
+    expect(button.x + button.w).toBeLessThanOrEqual(drawer.x + drawer.w);
+    expect(button.x).toBeGreaterThan(drawer.x + drawer.w / 2);
+    expect(button.y).toBeGreaterThanOrEqual(drawer.y);
+    expect(button.w).toBeGreaterThanOrEqual(24);
+    expect(button.h).toBeGreaterThanOrEqual(24);
+    await close.click();
+    await expect(dialog).toHaveCount(0);
+  });
+
   test("@gate4 the download label reflects only ready artifacts and disables at zero", async ({ page }) => {
     await gotoGate4(page);
     const action = page.getByTestId("download-artifacts");
