@@ -25,6 +25,7 @@ import {
   unassignedBreakdown,
   verdictBreakdown,
 } from "@/lib/gate4";
+import { analysisBackPathFor, analysisPathFor } from "@/lib/gate-routes";
 import { buildSankeyData } from "@/lib/sankey";
 import { FINISHED_JOB, finishedFixture, serveFinished } from "./gate23-fixture";
 
@@ -823,9 +824,47 @@ test.describe("Gate 4 screen", () => {
 
   test("@gate4 the terminal next-actions route to analysis ideas and a new run", async ({ page }) => {
     await gotoGate4(page);
-    await expect(page.getByTestId("analysis-ideas-link")).toHaveAttribute("href", `/job/${FINISHED_JOB}/analysis`);
+    await expect(page.getByTestId("analysis-ideas-link")).toHaveAttribute("href", `/job/${FINISHED_JOB}/analysis?from=gate4`);
     await expect(page.getByTestId("rerun-action")).toHaveAttribute("href", "/run/new/setup");
   });
+
+  test("@gate4 review 2 — analysis ideas, then back to the run, lands on Gate 4 — not the legacy run page", async ({ page }) => {
+    await gotoGate4(page);
+    await page.getByTestId("analysis-ideas-link").click();
+    await expect(page).toHaveURL(new RegExp(`/job/${FINISHED_JOB}/analysis\\?from=gate4$`));
+    const back = page.getByTestId("analysis-back").first();
+    await expect(back).toHaveAttribute("href", `/run/${FINISHED_JOB}/gate4`);
+    await back.click();
+    await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate4$`));
+    await expect(page.getByTestId("export-set")).toBeVisible();
+  });
+
+  test("@gate4 review 2 — a staged run's analysis page goes back to Gate 4 even without an origin", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      run.gatePosition = "gate4";
+    });
+    await page.goto(`/job/${FINISHED_JOB}/analysis`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("analysis-back").first()).toHaveAttribute("href", `/run/${FINISHED_JOB}/gate4`);
+  });
+});
+
+// --- final review round 2: analysis ideas -> "back to the run" returns to Gate 4 for a staged run ---------------
+
+test("@gate4 review 2 — analysis ideas' back link returns to the gate it came from, else Gate 4 for a staged run", () => {
+  // Bhargav: "clicking 'Explore analysis ideas' then 'back to the run' takes me to the sankey diagram page" — the
+  // LEGACY run view, which a staged run has no business landing on.
+  expect(analysisPathFor("r1", "gate4")).toBe("/job/r1/analysis?from=gate4");
+  expect(analysisPathFor("r1")).toBe("/job/r1/analysis");
+  // Came from Gate 4: back to Gate 4 (the shared demo's server row can sit at gate1 while the guest walked on).
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: "gate1" }, "gate4")).toBe("/run/r1/gate4");
+  // No origin named, staged run: Gate 4 — the screen the ideas are reached from, and a pure read.
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: "gate4" }, null)).toBe("/run/r1/gate4");
+  // A legacy one-shot run keeps its run page.
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: null }, null)).toBe("/job/r1");
+  // `from` is only ever a rail screen — never a URL to follow somewhere else.
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: null }, "https://evil.example")).toBe("/job/r1");
+  expect(analysisBackPathFor({ jobId: "r1", gatePosition: null }, "gate0")).toBe("/job/r1");
 });
 
 // --- source assertions (statically decidable) ---------------------------------------------------------

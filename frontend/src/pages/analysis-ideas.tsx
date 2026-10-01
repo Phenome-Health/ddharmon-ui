@@ -3,15 +3,18 @@
 // generates them first (LLM pass) and then lands here. Each idea's concept chips deep-link into the review
 // workbench, preselected to that concept.
 import { useMemo } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import { ArrowLeft, Lightbulb, Loader2 } from "lucide-react";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { IdeaCard } from "@/components/analysis-ideas";
+import { FROM_PARAM, analysisBackPathFor } from "@/lib/gate-routes";
 
 export default function AnalysisIdeasPage() {
   const { jobId = "" } = useParams();
   // Load the finished run immediately (no replay animation) — same as the workbench.
   const { jobState } = useHarmonizeStream(jobId, true, true);
+  // "Back to run" returns where the reviewer came from — Gate 4 for a staged run, not the legacy run page (review 2).
+  const from = new URLSearchParams(useSearch()).get(FROM_PARAM);
 
   // Concept LABEL → record id, so an idea's concept chip can deep-link into the workbench (which preselects
   // a concept by ?c=<recordId>). First match wins. Computed before the early return to keep hook order stable.
@@ -30,6 +33,7 @@ export default function AnalysisIdeasPage() {
     );
   }
 
+  const backHref = analysisBackPathFor({ jobId, gatePosition: jobState.gatePosition }, from);
   const ideas = jobState.analysisIdeas ?? [];
   const isDemo = !!(jobState.config as { demo?: boolean }).demo;
   const linkForConcept = (concept: string) => {
@@ -41,7 +45,8 @@ export default function AnalysisIdeasPage() {
     <div className="space-y-6">
       <div>
         <Link
-          href={`/job/${jobId}`}
+          href={backHref}
+          data-testid="analysis-back"
           className="mb-1 flex items-center gap-1 text-xs text-on-field-muted hover:text-on-field"
         >
           <ArrowLeft className="h-3 w-3" /> Back to run
@@ -70,7 +75,7 @@ export default function AnalysisIdeasPage() {
       ) : (
         <p className="text-sm text-on-field-muted">
           No analysis ideas for this run.{" "}
-          <Link href={`/job/${jobId}`} className="text-link-on-field underline hover:text-on-field">
+          <Link href={backHref} data-testid="analysis-back" className="text-link-on-field underline hover:text-on-field">
             Back to the run
           </Link>
           .

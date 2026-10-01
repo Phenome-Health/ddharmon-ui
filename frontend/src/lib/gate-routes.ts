@@ -250,3 +250,33 @@ export function runPathFor(job: {
   if (isInFlight(job.status)) return pathForGate(job.jobId, inFlightGateOf(job.gatePosition));
   return `/job/${job.jobId}`;
 }
+
+/** The query key a link to the analysis-ideas page names its ORIGIN screen by (final review round 2). */
+export const FROM_PARAM = "from";
+
+/** The analysis-ideas page for a run; `from` names the rail screen the reviewer is leaving, so "back" returns there. */
+export function analysisPathFor(jobId: string, from?: GatePosition): string {
+  return `/job/${jobId}/analysis${from ? `?${FROM_PARAM}=${encodeURIComponent(from)}` : ""}`;
+}
+
+/**
+ * Where the analysis-ideas page's "Back to run" goes (final review round 2).
+ *
+ * It used to be `/job/:id` for every run — the LEGACY run page — so a reviewer who opened the ideas from Gate 4
+ * came "back" to a screen they had never been on (Bhargav: "takes me to the sankey diagram page"). Now:
+ *
+ *  1. the screen the link came FROM, when it names one on the rail. Validated against `RAIL_SEQUENCE`, so the
+ *     query can only ever pick a gate — never a URL — and the retired position is not one of them;
+ *  2. else, for a STAGED run (it carries a gate position), Gate 4 — the screen the ideas are reached from, and a
+ *     pure read. Not the run's own position: the shared demo's server row stays parked at Gate 1 while a guest
+ *     walks it on in their browser, so its position is not where the reviewer was;
+ *  3. else the legacy run page, which is where a one-shot run's results live — unchanged.
+ */
+export function analysisBackPathFor(
+  job: { jobId: string; gatePosition?: GatePosition | string | null },
+  from: string | null | undefined,
+): string {
+  if (from && (RAIL_SEQUENCE as readonly string[]).includes(from)) return pathForGate(job.jobId, from);
+  if (job.gatePosition) return pathForGate(job.jobId, "gate4");
+  return `/job/${job.jobId}`;
+}

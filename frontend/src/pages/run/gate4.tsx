@@ -19,6 +19,7 @@ import { ArtifactPreviewBody } from "@/components/gate/ArtifactPreviewBody";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { exportUrl } from "@/lib/api";
+import { analysisPathFor } from "@/lib/gate-routes";
 import { isParkedAt } from "@/lib/run-state";
 import { cn } from "@/lib/utils";
 import {
@@ -295,7 +296,7 @@ export default function Gate4Page() {
         {/* Terminal next-actions: analysis ideas (Task 4, existing route) and run again (Task 5). */}
         <div data-testid="gate4-next-actions" className="flex flex-wrap items-center gap-4 text-sm">
           <Link
-            href={`/job/${jobId}/analysis`}
+            href={analysisPathFor(jobId, "gate4")}
             data-testid="analysis-ideas-link"
             className="font-semibold text-link-on-field underline underline-offset-2"
           >
