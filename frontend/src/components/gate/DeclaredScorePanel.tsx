@@ -21,6 +21,7 @@ import { useGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
 import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
+import { stripStatus } from "@/lib/score-declaration";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
 import type { NamedGroup } from "@/lib/ledger";
@@ -300,6 +301,12 @@ export function DeclaredScorePanel({
     });
   }, [declared, spec]);
 
+  /**
+   * The CLOSED strip's status when a score is declared (H4), else `null` and the invitation stands. Read from the
+   * persisted rows (`swaps.all`) and the derived spec — never from the draft — so it is what a reload shows too.
+   */
+  const status = stripStatus(swaps.all, spec);
+
   const verdict = scopeVerdictFor(evidence);
   const style = VERDICT_STYLE[verdict];
   const codingFor = (name: string) =>
@@ -353,6 +360,7 @@ export function DeclaredScorePanel({
       // reaching for it through the collapsible's markup — and so "is it the same height as the other
       // strip?" compares a container with a container.
       data-testid="score-strip"
+      data-declared={status ? "true" : "false"}
       // The how-to strip's geometry, verbatim: ground surface, inner radius, same padding. This is the
       // difference between a second orientation strip and a fourth panel competing for the top of Gate 1.
       className={cn("rounded-inner bg-on-field/5 px-4 py-3", className)}
@@ -361,11 +369,9 @@ export function DeclaredScorePanel({
         data-testid="score-panel-toggle"
         // An icon-only control names the ACTION and its OBJECT; this one is not icon-only, but the same
         // rule governs what the name has to say.
-        aria-label={
-          open
-            ? "Hide the declared-score panel"
-            : "Show the declared-score panel"
-        }
+        // The status rides the accessible name too (H4): an aria-label REPLACES the content, so without it a
+        // screen reader would hear "show the panel" while the screen says a score is declared.
+        aria-label={`${open ? "Hide" : "Show"} the declared-score panel${status ? ` — ${status}` : ""}`}
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         {/*
@@ -379,15 +385,34 @@ export function DeclaredScorePanel({
           <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
             A score you want to build from this run
           </span>
-          {/*
-            THE FREE/PAID SPLIT, ON THE CLOSED STRIP. Collapsing this panel must not make the reviewer
-            meet the charge later than they did when it was expanded at the foot of the page — so the
-            summary states both halves here, where it is visible without opening anything. The priced
-            copy inside is unchanged and still sits immediately above the control it prices.
-          */}
-          <span className="min-w-0 text-xs text-on-field-muted">
-            {STRIP_SUMMARY}
-          </span>
+          {status ? (
+            /*
+              A DECLARED SCORE SAYS SO ON THE CLOSED STRIP (H4, final review round 2 — *"still there — fix
+              now"*). It used to read as the same invitation whether 48 components were declared or none, so a
+              reviewer coming back to Gate 1 could not see from the top of the screen that their score was there.
+              The status REPLACES the invitation rather than joining it: both would wrap the strip onto a second
+              line, and this strip is one line at the how-to's height by design. The charge is not lost — every
+              paid control inside is still priced inline, above the control — and the reviewer who declared has
+              already met it. ONE LINE, truncated: a long score name ellipsizes, and the full line is the title.
+            */
+            <span
+              data-testid="score-strip-status"
+              title={status}
+              className="min-w-0 flex-1 truncate text-xs font-semibold text-on-field"
+            >
+              {status}
+            </span>
+          ) : (
+            /*
+              THE FREE/PAID SPLIT, ON THE CLOSED STRIP. Collapsing this panel must not make the reviewer
+              meet the charge later than they did when it was expanded at the foot of the page — so the
+              summary states both halves here, where it is visible without opening anything. The priced
+              copy inside is unchanged and still sits immediately above the control it prices.
+            */
+            <span className="min-w-0 text-xs text-on-field-muted">
+              {STRIP_SUMMARY}
+            </span>
+          )}
         </span>
         <ChevronDown
           aria-hidden="true"

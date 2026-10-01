@@ -1,7 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { decisionItemKey, optionSetKey, type DecisionIndex, type GateDecision } from "@/lib/gate-decisions";
+import { SANDBOX_PREFIX } from "@/lib/sandbox";
 import { stripStatus } from "@/lib/score-declaration";
+import { STRIP_SUMMARY } from "@/lib/score-proposal";
+import { declaredComponents } from "@/lib/score-scope";
 import type { CompositeSpec } from "@/types";
+import { PAUSED_JOB, serveRun } from "./gate1-fixture";
 
 /**
  * What Gate 1's score panel says about the declaration it holds (phase-8 final review, round 2).
@@ -120,5 +124,90 @@ test.describe("score strip status (H4)", () => {
     expect(stripStatus(index, null)).toBe(`${SCORE} · 3 components declared · not matched yet · and 1 more score`);
     const three = indexOf(declared(SCORE, THREE), declared("SES index", ["Income"]), declared("IC score", ["Gait"]));
     expect(stripStatus(three, null)).toMatch(/· and 2 more scores$/);
+  });
+});
+
+// --- the screen (static build) ---------------------------------------------------------------------------------
+
+const TRIGGER = "[data-testid='score-panel-toggle']";
+const STATUS = "[data-testid='score-strip-status']";
+
+async function openGate1(page: Page): Promise<void> {
+  await page.goto(`/run/${PAUSED_JOB}/gate1`);
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("[data-testid='ledger']")).toBeVisible();
+}
+
+/** Seed the demo's browser sandbox with declaration rows, as a reviewer's earlier Declare left them. */
+async function seedDeclaration(page: Page, rows: GateDecision[]): Promise<void> {
+  const byItem = Object.fromEntries(rows.map((r) => [decisionItemKey("composite_swap", r), r]));
+  await page.addInitScript(
+    ([key, state]) => sessionStorage.setItem(key, state),
+    [`${SANDBOX_PREFIX}${PAUSED_JOB}`, JSON.stringify({ gateDecisions: { composite_swap: byItem } })] as const,
+  );
+}
+
+/** Declare through the panel the way a reviewer does: name, components, Declare. */
+async function declareThroughPanel(page: Page, scoreName: string, components: string): Promise<void> {
+  await page.locator(TRIGGER).click();
+  await expect(page.locator("[data-testid='score-panel']")).toBeVisible();
+  await page.locator("#score-name").fill(scoreName);
+  await page.locator("[data-testid='score-components']").fill(components);
+  await page.getByRole("button", { name: "Declare these components" }).click();
+  await expect(page.locator("[data-testid='score-component']")).toHaveCount(declaredComponents(components).length);
+}
+
+test.describe("score strip on the static build (H4)", () => {
+  test("@gate1 nothing declared: the closed strip is still the invitation, charge and all", async ({ page }) => {
+    await openGate1(page);
+    await expect(page.locator(TRIGGER)).toContainText(STRIP_SUMMARY);
+    await expect(page.locator(STATUS)).toHaveCount(0);
+    await expect(page.locator("[data-testid='score-strip']")).toHaveAttribute("data-declared", "false");
+  });
+
+  test("@gate1 after a declaration the CLOSED strip names the score — and still does after a reload", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    await declareThroughPanel(page, SCORE, THREE.join("\n"));
+    // Close it again: the claim is about the strip as a returning reviewer meets it, closed.
+    await page.locator(TRIGGER).click();
+    await expect(page.locator("[data-testid='score-panel']")).toHaveCount(0);
+    const want = `${SCORE} · 3 components declared · not matched yet`;
+    await expect(page.locator(STATUS)).toHaveText(want);
+    await expect(page.locator(TRIGGER)).not.toContainText(STRIP_SUMMARY);
+    await expect(page.locator("[data-testid='score-strip']")).toHaveAttribute("data-declared", "true");
+    // Screen readers hear it too: the trigger's accessible name carries the status, not only its pixels.
+    await expect(page.getByRole("button", { name: `Show the declared-score panel — ${want}` })).toBeVisible();
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    // Closed by default after a reload, and the status is the persisted declaration's, not component state.
+    await expect(page.locator("[data-testid='score-panel']")).toHaveCount(0);
+    await expect(page.locator(STATUS)).toHaveText(want);
+  });
+
+  test("@gate1 the status keeps the strip ONE line, the how-to strip's height", async ({ page }) => {
+    // Long enough that the line cannot fit at 1440px: it must ellipsize, never wrap the strip onto two lines.
+    const long = "A frailty index built from the deficit-accumulation model with every domain the paper lists ".repeat(3);
+    await seedDeclaration(page, declared(long.trim(), THREE));
+    await openGate1(page);
+    await expect(page.locator(STATUS)).toBeVisible();
+    // Truncated, with the whole line kept as its title.
+    const clipped = await page.locator(STATUS).evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(clipped).toBe(true);
+    await expect(page.locator(STATUS)).toHaveAttribute("title", `${long.trim()} · 3 components declared · not matched yet`);
+    const howto = await page.locator("[data-testid='how-to']").boundingBox();
+    const strip = await page.locator("[data-testid='score-strip']").boundingBox();
+    expect(Math.abs(strip!.height - howto!.height)).toBeLessThanOrEqual(2);
+  });
+
+  test("@gate1 a matched score: the closed strip gives the match state", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.composites = [specOf(SCORE, THREE, 2)];
+    });
+    await seedDeclaration(page, declared(SCORE, THREE));
+    await openGate1(page);
+    await expect(page.locator(STATUS)).toHaveText(`${SCORE} · 3 components declared · matched: 2 of 3 found`);
   });
 });
