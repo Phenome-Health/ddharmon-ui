@@ -1427,8 +1427,9 @@ def _effective_members(result: dict[str, Any], overrides: dict[str, Any] | None,
     """A Gate-1 group's members as the reviewer currently sees it: the split's, minus moves out, plus moves in.
 
     The same rule the Gate 1 screen draws (``effectiveMembers`` in ``frontend/src/lib/ledger.ts``) and core
-    applies (``resolve_group_membership``) — used here only to refuse, before any spend, a division of a group
-    the reviewer has already emptied down to one variable. Core's own resolution is what the re-split uses.
+    applies (``resolve_group_membership``) — used here to refuse, before any spend, a division of a group the
+    reviewer has already emptied down to one variable, and (via :func:`_gate1_membership`) as the closed world of
+    Gate 1's free score suggestions. Core's own resolution is what the re-split uses.
     """
     uncapped = (result.get("conceptGroupMembers") or {}).get(group_id)
     if uncapped is None:  # a payload with no uncapped list for this group: the recorded sample, as the screen does
@@ -1438,6 +1439,21 @@ def _effective_members(result: dict[str, Any], overrides: dict[str, Any] | None,
     moves = (overrides or {}).get("moves") or {}
     kept = [m for m in original if moves.get(m, group_id) == group_id]
     return kept + sorted(m for m, dest in moves.items() if dest == group_id and m not in original)
+
+
+def _gate1_membership(result: dict[str, Any], overrides: dict[str, Any] | None) -> dict[str, list[str]]:
+    """EVERY Gate-1 group's members as the reviewer currently sees them — :func:`_effective_members`, for all.
+
+    The split's groups (``conceptGroups``, then any ``conceptGroupMembers`` key the rows do not list), then the
+    reviewer's New groups in ``overrides`` order; ``overrides`` is :func:`_gate1_overrides`' sanitised regrouping,
+    so a move to a destination that cannot be honoured never moves anything here either. Every Gate 1 move is
+    APPLIED (08-28): a variable dragged into a New group is that group's, and a clustering leftover the reviewer
+    placed into a group counts for it.
+    """
+    ids = [str(g["groupId"]) for g in result.get("conceptGroups") or [] if g.get("groupId")]
+    ids += [str(g) for g in (result.get("conceptGroupMembers") or {}) if str(g) not in ids]
+    ids += [str(g["groupId"]) for g in (overrides or {}).get("newGroups") or [] if g.get("groupId")]
+    return {gid: _effective_members(result, overrides, gid) for gid in dict.fromkeys(ids)}
 
 
 @app.post("/api/harmonize/jobs/{job_id}/readjudicate")
@@ -2066,6 +2082,37 @@ def score_components(
         with _writable_run():
             artifacts.put(owner=owner, job_id=job_id, kind=SCORE_COMPONENT_PROPOSAL, payload=payload)
     return {**payload, "cached": False}
+
+
+@app.get("/api/harmonize/jobs/{job_id}/score/suggestions")
+def score_suggestions(job_id: str, request: Request) -> dict[str, Any]:
+    """Gate 1's SUGGESTIONS for the declared score — the free half of the match: retrieval only, no model, $0.
+
+    08-28 Decision 6 (option A). The paid match is on Gate 4 (decision Q5), after Gate 1 has been continued, so a
+    live Gate 1 had no matches to seed its scope from. This runs core's ``suggest_groups`` for every score declared
+    on the run (its ``composite_swap`` rows) against Gate 1's EFFECTIVE groups (:func:`_gate1_membership`: the
+    split's members with the reviewer's moves applied and their New groups included), and returns each reached
+    group with the dense cosine of its best member plus core's calibrated cut-off. The screen seeds and tags the
+    groups that clear it AS SUGGESTIONS; the verdict stays on Gate 4.
+
+    $0 by construction: the embedder is the run's cache-backed BioLORD (``backend.composite._embedder``, the same
+    ``~/.ddharmon/embeddings.db`` a run and the Gate 4 match use), no LLM client is built and nothing is billed.
+    Without the dense encoder the answer is "no suggestions" with core's reason — never a threshold over a lexical
+    score, which is not comparable across components. A read: no gate refusal, and a shared demo (whose
+    declarations live in the browser, not here) gets an empty list.
+    """
+    from backend import composite as composite_web
+    from backend.declared_score import declared_scores, gate1_suggestions
+
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = _export_payload(job) or {}
+    declared = declared_scores(store.artifacts_for(job, subject))
+    embed = composite_web._embedder() if declared and composite_web.encoder_available() else None
+    membership = _gate1_membership(payload, _gate1_overrides(job, subject, payload)) if declared else {}
+    return gate1_suggestions(declared, payload.get("fieldIndex"), membership, embed=embed)
 
 
 @app.post("/api/harmonize/score/extract")

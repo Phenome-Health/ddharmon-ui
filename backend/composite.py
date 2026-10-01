@@ -38,6 +38,17 @@ def _get_provider() -> Any:
     return _provider
 
 
+def encoder_available() -> bool:
+    """Whether the dense encoder can be loaded here (``sentence-transformers`` installed) — checked, not imported.
+
+    Gate 1's score suggestions are scored by a dense cosine; without the encoder there is no comparable score, so
+    the caller asks core for no suggestions (and gets its reason) rather than loading a model that cannot load.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
 def _cache_db_path() -> Any:
     """The shared embedding-cache DB — the same root embed_dictionary() uses ($DDHARMON_CACHE, else ~/.ddharmon)."""
     import os
