@@ -60,6 +60,13 @@ import {
   type TargetValue,
 } from "@/lib/value-map";
 import { combineAlternatives, combineChoice, combineGroups } from "@/lib/combine-rules";
+import {
+  canRemoveMember,
+  cohortsLeft,
+  removalWrite,
+  removedMembersOf,
+  withoutRemovedMembers,
+} from "@/lib/member-exclusion";
 import { cn } from "@/lib/utils";
 import { permissibleValueLabels, sourceValueLabels } from "@/types";
 import type { JobResult, UIRecord, GatePosition } from "@/types";
@@ -164,6 +171,10 @@ export default function Gate3Page() {
   const specs = useGateDecisions(jobId, "gate3_spec_edit", { pinned, frozen });
   // 08-28 1d (Q4): how several of one cohort's variables on one target column combine.
   const combines = useGateDecisions(jobId, "gate3_combine_rule", { pinned, frozen });
+  // Review round 2: a variable the reviewer REMOVED from a concept (a rogue member). Its own kind, keyed on the
+  // (group, variable) pair; the export leaves it out of that concept everywhere. Undo deletes the row.
+  const exclusions = useGateDecisions(jobId, "gate3_member_exclusion", { pinned, frozen });
+  const removedIn = (groupId: string) => removedMembersOf(exclusions.decisions, groupId);
   const picks = useGateDecisions(jobId, "gate2_candidate_pick", {
     pinned,
     frozen,
@@ -240,11 +251,15 @@ export default function Gate3Page() {
         .filter((d) => d.rejected === true)
         .map((d) => String(d.sourceVariable ?? "")),
     );
+    // A removed variable writes no column, so it is no one's combine partner — the export's own reading.
     return combineGroups(
-      groups.map((g) => g.record),
+      withoutRemovedMembers(
+        groups.map((g) => g.record),
+        exclusions.decisions,
+      ),
       rejected,
     );
-  }, [groups, specs.decisions]);
+  }, [groups, specs.decisions, exclusions.decisions]);
 
   const anyRow = groups.some((g) => g.rows.length > 0);
   const selected =
@@ -323,6 +338,23 @@ export default function Gate3Page() {
     return ok;
   }
 
+  /** Remove one variable from one concept (review round 2). A write of its own kind, through the one decision hook. */
+  async function removeMember(record: UIRecord, sourceVariable: string) {
+    const { fields, options } = removalWrite(record.groupId, sourceVariable);
+    const ok = await exclusions.write(fields, options);
+    if (ok) {
+      toast.success(
+        `Removed ${sourceVariable} from “${labelOf(record)}”${exclusions.local ? " (kept in this browser)" : ""}`,
+      );
+    }
+  }
+
+  /** Undo a removal: the row is deleted, and the variable is back in the concept and every export. */
+  async function restoreMember(record: UIRecord, sourceVariable: string) {
+    const ok = await exclusions.clear({ groupId: record.groupId, memberId: sourceVariable });
+    if (ok) toast.success(`${sourceVariable} is back in “${labelOf(record)}”`);
+  }
+
   async function saveNote(record: UIRecord, sourceVariable: string, value: string) {
     const ok = await saveSpec(record, sourceVariable, { note: value });
     // Keep the typed text on a failed write — the rollback restores the stored note, not the reviewer's draft.
@@ -383,6 +415,7 @@ export default function Gate3Page() {
           const matchState = conceptMatchState(record, {
             optedIn: conceptGateOn,
           });
+          const removed = removedIn(record.groupId);
           return (
             <ConceptQueueRow
               key={record.groupId}
@@ -402,8 +435,8 @@ export default function Gate3Page() {
                   )}
                 </>
               }
-              cohorts={record.cohorts}
-              count={rows.length}
+              cohorts={cohortsLeft(record, removed)}
+              count={rows.filter((r) => !removed.has(r.sourceVariable)).length}
               selected={record.groupId === (selected?.record.groupId ?? null)}
               onSelect={() => setSelectedId(record.groupId)}
             />
@@ -423,6 +456,12 @@ export default function Gate3Page() {
               const matchState = conceptMatchState(record, {
                 optedIn: conceptGateOn,
               });
+              // The concept as the export carries it: removed variables are out of its count, its cohorts and its
+              // source rows, and each folds to a removed line in the value mapping below (with its Undo).
+              const removed = removedIn(record.groupId);
+              const activeCount = rows.filter((r) => !removed.has(r.sourceVariable)).length;
+              const cohorts = cohortsLeft(record, removed);
+              const keptMembers = record.members.filter((m) => !removed.has(m));
               const tgtLabels = permissibleValueLabels(
                 record.gencde?.permissibleValues,
               );
@@ -526,10 +565,19 @@ export default function Gate3Page() {
                     meta={
                       <>
                         <span className="font-semibold text-on-raised">
-                          {rows.length}
+                          {activeCount}
                         </span>{" "}
-                        source {rows.length === 1 ? "variable" : "variables"} ·{" "}
-                        {record.cohorts?.join(", ")}
+                        source {activeCount === 1 ? "variable" : "variables"} ·{" "}
+                        {cohorts.join(", ")}
+                        {removed.size > 0 && (
+                          <>
+                            {" "}
+                            ·{" "}
+                            <span data-testid="gate3-removed-count">
+                              {removed.size} removed
+                            </span>
+                          </>
+                        )}
                       </>
                     }
                   />
@@ -564,11 +612,11 @@ export default function Gate3Page() {
                   <InheritedPanel
                     from="Gate 1"
                     label="source variables"
-                    detail={`${record.nMembers} ${record.nMembers === 1 ? "variable" : "variables"} · ${record.cohorts?.join(", ")}`}
+                    detail={`${keptMembers.length} ${keptMembers.length === 1 ? "variable" : "variables"} · ${cohorts.join(", ")}${removed.size > 0 ? ` · ${removed.size} removed here` : ""}`}
                     testid="inherited-source-rows"
                   >
                     <SourceRows
-                      memberIds={record.members}
+                      memberIds={keptMembers}
                       memberDetails={record.memberDetails}
                       fieldIndex={fieldIndex}
                     />
@@ -717,9 +765,39 @@ export default function Gate3Page() {
 
                   <div className="flex flex-col gap-2">
                     <h3 className="text-sm font-semibold text-on-raised">
-                      Value mapping ({rows.length})
+                      Value mapping ({activeCount})
                     </h3>
                     {rows.map(({ sourceVariable, transform, state }) => {
+                      // REMOVED from this concept (review round 2): the recode is not built and no export carries
+                      // the variable, so the row folds to one line that says so — and offers the Undo.
+                      if (removed.has(sourceVariable)) {
+                        return (
+                          <div
+                            key={sourceVariable}
+                            data-testid="removed-row"
+                            data-source={sourceVariable}
+                            className="flex flex-wrap items-center gap-2 rounded-inner border border-dashed border-rule-on-raised px-4 py-2"
+                          >
+                            <span className="font-mono text-xs text-on-raised-muted line-through">
+                              {sourceVariable}
+                            </span>
+                            <span className="text-xs text-on-raised-muted">
+                              Removed from this concept — it is left out of the
+                              transform specs and every export.
+                            </span>
+                            <Button
+                              data-testid="spec-remove-undo"
+                              size="sm"
+                              variant="outline"
+                              disabled={frozen}
+                              onClick={() => void restoreMember(record, sourceVariable)}
+                            >
+                              Undo
+                            </Button>
+                          </div>
+                        );
+                      }
+                      const removable = canRemoveMember(record.members, removed, sourceVariable);
                       const itemKey = specs.itemKey({ sourceVariable });
                       const decision = specs.decisions[itemKey];
                       const review =
@@ -1052,6 +1130,23 @@ export default function Gate3Page() {
                                 Reject
                               </Button>
                             )}
+                            {/* Review round 2: take a ROGUE variable out of this concept. Free, nothing re-runs, and
+                                Undo is right there on the removed line — so no confirmation step. Last in the
+                                strip, so on a narrow pane it is the one that wraps. */}
+                            <Button
+                              data-testid="spec-remove"
+                              size="sm"
+                              variant="outline"
+                              disabled={frozen || !removable}
+                              title={
+                                removable
+                                  ? "Take this variable out of this concept: it leaves the transform specs and every export. You can undo it until you continue."
+                                  : "A concept keeps at least one variable — reject this recode instead to leave it out of the notebook."
+                              }
+                              onClick={() => void removeMember(record, sourceVariable)}
+                            >
+                              Remove from this concept
+                            </Button>
                             {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
                                 failed write rolls back and toasts instead, so this never claims a miss. */}
                             {savedKeys[itemKey] && (
