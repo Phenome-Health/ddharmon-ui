@@ -135,11 +135,12 @@ export function pastedRecords(index: DecisionIndex | null | undefined): PastedRe
 
 /**
  * When the record starts COLLAPSED. The document record has no collapse of its own; it is a box capped at
- * `max-h-80` (320px) that scrolls, which at its 11px monospace (1.5 line height, `py-2`) shows 18 lines. So a pasted
- * record that would not fit that box unscrolled is LONG: more than 18 lines, or — for a pasted paragraph, which is
- * few lines that wrap — more than 2,000 characters. Trailing blank lines do not count.
+ * `max-h-80` (320px) that scrolls, which on the app's 20px line height (`py-2`, a 1px border) shows 15 lines — the
+ * static-build spec measures it. So a pasted record that would not fit that box unscrolled is LONG: more than 15
+ * lines, or — for a pasted paragraph, which is few lines that wrap — more than 2,000 characters (15 lines of the
+ * full-width record at ~140 monospace characters a line). Trailing blank lines do not count.
  */
-export const RECORD_OPEN_LINES = 18;
+export const RECORD_OPEN_LINES = 15;
 export const RECORD_OPEN_CHARS = 2000;
 
 const trimEnd = (text: string) => text.replace(/\s+$/u, "");

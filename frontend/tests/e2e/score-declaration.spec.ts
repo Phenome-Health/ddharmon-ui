@@ -189,7 +189,7 @@ test.describe("pasted source record", () => {
 
   test("@gate1 LONG is more than the document record's box shows before it scrolls", () => {
     const lines = (n: number) => Array.from({ length: n }, (_, i) => `Component ${i + 1}`).join("\n");
-    expect(RECORD_OPEN_LINES).toBe(18);
+    expect(RECORD_OPEN_LINES).toBe(15);
     expect(isLongRecord(lines(RECORD_OPEN_LINES))).toBe(false);
     expect(isLongRecord(`${lines(RECORD_OPEN_LINES)}\n\n`)).toBe(false); // trailing newlines are not lines
     expect(isLongRecord(lines(RECORD_OPEN_LINES + 1))).toBe(true);
@@ -287,5 +287,129 @@ test.describe("score strip on the static build (H4)", () => {
     await seedDeclaration(page, declared(SCORE, THREE));
     await openGate1(page);
     await expect(page.locator(STATUS)).toHaveText(`${SCORE} · 3 components declared · matched: 2 of 3 found`);
+  });
+});
+
+test.describe("pasted source record on the static build", () => {
+  const RECORD = "[data-testid='score-paste-record']";
+  const TEXT = "[data-testid='score-paste-text']";
+  const TOGGLE = "[data-testid='score-paste-toggle']";
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `Deficit item ${i + 1}`).join("\n");
+  /** The record's text EXACTLY — `toHaveText` would normalise the whitespace the record must keep. */
+  const exactText = (page: Page) => page.locator(TEXT).evaluate((el) => el.textContent);
+  const openPanel = async (page: Page) => {
+    await page.locator(TRIGGER).click();
+    await expect(page.locator("[data-testid='score-panel']")).toBeVisible();
+  };
+
+  test("@gate1 a pasted declaration shows what was entered, read-only, as pasted text — and after a reload", async ({
+    page,
+  }) => {
+    await openGate1(page);
+    await declareThroughPanel(page, SCORE, PASTED);
+    const record = page.locator(RECORD);
+    await expect(record).toBeVisible();
+    await expect(record).toContainText(/pasted text/i);
+    await expect(record).toContainText("4 lines"); // the blank line the reviewer left counts: it is what was entered
+    expect(await exactText(page)).toBe(PASTED);
+    // READ-ONLY: a record, not a second place to edit the declaration.
+    await expect(page.locator(TEXT)).toHaveJSProperty("tagName", "PRE");
+    await expect(record.locator("textarea, input, [contenteditable='true']")).toHaveCount(0);
+    // Short: shown whole, nothing to open.
+    await expect(page.locator(TOGGLE)).toHaveCount(0);
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await openPanel(page);
+    // The box is empty again (it is a draft) — so what still shows is the PERSISTED record, not component state.
+    await expect(page.locator("[data-testid='score-components']")).toHaveValue("");
+    await expect(page.locator(RECORD)).toBeVisible();
+    expect(await exactText(page)).toBe(PASTED);
+  });
+
+  test("@gate1 a long paste starts collapsed, says its size, and opens on demand — after a reload too", async ({
+    page,
+  }) => {
+    const long = lines(30);
+    await openGate1(page);
+    await declareThroughPanel(page, SCORE, long);
+    const record = page.locator(RECORD);
+    await expect(record).toHaveAttribute("data-long", "true");
+    await expect(record).toContainText("30 lines");
+    await expect(page.locator(TEXT)).toHaveCount(0);
+    const toggle = page.locator(TOGGLE);
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(await exactText(page)).toBe(long);
+    await toggle.click();
+    await expect(page.locator(TEXT)).toHaveCount(0);
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await openPanel(page);
+    await expect(page.locator(RECORD)).toHaveAttribute("data-long", "true");
+    await expect(page.locator(TEXT)).toHaveCount(0);
+  });
+
+  test("@gate1 the collapse threshold is the document box's: 15 lines fit it unscrolled, 16 would not", async ({
+    page,
+  }) => {
+    await seedDeclaration(page, [
+      ...declared(SCORE, ["a"], { source: declarationSource(lines(RECORD_OPEN_LINES), null, 1) }),
+      ...declared("SES index", ["b"], { source: declarationSource(lines(RECORD_OPEN_LINES + 1), null, 2) }),
+    ]);
+    await openGate1(page);
+    await openPanel(page);
+    const fits = page.locator(`${RECORD}[data-score='${SCORE}']`);
+    const over = page.locator(`${RECORD}[data-score='SES index']`);
+    await expect(fits).toHaveAttribute("data-long", "false");
+    const scrolls = (box: typeof fits) =>
+      box.locator(TEXT).evaluate((el) => el.scrollHeight > el.clientHeight);
+    expect(await scrolls(fits)).toBe(false);
+    await expect(over).toHaveAttribute("data-long", "true");
+    await over.locator(TOGGLE).click();
+    expect(await scrolls(over)).toBe(true);
+    // Two records, so each names its score.
+    await expect(fits).toContainText(SCORE);
+    await expect(over).toContainText("SES index");
+  });
+
+  test("@gate1 a declaration made from a read document leaves no pasted record, and stores no document text", async ({
+    page,
+  }) => {
+    const read = { text: "A frailty index. Table 1: Help Bathing, Help Dressing.", provenance: "searle-2008.pdf", sha256: "a".repeat(64), nChars: 55 };
+    await page.route("**/api/harmonize/score/extract", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(read) }),
+    );
+    await openGate1(page);
+    await openPanel(page);
+    await page
+      .locator("[data-testid='score-upload'] input[type='file']")
+      .setInputFiles({ name: "searle-2008.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 stub") });
+    await expect(page.locator("[data-testid='score-doc-text']")).toBeVisible();
+    await page.locator("[data-testid='score-components']").fill("Help Bathing\nHelp Dressing");
+    await page.getByRole("button", { name: "Declare these components" }).click();
+    await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
+    await expect(page.locator(RECORD)).toHaveCount(0);
+    // What was stored: the document's handle, never its text.
+    const held = await page.evaluate((key) => sessionStorage.getItem(key) ?? "", `${SANDBOX_PREFIX}${PAUSED_JOB}`);
+    const rows = Object.values(JSON.parse(held).gateDecisions.composite_swap) as { source?: { kind: string } }[];
+    expect(rows.map((r) => r.source?.kind)).toEqual(["document", "document"]);
+    expect(held).not.toContain(read.text);
+  });
+
+  test("@gate1 the record shows beside a matched score, and on a Gate 1 the run has passed", async ({ page }) => {
+    await serveRun(page, (run) => {
+      run.gatePosition = "gate2";
+      run.result!.gatePosition = "gate2";
+      run.composites = [specOf(SCORE, THREE, 0)];
+    });
+    await seedDeclaration(page, declared(SCORE, THREE, { source: declarationSource(PASTED, null, 5) }));
+    await openGate1(page);
+    await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();
+    await openPanel(page);
+    await expect(page.locator(RECORD)).toBeVisible();
+    expect(await exactText(page)).toBe(PASTED);
   });
 });
