@@ -313,6 +313,50 @@ test("@gate4 review 2 — the exported records match the backend's effective rec
   expect(PARITY.result.records.find((r) => r.groupId === "c1#g0")?.members).toContain("B:smk");
 });
 
+test("@gate4 review 2 — on a staged run every preview reads the records the export carries, not the raw run", () => {
+  // The Gate 3 agent's note: the previews still showed removed variables and rejected recodes after round 2.
+  const gateLog = { index: indexDecisions(PARITY.grouped), config: PARITY.config, gatePosition: "gate4" };
+  const json = JSON.parse(artifactPreview("records_json", "py", PARITY.result, {}, gateLog).text) as Record<string, unknown>[];
+  // c2 was scoped out; c0 carries its reviewer name and its unapplied pick; c1 lost B:smk at Gate 3.
+  expect(json.map((r) => r.id)).toEqual(["c0#g0", "c1#g0", "c3#g0"]);
+  expect(json[0]).toMatchObject({ concept: "Participant âge", cde: "AgeAtVisitCDE" });
+  expect(json[1]).toMatchObject({ nMembers: 1, cohorts: ["A"], removedMembers: ["B:smk"], transforms: 1 });
+  const tsv = artifactPreview("eitl_tsv", "py", PARITY.result, {}, gateLog);
+  if (tsv.kind !== "table") throw new Error("expected a table");
+  const { columns, rows } = previewTable(tsv.text, tsv.delimiter);
+  const c1 = rows.find((r) => r[0] === "c1#g0")!;
+  expect([c1[columns.indexOf("n_members")], c1[columns.indexOf("cohorts")]]).toEqual(["1", "A"]);
+  expect(rows.map((r) => r[columns.indexOf("concept")])).toEqual(["Participant âge", "Smoking status", "Diabetes"]);
+  // The notebook excerpt applies no removed variable.
+  expect(artifactPreview("notebook", "py", PARITY.result, {}, gateLog).text).not.toContain("B:smk");
+  // A LEGACY one-shot run (no gate position, no decisions) previews its raw records, exactly as its files do.
+  const legacy = JSON.parse(
+    artifactPreview("records_json", "py", PARITY.result, {}, { index: {}, config: {}, gatePosition: null }).text,
+  ) as Record<string, unknown>[];
+  expect(legacy.map((r) => r.id)).toEqual(["c0#g0", "c1#g0", "c2#g0"]);
+  expect(legacy[0]).not.toHaveProperty("removedMembers");
+});
+
+test("@gate4 review 2 — the notebook preview leaves a rejected recode out and says so", () => {
+  const d = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
+  const index: DecisionIndex = { gate3_spec_edit: { "A:dm": d({ sourceVariable: "A:dm", chosen: "", rejected: true }) } };
+  const result = { ...PARITY.result, records: PARITY.result.records.filter((r) => r.groupId === "c3#g0") };
+  const nb = artifactPreview("notebook", "py", result, {}, { index, config: {}, gatePosition: "gate4" }).text;
+  expect(nb).toContain("#   transform: categorical on B:dm");
+  expect(nb).not.toContain("#   transform: categorical on A:dm");
+  expect(nb).toContain("#   left out (recode rejected at Gate 3): A:dm");
+  expect(nb).toContain("# Applies 1 transform(s) across 1 concept(s).");
+});
+
+test("@gate4 review 2 — with every concept out of the export, a record preview says so; the log still previews", () => {
+  const index = indexDecisions(PARITY.grouped);
+  const gateLog = { index, config: { ...PARITY.config, gate1_scope: [] }, gatePosition: "gate4" };
+  const json = artifactPreview("records_json", "py", PARITY.result, {}, gateLog);
+  expect(json.kind).toBe("empty");
+  expect(json.text).toMatch(/Nothing is in this export/);
+  expect(artifactPreview("decisions_csv", "py", PARITY.result, {}, gateLog).kind).toBe("table");
+});
+
 test("@gate4 review 2 — the Sankey's flows are the exported records': a scoped-out novel group draws no Novel flow", () => {
   const exported = exportedRecords(PARITY.result, PARITY.config, indexDecisions(PARITY.grouped));
   const data = buildSankeyData(exported);

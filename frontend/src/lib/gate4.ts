@@ -926,21 +926,27 @@ export function artifactPreview(
   decisions: Record<string, LegacyVerdicts> | undefined,
   gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
 ): ArtifactPreview {
-  const all = result?.records ?? [];
-  const records = all.slice(0, PREVIEW_RECORDS);
-  const dec = decisions ?? {};
-  if (records.length === 0) {
+  if ((result?.records ?? []).length === 0) {
     return { kind: "empty", text: "This run produced no concept records, so this artifact would be empty." };
   }
-  // The legacy excerpts are the first few concepts; the file carries every one, and the drawer says so.
+  const dec = decisions ?? {};
+  // A STAGED run's files carry the records as the REVIEWER left them (`_export_staged` reads `effective_records`),
+  // so its previews read the same (review round 2): no scoped-out group, no removed variable, the reviewer's names
+  // and targets, rejected recodes marked. A legacy one-shot run's files are its raw records, and so are its previews.
+  const staged = !!gateLog && isStagedExport(gateLog.gatePosition, gateLog.index);
+  const all: (UIRecord | ExportedRecord)[] =
+    staged && gateLog ? exportedRecords(result, gateLog.config, gateLog.index) : (result?.records ?? []);
+  const records = all.slice(0, PREVIEW_RECORDS);
+  // The excerpts are the first few concepts; the file carries every one, and the drawer says so.
   const recordsNote =
     all.length > records.length
       ? `The first ${records.length} of ${all.length} concepts — the file carries every one.`
       : undefined;
 
   // 08-27: on a staged run the download is the gate decision LOG, so the preview reads the same decisions
-  // (never the legacy verdict mirror, which no gate writes) through the backend's own row rule.
-  if (id === "decisions_csv" && gateLog && isStagedExport(gateLog.gatePosition, gateLog.index)) {
+  // (never the legacy verdict mirror, which no gate writes) through the backend's own row rule — over the RAW
+  // run, as the backend's `decision_log_rows` does: the log says what each decision did to what the model made.
+  if (id === "decisions_csv" && gateLog && staged) {
     const rows = decisionLogCsvRows(gateLog.index, result, gateLog.config, decisions);
     const text = rows.slice(0, PREVIEW_LOG_ROWS).map(csvLine).join("\n");
     const note =
@@ -950,6 +956,13 @@ export function artifactPreview(
           ? `… ${rows.length - PREVIEW_LOG_ROWS} more decision(s) in the file`
           : undefined;
     return { kind: "table", delimiter: ",", text, note };
+  }
+
+  if (records.length === 0) {
+    return {
+      kind: "empty",
+      text: "Nothing is in this export — every concept was scoped out or excluded — so this file carries no concepts.",
+    };
   }
 
   if (id === "records_json") {
@@ -964,6 +977,8 @@ export function artifactPreview(
           nMembers: r.nMembers,
           cohorts: r.cohorts,
           transforms: r.transforms?.length ?? 0,
+          // Every staged record names what Gate 3 removed from it (`[]` for nothing), as the file does.
+          ...("removedMembers" in r ? { removedMembers: r.removedMembers } : {}),
         })),
         null,
         2,
@@ -1000,9 +1015,11 @@ export function artifactPreview(
 
   // notebook: a faithful excerpt of what the notebook applies — the transforms, in the chosen language.
   const langName = lang === "r" ? "R" : "Python";
+  // A rejected recode is left out of the notebook, and listed as left out — as the backend's notebook does.
+  const isRejected = (t: UITransform) => !!(t as ExportedTransform).rejected;
   const lines: string[] = [
     `# Harmonization transform notebook (${langName})`,
-    `# Applies ${records.reduce((n, r) => n + (r.transforms?.length ?? 0), 0)} transform(s) across ${
+    `# Applies ${records.reduce((n, r) => n + (r.transforms ?? []).filter((t) => !isRejected(t)).length, 0)} transform(s) across ${
       all.length
     } concept(s).`,
     "# The notebook runs where your data already lives; your data never enters ddharmon.",
@@ -1011,7 +1028,11 @@ export function artifactPreview(
   for (const r of records) {
     lines.push(`# ${r.concept} — ${r.verdict}${r.cde?.id ? ` → ${r.cde.id}` : ""}`);
     for (const t of r.transforms ?? []) {
-      lines.push(`#   transform: ${t.kind ?? "recode"} on ${t.sourceVariable ?? r.id}`);
+      lines.push(
+        isRejected(t)
+          ? `#   left out (recode rejected at Gate 3): ${t.sourceVariable ?? r.id}`
+          : `#   transform: ${t.kind ?? "recode"} on ${t.sourceVariable ?? r.id}`,
+      );
     }
   }
   return { kind: "code", text: lines.join("\n") };
