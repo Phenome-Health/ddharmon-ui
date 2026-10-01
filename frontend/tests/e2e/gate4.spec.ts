@@ -17,6 +17,7 @@ import {
   scopeSummary,
   artifactPreview,
   downloadLabel,
+  exportedRecords,
   previewFor,
   previewTable,
   resolveFormat,
@@ -24,6 +25,7 @@ import {
   unassignedBreakdown,
   verdictBreakdown,
 } from "@/lib/gate4";
+import { buildSankeyData } from "@/lib/sankey";
 import { FINISHED_JOB, finishedFixture, serveFinished } from "./gate23-fixture";
 
 /**
@@ -252,6 +254,58 @@ test("@gate4 the decision-log CSV preview on a staged run reads gate decisions, 
     gatePosition: null,
   });
   expect(legacy.split("\n")[0]).toBe("record_id,concept,verdict,chosen_cde,your_decision,note");
+});
+
+// --- final review round 2: the Sankey on Gate 4 draws the records the EXPORT carries -------------------------
+
+/**
+ * Pinned by BOTH sides: `tests/test_export_staged.py` asserts the backend's `effective_records` projects to each
+ * case's `expected`, and this asserts the client's `exportedRecords` does too — so the chart Gate 4 draws cannot
+ * show a flow the downloaded files do not carry.
+ */
+const EXPORTED = JSON.parse(readFileSync(resolve(HERE, "fixtures/exported-records-parity.json"), "utf8")) as {
+  cases: {
+    name: string;
+    useParityDecisions?: boolean;
+    config?: Record<string, unknown>;
+    grouped?: GroupedDecisions;
+    expected: { groupId: string; concept: string; verdict: string; cohorts: string[]; members: string[] }[];
+  }[];
+};
+
+test("@gate4 review 2 — the exported records match the backend's effective records, case for case", () => {
+  for (const c of EXPORTED.cases) {
+    const config = c.useParityDecisions ? PARITY.config : (c.config ?? {});
+    const index = indexDecisions(c.useParityDecisions ? PARITY.grouped : (c.grouped ?? {}));
+    const got = exportedRecords(PARITY.result, config, index).map((r) => ({
+      groupId: r.groupId,
+      concept: r.concept,
+      verdict: r.verdict,
+      cohorts: r.cohorts,
+      members: r.members,
+    }));
+    expect(got, c.name).toEqual(c.expected);
+  }
+  // Never the raw pipeline output: the input is not mutated, and the raw run carries the group the scope dropped.
+  expect(PARITY.result.records.map((r) => r.groupId)).toContain("c2#g0");
+  expect(PARITY.result.records.find((r) => r.groupId === "c0#g0")?.concept).toBe("Age in years");
+});
+
+test("@gate4 review 2 — the Sankey's flows are the exported records': a scoped-out novel group draws no Novel flow", () => {
+  const exported = exportedRecords(PARITY.result, PARITY.config, indexDecisions(PARITY.grouped));
+  const data = buildSankeyData(exported);
+  const names = data.nodes.map((n) => n.name);
+  // c2 (the only novel group) was scoped out at Gate 1, and c3's applied re-pick took it from novel to adopt.
+  expect(names).toEqual(["A", "B", "Adopt", "Refine", "Existing CDE"]);
+  const flow = (from: string, to: string) =>
+    data.links.find((l) => names[l.source] === from && names[l.target] === to)?.value ?? 0;
+  expect(flow("A", "Adopt")).toBe(2); // A:age, A:dm
+  expect(flow("B", "Adopt")).toBe(2); // B:age_yrs, B:dm
+  expect(flow("A", "Refine")).toBe(1);
+  expect(flow("Adopt", "Existing CDE")).toBe(4);
+  expect(flow("Refine", "Existing CDE")).toBe(2);
+  // The raw run would have drawn the scoped-out group.
+  expect(buildSankeyData(PARITY.result.records).nodes.map((n) => n.name)).toContain("Novel");
 });
 
 // --- final review round 2: CSV / TSV previews render as a table, parsed by a real CSV parser -----------------

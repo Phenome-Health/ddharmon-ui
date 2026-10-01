@@ -1028,3 +1028,41 @@ export function previewFor(
   const preview = artifactPreview(id, lang, result, decisions, gateLog);
   return preview.kind === "table" && preview.note ? `${preview.text}\n${preview.note}` : preview.text;
 }
+
+// --- the records the export carries (final review round 2: the Sankey on Gate 4) -------------------------------
+
+/** The Gate 4 export-selection values that leave a record OUT — `EXCLUDE_VALUES` in the backend. */
+const EXPORT_EXCLUDE = new Set(["exclude", "out"]);
+
+/**
+ * The concept records as the EXPORT carries them — the client half of `backend/export_decisions.py::
+ * effective_records`, for the parts that decide WHICH records leave the tool and what they are called: the Gate 1
+ * scope (the frozen list first, else the legacy "not scoped out" rule), the Gate 4 export selection, and the
+ * reviewer's name for the group. A Gate 2 pick needs nothing here: the Gate 2 -> 3 leg already re-targeted the
+ * record (its verdict, cde and candidates name the reviewer's target), and an export reads the record's own
+ * verdict either way.
+ *
+ * WHY IT EXISTS (Bhargav, review round 2: surface the run view's Sankey on Gate 4). A chart drawn from the raw
+ * pipeline output would show flows the files do not carry — a scoped-out group's variables, an excluded record —
+ * on the very screen that says "this is what leaves the tool". Pinned against the backend by
+ * `fixtures/exported-records-parity.json`, from both sides. Returns new objects only where a name changed; the
+ * run result is never mutated.
+ */
+export function exportedRecords(
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  index: DecisionIndex,
+): UIRecord[] {
+  const keep = inheritedGate1Scope(config, index.gate1_group_scope ?? {});
+  const selection = index.gate4_export_selection ?? {};
+  const renames = index.gate1_rename ?? {};
+  const out: UIRecord[] = [];
+  for (const raw of result?.records ?? []) {
+    const gid = String(raw.groupId || raw.id || "");
+    if (!keep(gid)) continue;
+    if (EXPORT_EXCLUDE.has(String(selection[String(raw.id || "")]?.chosen ?? ""))) continue;
+    const name = String(renames[gid]?.chosen ?? "").trim();
+    out.push(name ? { ...raw, concept: name } : raw);
+  }
+  return out;
+}

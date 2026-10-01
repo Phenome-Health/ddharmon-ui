@@ -516,6 +516,30 @@ def test_the_decision_log_matches_the_pinned_parity_fixture():
     assert any(r[-1] == "true" for r in fixture["expectedRows"]), "the fixture must exercise a stale decision"
 
 
+def test_the_exported_records_match_the_pinned_parity_fixture():
+    """Gate 4's Sankey (final review round 2) draws the records the EXPORT carries, re-derived on the client
+    (``frontend/src/lib/gate4.ts::exportedRecords``) so it works in the backend-less build. Both sides are pinned to
+    the same literal projection of :func:`effective_records`, so the chart cannot drift from the files (the e2e twin
+    is in ``gate4.spec.ts``)."""
+    from pathlib import Path
+
+    from backend.export_decisions import effective_records
+
+    here = Path(__file__).parent.parent / "frontend/tests/e2e/fixtures"
+    parity = json.loads((here / "decision-log-parity.json").read_text("utf-8"))
+    fixture = json.loads((here / "exported-records-parity.json").read_text("utf-8"))
+    assert fixture["source"] == "decision-log-parity.json"
+    keys = ("groupId", "concept", "verdict", "cohorts", "members")
+    for case in fixture["cases"]:
+        config = parity["config"] if case.get("useParityDecisions") else case["config"]
+        grouped = parity["grouped"] if case.get("useParityDecisions") else case["grouped"]
+        got = [{k: r.get(k) for k in keys} for r in effective_records(parity["result"], config, grouped)]
+        assert got == case["expected"], case["name"]
+    # The cases exercise every rule the chart depends on: a frozen scope, an explicit "out", an export exclude.
+    names = [[r["groupId"] for r in c["expected"]] for c in fixture["cases"]]
+    assert "c2#g0" not in names[0] and "c1#g0" not in names[1] and "c3#g0" not in names[1]
+
+
 # --- 08-28 1e: provenance & the decision log ---------------------------------------------------------------
 #
 # The walk of run 6c66731c (08-LIVE-VERIFY-3 F17) found that once the Gate 2 -> 3 leg APPLIES a pick (the

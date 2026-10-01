@@ -1,0 +1,115 @@
+{
+  "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py::effective_records) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts::exportedRecords): Gate 4's Sankey (final review round 2) draws the records the EXPORT carries — Gate 1 scope (frozen list first, else the legacy 'not out' rule), the Gate 4 export selection, and the reviewer's names — so its flows cannot drift from the files. Every case reads its result from decision-log-parity.json; a case with useParityDecisions reads that file's config and decisions too, so a change to the shared inputs must be reflected here. Regenerate only by changing both implementations.",
+  "source": "decision-log-parity.json",
+  "cases": [
+    {
+      "name": "the parity run as walked: frozen scope drops c2, a rename, an applied and an unapplied re-pick",
+      "useParityDecisions": true,
+      "expected": [
+        {
+          "groupId": "c0#g0",
+          "concept": "Participant âge",
+          "verdict": "adopt",
+          "cohorts": [
+            "A",
+            "B"
+          ],
+          "members": [
+            "A:age",
+            "B:age_yrs"
+          ]
+        },
+        {
+          "groupId": "c1#g0",
+          "concept": "Smoking status",
+          "verdict": "refine",
+          "cohorts": [
+            "A",
+            "B"
+          ],
+          "members": [
+            "A:smoke",
+            "B:smk"
+          ]
+        },
+        {
+          "groupId": "c3#g0",
+          "concept": "Diabetes",
+          "verdict": "adopt",
+          "cohorts": [
+            "A",
+            "B"
+          ],
+          "members": [
+            "A:dm",
+            "B:dm"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "no frozen scope: an explicit out, an export-selection exclude, a padded rename",
+      "config": {},
+      "grouped": {
+        "gate1_group_scope": [
+          {
+            "groupId": "c1#g0",
+            "chosen": "out",
+            "alternatives": [
+              "in",
+              "out"
+            ],
+            "optionSetKey": "s"
+          }
+        ],
+        "gate4_export_selection": [
+          {
+            "recordId": "c3#g0",
+            "chosen": "exclude",
+            "alternatives": [
+              "include",
+              "exclude"
+            ],
+            "optionSetKey": "x"
+          }
+        ],
+        "gate1_rename": [
+          {
+            "groupId": "c2#g0",
+            "chosen": "  Hair colour  ",
+            "alternatives": [
+              "Hair colour"
+            ],
+            "optionSetKey": "r"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "groupId": "c0#g0",
+          "concept": "Age in years",
+          "verdict": "adopt",
+          "cohorts": [
+            "A",
+            "B"
+          ],
+          "members": [
+            "A:age",
+            "B:age_yrs"
+          ]
+        },
+        {
+          "groupId": "c2#g0",
+          "concept": "Hair colour",
+          "verdict": "novel",
+          "cohorts": [
+            "A"
+          ],
+          "members": [
+            "A:hair"
+          ]
+        }
+      ]
+    }
+  ]
+}
