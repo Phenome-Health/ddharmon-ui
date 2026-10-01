@@ -384,7 +384,7 @@ function GroupTitle({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const generated = groupLabel(group).text;
+  const own = groupLabel(group);
 
   if (editing) {
     return (
@@ -428,15 +428,16 @@ function GroupTitle({
       </span>
       {label.source === "reviewer" && <RenamedMark />}
       {label.source === "judge" && <BorrowedMark />}
-      {/* `generated` and `none` carry NO mark. `generated` is the default and a pill on every row says
-          nothing (08-16c review); `none` never had one, because "generated" beside "Unnamed group"
-          would claim the pipeline produced that string, which it did not. */}
+      {/* `generated`, `leftover` and `none` carry NO mark. `generated` is the default and a pill on every row
+          says nothing (08-16c review); the two placeholders never had one, because "generated" beside
+          "Unnamed group" would claim the pipeline produced that string, which it did not. */}
       {label.source === "reviewer" && (
         <span
           data-testid="generated-name-kept"
           className="truncate text-xs text-on-raised-muted"
         >
-          ddharmon called it {generated}
+          {/* A leftover was never named, so its placeholder is kept as itself, not as what ddharmon "called it". */}
+          {own.source === "leftover" ? own.text : `ddharmon called it ${own.text}`}
         </span>
       )}
       {!readOnly && (
