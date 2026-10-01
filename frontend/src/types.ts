@@ -1116,16 +1116,50 @@ export function isRawConceptId(
   return /^[0-9a-f]{6,}#g\d+$/i.test(c) || /^[0-9a-f]{12,}$/i.test(c);
 }
 
+// ── the split's leftover group ───────────────────────────────────────────────────────────────
+// Core's split names the groups the model returned and SWEEPS every member it did not place into one more
+// group with `concept: ""`, appended AFTER the model's groups (core `leanb.prepare_group_assign`, the residual-
+// completion block). Group ids are `<clusterId>#g<index>` in that order, so the sweep always sits at index >= 1.
+// A cluster with NO usable split falls back to ONE group over every member — always `#g0`, alone. The model
+// cannot return an unnamed group of its own: `concept` is a required field of the forced split tool. So an
+// unnamed group past index 0 is the leftover, and an unnamed `#g0` is the whole cluster.
+//
+// Why the difference matters: every group of a cluster carries the CLUSTER's ideal description (`idealCde`).
+// For the whole-cluster group that is an accurate title; for the leftover it describes concepts that sit in
+// its sibling groups, not in it.
+
+/** The split's own index for a group — the `<n>` of core's `<clusterId>#g<n>` id — or null when the id is not
+ *  in that shape (a reviewer's own `rev:` group). A re-split child is `<parent group id>#g<n>`: the LAST index
+ *  is the split that produced it, so that is the one read. */
+export function splitGroupIndex(groupId: string | null | undefined): number | null {
+  const m = /#g(\d+)$/.exec(groupId ?? "");
+  return m ? Number(m[1]) : null;
+}
+
+/** True when an unnamed group is the split's LEFTOVER rather than a cluster the split never divided. The
+ *  caller decides "unnamed" by its own rule; this reads only where the group sits in its split. */
+export function isSplitLeftover(groupId: string | null | undefined): boolean {
+  return (splitGroupIndex(groupId) ?? 0) >= 1;
+}
+
+/** An unnamed split leftover's title: what it is, never its cluster's ideal. `nMembers` = the group's size. */
+export function leftoverLabel(nMembers: number): string {
+  return `Not named by the split — ${nMembers} ${nMembers === 1 ? "variable" : "variables"} the model left over`;
+}
+
 /** The human-readable label for a concept card. When `concept` is a leaked raw id (or empty), fall back to
- *  the GenCDE title, then the concept-summary's first phrase, then a variable-count placeholder — so the UI
- *  never prints a hash. Otherwise returns `concept` untouched. */
+ *  the GenCDE title, then — for a split leftover — the leftover label, else the concept-summary's first phrase,
+ *  then a variable-count placeholder — so the UI never prints a hash. Otherwise returns `concept` untouched. */
 export function conceptLabel(
   r: Pick<UIRecord, "concept" | "clusterId" | "groupId" | "gencde" | "idealCde" | "nMembers">,
 ): string {
   const c = (r.concept ?? "").trim();
   if (!isRawConceptId(c, { clusterId: r.clusterId, groupId: r.groupId })) return c;
+  // The group's OWN generated element, minted from its own members — accurate for a leftover too.
   const gTitle = (r.gencde?.title || r.gencde?.preferredName || "").trim();
   if (gTitle) return gTitle;
+  // The concept summary below is the CLUSTER's; a leftover is only part of that cluster.
+  if (isSplitLeftover(r.groupId)) return leftoverLabel(r.nMembers ?? 0);
   const ideal = (r.idealCde ?? "").trim();
   if (ideal) {
     const phrase = ideal.split(/[.;\n]/)[0].trim();
