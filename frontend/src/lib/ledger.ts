@@ -651,6 +651,43 @@ export function conceptTitle(
   ).text;
 }
 
+/** A Gate 1 group with the name Gate 1 shows for it — and, when the reviewer renamed it, the one ddharmon gave it. */
+export interface NamedGroup {
+  group: ConceptGroup;
+  name: string;
+  /** Present only when the reviewer renamed a GENERATED name: the original, kept beside theirs (08-16c Task 3). */
+  generatedName?: string;
+}
+
+/**
+ * groupId → every group Gate 1 shows, NAMED as Gate 1 names it — for surfaces off the ledger that point at a
+ * group, such as the declared-score panel (phase-8 final review, round 1).
+ *
+ * TWO DEFECTS, ONE PLACE. The score builder resolved a matched group through a map of the PIPELINE's groups
+ * only, labelled with `groupLabel(g)` and no rename. So a group the reviewer renamed read under its generated
+ * name, and a group the reviewer MADE — a New group or a part of an accepted division, both `rev:` ids that are
+ * never in a checkpoint's `conceptGroups` — was missing from the map and read "Unnamed group".
+ *
+ * The reviewer's own groups are named through their OWN decision (`reviewerGroupRows` reads it into `concept`),
+ * so they carry no `generatedName`: there is no generated name to keep. A renamed pipeline group keeps its
+ * generated one, the same "ddharmon called it …" pairing Gate 1's row shows.
+ */
+export function namedGroupsById(
+  groups: readonly ConceptGroup[],
+  reviewerRows: readonly ConceptGroup[],
+  renamedOf: (groupId: string) => string | undefined,
+): Map<string, NamedGroup> {
+  const out = new Map<string, NamedGroup>();
+  for (const group of [...reviewerRows, ...groups]) {
+    if (out.has(group.groupId)) continue;
+    const label = groupLabel(group, renamedOf(group.groupId));
+    const generatedName =
+      label.source === "reviewer" && group.conceptIsGenerated !== false ? groupLabel(group).text : undefined;
+    out.set(group.groupId, { group, name: label.text, ...(generatedName ? { generatedName } : {}) });
+  }
+  return out;
+}
+
 /** What a bulk scope action would do: which decisions to clear, and which to write OUT. */
 export interface BulkScopePlan {
   clear: string[];

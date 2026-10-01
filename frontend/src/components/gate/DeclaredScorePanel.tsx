@@ -23,7 +23,7 @@ import { heldRunKey } from "@/lib/run-key";
 import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
-import { groupLabel } from "@/lib/ledger";
+import type { NamedGroup } from "@/lib/ledger";
 import {
   CUTOFF_UNSTATED,
   PARTIAL_IS_NOT_THE_SCORE,
@@ -40,7 +40,6 @@ import type {
   CompositeSpec,
   ComponentCoding,
   ComponentMatch,
-  ConceptGroup,
   FieldDetail,
 } from "@/types";
 
@@ -159,10 +158,13 @@ export interface DeclaredScorePanelProps {
   onMatch?: () => void;
   matching?: boolean;
   /**
-   * groupId → its Gate 1 group, so a match (or a retrieved-but-rejected candidate) can name its concept
-   * group and link into the detail pane. Absent where the run has no groups (the demo's empty Gate 1).
+   * groupId → its Gate 1 group, ALREADY NAMED as Gate 1 names it (`namedGroupsById`: the reviewer's rename, their
+   * own New groups and division parts included), so a match (or a retrieved-but-rejected candidate) can name its
+   * concept group and link into the detail pane. The panel never re-derives a name — deriving it here, from the
+   * pipeline's groups alone, is how a renamed group read under its old name and a New one as "Unnamed group".
+   * Absent where the run has no groups (the demo's empty Gate 1).
    */
-  groupsById?: Map<string, ConceptGroup>;
+  groupsById?: Map<string, NamedGroup>;
   /** variableId ("cohort:var") → its concept groupId, so a variable-level retrieval candidate (a missing
    *  component's shortlist is variable-level) can be rolled up to the ONE group it belongs to — deduped and
    *  linkable — instead of listing many look-alike raw variables that cannot open a group. */
@@ -217,8 +219,14 @@ export function DeclaredScorePanel({
   // candidate has no group so it stays undefined and the coverage line degrades to "N members matched".
   const resolveConcept = useMemo(
     () => (id: string) => {
-      const g = groupsById?.get(id);
-      if (g) return { concept: groupLabel(g).text, cohorts: g.cohorts, nMembers: g.nMembers };
+      const named = groupsById?.get(id);
+      if (named)
+        return {
+          concept: named.name,
+          generatedName: named.generatedName,
+          cohorts: named.group.cohorts,
+          nMembers: named.group.nMembers,
+        };
       const fd = fieldIndex?.[id];
       if (fd)
         return {
@@ -661,20 +669,19 @@ function ScoreComponentRow({
   evidence: ComponentEvidence;
   match: ComponentMatch | undefined;
   coding: ComponentCoding | undefined;
-  groupsById?: Map<string, ConceptGroup>;
+  groupsById?: Map<string, NamedGroup>;
   onOpenGroup?: (groupId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const componentVerdict = componentVerdictFor(evidence);
-  const matchedGroup = match?.conceptId
-    ? groupsById?.get(match.conceptId)
-    : undefined;
+  const matchedNamed = match?.conceptId ? groupsById?.get(match.conceptId) : undefined;
+  const matchedGroup = matchedNamed?.group;
   // The candidates retrieval offered, minus the one that was chosen — the "also considered" for a match,
   // the "retrieved and rejected" for a miss. Only those we can name (present in `groupsById`) are shown.
   const otherCandidates = (match?.shortlist ?? [])
     .filter((id) => id !== match?.conceptId)
-    .map((id) => ({ id, group: groupsById?.get(id) }))
-    .filter((c): c is { id: string; group: ConceptGroup } => !!c.group);
+    .map((id) => ({ id, named: groupsById?.get(id) }))
+    .filter((c): c is { id: string; named: NamedGroup } => !!c.named);
   const hasDetail = !!matchedGroup || otherCandidates.length > 0;
 
   return (
@@ -713,10 +720,10 @@ function ScoreComponentRow({
         // Simplified row copy (08-16g review #3): the wordy "Matched to a concept in this run:" prefix is
         // trimmed to "Matched:", and the full sentence — the matched concept's name, or the long "why not"
         // reason — is relegated to a tooltip and clamped to two lines, so a long name/reason never bloats
-        // the row. The name resolves through groupLabel (#1) so an unnamed residual reads "Unnamed group",
-        // never a raw group id.
+        // the row. The name is the one Gate 1 shows (`namedGroupsById`, #1) so an unnamed residual reads "Unnamed
+        // group", never a raw group id, and a renamed group reads under the reviewer's name.
         const summary = evidence.matched
-          ? `Matched: ${matchedGroup ? groupLabel(matchedGroup).text : match?.concept?.trim() || "—"}`
+          ? `Matched: ${matchedNamed ? matchedNamed.name : match?.concept?.trim() || "—"}`
           : missingReason(evidence);
         return (
           <span
@@ -772,7 +779,7 @@ function ScoreComponentRow({
                 className="w-fit text-left text-sm font-semibold text-link-on-raised underline underline-offset-2"
                 title="Open this group's members on Gate 1"
               >
-                {groupLabel(matchedGroup).text}
+                {matchedNamed?.name}
               </button>
               <div className="flex flex-wrap items-center gap-1">
                 {matchedGroup.cohorts.map((c) => (
@@ -808,7 +815,7 @@ function ScoreComponentRow({
                   ? "Other concepts retrieved"
                   : "Concepts retrieved — none measured this"}
               </span>
-              {otherCandidates.map(({ id, group }) => (
+              {otherCandidates.map(({ id, named: { group, name } }) => (
                 <button
                   key={id}
                   type="button"
@@ -819,7 +826,7 @@ function ScoreComponentRow({
                   title="Open this group's members on Gate 1"
                 >
                   <span className="line-clamp-1 text-xs text-link-on-raised underline underline-offset-2">
-                    {groupLabel(group).text}
+                    {name}
                   </span>
                   <span className="shrink-0 font-mono text-[11px] text-on-raised-muted">
                     {group.cohorts.join(" · ")}

@@ -1,7 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
-import { conceptTitle, groupLabel } from "@/lib/ledger";
-import type { UIRecord } from "@/types";
+import { conceptTitle, groupLabel, namedGroupsById, reviewerGroupRows } from "@/lib/ledger";
+import { optionSetKey } from "@/lib/gate-decisions";
+import { SANDBOX_PREFIX } from "@/lib/sandbox";
+import type { ComponentCoding, CompositeSpec, ConceptGroup, UIRecord } from "@/types";
 import { FINISHED_JOB, finishedRecords, serveFinished } from "./gate23-fixture";
+import { PAUSED_JOB, fixtureGroups, serveRun } from "./gate1-fixture";
 
 /**
  * A concept keeps the name it had at Gate 1 (phase-8 final review, round 1).
@@ -140,5 +143,165 @@ test.describe("Gate 2 titles", () => {
     const row = page.locator(`[data-testid='gate3-concept'][data-concept-id='${NOVEL}']`);
     await expect(row).toContainText(conceptOf(NOVEL));
     await expect(row).not.toContainText("transportation_via_company_involvement_ind");
+  });
+});
+
+// --- the score builder on Gate 1 -----------------------------------------------------------------------------
+
+/**
+ * The score builder names groups the way Gate 1 does (phase-8 final review, round 1).
+ *
+ * The declared-score panel resolved a matched group through a map of the PIPELINE's groups only, labelled without
+ * the reviewer's rename. So a group the reviewer renamed read under its generated name, and a group the reviewer
+ * MADE — a New group, or a part of an accepted division (both `rev:` ids, both renamed through their own decision)
+ * — was not in the map at all and read "Unnamed group".
+ */
+test.describe("score builder group names", () => {
+  const RENAMED = "cb2a6e2cd6fd3#g0";
+  const PLAIN = "c8331409f61e1#g0";
+  const MADE = "rev:00000000-0000-4000-8000-0000000000e1";
+
+  function group(id: string): ConceptGroup {
+    return fixtureGroups().find((g) => g.groupId === id)!;
+  }
+
+  test("@names a renamed group carries the reviewer's name, with the generated one kept beside it", () => {
+    const g = group(RENAMED);
+    const byId = namedGroupsById([g, group(PLAIN)], [], (id) => (id === RENAMED ? "My grip items" : undefined));
+    expect(byId.get(RENAMED)).toMatchObject({ name: "My grip items", generatedName: g.concept });
+    // An untouched group reads its generated name, with nothing beside it.
+    expect(byId.get(PLAIN)).toMatchObject({ name: group(PLAIN).concept });
+    expect(byId.get(PLAIN)!.generatedName).toBeUndefined();
+  });
+
+  test("@names a group the reviewer made is in the map, under the name they gave it", () => {
+    const made = reviewerGroupRows(
+      { [MADE]: { groupId: MADE, chosen: "Eye conditions", name: "Eye conditions", createdAt: 1 } },
+      () => [],
+    );
+    const byId = namedGroupsById([group(PLAIN)], made, () => undefined);
+    expect(byId.get(MADE)).toMatchObject({ name: "Eye conditions" });
+    // It never had a generated name, so none is claimed for it.
+    expect(byId.get(MADE)!.generatedName).toBeUndefined();
+  });
+
+  function spec(candidates: { groupId: string; confidence: number }[]): CompositeSpec {
+    const coding: ComponentCoding = {
+      kind: "threshold",
+      cutoff: "",
+      referenceRange: "",
+      codeMap: {},
+      formula: "",
+      units: "",
+      statedInSource: false,
+      needsReview: true,
+    };
+    return {
+      definition: {
+        name: "Test frailty index",
+        kind: "criteria_count",
+        citation: "",
+        combinationRule: "count of criteria met",
+        threshold: "",
+        notes: "",
+        statedNItems: 1,
+        underEnumerated: 0,
+        provenance: "pasted text",
+        sourceSha256: "",
+        components: [{ name: "Grip strength", definition: "", required: true, weight: null, coding }],
+      },
+      matches: [
+        {
+          component: "Grip strength",
+          conceptId: candidates[0].groupId,
+          concept: "",
+          column: "grip",
+          cohorts: [],
+          sourceVariables: [],
+          confidence: candidates[0].confidence,
+          rationale: "measures grip strength",
+          required: true,
+          pinned: false,
+          shortlist: candidates.map((c) => c.groupId),
+          matchedMembers: [],
+          groupCandidates: candidates.map((c) => ({ ...c, nMatched: 1, nTotal: 1 })),
+        },
+      ],
+      feasibility: {
+        verdict: "partial",
+        nRequired: 1,
+        nRequiredMatched: 1,
+        matched: ["Grip strength"],
+        missing: [],
+        needsReview: [],
+        computableCohorts: [],
+        perCohort: [],
+        caveats: [],
+      },
+      derivation: [],
+      units: "",
+      validationRules: [],
+    } as CompositeSpec;
+  }
+
+  test("@names @gate1 the score builder shows a renamed group by its new name and a New group by its own", async ({
+    page,
+  }) => {
+    const member = group(PLAIN).memberVariableNames[0];
+    await serveRun(page, (run) => {
+      run.composites = [
+        spec([
+          { groupId: MADE, confidence: 0.9 },
+          { groupId: RENAMED, confidence: 0.85 },
+        ]),
+      ];
+    });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    // Seeded exactly as Gate 1 writes them: a rename, a New group, and a move that fills it.
+    const alts = [PLAIN, "__unassigned__", MADE];
+    const gateDecisions = {
+      gate1_rename: {
+        [RENAMED]: {
+          groupId: RENAMED,
+          chosen: "My grip items",
+          alternatives: [group(RENAMED).concept, "My grip items"],
+          optionSetKey: optionSetKey([group(RENAMED).concept, "My grip items"]),
+          generatedName: group(RENAMED).concept,
+        },
+      },
+      gate1_new_group: {
+        [MADE]: {
+          groupId: MADE,
+          chosen: "Eye conditions",
+          alternatives: ["Eye conditions"],
+          optionSetKey: optionSetKey(["Eye conditions"]),
+          name: "Eye conditions",
+          createdAt: 1,
+        },
+      },
+      gate1_regroup: {
+        [member]: { memberId: member, fromGroupId: PLAIN, chosen: MADE, alternatives: alts, optionSetKey: optionSetKey(alts), movedAt: 1 },
+      },
+    };
+    await page.evaluate(
+      ({ key, value }) => sessionStorage.setItem(key, value),
+      { key: `${SANDBOX_PREFIX}${PAUSED_JOB}`, value: JSON.stringify({ gateDecisions }) },
+    );
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+
+    await page.locator("[data-testid='score-panel-toggle']").click();
+    const grip = page.locator("[data-testid='score-match'][data-component='Grip strength']");
+    await grip.locator("[data-testid='score-component-expand']").click();
+    const renamed = grip.locator(`[data-testid='score-group'][data-group='${RENAMED}']`);
+    const made = grip.locator(`[data-testid='score-group'][data-group='${MADE}']`);
+    await expect(renamed.locator("[data-testid='score-open-group']")).toContainText("My grip items");
+    await expect(renamed.locator("[data-testid='score-group-generated']")).toHaveText(
+      `ddharmon called it ${group(RENAMED).concept}`,
+    );
+    await expect(made.locator("[data-testid='score-open-group']")).toContainText("Eye conditions");
+    await expect(made.locator("[data-testid='score-group-generated']")).toHaveCount(0);
+    await expect(grip).not.toContainText("Unnamed group");
   });
 });

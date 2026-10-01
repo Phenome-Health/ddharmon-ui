@@ -269,7 +269,7 @@ export function SpecView({
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   resolveConcept?: (
     id: string,
-  ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
+  ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
   resolveGroupId?: (id: string) => string | undefined;
 }) {
   const { definition, feasibility, derivation } = spec;
@@ -669,7 +669,7 @@ function MatchRow({
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   resolveConcept?: (
     id: string,
-  ) => { concept: string; cohorts: string[]; nMembers?: number } | undefined;
+  ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
   resolveGroupId?: (id: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -695,6 +695,8 @@ function MatchRow({
   const groups = candidates.map((g) => ({
     groupId: g.groupId,
     label: resolveConcept?.(g.groupId)?.concept?.trim() || "Unnamed group",
+    // The name ddharmon gave a group the reviewer RENAMED, kept beside theirs as Gate 1's row keeps it.
+    generatedName: resolveConcept?.(g.groupId)?.generatedName,
     confidence: g.confidence,
     nMatched: g.nMatched,
     nTotal: g.nTotal,
@@ -782,6 +784,11 @@ function MatchRow({
               </button>
             ) : (
               <span className="text-xs font-semibold text-on-raised">{g.label}</span>
+            )}
+            {g.generatedName && (
+              <span data-testid="score-group-generated" className="block text-[11px] text-on-raised-muted">
+                ddharmon called it {g.generatedName}
+              </span>
             )}
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-on-raised-muted">
               <span className="font-mono tabular-nums text-on-raised">{g.confidence.toFixed(2)}</span>

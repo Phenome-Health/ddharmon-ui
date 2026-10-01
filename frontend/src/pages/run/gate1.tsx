@@ -72,6 +72,7 @@ import {
   reshapedGroupIds,
   reviewerGroupRows,
   matchTerms,
+  namedGroupsById,
   partitionByBreadth,
   pricePerGroup,
   sortDestinations,
@@ -2455,11 +2456,6 @@ export default function Gate1Page() {
     () => jobState?.result?.conceptGroups ?? [],
     [jobState?.result?.conceptGroups],
   );
-  // groupId → group, so the declared-score panel can name a match's concept group and link into its detail.
-  const groupsById = useMemo(
-    () => new Map(groups.map((g) => [g.groupId, g])),
-    [groups],
-  );
   // variableId ("cohort:var") → its concept groupId, from the run's FULL membership lists. Lets the score
   // panel roll a variable-level retrieval candidate (a missing component's shortlist is variable-level) up
   // to the ONE group it belongs to — so eight look-alike cancer-type variables collapse to a single group
@@ -2697,6 +2693,17 @@ export default function Gate1Page() {
   const reviewerRows = useMemo(
     () => reviewerGroupRows(newGroups.decisions, (id) => membership.byGroup[id] ?? []),
     [newGroups.decisions, membership],
+  );
+  /**
+   * groupId → group, NAMED as this screen names it, so the declared-score panel can name a match's concept group
+   * and link into its detail. Every group the queue shows — the reviewer's own included — under the reviewer's
+   * name where they gave one (phase-8 final review: renamed and New groups read "Unnamed group" there).
+   */
+  const groupsById = useMemo(
+    () => namedGroupsById(groups, reviewerRows, renamedOf),
+    // `renamedOf` reads `renames.decisions`; the map is rebuilt whenever a rename lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groups, reviewerRows, renames.decisions],
   );
   /**
    * The pipeline groups the reviewer RESHAPED (Option B, 2026-09-18). Continue regenerates each one's ideal
