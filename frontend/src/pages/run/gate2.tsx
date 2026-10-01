@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
+import { GateShell } from "@/components/gate/GateShell";
 import {
   ConceptWorkbench,
   ConceptQueueRow,
@@ -23,16 +23,17 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
-import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
+import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
-import { isReviewerGroupId } from "@/lib/ledger";
+import { conceptTitle, isReviewerGroupId } from "@/lib/ledger";
 import {
   affectedSpecCount,
   candidateAlternatives,
@@ -85,10 +86,6 @@ import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
 
 type Gate2SortKey = "concept" | "verdict" | "vars";
 
-function conceptLabel(r: UIRecord): string {
-  return r.gencde?.preferredName || r.concept || r.idealCde || r.groupId;
-}
-
 /** The reviewer's in-progress edit to the anchor, tagged with the concept it belongs to (Gate 2/3 pattern:
  *  no effect, so no reset to mis-order the draft when the selection changes). */
 interface AnchorDraft {
@@ -121,6 +118,10 @@ export default function Gate2Page() {
   const parkedHere = jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate2";
   const failedLeg = !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
   const continueAction = failedLeg ? "Retry — continue this run" : "Continue to Gate 3";
+  // A frozen Gate 2 keeps its bar, but says what its Continue did instead of offering it again (O2).
+  const pastBar = frozen
+    ? frozenContinue("gate2", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+    : null;
 
   // What pressing Continue BUYS: continuing from Gate 2 runs the work whose results Gate 3 shows (spec-gen,
   // plus the concept-match check if the run opted in), so the forecast is Gate 3's — priced on THIS run's
@@ -170,9 +171,10 @@ export default function Gate2Page() {
   // Read-only inheritance from Gate 1: scope decides which groups reach this screen; regroups decide which
   // groups' anchors lag their membership. Neither is written here.
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
-  // A Gate 1 rename is the group's name from here on (08-27 option C) — it only ever showed on Gate 1.
+  // A concept is titled by its Gate 1 GROUP name — the reviewer's rename if any (08-27 option C), else the name
+  // Gate 1 showed — never by its target's name, which is shown as the target (phase-8 final review; `conceptTitle`).
   const renames = useGateDecisions(jobId, "gate1_rename", { pinned });
-  const labelOf = (r: UIRecord) => renamedLabel(conceptLabel(r), renames.decisions[r.groupId]);
+  const labelOf = (r: UIRecord) => conceptTitle(r, renames.decisions[r.groupId]);
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned });
 
   // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.
@@ -705,7 +707,8 @@ export default function Gate2Page() {
         }
       />
       <CommitBar
-        action={continueAction}
+        action={pastBar ? pastBar.action : continueAction}
+        done={pastBar?.note}
         actionTestId="gate2-continue"
         total={pinned === true ? undefined : continueCost}
         spentHere={costSoFar}
@@ -744,12 +747,11 @@ function Shell({
       gate="gate2"
       jobId={jobId}
       subhead="One concept at a time: the target ddharmon generated for it, the ranked catalogue candidates it was judged against, and the one you choose — or your own."
-      rail={railFor("gate2", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}
       onStop={cancel}
-      resumed={jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate2"}
+      resumed={isParkedAt(jobState, "gate2")}
     >
       <span data-testid="run-status" data-status={jobState?.status ?? "unknown"} className="sr-only">
         Run status: {jobState?.status ?? "unknown"}

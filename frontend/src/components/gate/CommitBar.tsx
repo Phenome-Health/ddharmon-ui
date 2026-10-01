@@ -55,6 +55,13 @@ export interface CommitBarProps {
    * own button. Only ever passed after such a refusal, so no bar changes until a server asks.
    */
   keyField?: React.ReactNode;
+  /**
+   * The gate is BEHIND the run (a frozen record): what happened here, said in place of the purchase (O2 — see
+   * `frozenContinue`). When set, the bar states no price, no "already spent" figure and no amount on the
+   * button — every one of those is a present-tense offer, and a past gate can make none. The bar itself stays:
+   * it is where a reviewer looks for what this step cost.
+   */
+  done?: React.ReactNode;
   onCommit?: () => void;
   busy?: boolean;
   disabled?: boolean;
@@ -71,6 +78,7 @@ export function CommitBar({
   recheckNotice,
   assurance,
   keyField,
+  done,
   onCommit,
   busy = false,
   disabled = false,
@@ -82,7 +90,7 @@ export function CommitBar({
       // The amount as DATA as well as words. A gate asserting "this press carries a non-zero charge" has
       // to read the figure, and parsing it back out of a formatted sentence is a gate that breaks on a
       // copy edit rather than on a wrong number.
-      data-total={total === undefined ? "" : String(total)}
+      data-total={total === undefined || done ? "" : String(total)}
       data-first-charge={String(firstCharge)}
       className={cn(
         "sticky bottom-0 z-10 flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
@@ -98,7 +106,12 @@ export function CommitBar({
 
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">
-          {spentHere !== undefined && (
+          {done && (
+            <p data-testid="commit-done" className="max-w-[68ch] text-sm text-on-raised">
+              {done}
+            </p>
+          )}
+          {!done && spentHere !== undefined && (
             <p className="text-sm text-on-raised-muted">
               <span className="font-semibold text-on-raised">
                 Already spent to reach this gate: <span className="font-mono tabular-nums">{formatUsd(spentHere)}</span>
@@ -106,7 +119,7 @@ export function CommitBar({
               — money the run has committed, not an estimate.
             </p>
           )}
-          {total !== undefined && (
+          {!done && total !== undefined && (
             <p className="max-w-[68ch] text-sm text-on-raised">
               {/* The unmissable statement. It names the amount, the scope and the fact that this is where
                   spending begins — inline, in the bar the reviewer is already reading. */}
@@ -126,7 +139,7 @@ export function CommitBar({
         >
           {busy && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
           {action}
-          {total !== undefined && (
+          {!done && total !== undefined && (
             <span className="ml-2 font-mono tabular-nums">{formatUsd(total)}</span>
           )}
         </Button>

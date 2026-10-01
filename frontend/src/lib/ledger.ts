@@ -595,7 +595,11 @@ export type GroupLabelSource = "reviewer" | "generated" | "judge" | "none";
  * reach the same label by different routes and collapsing them would hide that.
  */
 export function groupLabel(
-  group: ConceptGroup,
+  /**
+   * Only the naming fields — so a Gate 2/3 RECORD (which carries the same four, from the same split) is titled by
+   * exactly this rule too (`conceptTitle`), not by a second copy of it.
+   */
+  group: Pick<ConceptGroup, "concept" | "idealCde" | "coherence" | "coherenceSummary">,
   /** The reviewer's own name for this group, if they have given it one (08-16c Task 3). */
   renamedTo?: string | null,
 ): { text: string; source: GroupLabelSource } {
@@ -614,6 +618,74 @@ export function groupLabel(
   const summary = (group.coherenceSummary ?? "").trim();
   if (judged && summary) return { text: summary, source: "judge" };
   return { text: "Unnamed group", source: "none" };
+}
+
+/**
+ * A concept's title from Gate 2 on: the name its group had at Gate 1 (phase-8 final review, round 1).
+ *
+ * Bhargav: *"I would rather the group names in Gate 1 carry over to gate 2 rather than the CDE name replacing the
+ * group name."* Gates 2 and 3 titled a concept `gencde.preferredName || concept`, so a refine concept read as its
+ * target's catalog question and a novel one as its generated element's snake_case id (H6) — and since the title
+ * followed the target, re-picking the target could never bring the group's name back (H7). The target is the
+ * reviewer's DECISION and is shown as one ("target: …"); the title is the GROUP, so it does not move with it.
+ *
+ * THE SAME RULE AS GATE 1, NOT A COPY. A record carries its group's `concept` (core stamps it from the split, and
+ * a reviewer's New group's record from the name they gave it), `idealCde`, `coherence` and `coherenceSummary`, so
+ * `groupLabel` titles it exactly as Gate 1's row was titled — including the fallbacks for an unnamed group — and
+ * the reviewer's Gate 1 rename outranks all of it, as it does there.
+ */
+export function conceptTitle(
+  record: { concept?: string | null; idealCde?: string | null; coherence?: CoherenceState; coherenceSummary?: string | null },
+  rename: { chosen?: unknown } | undefined,
+): string {
+  const chosen = typeof rename?.chosen === "string" ? rename.chosen : undefined;
+  return groupLabel(
+    {
+      concept: record.concept ?? "",
+      idealCde: record.idealCde ?? "",
+      // An older payload without the cell is NOT a judged group: its summary (if any) cannot lend a name.
+      coherence: record.coherence ?? "not_judged",
+      coherenceSummary: record.coherenceSummary ?? "",
+    },
+    chosen,
+  ).text;
+}
+
+/** A Gate 1 group with the name Gate 1 shows for it — and, when the reviewer renamed it, the one ddharmon gave it. */
+export interface NamedGroup {
+  group: ConceptGroup;
+  name: string;
+  /** Present only when the reviewer renamed a GENERATED name: the original, kept beside theirs (08-16c Task 3). */
+  generatedName?: string;
+}
+
+/**
+ * groupId → every group Gate 1 shows, NAMED as Gate 1 names it — for surfaces off the ledger that point at a
+ * group, such as the declared-score panel (phase-8 final review, round 1).
+ *
+ * TWO DEFECTS, ONE PLACE. The score builder resolved a matched group through a map of the PIPELINE's groups
+ * only, labelled with `groupLabel(g)` and no rename. So a group the reviewer renamed read under its generated
+ * name, and a group the reviewer MADE — a New group or a part of an accepted division, both `rev:` ids that are
+ * never in a checkpoint's `conceptGroups` — was missing from the map and read "Unnamed group".
+ *
+ * The reviewer's own groups are named through their OWN decision (`reviewerGroupRows` reads it into `concept`),
+ * so they carry no `generatedName`: there is no generated name to keep. A renamed pipeline group keeps its
+ * generated one, the same "ddharmon called it …" pairing Gate 1's row shows.
+ */
+export function namedGroupsById(
+  groups: readonly ConceptGroup[],
+  reviewerRows: readonly ConceptGroup[],
+  renamedOf: (groupId: string) => string | undefined,
+): Map<string, NamedGroup> {
+  const out = new Map<string, NamedGroup>();
+  for (const group of [...reviewerRows, ...groups]) {
+    if (out.has(group.groupId)) continue;
+    const label = groupLabel(group, renamedOf(group.groupId));
+    const generatedName =
+      label.source === "reviewer" && group.conceptIsGenerated !== false ? groupLabel(group).text : undefined;
+    out.set(group.groupId, { group, name: label.text, ...(generatedName ? { generatedName } : {}) });
+  }
+  return out;
 }
 
 /** What a bulk scope action would do: which decisions to clear, and which to write OUT. */

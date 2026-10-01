@@ -23,7 +23,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { GATE_LABELS } from "@/components/gate/GateRail";
-import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
+import { GateShell } from "@/components/gate/GateShell";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
 import { LedgerRow } from "@/components/gate/LedgerRow";
 import { CoherenceMark } from "@/components/gate/CoherenceMark";
@@ -50,6 +50,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
@@ -71,6 +72,7 @@ import {
   reshapedGroupIds,
   reviewerGroupRows,
   matchTerms,
+  namedGroupsById,
   partitionByBreadth,
   pricePerGroup,
   sortDestinations,
@@ -82,7 +84,7 @@ import {
 } from "@/lib/ledger";
 import {
   isInFlight,
-  isParked,
+  isParkedAt,
   isTerminal,
   resumeTookEffect,
 } from "@/lib/run-state";
@@ -2454,11 +2456,6 @@ export default function Gate1Page() {
     () => jobState?.result?.conceptGroups ?? [],
     [jobState?.result?.conceptGroups],
   );
-  // groupId → group, so the declared-score panel can name a match's concept group and link into its detail.
-  const groupsById = useMemo(
-    () => new Map(groups.map((g) => [g.groupId, g])),
-    [groups],
-  );
   // variableId ("cohort:var") → its concept groupId, from the run's FULL membership lists. Lets the score
   // panel roll a variable-level retrieval candidate (a missing component's shortlist is variable-level) up
   // to the ONE group it belongs to — so eight look-alike cancer-type variables collapse to a single group
@@ -2536,6 +2533,10 @@ export default function Gate1Page() {
     "gate1",
     (jobState?.gatePosition ?? null) as GatePosition | null,
   );
+  // What a frozen Gate 1's bar says in place of the purchase (O2): the step is done, and what it bought.
+  const pastBar = frozen
+    ? frozenContinue("gate1", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+    : null;
   const scope = useGateDecisions(jobId, "gate1_group_scope", {
     pinned,
     frozen,
@@ -2692,6 +2693,17 @@ export default function Gate1Page() {
   const reviewerRows = useMemo(
     () => reviewerGroupRows(newGroups.decisions, (id) => membership.byGroup[id] ?? []),
     [newGroups.decisions, membership],
+  );
+  /**
+   * groupId → group, NAMED as this screen names it, so the declared-score panel can name a match's concept group
+   * and link into its detail. Every group the queue shows — the reviewer's own included — under the reviewer's
+   * name where they gave one (phase-8 final review: renamed and New groups read "Unnamed group" there).
+   */
+  const groupsById = useMemo(
+    () => namedGroupsById(groups, reviewerRows, renamedOf),
+    // `renamedOf` reads `renames.decisions`; the map is rebuilt whenever a rename lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groups, reviewerRows, renames.decisions],
   );
   /**
    * The pipeline groups the reviewer RESHAPED (Option B, 2026-09-18). Continue regenerates each one's ideal
@@ -3217,15 +3229,15 @@ export default function Gate1Page() {
       // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
       jobId={jobId}
       subhead="Each row is a group of variables that mean the same thing, with the name ddharmon generated for it. Choose which ones go on to be matched against common data elements."
-      rail={railFor("gate1", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
       // gate's whole part in it is handing over the run and the stream's own `cancel(mode)`.
       job={jobState}
       onStop={cancel}
-      // The shared answer to "is this run parked?", not a fourth local copy of the predicate.
-      resumed={isParked(jobState?.status)}
+      // Parked HERE, not merely parked: a run waiting at Gate 4 must not say "Paused at Gate 1" on a frozen
+      // Gate 1 (O3). The shared predicate, not a local copy.
+      resumed={isParkedAt(jobState, "gate1")}
     >
       {reconnecting && (
         <p
@@ -3781,7 +3793,9 @@ export default function Gate1Page() {
       )}
 
       <CommitBar
-        action="Continue to Gate 2"
+        action={pastBar ? pastBar.action : "Continue to Gate 2"}
+        // A frozen Gate 1 keeps its bar, but says what its Continue did instead of offering it again (O2).
+        done={pastBar?.note}
         keyField={
           continueKeyAsk ? <RunKeyField reason={continueKeyAsk} action="Continue to Gate 2" /> : undefined
         }

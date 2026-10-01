@@ -3,16 +3,17 @@ import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
 import { isGatePast, pathForGate, railReachOf } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
-import { formatUsd, type GatePosition, type JobResult, type RunCost } from "@/types";
+import { formatUsd, type GatePosition, type JobResult } from "@/types";
 import { PhMark } from "@/components/ph-logo";
 import { StopRunAction } from "@/components/stop-run-action";
-import { GATE_LABELS, GATE_SEQUENCE, GateRail, type GateRailItem } from "@/components/gate/GateRail";
+import { GATE_LABELS, GateRail, type GateRailItem } from "@/components/gate/GateRail";
 import { HowToPanel } from "@/components/gate/HowToPanel";
 import { RunProgress } from "@/components/gate/RunProgress";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
 import { ConflictNotice } from "@/components/gate/ConflictNotice";
 import { SandboxBanner } from "@/components/gate/SandboxBanner";
-import { realizedSpendByGate, stopCostSplit } from "@/lib/estimate";
+import { stopCostSplit } from "@/lib/estimate";
+import { railCosts, realizedRailArgs, type RailCostArgs } from "@/lib/gate-rail";
 import { isInFlight } from "@/lib/run-state";
 
 /**
@@ -77,8 +78,12 @@ export interface GateShellProps {
   title?: string;
   /** One sentence. What this screen is for, in the reviewer's terms. */
   subhead: string;
-  /** The five rail columns. Supplied by the page because only it knows this run's realized spend. */
-  rail: GateRailItem[];
+  /**
+   * The five rail columns, for a shell with NO run behind it. With a `job` the shell derives the rail itself
+   * (`runRailFor`), because the rail is the RUN's state — what it has spent and how far it has got — and a page
+   * computing it from its own screen is how a finished run's past gates came to read "est. pending" (O1).
+   */
+  rail?: GateRailItem[];
   /** The run's name, or undefined when no run is in progress — in which case NO chip renders. */
   runName?: string;
   /** Realized spend so far, shown on the run chip and the resume banner. */
@@ -225,7 +230,12 @@ export function GateShell({
       {/* (3) The rail, then (4) the how-to panel — both on the ground, above the working surface. */}
       {/* Reachability reads `railReachOf`, not the raw position: a FINISHED run (the shared demo every guest walks)
           carries none, and has reached every gate (08-18). Freezing above still reads the raw position. */}
-      <GateRail current={gate} items={rail} jobId={jobId} runPosition={railReachOf(job)} />
+      <GateRail
+        current={gate}
+        items={job ? runRailFor(gate, job, costSoFar) : (rail ?? railFor(gate))}
+        jobId={jobId}
+        runPosition={railReachOf(job)}
+      />
 
       {frozen && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
 
@@ -248,18 +258,6 @@ export function GateShell({
   );
 }
 
-/**
- * A rail with every column's cost/state derived from one run's position and realized spend.
- *
- * Pulled out of the pages so the realized/forecast split is decided ONCE. The rule: a gate the reviewer
- * has already passed shows what it actually cost; the gate ahead shows an estimate; Setup and Gate 4 show
- * a state rather than a figure, because they genuinely spend nothing and a `$0.00` forecast on them is
- * noise dressed as precision.
- *
- * `realizedByGate` is what the run has committed per gate. Absent entries on a PASSED gate fall back to
- * "spent" with the run total, never to a forecast — quoting committed money as an estimate is the exact
- * confusion UI-SPEC §7.1.3 asks the rail to prevent.
- */
 /**
  * The banner a PAST gate wears (08-16c Task 2).
  *
@@ -292,68 +290,28 @@ function FrozenNotice({ jobId, runPosition }: { jobId?: string; runPosition: Gat
   );
 }
 
-export function railFor(
-  current: GatePosition,
-  {
-    realizedByGate = {},
-    forecastByGate = {},
-    totalRealized = 0,
-  }: {
-    realizedByGate?: Partial<Record<GatePosition, number>>;
-    forecastByGate?: Partial<Record<GatePosition, number>>;
-    totalRealized?: number;
-  } = {},
-): GateRailItem[] {
-  const currentIndex = GATE_SEQUENCE.indexOf(current);
-  return GATE_SEQUENCE.map((gate, i) => {
-    const label = GATE_LABELS[gate];
-    // Setup is `local` because everything it now carries — loading, preparing, embedding and the free
-    // pre-flight over the result — calls no model. That free leg used to be Gate 0's, whose column read
-    // `local` for the same reason and whose Continue was the run's first charge; both moved here with the
-    // demotion (D-2/D-3). The charge itself is still attributed to Gate 1, because that is the work it
-    // buys — a reviewer who saw the amount twice would think they had been billed twice.
-    //
-    // NOTHING MAY PASS THE RETIRED POSITION TO THIS FUNCTION. It is no longer in `GATE_SEQUENCE`, so
-    // `indexOf` would return -1 and every column would render as a forecast — including gates the run has
-    // already paid for. There is no call site left that can: the route redirects before a page mounts.
-    if (gate === "setup") return { gate, label, cost: { kind: "state" as const, text: "local" } };
-    // Gate 4 runs no pipeline stage, but it hosts two paid ACTIONS (score Match, analysis ideas — 08-28 1a/1f,
-    // `GATE_LEDGER_KEYS.gate4`). Once either has billed, the column shows it like any other realized spend, or the
-    // rail stops summing to the run's total; until then it is honestly "no charge".
-    if (gate === "gate4") {
-      const realized = realizedByGate.gate4 ?? 0;
-      return realized > 0
-        ? { gate, label, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } }
-        : { gate, label, cost: { kind: "state" as const, text: "no charge" } };
-    }
-    if (i <= currentIndex) {
-      const realized = realizedByGate[gate] ?? (gate === current ? totalRealized : 0);
-      return { gate, label, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } };
-    }
-    const forecast = forecastByGate[gate];
-    return {
-      gate,
-      label,
-      cost: {
-        kind: "forecast" as const,
-        text: forecast === undefined ? "est. pending" : `est. ${formatUsd(forecast)}`,
-      },
-    };
-  });
+/**
+ * The five rail columns: `railCosts` (lib/gate-rail.ts — the rule, asserted in Node) plus each gate's label.
+ *
+ * Pulled out of the pages so the realized/forecast split is decided ONCE. Absent entries on a PASSED gate
+ * fall back to "spent", never to a forecast — quoting committed money as an estimate is the exact confusion
+ * UI-SPEC §7.1.3 asks the rail to prevent.
+ *
+ * Pass `runPosition` and every gate the run has reached reads realized, whichever screen is open. The shell does
+ * that itself for any screen with a run (`runRailFor`); a bare call is a rail with no run behind it.
+ *
+ * NOTHING MAY PASS THE RETIRED POSITION AS `current`. It is no longer in the rail's sequence, so it indexes -1
+ * and every column would render as a forecast — including gates the run has already paid for. There is no call
+ * site left that can: the route redirects before a page mounts.
+ */
+export function railFor(current: GatePosition, args: RailCostArgs = {}): GateRailItem[] {
+  return railCosts(current, args).map(({ gate, cost }) => ({ gate, label: GATE_LABELS[gate], cost }));
 }
 
-/**
- * The realized-cost args for `railFor`, from the run's OWN ledger. Attributes per gate when the run HAS a
- * per-stage ledger (each gate reads what it actually spent); otherwise it hands back only the total, for the
- * current gate. An unledgered total — an in-flight run, or a DB-hydrated historical one — attributed per gate
- * would be a guess, and the current $0-on-past-gates + whole-total-on-current is exactly that. This replaces
- * passing bare `totalRealized`, which made Gate 1 read $0 while the cumulative total landed on the current gate.
- */
-export function realizedRailArgs(
-  cost?: RunCost | null,
-  costSoFar?: number,
-): { realizedByGate?: Partial<Record<GatePosition, number>>; totalRealized: number } {
-  const spend = realizedSpendByGate(cost, costSoFar);
-  const hasLedger = !!cost?.perStage && Object.keys(cost.perStage).length > 0;
-  return hasLedger ? { realizedByGate: spend.byGate, totalRealized: spend.total } : { totalRealized: spend.total };
+/** The rail for a screen with a run behind it: the run's own ledger, and how far the run has got. */
+export function runRailFor(current: GatePosition, job: JobResult, costSoFar?: number): GateRailItem[] {
+  return railFor(current, { ...realizedRailArgs(job.result?.cost, costSoFar), runPosition: railReachOf(job) });
 }
+
+// Re-exported so the five pages that imported it from here keep resolving; the rule itself lives in lib.
+export { realizedRailArgs };

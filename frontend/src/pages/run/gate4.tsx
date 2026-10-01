@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
-import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
+import { GateShell } from "@/components/gate/GateShell";
 import { GuestAuthNotice } from "@/components/gate/SandboxBanner";
 import { useSandboxCount } from "@/hooks/use-sandbox-count";
 import { demoExportNote } from "@/lib/sandbox";
@@ -17,6 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { exportUrl } from "@/lib/api";
+import { isParkedAt } from "@/lib/run-state";
 import { cn } from "@/lib/utils";
 import {
   NOT_AVAILABLE_GAPS,
@@ -143,12 +144,11 @@ export default function Gate4Page() {
       gate="gate4"
       jobId={jobId}
       subhead="Choose what to take away, check it before it goes, and read the decision trail behind it. Downloading is free."
-      rail={railFor("gate4", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}
       onStop={cancel}
-      resumed={jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate4"}
+      resumed={isParkedAt(jobState, "gate4")}
     >
       <div className="flex flex-col gap-6">
         {/* Surface 1 — notebook language, + the lifted reproducibility disclosure. */}

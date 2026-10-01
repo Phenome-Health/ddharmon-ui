@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { RunKeyField } from "@/components/gate/RunKeyField";
 import { GATE_LABELS } from "@/components/gate/GateRail";
-import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
+import { GateShell } from "@/components/gate/GateShell";
 import {
   ConceptWorkbench,
   ConceptQueueRow,
@@ -24,12 +24,14 @@ import { SpecNumberMap } from "@/components/gate/SpecNumberMap";
 import { SpecBinning } from "@/components/gate/SpecBinning";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
-import { inheritedGate1Scope, renamedLabel, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
+import { conceptTitle } from "@/lib/ledger";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
-import { isInFlight, isTerminal, resumeTookEffect } from "@/lib/run-state";
+import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
   recodeShape,
@@ -93,9 +95,6 @@ const REJECT_CONFIRMATION =
   "Reject this recode? It will be excluded from the notebook and the mapping table, and recorded as " +
   "rejected in the decision log.";
 
-function conceptLabel(r: UIRecord): string {
-  return r.gencde?.preferredName || r.concept || r.idealCde || r.groupId;
-}
 
 export default function Gate3Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
@@ -128,6 +127,10 @@ export default function Gate3Page() {
   const failedLeg =
     !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
   const continueAction = failedLeg ? "Retry — continue this run" : "Continue to Gate 4";
+  // A frozen Gate 3 keeps its bar, but says what its Continue did instead of offering it again (O2).
+  const pastBar = frozen
+    ? frozenContinue("gate3", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+    : null;
 
   async function onContinue() {
     // The shared demo is walked, not resumed (08-18) — see Gate 1's `onContinue`.
@@ -166,9 +169,10 @@ export default function Gate3Page() {
   });
   // Read-only inheritance from Gate 1: only in-scope groups reach this screen.
   const scope = useGateDecisions(jobId, "gate1_group_scope", { pinned });
-  // A Gate 1 rename is the group's name from here on (08-27 option C) — it only ever showed on Gate 1.
+  // A concept is titled by its Gate 1 GROUP name — the reviewer's rename if any (08-27 option C), else the name
+  // Gate 1 showed — never by its target's name, the same rule as Gate 2 (phase-8 final review; `conceptTitle`).
   const renames = useGateDecisions(jobId, "gate1_rename", { pinned });
-  const labelOf = (r: UIRecord) => renamedLabel(conceptLabel(r), renames.decisions[r.groupId]);
+  const labelOf = (r: UIRecord) => conceptTitle(r, renames.decisions[r.groupId]);
   // The scope Gate 1 SHOWED, frozen by its Continue (08-27 #3); legacy default-in without one.
   const inScope = inheritedGate1Scope(runConfig, scope.decisions);
 
@@ -674,9 +678,11 @@ export default function Gate3Page() {
                           key={key}
                           group={g}
                           choice={combineChoice(combines.decisions[key], g.members)}
+                          // The COLUMN is the target, so it is named as the target — the generated element's own
+                          // name — not by the concept's (group) title.
                           targetLabel={
                             record.gencde && g.targetId === record.gencde.gencdeId
-                              ? labelOf(record)
+                              ? record.gencde.preferredName || labelOf(record)
                               : undefined
                           }
                           readOnly={frozen}
@@ -1094,7 +1100,8 @@ export default function Gate3Page() {
         }
       />
       <CommitBar
-        action={continueAction}
+        action={pastBar ? pastBar.action : continueAction}
+        done={pastBar?.note}
         actionTestId="gate3-continue"
         spentHere={costSoFar}
         recheckNotice={
@@ -1103,9 +1110,11 @@ export default function Gate3Page() {
             : undefined
         }
         assurance={
-          pinned === true
-            ? DEMO_CONTINUE_NOTE
-            : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
+          pastBar
+            ? undefined
+            : pinned === true
+              ? DEMO_CONTINUE_NOTE
+              : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
         }
         keyField={keyAsk ? <RunKeyField reason={keyAsk} action={continueAction} /> : undefined}
         onCommit={onContinue}
@@ -1134,15 +1143,11 @@ function Shell({
       gate="gate3"
       jobId={jobId}
       subhead="One recode per source variable, grouped by concept. Arithmetic recodes always come to you for review."
-      rail={railFor("gate3", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}
       onStop={cancel}
-      resumed={
-        jobState?.status === "awaiting_review" &&
-        jobState?.gatePosition === "gate3"
-      }
+      resumed={isParkedAt(jobState, "gate3")}
     >
       <span
         data-testid="run-status"
