@@ -588,6 +588,51 @@ test.describe("Gate 4 screen", () => {
     await expect(dialog).toHaveCount(0);
   });
 
+  test("@gate4 review 2 — Gate 4 draws the run's Sankey from the records the export carries, not the raw run", async ({
+    page,
+  }) => {
+    // Bhargav, review round 2: the run view's Sankey was only reachable by accident (analysis ideas -> back), so it
+    // is surfaced here. It must draw what LEAVES THE TOOL: freeze the scope to five of the served twelve groups.
+    let kept = 0;
+    let variables = 0;
+    await serveFinished(page, (run) => {
+      const recs = run.result?.records ?? [];
+      const inScope = recs.slice(0, 5);
+      run.config = { ...(run.config ?? {}), gate1_scope: inScope.map((r) => r.groupId) };
+      kept = inScope.length;
+      variables = inScope.reduce((n, r) => n + (r.members.length || r.cohorts.length), 0);
+    });
+    await gotoGate4(page);
+    const flows = page.getByTestId("gate4-sankey");
+    await expect(flows).toBeVisible();
+    await expect(flows).toHaveAttribute("data-concepts", String(kept));
+    await expect(flows).toHaveAttribute("data-variables", String(variables));
+    await expect(flows).toContainText(`${kept} concepts`);
+    // The existing chart, drawn: recharts' surface with one path per flow. (A path is not asserted `visible`: a
+    // flow that runs dead level has a zero-height box, which Playwright calls hidden.)
+    await expect(flows.locator(".recharts-surface")).toBeVisible();
+    expect(await flows.locator(".recharts-surface path").count()).toBeGreaterThan(0);
+    // It sits above the export set — surfaced, not buried under the decision log.
+    const [chartY, exportY] = await Promise.all([
+      flows.evaluate((el) => el.getBoundingClientRect().top),
+      page.getByTestId("export-set").evaluate((el) => el.getBoundingClientRect().top),
+    ]);
+    expect(chartY).toBeLessThan(exportY);
+  });
+
+  test("@gate4 review 2 — with nothing in the export, the Sankey says so instead of drawing an empty chart", async ({
+    page,
+  }) => {
+    await serveFinished(page, (run) => {
+      run.config = { ...(run.config ?? {}), gate1_scope: [] };
+    });
+    await gotoGate4(page);
+    const flows = page.getByTestId("gate4-sankey");
+    await expect(flows).toHaveAttribute("data-concepts", "0");
+    await expect(flows.getByTestId("gate4-sankey-empty")).toContainText("Nothing is in this export");
+    await expect(flows.locator(".recharts-surface")).toHaveCount(0);
+  });
+
   test("@gate4 the download label reflects only ready artifacts and disables at zero", async ({ page }) => {
     await gotoGate4(page);
     const action = page.getByTestId("download-artifacts");

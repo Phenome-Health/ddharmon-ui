@@ -143,3 +143,8 @@ export function buildSankeyData(records: UIRecord[], cohortTotals?: Record<strin
   links.forEach((l, i) => (l.li = i));
   return { nodes, links, nCohorts: cohorts.length };
 }
+
+/** How many variables a Sankey draws — the summed width of every flow leaving a cohort node. */
+export function sankeyVariableCount(data: SankeyData): number {
+  return data.links.filter((l) => l.source < data.nCohorts).reduce((n, l) => n + l.value, 0);
+}

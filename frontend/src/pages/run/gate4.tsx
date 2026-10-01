@@ -9,6 +9,7 @@ import { demoExportNote } from "@/lib/sandbox";
 import { ArtifactTile } from "@/components/gate/ArtifactTile";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { DecisionLog } from "@/components/gate/DecisionLog";
+import { ExportFlows } from "@/components/gate/ExportFlows";
 import { Gate4ScorePanel } from "@/components/gate/Gate4ScorePanel";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { NotAvailable } from "@/components/gate/NotAvailable";
@@ -28,6 +29,7 @@ import {
   type RealArtifact,
   artifactPreview,
   downloadLabel,
+  exportedRecords,
   resolveFormat,
   unassignedBreakdown,
   verdictBreakdown,
@@ -137,6 +139,11 @@ export default function Gate4Page() {
     gate.all.gate1_group_scope,
   );
   const unassignedCount = unassigned.scopedOut + unassigned.noConcept;
+  // The records every file carries — scope, export selection and names applied (`effective_records` on the server).
+  const exported = useMemo(
+    () => exportedRecords(result, jobState?.config as Record<string, unknown> | undefined, gate.all),
+    [result, jobState?.config, gate.all],
+  );
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const filenameFor = (a: RealArtifact) => (a.id === "notebook" ? `harmonization.${lang}.ipynb` : a.filename);
 
@@ -192,6 +199,10 @@ export default function Gate4Page() {
             }}
           />
         ))}
+
+        {/* Where the exported variables go (review 2) — the run view's Sankey, drawn from the records the files
+            carry, above the files themselves: the summary of what is about to leave. */}
+        <ExportFlows records={exported} runHasRecords={records.length > 0} outsideCount={unassignedCount} />
 
         {/* Surface 2 — what ships: the real artifacts, then the honest gaps. */}
         <section className="flex flex-col gap-3" data-testid="export-set">
