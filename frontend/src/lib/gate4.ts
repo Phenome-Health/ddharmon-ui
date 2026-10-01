@@ -1,3 +1,4 @@
+import Papa from "papaparse";
 import type { ExportFormat, HarmonizationResult, UIRecord, UITransform } from "@/types";
 import {
   GATE_DECISION_KINDS,
@@ -876,6 +877,40 @@ export function verdictBreakdown(result: HarmonizationResult | null | undefined)
 // --- artifact previews (UI-SPEC §0.2 Surface 2) -------------------------------------------------------
 
 /**
+ * What the preview drawer renders for one artifact (final review round 2): a TABLE for the two delimited files,
+ * CODE for the JSON and the notebook, and a sentence when the run has nothing to put in the file.
+ *
+ * `text` is always the file's own text, exactly as excerpted — the table is PARSED from it, so the drawer shows
+ * what the file says rather than a second rendering that could disagree. `note` is the drawer's own line under
+ * the excerpt (the row cap, stated); it is never part of the file.
+ */
+export type ArtifactPreview =
+  | { kind: "table"; delimiter: "," | "\t"; text: string; note?: string }
+  | { kind: "code"; text: string }
+  | { kind: "empty"; text: string };
+
+/** The concepts a legacy preview excerpts — the cap the CSV / TSV / JSON / notebook previews have always had. */
+const PREVIEW_RECORDS = 3;
+/** The decision-log preview's row cap: the header plus twelve decisions. */
+const PREVIEW_LOG_ROWS = 13;
+
+/** One TSV line quoted the way Python's `csv.writer(delimiter="\t")` quotes it — what the EITL download is. */
+export function tsvLine(row: string[]): string {
+  return row.map((c) => (/["\t\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join("\t");
+}
+
+/**
+ * Parse a delimited preview into its header and rows with a REAL CSV parser (Papa Parse, RFC 4180 quoting): a
+ * quoted cell carrying the delimiter, a doubled quote or a newline stays ONE cell. `split(",")` would cut the
+ * decision log's quoted notes — and the demo's own concept names, which carry commas — into extra columns.
+ */
+export function previewTable(text: string, delimiter: "," | "\t"): { columns: string[]; rows: string[][] } {
+  const parsed = Papa.parse<string[]>(text, { delimiter, skipEmptyLines: true });
+  const [columns = [], ...rows] = parsed.data;
+  return { columns, rows };
+}
+
+/**
  * A faithful preview of what an artifact CONTAINS, derived from the run result on the client.
  *
  * DERIVED, NOT FETCHED, and that is deliberate. The preview must show real generated content, never a
@@ -884,41 +919,56 @@ export function verdictBreakdown(result: HarmonizationResult | null | undefined)
  * available in the backend-less build the e2e suite runs against, where fetching the file would 404. The
  * DOWNLOAD still pulls the byte-exact file from the export route; this is an excerpt of the same data.
  */
-export function previewFor(
+export function artifactPreview(
   id: RealArtifact["id"],
   lang: NotebookLang,
   result: HarmonizationResult | null | undefined,
   decisions: Record<string, LegacyVerdicts> | undefined,
   gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
-): string {
-  const records = (result?.records ?? []).slice(0, 3);
+): ArtifactPreview {
+  const all = result?.records ?? [];
+  const records = all.slice(0, PREVIEW_RECORDS);
   const dec = decisions ?? {};
-  if (records.length === 0) return "This run produced no concept records, so this artifact would be empty.";
+  if (records.length === 0) {
+    return { kind: "empty", text: "This run produced no concept records, so this artifact would be empty." };
+  }
+  // The legacy excerpts are the first few concepts; the file carries every one, and the drawer says so.
+  const recordsNote =
+    all.length > records.length
+      ? `The first ${records.length} of ${all.length} concepts — the file carries every one.`
+      : undefined;
 
   // 08-27: on a staged run the download is the gate decision LOG, so the preview reads the same decisions
   // (never the legacy verdict mirror, which no gate writes) through the backend's own row rule.
   if (id === "decisions_csv" && gateLog && isStagedExport(gateLog.gatePosition, gateLog.index)) {
     const rows = decisionLogCsvRows(gateLog.index, result, gateLog.config, decisions);
-    const shown = rows.slice(0, 13).map(csvLine);
-    if (rows.length === 1) shown.push("(no decisions recorded yet — the file will carry only this header)");
-    else if (rows.length > 13) shown.push(`… ${rows.length - 13} more decision(s) in the file`);
-    return shown.join("\n");
+    const text = rows.slice(0, PREVIEW_LOG_ROWS).map(csvLine).join("\n");
+    const note =
+      rows.length === 1
+        ? "(no decisions recorded yet — the file will carry only this header)"
+        : rows.length > PREVIEW_LOG_ROWS
+          ? `… ${rows.length - PREVIEW_LOG_ROWS} more decision(s) in the file`
+          : undefined;
+    return { kind: "table", delimiter: ",", text, note };
   }
 
   if (id === "records_json") {
-    return JSON.stringify(
-      records.map((r) => ({
-        id: r.id,
-        concept: r.concept,
-        verdict: r.verdict,
-        cde: r.cde?.id ?? null,
-        nMembers: r.nMembers,
-        cohorts: r.cohorts,
-        transforms: r.transforms?.length ?? 0,
-      })),
-      null,
-      2,
-    );
+    return {
+      kind: "code",
+      text: JSON.stringify(
+        records.map((r) => ({
+          id: r.id,
+          concept: r.concept,
+          verdict: r.verdict,
+          cde: r.cde?.id ?? null,
+          nMembers: r.nMembers,
+          cohorts: r.cohorts,
+          transforms: r.transforms?.length ?? 0,
+        })),
+        null,
+        2,
+      ),
+    };
   }
 
   if (id === "decisions_csv") {
@@ -931,7 +981,8 @@ export function previewFor(
       dec[r.id]?.decision ?? "",
       dec[r.id]?.note ?? "",
     ]);
-    return [header, ...rows].map((row) => row.join(",")).join("\n");
+    // QUOTED, as the download is: a bare `join(",")` cut every concept name carrying a comma into extra columns.
+    return { kind: "table", delimiter: ",", text: [header, ...rows].map(csvLine).join("\n"), note: recordsNote };
   }
 
   if (id === "eitl_tsv") {
@@ -944,7 +995,7 @@ export function previewFor(
       String(r.nMembers),
       r.cohorts.join(";"),
     ]);
-    return [header, ...rows].map((row) => row.join("\t")).join("\n");
+    return { kind: "table", delimiter: "\t", text: [header, ...rows].map(tsvLine).join("\n"), note: recordsNote };
   }
 
   // notebook: a faithful excerpt of what the notebook applies — the transforms, in the chosen language.
@@ -952,7 +1003,7 @@ export function previewFor(
   const lines: string[] = [
     `# Harmonization transform notebook (${langName})`,
     `# Applies ${records.reduce((n, r) => n + (r.transforms?.length ?? 0), 0)} transform(s) across ${
-      result?.records?.length ?? 0
+      all.length
     } concept(s).`,
     "# The notebook runs where your data already lives; your data never enters ddharmon.",
     "",
@@ -963,5 +1014,17 @@ export function previewFor(
       lines.push(`#   transform: ${t.kind ?? "recode"} on ${t.sourceVariable ?? r.id}`);
     }
   }
-  return lines.join("\n");
+  return { kind: "code", text: lines.join("\n") };
+}
+
+/** {@link artifactPreview} flattened to one string: the file's excerpt, then the drawer's note under it. */
+export function previewFor(
+  id: RealArtifact["id"],
+  lang: NotebookLang,
+  result: HarmonizationResult | null | undefined,
+  decisions: Record<string, LegacyVerdicts> | undefined,
+  gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
+): string {
+  const preview = artifactPreview(id, lang, result, decisions, gateLog);
+  return preview.kind === "table" && preview.note ? `${preview.text}\n${preview.note}` : preview.text;
 }

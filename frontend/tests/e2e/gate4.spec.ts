@@ -14,8 +14,10 @@ import {
   decisionLogRows,
   modelRelation,
   scopeSummary,
+  artifactPreview,
   downloadLabel,
   previewFor,
+  previewTable,
   resolveFormat,
   revisionRate,
   unassignedBreakdown,
@@ -249,6 +251,82 @@ test("@gate4 the decision-log CSV preview on a staged run reads gate decisions, 
     gatePosition: null,
   });
   expect(legacy.split("\n")[0]).toBe("record_id,concept,verdict,chosen_cde,your_decision,note");
+});
+
+// --- final review round 2: CSV / TSV previews render as a table, parsed by a real CSV parser -----------------
+
+test("@gate4 review 2 — the table parser keeps a quoted field with a comma and a newline as ONE cell", () => {
+  const { columns, rows } = previewTable('gate,note\nGate 3,"line one, with a comma\nline two"\nGate 1,""\n', ",");
+  expect(columns).toEqual(["gate", "note"]);
+  expect(rows).toEqual([
+    ["Gate 3", "line one, with a comma\nline two"],
+    ["Gate 1", ""],
+  ]);
+  expect(previewTable("a\tb\n1\t2\n", "\t")).toEqual({ columns: ["a", "b"], rows: [["1", "2"]] });
+});
+
+test("@gate4 review 2 — the decision-log preview's TABLE is the backend's rows, cell for cell", () => {
+  const index = indexDecisions(PARITY.grouped);
+  const preview = artifactPreview("decisions_csv", "py", PARITY.result, PARITY.legacyDecisions, {
+    index,
+    config: PARITY.config,
+    gatePosition: "gate4",
+  });
+  expect(preview.kind).toBe("table");
+  if (preview.kind !== "table") return;
+  const { columns, rows } = previewTable(preview.text, preview.delimiter);
+  expect(columns).toEqual(PARITY.columns);
+  // The cap is unchanged (12 decisions); every cell — quoted notes included — survives the round trip.
+  expect(rows).toEqual(PARITY.expectedRows.slice(0, 12));
+  expect(preview.note).toBe(`… ${PARITY.expectedRows.length - 12} more decision(s) in the file`);
+});
+
+test("@gate4 review 2 — a note with a comma stays one cell of the decision-log table (a newline is flattened, as the file does)", () => {
+  const d = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
+  const index: DecisionIndex = {
+    gate3_spec_edit: { "A:y": d({ sourceVariable: "A:y", chosen: "", rejected: true, note: "wrong target,\nsee codebook" }) },
+  };
+  const preview = artifactPreview("decisions_csv", "py", PARITY.result, {}, { index, config: {}, gatePosition: "gate4" });
+  if (preview.kind !== "table") throw new Error("expected a table");
+  const { columns, rows } = previewTable(preview.text, preview.delimiter);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toHaveLength(columns.length);
+  // The downloaded log writes every cell on one line (`clean` in both implementations), so the file — and its
+  // preview — carries the note's newline as a space; its comma is what the quoting has to survive.
+  expect(rows[0][columns.indexOf("note")]).toBe("wrong target, see codebook");
+});
+
+test("@gate4 review 2 — a legacy CSV / TSV preview quotes a concept with a comma, so every row keeps its columns", () => {
+  const run = finishedFixture().result as HarmonizationResult;
+  // The shipped demo's own concepts carry commas ("… (marijuana, cocaine, prescription stimulants, …)").
+  expect(run.records.slice(0, 3).some((r) => r.concept.includes(","))).toBe(true);
+  const legacy = { index: {}, config: {}, gatePosition: null };
+  for (const id of ["decisions_csv", "eitl_tsv"] as const) {
+    const preview = artifactPreview(id, "py", run, {}, legacy);
+    if (preview.kind !== "table") throw new Error(`expected ${id} to preview as a table`);
+    expect(preview.delimiter).toBe(id === "eitl_tsv" ? "\t" : ",");
+    const { columns, rows } = previewTable(preview.text, preview.delimiter);
+    expect(rows).toHaveLength(3);
+    for (const [i, row] of rows.entries()) {
+      expect(row, `${id} row ${i}`).toHaveLength(columns.length);
+      expect(row[columns.indexOf("concept")]).toBe(run.records[i].concept);
+    }
+    // The cap is stated, not silent.
+    expect(preview.note).toBe(`The first 3 of ${run.records.length} concepts — the file carries every one.`);
+  }
+});
+
+test("@gate4 review 2 — JSON and the notebook stay code; an empty run says so instead of drawing an empty table", () => {
+  const run = finishedFixture().result as HarmonizationResult;
+  const json = artifactPreview("records_json", "py", run, {});
+  expect(json.kind).toBe("code");
+  expect(JSON.parse(json.text)).toHaveLength(3);
+  expect(artifactPreview("notebook", "r", run, {}).kind).toBe("code");
+  const empty = artifactPreview("eitl_tsv", "py", { ...run, records: [] }, {});
+  expect(empty.kind).toBe("empty");
+  // `previewFor` is the same content flattened to one string (the file's text, then its note).
+  const table = artifactPreview("eitl_tsv", "py", run, {});
+  expect(previewFor("eitl_tsv", "py", run, {})).toBe(`${table.text}\n${table.kind === "table" ? table.note : ""}`);
 });
 
 // --- 08-28 1e: provenance & the decision log (08-LIVE-VERIFY-3 F7 F17 F21 H9) ------------------------------
