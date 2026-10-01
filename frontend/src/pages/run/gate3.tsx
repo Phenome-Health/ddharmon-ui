@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { RunKeyField } from "@/components/gate/RunKeyField";
 import { GATE_LABELS } from "@/components/gate/GateRail";
-import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
+import { GateShell } from "@/components/gate/GateShell";
 import {
   ConceptWorkbench,
   ConceptQueueRow,
@@ -1134,7 +1134,6 @@ function Shell({
       gate="gate3"
       jobId={jobId}
       subhead="One recode per source variable, grouped by concept. Arithmetic recodes always come to you for review."
-      rail={railFor("gate3", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}

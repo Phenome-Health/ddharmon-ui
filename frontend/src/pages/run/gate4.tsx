@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
-import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
+import { GateShell } from "@/components/gate/GateShell";
 import { GuestAuthNotice } from "@/components/gate/SandboxBanner";
 import { useSandboxCount } from "@/hooks/use-sandbox-count";
 import { demoExportNote } from "@/lib/sandbox";
@@ -143,7 +143,6 @@ export default function Gate4Page() {
       gate="gate4"
       jobId={jobId}
       subhead="Choose what to take away, check it before it goes, and read the decision trail behind it. Downloading is free."
-      rail={railFor("gate4", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}
