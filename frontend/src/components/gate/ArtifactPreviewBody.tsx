@@ -18,9 +18,11 @@ import { cn } from "@/lib/utils";
  * The row cap is unchanged; the drawer states it under the excerpt (`note`), outside the scrolling box.
  */
 export function ArtifactPreviewBody({ preview, className }: { preview: ArtifactPreview; className?: string }) {
+  // Keyed on the TEXT, not the object: the page builds a fresh preview object on every render.
+  const delimiter = preview.kind === "table" ? preview.delimiter : null;
   const table = useMemo(
-    () => (preview.kind === "table" ? previewTable(preview.text, preview.delimiter) : null),
-    [preview],
+    () => (delimiter ? previewTable(preview.text, delimiter) : null),
+    [delimiter, preview.text],
   );
 
   if (preview.kind === "empty") {
