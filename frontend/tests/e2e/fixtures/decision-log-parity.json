@@ -1,5 +1,5 @@
 {
- "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations. 08-28 1e adds: an APPLIED re-pick (reviewerPick stamp), a pick on an absent group, an empty Gate 3 row, a per-code mapping diff, and score declarations collapsed to one row per score. 08-28 3f adds Gate 2 relations: one on the picked target, one on the model's (now not current) target, note-only rows on an applied pick and on the group's own element, and one on an absent group.",
+ "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations. 08-28 1e adds: an APPLIED re-pick (reviewerPick stamp), a pick on an absent group, an empty Gate 3 row, a per-code mapping diff, and score declarations collapsed to one row per score. 08-28 3f adds Gate 2 relations: one on the picked target, one on the model's (now not current) target, note-only rows on an applied pick and on the group's own element, and one on an absent group. Review round 2 adds Gate 3 removals (gate3_member_exclusion): one applied, one on an absent group, and one naming a variable the group does not have.",
  "result": {
   "records": [
    {
@@ -525,6 +525,38 @@
     "optionSetKey": "k5"
    }
   ],
+  "gate3_member_exclusion": [
+   {
+    "groupId": "c1#g0",
+    "memberId": "B:smk",
+    "chosen": "exclude",
+    "alternatives": [
+     "keep",
+     "exclude"
+    ],
+    "optionSetKey": "32526f8b1a5fa77f"
+   },
+   {
+    "groupId": "zz#g9",
+    "memberId": "B:smk",
+    "chosen": "exclude",
+    "alternatives": [
+     "keep",
+     "exclude"
+    ],
+    "optionSetKey": "32526f8b1a5fa77f"
+   },
+   {
+    "groupId": "c0#g0",
+    "memberId": "A:not_a_member",
+    "chosen": "exclude",
+    "alternatives": [
+     "keep",
+     "exclude"
+    ],
+    "optionSetKey": "32526f8b1a5fa77f"
+   }
+  ],
   "verdict": [
    {
     "recordId": "c1#g0",
@@ -784,6 +816,39 @@
    "edited",
    "",
    "-818: missing → 9; -121: 9 → missing",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_member_exclusion",
+   "Removed a variable from a concept",
+   "c1#g0|B:smk",
+   "c1#g0",
+   "removed",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_member_exclusion",
+   "Removed a variable from a concept",
+   "zz#g9|B:smk",
+   "zz#g9",
+   "removed",
+   "",
+   "{\"notApplied\":\"no record for this group in the run's results\"}",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_member_exclusion",
+   "Removed a variable from a concept",
+   "c0#g0|A:not_a_member",
+   "c0#g0",
+   "removed",
+   "",
+   "{\"notApplied\":\"not a variable of this group in the run's results\"}",
    "false"
   ],
   [

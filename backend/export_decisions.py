@@ -48,6 +48,13 @@ WHAT EACH DECISION DOES TO THE EXPORT (and what it deliberately does not):
 * ``gate3_combine_rule`` — how several variables of one cohort on one target column become that column
   (``backend/combine_rules.py``). Every record with a member in such a group carries the resolved rule as
   ``combineRules`` (the default ``coalesce`` when undecided, said so); the notebook applies it.
+* ``gate3_member_exclusion`` — the reviewer removed one source variable from one concept (keyed on the
+  (group, variable) pair). The variable is ABSENT from that record in every format: its ``members``,
+  ``memberDetails`` and transform specs, its generated element's ``sourceVariables`` (and the cohorts those
+  imply), and so from every combine group and every notebook op. ``nMembers`` / ``cohorts`` / ``crossCohort``
+  follow the variables that remain, and the record names what was removed as ``removedMembers`` (``[]`` when
+  nothing was), so no absence is a silent one. The log lists each removal; one on a group or variable the
+  results do not have says it applied nowhere.
 * ``gate4_export_selection`` — per-record inclusion. A record whose decision's ``chosen`` is ``exclude``
   (or ``out``) is absent from every format; any other value, and absence, include it. NO SCREEN WRITES THIS
   KIND TODAY (Gate 4's tile selection is component state), so the filter is a no-op until one does.
@@ -69,6 +76,7 @@ from backend.artifact_kinds import (
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
     GATE3_COMBINE_RULE,
+    GATE3_MEMBER_EXCLUSION,
     GATE3_SPEC_EDIT,
     GATE4_EXPORT_SELECTION,
     GATE_DECISION_KINDS,
@@ -100,6 +108,7 @@ GATE_OF = {
     GATE2_RELATION: "Gate 2",
     GATE3_SPEC_EDIT: "Gate 3",
     GATE3_COMBINE_RULE: "Gate 3",
+    GATE3_MEMBER_EXCLUSION: "Gate 3",
     GATE4_EXPORT_SELECTION: "Gate 4",
     COMPOSITE_SWAP: "Composite",
 }
@@ -112,6 +121,7 @@ ACTION_OF = {
     GATE2_RELATION: "Set a relation",
     GATE3_SPEC_EDIT: "Edited a transform spec",
     GATE3_COMBINE_RULE: "Chose how variables combine",
+    GATE3_MEMBER_EXCLUSION: "Removed a variable from a concept",
     GATE4_EXPORT_SELECTION: "Chose export inclusion",
     # The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
     COMPOSITE_SWAP: "Declared a score",
@@ -137,6 +147,11 @@ OWN_TARGET = "own"
 #: Why a decision reached no record — the group is not in the results, or the edge is not the group's target.
 NOT_APPLIED_ABSENT = "no record for this group in the run's results"
 NOT_APPLIED_TARGET = "not this group's current target"
+#: Why a Gate 3 removal reached no record: the variable is not one of the group's (mirrored in ``lib/gate4.ts``).
+NOT_APPLIED_MEMBER = "not a variable of this group in the run's results"
+
+#: What a removal's ``after`` reads as in the decision log.
+REMOVED = "removed"
 
 #: What a per-code diff calls a code that yields no value (absent from the map, or the missing sentinel).
 MISSING = "missing"
@@ -308,6 +323,48 @@ def spec_edit(decision: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def removed_members(grouped: dict[str, Any]) -> dict[str, list[str]]:
+    """``groupId -> [memberId, ...]`` the reviewer removed at Gate 3, in the order the rows were written."""
+    out: dict[str, list[str]] = {}
+    for d in _by_key(grouped, GATE3_MEMBER_EXCLUSION).values():
+        members = out.setdefault(str(d.get("groupId") or ""), [])
+        member = str(d.get("memberId") or "")
+        if member not in members:
+            members.append(member)
+    return out
+
+
+def _cohort(member: Any) -> str:
+    return str(member).partition(":")[0]
+
+
+def _drop_members(r: dict[str, Any], removed: list[str]) -> None:
+    """Take the removed variables out of one (already copied) record, everywhere it names them.
+
+    ``removedMembers`` lists only the variables the record actually had — a removal of something it never held
+    changed nothing here (the log says so). The counts and cohorts are re-derived from what remains, because a
+    record still claiming three variables over two cohorts after one left is a file contradicting itself.
+    """
+    gone = [m for m in removed if m in (r.get("members") or [])]
+    r["removedMembers"] = gone
+    if not gone:
+        return
+    out = set(gone)
+    r["members"] = [m for m in r.get("members") or [] if m not in out]
+    r["memberDetails"] = [d for d in r.get("memberDetails") or [] if str((d or {}).get("id") or "") not in out]
+    r["transforms"] = [t for t in r.get("transforms") or [] if str(t.get("sourceVariable") or "") not in out]
+    r["nMembers"] = len(r["members"])
+    left = {_cohort(m) for m in r["members"]}
+    r["cohorts"] = [c for c in r.get("cohorts") or [] if c in left]
+    r["crossCohort"] = len(r["cohorts"]) > 1
+    gencde = r.get("gencde")
+    if isinstance(gencde, dict) and isinstance(gencde.get("sourceVariables"), list):
+        gencde["sourceVariables"] = [v for v in gencde["sourceVariables"] if v not in out]
+        if isinstance(gencde.get("sourceCohorts"), list):
+            sources = {_cohort(v) for v in gencde["sourceVariables"]}
+            gencde["sourceCohorts"] = [c for c in gencde["sourceCohorts"] if c in sources]
+
+
 def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: dict[str, Any]) -> list[dict[str, Any]]:
     """The records as the REVIEWER left them: scoped, selected, renamed, re-targeted and recode-edited.
 
@@ -319,6 +376,7 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
     renames = _by_key(grouped, GATE1_RENAME)
     picks = _by_key(grouped, GATE2_CANDIDATE_PICK)
     specs = _by_key(grouped, GATE3_SPEC_EDIT)
+    removals = removed_members(grouped)
     relations: dict[str, list[dict[str, Any]]] = {}
     for d in _by_key(grouped, GATE2_RELATION).values():
         relations.setdefault(str(d.get("groupId") or ""), []).append(d)
@@ -331,6 +389,9 @@ def effective_records(result: dict[str, Any], config: dict[str, Any], grouped: d
         if str((selection.get(str(raw.get("id") or "")) or {}).get("chosen") or "") in EXCLUDE_VALUES:
             continue
         r = copy.deepcopy(raw)
+        # FIRST, so nothing below — a re-pick's re-targeting, a recode edit, the combine groups — sees a removed
+        # variable as one of the concept's (review round 2).
+        _drop_members(r, removals.get(gid, []))
 
         rename = renames.get(gid)
         r["generatedConcept"] = raw.get("concept", "")
@@ -607,6 +668,15 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                     after = "annotated" if note.strip() else REVERTED_TO_MODEL
                 if edit:
                     detail = _edit_detail(spec, edit)
+            elif kind == GATE3_MEMBER_EXCLUSION:
+                # The concept the variable was removed from -> "removed"; one that reached no record says so.
+                gid, member = str(d.get("groupId") or ""), str(d.get("memberId") or "")
+                before, after = gid, REMOVED
+                rec = by_group.get(gid)
+                if rec is None:
+                    detail = _j({"notApplied": NOT_APPLIED_ABSENT})
+                elif member not in (rec.get("members") or []):
+                    detail = _j({"notApplied": NOT_APPLIED_MEMBER})
             rows.append(
                 [GATE_OF.get(kind, ""), kind, ACTION_OF.get(kind, kind), item, before, after, note, detail,
                  "true" if (kind, item) in stale else "false"]

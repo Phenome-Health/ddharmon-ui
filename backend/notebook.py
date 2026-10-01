@@ -545,6 +545,8 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
     ops: dict[str, list[_Op]] = {}
     novel: list[str] = []
     rejected: list[str] = []
+    # Removed from their concept at Gate 3 (review round 2): already absent from ``members``, named at the end.
+    removed = [f"{r.get('concept', '?')}  ({m})" for r in records for m in r.get("removedMembers") or []]
     for r in records:
         cde = r.get("cde")
         tmap = {t.get("sourceVariable"): t for t in r.get("transforms", [])}
@@ -601,6 +603,7 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
     if not ops:
         cells.append(_md("_This run produced no CDE assignments with transforms to apply._"))
         cells.extend(_rejected_cells(rejected))
+        cells.extend(_removed_cells(removed))
         return {"cells": cells, "metadata": _KERNELS[lang], "nbformat": 4, "nbformat_minor": 5}
 
     # Step 1 — load raw frames.
@@ -652,7 +655,24 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
         )
 
     cells.extend(_rejected_cells(rejected))
+    cells.extend(_removed_cells(removed))
     return {"cells": cells, "metadata": _KERNELS[lang], "nbformat": 4, "nbformat_minor": 5}
+
+
+def _removed_cells(removed: list[str]) -> list[dict[str, Any]]:
+    """The variables the reviewer removed from a concept at Gate 3 — named, so their absence is not a silent one."""
+    if not removed:
+        return []
+    return [
+        _md(
+            "## Removed from a concept (excluded)",
+            "",
+            "The reviewer removed these variables from their concept at Gate 3, so this notebook does not "
+            "harmonize them:",
+            "",
+            *[f"- {n}" for n in removed[:200]],
+        )
+    ]
 
 
 def _rejected_cells(rejected: list[str]) -> list[dict[str, Any]]:

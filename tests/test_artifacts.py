@@ -722,11 +722,12 @@ def test_every_gate_decision_kind_is_registered_with_an_identity(artifacts):
     for ``gate1_rename`` (the reviewer's own name for a concept group, keyed on the group). Raised 8 -> 10 by
     08-28: 1d's ``gate3_combine_rule`` (how several of one cohort's variables become one target column, keyed
     on the (cohort, target) column it governs) and Wave 2's ``gate1_new_group`` (a group the reviewer made,
-    keyed on that group's own ``rev:<uuid>`` id).
+    keyed on that group's own ``rev:<uuid>`` id). Raised 10 -> 11 by review round 2's ``gate3_member_exclusion``
+    (a variable the reviewer removed from one concept, keyed on the (group, variable) pair it removes).
     """
     from backend.artifacts import registry as global_registry
 
-    assert len(GATE_DECISION_KINDS) == 10
+    assert len(GATE_DECISION_KINDS) == 11
     for name in GATE_DECISION_KINDS:
         assert not global_registry.get(name).singleton, f"{name} must key on the thing decided"
 
@@ -1117,13 +1118,26 @@ def test_a_non_decision_kind_is_never_given_a_conflict_notice(tmp_path, monkeypa
 def _a_valid_decision(kind: str) -> dict:
     """One payload the registered kind accepts, built from the identity table rather than by hand, so a kind
     added to the registry is covered here without anyone remembering to add it."""
-    from backend.artifact_kinds import _DECISION_IDENTITY_FIELDS, REVIEWER_GROUP_PREFIX, SKOS_RELATIONS
+    from backend.artifact_kinds import (
+        _DECISION_IDENTITY_FIELDS,
+        GATE3_MEMBER_EXCLUSION,
+        MEMBER_EXCLUDE,
+        MEMBER_KEEP,
+        REVIEWER_GROUP_PREFIX,
+        SKOS_RELATIONS,
+    )
 
     payload = {field: f"{field}-1" for field in _DECISION_IDENTITY_FIELDS[kind]}
     if "groupId" in payload:
         payload["groupId"] = f"{REVIEWER_GROUP_PREFIX}guest-1"  # the one id every group-keyed kind accepts
-    # A relation's `chosen` must be a SKOS predicate (the store refuses anything else); every other kind takes "x".
-    options = list(SKOS_RELATIONS[:2]) if kind == GATE2_RELATION else ["x", "y"]
+    # A relation's `chosen` must be a SKOS predicate, and a removal's is always "exclude" (the store refuses
+    # anything else); every other kind takes "x".
+    if kind == GATE2_RELATION:
+        options = list(SKOS_RELATIONS[:2])
+    elif kind == GATE3_MEMBER_EXCLUSION:
+        options = [MEMBER_EXCLUDE, MEMBER_KEEP]
+    else:
+        options = ["x", "y"]
     return {
         **payload,
         "name": "My group",

@@ -2683,6 +2683,11 @@ _EITL_COMBINE_COLS = ["combineRules"]
 #: relation beside it, and the reviewer's note (``backend/export_decisions.py``). Appended last: no index moves.
 _EITL_RELATION_COLS = ["relation", "relationBy", "modelRelation", "relationNote"]
 
+#: Review round 2: the variables the reviewer removed from this concept at Gate 3 (``;``-joined, "" for none) —
+#: already absent from ``members`` / ``nMembers`` / ``nTransforms``, named here so the absence is not a silent one.
+#: Appended last: no index moves.
+_EITL_REMOVAL_COLS = ["removedMembers"]
+
 
 def _export_payload(job: Job) -> dict[str, Any] | None:
     """The result an export serializes: a parked run's checkpoint (D-02), else the finished run's result."""
@@ -2869,7 +2874,7 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
 
     decisions = _verdicts_to_legacy(grouped.get(VERDICT, [])) if grouped else job.decisions
     w = csv.writer(buf, delimiter="\t")
-    w.writerow(_EITL_COLS + _EITL_STAGED_COLS + _EITL_COMBINE_COLS + _EITL_RELATION_COLS)
+    w.writerow(_EITL_COLS + _EITL_STAGED_COLS + _EITL_COMBINE_COLS + _EITL_RELATION_COLS + _EITL_REMOVAL_COLS)
     for r in _eitl_order(records):
         dec = decisions.get(r["id"], {})
         model_cde = r.get("modelCde") or {}
@@ -2892,6 +2897,7 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
                 r.get("modelRelation", ""),
                 _clean(r.get("relationNote", "")),
             ]
+            + [_clean(";".join(r.get("removedMembers") or []))]
         )
     return _download(buf.getvalue(), "eitl_tsv", "tsv", job.job_id)
 
