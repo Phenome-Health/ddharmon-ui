@@ -44,6 +44,18 @@ serve.sh     prod-ish: build the SPA once, then serve SPA + API from one uvicorn
   `data/cde/` (or point `DDHARMON_CDE_DIR` at them). New runs default to `cdeSet` = `full`
   (`all_cdes_flat.tsv`); `endorsed` (`nih_endorsed_flat.tsv`) is the opt-in alternative. A server
   missing the requested file refuses the run by name — it never falls back to the other catalog.
+
+  **Warm the catalog's embeddings after every deploy or catalog update.** Every run embeds the catalog
+  through the shared embedding cache, and on a cold cache the first full-catalog run embeds all 22,743 rows
+  on the CPU while a user waits. Run `.venv/bin/python scripts/warm_cde_cache.py` (both catalogs; add
+  `--cde-set full` or `--cde-set endorsed` to warm just one) as the service's user with the service's
+  `DDHARMON_CACHE` and `DDHARMON_CDE_DIR` (unset means `~/.ddharmon` and `data/cde/`), or it warms a cache the
+  service never reads. It loads and embeds the catalog through the same code a run uses. On a warm cache it
+  embeds nothing and finishes in about two seconds. Verify with `scripts/warm_cde_cache.py --check`
+  (it never embeds, and exits 1 unless every row is cached) or with `/api/health`, where
+  `cdeCache.catalogs.<name>` shows `{rows, cached, warm}` as the service sees it. That check runs in the
+  background, so the value is `null` on the first poll after a start, and the first poll after the cache
+  changes starts a re-check (at most one per 15 s). Poll again a few seconds later to read it.
 - **`ANTHROPIC_API_KEY`** only for `classifyMode` = `sync`/`batch` (the default `none` runs the full
   clustering + anchoring with no LLM and no key).
 

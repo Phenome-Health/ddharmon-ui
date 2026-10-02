@@ -21,6 +21,10 @@ import pytest
 _TEST_ROOT = tempfile.mkdtemp(prefix="ddharmon-ui-test-")
 os.environ["DDHARMON_UI_WORK"] = _TEST_ROOT
 os.environ["DDHARMON_UI_DB"] = os.path.join(_TEST_ROOT, "jobs.db")
+# The same for core's embedding cache: unset, every `embed_dictionary` a test drives (and the health probe's CDE
+# warmth check) would read and WRITE the developer's real `~/.ddharmon/embeddings.db`. Tests that need their own
+# cache still monkeypatch it per test.
+os.environ["DDHARMON_CACHE"] = os.path.join(_TEST_ROOT, "embedding-cache")
 
 
 @pytest.fixture(autouse=True)
