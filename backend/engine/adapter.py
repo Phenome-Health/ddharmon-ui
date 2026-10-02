@@ -2719,6 +2719,47 @@ def _replaying_stage(
     return stage
 
 
+# ── the load → embed front half, shared with the CDE-cache warm ──────────────────────────────
+#
+# Every run embeds the CDE catalog next to the cohorts, through core's content-addressed embedding cache (key =
+# model + sha of the composed text + vector type). The catalog is never preprocessed, so its text is the same
+# for every run on a server, and `scripts/warm_cde_cache.py` fills that cache ahead of the first run. A warm only
+# helps if it writes the keys a run reads, so the two do not each spell out the loader call, the default provider
+# and the embed call: `run_pipeline`, `replay_leanb_result` and the warm all go through these helpers.
+
+
+def load_spec(spec: Any) -> Any:
+    """Load one ``{path, cohort_name, column_roles}`` spec into a core ``DataDictionary``, as a run does."""
+    from ddharmon.ingestion import load_dictionary
+
+    return load_dictionary(spec["path"], cohort_name=spec["cohort_name"], **spec["column_roles"])
+
+
+def default_embedding_provider() -> Any:
+    """The provider a run embeds with when none is injected (core's default encoder; loads the model)."""
+    from ddharmon.embedding.provider import SentenceTransformerProvider
+
+    return SentenceTransformerProvider()
+
+
+def default_embedding_model_name() -> str:
+    """The model :func:`default_embedding_provider` embeds with, WITHOUT loading it (a ~440 MB load).
+
+    Read off the provider's own signature default — the value the no-argument construction above uses — so the
+    name a cache lookup keys on can never disagree with the model a run actually loads.
+    """
+    from ddharmon.embedding.provider import SentenceTransformerProvider
+
+    return str(inspect.signature(SentenceTransformerProvider).parameters["model_name"].default)
+
+
+def embed_for_run(dd: Any, provider: Any) -> Any:
+    """Embed one loaded dictionary the way a run does: core's ``embed_dictionary`` with its default cache."""
+    from ddharmon.embedding.service import embed_dictionary
+
+    return embed_dictionary(dd, provider=provider)
+
+
 def run_pipeline(
     dict_specs: list[dict[str, Any]],
     cde_spec: dict[str, Any] | None,
@@ -2778,9 +2819,7 @@ def run_pipeline(
     A staged run (``config["stop_at_gate"]`` set to ``"gate1"`` or ``"gate2"``) returns a PARTIAL result
     carrying ``gatePosition`` plus whatever the stages before that boundary produced.
     """
-    from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
-    from ddharmon.ingestion import load_dictionary
 
     progress = progress or _noop_progress
     overrides = stage_overrides or {}
@@ -2824,7 +2863,7 @@ def run_pipeline(
     # --- load ---
     progress("loading", 0, 0)
     specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
-    dictionaries = [load_dictionary(s["path"], cohort_name=s["cohort_name"], **s["column_roles"]) for s in specs]
+    dictionaries = [load_spec(s) for s in specs]
 
     # --- prepare: rule-based preprocessing, between loading and embedding ---
     # See the section header above `preprocess_for_run`: this had never run in the product, and turning it
@@ -2839,12 +2878,11 @@ def run_pipeline(
     total = len(dictionaries)
     progress("embedding", 0, total)
     if provider is None:
-        from ddharmon.embedding.provider import SentenceTransformerProvider
-
-        provider = SentenceTransformerProvider()
+        provider = default_embedding_provider()
     embedded = []
     for i, dd in enumerate(dictionaries):
-        embedded.append(embed_dictionary(dd, provider=provider))
+        # The CDE catalog's rows are cache hits on a server whose cache was warmed (scripts/warm_cde_cache.py).
+        embedded.append(embed_for_run(dd, provider))
         progress("embedding", i + 1, total)
 
     # Guard: an uploaded file with only a header row (or columns that didn't map to a variable/description/
@@ -3501,9 +3539,7 @@ def replay_leanb_result(
     The frozen substrate is REQUIRED. Its absence is not a degraded replay, it is a different partition -
     and a group id from the reviewer's screen means nothing against a partition they never saw.
     """
-    from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
-    from ddharmon.ingestion import load_dictionary
 
     if not replay_responses:
         raise ReplayUnavailableError(
@@ -3520,7 +3556,7 @@ def replay_leanb_result(
 
     cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
     specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
-    dictionaries = [load_dictionary(s["path"], cohort_name=s["cohort_name"], **s["column_roles"]) for s in specs]
+    dictionaries = [load_spec(s) for s in specs]
     # Preprocessing is part of the deterministic front half and it CHANGES the embedded text, so replaying
     # with it configured differently than the original leg would embed different text and cluster differently.
     # The run's own config is the record of what it did.
@@ -3528,10 +3564,8 @@ def replay_leanb_result(
         for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
             preprocess_for_run(dd, source_path=spec["path"])
     if provider is None:
-        from ddharmon.embedding.provider import SentenceTransformerProvider
-
-        provider = SentenceTransformerProvider()
-    embedded = [embed_dictionary(dd, provider=provider) for dd in dictionaries]
+        provider = default_embedding_provider()
+    embedded = [embed_for_run(dd, provider) for dd in dictionaries]
     embedded = [ed for ed in embedded if len(list(ed.get_variable_names())) > 0]
 
     kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}

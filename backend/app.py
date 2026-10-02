@@ -44,7 +44,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
-from backend import batch_reconcile, billing, export_decisions
+from backend import batch_reconcile, billing, cde_cache, export_decisions
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
     GATE1_GROUP_SCOPE,
@@ -75,7 +75,7 @@ from backend.checkpoint import (
 from backend.db import JobDB
 from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
 from backend.engine import CONTRACT_VERSION
-from backend.engine.adapter import cost_block
+from backend.engine.adapter import cost_block, load_spec
 from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
 from backend.llm_errors import CodedHTTPException, coded_http_error, key_required
 from backend.notebook import build_notebook
@@ -167,6 +167,17 @@ CDE_COLUMN_ROLES = {
     "standard_code": "concept_codes",
 }
 CDE_COHORT = "NIH_CDE"
+
+
+def cde_spec_for(path: Path | str) -> dict[str, Any]:
+    """The loader spec a run reads the CDE catalog at ``path`` with — the ONE place it is spelled out.
+
+    Every leg that embeds the catalog builds its spec here, and so does ``scripts/warm_cde_cache.py``: the warm
+    fills the embedding cache with the catalog's vectors ahead of the first run, which only helps if it loads the
+    catalog with exactly the roles and cohort name a run does (they decide the text that is hashed into the key).
+    """
+    return {"path": str(path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+
 
 _WORK_ROOT = Path(os.environ.get("DDHARMON_UI_WORK", _REPO_ROOT / ".ddharmon_ui"))
 # Let the job store tear down a job's on-disk scratch dir (<_WORK_ROOT>/<job_id>: uploads + prompts +
@@ -593,11 +604,7 @@ async def start_batch(
             raise HTTPException(status_code=400, detail=empty_error)
         dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
-    cde_spec: dict[str, Any] = {
-        "path": str(cde_path),
-        "cohort_name": CDE_COHORT,
-        "column_roles": dict(CDE_COLUMN_ROLES),
-    }
+    cde_spec = cde_spec_for(cde_path)
 
     run_mode = cfg.get("runMode", "batch")
     if run_mode not in ("batch", "sync", "preview"):
@@ -1120,7 +1127,7 @@ def _resume_locked(
     # server without a catalog can still carry a finished run to its export screen.
     # The catalog the run RECORDED at creation — never the current creation default (`_recorded_cde_set`).
     cde_path = _catalog_path_or_refuse(_recorded_cde_set(job.config), starting=False)
-    cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+    cde_spec = cde_spec_for(cde_path)
     # Pre-flight the provider key BEFORE committing the gate and spawning the worker. Past Gate 4 this leg
     # makes a PAID call, and the BYOK key clears on a browser reload — discovering it missing deep in the
     # generating stage errors the whole run and wipes the served gate state (the keyless-wipes-gate-state
@@ -1340,7 +1347,7 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     shutil.copytree(old_uploads, new_uploads)
     # Remap each dict_spec path (same filenames) into the new uploads dir.
     new_specs = [{**s, "path": str(new_uploads / Path(s["path"]).name)} for s in src.dict_specs]
-    cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+    cde_spec = cde_spec_for(cde_path)
     # A re-run is a NEW run, so it gets what every new run gets: re-splitting on (see `start_batch`), even when the
     # run it copies predates that and recorded it off. The source run is untouched and replays as recorded.
     run_config = {**src.config, "work_dir": str(new_work), "readjudication": True}
@@ -1561,7 +1568,7 @@ def readjudicate(
         )
     # The catalog the run RECORDED at creation — never the current creation default (`_recorded_cde_set`).
     cde_path = _catalog_path_or_refuse(_recorded_cde_set(job.config), starting=False)
-    cde_spec = {"path": str(cde_path), "cohort_name": CDE_COHORT, "column_roles": dict(CDE_COLUMN_ROLES)}
+    cde_spec = cde_spec_for(cde_path)
 
     # The paid-action guard: the re-split ALWAYS buys a split, so a missing provider key must fail loudly HERE,
     # not deep in the paid stage where it once returned 200 with nothing done. No preview exemption. The key
@@ -3095,6 +3102,13 @@ def _core_version() -> str:
         return "unknown"
 
 
+# Whether each CDE catalog's vectors are already in the shared embedding cache — i.e. whether the next run embeds
+# 22,743 catalog rows on the CPU or reads them all back. Checked in a background thread and kept in memory (see
+# `cde_cache.WarmthMonitor`): health is polled, and a check loads the catalog and looks up every row. Filled by
+# `scripts/warm_cde_cache.py`; re-checked by itself when a catalog file or the cache file changes.
+_cde_warmth = cde_cache.WarmthMonitor(lambda: CDE_FILES, lambda path: load_spec(cde_spec_for(path)))
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     """Liveness/readiness probe: process is up, plus which optional server-side assets are present.
@@ -3104,6 +3118,12 @@ def health() -> dict[str, Any]:
     built SPA are in place (a run with ``cdeSet != none`` needs the matching CDE file). ``channel``
     (``prod`` default / ``dev``) and ``coreVersion`` distinguish the dev deployment — which pins the
     core to an unreleased GitHub ref — from prod, which tracks the PyPI release.
+
+    ``cdeCache`` reports, per catalog, how many of its rows the shared embedding cache already holds:
+    ``{"checkedAt", "catalogs": {name: {"rows", "cached", "warm"}}}``. It never blocks this probe: the first
+    poll starts a background check and reads ``null`` per catalog until it finishes (a couple of seconds on
+    the full catalog), and a catalog whose file is gone carries an ``error`` instead of figures. ``cde`` keeps
+    its exact shape.
     """
     return {
         "status": "ok",
@@ -3112,6 +3132,7 @@ def health() -> dict[str, Any]:
         "channel": os.environ.get("DDHARMON_CHANNEL", "prod"),
         "coreVersion": _core_version(),
         "cde": {name: path.exists() for name, path in CDE_FILES.items()},
+        "cdeCache": _cde_warmth.snapshot(),
         "frontendBuilt": _DIST.exists(),
     }
 
