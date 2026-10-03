@@ -37,7 +37,7 @@ export interface SuggestionCard {
 
 /**
  * WHY a group is in Gate 1's scope — the reviewer chose it, made it, or a score suggestion seeded it (and for which
- * components) — so a card can tell its OWN groups from ones another component put there.
+ * components) — so a card can say why a group it did not suggest is in scope.
  */
 export interface GroupScopeWhy {
   by: "chosen" | "made" | "score" | "none";
@@ -46,14 +46,16 @@ export interface GroupScopeWhy {
 }
 
 /**
- * Whether an in-scope group COUNTS toward this card's spread: it was suggested for THIS component, or the reviewer
- * chose or made it. A group in scope only because ANOTHER component's suggestion seeded it does not — the free search
- * reaches ~8 groups per component, and counting every one already in scope for someone else's reason made a card read
- * "7 in scope" when 2 were its own (iteration 7, 2026-10-02). Without `why`, only this card's suggestions count.
+ * Whether an in-scope group COUNTS toward this card's spread: only when it was suggested for THIS component.
+ *
+ * Scope is one set for the whole gate, and the free search reaches ~8 groups per component — so counting every
+ * reached group that is in scope made a card read "7 in scope" when 2 were its own (live rig, iteration 7,
+ * 2026-10-02). Counting the reviewer's explicit picks did not fix it: a driver's (or a bulk include's) explicit
+ * decisions cover groups no card suggested. So the spread is "this component's suggestions you kept"; every other
+ * in-scope row stays checked and says why (`GroupScopeWhy`).
  */
-export function countsForCard(g: SuggestionCardGroup, inScope: boolean, why?: GroupScopeWhy): boolean {
-  if (!inScope) return false;
-  return g.suggested || why?.by === "chosen" || why?.by === "made";
+export function countsForCard(g: SuggestionCardGroup, inScope: boolean): boolean {
+  return inScope && g.suggested;
 }
 
 /**
