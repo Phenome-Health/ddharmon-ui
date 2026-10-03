@@ -227,10 +227,16 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await row(top!).getByTestId("score-suggestion-group-toggle").click();
     await expect(scopeOf(page, top!)).toHaveAttribute("aria-checked", "false");
     await expect(row(top!)).toHaveAttribute("data-in-scope", "false");
-    // A group below the cut-off can be put in scope from here too — the reviewer catching a miss.
+    await expect(card.getByTestId("score-suggestion-spread")).toContainText("1 in scope");
+    // A group below the cut-off can be put in scope from here too — the reviewer catching a miss. It is in scope and
+    // says why, but the spread stays the count of THIS component's suggestions kept: scope is one set for the gate,
+    // and the live rig showed that counting every in-scope group a search reached (a driver's or a bulk include's
+    // explicit picks among them) inflates every card.
     await row(below!).getByTestId("score-suggestion-group-toggle").click();
     await expect(scopeOf(page, below!)).toHaveAttribute("aria-checked", "true");
-    await expect(card.getByTestId("score-suggestion-spread")).toContainText("2 in scope");
+    await expect(row(below!)).toHaveAttribute("data-counted", "false");
+    await expect(row(below!).getByTestId("score-suggestion-scope-why")).toHaveText(/your choice/i);
+    await expect(card.getByTestId("score-suggestion-spread")).toContainText("1 in scope");
   });
 
   test("@gate1 a group in scope only because ANOTHER component suggested it is named so, and not counted here", async ({

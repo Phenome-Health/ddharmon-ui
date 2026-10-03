@@ -23,9 +23,9 @@ import type { FieldDetail } from "@/types";
  *   3. Nothing suggested is a RESULT of this search, not a finding about the cohorts — never "missing".
  *
  * THE CHECKBOX IS GATE 1 SCOPE — the ledger checkbox's own path (`onGroupScopeChange`), so the two cannot disagree
- * and a check survives a reload. Scope is ONE set for the whole gate, so a group can be in it for another component's
- * reason: such a row stays checked but is drawn neutral, says whose it is ("In scope for Migraine"), and is not
- * counted in this card's spread (`countsForCard`). A group BELOW the cut-off is listed under a divider so the reviewer can catch a miss
+ * and a check survives a reload. Scope is ONE set for the whole gate, so a group can be in it for a reason other than
+ * this component's suggestion: such a row stays checked but is drawn neutral, says why ("In scope for Migraine",
+ * "In scope — your choice"), and is not counted in this card's spread (`countsForCard`). A group BELOW the cut-off is listed under a divider so the reviewer can catch a miss
  * (the paid judge picked 8 groups the 0.62 cut-off did not); checking it puts it in scope like any other.
  */
 export function ScoreSuggestionCards({
@@ -75,9 +75,9 @@ export function ScoreSuggestionCards({
               verdict is Gate 4&rsquo;s match.
             </li>
             <li>
-              <span className="font-semibold text-on-raised">Variables · cohorts.</span> Everything in the groups in
-              scope for this component — group membership, not a match. Gate 4 says which of them measure it. A group
-              another component put in scope is marked so and not counted here.
+              <span className="font-semibold text-on-raised">Variables · cohorts.</span> Everything in this
+              component&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
+              of them measure it. Other in-scope groups the search reached say why they are in scope.
             </li>
           </ul>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
@@ -144,7 +144,7 @@ function SuggestionRow({
 }) {
   const [open, setOpen] = useState(false);
   const inScope = (gid: string) => isGroupInScope?.(gid) ?? false;
-  const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId), groupScopeWhy?.(g.groupId));
+  const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId));
   const scoped = card.groups.filter(counts);
   // What is IN the groups in scope — membership, counted from Gate 1's own groups (never inferred as a match).
   const scopedGroups = scoped.map((g) => groupsById?.get(g.groupId)?.group).filter((g) => g != null);
@@ -179,9 +179,16 @@ function SuggestionRow({
     const label = named?.name?.trim() || "Unnamed group";
     const sel = inScope(g.groupId);
     const counted = counts(g);
-    // In scope, but for ANOTHER component's suggestion: checked, neutral, and named as whose it is.
+    // In scope, but not as THIS component's suggestion: checked, neutral, and saying why.
     const why = groupScopeWhy?.(g.groupId);
-    const borrowed = sel && !counted && why?.by === "score" ? why.components : null;
+    const scopeReason =
+      sel && !counted
+        ? why?.by === "score"
+          ? `In scope for ${why.components.join(", ")}`
+          : why?.by === "made"
+            ? "In scope — your group"
+            : "In scope — your choice"
+        : null;
     const ci = g.bestMember.indexOf(":");
     const cohort = ci >= 0 ? g.bestMember.slice(0, ci) : "";
     return (
@@ -255,13 +262,13 @@ function SuggestionRow({
               </div>
             )}
           </div>
-          {borrowed ? (
+          {scopeReason ? (
             <span
               data-testid="score-suggestion-scope-why"
-              title="In Gate 1's scope because another component's suggestion put it there — unchecking it here takes it out for that component too"
+              title="In Gate 1's scope, but not as this component's suggestion — so it is not counted on this card. Scope is one set for the gate: unchecking it here takes it out everywhere."
               className="shrink-0 rounded-full border border-dashed border-rule-on-raised px-1.5 py-0.5 text-[10px] font-semibold text-on-raised-muted"
             >
-              In scope for {borrowed.join(", ")}
+              {scopeReason}
             </span>
           ) : (
             sel && (
