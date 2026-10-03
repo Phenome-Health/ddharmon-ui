@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
-import { coveredCohorts, GROUP_SELECT_THRESHOLD, offeredGroups } from "@/lib/score-scope";
+import { coveredCohorts, GROUP_SELECT_THRESHOLD, missingReason, offeredGroups } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
@@ -278,39 +278,6 @@ export function SpecView({
   // vocabulary, a truncated field on an old run — into an on-screen claim that the score cannot be
   // built. That is the prohibited emission, arrived at by a default rather than by a judgement.
   const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.indeterminate;
-  const codingFor = (name: string): ScoreComponent | undefined =>
-    definition.components.find((c) => c.name === name);
-  // The component list renders in SOURCE-DOCUMENT order — `spec.matches` preserves the definition's order,
-  // which the builder keeps from the source doc — never reordered by match state or confidence, so the
-  // reviewer reads the score exactly as the paper presents it. Found vs missing is shown per row (the icon)
-  // and summarised in the header count, not by regrouping the list.
-  const nFound = spec.matches.filter((m) => m.conceptId != null).length;
-  // Resolve a concept id to a name + cohorts for the group list. Callers may pass a resolver (the gate
-  // strip resolves against the run's concept groups); otherwise fall back to this run's records.
-  const recordById = useMemo(
-    () => Object.fromEntries(records.map((r) => [r.id, r])),
-    [records],
-  );
-  const resolve =
-    resolveConcept ??
-    ((id: string) => {
-      const r = conceptById[id] ?? recordById[id];
-      return r ? { concept: r.concept ?? "", cohorts: r.cohorts ?? [] } : undefined;
-    });
-  const renderRow = (m: typeof spec.matches[number]) => (
-    <MatchRow
-      key={m.component}
-      match={m}
-      component={codingFor(m.component)}
-      concept={m.conceptId ? conceptById[m.conceptId] : undefined}
-      jobId={jobId}
-      onOpenGroup={onOpenGroup}
-      isGroupInScope={isGroupInScope}
-      onGroupScopeChange={onGroupScopeChange}
-      resolveConcept={resolve}
-      resolveGroupId={resolveGroupId}
-    />
-  );
 
   // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
   // groups only when components actually carry a `domain`; with none, the flat table below renders
@@ -432,57 +399,17 @@ export function SpecView({
       </Card>
 
       {/* --- components --- */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Components → this run's concepts</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. */}
-          <div
-            data-testid="score-builder-info"
-            className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
-          >
-            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-              Score builder · how matching works
-            </p>
-            <ul className="flex flex-col gap-1 text-on-raised-muted">
-              <li>
-                <span className="font-semibold text-on-raised">Source-only.</span> Each component shows the
-                paper&rsquo;s own fields (name · categories · coding); generated prose is dropped unless it is
-                verbatim in the document.
-              </li>
-              <li>
-                <span className="font-semibold text-on-raised">Scoring.</span> The judge rates each variable /
-                answer-option individually (0–1); a group&rsquo;s score is the mean of its rated members.
-              </li>
-              <li>
-                <span className="font-semibold text-on-raised">Component number.</span> The figure on each
-                component is the mean of the best match per cohort, over the cohorts found.
-              </li>
-            </ul>
-            <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
-              {/* The threshold is NOT TUNED yet — an INTERNAL note (see `GROUP_SELECT_THRESHOLD`), deliberately not
-                  printed here (final review round 1, item 3). */}
-              Auto-select &amp; tag every group scoring{" "}
-              <span className="font-mono text-on-raised">{GROUP_SELECT_THRESHOLD.toFixed(2)}</span> or higher —
-              one threshold for the whole builder, applied to every component.
-            </p>
-          </div>
-          {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
-              The header carries the found/total tally; each row shows its own found/missing icon. */}
-          <Collapsible defaultOpen>
-            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-              <span className="flex items-center gap-1.5">
-                Components · {nFound}/{spec.matches.length} found
-              </span>
-              <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2 space-y-2">
-              {spec.matches.map(renderRow)}
-            </CollapsibleContent>
-          </Collapsible>
-        </CardContent>
-      </Card>
+      <ScoreComponentsCard
+        spec={spec}
+        conceptById={conceptById}
+        records={records}
+        jobId={jobId}
+        onOpenGroup={onOpenGroup}
+        isGroupInScope={isGroupInScope}
+        onGroupScopeChange={onGroupScopeChange}
+        resolveConcept={resolveConcept}
+        resolveGroupId={resolveGroupId}
+      />
 
       {/* --- per-cohort coverage --- */}
       <Card>
@@ -647,14 +574,156 @@ export function SpecView({
 }
 
 /**
+ * The builder's "Components → this run's concepts" card — the per-component rows, the builder-level how-to and the
+ * found tally. Extracted from `SpecView` (08-28, option A) so Gate 4 can show the SAME card after its match.
+ *
+ * `variant`:
+ *   - `builder` (default): the composite page and a Gate 1 that carries a match — groups are SELECTED at the builder's
+ *     auto-select threshold (or by Gate 1 scope when wired), and checked groups continue to Gate 2.
+ *   - `record` (Gate 4): scope was settled on Gate 1, so nothing selects — no checkbox, no Gate 2 tag, no threshold.
+ *     Every group the match reached counts toward the figure, as it does toward the coverage the verdict comes from,
+ *     and each row states its outcome without being opened (a missing component is a result, not a thing to hide).
+ */
+export function ScoreComponentsCard({
+  spec,
+  conceptById,
+  records,
+  jobId,
+  variant = "builder",
+  onOpenGroup,
+  isGroupInScope,
+  onGroupScopeChange,
+  resolveConcept,
+  resolveGroupId,
+}: {
+  spec: CompositeSpec;
+  conceptById: Record<string, UIRecord>;
+  records: UIRecord[];
+  jobId: string;
+  variant?: "builder" | "record";
+  onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
+  isGroupInScope?: (groupId: string) => boolean;
+  onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
+  resolveConcept?: (
+    id: string,
+  ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
+  resolveGroupId?: (id: string) => string | undefined;
+}) {
+  const { definition } = spec;
+  const record = variant === "record";
+  const codingFor = (name: string): ScoreComponent | undefined =>
+    definition.components.find((c) => c.name === name);
+  // The component list renders in SOURCE-DOCUMENT order — `spec.matches` preserves the definition's order,
+  // which the builder keeps from the source doc — never reordered by match state or confidence, so the
+  // reviewer reads the score exactly as the paper presents it. Found vs missing is shown per row (the icon)
+  // and summarised in the header count, not by regrouping the list.
+  const nFound = spec.matches.filter((m) => m.conceptId != null).length;
+  // Resolve a concept id to a name + cohorts for the group list. Callers may pass a resolver (the gate
+  // strip resolves against the run's concept groups); otherwise fall back to this run's records.
+  const recordById = useMemo(
+    () => Object.fromEntries(records.map((r) => [r.id, r])),
+    [records],
+  );
+  const resolve =
+    resolveConcept ??
+    ((id: string) => {
+      const r = conceptById[id] ?? recordById[id];
+      return r ? { concept: r.concept ?? "", cohorts: r.cohorts ?? [] } : undefined;
+    });
+  const renderRow = (m: typeof spec.matches[number]) => (
+    <MatchRow
+      key={m.component}
+      match={m}
+      component={codingFor(m.component)}
+      concept={m.conceptId ? conceptById[m.conceptId] : undefined}
+      jobId={jobId}
+      variant={variant}
+      onOpenGroup={onOpenGroup}
+      isGroupInScope={isGroupInScope}
+      onGroupScopeChange={onGroupScopeChange}
+      resolveConcept={resolve}
+      resolveGroupId={resolveGroupId}
+    />
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Components → this run's concepts</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. */}
+        <div
+          data-testid="score-builder-info"
+          className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
+        >
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            Score builder · how matching works
+          </p>
+          <ul className="flex flex-col gap-1 text-on-raised-muted">
+            <li>
+              <span className="font-semibold text-on-raised">Source-only.</span> Each component shows the
+              paper&rsquo;s own fields (name · categories · coding); generated prose is dropped unless it is
+              verbatim in the document.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Scoring.</span> The judge rates each variable /
+              answer-option individually (0–1); a group&rsquo;s score is the mean of its rated members.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Component number.</span> The figure on each
+              component is the mean of the best match per cohort, over the cohorts found.
+            </li>
+          </ul>
+          <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
+            {record ? (
+              // A RECORD (Gate 4): scope was settled on Gate 1, so there is no threshold to state and nothing selects.
+              <>
+                Scope was settled on Gate 1, so nothing here selects: every group the match reached counts toward a
+                component&rsquo;s figure, as it does toward the coverage the verdict comes from.
+              </>
+            ) : (
+              <>
+                {/* The threshold is NOT TUNED yet — an INTERNAL note (see `GROUP_SELECT_THRESHOLD`), deliberately not
+                    printed here (final review round 1, item 3). */}
+                Auto-select &amp; tag every group scoring{" "}
+                <span className="font-mono text-on-raised">{GROUP_SELECT_THRESHOLD.toFixed(2)}</span> or higher —
+                one threshold for the whole builder, applied to every component.
+              </>
+            )}
+          </p>
+        </div>
+        {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
+            The header carries the found/total tally; each row shows its own found/missing icon. */}
+        <Collapsible defaultOpen>
+          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            <span className="flex items-center gap-1.5">
+              Components · {nFound}/{spec.matches.length} found
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2 space-y-2">
+            {spec.matches.map(renderRow)}
+          </CollapsibleContent>
+        </Collapsible>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
  * One component row: the concept GROUPS its rated variables reached. Every group at/above the builder's
  * auto-select threshold renders as selected (and auto-tagged for Gate 2), with its covered members + cohorts;
  * the header figure is the mean best match per cohort. Source coding is shown structurally, never as
  * synthesised prose. A missing component lists the retrieved-but-below-threshold candidates instead.
+ *
+ * As a `record` (Gate 4) every group is counted and nothing selects — no checkbox, no Gate 2 tag, no threshold
+ * divider — and the row states its outcome ("Matched: …" or why not) without being opened.
  */
 function MatchRow({
   match,
   component,
+  variant = "builder",
   onOpenGroup,
   isGroupInScope,
   onGroupScopeChange,
@@ -664,6 +733,7 @@ function MatchRow({
   component?: ScoreComponent;
   concept?: UIRecord;
   jobId: string;
+  variant?: "builder" | "record";
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
   isGroupInScope?: (groupId: string) => boolean;
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
@@ -673,6 +743,7 @@ function MatchRow({
   resolveGroupId?: (id: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  const record = variant === "record";
   const coding = component?.coding;
 
   // Build the reached concept GROUPS from `groupCandidates`, each carrying its covered members (from
@@ -701,7 +772,8 @@ function MatchRow({
     nMatched: g.nMatched,
     nTotal: g.nTotal,
     members: (membersByGroup.get(g.groupId) ?? []).slice().sort((a, b) => b.confidence - a.confidence),
-    selected: g.confidence >= GROUP_SELECT_THRESHOLD,
+    // A record counts every group the match reached: scope was settled upstream, so no threshold selects here.
+    selected: record || g.confidence >= GROUP_SELECT_THRESHOLD,
   }));
   type GroupRow = (typeof groups)[number];
   const orderedGroups = [...groups].sort((a, b) => b.confidence - a.confidence);
@@ -716,7 +788,7 @@ function MatchRow({
   );
   const scoped = isGroupInScope != null;
   const readOnly = scoped && onGroupScopeChange == null;
-  const isSel = (gid: string) => (scoped ? isGroupInScope(gid) : localIds.has(gid));
+  const isSel = (gid: string) => (record ? true : scoped ? isGroupInScope(gid) : localIds.has(gid));
   const toggleGroup = (gid: string) => {
     if (scoped) {
       onGroupScopeChange?.(gid, !isGroupInScope(gid));
@@ -761,15 +833,17 @@ function MatchRow({
         )}
       >
         <div className="flex items-start gap-2 px-2.5 py-2">
-          <input
-            type="checkbox"
-            data-testid="score-group-toggle"
-            checked={sel}
-            disabled={readOnly}
-            onChange={() => toggleGroup(g.groupId)}
-            aria-label={`Include the group ${g.label} for this component`}
-            className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
-          />
+          {!record && (
+            <input
+              type="checkbox"
+              data-testid="score-group-toggle"
+              checked={sel}
+              disabled={readOnly}
+              onChange={() => toggleGroup(g.groupId)}
+              aria-label={`Include the group ${g.label} for this component`}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
+            />
+          )}
           <div className="min-w-0 flex-1">
             {onOpenGroup ? (
               <button
@@ -841,7 +915,7 @@ function MatchRow({
               </p>
             )}
           </div>
-          {sel && (
+          {sel && !record && (
             <span
               data-testid="score-group-gate2"
               className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised"
@@ -864,6 +938,9 @@ function MatchRow({
       data-testid="score-match"
       data-component={match.component}
       data-matched={isFound ? "true" : "false"}
+      // A record names its outcome as the other gate panels do (`componentVerdictFor`: the match ran, so a miss is a
+      // finding about this run's retrieval, never "not looked for").
+      data-verdict={record ? (isFound ? "full" : "infeasible") : undefined}
     >
       <button
         type="button"
@@ -896,6 +973,20 @@ function MatchRow({
 
       {/* ALWAYS-VISIBLE summary (moved out of the dropdown per review): review flag, source coding, spread. */}
       <div className="flex flex-col gap-1.5 px-3 pb-2.5 pl-9 text-xs">
+        {/* A RECORD states its outcome unopened — the matched concept under the reviewer's name, or why there is none
+            (rule 1: a missing component is a result, and "retrieved and rejected" differs from "nothing retrieved"). */}
+        {record && (
+          <span data-testid="score-match-summary" className="line-clamp-2 max-w-[80ch] text-on-raised-muted">
+            {isFound
+              ? `Matched: ${match.concept?.trim() || (match.conceptId && resolveConcept?.(match.conceptId)?.concept) || "—"}`
+              : missingReason({
+                  name: match.component,
+                  searched: true,
+                  matched: false,
+                  shortlistSize: match.shortlist.length,
+                })}
+          </span>
+        )}
         {coding?.needsReview && (
           <Badge className="w-fit border-rule-warn bg-surface-warn text-xs text-on-warn">
             {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
@@ -933,10 +1024,10 @@ function MatchRow({
             </span>
             <span className="text-on-raised-muted">·</span>
             <span>
-              <span className="font-semibold">{selected.length}</span> group{selected.length === 1 ? "" : "s"}{" "}
-              selected
+              <span className="font-semibold">{selected.length}</span> group{selected.length === 1 ? "" : "s"}
+              {record ? "" : " selected"}
             </span>
-            {selected.length > 0 && (
+            {selected.length > 0 && !record && (
               <span className="ml-auto text-[11px] font-semibold text-link-on-raised">
                 → auto-queued for Gate 2
               </span>
@@ -952,6 +1043,7 @@ function MatchRow({
               <div className="flex flex-col gap-1.5">
                 {orderedGroups.map((g, i) => {
                   const showDivider =
+                    !record &&
                     i > 0 &&
                     orderedGroups[i - 1].confidence >= GROUP_SELECT_THRESHOLD &&
                     g.confidence < GROUP_SELECT_THRESHOLD;
@@ -969,10 +1061,12 @@ function MatchRow({
                   );
                 })}
               </div>
-              <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
-                Checked groups auto-tag and continue to Gate 2. Refine any group&rsquo;s membership on Gate 1
-                via its <span className="font-semibold">↗</span> link (normal drag/drop); the panel re-reads it.
-              </p>
+              {!record && (
+                <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
+                  Checked groups auto-tag and continue to Gate 2. Refine any group&rsquo;s membership on Gate 1
+                  via its <span className="font-semibold">↗</span> link (normal drag/drop); the panel re-reads it.
+                </p>
+              )}
             </>
           ) : (
             <p className="text-on-raised-muted">

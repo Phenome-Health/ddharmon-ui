@@ -194,6 +194,8 @@ export default function Gate4Page() {
             score={score}
             spec={specForScore(composites, score.scoreName)}
             pinned={pinned === true}
+            records={records}
+            fieldIndex={result?.fieldIndex}
             onMatched={(spec) => {
               setMatched((prev) => ({ ...prev, [score.scoreName]: spec }));
               void queryClient.invalidateQueries({ queryKey: ["harmonize-result", jobId] });
