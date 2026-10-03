@@ -46,7 +46,7 @@ import {
   type ComponentEvidence,
   type ScopeVerdict,
 } from "@/lib/score-scope";
-import { suggestionCards } from "@/lib/score-suggestion-cards";
+import { suggestionCards, type GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import type {
   CompositeSpec,
   ComponentCoding,
@@ -207,6 +207,8 @@ export interface DeclaredScorePanelProps {
    * receives. Absent → the panel falls back to local state seeded from the auto-select threshold.
    */
   isGroupInScope?: (groupId: string) => boolean;
+  /** Why a group is in Gate 1's scope — lets a suggestion card count only its own groups. */
+  groupScopeWhy?: (groupId: string) => GroupScopeWhy;
   /** Write a group's Gate 1 scope (the ledger checkbox's own path). Absent on a frozen gate → read-only. */
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   /** Gate 1 has been passed: the panel is a record — nothing here may write (08-27 audit B4). */
@@ -229,6 +231,7 @@ export function DeclaredScorePanel({
   fieldIndex,
   onOpenGroup,
   isGroupInScope,
+  groupScopeWhy,
   onGroupScopeChange,
   frozen = false,
   className,
@@ -717,6 +720,7 @@ export function DeclaredScorePanel({
                   groupsById={groupsById}
                   fieldIndex={fieldIndex}
                   isGroupInScope={isGroupInScope}
+                  groupScopeWhy={groupScopeWhy}
                   onGroupScopeChange={frozen ? undefined : onGroupScopeChange}
                   onOpenGroup={onOpenGroup}
                 />

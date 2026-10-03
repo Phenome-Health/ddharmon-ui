@@ -3,7 +3,7 @@ import { CheckCircle2, ChevronDown, CircleDashed } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { NamedGroup } from "@/lib/ledger";
-import type { SuggestionCard, SuggestionCardGroup } from "@/lib/score-suggestion-cards";
+import { countsForCard, type GroupScopeWhy, type SuggestionCard, type SuggestionCardGroup } from "@/lib/score-suggestion-cards";
 import { cn } from "@/lib/utils";
 import type { FieldDetail } from "@/types";
 
@@ -23,7 +23,9 @@ import type { FieldDetail } from "@/types";
  *   3. Nothing suggested is a RESULT of this search, not a finding about the cohorts — never "missing".
  *
  * THE CHECKBOX IS GATE 1 SCOPE — the ledger checkbox's own path (`onGroupScopeChange`), so the two cannot disagree
- * and a check survives a reload. A group BELOW the cut-off is listed under a divider so the reviewer can catch a miss
+ * and a check survives a reload. Scope is ONE set for the whole gate, so a group can be in it for another component's
+ * reason: such a row stays checked but is drawn neutral, says whose it is ("In scope for Migraine"), and is not
+ * counted in this card's spread (`countsForCard`). A group BELOW the cut-off is listed under a divider so the reviewer can catch a miss
  * (the paid judge picked 8 groups the 0.62 cut-off did not); checking it puts it in scope like any other.
  */
 export function ScoreSuggestionCards({
@@ -32,6 +34,7 @@ export function ScoreSuggestionCards({
   groupsById,
   fieldIndex,
   isGroupInScope,
+  groupScopeWhy,
   onGroupScopeChange,
   onOpenGroup,
 }: {
@@ -41,6 +44,8 @@ export function ScoreSuggestionCards({
   groupsById?: Map<string, NamedGroup>;
   fieldIndex?: Record<string, FieldDetail>;
   isGroupInScope?: (groupId: string) => boolean;
+  /** Why a group is in scope, so a card counts only its own (see `countsForCard`). */
+  groupScopeWhy?: (groupId: string) => GroupScopeWhy;
   /** Absent on a frozen gate → the checkboxes are read-only. */
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
@@ -71,7 +76,8 @@ export function ScoreSuggestionCards({
             </li>
             <li>
               <span className="font-semibold text-on-raised">Variables · cohorts.</span> Everything in the groups in
-              scope — group membership, not a match. Gate 4 says which of them measure the component.
+              scope for this component — group membership, not a match. Gate 4 says which of them measure it. A group
+              another component put in scope is marked so and not counted here.
             </li>
           </ul>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
@@ -95,6 +101,7 @@ export function ScoreSuggestionCards({
                 groupsById={groupsById}
                 fieldIndex={fieldIndex}
                 isGroupInScope={isGroupInScope}
+                groupScopeWhy={groupScopeWhy}
                 onGroupScopeChange={onGroupScopeChange}
                 onOpenGroup={onOpenGroup}
               />
@@ -122,6 +129,7 @@ function SuggestionRow({
   groupsById,
   fieldIndex,
   isGroupInScope,
+  groupScopeWhy,
   onGroupScopeChange,
   onOpenGroup,
 }: {
@@ -130,12 +138,14 @@ function SuggestionRow({
   groupsById?: Map<string, NamedGroup>;
   fieldIndex?: Record<string, FieldDetail>;
   isGroupInScope?: (groupId: string) => boolean;
+  groupScopeWhy?: (groupId: string) => GroupScopeWhy;
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const inScope = (gid: string) => isGroupInScope?.(gid) ?? false;
-  const scoped = card.groups.filter((g) => inScope(g.groupId));
+  const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId), groupScopeWhy?.(g.groupId));
+  const scoped = card.groups.filter(counts);
   // What is IN the groups in scope — membership, counted from Gate 1's own groups (never inferred as a match).
   const scopedGroups = scoped.map((g) => groupsById?.get(g.groupId)?.group).filter((g) => g != null);
   const spreadVars = scopedGroups.reduce((s, g) => s + g.nMembers, 0);
@@ -168,6 +178,10 @@ function SuggestionRow({
     const named = groupsById?.get(g.groupId);
     const label = named?.name?.trim() || "Unnamed group";
     const sel = inScope(g.groupId);
+    const counted = counts(g);
+    // In scope, but for ANOTHER component's suggestion: checked, neutral, and named as whose it is.
+    const why = groupScopeWhy?.(g.groupId);
+    const borrowed = sel && !counted && why?.by === "score" ? why.components : null;
     const ci = g.bestMember.indexOf(":");
     const cohort = ci >= 0 ? g.bestMember.slice(0, ci) : "";
     return (
@@ -176,9 +190,11 @@ function SuggestionRow({
         data-group={g.groupId}
         data-suggested={g.suggested ? "true" : "false"}
         data-in-scope={sel ? "true" : "false"}
+        data-counted={counted ? "true" : "false"}
         className={cn(
           "rounded-md border",
-          sel ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised opacity-80",
+          counted ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised",
+          !sel && "opacity-80",
         )}
       >
         <div className="flex items-start gap-2 px-2.5 py-2">
@@ -239,10 +255,20 @@ function SuggestionRow({
               </div>
             )}
           </div>
-          {sel && (
-            <span className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised">
-              Gate 2 ✓
+          {borrowed ? (
+            <span
+              data-testid="score-suggestion-scope-why"
+              title="In Gate 1's scope because another component's suggestion put it there — unchecking it here takes it out for that component too"
+              className="shrink-0 rounded-full border border-dashed border-rule-on-raised px-1.5 py-0.5 text-[10px] font-semibold text-on-raised-muted"
+            >
+              In scope for {borrowed.join(", ")}
             </span>
+          ) : (
+            sel && (
+              <span className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised">
+                Gate 2 ✓
+              </span>
+            )
           )}
         </div>
       </div>

@@ -90,6 +90,7 @@ import {
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { SUGGESTION_TAG_COPY, scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
+import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
 import { cn } from "@/lib/utils";
 import type {
@@ -2705,6 +2706,20 @@ export default function Gate1Page() {
     if (isReviewerGroupId(groupId)) return true;
     return scoreSeed.has(groupId);
   };
+  /**
+   * WHY a group is in scope — the same branches as `isInScope`, kept beside it so they cannot drift — for the score
+   * panel's cards, which count only the groups in scope for THEIR component (a group seeded by another component's
+   * suggestion is in scope, but not this card's).
+   */
+  const scopeWhy = (groupId: string): GroupScopeWhy => {
+    if (frozenScope) return { by: frozenScope.has(groupId) ? "chosen" : "none", components: [] };
+    const chosen = scope.decisions[groupId]?.chosen;
+    if (chosen === IN_SCOPE) return { by: "chosen", components: [] };
+    if (chosen === OUT_OF_SCOPE) return { by: "none", components: [] };
+    if (isReviewerGroupId(groupId)) return { by: "made", components: [] };
+    const seededBy = scoreSeed.get(groupId);
+    return seededBy ? { by: "score", components: seededBy } : { by: "none", components: [] };
+  };
   /** Write one group's scope — the ONE path, shared by the ledger checkbox and the score panel's. */
   const setGroupScope = (groupId: string, next: boolean) =>
     void scope.write(
@@ -3358,6 +3373,7 @@ export default function Gate1Page() {
         groupByVariable={groupByVariable}
         fieldIndex={jobState?.result?.fieldIndex}
         isGroupInScope={isInScope}
+        groupScopeWhy={scopeWhy}
         onGroupScopeChange={frozen ? undefined : setGroupScope}
         frozen={frozen}
         onOpenGroup={(groupId: string, matchedIds?: string[]) => {

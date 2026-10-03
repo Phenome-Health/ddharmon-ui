@@ -42,6 +42,8 @@ function reached() {
     { group: g[4]!, score: 0.3, component: "Glaucoma" }, // below the cut-off: listed, not suggested
     { group: g[2]!, score: TAU, component: "Hearing difficulty" }, // exactly AT the cut-off: suggested (>=)
     { group: g[3]!, score: 0.61, component: "Hearing difficulty" },
+    // Reached weakly for Hearing difficulty, but SUGGESTED for Glaucoma — so it is in scope for Glaucoma's reason.
+    { group: g[1]!, score: 0.4, component: "Hearing difficulty" },
     { group: g[5]!, score: 0.5, component: "Tinnitus" }, // reached, but only below the cut-off
   ];
 }
@@ -229,6 +231,24 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await row(below!).getByTestId("score-suggestion-group-toggle").click();
     await expect(scopeOf(page, below!)).toHaveAttribute("aria-checked", "true");
     await expect(card.getByTestId("score-suggestion-spread")).toContainText("2 in scope");
+  });
+
+  test("@gate1 a group in scope only because ANOTHER component suggested it is named so, and not counted here", async ({
+    page,
+  }) => {
+    const panel = await openGate1Panel(page);
+    const card = cardOf(panel, "Hearing difficulty");
+    const borrowed = fixtureGroups()[1]!.groupId; // suggested for Glaucoma at 0.70, reached here at 0.40
+    // Its own suggestion (exactly at the cut-off) counts; the borrowed group does not — though it IS in scope.
+    await expect(card.getByTestId("score-suggestion-spread")).toContainText("1 group suggested");
+    await expect(card.getByTestId("score-suggestion-spread")).toContainText("1 in scope");
+    await expect(card.getByTestId("score-suggestion-spread")).toContainText(`${fixtureGroups()[2]!.nMembers} variables`);
+    await card.getByTestId("score-suggestion-expand").click();
+    const row = card.locator(`[data-testid='score-suggestion-group'][data-group='${borrowed}']`);
+    await expect(row).toHaveAttribute("data-in-scope", "true");
+    await expect(row).toHaveAttribute("data-counted", "false");
+    await expect(row.getByTestId("score-suggestion-scope-why")).toHaveText(/In scope for Glaucoma/);
+    await expect(row.getByTestId("score-suggestion-group-toggle")).toBeChecked();
   });
 
   test("@gate1 a component with nothing suggested says so — never that it is missing from the cohorts", async ({
