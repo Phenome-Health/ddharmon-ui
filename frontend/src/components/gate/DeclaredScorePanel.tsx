@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
+import { ScoreSuggestionCards } from "@/components/gate/ScoreSuggestionCards";
 import { useGateDecisions, type UseGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
@@ -45,11 +46,13 @@ import {
   type ComponentEvidence,
   type ScopeVerdict,
 } from "@/lib/score-scope";
+import { suggestionCards } from "@/lib/score-suggestion-cards";
 import type {
   CompositeSpec,
   ComponentCoding,
   ComponentMatch,
   FieldDetail,
+  ScoreSuggestions,
 } from "@/types";
 
 /**
@@ -165,6 +168,11 @@ export interface DeclaredScorePanelProps {
    */
   suggestionNote?: { nGroups: number; nComponents: number; unavailable: string } | null;
   /**
+   * The free search's answer itself, when it is Gate 1's score input (no Gate 4 match, gate still open) — what the
+   * per-component cards are drawn from. `null` (or no dense score in it) keeps the plain declared list.
+   */
+  suggestions?: ScoreSuggestions | null;
+  /**
    * A composite spec already derived for this run, when one exists. This is the ONLY source of match
    * evidence — the panel never infers a match, because inferring one is what `match_components` is paid
    * to do properly.
@@ -192,8 +200,8 @@ export interface DeclaredScorePanelProps {
   /** cohort:var → its FieldDetail, so a variable-level match/candidate resolves to its name (not a raw id)
    *  in the candidate list. From the run's `fieldIndex`. */
   fieldIndex?: Record<string, FieldDetail>;
-  /** Select a group in Gate 1's detail pane (the drag-drop screen) and scroll it into view. */
-  onOpenGroup?: (groupId: string) => void;
+  /** Select a group in Gate 1's detail pane (the drag-drop screen) and scroll it into view, highlighting `matchedIds`. */
+  onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
   /**
    * Gate 1 SCOPE for a group — the panel's group checkbox reads this, so "Gate 2 ✓" is literally what Gate 2
    * receives. Absent → the panel falls back to local state seeded from the auto-select threshold.
@@ -211,6 +219,7 @@ export function DeclaredScorePanel({
   pinned,
   swaps: sharedSwaps,
   suggestionNote = null,
+  suggestions = null,
   spec,
   matchRefusal,
   onMatch,
@@ -330,6 +339,12 @@ export function DeclaredScorePanel({
   const status = stripStatus(swaps.all, spec);
   /** What was entered, for each declared score whose newest declaration was PASTED — from the persisted rows. */
   const pasted = useMemo(() => pastedRecords(swaps.all), [swaps.all]);
+
+  /** The free search's cards, one per declared component — `[]` keeps the plain list (no dense score, or none asked). */
+  const cards = useMemo(
+    () => (spec ? [] : suggestionCards(declared.map((d) => d.name), suggestions)),
+    [spec, declared, suggestions],
+  );
 
   const verdict = scopeVerdictFor(evidence);
   const style = VERDICT_STYLE[verdict];
@@ -661,19 +676,6 @@ export function DeclaredScorePanel({
                 )}
               </div>
 
-              <ul className="flex flex-col gap-2">
-                {evidence.map((e) => (
-                  <ScoreComponentRow
-                    key={e.name}
-                    evidence={e}
-                    match={matchByComponent.get(e.name)}
-                    coding={codingFor(e.name)}
-                    groupsById={groupsById}
-                    onOpenGroup={onOpenGroup}
-                  />
-                ))}
-              </ul>
-
               {/*
                 GATE 1'S FREE SUGGESTIONS (08-28 Decision 6). Said here, beside the declaration they come from: what
                 put groups in scope, that it cost nothing, and that it is NOT the verdict. Never phrased as a match —
@@ -700,6 +702,37 @@ export function DeclaredScorePanel({
                     </>
                   )}
                 </p>
+              )}
+
+              {/*
+                THE OLD BUILDER LOOK, FROM THE FREE SEARCH (08-28, option A). Bhargav: *"what happened to the old score
+                builder look?"* — the cards drew only from a paid match, which Q5 moved to Gate 4. With a dense answer in
+                hand they come back as the scoping half: per component, the groups reached, what is in them, which are in
+                scope. Without one, the plain declared list stands.
+              */}
+              {cards.length > 0 ? (
+                <ScoreSuggestionCards
+                  cards={cards}
+                  threshold={suggestions!.threshold}
+                  groupsById={groupsById}
+                  fieldIndex={fieldIndex}
+                  isGroupInScope={isGroupInScope}
+                  onGroupScopeChange={frozen ? undefined : onGroupScopeChange}
+                  onOpenGroup={onOpenGroup}
+                />
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {evidence.map((e) => (
+                    <ScoreComponentRow
+                      key={e.name}
+                      evidence={e}
+                      match={matchByComponent.get(e.name)}
+                      coding={codingFor(e.name)}
+                      groupsById={groupsById}
+                      onOpenGroup={onOpenGroup}
+                    />
+                  ))}
+                </ul>
               )}
             </>
           ) : null}

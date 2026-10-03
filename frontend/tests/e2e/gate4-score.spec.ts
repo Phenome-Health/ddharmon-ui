@@ -339,11 +339,12 @@ test.describe("Gate 4 declared score", () => {
     expect(sent).toEqual([{ declaredScore: SCORE }]);
     // Rule 3: partial is not the published score, in words.
     await expect(panel.getByTestId("gate4-score-verdict")).toContainText(/not the published score/i);
-    // Each component: matched to the REVIEWER'S concept name, or an honest gap.
-    const weight = panel.locator(`[data-testid="gate4-score-component"][data-component="Weight loss"]`);
+    // Each component — now the builder's own card (option A, `score-cards.spec.ts`): matched to the REVIEWER'S
+    // concept name, or an honest gap, stated without opening the card.
+    const weight = panel.locator(`[data-testid="score-match"][data-component="Weight loss"]`);
     await expect(weight).toHaveAttribute("data-verdict", "full");
     await expect(weight).toContainText("Unintentional weight loss (reviewer's name)");
-    const gait = panel.locator(`[data-testid="gate4-score-component"][data-component="Slow gait"]`);
+    const gait = panel.locator(`[data-testid="score-match"][data-component="Slow gait"]`);
     await expect(gait).toHaveAttribute("data-verdict", "infeasible");
     await expect(gait).toContainText(/2 candidate concepts/);
     // Per-cohort computability and the recipe itself.

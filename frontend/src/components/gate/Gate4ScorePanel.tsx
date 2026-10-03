@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -20,7 +20,8 @@ import {
   type ScopeVerdict,
 } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
-import type { CompositeSpec } from "@/types";
+import { ScoreComponentsCard } from "@/pages/composite";
+import type { CompositeSpec, FieldDetail, UIRecord } from "@/types";
 
 /**
  * The declared score on Gate 4 — read-only declaration, one paid Match, then verdict + coverage + recipe.
@@ -77,9 +78,24 @@ export interface Gate4ScorePanelProps {
   pinned?: boolean;
   /** A match came back — the page holds it and refreshes the run's stored composites. */
   onMatched: (spec: CompositeSpec) => void;
+  /** The run's final records — what the match's concept ids name — for the matched cards' group labels. */
+  records?: UIRecord[];
+  /** cohort:var → its FieldDetail, so a matched variable reads as its question rather than a raw id. */
+  fieldIndex?: Record<string, FieldDetail>;
 }
 
-export function Gate4ScorePanel({ jobId, score, spec, pinned, onMatched }: Gate4ScorePanelProps) {
+/** The cards resolve through `resolveConcept`; nothing is keyed by a separate concept map here. */
+const NO_CONCEPTS: Record<string, UIRecord> = {};
+
+export function Gate4ScorePanel({
+  jobId,
+  score,
+  spec,
+  pinned,
+  onMatched,
+  records = [],
+  fieldIndex,
+}: Gate4ScorePanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   /** The server refused the match for want of a BYOK key (08-28): the field shows here, where it was pressed. */
@@ -93,6 +109,23 @@ export function Gate4ScorePanel({ jobId, score, spec, pinned, onMatched }: Gate4
   const style = VERDICT_STYLE[verdict];
   const header = gate4ScoreHeader(n, spec, { refused: refusal !== null });
   const matchOf = new Map((spec?.matches ?? []).map((m) => [m.component, m]));
+  /**
+   * A matched card's ids → a readable name: a concept id is one of the final RECORDS (the concepts being exported,
+   * under the reviewer's names); a variable id ("cohort:var") resolves through the field index to its question.
+   */
+  const resolveConcept = useMemo(() => {
+    const byId = new Map(records.map((r) => [r.id, r]));
+    return (id: string) => {
+      const r = byId.get(id);
+      if (r) return { concept: r.concept ?? "", cohorts: r.cohorts ?? [], nMembers: r.nMembers };
+      const fd = fieldIndex?.[id];
+      if (fd) {
+        const ci = id.indexOf(":");
+        return { concept: fd.questionText || fd.text || fd.name || id, cohorts: ci >= 0 ? [id.slice(0, ci)] : [] };
+      }
+      return undefined;
+    };
+  }, [records, fieldIndex]);
 
   async function onMatch() {
     setBusy(true);
@@ -171,44 +204,61 @@ export function Gate4ScorePanel({ jobId, score, spec, pinned, onMatched }: Gate4
             {verdict === "partial" && <span className="max-w-[80ch] text-xs">{PARTIAL_IS_NOT_THE_SCORE}</span>}
           </div>
 
-          <ol className="flex flex-col gap-2">
-            {score.components.map((name) => {
-              const m = matchOf.get(name);
-              const evidence: ComponentEvidence = {
-                name,
-                searched: m !== undefined,
-                matched: !!m?.conceptId,
-                shortlistSize: m?.shortlist?.length ?? 0,
-              };
-              const cohorts = m?.conceptId ? coveredCohorts(m) : [];
-              return (
-                <li
-                  key={name}
-                  data-testid="gate4-score-component"
-                  data-component={name}
-                  data-verdict={componentVerdictFor(evidence)}
-                  className="flex flex-col gap-0.5 rounded-inner border border-rule-on-raised px-3 py-2"
-                >
-                  <span className="text-sm font-semibold text-on-raised">{name}</span>
-                  <span className="line-clamp-2 max-w-[80ch] text-xs text-on-raised-muted">
-                    {evidence.matched ? `Matched: ${m?.concept?.trim() || m?.conceptId}` : missingReason(evidence)}
-                  </span>
-                  {cohorts.length > 0 && (
-                    <span className="flex flex-wrap gap-1">
-                      {cohorts.map((c) => (
-                        <span
-                          key={c}
-                          className="rounded border border-rule-on-raised px-1.5 py-0.5 font-mono text-[11px] text-on-raised-muted"
-                        >
-                          {c}
-                        </span>
-                      ))}
+          {/*
+            MATCHED: THE BUILDER'S OWN CARDS (08-28, option A — "what happened to the old score builder look?"). They drew
+            only from a match, and Q5 moved the match here, so here is where they come back — as a RECORD: scope was
+            settled on Gate 1, so nothing selects and every group the match reached counts. Before a match the
+            declaration stands as the plain list it is.
+          */}
+          {spec ? (
+            <ScoreComponentsCard
+              spec={spec}
+              variant="record"
+              conceptById={NO_CONCEPTS}
+              records={records}
+              jobId={jobId}
+              resolveConcept={resolveConcept}
+            />
+          ) : (
+            <ol className="flex flex-col gap-2">
+              {score.components.map((name) => {
+                const m = matchOf.get(name);
+                const evidence: ComponentEvidence = {
+                  name,
+                  searched: m !== undefined,
+                  matched: !!m?.conceptId,
+                  shortlistSize: m?.shortlist?.length ?? 0,
+                };
+                const cohorts = m?.conceptId ? coveredCohorts(m) : [];
+                return (
+                  <li
+                    key={name}
+                    data-testid="gate4-score-component"
+                    data-component={name}
+                    data-verdict={componentVerdictFor(evidence)}
+                    className="flex flex-col gap-0.5 rounded-inner border border-rule-on-raised px-3 py-2"
+                  >
+                    <span className="text-sm font-semibold text-on-raised">{name}</span>
+                    <span className="line-clamp-2 max-w-[80ch] text-xs text-on-raised-muted">
+                      {evidence.matched ? `Matched: ${m?.concept?.trim() || m?.conceptId}` : missingReason(evidence)}
                     </span>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
+                    {cohorts.length > 0 && (
+                      <span className="flex flex-wrap gap-1">
+                        {cohorts.map((c) => (
+                          <span
+                            key={c}
+                            className="rounded border border-rule-on-raised px-1.5 py-0.5 font-mono text-[11px] text-on-raised-muted"
+                          >
+                            {c}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
 
           {spec && (
             <>

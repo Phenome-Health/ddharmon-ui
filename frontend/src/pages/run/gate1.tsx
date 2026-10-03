@@ -3350,6 +3350,8 @@ export default function Gate1Page() {
         pinned={pinned}
         swaps={swaps}
         suggestionNote={suggestionNote}
+        // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
+        suggestions={!frozen && !latestSpec ? (suggestionsQuery.data ?? null) : null}
         spec={latestSpec}
         matchRefusal={matchRefusal}
         groupsById={groupsById}
