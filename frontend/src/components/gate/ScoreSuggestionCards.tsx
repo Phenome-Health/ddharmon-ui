@@ -79,6 +79,11 @@ export function ScoreSuggestionCards({
               component&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
               of them measure it. Other in-scope groups the search reached say why they are in scope.
             </li>
+            {/* SAID ONCE, HERE (Bhargav 2026-10-05): on a 49-item score this caveat repeated on every unsuggested card. */}
+            <li>
+              <span className="font-semibold text-on-raised">Nothing suggested.</span> This search reached no group at
+              the cut-off — not a finding about your cohorts. Gate 4&rsquo;s match decides.
+            </li>
           </ul>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
             Every group scoring <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span> or higher
@@ -309,13 +314,12 @@ function SuggestionRow({
 
       <div className="flex flex-col gap-1.5 px-3 pb-2.5 pl-9 text-xs">
         {!suggested && (
+          // ONE short line: what "nothing suggested" means is said once, in the info strip above.
           <p data-testid="score-suggestion-none" className="max-w-[80ch] text-[11px] text-on-raised-muted">
-            <span className="font-semibold text-on-raised">Nothing suggested.</span> The free search reached no group
-            at {threshold.toFixed(2)} or above
+            <span className="font-semibold text-on-raised">Nothing suggested</span>
             {nBelow > 0
               ? ` — ${nBelow} group${nBelow === 1 ? "" : "s"} reached below the cut-off; open to check ${nBelow === 1 ? "it" : "them"}.`
-              : " — it reached no group at all."}{" "}
-            That is what this search found, not a finding about your cohorts; Gate 4&rsquo;s match decides.
+              : " — the search reached no group."}
           </p>
         )}
         {(suggested || scoped.length > 0) && (
