@@ -201,6 +201,8 @@ export default function Gate3Page() {
   // Unsaved note text PER ROW — a single draft slot lost row A's text the moment row B was typed in.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [rejecting, setRejecting] = useState<string | null>(null);
+  // Rejected rows the reviewer has OPENED to look at the mapping they turned down (H10) — a view toggle, never saved.
+  const [openRejected, setOpenRejected] = useState<Record<string, true>>({});
   // Rows whose last save this session LANDED (08-26 #12). Set only off `write`'s resolved value — never
   // off having pressed Save — so the confirmation is evidence the store took the decision.
   const [savedKeys, setSavedKeys] = useState<Record<string, true>>({});
@@ -805,6 +807,10 @@ export default function Gate3Page() {
                         matchState === "flagged" ||
                         (transform ? routesToReview(transform) : false);
                       const rejected = decision?.rejected === true;
+                      // H10 (Bhargav 2026-10-05, "build as proposed"): a rejected recode folds its surface away —
+                      // the reviewer opens it to see what was turned down, read-only — and the row says what
+                      // rejecting did instead of reading as if the recode will be exported.
+                      const showRecode = !rejected || !!openRejected[itemKey];
                       const noteValue =
                         itemKey in drafts
                           ? drafts[itemKey]
@@ -914,6 +920,7 @@ export default function Gate3Page() {
                             transform ? specForm(transform.kind) : "none"
                           }
                           data-review={String(review)}
+                          data-rejected={String(rejected)}
                           data-stale={String(specs.isStale(itemKey))}
                           data-concept-mismatch={String(
                             matchState === "flagged",
@@ -937,9 +944,13 @@ export default function Gate3Page() {
                                 <span className="text-on-raised-faint">→</span>
                                 <span
                                   data-testid="spec-row-summary"
-                                  className="text-xs text-on-raised"
+                                  className={cn(
+                                    "text-xs",
+                                    rejected ? "text-on-raised-muted" : "text-on-raised",
+                                  )}
                                 >
-                                  {headline}
+                                  {/* A rejected recode is not exported, so its header never describes what it would map. */}
+                                  {rejected ? "not exported — rejected" : headline}
                                 </span>
                               </>
                             )}
@@ -950,7 +961,7 @@ export default function Gate3Page() {
                                   : "→ Proposed GenCDE"}
                               </span>
                             )}
-                            {coverage !== null && (
+                            {coverage !== null && !rejected && (
                               <span
                                 data-testid="spec-row-coverage"
                                 className="text-xs text-on-raised-muted"
@@ -987,107 +998,147 @@ export default function Gate3Page() {
                             {specs.isTouched(itemKey) && (
                               <span
                                 data-testid="spec-edited-badge"
-                                className="rounded-pill border border-rule-on-raised px-2 py-0.5 text-xs text-on-raised-muted"
+                                className={cn(
+                                  "rounded-pill border px-2 py-0.5 text-xs",
+                                  decision?.rejected
+                                    ? "border-status-warn text-on-warn"
+                                    : "border-rule-on-raised text-on-raised-muted",
+                                )}
                               >
                                 {decision?.rejected ? "rejected" : "edited"}
                               </span>
                             )}
                           </div>
 
-                          {state === "failed" && (
-                            <p className="max-w-[68ch] text-xs text-on-raised-muted">
-                              Spec generation ran for this run and did not
-                              generate a recode for this variable. It is routed
-                              to review rather than dropped — the variable is
-                              still in scope and still needs an answer.
-                            </p>
-                          )}
-                          {state === "not-generated" && (
-                            <p className="max-w-[68ch] text-xs text-on-raised-muted">
-                              No transform spec was generated for this run, so
-                              nothing has been attempted for this variable.
-                            </p>
-                          )}
-                          {state === "no-transform" && (
-                            <p className="max-w-[68ch] text-xs text-on-raised-muted">
-                              No transform required — the source values already
-                              match the target&apos;s value domain.
-                            </p>
-                          )}
-                          {/* 08-28 1c (F16): the model could not produce this recode. Never "no transform
-                              required" — that reading exported raw codes as if they already fit. */}
-                          {state === "needs-you" && (
-                            <p
-                              data-testid="spec-needs-you"
-                              className="max-w-[68ch] text-xs text-on-raised"
-                            >
-                              <span className="font-semibold text-on-warn">
-                                {unproduced} — needs you.
-                              </span>{" "}
-                              {transform?.kind === "unit"
-                                ? `No unit conversion could be authored (${transform.sourceUnit ?? "?"} → ${transform.targetUnit ?? "?"}), so the notebook leaves this variable as a REVIEW REQUIRED stub rather than a no-op conversion.`
-                                : persistedMapping
-                                  ? "The model could not map any of this variable's values; your mapping below is what the export applies."
-                                  : shape === "value-map"
-                                    ? "The model could not map any of this variable's values onto the target, so nothing is exported for it until you place its values below."
-                                    : "The model could not map any of this variable's values onto the target, so the notebook leaves it as a REVIEW REQUIRED stub — nothing is copied across."}
-                            </p>
+                          {rejected && (
+                            <div className="flex flex-col gap-1">
+                              <p
+                                data-testid="spec-rejected-note"
+                                className="max-w-[68ch] text-xs text-on-raised"
+                              >
+                                <span className="font-semibold">Rejected.</span> This recode is left out of
+                                the notebook and the mapping table, and logged as rejected in the decision log.
+                                Un-reject brings it back exactly as it was.
+                              </p>
+                              <button
+                                type="button"
+                                data-testid="spec-rejected-toggle"
+                                aria-expanded={showRecode}
+                                onClick={() =>
+                                  setOpenRejected((prev) => {
+                                    const next = { ...prev };
+                                    if (next[itemKey]) delete next[itemKey];
+                                    else next[itemKey] = true;
+                                    return next;
+                                  })
+                                }
+                                className="w-fit text-left text-xs font-semibold text-link-on-raised underline underline-offset-2"
+                              >
+                                {showRecode
+                                  ? "Hide the rejected mapping ▴"
+                                  : "Show the rejected mapping (read-only) ▾"}
+                              </button>
+                            </div>
                           )}
 
-                          {/* The recode surface is chosen by the TARGET type (see `recodeShape`), so a coded
-                          source landing on a numeric CDE gets a code→number table instead of chips with
-                          nowhere to drop. Each surface renders for an OK spec AND a FAILED one (seeded from a
-                          $0 heuristic), so a reviewer fixes the recode rather than only annotating it. */}
-                          {shape === "value-map" && (
-                            <SpecMappingEditor
-                              sourceOptions={sourceOptions}
-                              targetValues={mappingBuckets}
-                              value={mappingValue}
-                              recommended={recommended.mapping}
-                              recommendedFrom={recommended.from}
-                              readOnly={frozen || rejected}
-                              onChange={(m) =>
-                                void saveSpec(record, sourceVariable, { mapping: m })
-                              }
-                            />
+                          {showRecode && (
+                            <div className={cn("flex flex-col gap-2", rejected && "opacity-75")}>
+                              {state === "failed" && (
+                                <p className="max-w-[68ch] text-xs text-on-raised-muted">
+                                  Spec generation ran for this run and did not
+                                  generate a recode for this variable. It is routed
+                                  to review rather than dropped — the variable is
+                                  still in scope and still needs an answer.
+                                </p>
+                              )}
+                              {state === "not-generated" && (
+                                <p className="max-w-[68ch] text-xs text-on-raised-muted">
+                                  No transform spec was generated for this run, so
+                                  nothing has been attempted for this variable.
+                                </p>
+                              )}
+                              {state === "no-transform" && (
+                                <p className="max-w-[68ch] text-xs text-on-raised-muted">
+                                  No transform required — the source values already
+                                  match the target&apos;s value domain.
+                                </p>
+                              )}
+                              {/* 08-28 1c (F16): the model could not produce this recode. Never "no transform
+                                  required" — that reading exported raw codes as if they already fit. */}
+                              {state === "needs-you" && (
+                                <p
+                                  data-testid="spec-needs-you"
+                                  className="max-w-[68ch] text-xs text-on-raised"
+                                >
+                                  <span className="font-semibold text-on-warn">
+                                    {unproduced} — needs you.
+                                  </span>{" "}
+                                  {transform?.kind === "unit"
+                                    ? `No unit conversion could be authored (${transform.sourceUnit ?? "?"} → ${transform.targetUnit ?? "?"}), so the notebook leaves this variable as a REVIEW REQUIRED stub rather than a no-op conversion.`
+                                    : persistedMapping
+                                      ? "The model could not map any of this variable's values; your mapping below is what the export applies."
+                                      : shape === "value-map"
+                                        ? "The model could not map any of this variable's values onto the target, so nothing is exported for it until you place its values below."
+                                        : "The model could not map any of this variable's values onto the target, so the notebook leaves it as a REVIEW REQUIRED stub — nothing is copied across."}
+                                </p>
+                              )}
+
+                              {/* The recode surface is chosen by the TARGET type (see `recodeShape`), so a coded
+                              source landing on a numeric CDE gets a code→number table instead of chips with
+                              nowhere to drop. Each surface renders for an OK spec AND a FAILED one (seeded from a
+                              $0 heuristic), so a reviewer fixes the recode rather than only annotating it. */}
+                              {shape === "value-map" && (
+                                <SpecMappingEditor
+                                  sourceOptions={sourceOptions}
+                                  targetValues={mappingBuckets}
+                                  value={mappingValue}
+                                  recommended={recommended.mapping}
+                                  recommendedFrom={recommended.from}
+                                  readOnly={frozen || rejected}
+                                  onChange={(m) =>
+                                    void saveSpec(record, sourceVariable, { mapping: m })
+                                  }
+                                />
+                              )}
+                              {shape === "code-to-number" && (
+                                <SpecNumberMap
+                                  sourceOptions={sourceOptions}
+                                  targetUnits={targetUnits}
+                                  value={numberMapValue}
+                                  recommended={recommendedNumberMap}
+                                  readOnly={frozen || rejected}
+                                  onChange={(m) =>
+                                    void saveSpec(record, sourceVariable, { numberMap: m })
+                                  }
+                                />
+                              )}
+                              {shape === "binning" && (
+                                <SpecBinning
+                                  value={binsValue}
+                                  recommended={recommendedBins}
+                                  readOnly={frozen || rejected}
+                                  onChange={(b) =>
+                                    void saveSpec(record, sourceVariable, { bins: b })
+                                  }
+                                />
+                              )}
+                              {shape === "recode-detail" &&
+                                transform &&
+                                state === "ok" && (
+                                  <RecodeDetail
+                                    t={transform}
+                                    srcLabels={srcLabels}
+                                    tgtLabels={tgtLabels}
+                                  />
+                                )}
+                            </div>
                           )}
-                          {shape === "code-to-number" && (
-                            <SpecNumberMap
-                              sourceOptions={sourceOptions}
-                              targetUnits={targetUnits}
-                              value={numberMapValue}
-                              recommended={recommendedNumberMap}
-                              readOnly={frozen || rejected}
-                              onChange={(m) =>
-                                void saveSpec(record, sourceVariable, { numberMap: m })
-                              }
-                            />
-                          )}
-                          {shape === "binning" && (
-                            <SpecBinning
-                              value={binsValue}
-                              recommended={recommendedBins}
-                              readOnly={frozen || rejected}
-                              onChange={(b) =>
-                                void saveSpec(record, sourceVariable, { bins: b })
-                              }
-                            />
-                          )}
-                          {shape === "recode-detail" &&
-                            transform &&
-                            state === "ok" && (
-                              <RecodeDetail
-                                t={transform}
-                                srcLabels={srcLabels}
-                                tgtLabels={tgtLabels}
-                              />
-                            )}
 
                           <div className="flex flex-wrap items-center gap-2">
                             <Input
                               data-testid="spec-note-input"
                               aria-label={`Note on the recode for ${sourceVariable}`}
-                              placeholder="Your note on this recode"
+                              placeholder={rejected ? "Why was it rejected? (optional)" : "Your note on this recode"}
                               value={noteValue}
                               disabled={frozen}
                               onChange={(e) => {
@@ -1107,7 +1158,8 @@ export default function Gate3Page() {
                                 void saveNote(record, sourceVariable, noteValue)
                               }
                             >
-                              Save
+                              {/* It only ever saved the note; on a rejected row, where nothing else is editable, say so. */}
+                              {rejected ? "Save note" : "Save"}
                             </Button>
                             {rejected ? (
                               <Button

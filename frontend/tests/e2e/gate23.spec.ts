@@ -1504,7 +1504,9 @@ test.describe("gate3 spec edits merge", () => {
     await row.locator("[data-testid='spec-reject']").click();
     await row.locator("[data-testid='reject-accept']").click();
     await expect(row.locator("[data-testid='spec-edited-badge']")).toHaveText("rejected");
-    // a rejected recode is not silently un-rejected by a drag: its editor is read-only
+    // a rejected recode is not silently un-rejected by a drag: its editor is folded away (H10), and read-only when
+    // the reviewer opens it to look
+    await row.locator("[data-testid='spec-rejected-toggle']").click();
     await expect(chip(row, "0")).toHaveAttribute("draggable", "false");
     await page.reload();
     await page.waitForLoadState("networkidle");
@@ -1514,6 +1516,49 @@ test.describe("gate3 spec edits merge", () => {
     await expect(row.locator("[data-testid='spec-edited-badge']")).toHaveText("edited");
     await expect(bucket(row, "No").locator("[data-code='1']")).toBeVisible();
     await expect(row.locator("[data-testid='spec-note-input']")).toHaveValue("why");
+  });
+
+  test("@gate3 H10 — a rejected row folds its mapping away, says what rejecting did, and asks why", async ({ page }) => {
+    // Bhargav 2026-10-05 ("build as proposed"): a rejected row still showed the whole editor, and its header still
+    // read "→ 5 codes mapped · coverage 100%" as if the recode would be exported.
+    const row = await oneRow(page);
+    const summary = row.locator("[data-testid='spec-row-summary']");
+    const before = (await summary.textContent()) ?? "";
+    await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(1);
+    await row.locator("[data-testid='spec-reject']").click();
+    await row.locator("[data-testid='reject-accept']").click();
+
+    await expect(row).toHaveAttribute("data-rejected", "true");
+    await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='spec-rejected-note']")).toContainText(
+      /left out of the notebook and the mapping table/i,
+    );
+    await expect(row.locator("[data-testid='spec-rejected-note']")).toContainText(/Un-reject/);
+    await expect(summary).toHaveText("not exported — rejected");
+    await expect(row.locator("[data-testid='spec-row-coverage']")).toHaveCount(0);
+    await expect(row.locator("[data-testid='spec-note-input']")).toHaveAttribute(
+      "placeholder",
+      "Why was it rejected? (optional)",
+    );
+    await expect(row.locator("[data-testid='spec-save']")).toHaveText("Save note");
+
+    // The disclosure shows the rejected mapping read-only, and folds it again.
+    const toggle = row.locator("[data-testid='spec-rejected-toggle']");
+    await expect(toggle).toHaveText(/Show the rejected mapping/);
+    await toggle.click();
+    await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(1);
+    await expect(toggle).toHaveText(/Hide the rejected mapping/);
+    await toggle.click();
+    await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(0);
+
+    // Un-reject puts the row back exactly as it was.
+    await row.locator("[data-testid='spec-unreject']").click();
+    await expect(row).toHaveAttribute("data-rejected", "false");
+    await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(1);
+    await expect(row.locator("[data-testid='spec-rejected-toggle']")).toHaveCount(0);
+    await expect(summary).toHaveText(before);
+    await expect(row.locator("[data-testid='spec-note-input']")).toHaveAttribute("placeholder", "Your note on this recode");
+    await expect(row.locator("[data-testid='spec-save']")).toHaveText("Save");
   });
 
   test("@gate3 an unsaved note in one row survives typing in another", async ({ page }) => {
