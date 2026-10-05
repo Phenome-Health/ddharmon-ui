@@ -353,12 +353,17 @@ PATHS: dict[str, dict] = {
         ],
     },
     "ungrouped_leftovers": {
-        "intent": "8. Variables that fall out as HDBSCAN outliers and stay out through outlier recovery (M10).",
+        "intent": (
+            "8. Variables the main HDBSCAN pass leaves as outliers, recovered by M10 as ONE group the split stage "
+            "then divides."
+        ),
         "note": (
-            "Leftover-ness is the one FRAGILE path: M10 re-clusters the main pass's outliers, so a leftover must "
-            "stay noise twice. 'variables' are the leftovers of the reference validation (repeatable run to run "
-            "on one machine with the same embedding cache); 'candidates' are the rows added to seed them. Assert "
-            "that at least one leftover exists, not which ones — see tests/live/fixture/VALIDATION.md."
+            "Since core clusters cohort-only (2026-10-02), the main pass leaves ~10 outliers here, and M10 groups "
+            "any residual of <= 15 rows WHOLE rather than re-clustering it (core recluster_residual, by design: a "
+            "recall-favoring feed for the split stage). So at this size nothing stays an ungrouped leftover; a "
+            "leftover needs a residual > 15. Assert that the main pass leaves at least one outlier and M10 returns "
+            "them as one group, not which ones. 'variables' and 'candidates' are the rows chosen (under the earlier "
+            "catalog-in clustering) to sit between clusters — see tests/live/fixture/VALIDATION.md."
         ),
         "variables": [
             (

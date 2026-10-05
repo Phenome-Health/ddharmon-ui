@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import sys
@@ -88,25 +89,52 @@ def _labelled(member_sets: list[list[str]]) -> tuple[list[list[str]], dict[str, 
     return ordered, {v: f"K{i}" for i, m in enumerate(ordered, 1) for v in m}
 
 
-def _seed_partition(embedded: list[Any], mcs: int, seed: int) -> list[list[str]]:
-    """``harmonize_leanb``'s clustering prefix at a given UMAP seed: UMAP+HDBSCAN, then M10 recovery."""
+def _pipeline_seed() -> int:
+    """The UMAP seed ``harmonize_leanb`` clusters at: ``topic_model_dictionaries``' own default (it passes none)."""
     from ddharmon.clustering.topic_engine import topic_model_dictionaries
-    from ddharmon.harmonization.leanb import recover_outlier_clusters
+
+    return int(inspect.signature(topic_model_dictionaries).parameters["random_state"].default)
+
+
+def _seed_partition(embedded: list[Any], mcs: int, seed: int) -> tuple[list[list[str]], dict[str, Any]]:
+    """``harmonize_leanb``'s clustering prefix at a given UMAP seed: UMAP+HDBSCAN, then M10 recovery.
+
+    Clusters COHORT-ONLY, as ``harmonize_leanb`` does by default since core's 2026-10-02 switch: the catalog is
+    loaded for retrieval but never enters clustering (``clustering_input_dicts``). Also returns what M10 did with
+    the main pass's outliers, which path 8 checks: ``mainOutliers`` (what HDBSCAN left as noise) and
+    ``recovered`` (the clusters M10 appended).
+    """
+    from ddharmon.clustering.topic_engine import collect_inputs, topic_model_dictionaries
+    from ddharmon.harmonization.leanb import clustering_input_dicts, recover_outlier_clusters
     from ddharmon.harmonization.substrate import build_substrate
 
     from backend.app import CDE_COHORT
 
-    tm = topic_model_dictionaries(embedded, min_cluster_size=mcs, random_state=seed)
-    sub = build_substrate(tm.clusters, min_cluster_size=mcs, outlier=tm.outlier_cluster, n_fields=len(tm.field_refs))
-    clusters, _sub = recover_outlier_clusters(tm.clusters, sub, tm.embeddings, tm.field_refs)
-    return [
-        [f"{m.dictionary_name}:{m.variable_name}" for m in c.members if m.dictionary_name != CDE_COHORT]
-        for c in clusters
-    ]
+    tm = topic_model_dictionaries(
+        clustering_input_dicts(embedded, cde_cohort=CDE_COHORT), min_cluster_size=mcs, random_state=seed
+    )
+    sub = build_substrate(
+        tm.clusters,
+        min_cluster_size=mcs,
+        outlier=tm.outlier_cluster,
+        n_fields=len(tm.field_refs),
+        clustered_with_catalog=False,
+    )
+    _docs, embeddings, field_refs, _cohorts = collect_inputs(embedded)
+    clusters, _sub = recover_outlier_clusters(tm.clusters, sub, embeddings, field_refs, cde_cohort=CDE_COHORT)
+
+    def ids(c: Any) -> list[str]:
+        return [f"{m.dictionary_name}:{m.variable_name}" for m in c.members if m.dictionary_name != CDE_COHORT]
+
+    m10 = {
+        "mainOutliers": sorted(f"{cohort}:{var}" for cohort, var in sub.outlier),
+        "recovered": [sorted(ids(c)) for c in clusters[len(tm.clusters) :]],
+    }
+    return [ids(c) for c in clusters], m10
 
 
 def checks(
-    where: dict[str, str], n_leftovers: int, loaded: dict, w2l: dict | None, manifest: dict
+    where: dict[str, str], n_leftovers: int, loaded: dict, w2l: dict | None, manifest: dict, m10: dict[str, Any]
 ) -> list[tuple[str, bool, str]]:
     """The landings the fixture must show at $0 (paths 1, 4, 6, 7, 8, 10)."""
     paths = manifest["paths"]
@@ -138,13 +166,18 @@ def checks(
             f"rows {ukbb.get('rows')} -> variables {ukbb.get('variables')}",
         )
     )
-    out.append(("8 leftovers: at least one", n_leftovers >= 1, f"{n_leftovers} ungrouped"))
-    ks = at("ungrouped_leftovers")
+    # Path 8 at this size: core's M10 groups a residual too small to re-cluster (<= 15 rows) into ONE recovered
+    # cluster, which the paid split stage then divides — so the main pass's outliers come back whole and no
+    # variable stays a leftover. A larger residual is re-clustered and may leave leftovers; then this fails, which
+    # says the fixture no longer exercises the small-residual rule.
+    main, recovered = m10["mainOutliers"], m10["recovered"]
+    out.append(("8 outlier recovery: the main pass leaves >= 1 outlier", len(main) >= 1, f"{len(main)} outliers"))
+    whole = len(recovered) == 1 and sorted(recovered[0]) == main and n_leftovers == 0
     out.append(
         (
-            "8 leftovers: the manifest's reference set",
-            bool(ks) and set(ks) == {LEFTOVER},
-            f"{ks.count(LEFTOVER)}/{len(ks)} are leftovers",
+            "8 outlier recovery: M10 recovers them as ONE group, no leftover",
+            whole,
+            f"{len(recovered)} recovered group(s) of sizes {[len(r) for r in recovered]}; {n_leftovers} leftover(s)",
         )
     )
     ks = sorted({k for k in at("eye_conditions_spread") if k != LEFTOVER})
@@ -180,6 +213,11 @@ def run(fixture: Path, cde_set: str, top_n: int, seeds: int) -> dict:
     sources = [ed for ed in embedded if ed.dictionary.cohort_name != CDE_COHORT]
     all_fields = sorted(f"{ed.dictionary.cohort_name}:{v}" for ed in sources for v in ed.get_variable_names())
     leftovers = [f for f in all_fields if f not in where]
+    # Path 8 needs the main pass's outliers, which the pipeline's result no longer tells apart from M10's
+    # recovered clusters: re-run the clustering prefix at the pipeline's own seed and record whether it
+    # reproduced the pipeline's partition (if not, path 8's detail describes a different partition).
+    prefix, m10 = _seed_partition(embedded, mcs, _pipeline_seed())
+    m10["reproducesPipeline"] = _labelled(prefix)[0] == ordered
     clusters = [
         {
             "label": f"K{i}",
@@ -253,9 +291,10 @@ def run(fixture: Path, cde_set: str, top_n: int, seeds: int) -> dict:
         "nClusters": len(clusters),
         "clusters": clusters,
         "leftovers": leftovers,
+        "m10": m10,
         "paths": paths_out,
         "wideToLong": w2l,
-        "checks": [list(c) for c in checks(where, len(leftovers), loaded, w2l, manifest)],
+        "checks": [list(c) for c in checks(where, len(leftovers), loaded, w2l, manifest, m10)],
         "fingerprint": fingerprint,
     }
 
@@ -264,11 +303,12 @@ def run(fixture: Path, cde_set: str, top_n: int, seeds: int) -> dict:
         left_freq: Counter[str] = Counter()
         n_left = []
         for seed in range(seeds):
-            _o, w = _labelled(_seed_partition(embedded, mcs, seed))
+            partition, seed_m10 = _seed_partition(embedded, mcs, seed)
+            _o, w = _labelled(partition)
             left = [f for f in all_fields if f not in w]
             left_freq.update(left)
             n_left.append(len(left))
-            for name, ok, _detail in checks(w, len(left), loaded, w2l, manifest):
+            for name, ok, _detail in checks(w, len(left), loaded, w2l, manifest, seed_m10):
                 passes[name] += bool(ok)
         rep["seedSweep"] = {
             "seeds": seeds,
@@ -295,6 +335,17 @@ def markdown(rep: dict) -> str:
             f"| {c['label']} | {c['nMembers']} | {', '.join(c['cohorts'])} | {', '.join(c['members'])} | {top} |"
         )
     lines += ["", "Ungrouped leftovers: " + (", ".join(rep["leftovers"]) or "none"), ""]
+    if "m10" in rep:
+        m10 = rep["m10"]
+        lines += [
+            f"Main-pass outliers (M10's input, {len(m10['mainOutliers'])}): "
+            + (", ".join(m10["mainOutliers"]) or "none"),
+            "",
+            f"M10 recovered {len(m10['recovered'])} group(s) of sizes {[len(r) for r in m10['recovered']]}; the "
+            f"prefix re-run {'reproduced' if m10.get('reproducesPipeline') else 'did NOT reproduce'} the pipeline's "
+            "partition.",
+            "",
+        ]
     lines += ["| Check | Result | Detail |", "|---|---|---|"]
     lines += [f"| {n} | {'PASS' if ok else 'FAIL'} | {d} |" for n, ok, d in rep["checks"]]
     if "seedSweep" in rep:
