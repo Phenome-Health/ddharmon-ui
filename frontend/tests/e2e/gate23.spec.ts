@@ -1529,6 +1529,7 @@ test.describe("gate3 spec edits merge", () => {
     await row.locator("[data-testid='reject-accept']").click();
 
     await expect(row).toHaveAttribute("data-rejected", "true");
+    await expect(row).toHaveCSS("border-top-style", "dashed");
     await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(0);
     await expect(row.locator("[data-testid='spec-rejected-note']")).toContainText(
       /left out of the notebook and the mapping table/i,
@@ -1554,6 +1555,7 @@ test.describe("gate3 spec edits merge", () => {
     // Un-reject puts the row back exactly as it was.
     await row.locator("[data-testid='spec-unreject']").click();
     await expect(row).toHaveAttribute("data-rejected", "false");
+    await expect(row).toHaveCSS("border-top-style", "solid");
     await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(1);
     await expect(row.locator("[data-testid='spec-rejected-toggle']")).toHaveCount(0);
     await expect(summary).toHaveText(before);
