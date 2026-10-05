@@ -611,6 +611,12 @@ export function ScoreComponentsCard({
 }) {
   const { definition } = spec;
   const record = variant === "record";
+  // A DECLARED score is a list of names: no component can have a coding rule from a source, so "no coding rule in
+  // source" would be the same badge on every card (×49 on the live run, Bhargav 2026-10-05). Said ONCE above the
+  // cards instead. A score read from a document keeps the per-card badge — there it marks the items the source left
+  // uncoded. Rule 2 holds either way: an unstated coding is flagged for a human, never filled in.
+  const declaredUncoded =
+    spec.sourceKind === "declaration" && definition.components.some((c) => c.coding?.kind === "unstated");
   const codingFor = (name: string): ScoreComponent | undefined =>
     definition.components.find((c) => c.name === name);
   // The component list renders in SOURCE-DOCUMENT order — `spec.matches` preserves the definition's order,
@@ -638,6 +644,7 @@ export function ScoreComponentsCard({
       concept={m.conceptId ? conceptById[m.conceptId] : undefined}
       jobId={jobId}
       variant={variant}
+      hideUnstatedBadge={declaredUncoded}
       onOpenGroup={onOpenGroup}
       isGroupInScope={isGroupInScope}
       onGroupScopeChange={onGroupScopeChange}
@@ -693,6 +700,18 @@ export function ScoreComponentsCard({
             )}
           </p>
         </div>
+        {declaredUncoded && (
+          <p
+            data-testid="score-coding-unstated-note"
+            className="flex items-start gap-1.5 rounded-md border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              This score was declared as a list of names, so no component has a coding rule from a source — set each
+              component&rsquo;s categories, coding or cutoff yourself. None is filled in for you.
+            </span>
+          </p>
+        )}
         {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
             The header carries the found/total tally; each row shows its own found/missing icon. */}
         <Collapsible defaultOpen>
@@ -724,6 +743,7 @@ function MatchRow({
   match,
   component,
   variant = "builder",
+  hideUnstatedBadge = false,
   onOpenGroup,
   isGroupInScope,
   onGroupScopeChange,
@@ -734,6 +754,8 @@ function MatchRow({
   concept?: UIRecord;
   jobId: string;
   variant?: "builder" | "record";
+  /** The card says "no coding rule in source" once for the whole score (a declared one), so the row does not. */
+  hideUnstatedBadge?: boolean;
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
   isGroupInScope?: (groupId: string) => boolean;
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
@@ -987,8 +1009,8 @@ function MatchRow({
                 })}
           </span>
         )}
-        {coding?.needsReview && (
-          <Badge className="w-fit border-rule-warn bg-surface-warn text-xs text-on-warn">
+        {coding?.needsReview && !(hideUnstatedBadge && coding.kind === "unstated") && (
+          <Badge data-testid="score-coding-review" className="w-fit border-rule-warn bg-surface-warn text-xs text-on-warn">
             {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
           </Badge>
         )}

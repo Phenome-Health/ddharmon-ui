@@ -271,6 +271,20 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     for (const card of [tinnitus, migraine]) await expect(card).not.toContainText(/missing|not found|lacks/i);
   });
 
+  test("@gate1 what 'nothing suggested' means is said ONCE, in the info strip — each card keeps one short line", async ({
+    page,
+  }) => {
+    // Bhargav 2026-10-05: the same three-line caveat repeated on every unsuggested card (dozens on a 49-item score).
+    const panel = await openGate1Panel(page);
+    const cards = panel.locator("[data-testid='score-suggestions']");
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/not a finding about your cohorts/i);
+    await expect(cards.getByText(/not a finding about your cohorts/i)).toHaveCount(1);
+    for (const c of ["Tinnitus", "Migraine"]) {
+      const none = cardOf(panel, c).getByTestId("score-suggestion-none");
+      await expect(none).not.toContainText(/not a finding|Gate 4/i);
+    }
+  });
+
   test("@gate1 no dense encoder: no cards — the plain declared list stands", async ({ page }) => {
     const empty = suggestions().scores.map((sc) => ({ ...sc, components: sc.components.map((c) => ({ ...c, groups: [] })) }));
     const panel = await openGate1Panel(page, suggestions({ scored: false, reason: "no dense encoder", scores: empty }));
@@ -398,9 +412,32 @@ function g4Spec(): CompositeSpec {
 }
 
 /** Gate 4 with the score declared, unfolded, and matched (the match fulfilled at the network layer). */
-async function openGate4Matched(page: Page, { match = true }: { match?: boolean } = {}): Promise<Locator> {
+/** `g4Spec()` with NO coding rule on any component — what a score declared as a list of names carries. */
+function uncodedSpec(sourceKind: CompositeSpec["sourceKind"]): CompositeSpec {
+  const sp = g4Spec();
+  const unstated = {
+    kind: "unstated",
+    cutoff: "",
+    referenceRange: "",
+    codeMap: {},
+    formula: "",
+    units: "",
+    statedInSource: false,
+    needsReview: true,
+  };
+  return {
+    ...sp,
+    sourceKind,
+    definition: { ...sp.definition, components: sp.definition.components.map((c) => ({ ...c, coding: unstated })) },
+  } as unknown as CompositeSpec;
+}
+
+async function openGate4Matched(
+  page: Page,
+  { match = true, spec = g4Spec() }: { match?: boolean; spec?: CompositeSpec } = {},
+): Promise<Locator> {
   await page.route("**/api/harmonize/jobs/*/composite", (route: Route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(g4Spec()) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(spec) }),
   );
   await serveFinished(page, (run) => {
     (run.config as Record<string, unknown>).demo = false;
@@ -466,6 +503,24 @@ test.describe("score cards — Gate 4 (the match)", () => {
     const cards = panel.locator("[data-testid='score-match']");
     for (const c of await cards.all()) await expect(c).not.toContainText(/Gate 2|auto-select|auto-queued/i);
     await expect(panel.getByTestId("score-builder-info")).not.toContainText(/auto-select/i);
+  });
+
+  test("@gate4 a DECLARED score's missing coding is said once above the cards, not as a badge on every card", async ({
+    page,
+  }) => {
+    // Bhargav 2026-10-05 (option A): 49 identical "no coding rule in source" badges on the live run hid each outcome.
+    const panel = await openGate4Matched(page, { spec: uncodedSpec("declaration") });
+    await expect(panel.getByTestId("score-coding-unstated-note")).toHaveCount(1);
+    await expect(panel.getByTestId("score-coding-unstated-note")).toContainText(/declared/i);
+    await expect(panel.getByTestId("score-coding-review")).toHaveCount(0);
+  });
+
+  test("@gate4 a score READ FROM A DOCUMENT keeps the badge on each card — there it marks the items the source left uncoded", async ({
+    page,
+  }) => {
+    const panel = await openGate4Matched(page, { spec: uncodedSpec("definition") });
+    await expect(panel.getByTestId("score-coding-unstated-note")).toHaveCount(0);
+    await expect(panel.getByTestId("score-coding-review")).toHaveCount(G4_DECLARED.length);
   });
 
   test("@gate4 a matched card names its concept; a missing one says why without being opened", async ({ page }) => {
