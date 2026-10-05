@@ -930,6 +930,8 @@ export default function Gate3Page() {
                             review
                               ? "border-l-4 border-l-accent-action border-rule-on-raised"
                               : "border-rule-on-raised",
+                            // H10: a rejected row is drawn dashed — present, but not part of what is exported.
+                            rejected && "border-dashed",
                           )}
                         >
                           <div className="flex flex-wrap items-center gap-2">
