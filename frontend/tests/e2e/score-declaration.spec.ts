@@ -13,7 +13,7 @@ import {
 import { STRIP_SUMMARY } from "@/lib/score-proposal";
 import { declaredComponents } from "@/lib/score-scope";
 import type { CompositeSpec } from "@/types";
-import { PAUSED_JOB, serveRun } from "./gate1-fixture";
+import { PAUSED_JOB, asOwnedRun, serveRun } from "./gate1-fixture";
 
 /**
  * What Gate 1's score panel says about the declaration it holds (phase-8 final review, round 2).
@@ -419,6 +419,7 @@ test.describe("pasted source record on the static build", () => {
       run.gatePosition = "gate2";
       run.result!.gatePosition = "gate2";
       run.composites = [specOf(SCORE, THREE, 0)];
+      return asOwnedRun(run); // a record only on a run of the reviewer's own — the demo stays open to practise
     });
     await seedDeclaration(page, declared(SCORE, THREE, { source: declarationSource(PASTED, null, 5) }));
     await openGate1(page);

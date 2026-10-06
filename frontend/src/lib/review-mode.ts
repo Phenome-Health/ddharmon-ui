@@ -37,8 +37,15 @@ export const AUTO_ACCEPTED_LABEL = "Auto-accepted — not reviewed";
 /** The decided-by value the decision log's `after` column carries for such a gate (`AUTO_DECIDED_AFTER`). */
 export const AUTO_DECIDED_AFTER = "auto — not reviewed";
 
+/** What a gate on the shared demo says in place of what can still change on it: everything can, in the tab only. */
+export const DEMO_PRACTICE_COPY =
+  "This is the shared demo, so every control here is yours to try. What you change stays in this tab: nothing is re-run, and the next gates still show the run as it was built.";
+
 /** The gates Full auto can commit, in order. Gate 4 is the export screen; nothing is committed there. */
 export const AUTO_GATES: readonly GatePosition[] = ["gate1", "gate2", "gate3"];
+
+/** The gates a reviewer decides on — every screen after Setup. */
+const REVIEW_GATES: readonly GatePosition[] = ["gate1", "gate2", "gate3", "gate4"];
 
 /**
  * The decision kinds a Full-auto run's PASSED gates still accept — `backend/artifact_kinds.py::AUTO_REVISABLE_KINDS`.
@@ -86,6 +93,10 @@ export function autoAcceptedGates(config: Config): GatePosition[] {
  * A gate the run has passed is a record when a person continued it (its decisions were consumed by a paid step). One
  * Full auto committed was never reviewed, so the kinds the export applies without a re-run stay open on it. Mirrors
  * the server's `_refuse_past_gate`, so a control is never offered that the server would refuse.
+ *
+ * The shared demo locks none of its review gates: it is where a guest learns the controls. Its edits are held in the
+ * tab and never sent — the server refuses every write to it anyway — so no review gate on it is a record. Setup still
+ * is: it holds no review decision to practise, only the parameters the demo was built with.
  */
 export function isGateLocked(
   gate: GatePosition,
@@ -93,6 +104,7 @@ export function isGateLocked(
   config: Config,
   kind?: string,
 ): boolean {
+  if (config?.demo && REVIEW_GATES.includes(gate)) return false;
   if (!isGatePast(gate, runPosition)) return false;
   if (!isAutoAccepted(config, gate)) return true;
   return kind === undefined ? true : !AUTO_REVISABLE_KINDS.has(kind);

@@ -3138,11 +3138,15 @@ test.describe("gate1 column sort", () => {
  * second layer — they stop the control inviting an attempt that would only raise an error.
  */
 test.describe("gate1 frozen", () => {
-  /** Move the RUN to Gate 2, leaving this screen — Gate 1 — behind it. */
+  /**
+   * Move the RUN to Gate 2, leaving this screen — Gate 1 — behind it. A run of the reviewer's own: on the shared
+   * demo a passed gate stays open to practise on.
+   */
   async function openPastGate1(page: Page): Promise<void> {
     await serveRun(page, (run) => {
       run.gatePosition = "gate2";
       run.result!.gatePosition = "gate2";
+      return asOwnedRun(run);
     });
     await openGate1(page);
   }
@@ -3823,6 +3827,7 @@ test.describe("gate1 rename", () => {
     await serveRun(page, (run) => {
       run.gatePosition = "gate2";
       run.result!.gatePosition = "gate2";
+      return asOwnedRun(run);
     });
     await openGate1(page);
     await expect(page.locator("[data-testid='rename-group']")).toHaveCount(0);
@@ -4608,6 +4613,7 @@ test.describe("gate1 new group", () => {
     await serveRun(page, (run) => {
       run.gatePosition = "gate2";
       run.result!.gatePosition = "gate2";
+      return asOwnedRun(run);
     });
     await openGate1(page);
     await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();

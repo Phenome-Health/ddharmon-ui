@@ -2528,29 +2528,27 @@ export default function Gate1Page() {
    */
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
+  const position = (jobState?.gatePosition ?? null) as GatePosition | null;
+  /** The run has moved PAST this gate. */
+  const past = isGatePast("gate1", position);
   /**
    * The run has moved PAST this gate, so the screen is a record (08-16c Task 2).
    *
    * Passed into every decision hook below, where `write`/`clear` refuse outright. The refusal is at the
    * WRITE PATH rather than only in the rendering, because a disabled-looking control that still submits is
    * worse than an enabled one — and these decisions have already been consumed by the pipeline.
+   *
+   * Never on the shared demo, though it is parked at Gate 4: a guest practises every control there, and the hooks hold
+   * the edits in the tab without sending them (`isGateLocked`).
    */
-  const frozen = isGatePast(
-    "gate1",
-    (jobState?.gatePosition ?? null) as GatePosition | null,
-  );
+  const frozen = isGateLocked("gate1", position, runConfig);
   /**
    * 08-30: a Gate 1 Full auto committed was never reviewed, so its group NAMES stay open (the export applies a rename
    * without re-running anything). Its grouping does not: scope, moves and new groups were consumed by the paid steps
    * after it, and changing them would need those groups re-run, which is not available — `frozen` keeps them as
    * committed. The server's `_refuse_past_gate` draws the same line (`AUTO_REVISABLE_KINDS`).
    */
-  const renameFrozen = isGateLocked(
-    "gate1",
-    (jobState?.gatePosition ?? null) as GatePosition | null,
-    runConfig,
-    "gate1_rename",
-  );
+  const renameFrozen = isGateLocked("gate1", position, runConfig, "gate1_rename");
   // What a frozen Gate 1's bar says in place of the purchase (O2): the step is done, and what it bought. Not on the
   // shared demo: it is WALKED (08-18), so even a demo parked further on keeps the walk forward on this bar.
   const pastBar =
@@ -2710,18 +2708,21 @@ export default function Gate1Page() {
    * Gate 1, which Gate 1 never sent and Gate 2 never received. The frozen list is exactly what the reviewer saw at
    * Continue, score-seeded defaults included. A run that passed Gate 1 before 08-27 carries no list and keeps the
    * old derivation.
+   *
+   * On the shared demo the sent list is where practice STARTS: the guest's own ticks sit on top of it, in the tab.
    */
-  const frozenScope = useMemo(() => {
-    const sent = frozen ? runConfig?.gate1_scope : undefined;
+  const sentScope = useMemo(() => {
+    const sent = past ? runConfig?.gate1_scope : undefined;
     return Array.isArray(sent) ? new Set(sent.filter((g): g is string => typeof g === "string")) : null;
-  }, [frozen, runConfig]);
+  }, [past, runConfig]);
   const isInScope = (groupId: string) => {
-    if (frozenScope) return frozenScope.has(groupId);
+    if (frozen && sentScope) return sentScope.has(groupId);
     const chosen = scope.decisions[groupId]?.chosen;
     if (chosen === IN_SCOPE) return true;
     if (chosen === OUT_OF_SCOPE) return false;
     // A New group is IN by default: making one is already the deliberate act (08-28 Wave 2).
     if (isReviewerGroupId(groupId)) return true;
+    if (sentScope) return sentScope.has(groupId);
     return scoreSeed.has(groupId);
   };
   /**
@@ -2730,11 +2731,12 @@ export default function Gate1Page() {
    * suggestion is in scope, but not this card's).
    */
   const scopeWhy = (groupId: string): GroupScopeWhy => {
-    if (frozenScope) return { by: frozenScope.has(groupId) ? "chosen" : "none", components: [] };
+    if (frozen && sentScope) return { by: sentScope.has(groupId) ? "chosen" : "none", components: [] };
     const chosen = scope.decisions[groupId]?.chosen;
     if (chosen === IN_SCOPE) return { by: "chosen", components: [] };
     if (chosen === OUT_OF_SCOPE) return { by: "none", components: [] };
     if (isReviewerGroupId(groupId)) return { by: "made", components: [] };
+    if (sentScope) return { by: sentScope.has(groupId) ? "chosen" : "none", components: [] };
     const seededBy = scoreSeed.get(groupId);
     return seededBy ? { by: "score", components: seededBy } : { by: "none", components: [] };
   };

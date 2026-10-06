@@ -8,6 +8,7 @@ import {
   AUTO_ACCEPTED_LABEL,
   AUTO_DECIDED_AFTER,
   AUTO_REVISABLE_KINDS,
+  DEMO_PRACTICE_COPY,
   REVIEW_MODE_COPY,
   autoAcceptedGates,
   autoGateStates,
@@ -75,6 +76,18 @@ test.describe("Full auto — the rules, as functions", () => {
     const block = /AUTO_REVISABLE_KINDS[^=]*=\s*frozenset\(\s*\{([\s\S]*?)\}\s*\)/.exec(py)?.[1] ?? "";
     const names = [...block.matchAll(/([A-Z0-9_]+),/g)].map((m) => m[1].toLowerCase());
     expect(names.sort()).toEqual([...AUTO_REVISABLE_KINDS].sort());
+  });
+
+  test("@full-auto on the shared demo every gate stays open to practise on", () => {
+    // A guest learns the controls there. Their edits stay in the tab and never reach the run (the server refuses
+    // every write to the demo), so nothing on it is a record — whoever committed the gate.
+    const demo = { demo: true, review_mode: "auto", gate_decided_by: { gate1: "auto", gate2: "auto", gate3: "auto" } };
+    for (const kind of ["gate1_group_scope", "gate1_regroup", "gate1_new_group", "gate1_rename", "composite_swap"])
+      expect(isGateLocked("gate1", "gate4", demo, kind), kind).toBe(false);
+    expect(isGateLocked("gate1", "gate4", demo)).toBe(false);
+    expect(isGateLocked("gate2", "gate4", { demo: true }, "gate2_candidate_pick")).toBe(false);
+    // Setup holds no review decision to practise: on the demo it stays the read-back of how the run was built.
+    expect(isGateLocked("setup", "gate4", demo)).toBe(true);
   });
 
   test("@full-auto the walk is read gate by gate, from the run's own position and record", () => {
@@ -371,6 +384,43 @@ test.describe("Full auto — the guest demo it builds", () => {
     await serveAutoRun(fresh, { demo: true });
     await fresh.goto(`/run/${FINISHED_JOB}/gate1`);
     await expect(fresh.getByTestId("sandbox-banner")).toHaveAttribute("data-unsaved", "0");
+  });
+
+  test("@full-auto a guest practises Gate 1's grouping on the demo, and none of it leaves the tab", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await serveAutoRun(page, { demo: true });
+    const writes = watchWrites(page);
+    await open(page, "gate1");
+    // The banner says the controls are there to try, not that the grouping is locked.
+    await expect(page.getByTestId("auto-accepted-banner")).toContainText(DEMO_PRACTICE_COPY);
+
+    // Scope starts as the run sent it (every group in), and a guest can take a group out.
+    const rows = page.locator("[data-testid='ledger-row']");
+    const box = rows.first().locator("[data-testid='queue-scope']");
+    await expect(box).toBeChecked();
+    await box.click();
+    await expect(box).not.toBeChecked();
+
+    // A variable can be dragged from one group onto another.
+    const target = rows.nth(2);
+    await rows.nth(1).click();
+    const member = page.locator("[data-testid='gate1-detail'] [data-testid='member-row']").first();
+    await target.scrollIntoViewIfNeeded();
+    await member.dragTo(target);
+
+    // And a group of the guest's own can be made.
+    await page.locator("[data-testid='new-group']").click();
+    const name = page.locator("[data-testid='new-group-name']");
+    await name.fill("A guest's group");
+    await name.press("Enter");
+    await expect(page.locator("[data-testid='ledger-row'][data-reviewer='true']", { hasText: "A guest's group" })).toBeVisible();
+
+    const state = await held(page);
+    expect(Object.keys(state.gateDecisions ?? {}).sort()).toEqual(["gate1_group_scope", "gate1_new_group", "gate1_regroup"]);
+    await expect(page.getByTestId("sandbox-banner")).toHaveAttribute("data-unsaved", String(sandboxWorkCount(state)));
+    expect(writes).toEqual([]);
+    expect(errors).toEqual([]);
   });
 
   test("@full-auto the demo page opens a staged demo at Gate 1, and skipping goes to Gate 4", async ({ page }) => {

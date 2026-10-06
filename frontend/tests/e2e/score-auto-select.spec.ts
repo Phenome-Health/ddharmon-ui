@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { GROUP_SELECT_THRESHOLD, scoreSeededGroups } from "@/lib/score-scope";
 import type { ComponentCoding, CompositeSpec, ConceptGroup } from "@/types";
-import { PAUSED_JOB, fixtureGroups, serveRun } from "./gate1-fixture";
+import { PAUSED_JOB, asOwnedRun, fixtureGroups, serveRun } from "./gate1-fixture";
 
 /**
  * Gate 1's score-builder AUTO-SELECT threshold — does it actually work? (final review round 1, item 3)
@@ -168,6 +168,7 @@ test.describe("score builder auto-select threshold", () => {
       run.result!.gatePosition = "gate2";
       run.config = { ...(run.config as object), gate1_scope: [sent] } as never;
       run.composites = [spec()];
+      return asOwnedRun(run); // a record only on a run of the reviewer's own — the demo stays open to practise
     });
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.waitForLoadState("networkidle");

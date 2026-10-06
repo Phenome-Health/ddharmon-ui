@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
-import { isGatePast, pathForGate, railReachOf } from "@/lib/gate-routes";
+import { pathForGate, railReachOf } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult } from "@/types";
 import { PhMark } from "@/components/ph-logo";
@@ -14,7 +14,14 @@ import { ConflictNotice } from "@/components/gate/ConflictNotice";
 import { SandboxBanner } from "@/components/gate/SandboxBanner";
 import { stopCostSplit } from "@/lib/estimate";
 import { railCosts, realizedRailArgs, type RailCostArgs } from "@/lib/gate-rail";
-import { AUTO_ACCEPTED_LABEL, autoPausedReason, gateLabel, isAutoAccepted } from "@/lib/review-mode";
+import {
+  AUTO_ACCEPTED_LABEL,
+  DEMO_PRACTICE_COPY,
+  autoPausedReason,
+  gateLabel,
+  isAutoAccepted,
+  isGateLocked,
+} from "@/lib/review-mode";
 import { isInFlight } from "@/lib/run-state";
 
 /**
@@ -154,10 +161,11 @@ export function GateShell({
    * gate while the run stays parked ahead of them, and every question below turns on the run's position.
    */
   const runPosition = (job?.gatePosition ?? null) as GatePosition | null;
-  const frozen = isGatePast(gate, runPosition);
+  const config = job?.config as Record<string, unknown> | undefined;
+  // A record that can no longer change — never on the shared demo, which is there to practise on.
+  const frozen = isGateLocked(gate, runPosition, config);
   // Full auto (08-30): a gate the server committed by itself. Nobody reviewed it, so it is not a record of a review —
   // it wears its own banner (what was committed, and what can still be reviewed) instead of the frozen notice.
-  const config = job?.config as Record<string, unknown> | undefined;
   const autoAccepted = isAutoAccepted(config, gate);
   const pausedReason = job ? autoPausedReason({ ...job, config }) : null;
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
@@ -244,7 +252,7 @@ export function GateShell({
       />
 
       {frozen && !autoAccepted && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
-      {autoAccepted && <AutoAcceptedBanner gate={gate} />}
+      {autoAccepted && <AutoAcceptedBanner gate={gate} demo={isDemo} />}
       {pausedReason && runPosition && (
         <AutoPausedNotice reason={pausedReason} jobId={jobId} runPosition={runPosition} here={gate === runPosition} />
       )}
@@ -303,11 +311,13 @@ function FrozenNotice({ jobId, runPosition }: { jobId?: string; runPosition: Gat
 /**
  * The banner an AUTO-ACCEPTED gate wears (08-30): Full auto committed it with the pipeline's own proposals and nobody
  * reviewed it. Persistent and in the flow, like the frozen notice it replaces — and it says what can still be done
- * here, so the reviewer is neither told the gate is closed nor offered a change the server would refuse.
+ * here, so the reviewer is neither told the gate is closed nor offered a change the server would refuse. On the shared
+ * demo everything can, in the tab only, so it says that instead.
  */
-function AutoAcceptedBanner({ gate }: { gate: GatePosition }) {
-  const what =
-    gate === "gate1"
+function AutoAcceptedBanner({ gate, demo }: { gate: GatePosition; demo: boolean }) {
+  const what = demo
+    ? DEMO_PRACTICE_COPY
+    : gate === "gate1"
       ? "You can still rename its groups. The groups themselves stay as committed — every one was sent on — because changing them would need those groups re-run, which is not available yet."
       : "You can still review it: what you change here is recorded and goes into the export, though nothing is re-run.";
   return (
