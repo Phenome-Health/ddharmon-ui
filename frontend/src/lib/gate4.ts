@@ -9,6 +9,7 @@ import {
   inheritedGate1Scope,
 } from "@/lib/gate-decisions";
 import { OWN_TARGET, SKOS_RELATIONS } from "@/lib/gate23";
+import { AUTO_ACCEPTED_LABEL, AUTO_DECIDED_AFTER, autoAcceptedGates, gateLabel } from "@/lib/review-mode";
 
 /**
  * Gate 4's pure logic — the export catalog, the download-label rule, the decision-log rows, and the E3
@@ -135,6 +136,26 @@ const GATE_OF: Record<GateDecisionKind, string> = {
   gate4_export_selection: "Gate 4",
   composite_swap: "Composite",
 };
+
+/** The gate whose screen OWNS each kind — `backend/artifact_kinds.py::DECISION_GATE` (the score panel sits on Gate 1). */
+const DECISION_GATE: Record<GateDecisionKind, string> = {
+  gate1_group_scope: "gate1",
+  gate1_new_group: "gate1",
+  gate1_regroup: "gate1",
+  gate1_rename: "gate1",
+  gate2_candidate_pick: "gate2",
+  gate2_relation: "gate2",
+  gate3_spec_edit: "gate3",
+  gate3_combine_rule: "gate3",
+  gate3_member_exclusion: "gate3",
+  gate4_export_selection: "gate4",
+  composite_swap: "gate1",
+};
+
+/** The decision log's row for one gate Full auto committed — the server's `_auto_row`. */
+function autoRow(gate: string): string[] {
+  return [gateLabel(gate), "gate_auto_accepted", AUTO_ACCEPTED_LABEL, gate, "", AUTO_DECIDED_AFTER, "", "", "false"];
+}
 
 const ACTION_OF: Record<GateDecisionKind, string> = {
   gate1_group_scope: "Set group scope",
@@ -621,12 +642,19 @@ export function decisionLogCsvRows(
   const appliedMoves = new Set(Object.keys((regrouping && typeof regrouping === "object" && regrouping.moves) || {}));
   const passedGate1 =
     Array.isArray(config?.gate1_scope) || (!!regrouping && typeof regrouping === "object" && !Array.isArray(regrouping));
+  // 08-30: each gate Full auto committed leads ITS gate's rows (the server's `_auto_row`, in the same order), so the
+  // log says before anything else about that gate that nobody reviewed it. A guided run has none.
+  const pending: string[] = autoAcceptedGates(config);
+  if (pending[0] === "gate1") rows.push(autoRow(pending.shift()!));
   const frozen = config?.gate1_scope;
   if (Array.isArray(frozen)) {
     rows.push(["Gate 1", "gate1_scope_frozen", "Continued with this scope", "", "", `${frozen.length} groups in scope`, "", stableJson(frozen), "false"]);
   }
   for (const kind of GATE_DECISION_KINDS) {
+    const owner = DECISION_GATE[kind];
+    while (pending.length > 0 && kind !== "composite_swap" && owner >= pending[0]) rows.push(autoRow(pending.shift()!));
     if (kind === "composite_swap") {
+      rows.push(...pending.splice(0).map(autoRow));
       rows.push(...scoreCsvRows(index[kind] ?? {}, stale));
       continue;
     }
@@ -966,6 +994,8 @@ export function artifactPreview(
   }
 
   if (id === "records_json") {
+    const autoGates = staged ? autoAcceptedGates(gateLog?.config) : [];
+    const autoDecided = autoGates.length ? Object.fromEntries(autoGates.map((g) => [g, "auto"])) : null;
     return {
       kind: "code",
       text: JSON.stringify(
@@ -979,6 +1009,8 @@ export function artifactPreview(
           transforms: r.transforms?.length ?? 0,
           // Every staged record names what Gate 3 removed from it (`[]` for nothing), as the file does.
           ...("removedMembers" in r ? { removedMembers: r.removedMembers } : {}),
+          // 08-30: the gates nobody reviewed, on a Full-auto run only — as the file does.
+          ...(autoDecided ? { gateDecidedBy: autoDecided } : {}),
         })),
         null,
         2,

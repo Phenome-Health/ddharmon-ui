@@ -14,6 +14,7 @@ import { ConflictNotice } from "@/components/gate/ConflictNotice";
 import { SandboxBanner } from "@/components/gate/SandboxBanner";
 import { stopCostSplit } from "@/lib/estimate";
 import { railCosts, realizedRailArgs, type RailCostArgs } from "@/lib/gate-rail";
+import { AUTO_ACCEPTED_LABEL, autoPausedReason, gateLabel, isAutoAccepted } from "@/lib/review-mode";
 import { isInFlight } from "@/lib/run-state";
 
 /**
@@ -154,6 +155,11 @@ export function GateShell({
    */
   const runPosition = (job?.gatePosition ?? null) as GatePosition | null;
   const frozen = isGatePast(gate, runPosition);
+  // Full auto (08-30): a gate the server committed by itself. Nobody reviewed it, so it is not a record of a review —
+  // it wears its own banner (what was committed, and what can still be reviewed) instead of the frozen notice.
+  const config = job?.config as Record<string, unknown> | undefined;
+  const autoAccepted = isAutoAccepted(config, gate);
+  const pausedReason = job ? autoPausedReason({ ...job, config }) : null;
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
@@ -237,7 +243,11 @@ export function GateShell({
         runPosition={railReachOf(job)}
       />
 
-      {frozen && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
+      {frozen && !autoAccepted && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
+      {autoAccepted && <AutoAcceptedBanner gate={gate} />}
+      {pausedReason && runPosition && (
+        <AutoPausedNotice reason={pausedReason} jobId={jobId} runPosition={runPosition} here={gate === runPosition} />
+      )}
 
       {/* THE RUN'S STATE, while it has one (08-14h). Placed HERE, between the rail and the how-to panel,
           and the position is a judgement rather than an accident. The rail is the run's IDENTITY — where
@@ -284,6 +294,70 @@ function FrozenNotice({ jobId, runPosition }: { jobId?: string; runPosition: Gat
           className="font-semibold text-link-on-raised underline underline-offset-2"
         >
           Back to {GATE_LABELS[runPosition]}
+        </Link>
+      )}
+    </p>
+  );
+}
+
+/**
+ * The banner an AUTO-ACCEPTED gate wears (08-30): Full auto committed it with the pipeline's own proposals and nobody
+ * reviewed it. Persistent and in the flow, like the frozen notice it replaces — and it says what can still be done
+ * here, so the reviewer is neither told the gate is closed nor offered a change the server would refuse.
+ */
+function AutoAcceptedBanner({ gate }: { gate: GatePosition }) {
+  const what =
+    gate === "gate1"
+      ? "You can still rename its groups. The groups themselves stay as committed — every one was sent on — because changing them would need those groups re-run, which is not available yet."
+      : "You can still review it: what you change here is recorded and goes into the export, though nothing is re-run.";
+  return (
+    <p
+      role="status"
+      data-testid="auto-accepted-banner"
+      data-gate={gate}
+      className="flex flex-col gap-1 rounded-card border border-rule-warn bg-surface-warn px-4 py-3 text-sm text-on-warn"
+    >
+      <span className="font-semibold">{AUTO_ACCEPTED_LABEL}.</span>
+      <span>
+        This run was set to Full auto, so {gateLabel(gate)} was committed with the pipeline&rsquo;s own proposals and
+        nobody reviewed it first. Every flag is still on the rows below. {what}
+      </span>
+    </p>
+  );
+}
+
+/**
+ * A Full-auto run waiting short of Gate 4 (08-30): it stopped going on by itself — a Stop, a step that failed, no key,
+ * or a server restart (the key lives in memory only). Says why, and that it now goes on gate by gate, by hand.
+ */
+function AutoPausedNotice({
+  reason,
+  jobId,
+  runPosition,
+  here,
+}: {
+  reason: string;
+  jobId?: string;
+  runPosition: GatePosition;
+  here: boolean;
+}) {
+  return (
+    <p
+      role="status"
+      data-testid="auto-paused"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-card bg-surface-raised px-4 py-3 text-sm text-on-raised shadow-card"
+    >
+      <span className="font-semibold">Full auto is waiting at {gateLabel(runPosition)} for you.</span>
+      <span className="text-on-raised-muted">
+        {reason} From here the run stops at each gate like a guided run: review it and press Continue to go on.
+      </span>
+      {!here && jobId && (
+        <Link
+          href={pathForGate(jobId, runPosition)}
+          data-testid="auto-paused-go"
+          className="font-semibold text-link-on-raised underline underline-offset-2"
+        >
+          Go to {GATE_LABELS[runPosition]}
         </Link>
       )}
     </p>

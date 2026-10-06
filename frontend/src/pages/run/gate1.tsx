@@ -46,6 +46,7 @@ import { SourceRows, hasSourceRows } from "@/components/source-rows";
 import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
 import { gate1BillableGroups, gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
+import { isGateLocked } from "@/lib/review-mode";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
@@ -2280,6 +2281,7 @@ function GroupDetail({
   group,
   count,
   readOnly,
+  renameReadOnly = readOnly,
   renamedTo,
   onRename,
   inScope,
@@ -2291,6 +2293,8 @@ function GroupDetail({
   /** Effective member count after the reviewer's moves (the sidebar row's number). */
   count: number;
   readOnly: boolean;
+  /** Whether the NAME is read-only too — it can stay open when the rest is not (an auto-accepted Gate 1, 08-30). */
+  renameReadOnly?: boolean;
   renamedTo?: string;
   onRename: (next: string) => void;
   inScope: boolean;
@@ -2336,7 +2340,7 @@ function GroupDetail({
             )}
             {label.source === "reviewer" && !editing && <RenamedMark />}
             {label.source === "judge" && !editing && <BorrowedMark />}
-            {!readOnly && !editing && (
+            {!renameReadOnly && !editing && (
               <button
                 type="button"
                 data-testid="rename-group"
@@ -2535,16 +2539,30 @@ export default function Gate1Page() {
     "gate1",
     (jobState?.gatePosition ?? null) as GatePosition | null,
   );
-  // What a frozen Gate 1's bar says in place of the purchase (O2): the step is done, and what it bought.
-  const pastBar = frozen
-    ? frozenContinue("gate1", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
-    : null;
+  /**
+   * 08-30: a Gate 1 Full auto committed was never reviewed, so its group NAMES stay open (the export applies a rename
+   * without re-running anything). Its grouping does not: scope, moves and new groups were consumed by the paid steps
+   * after it, and changing them would need those groups re-run, which is not available — `frozen` keeps them as
+   * committed. The server's `_refuse_past_gate` draws the same line (`AUTO_REVISABLE_KINDS`).
+   */
+  const renameFrozen = isGateLocked(
+    "gate1",
+    (jobState?.gatePosition ?? null) as GatePosition | null,
+    runConfig,
+    "gate1_rename",
+  );
+  // What a frozen Gate 1's bar says in place of the purchase (O2): the step is done, and what it bought. Not on the
+  // shared demo: it is WALKED (08-18), so even a demo parked further on keeps the walk forward on this bar.
+  const pastBar =
+    frozen && pinned !== true
+      ? frozenContinue("gate1", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+      : null;
   const scope = useGateDecisions(jobId, "gate1_group_scope", {
     pinned,
     frozen,
   });
   const regroups = useGateDecisions(jobId, "gate1_regroup", { pinned, frozen });
-  const renames = useGateDecisions(jobId, "gate1_rename", { pinned, frozen });
+  const renames = useGateDecisions(jobId, "gate1_rename", { pinned, frozen: renameFrozen });
   /** The reviewer's own groups (08-28 Wave 2), filled by ordinary regroup moves whose destination is their id. */
   const newGroups = useGateDecisions(jobId, "gate1_new_group", { pinned, frozen });
   const reviewerIds = useMemo(
@@ -3811,6 +3829,7 @@ export default function Gate1Page() {
                 group={detailGroup}
                 count={memberCount(detailGroup)}
                 readOnly={frozen}
+                renameReadOnly={renameFrozen}
                 renamedTo={renamedOf(detailGroup.groupId)}
                 onRename={(next) => void onRename(detailGroup, next)}
                 inScope={isInScope(detailGroup.groupId)}
@@ -3913,7 +3932,7 @@ export default function Gate1Page() {
         // Nothing gates Continue on a REVIEW count — how much to triage is the reviewer's call (D-09
         // revised). What does gate it is having something to buy at all.
         // A closed gate buys nothing: the run is already past the charge this bar describes.
-        disabled={inScopeGroups.length === 0 || frozen}
+        disabled={inScopeGroups.length === 0 || (frozen && pinned !== true)}
       />
     </GateShell>
   );

@@ -33,9 +33,15 @@ export interface StreamError {
 /** The keys the thin frame does NOT carry, and which therefore come from the fetched payload. */
 type Payload = Pick<JobResult, "result" | "decisions" | "analysisIdeas" | "composites" | "config" | "dictionaries">;
 
-/** Statuses at which the stream closes: terminal, plus a gate pause (which has no worker to report). */
-function isClosing(status: JobResult["status"]): boolean {
-  return status === "complete" || status === "error" || status === "cancelled" || status === "awaiting_review";
+/**
+ * Frames at which the stream closes: terminal, plus a gate pause (which has no worker to report) — EXCEPT a Full-auto
+ * park the server is about to continue (08-30, `autoAdvancing`): that run is moving, and the server keeps the stream
+ * open into its next step, so the client must keep reading it too.
+ */
+function isClosing(frame: Pick<JobResult, "status" | "autoAdvancing">): boolean {
+  const { status } = frame;
+  if (status === "awaiting_review") return !frame.autoAdvancing;
+  return status === "complete" || status === "error" || status === "cancelled";
 }
 
 // `instant` shows the finished result immediately, skipping the demo replay animation — used by the demo
@@ -166,7 +172,7 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
           if (data.status === "error") {
             setError({ message: data.errorMessage ?? "Harmonization failed" });
           }
-          if (isClosing(data.status)) {
+          if (isClosing(data)) {
             // `awaiting_review` closes too: a gate pause is an EXIT (08 D-01), so there is no worker left
             // to report progress and holding the stream open would poll a dead run forever. It is NOT
             // terminal, though — `done` stays false so a resumed leg reconnects normally.
@@ -218,7 +224,7 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
         if (cancelled || !mountedRef.current) return;
         setJobState(data);
         if (data.status === "error") setError({ message: data.errorMessage ?? "Harmonization failed" });
-        if (isClosing(data.status)) {
+        if (isClosing(data)) {
           if (data.status !== "awaiting_review") setDone(true);
           setPolling(false);
           setReconnecting(false);
