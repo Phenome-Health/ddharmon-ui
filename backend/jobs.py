@@ -260,7 +260,11 @@ class Job:
 
             decisions = _verdicts_to_legacy(artifacts.get(VERDICT, []))
             ideas_artifact = artifacts.get(ANALYSIS_IDEAS)
-            analysis_ideas = (ideas_artifact or {}).get("ideas") if ideas_artifact else None
+            if ideas_artifact:
+                analysis_ideas = ideas_artifact.get("ideas")
+            elif not _is_pinned(self):
+                # A pinned demo keeps its own: its ideas are pre-generated and shipped with it, not anyone's work.
+                analysis_ideas = None
             # A list, and `None` when the user has none — the panel distinguishes "no composites yet" from
             # "an empty list", and the pre-artifact wire contract used null for the former.
             composites = artifacts.get(COMPOSITE) or None

@@ -27,6 +27,8 @@ from backend.jobs import AWAITING_REVIEW, JobStore
 from tests.test_full_auto import SECRET, _settled, _start, _wait, rig, two_clusters  # noqa: F401
 
 REPO = Path(__file__).resolve().parents[1]
+# The demo's pre-generated analysis ideas, shipped in the sidecar beside the snapshot.
+IDEAS = [{"title": "Pooled prevalence of X", "concepts": ["X"], "cohorts": ["A", "B"]}]
 
 
 def _builder():
@@ -96,6 +98,7 @@ def seeded(built, monkeypatch, tmp_path):
         "combos": [{"datasets": ["cohorta", "cohortb"], "snapshot": "cohorta_cohortb.json", "label": "A + B"}],
     }
     (demo_dir / "manifest.json").write_text(json.dumps(manifest))
+    (demo_dir / "analysis_ideas.json").write_text(json.dumps({"cohorta_cohortb.json": IDEAS}))
     monkeypatch.setattr(demos_module, "_DIR", demo_dir)
     monkeypatch.setattr(demos_module, "_MANIFEST", demo_dir / "manifest.json")
     monkeypatch.setattr(demos_module, "_IDEAS", demo_dir / "analysis_ideas.json")
@@ -154,6 +157,20 @@ def test_a_guest_walks_every_gate_and_nothing_persists(seeded, monkeypatch):
     assert (job.status, job.gate_position) == (AWAITING_REVIEW, "gate4")
     assert {p: p.read_bytes() for p in (work / demo_id).iterdir()} == before, "the demo's files changed"
     assert app_module.store.artifacts_for(job, None) == {}
+
+
+def test_a_guest_sees_the_staged_demos_pregenerated_analysis_ideas(seeded):
+    """Gate 4 hosts the ideas, so a demo parked there shows the ones baked for it — with no LLM call.
+
+    Two drops used to hide them: the staged seeding path never received the ideas, and the result read blanked
+    them, because a demo's per-user work resolves to ``{}``. The ideas are shipped content, not anyone's work.
+    """
+    client, _snap, demo_id, _work = seeded
+    assert app_module.store.get(demo_id).analysis_ideas == IDEAS
+    assert client.get(f"/api/harmonize/result/{demo_id}").json()["analysisIdeas"] == IDEAS
+    # The panel's read is served from the shipped ideas: cached, never a paid pass.
+    r = client.post(f"/api/harmonize/jobs/{demo_id}/analysis-ideas")
+    assert r.status_code == 200 and r.json() == {"ideas": IDEAS, "cached": True}
 
 
 def test_loading_a_staged_demo_returns_it_without_a_replay(seeded):

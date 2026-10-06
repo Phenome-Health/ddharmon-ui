@@ -147,11 +147,9 @@ def test_list_demos_matches_manifest():
 
 
 def test_seed_demos_surfaces_pregenerated_analysis_ideas(tmp_path):
-    """A seeded FINISHED demo carries its PRE-GENERATED analysis ideas (from the sidecar) so a guest sees them
-    without an LLM call — surfaced both on the Job and via to_dict()'s analysisIdeas.
-
-    A STAGED demo (08-30) is parked at Gate 4 and never completes, and ideas are a finished run's; ``seed_snapshot``
-    attaches none to it (the sidecar was generated for the earlier finished snapshot's records)."""
+    """A seeded demo carries its PRE-GENERATED analysis ideas (from the sidecar) so a guest sees them without an
+    LLM call — surfaced both on the Job and via to_dict()'s analysisIdeas. That holds for a STAGED demo (08-30)
+    too: it is parked at Gate 4, which is where the ideas live."""
     from backend.demos import _load_demo_ideas, demo_job_id, seed_demos
     from backend.jobs import JobStore
 
@@ -165,11 +163,26 @@ def test_seed_demos_surfaces_pregenerated_analysis_ideas(tmp_path):
             continue
         job = store.get(demo_job_id(combo["datasets"]))
         assert job is not None
-        if is_staged(load_snapshot(combo["datasets"])):
-            assert job.analysis_ideas is None
-            continue
         assert job.analysis_ideas == expected  # pre-generated ideas set on the demo job
         assert job.to_dict()["analysisIdeas"] == expected  # ...and streamed to the client
     # The shipped 5-cohort demo must actually carry ideas (guards against a missing/empty sidecar).
     shipped = ideas_by_snapshot.get("aireadi_aou_clsa_mesa_ukbb.json")
     assert shipped and len(shipped) > 0
+
+
+def test_the_shipped_demo_ideas_cite_only_the_shipped_snapshots_concepts():
+    """The sidecar is keyed by snapshot FILENAME, so a demo rebuilt under the same name silently keeps the old
+    run's ideas. The 2026-10-06 staged rebuild did exactly that: its ideas cited 64 concepts, 5 of which the new
+    run had. After a rebuild, regenerate the ideas — every concept an idea cites must be one of the run's own."""
+    from backend.demos import _load_demo_ideas
+
+    ideas_by_snapshot = _load_demo_ideas()
+    for combo in list_demos()["combos"]:
+        ideas = ideas_by_snapshot.get(combo["snapshot"])
+        if not combo.get("available") or not ideas:
+            continue
+        snap = load_snapshot(combo["datasets"]) or {}
+        concepts = {(r.get("concept") or "").strip() for r in snap.get("result", snap).get("records", [])}
+        cited = [c for idea in ideas for c in idea.get("concepts", [])]
+        stale = [c for c in cited if c not in concepts]
+        assert cited and not stale, f"{combo['snapshot']}: ideas cite concepts its run lacks: {stale[:3]}"

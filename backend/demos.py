@@ -199,7 +199,7 @@ def seed_snapshot(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: 
     store without one (a bare test store) has nowhere to put them.
     """
     if is_staged(snap):
-        return _seed_staged(store, job_id, snap)
+        return _seed_staged(store, job_id, snap, ideas=ideas)
     result = snap.get("result", snap)
     display = snap.get("displayName") or "Demo run"
     datasets = snap.get("datasets") or []
@@ -211,13 +211,14 @@ def seed_snapshot(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: 
     return True
 
 
-def _seed_staged(store: JobStore, job_id: str, snap: dict[str, Any]) -> bool:
+def _seed_staged(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: Any = None) -> bool:
     """Write the four gate checkpoints to the demo's work dir, then park the pinned run at Gate 4 over them.
 
     The run is created ``demo: True``, which is what makes it immutable (every write refused), TTL-exempt and
     never persisted to the durable store — so a restart re-seeds it from the shipped file, exactly as before.
     Its realized cost is what the run cost to BUILD (shown on the rail as what each gate spent); a guest is
-    never charged anything, since a pinned run cannot be resumed.
+    never charged anything, since a pinned run cannot be resumed. Gate 4 hosts the analysis ideas, so the
+    pre-generated ones ride along, as they do on a finished demo.
     """
     from backend.checkpoint import checkpoint_path, write_checkpoint
 
@@ -240,4 +241,6 @@ def _seed_staged(store: JobStore, job_id: str, snap: dict[str, Any]) -> bool:
     # Relative to the work root, like every other run's pointer (see backend/checkpoint.py).
     ref = f"{job_id}/{checkpoint_path(work, STAGED_DEMO_GATE).name}"
     store.checkpoint(job_id, gate=STAGED_DEMO_GATE, checkpoint_ref=ref, realized_cost=cost)
+    if ideas:
+        store.update(job_id, analysis_ideas=ideas)
     return True
