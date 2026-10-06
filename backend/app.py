@@ -73,7 +73,7 @@ from backend.checkpoint import (
     write_checkpoint,
 )
 from backend.db import JobDB
-from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
+from backend.demos import demo_job_id, is_staged, list_demos, load_snapshot, seed_demos, seed_snapshot
 from backend.engine import CONTRACT_VERSION
 from backend.engine.adapter import cost_block, load_spec
 from backend.jobs import (
@@ -1862,14 +1862,16 @@ def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
     source = store.get(job_id)
     if source is None or not _visible_to(source, subject):
         raise HTTPException(status_code=404, detail="Job not found")
-    if source.result is None:
+    # A run parked at a gate keeps its result in the checkpoint, not the row (D-02) — the staged demo always is.
+    source_result = _export_payload(source)
+    if source_result is None:
         raise HTTPException(status_code=409, detail="This run has no result to copy yet.")
     carried = _checked_clone_artifacts(body.artifacts or [])
 
     new_id = uuid.uuid4().hex[:12]
     # Deep copy: a shallow one leaves the copy sharing the demo's record list, so editing the copy would
     # mutate the canonical demo for everyone — the very thing this design exists to prevent.
-    result = deepcopy(source.result)
+    result = deepcopy(source_result)
     records = result.get("records") or []
     by_id = {r.get("id"): i for i, r in enumerate(records)}
     for patch in body.recordPatches or []:
@@ -3289,6 +3291,13 @@ def start_demo(body: DemoBody) -> dict[str, str]:
         )
     result = snap.get("result", snap)
     job_id = demo_job_id(body.datasets)
+    if is_staged(snap):
+        # A STAGED demo is walked gate by gate, not replayed (08-30): it is the run parked at Gate 4 that boot
+        # seeded, read-only, and there is nothing to reset — a guest's edits live in their own tab. Seeded here
+        # only if it is somehow absent.
+        if store.get(job_id) is None and not seed_snapshot(store, job_id, snap):
+            raise HTTPException(status_code=503, detail="The demo could not be prepared on this server.")
+        return {"jobId": job_id}
     display = snap.get("displayName") or "Demo run"
     store.delete(job_id)  # reset any prior replay of this same demo (idempotent → one Runs entry)
     store.create(job_id, display, {"demo": True, "datasets": sorted(body.datasets), "mode": result.get("mode")})
