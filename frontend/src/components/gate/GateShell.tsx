@@ -4,7 +4,6 @@ import { Link } from "wouter";
 import { pathForGate, railReachOf } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult } from "@/types";
-import { PhMark } from "@/components/ph-logo";
 import { StopRunAction } from "@/components/stop-run-action";
 import { GATE_LABELS, GateRail, type GateRailItem } from "@/components/gate/GateRail";
 import { HowToPanel } from "@/components/gate/HowToPanel";
@@ -16,7 +15,6 @@ import { stopCostSplit } from "@/lib/estimate";
 import { railCosts, realizedRailArgs, type RailCostArgs } from "@/lib/gate-rail";
 import {
   AUTO_ACCEPTED_LABEL,
-  DEMO_PRACTICE_COPY,
   autoPausedReason,
   gateLabel,
   isAutoAccepted,
@@ -32,12 +30,14 @@ import { isInFlight } from "@/lib/run-state";
  *
  *  1. **App bar.** Split, deliberately. The Phenome Health secondary lockup (icon + wordmark — the brand
  *     rule is that the wordmark never appears without the icon), the divider and the `ddharmon` wordmark
- *     are rendered ONCE by `AppShell`, which wraps every route including these. This component adds the
- *     two parts AppShell does not have: the tagline and the run chip. Rendering a second lockup here would
- *     put two Phenome Health marks on one screen, which is a brand defect, not extra compliance.
- *  2. **Masthead** — eyebrow (`Gate N of 4`), display h1, one-sentence subhead.
- *  3. **Gate rail** — five columns, always. See `GateRail`.
- *  4. **How-to panel** — on the ground, above the working surface. See `HowToPanel`.
+ *     are rendered ONCE by `AppShell`, which wraps every route including these. This component adds only
+ *     the run chip (and the stop control). The tagline and its mark were removed on 2026-10-06.
+ *  2. **No masthead.** The eyebrow, display title and subhead were removed on 2026-10-06 (Bhargav: "rail
+ *     shows this already"). The screen keeps ONE visually hidden h1 — the gate's name — for assistive
+ *     technology, and the subhead moved into the how-to panel as its opening line.
+ *  3. **Gate rail** — five columns, always, and PINNED to the top of the scroll container so scrolling never
+ *     hides where the reviewer is in the flow. See `GateRail`.
+ *  4. **How-to panel** — on the ground, above the working surface, OPEN by default. See `HowToPanel`.
  *  5. **Banner slots** — the sandbox banner and the resume banner (rendered here from `resumed`). Plus the
  *     two-tab conflict notice (`ConflictNotice`), which every decision hook on the screen feeds — see
  *     `lib/gate-conflicts.ts`. The sandbox banner is rendered HERE for any run whose config says it is the
@@ -63,29 +63,19 @@ import { isInFlight } from "@/lib/run-state";
  * in any string it renders (UI-SPEC §7.2). `scripts/leak_scan.py --profile public` gates it.
  *
  * EMPTY AND OVERFLOW STATES are handled here rather than left to each page: no run in progress renders no
- * run chip at all; a long run name and the tagline are both clamped to one line with the full value on
- * `title`, so the bar's height can never reflow.
+ * run chip at all; a long run name is clamped to one line with the full value on `title`, so the bar's
+ * height can never reflow.
  */
-
-/**
- * UI-SPEC §7.1.2 — the eyebrow. Setup is not "Gate N", so it says what it is.
- *
- * CHECKED AND DELIBERATELY LEFT ALONE at the Gate 0 demotion (2026-08-26). It already formatted every
- * non-Setup position as `N of 4`, which was one gate short while `gate0` was on the rail and became
- * correct by itself the moment it came off: the four remaining gates read `Gate 1 of 4` … `Gate 4 of 4`.
- * A correct-looking string with no explanation is the kind of thing a later reader "fixes", so this note
- * is the explanation. `gates.spec.ts` reads the rendered eyebrow on all five screens.
- */
-function eyebrowFor(gate: GatePosition): string {
-  return gate === "setup" ? "Set up" : `Gate ${gate.slice(4)} of 4`;
-}
 
 export interface GateShellProps {
   gate: GatePosition;
-  /** Display h1. Defaults to the gate's rail label so a page cannot silently render an unnamed screen. */
+  /** The screen's (visually hidden) h1. Defaults to the gate's rail label so no screen is unnamed. */
   title?: string;
-  /** One sentence. What this screen is for, in the reviewer's terms. */
-  subhead: string;
+  /**
+   * One sentence: what this screen is for, in the reviewer's terms. Rendered as the how-to panel's opening
+   * line. Omit it where another element on the screen already says it.
+   */
+  subhead?: string;
   /**
    * The five rail columns, for a shell with NO run behind it. With a `job` the shell derives the rail itself
    * (`runRailFor`), because the rail is the RUN's state — what it has spent and how far it has got — and a page
@@ -171,85 +161,83 @@ export function GateShell({
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
-  return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-8">
-      {/* (1) The gate app bar: the tagline and the run chip. The lockup and wordmark come from AppShell. */}
-      <div className="flex h-8 items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <PhMark tone="ground" aria-hidden="true" className="h-4 w-4 shrink-0" />
-          <span className="truncate text-xs text-on-field-muted" title="Harmonize data dictionaries against common data elements">
-            Harmonize data dictionaries against common data elements
-          </span>
-        </div>
-        <div className="flex min-w-0 shrink items-center gap-2">
+  /**
+   * (1) THE RUN LINE, inside the rail (2026-10-06, Bhargav: "move into the rail, should apply to all runs"). The run
+   * chip and the stop control used to sit on their own app-bar row; with the tagline gone that row held one chip.
+   * They now ride on the rail's navy box, pinned with it, so the run's name and spend stay in view while scrolling.
+   * Re-toned for the dark ground. Nothing renders when there is no run and nothing to stop.
+   */
+  const stopControl =
+    inFlight && isDemo ? (
+      <span
+        data-testid="stop-unavailable"
+        className="shrink-0 rounded-pill border border-dashed border-rule-on-chrome px-3 py-1 text-xs text-on-chrome-muted"
+      >
+        Stopping is not available on the shared sample — it replays in your browser and spends nothing,
+        so there is nothing to stop. Start your own run to get the control.
+      </span>
+    ) : inFlight && !isDemo && onStop && job ? (
+      job.stopping ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-on-chrome-muted">
+          <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> Stopping&hellip;
+        </span>
+      ) : (
+        // THE STOP CONTROL. Offered only while a worker is actually running: absent — not disabled, not an error —
+        // when there is nothing to stop. Once a stop is acknowledged the run reports `stopping` until it reaches its
+        // checkpoint, so the control is swapped for an indicator and cannot be re-fired.
+        <StopRunAction
+          labeled
+          displayName={job.displayName}
+          costNote={stopCostSplit(job.config, job.phase)}
+          onKeep={() => onStop("keep")}
+          onDiscard={() => onStop("discard")}
+        />
+      )
+    ) : null;
+  const runLine =
+    runName || stopControl ? (
+      <div className="flex min-w-0 items-center justify-between gap-4">
         {/* No run in progress -> no chip. An empty chip is worse than none: it reads as a run with no name. */}
-        {runName && (
-          <span
-            data-testid="run-chip"
-            title={runName}
-            className="flex min-w-0 shrink items-center gap-2 rounded-pill border border-rule-on-field bg-on-field/5 px-3 py-1"
-          >
-            <span className="max-w-[22rem] truncate text-xs font-semibold text-on-field">{runName}</span>
-            <span className="shrink-0 text-xs tabular-nums text-on-field-muted">
+        {runName ? (
+          <span data-testid="run-chip" title={runName} className="flex min-w-0 shrink items-center gap-2">
+            <span className="max-w-[40rem] truncate text-xs font-semibold text-on-chrome">{runName}</span>
+            <span className="shrink-0 text-xs tabular-nums text-on-chrome-muted">
               {costSoFar > 0 ? `spent ${formatUsd(costSoFar)}` : "nothing charged yet"}
             </span>
           </span>
+        ) : (
+          <span />
         )}
-
-        {/* THE STOP CONTROL. Offered only while a worker is actually running: absent — not disabled, not
-            an error — when there is nothing to stop, because a dead control implies the run is in a state
-            it is not in. Once a stop is acknowledged the run reports `stopping` until it reaches its
-            checkpoint, so the control is swapped for an indicator and cannot be re-fired. */}
-        {inFlight && isDemo && (
-          <span
-            data-testid="stop-unavailable"
-            className="shrink-0 rounded-pill border border-dashed border-rule-on-field px-3 py-1 text-xs text-on-field-muted"
-          >
-            Stopping is not available on the shared sample — it replays in your browser and spends nothing,
-            so there is nothing to stop. Start your own run to get the control.
-          </span>
-        )}
-        {inFlight && !isDemo && onStop && job && (
-          job.stopping ? (
-            <span className="flex shrink-0 items-center gap-1.5 text-xs text-on-field-muted">
-              <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> Stopping&hellip;
-            </span>
-          ) : (
-            <StopRunAction
-              labeled
-              displayName={job.displayName}
-              costNote={stopCostSplit(job.config, job.phase)}
-              onKeep={() => onStop("keep")}
-              onDiscard={() => onStop("discard")}
-            />
-          )
-        )}
-        </div>
+        {stopControl}
       </div>
-
+    ) : null;
+  return (
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-8">
       {/* The shared-demo banner (UI-SPEC §8.5): persistent, in the flow, never a modal — on every screen. */}
       {sandboxBanner ?? (isDemo && jobId ? <SandboxBanner jobId={jobId} sourceName={job?.displayName} /> : null)}
-      {resumed && <ResumeBanner gate={gate} costSoFar={costSoFar} />}
+      {/* Not on the demo: it was BUILT parked at its gate — the guest did not stop anywhere to resume from. */}
+      {resumed && !isDemo && <ResumeBanner gate={gate} costSoFar={costSoFar} />}
       {/* The two-tab notice (UI-SPEC §8.4, 08-28 3f): ONE placement, every screen — fixed to the viewport, so it
           renders nothing here in the flow and nothing at all until a save on this run replaced an unseen one. */}
       {jobId && <ConflictNotice jobId={jobId} />}
 
-      {/* (2) Masthead. */}
-      <header className="flex flex-col gap-2">
-        <p className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">{eyebrowFor(gate)}</p>
-        <h1 className="font-display text-display font-semibold text-on-field">{title ?? GATE_LABELS[gate]}</h1>
-        <p className="max-w-[68ch] text-sm text-on-field-muted">{subhead}</p>
-      </header>
+      {/* (2) No visible masthead: the rail names the screen. One hidden h1 keeps it named for assistive tech. */}
+      <h1 className="sr-only">{title ?? GATE_LABELS[gate]}</h1>
 
       {/* (3) The rail, then (4) the how-to panel — both on the ground, above the working surface. */}
       {/* Reachability reads `railReachOf`, not the raw position: a FINISHED run (the shared demo every guest walks)
           carries none, and has reached every gate (08-18). Freezing above still reads the raw position. */}
-      <GateRail
-        current={gate}
-        items={job ? runRailFor(gate, job, costSoFar) : (rail ?? railFor(gate))}
-        jobId={jobId}
-        runPosition={railReachOf(job)}
-      />
+      {/* PINNED (2026-10-06): sticky at the top of AppShell's scrolling <main>, on the ground colour, so the
+          working surface scrolls beneath it rather than showing around its rounded corners. */}
+      <div data-testid="gate-rail-pin" className="sticky top-0 z-30 -my-3 bg-surface-field py-3">
+        <GateRail
+          current={gate}
+          items={job ? runRailFor(gate, job, costSoFar) : (rail ?? railFor(gate))}
+          jobId={jobId}
+          runPosition={railReachOf(job)}
+          header={runLine}
+        />
+      </div>
 
       {frozen && !autoAccepted && <FrozenNotice jobId={jobId} runPosition={runPosition} />}
       {autoAccepted && <AutoAcceptedBanner gate={gate} demo={isDemo} />}
@@ -268,7 +256,7 @@ export function GateShell({
           single call site — the same rule and the same reason as the stop control above. */}
       <RunProgress job={job} />
 
-      <HowToPanel gate={gate} />
+      <HowToPanel gate={gate} lead={subhead} />
 
       {/* The working surface. */}
       <div className={cn("flex flex-col gap-6")}>{children}</div>
@@ -315,8 +303,9 @@ function FrozenNotice({ jobId, runPosition }: { jobId?: string; runPosition: Gat
  * demo everything can, in the tab only, so it says that instead.
  */
 function AutoAcceptedBanner({ gate, demo }: { gate: GatePosition; demo: boolean }) {
+  // On the demo the sandbox banner says what can be done here (anything, in the tab), so this says nothing more.
   const what = demo
-    ? DEMO_PRACTICE_COPY
+    ? null
     : gate === "gate1"
       ? "You can still rename its groups. The groups themselves stay as committed — every one was sent on — because changing them would need those groups re-run, which is not available yet."
       : "You can still review it: what you change here is recorded and goes into the export, though nothing is re-run.";

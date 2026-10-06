@@ -32,7 +32,6 @@ import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CarveProposal } from "@/components/gate/CarveProposal";
 import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
-import { GroupingStrip } from "@/components/gate/GroupingStrip";
 import { BreadthFilter } from "@/components/gate/BreadthFilter";
 import {
   MEMBER_DRAG_TYPE,
@@ -52,7 +51,6 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
-import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
 import {
@@ -125,7 +123,15 @@ import type {
  * with a forecast would imply the reviewer is scoping before any money moved. What is still true, and is
  * the honest claim, is that they scope before the *bulk*: assignment is 77% of the run.
  *
- * NO CLUSTER-SIZE CONTROL, EVER. See `GroupingStrip` for the three reasons.
+ * NO CLUSTER-SIZE CONTROL, EVER (D-17), for three independent reasons any one of which would be sufficient:
+ *   1. Re-clustering INVALIDATES THE FROZEN SUBSTRATE. UMAP + HDBSCAN is not bit-reproducible, so a partition
+ *      cannot be recovered by re-running with the same parameters — the run would be a different run.
+ *   2. It RE-PAYS the clustering step and strands every decision already made: a scope or a regroup is keyed
+ *      to a group that no longer exists under the new partition.
+ *   3. The public design page publishes a hand-tuned cluster size as the REJECTED alternative; a slider here
+ *      would contradict a live public claim about how the tool works.
+ * A group is reshaped by moving variables into or out of it. (The four-figure grouping strip that carried this
+ * note was removed on 2026-10-06: its totals moved into the queue header, beside the list they count.)
  */
 
 /** The two things a scope decision can say. Written out so the payload and the UI cannot disagree. */
@@ -3339,7 +3345,7 @@ export default function Gate1Page() {
       gate="gate1"
       // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
       jobId={jobId}
-      subhead="Each row is a group of variables that mean the same thing, with the name ddharmon generated for it. Choose which ones go on to be matched against common data elements."
+      subhead="Each row is a group of variables that mean the same thing, named by ddharmon."
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
@@ -3422,18 +3428,6 @@ export default function Gate1Page() {
           });
         }}
       />
-
-      {/* FOUR ZEROES ARE A CLAIM TOO. "0 concept groups · 0 parent clusters · 0 variables" reads as
-          "this run measured nothing", which is the same lie as the empty ledger and just as loud, so the
-          strip is withheld until the run has actually produced figures. */}
-      {!awaitingRun && !stoppedBeforeGate && (
-        <GroupingStrip
-          nGroups={groups.length}
-          nClusters={clusters}
-          nVariables={variables}
-          nCrossCohort={nCrossCohort}
-        />
-      )}
 
       {/* No groups to lay out — waiting, stopped, or an all-outliers run. Full width, not a pane. */}
       {awaitingRun ? (
@@ -3572,6 +3566,8 @@ export default function Gate1Page() {
                 }
                 count={visible.length}
                 total={groups.length}
+                totalVariables={variables}
+                crossCohortTotal={nCrossCohort}
                 crossCohortOnly={xcOnly}
                 onCrossCohortOnlyChange={setXcOnly}
                 verdict={
@@ -3922,7 +3918,6 @@ export default function Gate1Page() {
         // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
         // cost there would claim a purchase that does not happen.
         total={pinned !== true && groups.length > 0 ? quote : undefined}
-        assurance={pinned === true ? DEMO_CONTINUE_NOTE : undefined}
         // `spentHere` is DELIBERATELY OMITTED here, and only on this screen. The ledger's sum block
         // directly above already leads with the realized figure — that placement is the requirement, not
         // a preference — so passing it to the bar as well rendered the same fact twice, in two different

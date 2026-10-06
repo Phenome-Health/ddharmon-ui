@@ -7,7 +7,6 @@ import { RAIL_SEQUENCE, nextRailGate, railReachOf } from "@/lib/gate-routes";
 import type { JobResult } from "@/types";
 import { FINISHED_JOB, PAUSED_JOB, finishedFixture, pausedFixture } from "./gate23-fixture";
 import {
-  DEMO_CONTINUE_NOTE,
   SANDBOX_BANNER_COPY,
   SANDBOX_PREFIX,
   cloneRequestFor,
@@ -351,8 +350,10 @@ test.describe("guest sandbox — the sign-in prompt", () => {
       title: "Sign in to do this.",
       body: "You can walk every gate on the demo without an account — downloading the export needs one.",
     });
+    // The demo's ONE statement of what it is (2026-10-06): it absorbed the commit bar's "continuing spends nothing"
+    // note and the Full-auto banner's practice sentence, which said the same thing twice more.
     expect(SANDBOX_BANNER_COPY).toBe(
-      "This is the shared demo. Your changes are yours alone, are not saved, and disappear when you close the tab — clone it to keep them.",
+      "This is the shared demo. Try any control: nothing is charged or re-run, and your changes stay in this tab until you close it — clone it to keep them.",
     );
   });
 });
@@ -373,7 +374,7 @@ test.describe("guest sandbox — the walk", () => {
 
   test("@sandbox the demo's Continue walks to the next screen on the rail, and Gate 4 is the end", () => {
     expect(RAIL_SEQUENCE.map(nextRailGate)).toEqual(["gate1", "gate2", "gate3", "gate4", null]);
-    expect(DEMO_CONTINUE_NOTE).toMatch(/spends nothing/);
+    expect(SANDBOX_BANNER_COPY).toMatch(/nothing is charged/);
   });
 });
 
@@ -447,7 +448,9 @@ test.describe("guest sandbox — on screen", () => {
     const bar = page.locator("[data-testid='commit-bar']");
     // No amount on the demo's bar: the press buys nothing, so quoting one would be a false claim.
     await expect(bar).toHaveAttribute("data-total", "");
-    await expect(bar).toContainText(DEMO_CONTINUE_NOTE);
+    // Said once, in the sandbox banner — the bar does not repeat it (2026-10-06).
+    await expect(bar.locator("[data-testid='commit-assurance']")).toHaveCount(0);
+    await expect(page.getByTestId("sandbox-banner")).toContainText(/nothing is charged/);
     await bar.getByRole("button", { name: /Continue to Gate 2/ }).click();
     await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate2$`));
 

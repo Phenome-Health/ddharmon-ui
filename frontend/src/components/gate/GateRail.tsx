@@ -131,6 +131,7 @@ export function GateRail({
   className,
   jobId,
   runPosition,
+  header,
 }: {
   current: GatePosition;
   /** One entry per gate, in order. Exactly five; a short list is a bug, not a collapsed rail. */
@@ -143,14 +144,14 @@ export function GateRail({
   jobId?: string;
   /** Where the run actually is. Gates at or behind it are reachable; gates ahead of it are not. */
   runPosition?: GatePosition | null;
+  /** A line above the five columns, on the same navy box — the run's name, spend and stop control (2026-10-06). */
+  header?: React.ReactNode;
 }) {
   const currentIndex = GATE_SEQUENCE.indexOf(current);
   return (
-    <ol
-      aria-label="Review gates"
-      data-testid="gate-rail"
-      className={cn("grid grid-cols-5 gap-1 rounded-card bg-surface-chrome p-2", className)}
-    >
+    <div data-testid="gate-rail-box" className={cn("flex flex-col gap-1 rounded-card bg-surface-chrome p-2", className)}>
+    {header && <div className="px-3 pb-1 pt-1.5">{header}</div>}
+    <ol aria-label="Review gates" data-testid="gate-rail" className="grid grid-cols-5 gap-1">
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
         const isDone = i < currentIndex;
@@ -214,5 +215,6 @@ export function GateRail({
         );
       })}
     </ol>
+    </div>
   );
 }

@@ -62,7 +62,7 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   // NEVER RENDERED. Kept only because `GatePosition` still carries the position — see the docstring.
   gate0: [{ text: "This screen was retired; the run pauses at this point on Set up instead." }],
   gate1: [
-    { text: "Read the grouping strip: how many concept groups formed, and from how many clusters." },
+    { text: "Check the totals above the list, and how many groups span two or more cohorts." },
     { text: "Search for the concepts you care about, one term per line." },
     { text: "Tick the groups you want to take to Gate 2." },
     { text: "Open a group to see every variable in it and any proposed division." },
@@ -99,8 +99,13 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   ],
 };
 
-export function HowToPanel({ gate, className }: { gate: GatePosition; className?: string }) {
-  const [open, setOpen] = useState(false);
+/**
+ * OPEN BY DEFAULT (2026-10-06, Bhargav). The masthead's subhead now arrives as `lead`, so this panel is the
+ * screen's one statement of what it is for and what to do; folding it away by default hid exactly the text a
+ * first-time reviewer needs. It can still be folded for the visit.
+ */
+export function HowToPanel({ gate, lead, className }: { gate: GatePosition; lead?: string; className?: string }) {
+  const [open, setOpen] = useState(true);
   const steps = HOW_TO[gate];
   return (
     <Collapsible
@@ -126,6 +131,11 @@ export function HowToPanel({ gate, className }: { gate: GatePosition; className?
         />
       </CollapsibleTrigger>
       <CollapsibleContent>
+        {lead && (
+          <p data-testid="how-to-lead" className="mt-3 max-w-[80ch] text-sm text-on-field">
+            {lead}
+          </p>
+        )}
         <ol className="mt-3 space-y-2">
           {steps.map((step, i) => (
             <li key={i} className="flex gap-3 text-sm text-on-field">

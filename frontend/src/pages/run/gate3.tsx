@@ -32,7 +32,6 @@ import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { isGateLocked } from "@/lib/review-mode";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { conceptTitle } from "@/lib/ledger";
-import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
@@ -1278,11 +1277,10 @@ export default function Gate3Page() {
             : undefined
         }
         assurance={
-          pastBar
+          // On the demo the sandbox banner already says nothing is charged (2026-10-06: said once).
+          pastBar || pinned === true
             ? undefined
-            : pinned === true
-              ? DEMO_CONTINUE_NOTE
-              : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
+            : "Continuing to Gate 4 buys nothing — Gate 4 is a read of what this run already produced."
         }
         keyField={keyAsk ? <RunKeyField reason={keyAsk} action={continueAction} /> : undefined}
         onCommit={onContinue}
@@ -1310,7 +1308,7 @@ function Shell({
     <GateShell
       gate="gate3"
       jobId={jobId}
-      subhead="One recode per source variable, grouped by concept. Arithmetic recodes always come to you for review."
+      subhead="Arithmetic recodes always come to you for review."
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}

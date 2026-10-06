@@ -1435,7 +1435,8 @@ export default function SetupPage() {
         stage === "preflight"
           ? "Your dictionaries are loaded, prepared and grouped, all on this machine. Commit the run's first charge when you are ready — nothing has been charged for anything so far."
           : stage === "past"
-            ? "What this run was set up with. It is a record now, not a decision — the column mapping is fixed for a run that has started, and this run is already past its first charge."
+            ? // The "moved on" notice right below the rail already says this screen is a record.
+              undefined
             : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Mark each dictionary complete to export the exact text that will be clustered — all of that is free. Nothing is charged until you press Start run."
       }
       rail={railFor("setup", realizedRailArgs(jobState?.result?.cost, costSoFar))}

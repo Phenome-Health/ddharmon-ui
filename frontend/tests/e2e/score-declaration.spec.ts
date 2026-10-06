@@ -275,6 +275,8 @@ test.describe("score strip on the static build (H4)", () => {
     const clipped = await page.locator(STATUS).evaluate((el) => el.scrollWidth > el.clientWidth);
     expect(clipped).toBe(true);
     await expect(page.locator(STATUS)).toHaveAttribute("title", `${long.trim()} · 3 components declared · not matched yet`);
+    // Compared against the how-to COLLAPSED — it opens by default since 2026-10-06.
+    await page.getByRole("button", { name: "Hide how to use this screen" }).click();
     const howto = await page.locator("[data-testid='how-to']").boundingBox();
     const strip = await page.locator("[data-testid='score-strip']").boundingBox();
     expect(Math.abs(strip!.height - howto!.height)).toBeLessThanOrEqual(2);

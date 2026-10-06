@@ -37,10 +37,6 @@ export const AUTO_ACCEPTED_LABEL = "Auto-accepted — not reviewed";
 /** The decided-by value the decision log's `after` column carries for such a gate (`AUTO_DECIDED_AFTER`). */
 export const AUTO_DECIDED_AFTER = "auto — not reviewed";
 
-/** What a gate on the shared demo says in place of what can still change on it: everything can, in the tab only. */
-export const DEMO_PRACTICE_COPY =
-  "This is the shared demo, so every control here is yours to try. What you change stays in this tab: nothing is re-run, and the next gates still show the run as it was built.";
-
 /** The gates Full auto can commit, in order. Gate 4 is the export screen; nothing is committed there. */
 export const AUTO_GATES: readonly GatePosition[] = ["gate1", "gate2", "gate3"];
 

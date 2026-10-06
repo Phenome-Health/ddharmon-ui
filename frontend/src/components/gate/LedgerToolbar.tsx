@@ -33,6 +33,10 @@ export interface LedgerToolbarProps {
   count: number;
   /** How many groups exist in total (before search/filter), so a narrowed list can say "· N shown". */
   total: number;
+  /** Variables pooled across every group — shown beside the group total. */
+  totalVariables: number;
+  /** Groups drawing on two or more cohorts — shown on the toggle that filters to exactly them. */
+  crossCohortTotal: number;
   /** Show only groups pooled from 2+ cohorts (the harmonization subset). Off shows every group. */
   crossCohortOnly: boolean;
   onCrossCohortOnlyChange: (value: boolean) => void;
@@ -46,6 +50,8 @@ export function LedgerToolbar({
   search,
   count,
   total,
+  totalVariables,
+  crossCohortTotal,
   crossCohortOnly,
   onCrossCohortOnlyChange,
   verdict,
@@ -71,6 +77,10 @@ export function LedgerToolbar({
           title="Show only concepts pooled from 2+ cohorts (the harmonization subset)"
         >
           Cross-cohort only
+          {/* The count a click narrows to, on the control itself (2026-10-06: the strip that carried it is gone). */}
+          <span data-testid="cross-cohort-count" className="ml-1.5 font-mono tabular-nums text-on-raised">
+            {crossCohortTotal}
+          </span>
         </Button>
         <Select value={verdict} onValueChange={(v) => onVerdictChange(v as CoherenceState | "all")}>
           <SelectTrigger className="h-8 w-40" data-testid="verdict-select">
@@ -85,9 +95,12 @@ export function LedgerToolbar({
             ))}
           </SelectContent>
         </Select>
-        <span className="ml-auto text-xs text-on-raised-muted">
+        <span data-testid="ledger-totals" className="ml-auto text-xs text-on-raised-muted">
           <span className="font-mono tabular-nums text-on-raised">{total}</span>{" "}
           {total === 1 ? "group" : "groups"}
+          {" · "}
+          <span className="font-mono tabular-nums text-on-raised">{totalVariables}</span>{" "}
+          {totalVariables === 1 ? "variable" : "variables"}
           {count < total && (
             <span className="text-on-raised-faint">
               {" · "}

@@ -268,19 +268,22 @@ test.describe("gate1 ledger", () => {
     expect(flaggedIds.length).toBeGreaterThan(0);
   });
 
-  test("@gate1 the grouping strip states where the groups came from and offers no cluster-size control", async ({
+  test("@gate1 the queue header carries the run's counts and the screen offers no cluster-size control", async ({
     page,
   }) => {
     await openGate1(page);
-    const strip = page.locator("[data-testid='grouping-strip']");
-    await expect(strip).toBeVisible();
-
-    // Four read-only figures.
-    await expect(strip.locator("[data-testid='strip-figure']")).toHaveCount(4);
-    // The provenance line, ALWAYS VISIBLE rather than in a tooltip: it explains what a row is.
-    const provenance = strip.locator("[data-testid='strip-provenance']");
-    await expect(provenance).toBeVisible();
-    await expect(provenance).toContainText(/moving variables/i);
+    // The four-figure strip is gone (2026-10-06 distill): its figures repeated the queue's own count and
+    // filter. What a reviewer acts on now sits where they act — the group and variable totals beside the
+    // list, the cross-cohort count on the toggle that filters to it.
+    await expect(page.locator("[data-testid='grouping-strip']")).toHaveCount(0);
+    const run = gate1Fixture().result!;
+    const groups = run.conceptGroups ?? [];
+    const nVariables = groups.reduce((n, g) => n + g.nMembers, 0);
+    const nCross = groups.filter((g) => g.crossCohort).length;
+    const totals = page.locator("[data-testid='ledger-totals']");
+    await expect(totals).toContainText(`${groups.length} groups`);
+    await expect(totals).toContainText(`${nVariables} variables`);
+    await expect(page.locator("[data-testid='cross-cohort-count']")).toHaveText(String(nCross));
 
     // D-17, and the prohibition is what survives of it: NO `min_cluster_size` control anywhere on the
     // screen. Re-clustering invalidates the frozen substrate, re-pays clustering and strands every
@@ -1967,8 +1970,8 @@ test.describe("gate 1 waiting and error states", () => {
     await expect(
       page.getByText(/dictionaries share too little text/i),
     ).toHaveCount(0);
-    // And no zeroed statistics strip, which reads as "this run measured nothing" just as loudly.
-    await expect(page.locator("[data-testid='grouping-strip']")).toHaveCount(0);
+    // And no zeroed counts, which read as "this run measured nothing" just as loudly.
+    await expect(page.locator("[data-testid='ledger-totals']")).toHaveCount(0);
   });
 
   test("@gate1 a run that DIED before reaching gate 1 says so, rather than waiting forever", async ({
@@ -1997,7 +2000,6 @@ test.describe("gate 1 waiting and error states", () => {
     await expect(page.locator("[data-testid='gate1-run-stopped']")).toHaveCount(
       0,
     );
-    await expect(page.locator("[data-testid='grouping-strip']")).toBeVisible();
   });
 
   test("@gate1 a parked run WITH groups shows the ledger and neither of the new states", async ({
@@ -3229,9 +3231,10 @@ test.describe("gate1 frozen", () => {
  * picked up — so a list that omits it is a confident wrong map rather than merely incomplete.
  */
 test.describe("gate1 how-to", () => {
+  /** Open by default since 2026-10-06; asserted rather than clicked, since a click would now close it. */
   async function openHowTo(page: Page) {
     const panel = page.getByTestId("how-to");
-    await panel.getByRole("button").first().click();
+    await expect(panel.getByRole("button", { name: "Hide how to use this screen" })).toBeVisible();
     return panel;
   }
 
@@ -4492,6 +4495,8 @@ test.describe("gate1 score panel placement", () => {
     page,
   }) => {
     await openGate1(page);
+    // The how-to opens by default (2026-10-06); its COLLAPSED height is the strip register compared here.
+    await page.getByRole("button", { name: "Hide how to use this screen" }).click();
     const howto = await page.locator("[data-testid='how-to']").boundingBox();
     const strip = await page
       .locator("[data-testid='score-strip']")

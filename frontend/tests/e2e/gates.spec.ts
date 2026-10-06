@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { asOwnedRun, serveRun } from "./gate1-fixture";
 
 /**
  * The staged-review gate walk — the tracer's end-to-end assertion.
@@ -32,6 +33,8 @@ async function conceptGroupIds(page: import("@playwright/test").Page): Promise<s
 
 test.describe("staged review", () => {
   test("@gates the reviewer can resume at gate 1 with the same concept groups after a reload", async ({ page }) => {
+    // The reviewer's OWN run: the shared demo shows no resume banner (it was built parked; nobody stopped it).
+    await serveRun(page, asOwnedRun);
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.evaluate(() => document.fonts.ready);
     await page.waitForLoadState("networkidle");
@@ -103,9 +106,8 @@ test.describe("staged review", () => {
     // Written for someone who has never used the tool: numbered actions, in order, naming their control,
     // and saying plainly when money starts being spent. Since §0.1's reversal that is the run's FIRST
     // charge, and since the Gate 0 demotion (2026-08-26) that press lives on Set up.
-    const toggle = page.getByRole("button", { name: /how to use this screen/i });
-    await expect(toggle).toBeVisible();
-    await toggle.click();
+    // Open by default (2026-10-06): the reviewer reads it without a click.
+    await expect(page.getByRole("button", { name: "Hide how to use this screen" })).toBeVisible();
     await expect(page.getByText(/already charged on Set up/i)).toBeVisible();
     // …and it does not still send the reviewer to a screen that no longer exists.
     await expect(page.getByText(/Gate 0/i)).toHaveCount(0);
@@ -137,20 +139,13 @@ test.describe("five screens", () => {
       // Resolves: NOT the 404 fallback, which is the only other thing a `/run/...` path could hit.
       await expect(page.getByText("404 — page not found")).toHaveCount(0);
 
-      // (2) Masthead: an eyebrow, a display h1 and a subhead — on every screen, not just the built one.
-      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-
-      // (2b) The eyebrow. Setup is not a gate number; the four gates read 1..4 OF FOUR. Asserted from the
-      // DOM rather than from `eyebrowFor`'s source, because the formula was deliberately left untouched by
-      // the demotion and the only evidence it is still right is what it renders.
-      // Scoped to `main`: AppShell renders its own <header> for the app bar, outside <main>.
-      const eyebrow = (await page.locator("main header p").first().textContent())?.trim() ?? "";
-      if (gate === "setup") {
-        expect(eyebrow).toBe("Set up");
-        expect(eyebrow).not.toMatch(/gate\s*\d/i);
-      } else {
-        expect(eyebrow).toBe(`Gate ${gate.slice(4)} of 4`);
-      }
+      // (2) No masthead (2026-10-06, Bhargav: "rail shows this already"). The screen keeps ONE h1 for
+      // assistive technology — the gate's name, the rail's own label — but draws no eyebrow, title or
+      // subhead, and the app bar carries no tagline. The rail is the screen's visible title.
+      const h1 = page.getByRole("heading", { level: 1 });
+      await expect(h1).toHaveCount(1);
+      await expect(h1).toHaveClass(/\bsr-only\b/);
+      await expect(page.getByText("Harmonize data dictionaries against common data elements")).toHaveCount(0);
 
       // (3) The rail is FIVE columns on every screen, and marks THIS gate for assistive technology. Five
       // regardless of how many gates are behind the reviewer: a rail that shortens as gates complete makes
@@ -177,10 +172,39 @@ test.describe("five screens", () => {
       await expect(page.locator("[data-testid='gate-rail'] li[data-state='done']")).toHaveCount(i);
       await expect(page.locator("[data-testid='gate-rail'] li[data-state='ahead']")).toHaveCount(4 - i);
 
-      // (4) The how-to panel is present on every screen.
-      await expect(page.getByRole("button", { name: /how to use this screen/i })).toBeVisible();
+      // (4) The how-to panel is present on every screen, and OPEN by default: it carries the screen's
+      // one-line purpose now that the masthead is gone.
+      await expect(page.getByRole("button", { name: "Hide how to use this screen" })).toBeVisible();
+      await expect(page.getByTestId("how-to").locator("li").first()).toBeVisible();
     });
   }
+
+  test("@gates the run chip rides in the rail, with no app-bar row above it", async ({ page }) => {
+    // Bhargav, 2026-10-06: with the tagline gone the chip sat alone on an empty row; it moved into the rail, on
+    // every run. Pinned with the rail, the run's name and spend stay in view while the screen scrolls.
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const box = page.locator("[data-testid='gate-rail-box']");
+    await expect(box.locator("[data-testid='run-chip']")).toBeVisible();
+    await expect(box.locator("[data-testid='gate-rail'] > li")).toHaveCount(5);
+    // No chip outside the rail box.
+    await expect(page.locator("[data-testid='run-chip']")).toHaveCount(1);
+  });
+
+  test("@gates the rail stays pinned at the top while the screen scrolls", async ({ page }) => {
+    // Bhargav, 2026-10-06: scrolling down must not hide where you are in the flow.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const main = page.locator("main");
+    const rail = page.locator("[data-testid='gate-rail-box']");
+    const top = (await main.boundingBox())!.y;
+    await main.evaluate((el) => el.scrollTo(0, 1200));
+    await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBeGreaterThan(300);
+    const box = (await rail.boundingBox())!;
+    expect(box.y, "the rail scrolled out of view").toBeGreaterThanOrEqual(top - 1);
+    expect(box.y - top, "the rail is not at the top of the screen").toBeLessThan(40);
+  });
 
   test("@gates five screens — a passed gate reads as realized while a future one reads as a forecast", async ({
     page,

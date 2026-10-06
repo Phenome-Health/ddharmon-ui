@@ -1572,8 +1572,14 @@ test.describe("Setup — the boundary, with the report retired", () => {
     ]) {
       await expect(page.getByTestId(id), `${id} belonged to the retired report`).toHaveCount(0);
     }
-    // And its prose is not paraphrased somewhere else on the screen either.
-    const text = await page.locator("main").innerText();
+    // And its prose is not paraphrased somewhere else on the screen either. The how-to panel is excluded: it is
+    // open by default since 2026-10-06, and its own step legitimately places the embedded-text check "before you
+    // spend" (asserted by the 08-14g how-to test below) — that is the how-to's contract, not the report's prose.
+    const text = await page.locator("main").evaluate((el) => {
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.querySelector("[data-testid='how-to']")?.remove();
+      return clone.innerText;
+    });
     expect(text).not.toMatch(/what preparation found/i);
     expect(text).not.toMatch(/before you spend/i);
   });
@@ -2478,7 +2484,8 @@ test.describe("Setup — the how-to describes the screen that exists (08-14g)", 
     await page.waitForLoadState("networkidle");
     const panel = page.getByTestId("how-to");
     await expect(panel).toBeVisible();
-    await panel.getByRole("button").first().click();
+    // Open by default since 2026-10-06 — asserted, not clicked (a click would now fold it).
+    await expect(panel.getByRole("button", { name: "Hide how to use this screen" })).toBeVisible();
     return panel;
   };
 

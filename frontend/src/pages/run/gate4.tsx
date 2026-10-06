@@ -152,7 +152,7 @@ export default function Gate4Page() {
     <GateShell
       gate="gate4"
       jobId={jobId}
-      subhead="Choose what to take away, check it before it goes, and read the decision trail behind it. Downloading is free."
+      subhead="Downloading is free."
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}

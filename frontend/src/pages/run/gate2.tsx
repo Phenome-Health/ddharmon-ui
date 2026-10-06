@@ -30,7 +30,6 @@ import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { isGateLocked } from "@/lib/review-mode";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
-import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
@@ -733,7 +732,6 @@ export default function Gate2Page() {
             ? "The last attempt to continue this run did not finish. Nothing further was charged — press Retry to run the same step again."
             : undefined
         }
-        assurance={pinned === true ? DEMO_CONTINUE_NOTE : undefined}
         keyField={keyAsk ? <RunKeyField reason={keyAsk} action={continueAction} /> : undefined}
         onCommit={onContinue}
         busy={resuming}
@@ -761,7 +759,6 @@ function Shell({
     <GateShell
       gate="gate2"
       jobId={jobId}
-      subhead="One concept at a time: the target ddharmon generated for it, the ranked catalogue candidates it was judged against, and the one you choose — or your own."
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}
