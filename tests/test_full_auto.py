@@ -293,6 +293,10 @@ def test_an_unknown_review_mode_is_refused_before_anything_is_created(rig):
         "runMode": "batch",
         "reviewMode": "auto-with-gates",
     }
+    # What the work root holds BEFORE the start: boot may already have seeded a staged demo's checkpoints there.
+    work = tmp / "work"
+    before = sorted(work.iterdir()) if work.exists() else []
+    jobs_before = {j["jobId"] for j in client.get("/api/harmonize/jobs").json()}
     r = client.post(
         "/api/harmonize/batch",
         files=[("files", ("a.csv", _CSV["a.csv"].encode(), "text/csv"))],
@@ -302,7 +306,9 @@ def test_an_unknown_review_mode_is_refused_before_anything_is_created(rig):
     assert r.status_code == 400
     assert "reviewMode" in r.json()["detail"]
     assert legs == []
-    assert not (tmp / "work").exists() or not any((tmp / "work").iterdir()), "a refused start created a run"
+    after = sorted(work.iterdir()) if work.exists() else []
+    assert after == before, "a refused start created a run"
+    assert {j["jobId"] for j in client.get("/api/harmonize/jobs").json()} == jobs_before
 
 
 # ── stopping it ─────────────────────────────────────────────────────────────────────────────────────────────
