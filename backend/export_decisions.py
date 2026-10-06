@@ -69,6 +69,7 @@ from typing import Any
 
 from backend.artifact_kinds import (
     COMPOSITE_SWAP,
+    DECISION_GATE,
     GATE1_GROUP_SCOPE,
     GATE1_NEW_GROUP,
     GATE1_REGROUP,
@@ -92,6 +93,15 @@ from backend.target_codes import in_target_codes
 GATE1_SCOPE_CONFIG_KEY = "gate1_scope"
 #: Where it freezes the regrouping the pipeline then applies (``backend/app.py::GATE1_OVERRIDES_CONFIG_KEY``).
 GATE1_OVERRIDES_CONFIG_KEY = "gate1_overrides"
+#: Which gates Full auto committed (``backend/jobs.py::GATE_DECIDED_BY_CONFIG_KEY``), ``{gate: "auto"}``.
+GATE_DECIDED_BY_CONFIG_KEY = "gate_decided_by"
+
+#: What an auto-committed gate is called in every export (08-30). Mirrored in ``frontend/src/lib/review-mode.ts``.
+AUTO_ACCEPTED_LABEL = "Auto-accepted — not reviewed"
+#: The decided-by value the decision log's ``after`` column carries for such a gate.
+AUTO_DECIDED_AFTER = "auto — not reviewed"
+#: The gates Full auto can commit, in order (Gate 4 is the export screen itself — nothing is committed there).
+_AUTO_GATES = ("gate1", "gate2", "gate3")
 
 #: The ``gate4_export_selection`` values that EXCLUDE a record. Anything else includes it.
 EXCLUDE_VALUES = frozenset({"exclude", "out"})
@@ -167,6 +177,27 @@ def _by_key(grouped: dict[str, Any], kind: str) -> dict[str, dict[str, Any]]:
         except ValueError:
             continue
     return out
+
+
+def auto_accepted_gates(config: dict[str, Any] | None) -> list[str]:
+    """The gates Full auto committed on this run, in gate order — ``[]`` for every guided run (08-30).
+
+    Nothing a guided run exports changes: each place that adds provenance checks this list first.
+    """
+    decided = (config or {}).get(GATE_DECIDED_BY_CONFIG_KEY)
+    if not isinstance(decided, dict):
+        return []
+    return [g for g in _AUTO_GATES if decided.get(g) == "auto"]
+
+
+def gate_label(gate: str) -> str:
+    """``gate2`` -> ``Gate 2``."""
+    return f"Gate {gate[4:]}" if gate.startswith("gate") else gate
+
+
+def _auto_row(gate: str) -> list[str]:
+    """The decision log's row for one auto-committed gate."""
+    return [gate_label(gate), "gate_auto_accepted", AUTO_ACCEPTED_LABEL, gate, "", AUTO_DECIDED_AFTER, "", "", "false"]
 
 
 def is_staged(gate_position: str | None, grouped: dict[str, Any]) -> bool:
@@ -603,6 +634,12 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
     passed_gate1 = isinstance((config or {}).get(GATE1_SCOPE_CONFIG_KEY), list) or isinstance(regrouping, dict)
 
     rows: list[list[str]] = []
+    # 08-30: each gate Full auto committed leads ITS gate's rows, so the log reads in gate order and says, before
+    # anything else about that gate, that nobody reviewed it. A guided run has none, and its log is unchanged.
+    auto = auto_accepted_gates(config)
+    pending = [g for g in _AUTO_GATES if g in auto]
+    if "gate1" in pending:
+        rows.append(_auto_row(pending.pop(0)))
     frozen = (config or {}).get(GATE1_SCOPE_CONFIG_KEY)
     if isinstance(frozen, list):
         rows.append(
@@ -611,7 +648,12 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
         )  # fmt: skip
 
     for kind in GATE_DECISION_KINDS:
+        owner = DECISION_GATE.get(kind, "")
+        while pending and kind != COMPOSITE_SWAP and owner >= pending[0]:
+            rows.append(_auto_row(pending.pop(0)))
         if kind == COMPOSITE_SWAP:
+            rows.extend(_auto_row(g) for g in pending)
+            pending = []
             rows.extend(_score_rows(grouped, stale))
             continue
         for item, d in _by_key(grouped, kind).items():

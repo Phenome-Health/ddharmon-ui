@@ -589,6 +589,7 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
             f"assigned to a CDE: **{summary.get('nAssigned', 0)}**  ·  "
             f"with transforms: **{summary.get('nWithTransforms', 0)}**",
             f"- Cohorts: {', '.join(summary.get('cohorts', [])) or '—'}",
+            *_auto_accepted_lines(result),
             "",
             "**How to use:** in step 1, point each `raw_*` frame at your cohort's raw data file. "
             "Run step 2 to build one harmonized frame per cohort. Value recodes and unit conversions are "
@@ -657,6 +658,18 @@ def build_notebook(result: dict[str, Any], lang: Lang, display_name: str = "") -
     cells.extend(_rejected_cells(rejected))
     cells.extend(_removed_cells(removed))
     return {"cells": cells, "metadata": _KERNELS[lang], "nbformat": 4, "nbformat_minor": 5}
+
+
+def _auto_accepted_lines(result: dict[str, Any]) -> list[str]:
+    """The header line naming the gates Full auto committed (08-30) — none at all for a guided run."""
+    gates = [g for g in result.get("autoAcceptedGates") or [] if isinstance(g, str) and g.startswith("gate")]
+    if not gates:
+        return []
+    names = ", ".join(f"Gate {g[4:]}" for g in gates)
+    return [
+        f"- **Auto-accepted — not reviewed: {names}.** This run was set to Full auto, so these gates were "
+        "committed with the pipeline's own proposals and nobody reviewed them before this notebook was made."
+    ]
 
 
 def _removed_cells(removed: list[str]) -> list[dict[str, Any]]:

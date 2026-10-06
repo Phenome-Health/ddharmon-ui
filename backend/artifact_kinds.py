@@ -217,6 +217,23 @@ DECISION_GATE: dict[str, str] = {
     GATE4_EXPORT_SELECTION: "gate4",
 }
 
+#: The decision kinds a FULL-AUTO run's passed gates still accept (08-30). Full auto commits a gate with the
+#: pipeline's own proposals and nobody reviews it, so freezing it as a record (as a reviewed gate is) would forbid
+#: the review the run skipped. These are the kinds the export applies WITHOUT re-running anything — a group's name,
+#: the Gate 2 target and its generated element, the Gate 3 recodes, how variables combine and which are removed.
+#: Gate 1's grouping (scope, moves, new groups) and the score declaration are NOT here: changing them means
+#: re-running those groups (the incremental top-up), which is not built. Mirrored in frontend/src/lib/review-mode.ts.
+AUTO_REVISABLE_KINDS: frozenset[str] = frozenset(
+    {
+        GATE1_RENAME,
+        GATE2_CANDIDATE_PICK,
+        GATE2_RELATION,
+        GATE3_SPEC_EDIT,
+        GATE3_COMBINE_RULE,
+        GATE3_MEMBER_EXCLUSION,
+    }
+)
+
 #: How each gate-decision kind derives its item key: the payload fields, in order, that name the thing
 #: decided. Held as data rather than as seven near-identical closures so the granularity rule is readable
 #: as a table - the one property a reviewer of this file needs to check.
