@@ -28,6 +28,7 @@ import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/us
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { isGateLocked } from "@/lib/review-mode";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
@@ -107,7 +108,11 @@ export default function Gate2Page() {
 
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
-  const frozen = isGatePast("gate2", (jobState?.gatePosition ?? null) as GatePosition | null);
+  const position = (jobState?.gatePosition ?? null) as GatePosition | null;
+  const past = isGatePast("gate2", position);
+  // Locked = a record that can no longer change. A gate a person continued is one; a gate Full auto committed was
+  // never reviewed, so it stays open to review (08-30) — the server's `_refuse_past_gate` draws the same line.
+  const frozen = isGateLocked("gate2", position, runConfig, "gate2_candidate_pick");
 
   // The commit bar — the one place the paid resume is issued past Gate 1 (08-23b Task 1). Mirrors Gate 1's
   // idiom exactly: the destination is the SERVER'S (resumeRun's `target`), navigation is downstream of a
@@ -119,10 +124,12 @@ export default function Gate2Page() {
   const parkedHere = jobState?.status === "awaiting_review" && jobState?.gatePosition === "gate2";
   const failedLeg = !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
   const continueAction = failedLeg ? "Retry — continue this run" : "Continue to Gate 3";
-  // A frozen Gate 2 keeps its bar, but says what its Continue did instead of offering it again (O2).
-  const pastBar = frozen
-    ? frozenContinue("gate2", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
-    : null;
+  // A passed Gate 2 keeps its bar, but says what its Continue did instead of offering it again (O2). Not on the
+  // shared demo: it is WALKED (08-18), so even a demo parked further on keeps the walk forward on this bar.
+  const pastBar =
+    past && pinned !== true
+      ? frozenContinue("gate2", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+      : null;
 
   // What pressing Continue BUYS: continuing from Gate 2 runs the work whose results Gate 3 shows (spec-gen,
   // plus the concept-match check if the run opted in), so the forecast is Gate 3's — priced on THIS run's
@@ -730,7 +737,7 @@ export default function Gate2Page() {
         keyField={keyAsk ? <RunKeyField reason={keyAsk} action={continueAction} /> : undefined}
         onCommit={onContinue}
         busy={resuming}
-        disabled={frozen || (pinned !== true && !parkedHere && !failedLeg)}
+        disabled={(past && pinned !== true) || (pinned !== true && !parkedHere && !failedLeg)}
       />
     </Shell>
   );

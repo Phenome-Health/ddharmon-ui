@@ -5,6 +5,7 @@ import { switchToSync } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatDuration, formatUsd, type JobResult } from "@/types";
 import { isInFlight } from "@/lib/run-state";
+import { AUTO_ACCEPTED_LABEL, autoGateStates, gateLabel, isAutoRun, type AutoGateState } from "@/lib/review-mode";
 import {
   elapsedSeconds,
   etaSeconds,
@@ -96,7 +97,10 @@ export function RunTimeline({
 export function RunProgress({ job, className }: { job?: JobResult | null; className?: string }) {
   // Seconds, matching the wire: `createdAt`/`updatedAt` are unix seconds.
   const [now, setNow] = useState(() => Date.now() / 1000);
-  const inFlight = isInFlight(job?.status);
+  // Full auto (08-30): a run parked ONLY while the server commits that gate and starts the next step is still moving,
+  // so the readout stays — it is the moment the reviewer most needs to see the run did not stop there.
+  const advancing = job?.status === "awaiting_review" && !!job?.autoAdvancing;
+  const inFlight = isInFlight(job?.status) || advancing;
   useEffect(() => {
     if (!inFlight) return;
     const tick = setInterval(() => setNow(Date.now() / 1000), 1000);
@@ -132,8 +136,12 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
             heard of still displays. Only the percentage uses the known ordering. */}
         <p data-testid="run-progress-stage" className="flex items-center gap-2 text-sm text-on-raised">
           <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-accent-on-raised" />
-          <span className="font-semibold capitalize">{job.phase}</span>
-          {job.total > 0 && (
+          <span className="font-semibold capitalize">
+            {advancing
+              ? `Accepting ${job.gatePosition ? gateLabel(job.gatePosition) : "this gate"} and starting the next step`
+              : job.phase}
+          </span>
+          {!advancing && job.total > 0 && (
             <span className="font-mono text-xs tabular-nums text-on-raised-muted">
               {job.completed} / {job.total}
             </span>
@@ -207,7 +215,59 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
           the verbose progress too. It hides itself when the run carries no timings, so a hydrated
           historical run stays clean, and it reuses the tick this section already owns. */}
       <RunTimeline phaseStartedAt={job.phaseStartedAt} currentPhase={job.phase} now={now} />
+
+      <AutoProgress job={job} />
     </section>
+  );
+}
+
+const AUTO_STATE_LABEL: Record<AutoGateState, string> = {
+  accepted: AUTO_ACCEPTED_LABEL,
+  running: "running now",
+  reached: "waiting here",
+  waiting: "next",
+  stopped: "not reached",
+};
+
+/**
+ * Where a FULL-AUTO run is on its walk (08-30): each gate, committed by the server, running, or still ahead — so the
+ * run is seen moving through the gates rather than stopping at them. Renders nothing for a guided run.
+ */
+export function AutoProgress({ job }: { job: JobResult }) {
+  const config = job.config as Record<string, unknown> | undefined;
+  if (!isAutoRun(config) && job.reviewMode !== "auto") return null;
+  const states = autoGateStates({ ...job, config: { review_mode: "auto", ...config } });
+  return (
+    <div data-testid="auto-progress" className="flex flex-col gap-2 border-t border-rule-on-raised pt-2">
+      <p className="max-w-[80ch] text-xs text-on-raised-muted">
+        <span className="font-semibold text-on-raised">Full auto.</span> Each gate is committed with the pipeline&rsquo;s
+        own proposals and the next step starts by itself, through to the export screen. Nobody reviews a gate before
+        it is committed; you can review each one afterwards.
+      </p>
+      <ol className="flex flex-wrap gap-2">
+        {(["gate1", "gate2", "gate3", "gate4"] as const).map((g) => (
+          <li
+            key={g}
+            data-auto-gate={g}
+            data-state={states[g]}
+            className={cn(
+              "flex items-center gap-1.5 rounded-pill border px-3 py-1 text-xs",
+              states[g] === "running"
+                ? "border-accent-on-raised text-on-raised"
+                : "border-rule-on-raised text-on-raised-muted",
+            )}
+          >
+            {states[g] === "running" ? (
+              <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin text-accent-on-raised" />
+            ) : states[g] === "accepted" ? (
+              <Check aria-hidden="true" className="h-3 w-3 text-success" />
+            ) : null}
+            <span className="font-semibold text-on-raised">{gateLabel(g)}</span>
+            <span>· {AUTO_STATE_LABEL[states[g]]}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 

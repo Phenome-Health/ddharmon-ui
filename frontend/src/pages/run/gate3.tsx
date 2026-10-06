@@ -29,6 +29,7 @@ import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/us
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { isGateLocked } from "@/lib/review-mode";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { conceptTitle } from "@/lib/ledger";
 import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
@@ -117,10 +118,11 @@ export default function Gate3Page() {
   const fieldIndex = jobState?.result?.fieldIndex ?? {};
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
-  const frozen = isGatePast(
-    "gate3",
-    (jobState?.gatePosition ?? null) as GatePosition | null,
-  );
+  const position = (jobState?.gatePosition ?? null) as GatePosition | null;
+  const past = isGatePast("gate3", position);
+  // Locked = a record that can no longer change. A gate a person continued is one; a gate Full auto committed was
+  // never reviewed, so it stays open to review (08-30) — the server's `_refuse_past_gate` draws the same line.
+  const frozen = isGateLocked("gate3", position, runConfig, "gate3_spec_edit");
 
   // The commit bar past Gate 3 (08-23b Task 1). Same paid-resume idiom as Gate 1/2, but continuing to Gate 4
   // BUYS NOTHING — Gate 4 is a pure read the backend carries forward without a worker — so the bar quotes no
@@ -135,10 +137,12 @@ export default function Gate3Page() {
   const failedLeg =
     !!jobState && isTerminal(jobState.status) && jobState.status !== "complete";
   const continueAction = failedLeg ? "Retry — continue this run" : "Continue to Gate 4";
-  // A frozen Gate 3 keeps its bar, but says what its Continue did instead of offering it again (O2).
-  const pastBar = frozen
-    ? frozenContinue("gate3", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
-    : null;
+  // A passed Gate 3 keeps its bar, but says what its Continue did instead of offering it again (O2). Not on the
+  // shared demo: it is WALKED (08-18), so even a demo parked further on keeps the walk forward on this bar.
+  const pastBar =
+    past && pinned !== true
+      ? frozenContinue("gate3", realizedRailArgs(jobState?.result?.cost, costSoFar).realizedByGate)
+      : null;
 
   async function onContinue() {
     // The shared demo is walked, not resumed (08-18) — see Gate 1's `onContinue`.
@@ -1283,7 +1287,7 @@ export default function Gate3Page() {
         keyField={keyAsk ? <RunKeyField reason={keyAsk} action={continueAction} /> : undefined}
         onCommit={onContinue}
         busy={resuming}
-        disabled={frozen || (pinned !== true && !parkedHere && !failedLeg)}
+        disabled={(past && pinned !== true) || (pinned !== true && !parkedHere && !failedLeg)}
       />
     </Shell>
   );

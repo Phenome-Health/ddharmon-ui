@@ -73,10 +73,25 @@ from backend.checkpoint import (
     write_checkpoint,
 )
 from backend.db import JobDB
-from backend.demos import demo_job_id, list_demos, load_snapshot, seed_demos
+from backend.demos import demo_job_id, is_staged, list_demos, load_snapshot, seed_demos, seed_snapshot
 from backend.engine import CONTRACT_VERSION
 from backend.engine.adapter import cost_block, load_spec
-from backend.jobs import _PINNED_CONFIG_KEYS, AWAITING_REVIEW, TERMINAL_STATES, Job, _is_pinned, principal_of, store
+from backend.jobs import (
+    _PINNED_CONFIG_KEYS,
+    AWAITING_REVIEW,
+    DECIDED_BY_AUTO,
+    GATE_DECIDED_BY_CONFIG_KEY,
+    GUIDED_REVIEW,
+    REVIEW_MODE_CONFIG_KEY,
+    REVIEW_MODES,
+    TERMINAL_STATES,
+    Job,
+    _is_pinned,
+    auto_accepted,
+    is_auto,
+    principal_of,
+    store,
+)
 from backend.llm_errors import CodedHTTPException, coded_http_error, key_required
 from backend.notebook import build_notebook
 from backend.role_requirement import role_requirement_error, zero_variable_error
@@ -527,8 +542,12 @@ async def start_batch(
     """Start a harmonization run. ``config`` is a JSON string:
 
     ``{dictionaries: [{filename, cohortName, columnRoles}], cdeSet: endorsed|full,
-       runMode: batch|sync|preview, minClusterSize: int, genTransformSpecs?: bool,
+       runMode: batch|sync|preview, reviewMode?: guided|auto, minClusterSize: int, genTransformSpecs?: bool,
        topK?: int, retrievalFloor?: float, modelTag?: str, displayName?}``
+
+    ``reviewMode`` (08-30) defaults to ``guided``: every gate waits for the reviewer's Continue. ``auto`` is Full
+    auto — each gate is committed with the pipeline's own proposals (Gate 1: every group in scope) and the next leg
+    starts by itself, until the run parks at Gate 4. Independent of ``runMode``.
 
     The pipeline requires a CDE catalog (assignment to the given backbone is the thesis) — ``cdeSet`` must be
     ``endorsed`` or ``full``, and defaults to ``full`` (:data:`DEFAULT_CDE_SET`). ``runMode`` defaults to
@@ -544,6 +563,11 @@ async def start_batch(
     # BYOK: prefer the provider-agnostic header; fall back to the legacy Anthropic-specific one. Held in memory
     # for this job only (thread kwarg below) — never written to run_config (persisted) or any log.
     effective_key = x_provider_key or x_anthropic_key
+    # The review mode is checked at the door with the other refusals that cost nothing: an unknown mode is a
+    # caller error, and guessing one would either spend without review or stop where the caller asked not to.
+    review_mode = cfg.get("reviewMode", GUIDED_REVIEW)
+    if review_mode not in REVIEW_MODES:
+        raise HTTPException(status_code=400, detail=f"reviewMode must be one of {'|'.join(REVIEW_MODES)}")
     # Pre-flight the provider key AT THE DOOR, like Continue does (08-28 1a, live verify 3 F8). A run started
     # without one used to be accepted, uploaded and embedded, and then errored in its first paid stage. Refused
     # here, before anything is created: no run row, no work dir, nothing embedded, nothing charged. A preview
@@ -637,6 +661,10 @@ async def start_batch(
         # re-run embed the text the first leg embedded even if the product default moves again (`run_prepares`).
         "preprocess": PREPARE_BEFORE_EMBED_DEFAULT,
     }
+    # Recorded only when it is not the default, so a guided run's config is byte-for-byte what it always was (an
+    # absent key reads as guided — see backend/jobs.py `review_mode_of`).
+    if review_mode != GUIDED_REVIEW:
+        run_config[REVIEW_MODE_CONFIG_KEY] = review_mode
     # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
     # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from
     # an advanced/API caller still wins. Adding a new knob here needs no frontend change.
@@ -658,11 +686,12 @@ async def start_batch(
     # Own the run (verified Clerk subject) and persist dict_specs so it can be re-run from its retained
     # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
     store.create(job_id, display, run_config, owner_subject=_subject(request), dict_specs=dict_specs)
-    # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted.
+    # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted. A
+    # Full-auto leg is also handed the continue function, which carries that same in-memory key to the next leg.
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, dict_specs, cde_spec, {**run_config, "stop_at_gate": ENTRY_GATE}),
-        kwargs={"api_key": effective_key},
+        kwargs={"api_key": effective_key, **_auto_kwargs(run_config)},
         daemon=True,
     ).start()
     return {"jobId": job_id}
@@ -740,7 +769,9 @@ async def stream(job_id: str, request: Request) -> StreamingResponse:
                 return
             # A gate pause is an EXIT (D-01): there is no worker left to report progress, so holding the
             # stream open would poll a dead run forever. Close and let the client refetch the payload.
-            if job.status == AWAITING_REVIEW:
+            # Except a Full-auto park the server is about to continue (08-30): that run is moving, and the
+            # next frames are the next leg's.
+            if job.status == AWAITING_REVIEW and not job.auto_advance:
                 return
             await asyncio.sleep(0.5)
 
@@ -1055,6 +1086,9 @@ def resume_run(
 
     Authenticated even for the demo: this is the spend path. Pressing Continue at Gate 0 is the run's FIRST
     CHARGE (UI-SPEC §0.1), so it is not a surface a guest reaches by accident.
+
+    The work itself is :func:`_continue_run` — the ONE function a gate is committed through. Full auto (08-30)
+    calls it too, from the runner, so an auto-committed gate is committed exactly as a pressed one is.
     """
     subject = _subject(request)
     job = store.get(job_id)
@@ -1063,20 +1097,96 @@ def resume_run(
     with _writable_run():
         if _is_pinned(job):
             raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be resumed — clone it first")
+    return _continue_run(
+        job_id,
+        subject=subject,
+        api_key=x_anthropic_key,
+        gate1_scope=body.gate1Scope if body is not None else None,
+    )
+
+
+class _AutoAdvanceWithdrawnError(Exception):
+    """Full auto found nothing to continue: the run was stopped, continued by hand, or moved on meanwhile.
+
+    Not a failure, so it records nothing — whoever withdrew the advance already said why.
+    """
+
+
+def _continue_run(
+    job_id: str,
+    *,
+    subject: str | None,
+    api_key: str | None,
+    gate1_scope: list[str] | None,
+    auto: bool = False,
+) -> dict[str, Any]:
+    """Commit the gate a run is parked at and start its next leg — what Continue does, callable from the server.
+
+    The HTTP route and Full auto both come through here, and through nothing else: the same reconcile, the same
+    checkpoint lock, the same $0 replay seed, the same ledger seed and the same Gate 4 pure read. ``auto`` changes
+    only WHAT is committed — the pipeline's own proposals rather than the reviewer's decisions (Gate 1: every
+    group in scope, no moves; Gate 2: the model's picks; Gate 3: the specs as drafted) — and records the gate as
+    decided by ``auto``. Refusals raise like the route's (409, the key refusal); on the ``auto`` path a run that
+    is no longer waiting to be continued raises :class:`_AutoAdvanceWithdrawnError` instead.
+    """
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != AWAITING_REVIEW or not job.gate_position:
+        if auto:
+            raise _AutoAdvanceWithdrawnError
         raise HTTPException(status_code=409, detail="This run is not paused at a gate")
     target = next_gate(job.gate_position)
     if target is None:
+        if auto:
+            raise _AutoAdvanceWithdrawnError
         raise HTTPException(status_code=409, detail="This run is at the final gate; there is nothing to resume")
     # Reconcile before the replay fuel is read, not after: a late batch result that is attached now is a
     # stage this leg replays for $0, and one attached a minute later is a stage it pays for twice.
-    _reconcile_on_open(job, api_key=x_anthropic_key)
+    _reconcile_on_open(job, api_key=api_key)
     # Everything from reading the checkpoint to handing it to the next leg happens under the run's
     # checkpoint lock (08-28 1a). A paid action billed onto this checkpoint AFTER it is read as the seed but
     # BEFORE the run leaves `awaiting_review` would land in a file the new leg never reads again, and drop
     # out of every later figure; under the lock it instead waits and is queued for the new leg's checkpoint.
     with checkpoint_lock(job_id):
-        return _resume_locked(job_id, target, subject, x_anthropic_key, body)
+        return _resume_locked(job_id, target, subject, api_key, gate1_scope, auto=auto)
+
+
+def _auto_kwargs(config: dict[str, Any]) -> dict[str, Any]:
+    """The worker keyword a Full-auto leg carries: the continue function. Nothing at all for a guided leg."""
+    return {"auto_advance": _auto_continue} if is_auto(config) else {}
+
+
+def _gate_label(gate: str | None) -> str:
+    return f"Gate {gate[4:]}" if gate and gate.startswith("gate") else "this gate"
+
+
+def _auto_continue(job_id: str, api_key: str | None) -> None:
+    """Full auto's step (08-30): commit the gate the run just parked at with the pipeline's own proposals.
+
+    Called by the runner after a Full-auto leg parks cleanly, with that leg's in-memory key. Never raises: a run
+    this cannot continue — no key, no catalog, nothing in scope — stays parked at the gate it reached with the
+    reason recorded, which is exactly a guided run waiting for its Continue ("continue it manually").
+    """
+    job = store.get(job_id)
+    gate = job.gate_position if job is not None else None
+    try:
+        _continue_run(
+            job_id,
+            subject=job.owner_subject if job is not None else None,
+            api_key=api_key,
+            gate1_scope=None,
+            auto=True,
+        )
+    except _AutoAdvanceWithdrawnError:
+        return
+    except Exception as exc:  # noqa: BLE001 — every refusal and failure leaves the run parked, with its reason
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        logger.info("job %s: Full auto stopped at %s (%s)", job_id, gate, type(exc).__name__)
+        store.halt_auto_advance(
+            job_id,
+            reason=f"Full auto stopped at {_gate_label(gate)}: {detail} Review this gate and continue it manually.",
+        )
 
 
 def _resume_locked(
@@ -1084,13 +1194,22 @@ def _resume_locked(
     target: str,
     subject: str | None,
     x_anthropic_key: str | None,
-    body: ResumeBody | None,
+    gate1_scope: list[str] | None,
+    *,
+    auto: bool = False,
 ) -> dict[str, Any]:
-    """The body of :func:`resume_run`, run under the run's checkpoint lock. Never call this directly."""
+    """The body of :func:`_continue_run`, run under the run's checkpoint lock. Never call this directly."""
     job = store.get(job_id)
     if job is None or job.status != AWAITING_REVIEW or not job.gate_position or next_gate(job.gate_position) != target:
         # Re-checked under the lock: a second Continue that waited on the first must not spawn a second leg.
+        if auto:
+            raise _AutoAdvanceWithdrawnError
         raise HTTPException(status_code=409, detail="This run is not paused at a gate")
+    if auto and not job.auto_advance:
+        # A Stop landed between the park and this advance (or the run was continued by hand): it stays parked.
+        raise _AutoAdvanceWithdrawnError
+    # Who commits this gate (08-30). Written only where it changes something, so a guided run gets no new key.
+    decided_by = _decided_by_after(job, auto)
     ckpt = _checkpoint_for(job)
     if ckpt is None:
         raise HTTPException(status_code=409, detail="This run has no saved state to resume from")
@@ -1108,6 +1227,8 @@ def _resume_locked(
         # Gate 4 copy reads the realized cost, and a legacy Gate 3 checkpoint could carry a per-leg realized
         # figure its own cost block contradicts (08-28 1a, F14). The larger is the one money was spent on.
         realized = max(ckpt.realized_cost, cost_block(ckpt.result.get("cost")).get("actualUsd", 0.0))
+        if decided_by is not None:
+            store.update(job_id, config={**job.config, GATE_DECIDED_BY_CONFIG_KEY: decided_by})
         carried = write_checkpoint(
             work_dir,
             job_id=job_id,
@@ -1148,19 +1269,24 @@ def _resume_locked(
     # answer, so an unfiltered later leg would re-run them as "new work" and re-charge.
     ckpt_result = getattr(ckpt, "result", None) or {}
     groups = ckpt_result.get("conceptGroups") or []
+    config = dict(job.config)
     if job.gate_position == "gate1":
         # 08-28 Wave 2: FREEZE the reviewer's regrouping (moves + New groups) before the first paid leg, exactly as
         # the scope is frozen — every later leg and the $0 replay read this, never the live decisions. Recomputed
         # on EVERY Gate 1 Continue (a leg that failed parks the run back here, and the reviewer may regroup again).
+        # Full auto commits the pipeline's own groups, so it freezes no moves at all.
         config = {k: v for k, v in job.config.items() if k != GATE1_OVERRIDES_CONFIG_KEY}
-        overrides = _gate1_overrides(job, subject, ckpt_result)
+        overrides = None if auto else _gate1_overrides(job, subject, ckpt_result)
         if overrides is not None:
             config[GATE1_OVERRIDES_CONFIG_KEY] = overrides
         # 08-27: Gate 1's Continue sends the scope it DISPLAYED; freeze it (checkpoint order, then the New groups,
-        # unknown ids dropped). Only at Gate 1 — past it the scope is a consumed decision, not an input.
-        if body is not None and body.gate1Scope is not None:
-            sent = set(body.gate1Scope)
-            known = [g["groupId"] for g in groups if g.get("groupId")]
+        # unknown ids dropped). Only at Gate 1 — past it the scope is a consumed decision, not an input. Full
+        # auto's scope is EVERY group (08-30), frozen the same way, so every later leg and export reads it alike.
+        known = [g["groupId"] for g in groups if g.get("groupId")]
+        if auto:
+            gate1_scope = known
+        if gate1_scope is not None:
+            sent = set(gate1_scope)
             known += [g["groupId"] for g in (overrides or {}).get("newGroups", [])]
             frozen = [gid for gid in known if gid in sent]
             if not frozen:
@@ -1168,9 +1294,11 @@ def _resume_locked(
                     status_code=409, detail="Nothing is in scope — select at least one group on Gate 1."
                 )
             config[GATE1_SCOPE_CONFIG_KEY] = frozen
-        if config != job.config:
-            store.update(job_id, config=config)
-            job = store.get(job_id) or job
+    if decided_by is not None:
+        config[GATE_DECIDED_BY_CONFIG_KEY] = decided_by
+    if config != job.config:
+        store.update(job_id, config=config)
+        job = store.get(job_id) or job
     run_config = {
         **job.config,
         "stop_at_gate": target if target in ("gate1", "gate2") else None,
@@ -1181,7 +1309,7 @@ def _resume_locked(
         run_config["assign_group_ids"] = in_scope
     # 08-27b: the leg INTO Gate 3 generates the transform specs, so it must build them for the target the
     # reviewer picked at Gate 2, not the model's. Only this leg reads the picks: they are Gate 2's output.
-    if target == "gate3":
+    if target == "gate3" and not auto:  # Full auto builds Gate 3 for the model's own picks
         picks = _gate2_picks(job, subject, in_scope)
         if picks:
             run_config["gate2_picks"] = picks
@@ -1195,16 +1323,46 @@ def _resume_locked(
     # parked run by an older build, or one that raced the park) was read by this leg's first progress tick and
     # ended the reviewer's paid Continue `cancelled`. Cleared atomically with the flip, so a Stop pressed a
     # moment later sees an in-flight run and is honoured by the new leg, as it should be.
-    store.update(job_id, status="pending", phase="pending", phase_timings={}, cancel_mode=None)
+    #
+    # A Full-auto run's pending advance ends here too (08-30), however this Continue came: from the server, or
+    # from a reviewer who pressed Continue in the moment between the park and the advance.
+    flip: dict[str, Any] = {"auto_advance": False} if is_auto(job.config) else {}
+    store.update(job_id, status="pending", phase="pending", phase_timings={}, cancel_mode=None, **flip)
     threading.Thread(
         target=run_harmonization,
         args=(store, job_id, job.dict_specs, cde_spec, run_config),
         # `prior_cost` seeds the leg's ledger with everything the run has spent so far, so the checkpoint this
         # leg writes carries the run's cumulative cost rather than the leg's own share (08-28 1a, F14/F10).
-        kwargs={"api_key": x_anthropic_key, "replay_responses": ckpt.responses, "prior_cost": ckpt.result.get("cost")},
+        # Only a leg Full auto started is handed the continue function: once a person has continued a run by hand
+        # (one that stopped, or that a restart parked) it is guided from there, as the plan promises.
+        kwargs={
+            "api_key": x_anthropic_key,
+            "replay_responses": ckpt.responses,
+            "prior_cost": ckpt.result.get("cost"),
+            **(_auto_kwargs(job.config) if auto else {}),
+        },
         daemon=True,
     ).start()
     return {"jobId": job_id, "resumedFrom": job.gate_position, "target": target}
+
+
+def _decided_by_after(job: Job, auto: bool) -> dict[str, str] | None:
+    """The run's ``gate_decided_by`` once the gate it is parked at is committed — or None when nothing changes.
+
+    Full auto adds the gate as ``auto``. A person continuing a gate takes it OFF the record (a Full-auto run whose
+    leg failed parks back at a gate it had auto-committed, and the reviewer then continues it themselves). A run
+    with no record and no auto commit — every guided run — returns None, so no config write is made for it.
+    """
+    gate = job.gate_position or ""
+    raw = job.config.get(GATE_DECIDED_BY_CONFIG_KEY)
+    current = dict(raw) if isinstance(raw, dict) else None
+    if auto:
+        updated = {**(current or {}), gate: DECIDED_BY_AUTO}
+    elif current is None or gate not in current:
+        return None
+    else:
+        updated = {g: who for g, who in current.items() if g != gate}
+    return None if updated == current else updated
 
 
 # --- jobs list / delete ----------------------------------------------------------------------
@@ -1237,13 +1395,28 @@ def cancel_job(job_id: str, request: Request, mode: str = "discard") -> dict[str
     job = store.get(job_id)
     if job is None or not _visible_to(job, _subject(request)):
         raise HTTPException(status_code=404, detail="Job not found")
+    if is_auto(job.config):
+        # Full auto (08-30): the run may be parked only for the moment it takes the server to continue it. A Stop
+        # landing then stops Full auto THERE — the run stays parked with what it has bought, as a guided run would
+        # — and it is decided under the checkpoint lock the advance holds, so the two cannot both go ahead.
+        with checkpoint_lock(job_id):
+            if store.halt_auto_advance(
+                job_id, reason=f"Full auto was stopped at {_gate_label(job.gate_position)}. Continue it manually."
+            ):
+                return {"cancelled": True}
+            return _stop_unlocked(store.get(job_id) or job, mode)
+    return _stop_unlocked(job, mode)
+
+
+def _stop_unlocked(job: Job, mode: str) -> dict[str, bool]:
+    """The stop itself — unchanged for every run, guided and auto: a parked run has nothing to stop."""
     if job.status == AWAITING_REVIEW:
         raise HTTPException(
             status_code=409,
             detail="This run is paused at a review gate, so nothing is running and nothing is being spent — "
             "there is nothing to stop. Continue it from its gate, or delete it.",
         )
-    return {"cancelled": store.request_cancel(job_id, mode)}
+    return {"cancelled": store.request_cancel(job.job_id, mode)}
 
 
 @app.post("/api/harmonize/jobs/{job_id}/switch-to-sync")
@@ -1351,13 +1524,16 @@ def rerun_job(job_id: str, request: Request, x_anthropic_key: Annotated[str | No
     # A re-run is a NEW run, so it gets what every new run gets: re-splitting on (see `start_batch`), even when the
     # run it copies predates that and recorded it off. The source run is untouched and replays as recorded.
     run_config = {**src.config, "work_dir": str(new_work), "readjudication": True}
+    # Which gates Full auto committed is a fact about the SOURCE run's gates, not a setting: the copy has decided
+    # nothing yet. (It keeps the review mode, like every other setting it copies.)
+    run_config.pop(GATE_DECIDED_BY_CONFIG_KEY, None)
 
     display = f"{src.display_name} (re-run)"
     store.create(new_id, display, run_config, owner_subject=subject, dict_specs=new_specs)
     threading.Thread(
         target=run_harmonization,
         args=(store, new_id, new_specs, cde_spec, {**run_config, "stop_at_gate": ENTRY_GATE}),
-        kwargs={"api_key": x_anthropic_key},
+        kwargs={"api_key": x_anthropic_key, **_auto_kwargs(run_config)},
         daemon=True,
     ).start()
     return {"jobId": new_id}
@@ -1686,14 +1862,16 @@ def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
     source = store.get(job_id)
     if source is None or not _visible_to(source, subject):
         raise HTTPException(status_code=404, detail="Job not found")
-    if source.result is None:
+    # A run parked at a gate keeps its result in the checkpoint, not the row (D-02) — the staged demo always is.
+    source_result = _export_payload(source)
+    if source_result is None:
         raise HTTPException(status_code=409, detail="This run has no result to copy yet.")
     carried = _checked_clone_artifacts(body.artifacts or [])
 
     new_id = uuid.uuid4().hex[:12]
     # Deep copy: a shallow one leaves the copy sharing the demo's record list, so editing the copy would
     # mutate the canonical demo for everyone — the very thing this design exists to prevent.
-    result = deepcopy(source.result)
+    result = deepcopy(source_result)
     records = result.get("records") or []
     by_id = {r.get("id"): i for i, r in enumerate(records)}
     for patch in body.recordPatches or []:
@@ -1757,12 +1935,25 @@ def _refuse_past_gate(job: Job, kind: str) -> None:
     gate position — finished, or never staged — stays re-decidable, as the re-decide-a-finished-run design
     requires.
     """
-    from backend.artifact_kinds import DECISION_GATE
+    from backend.artifact_kinds import AUTO_REVISABLE_KINDS, DECISION_GATE
 
     gate = DECISION_GATE.get(kind)
     at = job.gate_position
     if gate is None or not at or at not in GATE_ORDER:
         return
+    if GATE_ORDER.index(at) > GATE_ORDER.index(gate) and auto_accepted(job.config, gate):
+        # Full auto (08-30) committed this gate and NOBODY reviewed it, so it is not a record of a review — it is
+        # still open to one. What can change is what the export applies without re-running anything (the set a
+        # finished run is re-decided with). Gate 1's grouping and the score declaration would need those groups
+        # re-run, which is not available, so they are refused by name rather than accepted and silently ignored.
+        if kind in AUTO_REVISABLE_KINDS:
+            return
+        raise HTTPException(
+            status_code=409,
+            detail=f"{gate.replace('gate', 'Gate ')} was auto-accepted, and changing its groups would need a re-run "
+            "of those groups, which is not available yet. Its names, the Gate 2 targets and the Gate 3 recodes can "
+            "still be reviewed.",
+        )
     if GATE_ORDER.index(at) > GATE_ORDER.index(gate):
         raise HTTPException(
             status_code=409,
@@ -2784,6 +2975,10 @@ _EITL_RELATION_COLS = ["relation", "relationBy", "modelRelation", "relationNote"
 #: Appended last: no index moves.
 _EITL_REMOVAL_COLS = ["removedMembers"]
 
+#: 08-30: the gates Full auto committed and nobody reviewed (``gate1;gate2;gate3``). Appended last, and ONLY on such
+#: a run: a guided run's queue keeps exactly the columns above.
+_EITL_AUTO_COLS = ["gatesAutoAccepted"]
+
 
 def _export_payload(job: Job) -> dict[str, Any] | None:
     """The result an export serializes: a parked run's checkpoint (D-02), else the finished run's result."""
@@ -2949,9 +3144,16 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
     """
     config = job.config or {}
     records = export_decisions.effective_records(payload, config, grouped)
+    # 08-30: the gates Full auto committed, which no person reviewed. Every format below says so — and for a
+    # guided run (none) adds nothing, so its files are byte for byte what they were.
+    auto = export_decisions.auto_accepted_gates(config)
+    if auto:
+        decided = dict.fromkeys(auto, "auto")
+        records = [{**r, "gateDecidedBy": decided} for r in records]
 
     if format in ("notebook_py", "notebook_r"):
-        return _notebook_response({**payload, "records": records}, format, job)
+        extra: dict[str, Any] = {"autoAcceptedGates": auto} if auto else {}
+        return _notebook_response({**payload, "records": records, **extra}, format, job)
 
     if format == "records_json":
         return JSONResponse(
@@ -2970,7 +3172,12 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
 
     decisions = _verdicts_to_legacy(grouped.get(VERDICT, [])) if grouped else job.decisions
     w = csv.writer(buf, delimiter="\t")
-    w.writerow(_EITL_COLS + _EITL_STAGED_COLS + _EITL_COMBINE_COLS + _EITL_RELATION_COLS + _EITL_REMOVAL_COLS)
+    # The review queue names the gates nobody reviewed (08-30) in one trailing column — present only on a run Full
+    # auto committed, so a guided run's queue keeps its exact columns.
+    auto_cols = _EITL_AUTO_COLS if auto else []
+    w.writerow(
+        _EITL_COLS + _EITL_STAGED_COLS + _EITL_COMBINE_COLS + _EITL_RELATION_COLS + _EITL_REMOVAL_COLS + auto_cols
+    )
     for r in _eitl_order(records):
         dec = decisions.get(r["id"], {})
         model_cde = r.get("modelCde") or {}
@@ -2994,6 +3201,7 @@ def _export_staged(job: Job, payload: dict[str, Any], grouped: dict[str, Any], f
                 _clean(r.get("relationNote", "")),
             ]
             + [_clean(";".join(r.get("removedMembers") or []))]
+            + ([";".join(auto)] if auto else [])
         )
     return _download(buf.getvalue(), "eitl_tsv", "tsv", job.job_id)
 
@@ -3083,6 +3291,13 @@ def start_demo(body: DemoBody) -> dict[str, str]:
         )
     result = snap.get("result", snap)
     job_id = demo_job_id(body.datasets)
+    if is_staged(snap):
+        # A STAGED demo is walked gate by gate, not replayed (08-30): it is the run parked at Gate 4 that boot
+        # seeded, read-only, and there is nothing to reset — a guest's edits live in their own tab. Seeded here
+        # only if it is somehow absent.
+        if store.get(job_id) is None and not seed_snapshot(store, job_id, snap):
+            raise HTTPException(status_code=503, detail="The demo could not be prepared on this server.")
+        return {"jobId": job_id}
     display = snap.get("displayName") or "Demo run"
     store.delete(job_id)  # reset any prior replay of this same demo (idempotent → one Runs entry)
     store.create(job_id, display, {"demo": True, "datasets": sorted(body.datasets), "mode": result.get("mode")})

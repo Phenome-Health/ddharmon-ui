@@ -20,6 +20,7 @@ import {
 import { decisionLogCsvRows, decisionLogRows } from "@/lib/gate4";
 import { SANDBOX_PREFIX } from "@/lib/sandbox";
 import type { ArtifactWriteResponse, HarmonizationResult, UIRecord } from "@/types";
+import { asOwnedRun } from "./gate1-fixture";
 import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
 
 /**
@@ -165,7 +166,11 @@ async function open(page: Page, groupId: string, gatePosition?: "gate4"): Promis
     page,
     (run) => {
       run.result!.records = [run.result!.records!.find((x) => x.groupId === groupId)!];
-      if (gatePosition) run.gatePosition = gatePosition;
+      // A passed gate is a record only on a run of the reviewer's own: the shared demo stays open to practise on.
+      if (gatePosition) {
+        run.gatePosition = gatePosition;
+        asOwnedRun(run);
+      }
     },
     { keep: 0 },
   );

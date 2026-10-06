@@ -12,7 +12,7 @@ import time
 from fastapi.testclient import TestClient
 
 from backend import app as app_module
-from backend.demos import list_demos, load_snapshot
+from backend.demos import is_staged, list_demos, load_snapshot
 from backend.notebook import build_notebook
 from backend.seed import seed_jobs
 
@@ -100,14 +100,24 @@ def test_demos_endpoint_lists_datasets():
 
 
 def test_demo_load_replays_and_marks_demo(monkeypatch):
-    """The shipped snapshot loads as a live-paced replay job, tagged demo:true, that completes with records."""
+    """The shipped snapshot loads as a demo:true job with records — a FINISHED snapshot as a live-paced replay that
+    completes, a STAGED one (08-30) as the pinned run parked at Gate 4 that guests walk (no replay)."""
     monkeypatch.setenv("DDHARMON_DEMO_REPLAY_SECS", "0")  # instant replay (skip the pacing sleeps) for the test
     combo = ["aou", "clsa", "ukbb", "mesa", "aireadi"]
-    assert load_snapshot(combo) is not None, "demo snapshot must be shipped"
+    snap = load_snapshot(combo)
+    assert snap is not None, "demo snapshot must be shipped"
 
     resp = client.post("/api/harmonize/demo", json={"datasets": combo})
     assert resp.status_code == 200
     job_id = resp.json()["jobId"]
+
+    if is_staged(snap):
+        row = next(j for j in client.get("/api/harmonize/jobs").json() if j["jobId"] == job_id)
+        assert row["status"] == "awaiting_review" and row["gatePosition"] == "gate4"
+        assert row["config"].get("demo") is True
+        ck = client.get(f"/api/harmonize/checkpoint/{job_id}").json()
+        assert len((ck.get("result") or {}).get("records") or []) > 0
+        return
 
     body = None
     for _ in range(100):
@@ -136,14 +146,16 @@ def test_list_demos_matches_manifest():
     assert [c["datasets"] for c in demos["combos"]] == [["aou", "clsa", "ukbb", "mesa", "aireadi"]]
 
 
-def test_seed_demos_surfaces_pregenerated_analysis_ideas():
-    """A seeded demo carries its PRE-GENERATED analysis ideas (from the sidecar) so a guest sees them
-    without an LLM call — surfaced both on the Job and via to_dict()'s analysisIdeas."""
+def test_seed_demos_surfaces_pregenerated_analysis_ideas(tmp_path):
+    """A seeded demo carries its PRE-GENERATED analysis ideas (from the sidecar) so a guest sees them without an
+    LLM call — surfaced both on the Job and via to_dict()'s analysisIdeas. That holds for a STAGED demo (08-30)
+    too: it is parked at Gate 4, which is where the ideas live."""
     from backend.demos import _load_demo_ideas, demo_job_id, seed_demos
     from backend.jobs import JobStore
 
     ideas_by_snapshot = _load_demo_ideas()
     store = JobStore()
+    store.work_root = tmp_path  # a staged demo writes its checkpoints here, as it does on the server
     seed_demos(store)
     for combo in list_demos()["combos"]:
         expected = ideas_by_snapshot.get(combo["snapshot"])
@@ -156,3 +168,21 @@ def test_seed_demos_surfaces_pregenerated_analysis_ideas():
     # The shipped 5-cohort demo must actually carry ideas (guards against a missing/empty sidecar).
     shipped = ideas_by_snapshot.get("aireadi_aou_clsa_mesa_ukbb.json")
     assert shipped and len(shipped) > 0
+
+
+def test_the_shipped_demo_ideas_cite_only_the_shipped_snapshots_concepts():
+    """The sidecar is keyed by snapshot FILENAME, so a demo rebuilt under the same name silently keeps the old
+    run's ideas. The 2026-10-06 staged rebuild did exactly that: its ideas cited 64 concepts, 5 of which the new
+    run had. After a rebuild, regenerate the ideas — every concept an idea cites must be one of the run's own."""
+    from backend.demos import _load_demo_ideas
+
+    ideas_by_snapshot = _load_demo_ideas()
+    for combo in list_demos()["combos"]:
+        ideas = ideas_by_snapshot.get(combo["snapshot"])
+        if not combo.get("available") or not ideas:
+            continue
+        snap = load_snapshot(combo["datasets"]) or {}
+        concepts = {(r.get("concept") or "").strip() for r in snap.get("result", snap).get("records", [])}
+        cited = [c for idea in ideas for c in idea.get("concepts", [])]
+        stale = [c for c in cited if c not in concepts]
+        assert cited and not stale, f"{combo['snapshot']}: ideas cite concepts its run lacks: {stale[:3]}"

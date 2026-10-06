@@ -53,6 +53,42 @@ LAST_GATE = "gate4"
 
 _TTL_SECONDS = 3600
 
+# --- review mode (08-30) -------------------------------------------------------------------------------------
+#: How a run's gates are committed. An ENUM, not a flag, so a third mode ("auto with gates": pause only when a
+#: stage flags more than N items) can join later without a second boolean beside this one.
+#:   guided — every gate waits for a reviewer's Continue. The default, and what every run before 08-30 was.
+#:   auto   — Full auto: each gate is committed with the pipeline's own proposals and the next leg starts by
+#:            itself, through the same internal path Continue takes, until the run parks at Gate 4.
+GUIDED_REVIEW = "guided"
+AUTO_REVIEW = "auto"
+REVIEW_MODES = (GUIDED_REVIEW, AUTO_REVIEW)
+#: Where a run's review mode is stored. Recorded ONLY for a non-default mode: a guided run's config stays exactly
+#: what it was before review modes existed (pinned by tests/test_guided_golden.py), and an absent key reads as
+#: guided — which is also the true answer for every run created before this field.
+REVIEW_MODE_CONFIG_KEY = "review_mode"
+#: Which gates were committed by whom, ``{gate: "auto"}``. Only Full auto writes it; a gate absent from it was
+#: continued by a reviewer (Guided records nothing new, so its config is unchanged).
+GATE_DECIDED_BY_CONFIG_KEY = "gate_decided_by"
+#: The decided-by value an auto-committed gate carries.
+DECIDED_BY_AUTO = "auto"
+
+
+def review_mode_of(config: dict[str, Any] | None) -> str:
+    """The run's review mode; an absent or unknown value reads as guided (the safe default — it never spends)."""
+    mode = (config or {}).get(REVIEW_MODE_CONFIG_KEY)
+    return mode if mode in REVIEW_MODES else GUIDED_REVIEW
+
+
+def is_auto(config: dict[str, Any] | None) -> bool:
+    return review_mode_of(config) == AUTO_REVIEW
+
+
+def auto_accepted(config: dict[str, Any] | None, gate: str) -> bool:
+    """Whether ``gate`` was committed by Full auto (and so has not been reviewed by anyone)."""
+    decided = (config or {}).get(GATE_DECIDED_BY_CONFIG_KEY)
+    return isinstance(decided, dict) and decided.get(gate) == DECIDED_BY_AUTO
+
+
 # Runs the TTL purge must never evict: the prepopulated demo (``demo``) and any pinned/sample run. These
 # are always terminal, so without this exemption they would age out after the TTL and vanish from Runs.
 _PINNED_CONFIG_KEYS = ("demo", "pinned", "sample")
@@ -170,6 +206,12 @@ class Job:
     batch: dict[str, Any] | None = None
     # The reviewer asked this leg to stop waiting on the batch (``POST .../switch-to-sync``).
     switch_to_sync: bool = False
+    # Full auto (08-30): this run is parked at a gate ONLY for the moment it takes the server to commit that gate
+    # and start the next leg itself. LIVE-ONLY and never persisted, on purpose: the key the next leg needs lives
+    # in this process's memory only, so a restarted process must find the run plainly parked (False) and wait for
+    # a manual Continue. Set by the park that is about to advance (``checkpoint``), cleared by the next leg's
+    # start, a halt, or a Stop that lands in between (``halt_auto_advance``).
+    auto_advance: bool = False
 
     @classmethod
     def from_db_row(cls, d: dict[str, Any]) -> Job:
@@ -218,7 +260,11 @@ class Job:
 
             decisions = _verdicts_to_legacy(artifacts.get(VERDICT, []))
             ideas_artifact = artifacts.get(ANALYSIS_IDEAS)
-            analysis_ideas = (ideas_artifact or {}).get("ideas") if ideas_artifact else None
+            if ideas_artifact:
+                analysis_ideas = ideas_artifact.get("ideas")
+            elif not _is_pinned(self):
+                # A pinned demo keeps its own: its ideas are pre-generated and shipped with it, not anyone's work.
+                analysis_ideas = None
             # A list, and `None` when the user has none — the panel distinguishes "no composites yet" from
             # "an empty list", and the pre-artifact wire contract used null for the former.
             composites = artifacts.get(COMPOSITE) or None
@@ -258,7 +304,18 @@ class Job:
             "resultVersion": self.result_version,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
+            **self._auto_fields(),
         }
+
+    def _auto_fields(self) -> dict[str, Any]:
+        """A Full-auto run's two live fields — and NOTHING for a guided run, whose wire shape is pinned unchanged.
+
+        ``autoAdvancing`` is what keeps a client following a park the server is about to continue: without it a
+        parked status reads as "waiting for you" and the stream (and the client) would stop there.
+        """
+        if not is_auto(self.config):
+            return {}
+        return {"reviewMode": AUTO_REVIEW, "autoAdvancing": self.auto_advance}
 
     def progress_dict(self) -> dict[str, Any]:
         """The 2 Hz SSE frame: live fields plus a version token, and NOTHING that could grow (D-03).
@@ -296,6 +353,7 @@ class Job:
             "batch": self.batch if self.status not in TERMINAL_STATES else None,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
+            **self._auto_fields(),
         }
 
     def resume_gate(self) -> str:
@@ -562,12 +620,17 @@ class JobStore:
         gate: str,
         checkpoint_ref: str,
         realized_cost: float | None = None,
+        auto_advance: bool = False,
     ) -> bool:
         """Park a run at a review gate: ``awaiting_review``, a gate position, a pointer, a bumped token.
 
         The payload is NOT passed here and never touches the jobs row (D-02) — the caller has already
         written it to the per-run work dir via :mod:`backend.checkpoint`, and ``checkpoint_ref`` is the
         pointer to it, relative to :attr:`work_root`.
+
+        ``auto_advance`` (08-30) marks a Full-auto park the server is about to continue by itself. A Stop that
+        raced this park WINS: it is honoured exactly as on a guided leg — the run stays parked — so the flag is
+        not raised over it. Every other park (guided, Gate 4, a halt) leaves the flag down.
 
         Returns False for an unknown run. Idempotent: re-checkpointing the same gate is safe and simply
         moves the token again, which costs one refetch and no money.
@@ -583,6 +646,8 @@ class JobStore:
             job.phase = AWAITING_REVIEW
             job.gate_position = gate
             job.checkpoint_ref = checkpoint_ref
+            # Read BEFORE the stop flag is cleared below: a stop that raced the park means "do not go on".
+            job.auto_advance = bool(auto_advance) and job.cancel_mode is None
             # A park is an EXIT (08 D-01): nothing is spent past it, so a stop that raced it has had its
             # effect. The runner parks only when no stop is set, but it reads that before writing the
             # checkpoint, and a Stop can land in between. Left set, that flag reads as "Stopping…" forever and
@@ -652,6 +717,24 @@ class JobStore:
                 return False
             job.cancel_mode = mode
             return True
+
+    def halt_auto_advance(self, job_id: str, *, reason: str | None = None) -> bool:
+        """Stop Full auto from continuing a run parked between two legs; the run stays parked where it is.
+
+        Returns True when a pending advance was withdrawn, False when there was none (not parked, or nobody was
+        about to continue it). ``reason`` (when given) is recorded as the run's note, which the gate screen shows
+        as why Full auto stopped there. Persisted like any parked-state write, so the note survives a restart.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != AWAITING_REVIEW or not job.auto_advance:
+                return False
+            job.auto_advance = False
+            if reason is not None:
+                job.error_message = reason
+            job.updated_at = time.time()
+        self._persist(job)
+        return True
 
     # --- the batch -> sync switch (08-28 0e) -------------------------------------------------------------
 

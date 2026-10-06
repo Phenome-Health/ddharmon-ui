@@ -12,6 +12,12 @@ that snapshot — so end users spend zero API credits.
     # the real shipped demo (needs ANTHROPIC_API_KEY) — adopt/refine/novel + transform specs:
     ANTHROPIC_API_KEY=sk-... python scripts/build_demos.py --mode sync --datasets aou clsa ukbb
 
+    # a STAGED demo (08-30) — snapshot a Full-auto run that the app already ran to Gate 4. Reads that run's
+    # four gate checkpoints from the app's work root and its config from the app's jobs.db (read-only), and
+    # ships them so a guest can walk Gates 1-4. No pipeline, no LLM, no key here — the run already paid.
+    python scripts/build_demos.py --from-run <jobId> --datasets aou clsa ukbb mesa aireadi \
+        --work-root <the app's DDHARMON_UI_WORK> [--db <the app's jobs.db>] [--core-version 1.4.0]
+
 Column roles are auto-detected with ddharmon's SchemaRegistry (same as the app's /detect).
 """
 
@@ -28,6 +34,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from backend.app import CDE_COHORT, CDE_COLUMN_ROLES, CDE_FILES  # noqa: E402
+from backend.checkpoint import read_checkpoint  # noqa: E402
+from backend.demos import STAGED_DEMO_GATE, STAGED_GATES, staged_snapshot  # noqa: E402
 from backend.engine import run_pipeline  # noqa: E402
 
 DEMO_DIR = REPO / "backend" / "demos"
@@ -160,6 +168,49 @@ def run_once(dict_specs, cde_spec, mode, mcs, cde_set, work_dir, substrate_path)
     return result, timings
 
 
+def snapshot_from_run(
+    job_id: str,
+    *,
+    work_root: Path,
+    db_path: Path | None = None,
+    ids: list[str],
+    core_version: str | None = None,
+) -> dict:
+    """A staged demo snapshot of an app run parked at Gate 4 — read, never written.
+
+    The run's row comes from the app's ``jobs.db`` opened READ-ONLY (the app may be serving it), and its four
+    gate checkpoints from ``<work_root>/<job_id>/``. Refuses (SystemExit, naming why) a run that is not parked at
+    Gate 4, since anything earlier has gates with nothing behind them to walk.
+    """
+    import sqlite3
+
+    db = Path(db_path) if db_path is not None else Path(work_root) / "jobs.db"
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT display_name, status, gate_position, config, realized_cost FROM jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise SystemExit(f"no run {job_id!r} in {db}")
+    display_name, status, gate, config_json, realized = row
+    if status != "awaiting_review" or gate != STAGED_DEMO_GATE:
+        raise SystemExit(f"run {job_id} is {status} at {gate!r}; a staged demo is a run parked at Gate 4")
+    config = json.loads(config_json or "{}")
+    work = Path(work_root) / job_id
+    checkpoints = {g: read_checkpoint(work, g).result for g in (*STAGED_GATES, STAGED_DEMO_GATE)}
+    label = " + ".join(COHORT_LABELS.get(d, d) for d in sorted(ids))
+    return staged_snapshot(
+        ids=ids,
+        display_name=f"Demo · {label}" if ids else (display_name or "Demo run"),
+        config=config,
+        checkpoints=checkpoints,
+        core_version=core_version,
+        realized_cost=float(realized or 0.0),
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--datasets", nargs="+", default=["aou", "clsa", "ukbb", "mesa", "aireadi"])
@@ -194,10 +245,40 @@ def main() -> None:
         "ddharmon version; pass the release version the demo corresponds to when building against an "
         "editable/dev core (which self-reports a placeholder like 0.1.0).",
     )
+    ap.add_argument(
+        "--from-run",
+        default=None,
+        metavar="JOB_ID",
+        help="build a STAGED demo from an app run parked at Gate 4 (a Full-auto run): its four gate checkpoints "
+        "and config are read from --work-root / --db. Runs no pipeline and needs no key.",
+    )
+    ap.add_argument(
+        "--work-root",
+        default=None,
+        help="the app's work root (its DDHARMON_UI_WORK; default .ddharmon_ui in this repo) — with --from-run",
+    )
+    ap.add_argument("--db", default=None, help="the app's jobs.db (default <work-root>/jobs.db) — with --from-run")
     args = ap.parse_args()
 
     ids = sorted(d.lower() for d in args.datasets)
     core_version = args.core_version or _installed_core_version()
+
+    if args.from_run:
+        work_root = Path(args.work_root) if args.work_root else REPO / ".ddharmon_ui"
+        snapshot = snapshot_from_run(
+            args.from_run,
+            work_root=work_root,
+            db_path=Path(args.db) if args.db else None,
+            ids=ids,
+            core_version=core_version,
+        )
+        out = DEMO_DIR / f"{'_'.join(ids)}.json"
+        out.write_text(json.dumps(snapshot))
+        _mark_staged_in_manifest(ids)
+        n = len(snapshot["result"].get("records") or [])
+        print(f"Wrote {out.relative_to(REPO)}  (staged, {n} records at Gate 4, {out.stat().st_size // 1024} KB)")
+        write_static_fixtures(ids, snapshot)
+        return
 
     if args.fixtures_only:
         snap_path = DEMO_DIR / f"{'_'.join(ids)}.json"
@@ -308,37 +389,68 @@ def main() -> None:
         )
 
 
-def write_static_fixtures(ids: list[str], snapshot: dict) -> None:
+def _mark_staged_in_manifest(ids: list[str]) -> None:
+    """Flag the combo staged in the backend manifest, so the demo page opens Gate 1 without reading the snapshot."""
+    manifest_path = DEMO_DIR / "manifest.json"
+    if not manifest_path.exists():
+        return
+    manifest = json.loads(manifest_path.read_text())
+    for combo in manifest.get("combos", []):
+        if sorted(str(x).lower() for x in combo.get("datasets", [])) == ids:
+            combo["staged"] = True
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+
+def write_static_fixtures(
+    ids: list[str],
+    snapshot: dict,
+    *,
+    static_dir: Path | None = None,
+    manifest_path: Path | None = DEMO_DIR / "manifest.json",
+) -> None:
     """Emit the demo as a static (backend-less) fixture for the Netlify build.
 
     Writes ``frontend/public/static-data/result-<jobId>.json`` (a JobResult wrapper the SPA loads in
     ``VITE_STATIC`` mode) and merges the demo into ``static-data/jobs.json`` so it shows on the Runs page,
     demo-marked. The client-side replay (``useHarmonizeStream``) paces it using ``phaseTimings``. The Runs
     page shows only real runs now (the demo + any user runs) — the demo is prepended + de-duped by jobId.
+
+    A STAGED snapshot (08-30) is written as the run the backend seeds: parked at Gate 4 (``awaiting_review``),
+    carrying the review mode and who decided each gate, with Gate 4's result — so the static build walks the same
+    gates the live demo does. ``static_dir`` / ``manifest_path`` default to the repo's (tests pass their own).
     """
     import time
 
-    static_dir = REPO / "frontend" / "public" / "static-data"
+    static_dir = static_dir or REPO / "frontend" / "public" / "static-data"
     static_dir.mkdir(parents=True, exist_ok=True)
     result = snapshot.get("result", snapshot)
     job_id = "demo-" + "_".join(ids)
     now = int(time.time())
+    staged = bool(snapshot.get("staged"))
     job = {
         "jobId": job_id,
         "displayName": snapshot.get("displayName", "Demo run"),
-        "status": "complete",
-        "phase": "complete",
+        "status": "awaiting_review" if staged else "complete",
+        "phase": "awaiting_review" if staged else "complete",
         "completed": 0,
         "total": 0,
         "errorMessage": None,
         "result": result,
-        "config": {"demo": True, "datasets": ids, "mode": result.get("mode")},
+        "config": {
+            **(snapshot.get("config") or {} if staged else {}),
+            "demo": True,
+            "datasets": ids,
+            "mode": result.get("mode"),
+        },
         "decisions": {},
         "createdAt": now,
         "updatedAt": now,
         "phaseTimings": snapshot.get("phaseTimings", {}),
         "coreVersion": snapshot.get("coreVersion"),
     }
+    if staged:
+        job.update({"gatePosition": STAGED_DEMO_GATE, "costSoFar": float(snapshot.get("realizedCost") or 0.0)})
+        job.update({"resultVersion": 1, "reviewMode": job["config"].get("review_mode"), "autoAdvancing": False})
     (static_dir / f"result-{job_id}.json").write_text(json.dumps(job))
 
     jobs_path = static_dir / "jobs.json"
@@ -356,18 +468,18 @@ def write_static_fixtures(ids: list[str], snapshot: dict) -> None:
         for combo in demos.get("combos", []):
             if sorted(str(x).lower() for x in combo.get("datasets", [])) == ids:
                 combo["available"] = True
+                if staged:
+                    combo["staged"] = True
         if snapshot.get("coreVersion"):
             demos["coreVersion"] = snapshot["coreVersion"]  # static (Netlify) demo-page version note
         demos_path.write_text(json.dumps(demos, indent=2))
 
     # Backend demo registry: stamp coreVersion so the LIVE /api/harmonize/demos endpoint can surface the
     # "reflects ddharmon vX" note on dev/prod too (not just the static build). Cheap top-level field.
-    if snapshot.get("coreVersion"):
-        manifest_path = DEMO_DIR / "manifest.json"
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text())
-            manifest["coreVersion"] = snapshot["coreVersion"]
-            manifest_path.write_text(json.dumps(manifest, indent=2))
+    if snapshot.get("coreVersion") and manifest_path is not None and manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+        manifest["coreVersion"] = snapshot["coreVersion"]
+        manifest_path.write_text(json.dumps(manifest, indent=2))
 
     print(
         f"static fixtures: result-{job_id}.json + jobs.json merge + demos.json availability ({summary['nRecords']} records)"

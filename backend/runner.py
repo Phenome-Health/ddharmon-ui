@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from backend import billing
 from backend.checkpoint import checkpoint_lock, checkpoint_path, write_checkpoint
 from backend.engine import run_pipeline
 from backend.engine.adapter import CumulativeLedger, LegTransport, StageFn, cost_block, merge_costs
-from backend.jobs import AWAITING_REVIEW, JobStore
+from backend.jobs import AWAITING_REVIEW, GATE_DECIDED_BY_CONFIG_KEY, JobStore, is_auto
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,11 @@ class RunCancelledError(Exception):
     """
 
 
+#: What Full auto calls after a leg parks (08-30): ``advance(job_id, api_key)``. The app passes its own continue
+#: function — the one the Continue route uses — so the runner never learns how a gate is committed.
+AutoAdvance = Callable[[str, "str | None"], None]
+
+
 def run_harmonization(
     store: JobStore,
     job_id: str,
@@ -63,8 +69,57 @@ def run_harmonization(
     api_key: str | None = None,
     replay_responses: dict[str, dict[str, Any]] | None = None,
     prior_cost: dict[str, Any] | None = None,
+    auto_advance: AutoAdvance | None = None,
 ) -> None:
+    """Run one leg (see :func:`_run_leg`), then — on a Full-auto run that parked cleanly — continue it.
+
+    ``auto_advance`` is handed in only for a Full-auto leg (08-30). It runs AFTER the leg is wholly over (its
+    ``finally`` included), so the next leg's worker can never race this one's teardown; it starts that worker
+    and returns, so each leg still owns exactly one thread and none blocks on another. The key it is given is
+    this leg's own in-memory ``api_key`` — handed from leg to leg, never written anywhere.
+
+    A leg that was stopped, failed or finished does not park for an advance, so nothing continues it: Stop and
+    a failure end Full auto exactly where they end a guided leg.
+    """
+    will_advance = auto_advance is not None and is_auto(config)
+    parked = _run_leg(
+        store,
+        job_id,
+        dict_specs,
+        cde_spec,
+        config,
+        provider=provider,
+        stage_overrides=stage_overrides,
+        api_key=api_key,
+        replay_responses=replay_responses,
+        prior_cost=prior_cost,
+        advance_after_park=will_advance,
+    )
+    if parked and auto_advance is not None:
+        try:
+            auto_advance(job_id, api_key)
+        except Exception:  # noqa: BLE001 — the advance owns its own failure reporting; never kill the thread
+            logger.exception("job %s: Full auto could not continue past its gate", job_id)
+
+
+def _run_leg(
+    store: JobStore,
+    job_id: str,
+    dict_specs: list[dict[str, Any]],
+    cde_spec: dict[str, Any] | None,
+    config: dict[str, Any],
+    *,
+    provider: Any | None = None,
+    stage_overrides: dict[str, StageFn] | None = None,
+    api_key: str | None = None,
+    replay_responses: dict[str, dict[str, Any]] | None = None,
+    prior_cost: dict[str, Any] | None = None,
+    advance_after_park: bool = False,
+) -> bool:
     """Run a job to completion, reporting phase progress to ``store``. Safe to run in a thread.
+
+    Returns True only when the leg parked at a gate FOR FULL AUTO TO CONTINUE (``advance_after_park`` and no
+    stop raced the park) — the one case :func:`run_harmonization` goes on from.
 
     ``provider`` and ``stage_overrides`` are injected by tests to avoid any model download / LLM call.
     ``api_key`` is the optional per-request BYOK key (in-memory, this job only; never persisted).
@@ -151,6 +206,11 @@ def run_harmonization(
         # `dict[str, Any]`; taking one copy here keeps the checkpoint writer and the ideas pass honest about
         # what they receive instead of casting at three call sites.
         payload: dict[str, Any] = dict(result)
+        if store.cancel_mode(job_id) == "discard":
+            # A discard pressed after the leg's LAST progress tick: the pipeline never got to raise, and returned
+            # normally. "Discard" still means no result — so it ends here exactly as a raised one does, never as a
+            # completed (or parked) run, and never with the paid ideas pass a completed run would then buy.
+            raise RunCancelledError
         gate = payload.get("gatePosition")
         if gate and store.cancel_mode(job_id) is None:
             # Gate boundary. Shaped like the keep-partial branch below — deliver work already paid for and
@@ -180,9 +240,13 @@ def run_harmonization(
                     # RELATIVE to the work root, so the pointer survives a redeploy that moves it.
                     checkpoint_ref=_relative_ref(store, job_id, ckpt.path or checkpoint_path(work_dir, gate)),
                     realized_cost=ckpt.realized_cost,
+                    # Full auto (08-30): parked only until the server continues it. A stop that raced this park
+                    # keeps the flag down (see JobStore.checkpoint), so the run stays parked as a guided one would.
+                    **({"auto_advance": True} if advance_after_park else {}),
                 )
+                parked_for_advance = bool(advance_after_park and getattr(store.get(job_id), "auto_advance", False))
             logger.info("job %s paused at %s (%.4f USD realized)", job_id, gate, ckpt.realized_cost)
-            return
+            return parked_for_advance
         if store.cancel_mode(job_id) == "keep":
             # "Keep" stop: the pipeline finished the in-flight stage and skipped the rest, returning a PARTIAL
             # result. Mark the run cancelled but attach that result so the user gets what they paid for.
@@ -190,7 +254,7 @@ def run_harmonization(
                 _absorb_pending(payload, work_dir)
                 store.update(job_id, status="cancelled", phase="cancelled", result=payload, cost_so_far=_total(payload))
             logger.info("job %s stopped (keep): %d partial records", job_id, len(result.get("records", [])))
-            return
+            return False
         # None unless opted-in + produced. Its spend is billed while this worker still owns the run, so it is
         # queued and folded into the finished result's cost just below.
         ideas = _generate_ideas(payload, config, api_key, store=store, job_id=job_id)
@@ -232,6 +296,7 @@ def run_harmonization(
                 phase=AWAITING_REVIEW,
                 error_message=str(exc),
                 failed_phase=failed_phase,
+                **_undo_auto_commit(failing.config, failing.gate_position),
             )
         else:
             store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)
@@ -239,6 +304,21 @@ def run_harmonization(
     finally:
         # The leg is over, however it ended: its switch and its in-flight batch end with it.
         store.reset_transport(job_id)
+    return False
+
+
+def _undo_auto_commit(config: dict[str, Any] | None, gate: str) -> dict[str, Any]:
+    """The config write that takes ``gate`` back out of the auto-committed set, or nothing.
+
+    A Full-auto leg that FAILS leaves the run parked back at the gate it started from (as any failed continue
+    does). That gate's commit did not take, so it must not keep reading "auto-accepted" while the run waits there
+    for a person. A run with no such record — every guided run — gets no config write at all.
+    """
+    decided = (config or {}).get(GATE_DECIDED_BY_CONFIG_KEY)
+    if not isinstance(decided, dict) or gate not in decided:
+        return {}
+    kept = {g: v for g, v in decided.items() if g != gate}
+    return {"config": {**(config or {}), GATE_DECIDED_BY_CONFIG_KEY: kept}}
 
 
 def _total(payload: dict[str, Any]) -> float:
