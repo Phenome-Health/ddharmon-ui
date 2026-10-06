@@ -189,6 +189,40 @@ def test_deriving_on_the_shared_demo_is_refused_rather_than_silently_dropped(stu
     assert r.status_code == 403 and "clone" in r.json()["detail"].lower()
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"sourceText": "Fried phenotype: five criteria, frail at three or more."},
+        {"declaredScore": "Fried frailty phenotype"},
+        {"definition": _FRIED},
+    ],
+    ids=["document", "declared", "definition"],
+)
+def test_the_shared_demo_is_refused_before_anything_is_built_or_billed(stub_llm, tmp_path, monkeypatch, body):
+    """The 403 used to come only at SAVE, after the paid derivation had run and been billed to the demo row: a
+    signed-in user with a key paid for a spec that was then thrown away. A pinned run is refused UP FRONT — no
+    provider client is built, no model is called and no ledger moves, whichever way the score was supplied."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    built: list[object] = []
+    billed: list[object] = []
+
+    def _no_client(*a, **k):
+        built.append(a)
+        raise AssertionError("a provider client was built for the shared demo")
+
+    monkeypatch.setattr("backend.engine.llm.build_llm_client", _no_client)
+    monkeypatch.setattr(app_module.billing, "bill_client", lambda *a, **k: billed.append(a) or 0.0)
+    with TestClient(app_module.app) as c:
+        _completed_job(app_module, "demo-1")
+        app_module.store.get("demo-1").config["demo"] = True
+        r = c.post("/api/harmonize/jobs/demo-1/composite", json=body, headers=_hdr())
+        job = app_module.store.get("demo-1")
+    assert r.status_code == 403, r.text
+    assert "clone" in r.json()["detail"].lower()
+    assert (built, billed, stub_llm["n"]) == ([], [], 0)
+    assert job.cost_so_far == 0.0
+
+
 def test_rederive_from_a_definition_with_all_components_pinned_costs_no_llm_call(stub_llm):
     with TestClient(app_module.app) as c:
         _completed_job(app_module)
