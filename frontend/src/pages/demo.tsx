@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { listDemos, startDemo } from "@/lib/api";
+import { pathForGate } from "@/lib/gate-routes";
 import { PH } from "@/lib/links";
 
 // Public source dictionary + reproducing build script for each demo cohort. Kept in sync with the
@@ -81,7 +82,8 @@ export default function DemoPage() {
     try {
       const { jobId } = await startDemo(combo.datasets);
       qc.invalidateQueries({ queryKey: ["jobs"] });
-      navigate(`/job/${jobId}`);
+      // A STAGED demo (08-30) is walked gate by gate from Gate 1 on the shared sandbox; a finished one replays.
+      navigate(combo.staged ? pathForGate(jobId, "gate1") : `/job/${jobId}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load demo");
       setLoading(false);
@@ -149,9 +151,11 @@ export default function DemoPage() {
                       variant="ghost"
                       size="sm"
                       className="text-accent-on-raised hover:text-accent-on-raised"
-                      onClick={() => navigate(`/job/${demoJobId}?results=1`)}
+                      onClick={() =>
+                        navigate(combo.staged ? pathForGate(demoJobId, "gate4") : `/job/${demoJobId}?results=1`)
+                      }
                     >
-                      Skip to results →
+                      {combo.staged ? "Skip to the export →" : "Skip to results →"}
                     </Button>
                   )}
                   <Button onClick={load} disabled={loading} size="sm">
