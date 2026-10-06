@@ -24,9 +24,9 @@ from ddharmon.models.cluster import FieldCluster, TopicModelResult
 from fastapi.testclient import TestClient
 
 from backend import app as app_module
-from backend.checkpoint import write_checkpoint
+from backend.checkpoint import read_checkpoint, write_checkpoint
 from backend.db import JobDB
-from backend.demos import demo_job_id, seed_demos
+from backend.demos import demo_job_id, is_staged, load_snapshot, seed_demos
 from backend.engine import contract as contract_module
 from backend.engine.adapter import build_ui_result, run_pipeline
 from backend.jobs import AWAITING_REVIEW, Job, JobStore
@@ -1737,17 +1737,32 @@ def test_run_pipeline_auto_derives_min_cluster_size_when_unset(monkeypatch, tmp_
     assert result["contractVersion"] == "5"
 
 
-def test_seed_demos_prepopulates_a_complete_run():
-    """seed_demos hydrates the bundled precomputed demo(s) as COMPLETE runs, so Runs is never empty on boot."""
+_SHIPPED_DEMO = ["aou", "clsa", "ukbb", "mesa", "aireadi"]
+
+
+def test_seed_demos_prepopulates_the_shipped_demo(tmp_path):
+    """seed_demos hydrates the bundled precomputed demo, so Runs is never empty on boot.
+
+    Whichever kind is shipped: a FINISHED snapshot seeds as a COMPLETE run; a STAGED one (08-30 — a Full-auto run
+    walked gate by gate) seeds as a pinned run parked at Gate 4 over its four checkpoints, which it writes under the
+    store's work root. The server always has one (``app._WORK_ROOT``), so the store here is given one too.
+    """
     store = JobStore()
+    store.work_root = tmp_path
     ids = seed_demos(store)
     assert ids, "expected at least one bundled demo snapshot to seed"
-    jid = demo_job_id(["aou", "clsa", "ukbb", "mesa", "aireadi"])
+    jid = demo_job_id(_SHIPPED_DEMO)
     assert jid in ids
     job = store.get(jid)
-    assert job is not None and job.status == "complete" and job.phase == "complete"
+    assert job is not None
     assert job.config.get("demo") is True
-    assert job.summary_dict()["nRecords"] > 0
+    if is_staged(load_snapshot(_SHIPPED_DEMO)):
+        assert job.status == AWAITING_REVIEW and job.gate_position == "gate4"
+        for gate in ("gate1", "gate2", "gate3", "gate4"):
+            assert read_checkpoint(tmp_path / jid, gate).result.get("records"), f"{gate} checkpoint has no records"
+    else:
+        assert job.status == "complete" and job.phase == "complete"
+        assert job.summary_dict()["nRecords"] > 0
     # idempotent: re-seeding neither duplicates nor clobbers the existing run
     assert seed_demos(store) == []
     assert store.get(jid) is job
@@ -2570,9 +2585,10 @@ def test_analysis_ideas_endpoint_caches_scopes_and_gates(monkeypatch, tmp_path):
         assert c.post("/api/harmonize/jobs/empty/analysis-ideas", headers=hdr("A")).status_code == 409
 
 
-def test_purge_exempts_demo_but_evicts_user_runs():
+def test_purge_exempts_demo_but_evicts_user_runs(tmp_path):
     """The TTL purge evicts stale terminal USER runs but never the prepopulated (pinned) demo run."""
     store = JobStore()
+    store.work_root = tmp_path  # a staged demo (08-30) writes its checkpoints here, as it does on the server
     store.create("user-1", "User run", {})
     store.update("user-1", status="complete", result={"records": []})
     seed_demos(store)
