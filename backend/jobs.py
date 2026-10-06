@@ -154,8 +154,14 @@ class Job:
     # concepts). None = none derived yet. A list, because a run legitimately supports several scores; a
     # LEGACY MIRROR: the durable home is the per-user artifact store (kind `composite`), whose identity
     # function keys by the score's name — so a re-derive replaces that score rather than appending.
-    # This field only still serves DB rows written before the artifact layer.
+    # This field only still serves DB rows written before the artifact layer. A pinned demo's are its SHIPPED match
+    # (backend/demos/score.json), served as they are — see `to_dict`.
     composites: list[dict[str, Any]] | None = None
+    # The shared demo's shipped declared score: ``{"declaration": [composite_swap rows], "suggestions": Gate 1's
+    # free hints}``. Set only by demo seeding, never persisted (a demo is re-seeded from the shipped file at every
+    # boot) and served only for a pinned run, as `demoScore`: the gate screens read it where a real run reads the
+    # reviewer's own rows and the suggestions route, neither of which a guest's walk of the demo can reach.
+    demo_score: dict[str, Any] | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     # Record count carried on a DB-hydrated summary (result blob not loaded); used by summary_dict when
@@ -266,8 +272,9 @@ class Job:
                 # A pinned demo keeps its own: its ideas are pre-generated and shipped with it, not anyone's work.
                 analysis_ideas = None
             # A list, and `None` when the user has none — the panel distinguishes "no composites yet" from
-            # "an empty list", and the pre-artifact wire contract used null for the former.
-            composites = artifacts.get(COMPOSITE) or None
+            # "an empty list", and the pre-artifact wire contract used null for the former. A pinned demo keeps its
+            # own, like its ideas: its match is shipped with it (backend/demos/score.json), not anyone's work.
+            composites = artifacts.get(COMPOSITE) or (self.composites if _is_pinned(self) else None)
         return {
             "jobId": self.job_id,
             "displayName": self.display_name,
@@ -305,7 +312,15 @@ class Job:
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
             **self._auto_fields(),
+            **self._demo_score_field(),
         }
+
+    def _demo_score_field(self) -> dict[str, Any]:
+        """The shared demo's shipped declaration + Gate 1 hints — and NOTHING for any other run, whose wire shape stays
+        exactly as it was (a real run's declaration is the reviewer's own rows, read through the artifacts route)."""
+        if not self.demo_score or not _is_pinned(self):
+            return {}
+        return {"demoScore": self.demo_score}
 
     def _auto_fields(self) -> dict[str, Any]:
         """A Full-auto run's two live fields — and NOTHING for a guided run, whose wire shape is pinned unchanged.
@@ -380,6 +395,7 @@ class Job:
         d = self.to_dict(artifacts)
         d.pop("result", None)
         d.pop("analysisIdeas", None)
+        d.pop("demoScore", None)  # a gate screen's read, not a row's
         # Prefer the live result count; fall back to the persisted n_records hint for DB-hydrated summaries.
         d["nRecords"] = len(self.result["records"]) if self.result else self.n_records
         return d
