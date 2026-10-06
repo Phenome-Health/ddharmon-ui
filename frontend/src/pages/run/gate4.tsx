@@ -36,6 +36,7 @@ import {
   verdictBreakdown,
 } from "@/lib/gate4";
 import { SCORE_ARTIFACT, declaredScores, scoreExport, specForScore } from "@/lib/score-match";
+import { shippedDeclaration } from "@/lib/demo-score";
 import type { CompositeSpec } from "@/types";
 
 /**
@@ -62,8 +63,14 @@ export default function Gate4Page() {
   // The decision log reads EVERY kind's decisions (`all`); the requested kind only names which sandbox key
   // this hook writes, and Gate 4 writes none of them (artifact selection is ephemeral UI state, not a
   // persisted gate decision — the `gate4_export_selection` kind is per-record inclusion, a different thing).
+  // On the shared demo the shipped declared score is the baseline (`lib/demo-score.ts`): Gate 4 shows that declaration
+  // and its shipped match, and a guest's own re-declaration on Gate 1 (held in the tab) wins over it.
+  const demoScore = jobState?.demoScore;
+  const pinnedRun = resolvePinned(jobState?.config);
+  const shippedRows = useMemo(() => shippedDeclaration(demoScore, pinnedRun), [demoScore, pinnedRun]);
   const gate = useGateDecisions(jobId, "gate4_export_selection", {
-    pinned: resolvePinned(jobState?.config),
+    pinned: pinnedRun,
+    baseline: shippedRows,
   });
 
   const [lang, setLang] = useState<NotebookLang>("py");

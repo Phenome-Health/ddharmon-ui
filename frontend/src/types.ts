@@ -582,6 +582,9 @@ export interface JobResult {
   analysisIdeas?: AnalysisIdea[] | null;
   // Derived composite specs, one per score (null until the first derivation). See CompositeSpec.
   composites?: CompositeSpec[] | null;
+  // THE SHARED DEMO ONLY: its shipped declared score — the declaration Gate 1 and Gate 4 start from and Gate 1's
+  // free hints for it (`lib/demo-score.ts`). Its Gate 4 match rides `composites`. Absent on every other run.
+  demoScore?: DemoScore;
   createdAt: number;
   updatedAt: number;
   // Present on the bundled demo fixture: per-phase wall-clock from the real build run, used to pace the
@@ -830,6 +833,15 @@ export interface CompositeSpec {
  * verdict and not the judge's confidence — the verdict is the Gate 4 match. `scored: false` (no dense encoder)
  * means nothing is suggested, and `reason` says why.
  */
+/**
+ * The shared demo's shipped declared score (`backend/demos/score.json`): the `composite_swap` rows the score panel
+ * would have written (a BASELINE the guest starts from, never counted as their edit) and Gate 1's free hints for them.
+ */
+export interface DemoScore {
+  declaration: Record<string, unknown>[];
+  suggestions: ScoreSuggestions | null;
+}
+
 export interface ScoreSuggestions {
   scored: boolean;
   scoreKind: "dense_cosine";
