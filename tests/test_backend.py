@@ -1758,8 +1758,10 @@ def test_seed_demos_prepopulates_the_shipped_demo(tmp_path):
     assert job.config.get("demo") is True
     if is_staged(load_snapshot(_SHIPPED_DEMO)):
         assert job.status == AWAITING_REVIEW and job.gate_position == "gate4"
+        # Every gate shows the concept groups; records exist from assignment on (Gate 2), so Gate 4 must have them.
         for gate in ("gate1", "gate2", "gate3", "gate4"):
-            assert read_checkpoint(tmp_path / jid, gate).result.get("records"), f"{gate} checkpoint has no records"
+            assert read_checkpoint(tmp_path / jid, gate).result.get("conceptGroups"), f"{gate} has no concept groups"
+        assert read_checkpoint(tmp_path / jid, "gate4").result.get("records")
     else:
         assert job.status == "complete" and job.phase == "complete"
         assert job.summary_dict()["nRecords"] > 0
