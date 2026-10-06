@@ -36,6 +36,7 @@ import {
 } from "@/lib/api";
 import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
+import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
 import {
   meetsRoleRequirement,
   participantLevelColumn,
@@ -447,6 +448,10 @@ export default function SetupPage() {
   // described there are the same object. `conceptGate` is the one addition (STGD-16) and defaults OFF.
   const [cdeSet, setCdeSet] = useState<CdeSet>(DEFAULT_CDE_SET);
   const [runMode, setRunMode] = useState<RunMode>("batch");
+  // How the gates are committed (08-30): Guided (the default — every gate waits for Continue) or Full auto (the server
+  // commits each gate with the pipeline's own proposals and runs on to Gate 4). Independent of the run mode.
+  const [reviewMode, setReviewMode] = useState<ReviewMode>(DEFAULT_REVIEW_MODE);
+  const fullAuto = reviewMode === "auto";
   // THE RUN'S DEFAULTS, not controls. All three decisions moved to the gate that owns them (08-16
   // amendment for the first and third, 08-17 for the second), and the 2026-08-26 review then removed the
   // informational cards that restated them here — the consolidated bill below now shows each one under its
@@ -922,6 +927,8 @@ export default function SetupPage() {
     if (config.run_mode === "batch" || config.run_mode === "sync" || config.run_mode === "preview") {
       setRunMode(config.run_mode);
     }
+    // A re-run opens in the review mode the earlier run used, like its run mode — still the reviewer's to change.
+    if (config.review_mode === "auto") setReviewMode("auto");
     setDisplayName(rerunNameFor(rerunSource.displayName));
     const from = rerunSource.displayName || "the earlier run";
     const declared: RunDictionary[] = Array.isArray(rerunSource.dictionaries) ? rerunSource.dictionaries : [];
@@ -1099,6 +1106,8 @@ export default function SetupPage() {
           genTransformSpecs: genSpecs,
           suggestAnalysisIdeas: suggestIdeas,
           conceptGate,
+          // Sent ONLY for Full auto: a guided Start's payload stays exactly what it was (the server's default).
+          ...(fullAuto ? { reviewMode } : {}),
           displayName: displayName || undefined,
           provider,
           modelTag: model || undefined,
@@ -1758,6 +1767,39 @@ export default function SetupPage() {
               .
             </p>
           </div>
+          {/* REVIEW MODE (08-30). Two options, one plain sentence each — the choice is whether anybody reviews a gate
+              before the next one is paid for, and the sentences say exactly that. */}
+          <fieldset data-testid="review-mode" className="flex flex-col gap-1.5">
+            <legend className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-on-raised">
+              Review
+              <InfoTip
+                text="Guided pauses at each of the four gates so you can check the groups, the targets and the recodes before the next step runs and is charged. Full auto commits every gate with the pipeline's own proposals — every group in scope, the model's targets, the recodes as drafted — and runs straight through to the export screen. Every flag stays on the records either way, and every gate stays open for you to review afterwards; the export marks each gate Full auto accepted as not reviewed."
+                label="About the review options"
+              />
+            </legend>
+            {REVIEW_MODES.map((mode) => (
+              <label
+                key={mode}
+                data-testid={`review-mode-${mode}`}
+                className="flex cursor-pointer items-start gap-2 rounded border border-rule-control-on-raised px-2 py-1.5"
+              >
+                <input
+                  type="radio"
+                  name="review-mode"
+                  value={mode}
+                  checked={reviewMode === mode}
+                  onChange={() => setReviewMode(mode)}
+                  className="mt-0.5 h-3.5 w-3.5 accent-[var(--accent)]"
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-xs font-semibold text-on-raised">{REVIEW_MODE_COPY[mode].label}</span>
+                  <span data-testid="review-mode-sentence" className="text-xs text-on-raised-muted">
+                    {REVIEW_MODE_COPY[mode].sentence}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="run-name" className="text-xs font-semibold text-on-raised">
               Run name (optional)
@@ -2049,6 +2091,28 @@ export default function SetupPage() {
                 Each line now sits under the gate whose Continue buys it, from `CostLine.gate`. The three
                 lines that are a CHOICE carry their default and the gate that owns the decision, which is
                 all the deleted cards said. Detail is in tooltips, not prose. */}
+            {fullAuto ? (
+              <p
+                data-testid="full-auto-charge"
+                data-total={String(fullAutoCharge(estimate))}
+                className="border-t border-rule-on-raised pt-2 text-xs text-on-raised"
+              >
+                <span className="font-semibold">
+                  Full auto: Start run buys the whole run — every gate, every group in scope — about{" "}
+                  {formatUsd(fullAutoCharge(estimate))}, with no Continue in between.
+                </span>
+                <InfoTip
+                  label="What Full auto buys"
+                  text={
+                    "Guided runs are paid gate by gate, and each gate re-quotes from the run's real groups before " +
+                    "you continue. Full auto has no Continue to ask at: pressing Start run commits every gate, so this " +
+                    "is every gate's estimate added up, with every group in scope. It stops at the export screen, so " +
+                    "the analysis ideas listed after the run are not part of it. Stop works at any time and keeps " +
+                    "what has already been paid for."
+                  }
+                />
+              </p>
+            ) : (
             <p
               data-testid="first-charge"
               className="border-t border-rule-on-raised pt-2 text-xs text-on-raised"
@@ -2069,6 +2133,7 @@ export default function SetupPage() {
                 }
               />
             </p>
+            )}
 
             <ul className="flex flex-col gap-2">
               {/* THE RETIRED POSITION DRAWS NO ROW. `byGate` is keyed by the WIRE type and still carries
@@ -2304,7 +2369,10 @@ export default function SetupPage() {
           ) : (
             <p className="max-w-[68ch] text-sm text-on-raised-muted">
               Ready to start. Uploading, mapping, confirming and exporting all ran on this machine and cost
-              nothing — pressing Start run is this run's first charge.
+              nothing —{" "}
+              {fullAuto
+                ? "pressing Start run buys the whole run in Full auto."
+                : "pressing Start run is this run's first charge."}
             </p>
           )}
         </div>
@@ -2329,9 +2397,20 @@ export default function SetupPage() {
         <CommitBar
           action="Start run"
           actionTestId="start-run"
-          total={isPreview || !estimate || estimate.free ? undefined : estimate.firstCharge}
+          // Full auto (08-30): Start is the run's ONE consent, so it quotes every gate, not the first charge (R8).
+          total={
+            isPreview || !estimate || estimate.free
+              ? undefined
+              : fullAuto
+                ? fullAutoCharge(estimate)
+                : estimate.firstCharge
+          }
           firstCharge={!isPreview && !estimate?.free}
-          scopeLabel={totalFields === null ? undefined : `${totalFields.toLocaleString()} variables`}
+          scopeLabel={
+            totalFields === null
+              ? undefined
+              : `${totalFields.toLocaleString()} variables${fullAuto ? ", every group in scope, through every gate" : ""}`
+          }
           onCommit={() => void onStart()}
           busy={starting}
           // NOT disabled for the static build any more (08-28): `startHarmonize` tries the request there and

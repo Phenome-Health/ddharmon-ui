@@ -4,6 +4,8 @@
 // sync with contract.py (CONTRACT_VERSION).
 
 export type RunMode = "batch" | "sync" | "preview";
+/** How a run's gates are committed (08-30) — see `lib/review-mode.ts`. An enum so a third mode can join later. */
+export type ReviewMode = "guided" | "auto";
 export type CdeSet = "endorsed" | "full";
 /**
  * The catalog a NEW run matches against unless the reviewer picks another (08-28 Decision 7; the backend's
@@ -613,6 +615,11 @@ export interface JobResult {
   // LIVE runs (08-28 0e): the batch a batch stage is polling right now, or null when none is in flight. What
   // the "Finish now with sync" control renders from.
   batch?: BatchInFlight | null;
+  // FULL AUTO (08-30) — present ONLY on a run started in Full auto (a guided run's wire shape is unchanged).
+  // `reviewMode` says so on the thin frame (which carries no config); `autoAdvancing` is true for the moment the
+  // run is parked while the server commits that gate and starts the next step itself — the client keeps following.
+  reviewMode?: ReviewMode;
+  autoAdvancing?: boolean;
 }
 
 /** The in-flight batch, as the progress frame reports it (08-28 0e). */
@@ -877,6 +884,12 @@ export interface RunConfig {
    * `JobResult.config`.
    */
   readjudication?: boolean;
+  /**
+   * How the run's gates are committed (08-30): `guided` (the default — every gate waits for Continue) or `auto`
+   * (Full auto — the server commits each gate with the pipeline's own proposals and goes on to Gate 4). Sent only
+   * for Full auto, so a guided Start's payload is exactly what it was. Persisted as `review_mode`.
+   */
+  reviewMode?: ReviewMode;
   displayName?: string;
   // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
   // omitted, and falls back to harmonize_leanb's own defaults for the rest)
@@ -914,6 +927,8 @@ export interface DemoCombo {
   label: string;
   description?: string;
   available: boolean;
+  /** A STAGED demo (08-30): a pinned Full-auto run parked at Gate 4 that a guest walks from Gate 1. */
+  staged?: boolean;
 }
 export interface DemosResponse {
   datasets: DemoDataset[];
