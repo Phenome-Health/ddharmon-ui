@@ -2124,10 +2124,9 @@ test.describe("gate 1 scrolling", () => {
       "the document may be no taller than the viewport",
     ).toBe(probe.viewportHeight);
     // ...and the ONE scroller that does exist is the content area, so scrolling the page scrolls the
-    // ledger. The reviewer never has to find the right container.
-    expect(probe.mainMoved, "the content area is the page's scroller").toBe(
-      300,
-    );
+    // ledger. The reviewer never has to find the right container. NOT exactly 300 since the rail collapses on
+    // scroll (2026-10-07): the browser's scroll anchoring gives back what the rail lost so the ledger stays put.
+    expect(probe.mainMoved, "the content area is the page's scroller").toBeGreaterThan(200);
   });
 
   test("@gate1 nothing absolutely positioned escapes the content scroller", async ({

@@ -223,6 +223,66 @@ test.describe("five screens", () => {
     expect(box.y - top, "the rail is not at the top of the screen").toBeLessThan(40);
   });
 
+  test("@gates scrolled down, the rail collapses to the chip and one line per gate", async ({ page }) => {
+    // Bhargav, 2026-10-07: as the reviewer scrolls, the rail tightens to the run chip and the five gates, one line
+    // each — the current gate keeps its name, the others just their number, and the spend lines go. Every gate stays
+    // in the line, so the rail still navigates while collapsed. At the top it opens up again.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const main = page.locator("main");
+    const box = page.getByTestId("gate-rail-box");
+    await expect(box).toHaveAttribute("data-compact", "false");
+    const full = (await box.boundingBox())!.height;
+
+    await main.evaluate((el) => el.scrollTo(0, 700));
+    await expect(box).toHaveAttribute("data-compact", "true");
+    expect((await box.boundingBox())!.height, "the collapsed rail is not tighter").toBeLessThan(full - 30);
+    await expect(box.getByTestId("run-chip")).toBeVisible();
+    const items = box.locator("[data-testid='gate-rail'] > li");
+    await expect(items).toHaveCount(5);
+    for (let i = 0; i < 5; i++) {
+      expect((await items.nth(i).boundingBox())!.height, `gate column ${i} is more than one line`).toBeLessThanOrEqual(36);
+    }
+    await expect(box.locator("li[aria-current='step']")).toContainText("Gate 1 · Concept groups");
+    await expect(box.locator("li[data-gate='gate2']")).toHaveText("Gate 2");
+    await expect(box.locator("[data-cost]")).toHaveCount(0);
+
+    await main.evaluate((el) => el.scrollTo(0, 0));
+    await expect(box).toHaveAttribute("data-compact", "false");
+    await expect(box.locator("[data-cost]")).toHaveCount(5);
+  });
+
+  test("@gates the rail does not flicker at the collapse boundary", async ({ page }) => {
+    // Collapsing shortens the rail, and the browser's scroll anchoring scrolls back by that much to keep the reader's
+    // row in place. If that pull-back crossed the re-open threshold the rail would open, close, open... Scroll down in
+    // small steps and count the changes: one, and only one.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const flips = await page.locator("main").evaluate(async (el) => {
+      const rail = document.querySelector("[data-testid='gate-rail-box']")!;
+      let last = rail.getAttribute("data-compact");
+      let n = 0;
+      const seen = new MutationObserver(() => {
+        const now = rail.getAttribute("data-compact");
+        if (now !== last) (n += 1), (last = now);
+      });
+      seen.observe(rail, { attributes: true, attributeFilter: ["data-compact"] });
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // RELATIVE steps, like a trackpad: an absolute scrollTop would overwrite the anchoring pull-back and hide the bug.
+      for (let i = 0; i < 100; i += 1) {
+        el.scrollBy(0, 4);
+        await frame();
+      }
+      await new Promise((r) => setTimeout(r, 300));
+      seen.disconnect();
+      return n;
+    });
+    expect(flips, "the rail changed state more than once while scrolling one way").toBe(1);
+    await expect(page.getByTestId("gate-rail-box")).toHaveAttribute("data-compact", "true");
+  });
+
   test("@gates five screens — a passed gate reads as realized while a future one reads as a forecast", async ({
     page,
   }) => {

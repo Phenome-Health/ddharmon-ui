@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
 import { pathForGate, railReachOf } from "@/lib/gate-routes";
@@ -131,6 +131,41 @@ export interface GateShellProps {
  * `pending` is INCLUDED: the worker has not started, so a stop still avoids the whole cost.
  */
 
+/**
+ * Whether the rail should be COLLAPSED (2026-10-07): the screen has scrolled well past where the rail sits.
+ *
+ * Measured from a zero-height MARKER just above the pinned rail, inside AppShell's scrolling <main>, so the rail's own
+ * change of height never moves the thing being measured. And a screen with too little to scroll never collapses:
+ * collapsing shortens the page, which on a short one would pull the marker back into view and re-open the rail.
+ *
+ * THE GAP BETWEEN THE TWO THRESHOLDS MUST EXCEED WHAT THE RAIL LOSES (~56px). When it collapses, the browser's scroll
+ * anchoring scrolls back by that much so the row the reviewer is reading does not jump — which is the point — but it
+ * also moves the marker back by the same amount. With a narrower gap that pull-back re-opens the rail, the re-open
+ * pushes it forward again, and the rail flickers at the boundary.
+ */
+const COLLAPSE_PAST_PX = 120;
+const EXPAND_WITHIN_PX = 16;
+const MIN_SCROLL_ROOM_PX = 200;
+
+function useRailCollapsed(marker: RefObject<HTMLElement | null>): boolean {
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    const el = marker.current;
+    const scroller = el?.closest("main");
+    if (!el || !scroller) return;
+    const update = () => {
+      // How far the marker has scrolled up past the top of the scrolling area (negative while it is still below it).
+      const past = scroller.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      const room = scroller.scrollHeight - scroller.clientHeight - (scroller.scrollTop - past);
+      setCollapsed((was) => (was ? past > EXPAND_WITHIN_PX : past > COLLAPSE_PAST_PX && room > MIN_SCROLL_ROOM_PX));
+    };
+    update();
+    scroller.addEventListener("scroll", update, { passive: true });
+    return () => scroller.removeEventListener("scroll", update);
+  }, [marker]);
+  return collapsed;
+}
+
 export function GateShell({
   gate,
   title,
@@ -161,6 +196,8 @@ export function GateShell({
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
+  const railMarker = useRef<HTMLDivElement>(null);
+  const railCollapsed = useRailCollapsed(railMarker);
   /**
    * (1) THE RUN LINE, inside the rail (2026-10-06, Bhargav: "move into the rail, should apply to all runs"). The run
    * chip and the stop control used to sit on their own app-bar row; with the tagline gone that row held one chip.
@@ -239,6 +276,9 @@ export function GateShell({
           carries none, and has reached every gate (08-18). Freezing above still reads the raw position. */}
       {/* PINNED (2026-10-06): sticky at the top of AppShell's scrolling <main>, on the ground colour, so the
           working surface scrolls beneath it rather than showing around its rounded corners. */}
+      {/* The collapse marker. Zero height, and its -mt-8 cancels the column gap it would otherwise add, so the rail
+          sits exactly where it did. It is NOT inside the pin: wrapping a sticky element leaves it nowhere to stick. */}
+      <div ref={railMarker} aria-hidden="true" className="-mt-8 h-0" />
       <div data-testid="gate-rail-pin" className="sticky top-0 z-30 -my-3 bg-surface-field py-3">
         <GateRail
           current={gate}
@@ -246,6 +286,7 @@ export function GateShell({
           jobId={jobId}
           runPosition={railReachOf(job)}
           header={runLine}
+          compact={railCollapsed}
         />
       </div>
 

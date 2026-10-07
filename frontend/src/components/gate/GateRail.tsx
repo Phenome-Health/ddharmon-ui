@@ -132,6 +132,7 @@ export function GateRail({
   jobId,
   runPosition,
   header,
+  compact = false,
 }: {
   current: GatePosition;
   /** One entry per gate, in order. Exactly five; a short list is a bug, not a collapsed rail. */
@@ -146,11 +147,21 @@ export function GateRail({
   runPosition?: GatePosition | null;
   /** A line above the five columns, on the same navy box — the run's name, spend and stop control (2026-10-06). */
   header?: React.ReactNode;
+  /**
+   * COLLAPSED (2026-10-07, Bhargav: "as the user scrolls down, the rail collapses into a tighter version"). The run
+   * line and all five gates, one line each: the current gate keeps its name, the others just their number, and the
+   * spend lines go. Every gate stays in the line, so the rail still navigates while the reviewer is deep in a screen.
+   */
+  compact?: boolean;
 }) {
   const currentIndex = GATE_SEQUENCE.indexOf(current);
   return (
-    <div data-testid="gate-rail-box" className={cn("flex flex-col gap-1 rounded-card bg-surface-chrome p-2", className)}>
-    {header && <div className="px-3 pb-1 pt-1.5">{header}</div>}
+    <div
+      data-testid="gate-rail-box"
+      data-compact={String(compact)}
+      className={cn("flex flex-col rounded-card bg-surface-chrome", compact ? "gap-0.5 p-1.5" : "gap-1 p-2", className)}
+    >
+    {header && <div className={compact ? "px-3 pb-0.5 pt-0.5" : "px-3 pb-1 pt-1.5"}>{header}</div>}
     <ol aria-label="Review gates" data-testid="gate-rail" className="grid grid-cols-5 gap-1">
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
@@ -173,7 +184,8 @@ export function GateRail({
             // screen-reader user has no way to tell which screen they are on.
             aria-current={isCurrent ? "step" : undefined}
             className={cn(
-              "flex min-h-8 flex-col gap-1 rounded-inner px-3 py-2",
+              "flex min-h-8 flex-col gap-1 rounded-inner px-3",
+              compact ? "justify-center py-1" : "py-2",
               // Navy rail (mockup parity): the active gate is a solid blue pill; the rest are plain columns
               // ON the navy bar. The per-gate cost stays — the mockup dropped it, but a reviewer standing
               // downstream of real spend needs the realized-vs-forecast split (UI-SPEC §7.1.3), so it is
@@ -195,11 +207,16 @@ export function GateRail({
                 isCurrent ? "text-on-accent-surface" : isDone ? "text-on-chrome" : "text-on-chrome-muted",
               )}
             >
-              {isDone && <Check aria-hidden="true" className="h-3 w-3" />}
+              {isDone && <Check aria-hidden="true" className="h-3 w-3 shrink-0" />}
               {item.gate === "setup" ? "Set up" : `Gate ${item.gate.slice(4)}`}
+              {/* Collapsed, the current gate keeps its name on the same line; the others are just their number. */}
+              {compact && isCurrent && (
+                <span className="min-w-0 truncate normal-case tracking-normal">{` \u00b7 ${item.label}`}</span>
+              )}
               {isDone && <span className="sr-only">completed</span>}
             </span>
-            <span className="truncate text-sm font-semibold">{item.label}</span>
+            {!compact && <span className="truncate text-sm font-semibold">{item.label}</span>}
+            {!compact && (
             <span
               data-cost={item.cost.kind}
               className={cn(
@@ -210,6 +227,7 @@ export function GateRail({
             >
               {item.cost.text}
             </span>
+            )}
             </Inner>
           </li>
         );
