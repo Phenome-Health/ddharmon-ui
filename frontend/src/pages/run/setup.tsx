@@ -1437,7 +1437,9 @@ export default function SetupPage() {
           : stage === "past"
             ? // The "moved on" notice right below the rail already says this screen is a record.
               undefined
-            : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Mark each dictionary complete to export the exact text that will be clustered — all of that is free. Nothing is charged until you press Start run."
+            : // Trimmed to what the steps below do not already say (2026-10-07): they walk the dictionaries,
+              // the export and the run mode one by one, so the lead carries only the money claim.
+              "Everything on this screen is free — nothing is charged until you press Start run."
       }
       rail={railFor("setup", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
