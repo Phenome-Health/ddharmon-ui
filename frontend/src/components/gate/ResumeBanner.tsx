@@ -1,4 +1,4 @@
-import { RotateCcw } from "lucide-react";
+import { CircleCheck, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition } from "@/types";
 import { GATE_LABELS } from "@/components/gate/GateRail";
@@ -9,6 +9,9 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
  * NO COUNTDOWN, deliberately. Retention is indefinite until the reviewer deletes the run, so a timer would
  * be a threat the product does not carry out (UI-SPEC §8.6). The honest register is a resume affordance:
  * "Paused at Gate 1 · resume any time."
+ *
+ * EXCEPT AT GATE 4 (2026-10-07, Bhargav: "'paused at gate 4' is weird bc there's nothing to resume"). By the
+ * export screen every stage has run, so the run is not paused anywhere — it is complete, and the banner says so.
  *
  * It also states the SPEND ALREADY COMMITTED, because a run rejoined days later is the exact case where
  * the reviewer has forgotten what it cost, and reporting nothing there reads as "nothing yet" (T-08-44).
@@ -23,27 +26,41 @@ export function ResumeBanner({
   costSoFar: number;
   className?: string;
 }) {
+  const complete = gate === "gate4";
+  const Icon = complete ? CircleCheck : RotateCcw;
   return (
     <div
       role="status"
       data-testid="resume-banner"
+      data-state={complete ? "complete" : "paused"}
       className={cn(
         "flex items-center gap-3 rounded-inner border border-rule-on-field bg-on-field/5 px-4 py-3",
         className,
       )}
     >
-      <RotateCcw aria-hidden="true" className="h-4 w-4 shrink-0 text-on-field-muted" />
-      <p className="text-sm text-on-field">
-        <span className="font-semibold">
-          Paused at {gate === "setup" ? "set up" : `Gate ${gate.slice(4)}`} · resume any time.
-        </span>{" "}
-        <span className="text-on-field-muted">
-          You stopped on the {GATE_LABELS[gate].toLowerCase()} screen.{" "}
-          {costSoFar > 0
-            ? `${formatUsd(costSoFar)} has already been charged for the work behind it.`
-            : "Nothing has been charged on this run so far."}
-        </span>
-      </p>
+      <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-on-field-muted" />
+      {complete ? (
+        <p className="text-sm text-on-field">
+          <span className="font-semibold">Run complete.</span>{" "}
+          <span className="text-on-field-muted">
+            {costSoFar > 0
+              ? `Every stage has run. ${formatUsd(costSoFar)} was charged in total.`
+              : "Every stage has run, and nothing was charged."}
+          </span>
+        </p>
+      ) : (
+        <p className="text-sm text-on-field">
+          <span className="font-semibold">
+            Paused at {gate === "setup" ? "set up" : `Gate ${gate.slice(4)}`} · resume any time.
+          </span>{" "}
+          <span className="text-on-field-muted">
+            You stopped on the {GATE_LABELS[gate].toLowerCase()} screen.{" "}
+            {costSoFar > 0
+              ? `${formatUsd(costSoFar)} has already been charged for the work behind it.`
+              : "Nothing has been charged on this run so far."}
+          </span>
+        </p>
+      )}
     </div>
   );
 }

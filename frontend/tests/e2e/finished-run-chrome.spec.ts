@@ -225,8 +225,12 @@ test.describe("finished run — the resume banner", () => {
     });
   }
 
-  test("@finished-chrome @resume Gate 4, where the run IS parked, still shows it", async ({ page }) => {
+  test("@finished-chrome @resume Gate 4, where the run IS parked, says the run is complete", async ({ page }) => {
+    // Bhargav, 2026-10-07: "Paused at Gate 4" is weird — there is nothing left to resume. Every stage has run by
+    // Gate 4; what remains is the export, so the banner says the run is complete instead of offering a resume.
     await openParkedAtGate4(page, "gate4");
-    await expect(page.locator("[data-testid='resume-banner']")).toContainText("Paused at Gate 4");
+    const banner = page.locator("[data-testid='resume-banner']");
+    await expect(banner).toContainText("Run complete");
+    await expect(banner).not.toContainText(/paused|resume/i);
   });
 });

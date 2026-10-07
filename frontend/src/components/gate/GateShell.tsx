@@ -171,7 +171,7 @@ export function GateShell({
     inFlight && isDemo ? (
       <span
         data-testid="stop-unavailable"
-        className="shrink-0 rounded-pill border border-dashed border-rule-on-chrome px-3 py-1 text-xs text-on-chrome-muted"
+        className="rounded-inner border border-dashed border-rule-on-chrome px-3 py-1 text-xs text-on-chrome-muted"
       >
         Stopping is not available on the shared sample — it replays in your browser and spends nothing,
         so there is nothing to stop. Start your own run to get the control.
@@ -194,12 +194,22 @@ export function GateShell({
         />
       )
     ) : null;
+  /**
+   * CENTRED AND OUTLINED (2026-10-07, Bhargav: "blends in a bit too much. add a border around it and center it in the
+   * rail"). Three columns, so the chip holds the rail's centre whether or not the stop control is on the line: the
+   * flanks are equal by construction and the stop control takes the right one.
+   */
   const runLine =
     runName || stopControl ? (
-      <div className="flex min-w-0 items-center justify-between gap-4">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] items-center gap-4">
+        <span />
         {/* No run in progress -> no chip. An empty chip is worse than none: it reads as a run with no name. */}
         {runName ? (
-          <span data-testid="run-chip" title={runName} className="flex min-w-0 shrink items-center gap-2">
+          <span
+            data-testid="run-chip"
+            title={runName}
+            className="flex min-w-0 items-center gap-2 rounded-pill border border-on-chrome-faint px-3 py-1"
+          >
             <span className="max-w-[40rem] truncate text-xs font-semibold text-on-chrome">{runName}</span>
             <span className="shrink-0 text-xs tabular-nums text-on-chrome-muted">
               {costSoFar > 0 ? `spent ${formatUsd(costSoFar)}` : "nothing charged yet"}
@@ -208,7 +218,7 @@ export function GateShell({
         ) : (
           <span />
         )}
-        {stopControl}
+        <div className="flex min-w-0 justify-end">{stopControl}</div>
       </div>
     ) : null;
   return (

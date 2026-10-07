@@ -191,6 +191,23 @@ test.describe("five screens", () => {
     await expect(page.locator("[data-testid='run-chip']")).toHaveCount(1);
   });
 
+  test("@gates the run chip is outlined and centred in the rail", async ({ page }) => {
+    // Bhargav, 2026-10-07: in the rail the chip "blends in a bit too much" — it gets a border and sits centred.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const chip = page.locator("[data-testid='run-chip']");
+    const style = await chip.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { width: parseFloat(s.borderTopWidth), style: s.borderTopStyle };
+    });
+    expect(style.width).toBeGreaterThanOrEqual(1);
+    expect(style.style).toBe("solid");
+    const c = await chip.boundingBox();
+    const r = await page.locator("[data-testid='gate-rail-box']").boundingBox();
+    expect(Math.abs(c!.x + c!.width / 2 - (r!.x + r!.width / 2))).toBeLessThanOrEqual(2);
+  });
+
   test("@gates the rail stays pinned at the top while the screen scrolls", async ({ page }) => {
     // Bhargav, 2026-10-06: scrolling down must not hide where you are in the flow.
     await page.setViewportSize({ width: 1440, height: 900 });
