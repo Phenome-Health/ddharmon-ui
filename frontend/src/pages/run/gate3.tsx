@@ -16,6 +16,14 @@ import {
   InheritedPanel,
 } from "@/components/gate/ConceptWorkbench";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
+import {
+  CohortLegend,
+  FilterCheck,
+  FilterChips,
+  FilterSection,
+  QueueSearch,
+  type FilterChip,
+} from "@/components/gate/QueueControls";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RecodeDetail, transformSummary } from "@/components/gate/RecodeDetail";
 import { SpecMappingEditor } from "@/components/gate/SpecMappingEditor";
@@ -31,7 +39,7 @@ import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-
 import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { isGateLocked } from "@/lib/review-mode";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
-import { conceptTitle } from "@/lib/ledger";
+import { cohortRoster, conceptTitle } from "@/lib/ledger";
 import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import {
   conceptMatchState,
@@ -198,7 +206,11 @@ export default function Gate3Page() {
     runConfig?.conceptGate ?? runConfig?.concept_gate,
   );
 
+  // The filter menu inside the search (08-30b): Cross-cohort only and the cohorts (a concept must span EVERY
+  // ticked cohort, as it stands after any removals here), then the arithmetic-recode filter.
   const [arithmeticOnly, setArithmeticOnly] = useState(false);
+  const [xcOnly, setXcOnly] = useState(false);
+  const [cohortFilter, setCohortFilter] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
   // Unsaved note text PER ROW — a single draft slot lost row A's text the moment row B was typed in.
@@ -244,9 +256,29 @@ export default function Gate3Page() {
           : g.rows,
       }))
       .filter((g) => g.rows.length > 0)
-      .filter((g) => !q || labelOf(g.record).toLowerCase().includes(q));
+      .filter((g) => !q || labelOf(g.record).toLowerCase().includes(q))
+      .filter((g) => !xcOnly || g.record.crossCohort)
+      .filter((g) => {
+        if (cohortFilter.length === 0) return true;
+        const left = cohortsLeft(g.record, removedIn(g.record.groupId));
+        return cohortFilter.every((c) => left.includes(c));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, arithmeticOnly, query, renames.decisions]);
+  }, [groups, arithmeticOnly, xcOnly, cohortFilter, query, renames.decisions, exclusions.decisions]);
+
+  // The run's cohorts in their fixed order — the strip's columns and the legend over them.
+  const roster = useMemo(
+    () => cohortRoster(jobState?.result?.summary?.cohorts, groups.map((g) => g.record)),
+    [jobState?.result?.summary?.cohorts, groups],
+  );
+  const nArithmetic = groups.filter((g) => g.rows.some((r) => r.transform?.kind === "arithmetic")).length;
+  const filterChips: FilterChip[] = [
+    ...(xcOnly ? [{ key: "xc", label: "Cross-cohort only", onRemove: () => setXcOnly(false) }] : []),
+    ...cohortFilter.map((c) => ({ key: `co:${c}`, label: c, onRemove: () => setCohortFilter((f) => f.filter((x) => x !== c)) })),
+    ...(arithmeticOnly
+      ? [{ key: "arith", label: "Arithmetic recodes only", onRemove: () => setArithmeticOnly(false) }]
+      : []),
+  ];
 
   // The columns several of one cohort's in-scope variables write (a rejected recode writes nothing) — the only
   // places the combine control appears. Across records, as the notebook groups them.
@@ -383,39 +415,73 @@ export default function Gate3Page() {
       <ConceptWorkbench
         gate="gate3"
         toolbar={
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="search"
-                data-testid="term-search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search concept…"
-                aria-label="Filter concepts"
-                className="h-8 min-w-[11rem] flex-1 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2.5 text-sm text-on-raised placeholder:text-on-raised-faint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              />
-              <span className="ml-auto text-xs text-on-raised-muted">
-                <span className="font-mono tabular-nums text-on-raised">
-                  {visible.length}
-                </span>{" "}
-                {visible.length === 1 ? "concept" : "concepts"}
-              </span>
-            </div>
-            {/* A STANDING FILTER, not a per-row chip: the reviewer asks for the risk category. */}
-            <Button
-              data-testid="arithmetic-filter"
-              data-active={arithmeticOnly}
-              variant={arithmeticOnly ? "default" : "outline"}
-              size="sm"
-              className="w-fit"
-              onClick={() => setArithmeticOnly((v) => !v)}
-            >
-              {arithmeticOnly
-                ? "Showing arithmetic recodes only"
-                : "Show arithmetic recodes only"}
-            </Button>
-          </div>
+          <>
+            <QueueSearch
+              value={query}
+              onChange={setQuery}
+              placeholder="Search concept…"
+              ariaLabel="Filter concepts"
+              activeFilters={filterChips.length}
+              filters={
+                <>
+                  <FilterSection
+                    first
+                    title="Cohorts"
+                    columns={2}
+                    lead={
+                      <FilterCheck
+                        testid="cross-cohort-toggle"
+                        checked={xcOnly}
+                        onChange={setXcOnly}
+                        label="Cross-cohort only"
+                        count={groups.filter((g) => g.record.crossCohort).length}
+                        countTestid="cross-cohort-count"
+                      />
+                    }
+                    hint="Spanning every cohort ticked"
+                  >
+                    {roster.map((c) => (
+                      <FilterCheck
+                        key={c}
+                        testid={`filter-cohort-${c}`}
+                        checked={cohortFilter.includes(c)}
+                        onChange={(on) => setCohortFilter((f) => (on ? [...f, c] : f.filter((x) => x !== c)))}
+                        label={c}
+                        count={groups.filter((g) => cohortsLeft(g.record, removedIn(g.record.groupId)).includes(c)).length}
+                      />
+                    ))}
+                  </FilterSection>
+                  {/* A STANDING FILTER, not a per-row chip: the reviewer asks for the risk category. */}
+                  <FilterSection title="Recodes">
+                    <FilterCheck
+                      testid="arithmetic-filter"
+                      checked={arithmeticOnly}
+                      onChange={setArithmeticOnly}
+                      label="Arithmetic recodes only"
+                      count={nArithmetic}
+                      className="col-span-2"
+                    />
+                  </FilterSection>
+                </>
+              }
+            />
+            <FilterChips
+              chips={filterChips}
+              onClear={() => {
+                setXcOnly(false);
+                setCohortFilter([]);
+                setArithmeticOnly(false);
+              }}
+            />
+          </>
         }
+        tools={
+          <span data-testid="queue-count" className="text-xs text-on-raised-muted">
+            <span className="font-mono tabular-nums text-on-raised">{visible.length}</span>{" "}
+            {visible.length === 1 ? "concept" : "concepts"}
+          </span>
+        }
+        legend={<CohortLegend roster={roster} />}
         rows={visible.map(({ record, rows }) => {
           const matchState = conceptMatchState(record, {
             optedIn: conceptGateOn,
@@ -427,20 +493,19 @@ export default function Gate3Page() {
               id={record.groupId}
               testid="gate3-concept"
               label={labelOf(record)}
-              badges={
-                <>
-                  <VerdictPill verdict={record.verdict} />
-                  {matchState === "flagged" && (
-                    <span
-                      data-testid="concept-match-flag"
-                      className="rounded-pill border border-status-warn px-2 py-0.5 text-xs text-on-warn"
-                    >
-                      concept-match flag
-                    </span>
-                  )}
-                </>
+              marks={
+                matchState === "flagged" && (
+                  <span
+                    data-testid="concept-match-flag"
+                    className="rounded-pill border border-status-warn px-2 py-0.5 text-xs text-on-warn"
+                  >
+                    concept-match flag
+                  </span>
+                )
               }
+              state={<VerdictPill verdict={record.verdict} variant="tag" />}
               cohorts={cohortsLeft(record, removed)}
+              roster={roster}
               count={rows.filter((r) => !removed.has(r.sourceVariable)).length}
               selected={record.groupId === (selected?.record.groupId ?? null)}
               onSelect={() => setSelectedId(record.groupId)}

@@ -5,17 +5,24 @@ import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GateShell } from "@/components/gate/GateShell";
 import {
   ConceptWorkbench,
   ConceptQueueRow,
-  ConceptSortHeader,
   ConceptDetailHeader,
   VerdictPill,
   InheritedPanel,
 } from "@/components/gate/ConceptWorkbench";
 import { CandidateTable } from "@/components/gate/CandidateTable";
+import {
+  CohortLegend,
+  FilterCheck,
+  FilterChips,
+  FilterSection,
+  QueueSearch,
+  SegmentedSort,
+  type FilterChip,
+} from "@/components/gate/QueueControls";
 import { CatalogLink } from "@/components/gate/CatalogLink";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { RunKeyField } from "@/components/gate/RunKeyField";
@@ -34,7 +41,7 @@ import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-
 import { isInFlight, isParkedAt, isTerminal, resumeTookEffect } from "@/lib/run-state";
 import { candidateLabel, pickedCandidateId } from "@/lib/cde-identity";
 import { type ColumnSort, toggleSort } from "@/lib/column-sort";
-import { conceptTitle, isReviewerGroupId } from "@/lib/ledger";
+import { cohortRoster, conceptTitle, isReviewerGroupId } from "@/lib/ledger";
 import {
   affectedSpecCount,
   candidateAlternatives,
@@ -86,6 +93,9 @@ import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
  */
 
 type Gate2SortKey = "concept" | "verdict" | "vars";
+
+/** The Verdict section of the filter menu (08-30b): boxes, several may be ticked; none ticked shows every verdict. */
+const VERDICTS = ["adopt", "refine", "novel"] as const;
 
 /** The reviewer's in-progress edit to the anchor, tagged with the concept it belongs to (Gate 2/3 pattern:
  *  no effect, so no reset to mis-order the draft when the selection changes). */
@@ -203,7 +213,11 @@ export default function Gate2Page() {
 
   const [selectedId, setSelectedId] = useState<string>("");
   const [query, setQuery] = useState("");
-  const [verdictFilter, setVerdictFilter] = useState<"all" | "adopt" | "refine" | "novel">("all");
+  // The filter menu inside the search (08-30b): Cross-cohort only and the cohorts (a concept must span EVERY
+  // ticked cohort), then the verdicts.
+  const [xcOnly, setXcOnly] = useState(false);
+  const [cohortFilter, setCohortFilter] = useState<string[]>([]);
+  const [verdicts, setVerdicts] = useState<string[]>([]);
   const [colSort, setColSort] = useState<ColumnSort<Gate2SortKey> | null>(null);
   const [draft, setDraft] = useState<AnchorDraft | null>(null);
   const [pendingPick, setPendingPick] = useState<{ chosenId: string; affected: number } | null>(null);
@@ -217,7 +231,9 @@ export default function Gate2Page() {
         return hay.includes(q);
       });
     }
-    if (verdictFilter !== "all") rows = rows.filter((r) => r.verdict === verdictFilter);
+    if (xcOnly) rows = rows.filter((r) => r.crossCohort);
+    if (cohortFilter.length > 0) rows = rows.filter((r) => cohortFilter.every((c) => r.cohorts?.includes(c)));
+    if (verdicts.length > 0) rows = rows.filter((r) => verdicts.includes(r.verdict));
     if (colSort) {
       const dir = colSort.dir === "asc" ? 1 : -1;
       rows = [...rows].sort((a, b) => {
@@ -228,7 +244,20 @@ export default function Gate2Page() {
     }
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, query, verdictFilter, colSort, renames.decisions]);
+  }, [records, query, xcOnly, cohortFilter, verdicts, colSort, renames.decisions]);
+
+  // The run's cohorts in their fixed order — the strip's columns and the legend over them.
+  const roster = useMemo(() => cohortRoster(jobState?.result?.summary?.cohorts, records), [jobState?.result?.summary?.cohorts, records]);
+  const filterChips: FilterChip[] = [
+    ...(xcOnly ? [{ key: "xc", label: "Cross-cohort only", onRemove: () => setXcOnly(false) }] : []),
+    ...cohortFilter.map((c) => ({ key: `co:${c}`, label: c, onRemove: () => setCohortFilter((f) => f.filter((x) => x !== c)) })),
+    ...verdicts.map((v) => ({ key: `v:${v}`, label: v, onRemove: () => setVerdicts((f) => f.filter((x) => x !== v)) })),
+  ];
+  const clearFilters = () => {
+    setXcOnly(false);
+    setCohortFilter([]);
+    setVerdicts([]);
+  };
 
   const record = visible.find((r) => r.groupId === selectedId) ?? visible[0] ?? records[0];
 
@@ -373,28 +402,63 @@ export default function Gate2Page() {
       <ConceptWorkbench
         gate="gate2"
         toolbar={
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="search"
-              data-testid="term-search"
+          <>
+            <QueueSearch
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={setQuery}
               placeholder="Search concept, variable, cohort…"
-              aria-label="Filter concepts"
-              className="h-8 min-w-[11rem] flex-1 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2.5 text-sm text-on-raised placeholder:text-on-raised-faint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              ariaLabel="Filter concepts"
+              activeFilters={filterChips.length}
+              filters={
+                <>
+                  <FilterSection
+                    first
+                    title="Cohorts"
+                    columns={2}
+                    lead={
+                      <FilterCheck
+                        testid="cross-cohort-toggle"
+                        checked={xcOnly}
+                        onChange={setXcOnly}
+                        label="Cross-cohort only"
+                        count={records.filter((r) => r.crossCohort).length}
+                        countTestid="cross-cohort-count"
+                      />
+                    }
+                    hint="Spanning every cohort ticked"
+                  >
+                    {roster.map((c) => (
+                      <FilterCheck
+                        key={c}
+                        testid={`filter-cohort-${c}`}
+                        checked={cohortFilter.includes(c)}
+                        onChange={(on) => setCohortFilter((f) => (on ? [...f, c] : f.filter((x) => x !== c)))}
+                        label={c}
+                        count={records.filter((r) => r.cohorts?.includes(c)).length}
+                      />
+                    ))}
+                  </FilterSection>
+                  <FilterSection title="Verdict">
+                    {VERDICTS.map((v) => (
+                      <FilterCheck
+                        key={v}
+                        testid={`filter-verdict-${v}`}
+                        checked={verdicts.includes(v)}
+                        onChange={(on) => setVerdicts((f) => (on ? [...f, v] : f.filter((x) => x !== v)))}
+                        label={v[0].toUpperCase() + v.slice(1)}
+                        count={records.filter((r) => r.verdict === v).length}
+                      />
+                    ))}
+                  </FilterSection>
+                </>
+              }
             />
-            <Select value={verdictFilter} onValueChange={(v) => setVerdictFilter(v as typeof verdictFilter)}>
-              <SelectTrigger className="h-8 w-36" data-testid="verdict-select">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All verdicts</SelectItem>
-                <SelectItem value="adopt">adopt</SelectItem>
-                <SelectItem value="refine">refine</SelectItem>
-                <SelectItem value="novel">novel</SelectItem>
-              </SelectContent>
-            </Select>
-            <span className="ml-auto text-xs text-on-raised-muted">
+            <FilterChips chips={filterChips} onClear={clearFilters} />
+          </>
+        }
+        tools={
+          <>
+            <span data-testid="queue-count" className="text-xs text-on-raised-muted">
               <span className="font-mono tabular-nums text-on-raised">{records.length}</span>{" "}
               {records.length === 1 ? "concept" : "concepts"}
               {visible.length < records.length && (
@@ -404,19 +468,19 @@ export default function Gate2Page() {
                 </span>
               )}
             </span>
-          </div>
+            <SegmentedSort<Gate2SortKey>
+              cols={[
+                { k: "concept", label: "Concept" },
+                { k: "verdict", label: "Verdict" },
+                { k: "vars", label: "Vars" },
+              ]}
+              sort={colSort}
+              onSort={(key) => setColSort((cur) => toggleSort(cur, key))}
+              onFlip={() => setColSort((cur) => (cur ? toggleSort(cur, cur.key) : cur))}
+            />
+          </>
         }
-        sortHeader={
-          <ConceptSortHeader<Gate2SortKey>
-            cols={[
-              { k: "concept", label: "Concept" },
-              { k: "verdict", label: "Verdict" },
-              { k: "vars", label: "Vars" },
-            ]}
-            sort={colSort}
-            onSort={(key) => setColSort((cur) => toggleSort(cur, key))}
-          />
-        }
+        legend={<CohortLegend roster={roster} />}
         rows={
           visible.length === 0 ? (
             <p data-testid="search-empty" className="px-4 py-6 text-sm text-on-raised-muted">
@@ -426,7 +490,7 @@ export default function Gate2Page() {
                 data-testid="clear-search-inline"
                 onClick={() => {
                   setQuery("");
-                  setVerdictFilter("all");
+                  clearFilters();
                 }}
                 className="font-semibold text-link-on-raised underline underline-offset-2"
               >
@@ -441,8 +505,9 @@ export default function Gate2Page() {
                 id={r.groupId}
                 testid="gate2-concept"
                 label={labelOf(r)}
-                badges={<VerdictPill verdict={r.verdict} />}
+                state={<VerdictPill verdict={r.verdict} variant="tag" />}
                 cohorts={r.cohorts}
+                roster={roster}
                 count={r.nMembers}
                 selected={r.groupId === groupId}
                 onSelect={() => setSelectedId(r.groupId)}

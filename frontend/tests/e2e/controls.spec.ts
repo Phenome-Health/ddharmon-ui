@@ -1,4 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { NO_FILTERS, applyFilters } from "@/lib/ledger";
+import { cohortInitials, tickedOfShown } from "@/lib/queue-controls";
+import type { CoherenceState, ConceptGroup } from "@/types";
+import { fixtureGroups } from "./gate1-fixture";
 
 /**
  * THE RECURRING CONTROLS (08-30b) — the twelve decisions from the controls design lab, asserted on the real app.
@@ -124,5 +128,276 @@ test.describe("controls section labels", () => {
     });
     const railLabel = page.locator("[data-testid='gate-rail'] li span.tracking-eyebrow").first();
     expect(await type(railLabel)).toMatchObject({ size: "12px", transform: "uppercase" });
+  });
+});
+
+test.describe("controls queue logic", () => {
+  test("@controls cohort initials are two characters, printed once, and never collide", () => {
+    // The lab's legend, on the lab's seven-cohort roster.
+    expect(cohortInitials(["AI-READI", "AoU", "CLSA", "MESA", "UKBB", "FHS", "PPMI"])).toEqual({
+      "AI-READI": "AI",
+      AoU: "Ao",
+      CLSA: "CL",
+      MESA: "ME",
+      UKBB: "UK",
+      FHS: "FH",
+      PPMI: "PP",
+    });
+    // Two cohorts that would share initials get distinct ones — a legend that repeats itself names nothing.
+    const clash = cohortInitials(["UKBB", "UK_imaging", "uk-pilot"]);
+    expect(new Set(Object.values(clash)).size).toBe(3);
+    for (const v of Object.values(clash)) expect(v).toHaveLength(2);
+  });
+
+  test("@controls ticking cohorts keeps the groups that span EVERY ticked cohort", () => {
+    const g = (id: string, cohorts: string[]) => ({ groupId: id, cohorts, coherence: "single" }) as ConceptGroup;
+    const groups = [g("a", ["CLSA", "UKBB"]), g("b", ["CLSA"]), g("c", ["UKBB", "MESA", "CLSA"]), g("d", ["MESA"])];
+    const keep = (cohorts: string[]) =>
+      applyFilters(groups, { ...NO_FILTERS, cohorts }, { isTouched: () => false, isInScope: () => false }).map(
+        (x) => x.groupId,
+      );
+    expect(keep([])).toEqual(["a", "b", "c", "d"]);
+    expect(keep(["CLSA"])).toEqual(["a", "b", "c"]);
+    // CLSA + UKBB asks what those two SHARE — not what either one has.
+    expect(keep(["CLSA", "UKBB"])).toEqual(["a", "c"]);
+  });
+
+  test("@controls the state filter is several boxes; none ticked shows every state", () => {
+    const g = (id: string, coherence: CoherenceState) => ({ groupId: id, cohorts: ["X"], coherence }) as ConceptGroup;
+    const groups = [g("s", "split"), g("q", "qualify"), g("n", "not_judged"), g("c", "single")];
+    const keep = (verdicts: CoherenceState[]) =>
+      applyFilters(groups, { ...NO_FILTERS, verdicts }, { isTouched: () => false, isInScope: () => false }).map(
+        (x) => x.groupId,
+      );
+    expect(keep([])).toEqual(["s", "q", "n", "c"]);
+    expect(keep(["split", "not_judged"])).toEqual(["s", "n"]);
+  });
+
+  test("@controls select-all counts are ticked of SHOWN, in groups and in variables", () => {
+    const shown = [
+      { id: "a", vars: 7, on: true },
+      { id: "b", vars: 8, on: false },
+      { id: "c", vars: 9, on: true },
+    ];
+    expect(tickedOfShown(shown.map((r) => r.id), (id) => shown.find((r) => r.id === id)!.on, (id) => shown.find((r) => r.id === id)!.vars)).toEqual({
+      state: "some",
+      groups: { on: 2, shown: 3 },
+      vars: { on: 16, shown: 24 },
+    });
+    expect(tickedOfShown([], () => true, () => 1).state).toBe("none");
+  });
+});
+
+// --- Gate 1's side panel, with every decision in place -------------------------------------------------------
+
+const ROSTER = ["AI-READI", "AoU", "CLSA", "MESA", "UKBB"];
+
+async function openGate1(page: Page): Promise<void> {
+  await open(page, `/run/${PAUSED}/gate1`);
+  await expect(page.locator("[data-testid='ledger-row']").first()).toBeVisible();
+}
+
+async function openFilters(page: Page): Promise<Locator> {
+  const menu = page.locator("[data-testid='filter-menu']");
+  if (!(await menu.isVisible())) await page.locator("[data-testid='filter-open']").click();
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+const rows = (page: Page) => page.locator("[data-testid='gate1-rows'] [data-testid='ledger-row']");
+
+test.describe("controls gate1 panel", () => {
+  test("@controls the filters live inside the search box: cohorts first, then the four states", async ({ page }) => {
+    await openGate1(page);
+    const field = page.locator("[data-testid='term-search']").locator("xpath=..");
+    await expect(field.locator("[data-testid='filter-open']")).toBeVisible();
+    // No standalone toggle or select left on the toolbar.
+    await expect(page.locator("[data-testid='ledger-toolbar'] [role='combobox']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='verdict-select']")).toHaveCount(0);
+
+    const menu = await openFilters(page);
+    const sections = menu.locator("[role='group']");
+    await expect(sections.nth(0)).toHaveAttribute("aria-label", "Cohorts");
+    await expect(sections.nth(1)).toHaveAttribute("aria-label", "State");
+    const groups = fixtureGroups();
+    await expect(menu.locator("[data-testid='cross-cohort-count']")).toHaveText(
+      String(groups.filter((g) => g.crossCohort).length),
+    );
+    // One box per cohort, in the run's own order.
+    expect(
+      await menu.locator("[data-testid^='filter-cohort-']").evaluateAll((els) => els.map((e) => e.getAttribute("data-testid"))),
+    ).toEqual(ROSTER.map((c) => `filter-cohort-${c}`));
+    // The four coherence states, each with the count ticking it would keep — no "All states" entry.
+    for (const st of ["split", "qualify", "not_judged", "single"] as CoherenceState[]) {
+      await expect(menu.locator(`[data-testid='filter-state-${st}-count']`)).toHaveText(
+        String(groups.filter((g) => g.coherence === st).length),
+      );
+    }
+    await expect(menu.getByText("All states")).toHaveCount(0);
+  });
+
+  test("@controls each ticked filter is a removable chip; Clear restores every group", async ({ page }) => {
+    await openGate1(page);
+    const groups = fixtureGroups();
+    const all = groups.length;
+    await expect(rows(page)).toHaveCount(all);
+    await expect(page.locator("[data-testid='filter-dot']")).toHaveCount(0);
+
+    const menu = await openFilters(page);
+    await menu.locator("[data-testid='filter-state-split']").click();
+    await menu.locator("[data-testid='filter-state-not_judged']").click();
+    // The menu stays open while several filters are set.
+    await expect(menu).toBeVisible();
+    const kept = groups.filter((g) => g.coherence === "split" || g.coherence === "not_judged").length;
+    await expect(rows(page)).toHaveCount(kept);
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+
+    const chips = page.locator("[data-testid='filter-chip']");
+    await expect(chips).toHaveCount(2);
+    await expect(page.locator("[data-testid='filter-dot']")).toBeVisible();
+    await chips.filter({ hasText: "split" }).getByRole("button").click();
+    await expect(chips).toHaveCount(1);
+    await expect(rows(page)).toHaveCount(groups.filter((g) => g.coherence === "not_judged").length);
+
+    await page.locator("[data-testid='filter-clear']").click();
+    await expect(chips).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(all);
+  });
+
+  test("@controls ticking cohorts keeps the groups that span every one of them", async ({ page }) => {
+    await openGate1(page);
+    const menu = await openFilters(page);
+    await menu.locator("[data-testid='filter-cohort-CLSA']").click();
+    await menu.locator("[data-testid='filter-cohort-UKBB']").click();
+    const both = fixtureGroups().filter((g) => g.cohorts.includes("CLSA") && g.cohorts.includes("UKBB"));
+    expect(both.length).toBeGreaterThan(0);
+    await expect(rows(page)).toHaveCount(both.length);
+    await expect(page.locator("[data-testid='filter-chip']")).toHaveCount(2);
+  });
+
+  test("@controls select all is one three-state box with ticked-of-shown counts", async ({ page }) => {
+    await openGate1(page);
+    const groups = fixtureGroups();
+    const vars = groups.reduce((n, g) => n + g.nMembers, 0);
+    const bulk = page.locator("[data-testid='bulk-scope']");
+    const box = bulk.locator("[data-testid='bulk-scope-toggle']");
+    await expect(bulk).toHaveAttribute("data-state", "none");
+    await expect(bulk.locator("[data-testid='bulk-count-groups']")).toHaveText(`0/${groups.length} groups`);
+    await expect(bulk.locator("[data-testid='bulk-count-vars']")).toHaveText(`0/${vars} vars`);
+    // No sentence, no pair of buttons.
+    await expect(page.locator("[data-testid='bulk-scope-in'], [data-testid='bulk-scope-out']")).toHaveCount(0);
+
+    // One row ticked → the box reads "some", as a minus.
+    const first = rows(page).first();
+    await first.locator("[data-testid='queue-scope']").click();
+    await expect(bulk).toHaveAttribute("data-state", "some");
+    await expect(box).toHaveAttribute("data-state", "indeterminate");
+    await expect(bulk.locator("[data-testid='bulk-count-groups']")).toHaveText(`1/${groups.length} groups`);
+
+    // Pressing it from "some" selects every shown row; pressing it again clears them.
+    await box.click();
+    await expect(bulk).toHaveAttribute("data-state", "all", { timeout: 30_000 });
+    await expect(bulk.locator("[data-testid='bulk-count-vars']")).toHaveText(`${vars}/${vars} vars`);
+    await box.click();
+    await expect(bulk).toHaveAttribute("data-state", "none", { timeout: 30_000 });
+
+    // The counts are over the SHOWN rows.
+    const menu = await openFilters(page);
+    await menu.locator("[data-testid='filter-state-split']").click();
+    const split = groups.filter((g) => g.coherence === "split");
+    await expect(bulk.locator("[data-testid='bulk-count-groups']")).toHaveText(`0/${split.length} groups`);
+  });
+
+  test("@controls sort is a segmented control and a direction button, with no Sort label", async ({ page }) => {
+    await openGate1(page);
+    const sort = page.locator("[data-testid='gate1-queue'] [data-testid='segmented-sort']");
+    await expect(sort).toBeVisible();
+    await expect(page.locator("[data-testid='gate1-queue']").getByText("Sort", { exact: true })).toHaveCount(0);
+    for (const k of ["concept", "verdict", "cohorts", "vars"]) {
+      await expect(sort.locator(`[data-testid='sort-${k}']`)).toHaveAttribute("aria-pressed", "false");
+    }
+    // Before a column is picked the screen's own flag-first order applies, so there is nothing to reverse.
+    await expect(sort.locator("[data-testid='sort-direction']")).toBeDisabled();
+
+    await sort.locator("[data-testid='sort-vars']").click();
+    await expect(sort.locator("[data-testid='sort-vars']")).toHaveAttribute("aria-pressed", "true");
+    const counts = async () =>
+      rows(page).locator("[data-testid='row-vars']").evaluateAll((els) => els.map((e) => parseInt(e.textContent ?? "0", 10)));
+    const asc = await counts();
+    expect(asc).toEqual([...asc].sort((a, b) => a - b));
+    await sort.locator("[data-testid='sort-direction']").click();
+    const desc = await counts();
+    expect(desc).toEqual([...desc].sort((a, b) => b - a));
+  });
+
+  test("@controls a row: the name alone on the left; strip, vars and state on the right, under one legend", async ({ page }) => {
+    await openGate1(page);
+    const legend = page.locator("[data-testid='gate1-queue'] [data-testid='cohort-legend']");
+    await expect(legend).toHaveCount(1);
+    await expect(legend).toHaveText(ROSTER.map((c) => cohortInitials(ROSTER)[c]).join(""));
+
+    const row = rows(page).first();
+    const strip = row.locator("[data-testid='cohort-strip']");
+    await expect(strip.locator("[data-cohort]")).toHaveCount(ROSTER.length);
+    // Every cell sits under its initial: the strip and the legend share x-centres.
+    const centres = (l: Locator) =>
+      l.locator("[data-cohort]").evaluateAll((els) => els.map((e) => {
+        const r = e.getBoundingClientRect();
+        return Math.round(r.left + r.width / 2);
+      }));
+    expect(await centres(strip)).toEqual(await centres(legend));
+
+    // Vars, then the state tag, under the strip; the per-row price is gone.
+    const facts = row.locator("[data-testid='row-vars']").locator("xpath=..");
+    await expect(facts.locator("[data-testid='row-vars'] + [data-testid='coherence-mark']")).toHaveCount(1);
+    await expect(row.locator("[data-testid='coherence-mark']")).toHaveAttribute("data-variant", "tag");
+    await expect(row).not.toContainText("$");
+    // The price is said once, under the list.
+    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(1);
+  });
+});
+
+// --- Gates 2 and 3 wear the same panel -----------------------------------------------------------------------
+
+test.describe("controls gates 2-3 panel", () => {
+  test("@controls Gate 2: the same search, filter menu, chips, sort and strip — with the verdict as its section", async ({
+    page,
+  }) => {
+    await open(page, `/run/${FINISHED}/gate2`);
+    const queue = page.locator("[data-testid='gate2-queue']");
+    const rowsG2 = queue.locator("[data-testid='gate2-concept']");
+    await expect(rowsG2.first()).toBeVisible();
+    const all = await rowsG2.count();
+    await expect(page.locator("[data-testid='verdict-select']")).toHaveCount(0);
+    await expect(queue.locator("[data-testid='cohort-legend']")).toHaveCount(1);
+    await expect(queue.locator("[data-testid='segmented-sort']")).toBeVisible();
+    await expect(rowsG2.first().locator("[data-testid='cohort-strip']")).toBeVisible();
+    await expect(rowsG2.first().locator("[data-testid='verdict-pill']")).toHaveAttribute("data-variant", "tag");
+
+    const menu = await openFilters(page);
+    await expect(menu.locator("[role='group']").nth(0)).toHaveAttribute("aria-label", "Cohorts");
+    await expect(menu.locator("[role='group']").nth(1)).toHaveAttribute("aria-label", "Verdict");
+    await menu.locator("[data-testid='filter-verdict-adopt']").click();
+    await page.keyboard.press("Escape");
+    const adopts = await rowsG2.count();
+    expect(adopts).toBeLessThan(all);
+    expect(
+      await rowsG2.locator("[data-testid='verdict-pill']").evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute("data-verdict")))]),
+    ).toEqual(["adopt"]);
+    await expect(page.locator("[data-testid='filter-chip']")).toHaveCount(1);
+    await page.locator("[data-testid='filter-clear']").click();
+    await expect(rowsG2).toHaveCount(all);
+  });
+
+  test("@controls Gate 3: the same panel, with arithmetic recodes as its filter", async ({ page }) => {
+    await open(page, `/run/${FINISHED}/gate3`);
+    const queue = page.locator("[data-testid='gate3-queue']");
+    await expect(queue.locator("[data-testid='gate3-concept']").first()).toBeVisible();
+    await expect(queue.locator("[data-testid='cohort-legend']")).toHaveCount(1);
+    await expect(queue.locator("[data-testid='gate3-concept']").first().locator("[data-testid='cohort-strip']")).toBeVisible();
+    const menu = await openFilters(page);
+    await expect(menu.locator("[role='group']").nth(0)).toHaveAttribute("aria-label", "Cohorts");
+    await expect(menu.locator("[data-testid='arithmetic-filter']")).toBeVisible();
   });
 });

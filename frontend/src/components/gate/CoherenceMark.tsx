@@ -71,16 +71,33 @@ const PILL: Record<CoherenceState, { surface: string; text: string; dot: string 
   },
 };
 
-export function CoherenceMark({ state, className }: { state: CoherenceState; className?: string }) {
+/**
+ * `variant="tag"` is the queue row's compact form (08-30b, controls lab round 5): a small square uppercase tag
+ * under the cohort strip — at 12px semibold, not the lab's 11px bold, because the app's type scale is four sizes
+ * and two weights (UI-SPEC §3; `typography.spec.ts` walks every gate for it). It KEEPS THE DOT — "not judged" still differs from a pass by its hollow dashed marker,
+ * never by dimness — only the shape and size of the badge change.
+ */
+export function CoherenceMark({
+  state,
+  variant = "pill",
+  className,
+}: {
+  state: CoherenceState;
+  variant?: "pill" | "tag";
+  className?: string;
+}) {
   const copy = COHERENCE_COPY[state];
   const pill = PILL[state];
   return (
     <span
       data-testid="coherence-mark"
       data-coherence={state}
+      data-variant={variant}
       title={copy.explain}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-pill px-2 py-0.5 text-xs font-bold capitalize",
+        variant === "tag"
+          ? "inline-flex items-center gap-1 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-xs font-semibold uppercase"
+          : "inline-flex items-center gap-1.5 rounded-pill px-2 py-0.5 text-xs font-bold capitalize",
         pill.surface,
         pill.text,
         className,
@@ -88,7 +105,10 @@ export function CoherenceMark({ state, className }: { state: CoherenceState; cla
     >
       {/* The marker is decorative: the state is already in the text beside it, so announcing the dot
           twice would only add noise for a screen reader. */}
-      <span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", pill.dot)} />
+      <span
+        aria-hidden="true"
+        className={cn("shrink-0 rounded-full", variant === "tag" ? "h-1.5 w-1.5" : "h-2 w-2", pill.dot)}
+      />
       {copy.label}
       <span className="sr-only">. {copy.explain}</span>
     </span>

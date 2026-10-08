@@ -926,9 +926,13 @@ test.describe("gate3 screen", () => {
   }) => {
     await serveFinished(page, undefined, { keep: 0 });
     await openGate3(page);
-    const filter = page.locator("[data-testid='arithmetic-filter']");
+    // A box in the filter menu inside the search since 08-30b; ticking it leaves a chip that says it is on.
+    await page.locator("[data-testid='filter-open']").click();
+    const filter = page.locator("[data-testid='filter-menu'] [data-testid='arithmetic-filter']");
     await expect(filter).toBeVisible();
     await filter.click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-testid='filter-chip']", { hasText: "Arithmetic recodes only" })).toBeVisible();
     const rows = page.locator("[data-testid='spec-row']");
     await expect(rows.first()).toBeVisible();
     const all = await rows.evaluateAll((els) =>

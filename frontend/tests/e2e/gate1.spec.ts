@@ -65,6 +65,22 @@ async function openGate1(page: Page): Promise<void> {
   await expect(page.locator("[data-testid='ledger']")).toBeVisible();
 }
 
+/** Open the filter menu inside the search box (08-30b), unless it is already open. */
+async function openFilters(page: Page): Promise<Locator> {
+  const menu = page.locator("[data-testid='filter-menu']");
+  if (!(await menu.isVisible())) await page.locator("[data-testid='filter-open']").click();
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+/** Tick (or untick) one box in the filter menu, then close it — the chips under the search say what is on. */
+async function tickFilter(page: Page, testid: string): Promise<void> {
+  const menu = await openFilters(page);
+  await menu.locator(`[data-testid='${testid}']`).click();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+}
+
 /** Row ids in render order — the identity a sort or a reload has to preserve. */
 async function rowIds(page: Page): Promise<string[]> {
   return page
@@ -273,17 +289,19 @@ test.describe("gate1 ledger", () => {
   }) => {
     await openGate1(page);
     // The four-figure strip is gone (2026-10-06 distill): its figures repeated the queue's own count and
-    // filter. What a reviewer acts on now sits where they act — the group and variable totals beside the
-    // list, the cross-cohort count on the toggle that filters to it.
+    // filter. What a reviewer acts on now sits where they act — since 08-30b the group and variable totals
+    // ride the select-all box (ticked of SHOWN; every group is shown on arrival) and the cross-cohort count
+    // rides its box in the filter menu.
     await expect(page.locator("[data-testid='grouping-strip']")).toHaveCount(0);
     const run = gate1Fixture().result!;
     const groups = run.conceptGroups ?? [];
     const nVariables = groups.reduce((n, g) => n + g.nMembers, 0);
     const nCross = groups.filter((g) => g.crossCohort).length;
-    const totals = page.locator("[data-testid='ledger-totals']");
-    await expect(totals).toContainText(`${groups.length} groups`);
-    await expect(totals).toContainText(`${nVariables} variables`);
-    await expect(page.locator("[data-testid='cross-cohort-count']")).toHaveText(String(nCross));
+    await expect(page.locator("[data-testid='bulk-count-groups']")).toHaveText(`0/${groups.length} groups`);
+    await expect(page.locator("[data-testid='bulk-count-vars']")).toHaveText(`0/${nVariables} vars`);
+    const menu = await openFilters(page);
+    await expect(menu.locator("[data-testid='cross-cohort-count']")).toHaveText(String(nCross));
+    await page.keyboard.press("Escape");
 
     // D-17, and the prohibition is what survives of it: NO `min_cluster_size` control anywhere on the
     // screen. Re-clustering invalidates the frozen substrate, re-pays clustering and strands every
@@ -525,14 +543,16 @@ test.describe("gate1 partition", () => {
       cross.length + single.length,
     );
 
-    const toggle = page.locator("[data-testid='cross-cohort-toggle']");
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    // 08-30b: the toggle is a box in the filter menu inside the search.
+    const menu = await openFilters(page);
+    const toggle = menu.locator("[data-testid='cross-cohort-toggle']");
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
     await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(
       cross.length,
     );
-    // Toggling back restores every group — the other set was never hidden, just a click away.
+    // Unticking restores every group — the other set was never hidden, just a click away.
     await toggle.click();
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(
       cross.length + single.length,
@@ -584,25 +604,22 @@ test.describe("gate1 partition", () => {
 });
 
 test.describe("gate1 toolbar", () => {
-  test("@gate1 the verdict select narrows to a coherence state, and All states restores every group", async ({
+  test("@gate1 a state box narrows to a coherence state, and unticking it restores every group", async ({
     page,
   }) => {
     await openGate1(page);
     const rows = page.locator("[data-testid='ledger-row']");
     const all = await rows.count();
 
-    // 08-16f: the four-filter panel collapsed to two controls — the verdict select (a coherence state)
-    // and the cross-cohort-only toggle. There is no cohort / touched / in-scope filter any more.
-    await page.locator("[data-testid='verdict-select']").click();
-    await page
-      .getByRole("option", { name: COHERENCE_COPY["split"].label })
-      .click();
+    // 08-30b: the coherence states are boxes in the filter menu (several may be ticked; none ticked shows
+    // every state, so there is no "All states" entry), beside the cohort boxes and Cross-cohort only.
+    await tickFilter(page, "filter-state-split");
     const split = fixtureGroups().filter((g) => g.coherence === "split");
     await expect(rows).toHaveCount(split.length);
     expect(split.length).toBeLessThan(all);
 
-    await page.locator("[data-testid='verdict-select']").click();
-    await page.getByRole("option", { name: "All states" }).click();
+    // The ticked state is a chip under the search; removing it restores every group.
+    await page.locator("[data-testid='filter-chip']").getByRole("button").click();
     await expect(rows).toHaveCount(all);
   });
   test("@gate1 a filter matching nothing and a term matching nothing read differently", async ({
@@ -614,10 +631,7 @@ test.describe("gate1 toolbar", () => {
       for (const gg of run.result!.conceptGroups!) gg.coherence = "not_judged";
     });
     await openGate1(page);
-    await page.locator("[data-testid='verdict-select']").click();
-    await page
-      .getByRole("option", { name: COHERENCE_COPY["split"].label })
-      .click();
+    await tickFilter(page, "filter-state-split");
     const filterEmpty = page.locator("[data-testid='filter-empty']");
     await expect(filterEmpty).toBeVisible();
     await expect(filterEmpty).toContainText(/no group matches this filter/i);
@@ -2348,28 +2362,32 @@ test.describe("gate1 toolbar labelling and explanations", () => {
   }) => {
     await openGate1(page);
     const toolbar = page.locator("[data-testid='ledger-toolbar']");
-    // 08-16f: the four-filter panel collapsed to two named controls — a cross-cohort-only toggle and a
-    // verdict select. Each is a real, reachable control (no unlabelled cohort/review chip groups).
-    const xc = toolbar.locator("[data-testid='cross-cohort-toggle']");
-    await expect(xc).toBeVisible();
+    // 08-30b: the narrowing controls live in ONE menu opened from the search box — a labelled button,
+    // reachable from the keyboard — whose sections are named and whose boxes are themselves focusable.
+    const open = toolbar.locator("[data-testid='filter-open']");
+    await expect(open).toHaveAttribute("aria-label", /filter/i);
+    await open.focus();
+    await expect(open).toBeFocused();
+    await page.keyboard.press("Enter");
+    const menu = page.locator("[data-testid='filter-menu']");
+    await expect(menu.getByRole("group", { name: "Cohorts" })).toBeVisible();
+    await expect(menu.getByRole("group", { name: "State" })).toBeVisible();
+    const xc = menu.locator("[data-testid='cross-cohort-toggle']");
     await xc.focus();
     await expect(xc).toBeFocused();
-    await expect(
-      toolbar.locator("[data-testid='verdict-select']"),
-    ).toBeVisible();
   });
 
   test("@gate1 each coherence state is named in the JUDGE'S OWN words, not a re-gloss", async ({
     page,
   }) => {
     await openGate1(page);
-    // The verdict select's options ARE the coherence states, labelled from the shared COHERENCE_COPY the
-    // ledger cell also reads — one register, not a second gloss.
-    await page.locator("[data-testid='verdict-select']").click();
+    // The State boxes ARE the coherence states, labelled from the shared COHERENCE_COPY the row's tag also
+    // reads — one register, not a second gloss (sentence-cased for a menu, nothing more).
+    const menu = await openFilters(page);
     for (const state of ["split", "qualify", "not_judged", "single"] as const) {
       await expect(
-        page.getByRole("option", { name: COHERENCE_COPY[state].label }),
-      ).toBeVisible();
+        menu.locator(`[data-testid='filter-state-${state}']`).locator("xpath=.."),
+      ).toContainText(COHERENCE_COPY[state].label, { ignoreCase: true });
     }
   });
 
@@ -2379,7 +2397,8 @@ test.describe("gate1 toolbar labelling and explanations", () => {
     const { fileURLToPath } = await import("node:url");
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(
-      resolve(here, "../../src/components/gate/LedgerToolbar.tsx"),
+      // The State filter's labels are built in Gate 1 itself since 08-30b (`stateLabel`); `LedgerToolbar` is gone.
+      resolve(here, "../../src/pages/run/gate1.tsx"),
       "utf8",
     )
       .replace(/\/\*[\s\S]*?\*\//g, " ")
@@ -2481,10 +2500,7 @@ test.describe("gate1 search", () => {
     await page.locator("[data-testid='clear-search-inline']").click();
     await page.locator("[data-testid='term-search']").fill("blood pressure");
     await expect(page.locator("[data-testid='ledger-row']")).not.toHaveCount(0);
-    await page.locator("[data-testid='verdict-select']").click();
-    await page
-      .getByRole("option", { name: COHERENCE_COPY["split"].label })
-      .click();
+    await tickFilter(page, "filter-state-split");
     const both = page.locator("[data-testid='search-empty']");
     if (await both.count()) {
       await expect(both).toHaveAttribute("data-cause", "both");
@@ -2605,8 +2621,8 @@ test.describe("gate1 cohort roster", () => {
     page,
   }) => {
     await openGate1(page);
-    // 08-16f: the segmented coverage strip was replaced by cohort chips on the row — a single-cohort
-    // group shows one, a cross-cohort group several, so the two do not read alike.
+    // 08-30b: the cohorts are a presence strip in the run's fixed order — a single-cohort group lights one
+    // square, a cross-cohort group several, so the two do not read alike.
     const groups = fixtureGroups();
     const single = groups.find((g) => !g.crossCohort)!;
     const cross = groups.find((g) => g.crossCohort && g.cohorts.length > 1)!;
@@ -2616,9 +2632,12 @@ test.describe("gate1 cohort roster", () => {
     const crossRow = page.locator(
       `[data-testid='ledger-row'][data-row-id="${cross.groupId}"]`,
     );
-    await expect(singleRow).toContainText(new RegExp(single.cohorts[0], "i"));
-    for (const c of cross.cohorts)
-      await expect(crossRow).toContainText(new RegExp(c, "i"));
+    const lit = (row: Locator) =>
+      row
+        .locator("[data-testid='cohort-strip'] [data-covered='true']")
+        .evaluateAll((els) => els.map((e) => e.getAttribute("data-cohort") ?? "").sort());
+    expect(await lit(singleRow)).toEqual([...single.cohorts].sort());
+    expect(await lit(crossRow)).toEqual([...cross.cohorts].sort());
     expect(cross.cohorts.length).toBeGreaterThan(single.cohorts.length);
   });
   test("@gate1 groups with no cohorts at all yield an empty roster rather than a crash", () => {
@@ -2851,12 +2870,12 @@ test.describe("gate1 bulk scope", () => {
     const bulk = page.locator("[data-testid='bulk-scope']");
     await expect(bulk).toBeVisible();
     const rows = await page.locator("[data-testid='ledger-row']").count();
-    // The number on the control is the number of rows on screen — stated before the press.
-    await expect(bulk.locator("[data-testid='bulk-scope-out']")).toContainText(
-      `${rows}`,
-    );
-    await expect(bulk.locator("[data-testid='bulk-scope-in']")).toContainText(
-      `${rows}`,
+    // The number beside the box is the number of rows on screen — stated before the press (08-30b: ticked
+    // of shown, "0/54 groups"), and the box's accessible name says the same.
+    await expect(bulk.locator("[data-testid='bulk-count-groups']")).toHaveText(`0/${rows} groups`);
+    await expect(bulk.locator("[data-testid='bulk-scope-toggle']")).toHaveAttribute(
+      "aria-label",
+      `Select all ${rows} shown`,
     );
   });
 
@@ -2864,10 +2883,11 @@ test.describe("gate1 bulk scope", () => {
    * PLAIN LANGUAGE, WITHOUT LOSING THE SCOPE (08-16c review). Bhargav: *"this wording is confusing. just
    * use simple 'select all' 'deselect all' language."*
    *
-   * The simplification is the easy half; the assertion is about what it may NOT cost. Every string here
-   * has to keep saying SHOWN, because the control acts on the rows the bucket, search and filters have
-   * left on screen — a "Select all" that silently reached filtered-out rows is precisely the trap Task 7
-   * was written to avoid, and it would be invisible in a screenshot.
+   * The simplification is the easy half; the assertion is about what it may NOT cost. The control has to
+   * keep saying SHOWN, because it acts on the rows the search and filters have left on screen — a "Select
+   * all" that silently reached filtered-out rows is precisely the trap Task 7 was written to avoid, and it
+   * would be invisible in a screenshot. Since 08-30b (the controls lab) the control is one three-state box:
+   * its visible counts are TICKED OF SHOWN ("0/12 groups"), and its accessible name says "shown" in words.
    */
   test("@gate1 the bulk control reads as select/deselect and still says it acts on the SHOWN rows", async ({
     page,
@@ -2876,27 +2896,23 @@ test.describe("gate1 bulk scope", () => {
     const bulk = page.locator("[data-testid='bulk-scope']");
     const rows = await page.locator("[data-testid='ledger-row']").count();
 
-    await expect(bulk.locator("[data-testid='bulk-scope-in']")).toHaveText(
-      `Select all ${rows} shown`,
-    );
-    await expect(bulk.locator("[data-testid='bulk-scope-out']")).toHaveText(
-      `Deselect all ${rows} shown`,
-    );
-    await expect(bulk).toContainText(`${rows} groups shown are selected`);
+    const box = bulk.locator("[data-testid='bulk-scope-toggle']");
+    const groupsCount = bulk.locator("[data-testid='bulk-count-groups']");
+
+    await expect(box).toHaveAttribute("aria-label", `Select all ${rows} shown`);
+    await expect(groupsCount).toHaveText(`0/${rows} groups`);
 
     // ...and it keeps saying so once a filter has narrowed what "all" means.
-    await page.locator("[data-testid='verdict-select']").click();
-    await page
-      .getByRole("option", { name: COHERENCE_COPY["split"].label })
-      .click();
+    await tickFilter(page, "filter-state-split");
     const narrowed = await page.locator("[data-testid='ledger-row']").count();
     expect(narrowed).toBeLessThan(rows);
-    await expect(bulk.locator("[data-testid='bulk-scope-in']")).toHaveText(
-      `Select all ${narrowed} shown`,
-    );
-    await expect(bulk.locator("[data-testid='bulk-scope-out']")).toHaveText(
-      `Deselect all ${narrowed} shown`,
-    );
+    await expect(box).toHaveAttribute("aria-label", `Select all ${narrowed} shown`);
+    await expect(groupsCount).toHaveText(`0/${narrowed} groups`);
+    // Pressed, it selects exactly those, and turns into the way back out.
+    await box.click();
+    await expect(bulk).toHaveAttribute("data-state", "all");
+    await expect(box).toHaveAttribute("aria-label", `Deselect all ${narrowed} shown`);
+    await expect(groupsCount).toHaveText(`${narrowed}/${narrowed} groups`);
   });
 
   test("@gate1 taking all out drops the price by exactly the rows it affected, and no more", async ({
@@ -2906,16 +2922,18 @@ test.describe("gate1 bulk scope", () => {
     await openGate1(page);
     const bar = page.locator("[data-testid='commit-bar']");
     // NEW DEFAULT is deselected: select everything first, so there is a full price to erode.
-    await page.locator("[data-testid='bulk-scope-in']").click();
+    await page.locator("[data-testid='bulk-scope-toggle']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "all");
     const full = Number(await bar.getAttribute("data-total"));
     expect(full).toBeGreaterThan(0);
     // Narrow to the cross-cohort bucket so the single-cohort groups are OFF screen. Bulk "all" acts on
     // the SHOWN rows only, so it must leave the off-screen ones in scope (08-16f: the view is the filter).
-    await page.locator("[data-testid='cross-cohort-toggle']").click();
+    await tickFilter(page, "cross-cohort-toggle");
     const shown = await page.locator("[data-testid='ledger-row']").count();
     expect(shown).toBeGreaterThan(0);
 
-    await page.locator("[data-testid='bulk-scope-out']").click();
+    // Every shown row is in, so the box now deselects.
+    await page.locator("[data-testid='bulk-scope-toggle']").click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
       "data-state",
       "none",
@@ -2923,7 +2941,7 @@ test.describe("gate1 bulk scope", () => {
 
     // Back to the whole corpus: the single-cohort groups were off-screen and stayed IN, so the total
     // dropped by exactly the cross-cohort rows and no more.
-    await page.locator("[data-testid='cross-cohort-toggle']").click();
+    await tickFilter(page, "cross-cohort-toggle");
     const after = Number(await bar.getAttribute("data-total"));
     expect(after).toBeLessThan(full);
     expect(after).toBeGreaterThan(0);
@@ -2942,7 +2960,7 @@ test.describe("gate1 bulk scope", () => {
       page.locator("[data-testid='ledger-row'][data-spine='changed']").count();
     // New default: nothing selected, nothing marked.
     expect(await changed()).toBe(0);
-    await page.locator("[data-testid='bulk-scope-in']").click();
+    await page.locator("[data-testid='bulk-scope-toggle']").click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
       "data-state",
       "all",
@@ -2950,24 +2968,26 @@ test.describe("gate1 bulk scope", () => {
     // The selections are the reviewer's own scope decisions, so the rows carry them.
     expect(await changed()).toBeGreaterThan(0);
     // ...and deselecting takes them all back out.
-    await page.locator("[data-testid='bulk-scope-out']").click();
+    await page.locator("[data-testid='bulk-scope-toggle']").click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
       "data-state",
       "none",
     );
   });
 
-  test("@gate1 once everything shown is selected, Select all is itself unavailable", async ({
+  test("@gate1 once everything shown is selected, the box offers the way back out, never a no-op select", async ({
     page,
   }) => {
     await openGate1(page);
-    await page.locator("[data-testid='bulk-scope-in']").click();
+    const box = page.locator("[data-testid='bulk-scope-toggle']");
+    await box.click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute(
       "data-state",
       "all",
     );
-    // Nothing left to select, so the control says so rather than offering a no-op.
-    await expect(page.locator("[data-testid='bulk-scope-in']")).toBeDisabled();
+    // Nothing left to select, so the one box now deselects — and says so — rather than offering a no-op.
+    await expect(box).toBeEnabled();
+    await expect(box).toHaveAttribute("aria-label", /^Deselect all \d+ shown$/);
   });
 });
 
@@ -3098,12 +3118,15 @@ test.describe("gate1 column sort", () => {
     await expect(head).toBeVisible();
 
     await head.click();
-    // Which way it is sorting is visible on the header itself — an up arrow for ascending.
-    await expect(head).toContainText("↑");
+    // Which column is sorting is visible on the segment itself, and which way on the direction button
+    // beside it (08-30b: a segmented control plus a direction button, no "Sort" label).
+    await expect(head).toHaveAttribute("aria-pressed", "true");
+    const dir = page.locator("[data-testid='sort-direction']");
+    await expect(dir).toHaveAttribute("aria-label", /^Ascending/);
     const asc = await rowIds(page);
 
     await head.click();
-    await expect(head).toContainText("↓");
+    await expect(dir).toHaveAttribute("aria-label", /^Descending/);
     const desc = await rowIds(page);
 
     // The direction genuinely reversed — the row that led now trails — while the row SET is untouched.
@@ -3195,8 +3218,7 @@ test.describe("gate1 frozen", () => {
     expect(await boxes.count()).toBeGreaterThan(0);
     await expect(boxes.first()).toBeDisabled();
     // ...the bulk control...
-    await expect(page.locator("[data-testid='bulk-scope-in']")).toBeDisabled();
-    await expect(page.locator("[data-testid='bulk-scope-out']")).toBeDisabled();
+    await expect(page.locator("[data-testid='bulk-scope-toggle']")).toBeDisabled();
     // ...and Continue, which would buy work this run has already bought.
     await expect(
       page.locator("[data-testid='commit-bar'] button"),
@@ -4270,20 +4292,23 @@ test.describe("gate1 pool as a group", () => {
  * AND THE OTHER HALF IS STILL NEVER HIDDEN. It is 87% of the corpus on a real run and it holds real work.
  * A control that disappeared into a menu would leave the reviewer looking at 28 rows of 54 with nothing on
  * screen saying so — which is the coverage lie the tab strip existed to prevent, arrived at by a different
- * route. Both counts stay visible without opening anything, and the other half is one click away.
+ * route. Since 08-30b the box DOES live in a menu (the filters moved inside the search, Bhargav's pick in the
+ * controls lab), so what stops the lie is what the menu leaves on screen when it closes: a "Cross-cohort only"
+ * chip under the search, a dot on the filter button, and the select-all counts over the SHOWN rows. The test
+ * below asserts the chip; the other half is still one click away.
  */
 test.describe("gate1 cross-cohort toggle", () => {
-  test("@gate1 the bucket tab strip is gone; a single cross-cohort-only toggle stands in the toolbar", async ({
+  test("@gate1 the bucket tab strip is gone; one cross-cohort-only box sits in the toolbar's filter menu", async ({
     page,
   }) => {
     await openGate1(page);
     await expect(page.locator("[data-testid='bucket-tab']")).toHaveCount(0);
     await expect(page.locator("[data-testid='breadth-filter']")).toHaveCount(0);
     await expect(
-      page.locator(
-        "[data-testid='ledger-toolbar'] [data-testid='cross-cohort-toggle']",
-      ),
+      page.locator("[data-testid='ledger-toolbar'] [data-testid='filter-open']"),
     ).toBeVisible();
+    const menu = await openFilters(page);
+    await expect(menu.locator("[data-testid='cross-cohort-toggle']")).toHaveCount(1);
   });
 
   test("@gate1 the default is every group; the toggle narrows to exactly the cross-cohort set", async ({
@@ -4294,21 +4319,28 @@ test.describe("gate1 cross-cohort toggle", () => {
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(
       fixtureGroups().length,
     );
-    await page.locator("[data-testid='cross-cohort-toggle']").click();
+    await tickFilter(page, "cross-cohort-toggle");
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(
       cross.length,
     );
+    // The narrowing stays on screen with the menu closed: a chip says it, and removing it undoes it.
+    const chip = page.locator("[data-testid='filter-chip']", { hasText: "Cross-cohort only" });
+    await expect(chip).toBeVisible();
+    await chip.getByRole("button").click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(fixtureGroups().length);
   });
 
   test("@gate1 the toggle is reachable and operable from the keyboard", async ({
     page,
   }) => {
     await openGate1(page);
-    const toggle = page.locator("[data-testid='cross-cohort-toggle']");
+    const menu = await openFilters(page);
+    const toggle = menu.locator("[data-testid='cross-cohort-toggle']");
     await toggle.focus();
     await expect(toggle).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // A checkbox now: Space toggles it (Enter is reserved for forms, per the ARIA checkbox pattern).
+    await page.keyboard.press("Space");
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
   });
 
   test("@gate1 the partition happens BEFORE the sort — sorting cannot widen the narrowed set", async ({
@@ -4316,7 +4348,7 @@ test.describe("gate1 cross-cohort toggle", () => {
   }) => {
     await openGate1(page);
     const { "cross-cohort": cross } = partitionByBreadth(fixtureGroups());
-    await page.locator("[data-testid='cross-cohort-toggle']").click();
+    await tickFilter(page, "cross-cohort-toggle");
     await page.locator("[data-testid='sort-vars']").click();
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(
       cross.length,
@@ -4339,7 +4371,7 @@ test.describe("gate1 cross-cohort toggle", () => {
     await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(
       singles.length,
     );
-    await page.locator("[data-testid='cross-cohort-toggle']").click();
+    await tickFilter(page, "cross-cohort-toggle");
     // A NAMED empty state, not a blank body: it says there are no cross-cohort groups and offers all back.
     await expect(page.locator("[data-testid='gate1-rows']")).toContainText(
       /no cross-cohort groups/i,

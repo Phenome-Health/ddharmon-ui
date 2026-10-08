@@ -1,56 +1,78 @@
 import { DisclosureChevron, DisclosureLabel } from "@/components/ui/disclosure";
 import { cn } from "@/lib/utils";
-import { type ColumnSort } from "@/lib/column-sort";
+import { QueueRowFacts } from "@/components/gate/QueueControls";
 
 /**
- * The shared master-detail frame for the review gates (08-16g).
+ * The shared master-detail frame for the review gates (08-16g) — now worn by all three (08-30b).
  *
  * Extracted from Gate 1's unified layout (08-16f) so Gate 2 and Gate 3 wear the SAME shell rather than
  * each inventing one — the intent Gate 1's own detail pane states verbatim: *"Same layout, later gates.
- * The left queue and this detail frame do not change."* Gate 1 itself is left on its inline copy for now
- * (its 500-test e2e suite pins that DOM); this component matches its classes and testid conventions so
- * Gate 1 can adopt it later with no visual change.
+ * The left queue and this detail frame do not change."* Gate 1 moved onto it with the recurring-controls
+ * redesign, so the three side panels cannot drift apart again: one frame, one set of controls
+ * (`QueueControls.tsx`), each gate bringing only its own vocabulary.
  *
  * The frame is deliberately dumb: it owns the grid, the scrollable queue and the detail card, and takes
- * every screen-specific part (toolbar, sort header, rows, footer, detail) as a slot. `gate` prefixes the
- * testids (`gate2-queue`, `gate2-rows`, `gate2-detail`) so each screen's e2e can target its own frame.
+ * every screen-specific part as a slot, in the order the queue reads top to bottom — `toolbar` (search,
+ * filter chips), `tools` (select-all, sort), `aboveList`, the cohort `legend` and the `rows`, `belowList`,
+ * `footer`. `gate` prefixes the testids (`gate2-queue`, `gate2-rows`, `gate2-detail`) so each screen's e2e
+ * can target its own frame.
  */
 export function ConceptWorkbench({
   gate,
+  testid,
   toolbar,
-  sortHeader,
+  tools,
+  aboveList,
+  legend,
   rows,
+  belowList,
   footer,
   detail,
+  detailRef,
 }: {
   gate: string;
+  /** The grid's testid; defaults to `${gate}-ledger`. Gate 1's predates the frame and stays `ledger`. */
+  testid?: string;
   toolbar?: React.ReactNode;
-  sortHeader?: React.ReactNode;
+  /** The row under the toolbar: select-all on the left (Gate 1), the sort control on the right. */
+  tools?: React.ReactNode;
+  aboveList?: React.ReactNode;
+  /** The cohort legend, printed once above the rows (`CohortLegend`). */
+  legend?: React.ReactNode;
   rows: React.ReactNode;
+  belowList?: React.ReactNode;
   footer?: React.ReactNode;
   detail: React.ReactNode;
+  detailRef?: React.Ref<HTMLElement>;
 }) {
   return (
     <div
-      data-testid={`${gate}-ledger`}
+      data-testid={testid ?? `${gate}-ledger`}
       className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(340px,384px)_minmax(0,1fr)] lg:items-start"
     >
       <aside
         data-testid={`${gate}-queue`}
         className="flex flex-col gap-3 overflow-hidden rounded-card bg-surface-raised py-4 shadow-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)]"
       >
-        {toolbar && <div className="px-4">{toolbar}</div>}
-        {sortHeader}
-        <div
-          data-testid={`${gate}-rows`}
-          className="flex-1 divide-y divide-rule-quiet-on-raised overflow-y-auto border-y border-rule-quiet-on-raised"
-        >
-          {rows}
+        {toolbar && <div className="flex flex-col gap-2 px-4">{toolbar}</div>}
+        {/* pl-5 = the rows' 4px state rule + their 16px padding, so select-all sits in the row checkboxes' column. */}
+        {tools && <div className="flex items-center justify-between gap-2 pl-5 pr-4">{tools}</div>}
+        {aboveList}
+        <div className="flex min-h-0 flex-1 flex-col border-y border-rule-quiet-on-raised">
+          {legend && <div className="border-b border-rule-quiet-on-raised">{legend}</div>}
+          <div
+            data-testid={`${gate}-rows`}
+            className="min-h-0 flex-1 divide-y divide-rule-quiet-on-raised overflow-y-auto"
+          >
+            {rows}
+          </div>
         </div>
+        {belowList}
         {footer && <div className="px-4">{footer}</div>}
       </aside>
 
       <section
+        ref={detailRef}
         data-testid={`${gate}-detail`}
         className="min-w-0 rounded-card bg-surface-raised p-5 shadow-card lg:p-6"
       >
@@ -62,28 +84,35 @@ export function ConceptWorkbench({
 
 /**
  * One row in a gate's queue — the scannable master of the master-detail, the Gate 2 / Gate 3 sibling of
- * Gate 1's `QueueRow`. Simpler than Gate 1's: no scope checkbox and no drop target (regrouping is Gate 1's
- * job alone), just a selectable two-line summary — name, badges, cohorts, size — that opens its depth on
- * the right.
+ * Gate 1's `QueueRow`, in the same layout since 08-30b: the name has the left column to itself (up to three
+ * lines), anything unusual about the concept rides under it (`marks`), and the right column is the cohort
+ * strip with the variable count and the state tag beneath. Simpler than Gate 1's: no scope checkbox and no
+ * drop target (regrouping is Gate 1's job alone). The old condensed sort-header strip is gone with it —
+ * every gate sorts with `SegmentedSort` now.
  */
 export function ConceptQueueRow({
   id,
   testid = "concept-row",
   label,
-  badges,
+  marks,
+  state,
   cohorts,
+  roster,
   count,
-  right,
   selected,
   onSelect,
 }: {
   id: string;
   testid?: string;
   label: string;
-  badges?: React.ReactNode;
-  cohorts?: string[];
+  /** Exceptional badges shown under the name (Gate 3's concept-match flag). */
+  marks?: React.ReactNode;
+  /** The row's state tag — the verdict, as a `VerdictPill variant="tag"`. */
+  state?: React.ReactNode;
+  cohorts: string[];
+  /** Every cohort in the run, in its fixed order — the strip's columns, under the queue's one legend. */
+  roster: string[];
   count?: number;
-  right?: React.ReactNode;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -102,7 +131,7 @@ export function ConceptQueueRow({
         }
       }}
       className={cn(
-        "grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-2.5 border-l-4 px-4 py-2.5 text-left",
+        "grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2.5 border-l-4 px-4 py-2.5 text-left",
         selected
           ? "border-l-accent-action bg-surface-info"
           : "border-l-transparent hover:bg-surface-inset",
@@ -111,74 +140,16 @@ export function ConceptQueueRow({
       <div className="min-w-0">
         <div
           className={cn(
-            "line-clamp-2 text-sm font-semibold leading-snug",
+            "line-clamp-3 text-sm font-semibold leading-snug",
             selected ? "text-accent-on-raised" : "text-on-raised",
           )}
           title={label}
         >
           {label}
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-          {badges}
-          {cohorts && cohorts.length > 0 && (
-            <span className="flex flex-wrap gap-1">
-              {cohorts.map((c) => (
-                <span
-                  key={c}
-                  className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-inset-muted"
-                >
-                  {c}
-                </span>
-              ))}
-            </span>
-          )}
-          {typeof count === "number" && (
-            <span className="text-xs text-on-raised-faint">
-              {count} {count === 1 ? "var" : "vars"}
-            </span>
-          )}
-        </div>
+        {marks && <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">{marks}</div>}
       </div>
-      {right && (
-        <span className="whitespace-nowrap pt-0.5 text-xs text-on-raised-muted">
-          {right}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/**
- * The queue's sort control — the same condensed header strip Gate 1 uses, over the shared
- * `ColumnSort`/`toggleSort` state so a group orders identically on every surface.
- */
-export function ConceptSortHeader<K extends string>({
-  cols,
-  sort,
-  onSort,
-}: {
-  cols: { k: K; label: string }[];
-  sort: ColumnSort<K> | null;
-  onSort: (key: K) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-faint">
-      <span className="mr-auto">Sort</span>
-      {cols.map((c) => (
-        <button
-          key={c.k}
-          type="button"
-          data-testid={`sort-${c.k}`}
-          onClick={() => onSort(c.k)}
-          className={cn(
-            "hover:text-accent-on-raised",
-            sort?.key === c.k && "text-accent-on-raised",
-          )}
-        >
-          {c.label}
-          {sort?.key === c.k ? (sort.dir === "asc" ? " ↑" : " ↓") : " ⇅"}
-        </button>
-      ))}
+      <QueueRowFacts cohorts={cohorts} roster={roster} vars={count} state={state} />
     </div>
   );
 }
@@ -234,16 +205,22 @@ const VERDICT_PILL: Record<string, { label: string; cls: string }> = {
   },
 };
 
-export function VerdictPill({ verdict }: { verdict?: string }) {
+/** `variant="tag"` is the queue row's compact square form, beside the variable count (08-30b). */
+export function VerdictPill({ verdict, variant = "pill" }: { verdict?: string; variant?: "pill" | "tag" }) {
   const v = verdict ? VERDICT_PILL[verdict] : undefined;
   if (!v) return null;
   return (
     <span
       data-testid="verdict-pill"
       data-verdict={verdict}
+      data-variant={variant}
       className={cn(
-        "rounded-pill border px-2 py-0.5 text-xs font-semibold",
+        variant === "tag"
+          ? "whitespace-nowrap rounded-sm border px-1.5 py-0.5 text-xs font-semibold uppercase"
+          : "rounded-pill border px-2 py-0.5 text-xs font-semibold",
         v.cls,
+        // Borderless like Gate 1's state tag, so the queue's tags read alike on every gate — last, so it wins.
+        variant === "tag" && "border-transparent",
       )}
     >
       {v.label}
