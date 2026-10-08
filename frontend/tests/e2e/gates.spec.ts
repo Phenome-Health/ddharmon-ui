@@ -209,6 +209,35 @@ test.describe("five screens", () => {
     expect(b.height, "the rail still carries a row above the gates").toBeLessThan(110);
   });
 
+  test("@gates the screen's blocks sit close together: no gap over 16px, and the title hugs the rail", async ({ page }) => {
+    // Bhargav, 2026-10-08: "vertical gaps between all these elements need to be reduced, I want a tighter overall
+    // feel". Measured between the shell's own blocks (banner, title, rail, notices, how-to, working surface) and
+    // between the working surface's panels — the rail by its navy box, not the pin's padding around it.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const gaps = await page.getByTestId("gate-rail-pin").evaluate((pin) => {
+      const shell = pin.parentElement!;
+      const blocks = (root: Element) =>
+        [...root.children]
+          .filter((el) => {
+            const cs = getComputedStyle(el);
+            return cs.position !== "absolute" && cs.position !== "fixed" && el.getBoundingClientRect().height > 0;
+          })
+          .map((el) => {
+            const r = (el === pin ? el.firstElementChild! : el).getBoundingClientRect();
+            return { name: el.getAttribute("data-testid") ?? el.className.slice(0, 40), top: r.top, bottom: r.bottom };
+          });
+      const between = (bs: ReturnType<typeof blocks>) =>
+        bs.slice(1).map((b, i) => ({ between: `${bs[i].name} -> ${b.name}`, gap: Math.round(b.top - bs[i].bottom) }));
+      const shellBlocks = blocks(shell);
+      return [...between(shellBlocks), ...between(blocks(shell.lastElementChild!))];
+    });
+    expect(gaps.length).toBeGreaterThan(3);
+    for (const g of gaps) expect(g.gap, g.between).toBeLessThanOrEqual(16);
+    expect(gaps.find((g) => g.between === "run-title -> gate-rail-pin")?.gap, "the title sits apart from the rail").toBeLessThanOrEqual(8);
+  });
+
   test("@gates the run title scrolls away with the screen; the pinned rail keeps the TOTAL", async ({ page }) => {
     // Option C's stated cost: the title is on the ground, not pinned, so a scrolled screen no longer names the run.
     // The rail still says what the run has spent.

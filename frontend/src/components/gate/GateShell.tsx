@@ -235,12 +235,12 @@ export function GateShell({
     ) : null;
   /**
    * The name, then the ID in small mono, then the stop control at the far right. `min-h-8` is the stop pill's height,
-   * so the title does not grow when a run starts or stops working. Its `-mb-5` takes the column's 32px gap down to
-   * 12px, so the title reads as the rail's caption rather than a section of its own.
+   * so the title does not grow when a run starts or stops working. Its `-mb-2` takes the column's 16px gap down to
+   * 8px, so the title reads as the rail's caption rather than a section of its own.
    */
   const runTitle =
     runName || stopControl ? (
-      <div data-testid="run-title" className="-mb-5 flex min-h-8 min-w-0 items-center justify-between gap-4 px-1">
+      <div data-testid="run-title" className="-mb-2 flex min-h-8 min-w-0 items-center justify-between gap-4 px-1">
         {/* No run in progress -> no name. An empty title is worse than none: it reads as a run with no name. */}
         {runName ? (
           <div className="flex min-w-0 items-baseline gap-2">
@@ -256,7 +256,9 @@ export function GateShell({
       </div>
     ) : null;
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-8">
+    // 16px between blocks (2026-10-08, Bhargav: "vertical gaps between all these elements need to be reduced, I want a
+    // tighter overall feel"). It was 32px here, and 24px between the working surface's panels.
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4">
       {/* The shared-demo banner (UI-SPEC §8.5): persistent, in the flow, never a modal — on every screen. */}
       {sandboxBanner ?? (isDemo && jobId ? <SandboxBanner jobId={jobId} sourceName={job?.displayName} /> : null)}
       {/* Not on the demo: it was BUILT parked at its gate — the guest did not stop anywhere to resume from. */}
@@ -273,10 +275,11 @@ export function GateShell({
           carries none, and has reached every gate (08-18). Freezing above still reads the raw position. */}
       {/* PINNED (2026-10-06): sticky at the top of AppShell's scrolling <main>, on the ground colour, so the
           working surface scrolls beneath it rather than showing around its rounded corners. */}
-      {/* The collapse marker. Zero height, and its -mt-8 cancels the column gap it would otherwise add, so the rail
-          sits exactly where it did. It is NOT inside the pin: wrapping a sticky element leaves it nowhere to stick. */}
+      {/* (1) The run's title, then the rail it captions. */}
       {runTitle}
-      <div ref={railMarker} aria-hidden="true" className="-mt-8 h-0" />
+      {/* The collapse marker. Zero height, and its -mt-4 cancels the column gap it would otherwise add, so the rail
+          sits exactly where it did. It is NOT inside the pin: wrapping a sticky element leaves it nowhere to stick. */}
+      <div ref={railMarker} aria-hidden="true" className="-mt-4 h-0" />
       <div data-testid="gate-rail-pin" className="sticky top-0 z-30 -my-3 bg-surface-field py-3">
         <GateRail
           current={gate}
@@ -310,7 +313,7 @@ export function GateShell({
       <HowToPanel gate={gate} lead={subhead} />
 
       {/* The working surface. */}
-      <div className={cn("flex flex-col gap-6")}>{children}</div>
+      <div className={cn("flex flex-col gap-4")}>{children}</div>
     </div>
   );
 }
