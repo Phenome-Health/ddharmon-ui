@@ -986,7 +986,8 @@ test.describe("gate3 screen", () => {
       .locator("[data-testid='spec-row'][data-state='no-transform']")
       .first();
     await expect(none).toBeVisible();
-    await expect(none).toContainText("No transform required");
+    // Said once, in the header ("identity (already aligned)") — not again in the body (review round 1).
+    await expect(none).toContainText("already aligned");
     await expect(none).not.toContainText("did not generate");
   });
 

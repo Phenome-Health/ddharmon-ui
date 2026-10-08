@@ -117,6 +117,7 @@ export default function Gate2Page() {
 
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
+  const conceptGateOn = Boolean(runConfig?.conceptGate ?? runConfig?.concept_gate);
   const position = (jobState?.gatePosition ?? null) as GatePosition | null;
   const past = isGatePast("gate2", position);
   // Locked = a record that can no longer change. A gate a person continued is one; a gate Full auto committed was
@@ -751,11 +752,15 @@ export default function Gate2Page() {
               )}
             </section>
 
-            <NotAvailable slug="concept-gate" thing="Concept-match check" claim="not-enabled">
-              A second model pass can check whether an assigned element measures the same concept, not just the
-              same values. This run did not include it, and it cannot be added to a run that has already
-              started — start a new run with it enabled to get the check.
-            </NotAvailable>
+            {/* Only on a run that left it off — read the same way Gate 3 does. It rendered unconditionally, so a run
+                that DID enable the check was told it had not (found in review round 1). */}
+            {!conceptGateOn && (
+              <NotAvailable slug="concept-gate" thing="Concept-match check" claim="not-enabled">
+                A second model pass can check whether an assigned element measures the same concept, not just the
+                same values. This run did not include it, and it cannot be added to a run that has already
+                started — start a new run with it enabled to get the check.
+              </NotAvailable>
+            )}
 
             {pendingPick && (
               <div

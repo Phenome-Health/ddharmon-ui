@@ -61,15 +61,8 @@ export function SpecNumberMap({
   return (
     <div data-testid="spec-number-map" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-on-raised-muted">
-          Numeric target — a coded value becomes a number, Missing, or Drop;
-          numeric responses pass through
-          {edited && (
-            <span className="ml-1 font-semibold text-status-warn">
-              · edited
-            </span>
-          )}
-        </span>
+        {/* What this table does is said once above the tiles (Gate 3's explainer); the tile names only its state. */}
+        <span className="text-xs font-semibold text-status-warn">{edited ? "Edited" : ""}</span>
         {edited && !readOnly && (
           <Button
             data-testid="number-reset"
@@ -107,9 +100,6 @@ export function SpecNumberMap({
               <span className="font-mono text-on-raised-muted">
                 → value{targetUnits ? ` (${targetUnits})` : ""}
               </span>
-            </div>
-            <div className="text-xs text-on-raised-faint">
-              Entered directly as a number — the default for a numeric target.
             </div>
           </div>
         </div>
@@ -186,11 +176,6 @@ export function SpecNumberMap({
                           }
                           className="w-20 rounded border border-rule-on-raised bg-surface-raised px-2 py-0.5 text-center font-mono text-xs text-on-raised"
                         />
-                      )}
-                      {action === "missing" && active && (
-                        <span className="text-xs text-on-raised-faint">
-                          — safe default; never fabricates a number
-                        </span>
                       )}
                     </div>
                   );

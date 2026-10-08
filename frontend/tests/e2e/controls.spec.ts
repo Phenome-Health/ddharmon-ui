@@ -3,6 +3,7 @@ import { NO_FILTERS, applyFilters } from "@/lib/ledger";
 import { cohortInitials, tickedOfShown } from "@/lib/queue-controls";
 import type { CoherenceState, ConceptGroup } from "@/types";
 import { fixtureGroups } from "./gate1-fixture";
+import { serveFinished } from "./gate23-fixture";
 
 /**
  * THE RECURRING CONTROLS (08-30b) — the twelve decisions from the controls design lab, asserted on the real app.
@@ -488,7 +489,7 @@ test.describe("controls review round 1", () => {
     // Walk to a concept with two or more value-map tiles.
     for (let i = 0; i < (await concepts.count()) && (await editors.count()) < 2; i++) await concepts.nth(i).click();
     expect(await editors.count()).toBeGreaterThan(1);
-    await expect(page.locator("[data-testid='gate3-detail']").getByText(/drag a value to change where it lands/)).toHaveCount(1);
+    await expect(page.locator("[data-testid='gate3-detail']").getByText(/drag a value to change where it lands/i)).toHaveCount(1);
   });
 
   test("@controls a Gate 3 recode tile folds, and Approve folds it and says so — after a reload too", async ({ page }) => {
@@ -518,5 +519,44 @@ test.describe("controls review round 1", () => {
     // Approval is undone from the folded tile's header.
     await again.locator("[data-testid='spec-unapprove']").click();
     await expect(again).toHaveAttribute("data-approved", "false");
+  });
+});
+
+test.describe("controls review round 1 — found on the way", () => {
+  test("@controls Gate 2 says the concept-match check is off only on a run that left it off", async ({ page }) => {
+    const tile = page.locator("[data-testid='not-available'][data-thing='concept-gate']");
+    await serveFinished(page, (run) => {
+      run.config = { ...(run.config as object), conceptGate: true };
+    });
+    await open(page, `/run/${FINISHED}/gate2`);
+    await expect(page.locator("[data-testid='gate2-detail']")).toBeVisible();
+    await expect(tile).toHaveCount(0);
+  });
+});
+
+test.describe("controls repeated copy (review round 1)", () => {
+  test("@controls Gate 3's tiles carry no per-tile instructions; the one explainer names only the editors shown", async ({
+    page,
+  }) => {
+    await open(page, `/run/${FINISHED}/gate3`);
+    const detail = page.locator("[data-testid='gate3-detail']");
+    const concepts = page.locator("[data-testid='gate3-concept']");
+    const n = Math.min(await concepts.count(), 8);
+    const repeated = /Numeric target —|Categorical target —|safe default; never fabricates|outside every band → Missing|Entered directly as a number/;
+    for (let i = 0; i < n; i++) {
+      await concepts.nth(i).click();
+      await expect(detail.getByText(repeated)).toHaveCount(0);
+      const explainer = detail.locator("[data-testid='value-map-explainer']");
+      await expect(explainer).toHaveCount(1);
+      const editors = {
+        map: await detail.locator("[data-testid='spec-mapping-editor']").count(),
+        number: await detail.locator("[data-testid='spec-number-map']").count(),
+        bands: await detail.locator("[data-testid='spec-binning']").count(),
+      };
+      const text = (await explainer.textContent()) ?? "";
+      expect(/drag a value/i.test(text)).toBe(editors.map > 0);
+      expect(/Missing, never a made-up number/.test(text)).toBe(editors.number > 0);
+      expect(/outside every band/.test(text)).toBe(editors.bands > 0);
+    }
   });
 });
