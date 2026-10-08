@@ -111,7 +111,7 @@ test.describe("finished run — the rail", () => {
   });
 
   for (const viewed of ["setup", "gate1", "gate2", "gate3", "gate4"] as GatePosition[]) {
-    test(`@finished-chrome @rail viewed from ${viewed}, every passed gate shows its spend and the rail sums to the header`, async ({
+    test(`@finished-chrome @rail viewed from ${viewed}, every passed gate shows its spend and the rail sums to its TOTAL`, async ({
       page,
     }) => {
       await openParkedAtGate4(page, viewed);
@@ -127,14 +127,14 @@ test.describe("finished run — the rail", () => {
         await expect(cost).toHaveText(text);
       }
       await expect(page.locator("[data-testid='gate-rail']")).not.toContainText("est. pending");
-      // THE INVARIANT: the rail's realized columns sum to what the header says the run spent.
+      // THE INVARIANT: the rail's realized columns sum to what its TOTAL says the run spent.
       const texts = await page
         .locator("[data-testid='gate-rail'] [data-cost='realized']")
         .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
       const sum = texts.reduce((s, t) => s + usd(t), 0);
-      const chip = await page.locator("[data-testid='run-chip']").textContent();
-      expect(usd(chip)).toBeCloseTo(TOTAL, 10);
-      expect(sum).toBeCloseTo(usd(chip), 10);
+      const total = await page.getByTestId("rail-total").textContent();
+      expect(usd(total)).toBeCloseTo(TOTAL, 10);
+      expect(sum).toBeCloseTo(usd(total), 10);
     });
   }
 });

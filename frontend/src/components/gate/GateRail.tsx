@@ -131,7 +131,7 @@ export function GateRail({
   className,
   jobId,
   runPosition,
-  header,
+  total,
   compact = false,
 }: {
   current: GatePosition;
@@ -145,12 +145,18 @@ export function GateRail({
   jobId?: string;
   /** Where the run actually is. Gates at or behind it are reachable; gates ahead of it are not. */
   runPosition?: GatePosition | null;
-  /** A line above the five columns, on the same navy box — the run's name, spend and stop control (2026-10-06). */
-  header?: React.ReactNode;
   /**
-   * COLLAPSED (2026-10-07, Bhargav: "as the user scrolls down, the rail collapses into a tighter version"). The run
-   * line and all five gates, one line each: the current gate keeps its name, the others just their number, and the
-   * spend lines go. Every gate stays in the line, so the rail still navigates while the reviewer is deep in a screen.
+   * THE RUN'S TOTAL, after Gate 4 (2026-10-08, Bhargav's pick C of the rail mockups). The run line used to be a row
+   * of its own above the gates — a whole row of rail height for one chip — so the run's name moved to a title on the
+   * ground above the rail (GateShell) and only the spend stayed here. It sits BESIDE the gates' list, not in it: it
+   * is not a step, and the rail is still five. Omit it (no run) and the rail is the five gates alone.
+   */
+  total?: { amount: string; note: string };
+  /**
+   * COLLAPSED (2026-10-07, Bhargav: "as the user scrolls down, the rail collapses into a tighter version"). All five
+   * gates and the total, one line each: the current gate keeps its name, the others just their number, the total
+   * keeps its amount, and the spend lines go. Every gate stays in the line, so the rail still navigates while the
+   * reviewer is deep in a screen.
    */
   compact?: boolean;
 }) {
@@ -160,22 +166,12 @@ export function GateRail({
       data-testid="gate-rail-box"
       data-compact={String(compact)}
       className={cn(
-        "flex flex-col rounded-card bg-surface-chrome transition-[padding,gap] duration-200 ease-out motion-reduce:transition-none",
-        compact ? "gap-0.5 p-1.5" : "gap-1 p-2",
+        "flex gap-1 rounded-card bg-surface-chrome transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+        compact ? "p-1.5" : "p-2",
         className,
       )}
     >
-    {header && (
-      <div
-        className={cn(
-          "px-3 transition-[padding] duration-200 ease-out motion-reduce:transition-none",
-          compact ? "pb-0.5 pt-0.5" : "pb-1 pt-1.5",
-        )}
-      >
-        {header}
-      </div>
-    )}
-    <ol aria-label="Review gates" data-testid="gate-rail" className="grid grid-cols-5 gap-1">
+    <ol aria-label="Review gates" data-testid="gate-rail" className="grid min-w-0 flex-1 grid-cols-5 gap-1">
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
         const isDone = i < currentIndex;
@@ -258,6 +254,34 @@ export function GateRail({
         );
       })}
     </ol>
+    {total && (
+      // Set like a gate column, so it folds with them: a label line that stays, and the rest on the same 0fr/1fr fold.
+      // Collapsed, the amount rides up onto the label line, as the current gate's name does.
+      <div
+        data-testid="rail-total"
+        className={cn(
+          "flex min-h-8 w-32 shrink-0 flex-col items-end gap-1 border-l border-rule-on-chrome px-3 text-right text-on-chrome transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+          compact ? "justify-center py-1" : "py-2",
+        )}
+      >
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-on-chrome-muted">
+          Total
+          {compact && <span className="normal-case tabular-nums tracking-normal text-on-chrome">{total.amount}</span>}
+        </span>
+        <div
+          aria-hidden={compact ? true : undefined}
+          className={cn(
+            "grid transition-[grid-template-rows,opacity,visibility] duration-200 ease-out motion-reduce:transition-none",
+            compact ? "invisible grid-rows-[0fr] opacity-0" : "visible grid-rows-[1fr] opacity-100",
+          )}
+        >
+          <div className="flex min-h-0 flex-col items-end gap-1 overflow-hidden pt-1">
+            <span className="text-sm font-semibold tabular-nums">{total.amount}</span>
+            <span className="text-xs text-on-chrome-muted">{total.note}</span>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 }

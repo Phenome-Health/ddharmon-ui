@@ -31,7 +31,7 @@ import { isInFlight } from "@/lib/run-state";
  *  1. **App bar.** Split, deliberately. The Phenome Health secondary lockup (icon + wordmark — the brand
  *     rule is that the wordmark never appears without the icon), the divider and the `ddharmon` wordmark
  *     are rendered ONCE by `AppShell`, which wraps every route including these. This component adds only
- *     the run chip (and the stop control). The tagline and its mark were removed on 2026-10-06.
+ *     the run title (and the stop control). The tagline and its mark were removed on 2026-10-06.
  *  2. **No masthead.** The eyebrow, display title and subhead were removed on 2026-10-06 (Bhargav: "rail
  *     shows this already"). The screen keeps ONE visually hidden h1 — the gate's name — for assistive
  *     technology, and the subhead moved into the how-to panel as its opening line.
@@ -63,8 +63,8 @@ import { isInFlight } from "@/lib/run-state";
  * in any string it renders (UI-SPEC §7.2). `scripts/leak_scan.py --profile public` gates it.
  *
  * EMPTY AND OVERFLOW STATES are handled here rather than left to each page: no run in progress renders no
- * run chip at all; a long run name is clamped to one line with the full value on `title`, so the bar's
- * height can never reflow.
+ * run title and no rail total at all; a long run name is clamped to one line with the full value on `title`,
+ * so the title's height can never reflow.
  */
 
 export interface GateShellProps {
@@ -82,9 +82,9 @@ export interface GateShellProps {
    * computing it from its own screen is how a finished run's past gates came to read "est. pending" (O1).
    */
   rail?: GateRailItem[];
-  /** The run's name, or undefined when no run is in progress — in which case NO chip renders. */
+  /** The run's name, or undefined when no run is in progress — in which case NO title renders. */
   runName?: string;
-  /** Realized spend so far, shown on the run chip and the resume banner. */
+  /** Realized spend so far, shown as the rail's TOTAL and on the resume banner. */
   costSoFar?: number;
   /** True when this run was REJOINED at a gate rather than walked to — renders the resume banner. */
   resumed?: boolean;
@@ -138,7 +138,7 @@ export interface GateShellProps {
  * change of height never moves the thing being measured. And a screen with too little to scroll never collapses:
  * collapsing shortens the page, which on a short one would pull the marker back into view and re-open the rail.
  *
- * THE GAP BETWEEN THE TWO THRESHOLDS MUST EXCEED WHAT THE RAIL LOSES (~56px). When it collapses, the browser's scroll
+ * THE GAP BETWEEN THE TWO THRESHOLDS MUST EXCEED WHAT THE RAIL LOSES (~48px since the run line left it). When it collapses, the browser's scroll
  * anchoring scrolls back by that much so the row the reviewer is reading does not jump — which is the point — but it
  * also moves the marker back by the same amount. With a narrower gap that pull-back re-opens the rail, the re-open
  * pushes it forward again, and the rail flickers at the boundary.
@@ -199,23 +199,25 @@ export function GateShell({
   const railMarker = useRef<HTMLDivElement>(null);
   const railCollapsed = useRailCollapsed(railMarker);
   /**
-   * (1) THE RUN LINE, inside the rail (2026-10-06, Bhargav: "move into the rail, should apply to all runs"). The run
-   * chip and the stop control used to sit on their own app-bar row; with the tagline gone that row held one chip.
-   * They now ride on the rail's navy box, pinned with it, so the run's name and spend stay in view while scrolling.
-   * Re-toned for the dark ground. Nothing renders when there is no run and nothing to stop.
+   * (1) THE RUN TITLE, above the rail (2026-10-08, Bhargav's pick C of the rail mockups). On 2026-10-06 the run chip
+   * and the stop control moved off their own app-bar row onto the rail — but as a row of their own there too, so the
+   * rail paid a whole row of height for one chip. Now the run's name and ID are a title on the ground ABOVE the rail,
+   * and the rail keeps only the spend, as its TOTAL. The title is not pinned: it scrolls away, and that is the price
+   * Bhargav chose — a scrolled screen says what the run has spent, not which run it is. Nothing renders when there is
+   * no run and nothing to stop.
    */
   const stopControl =
     inFlight && isDemo ? (
       <span
         data-testid="stop-unavailable"
-        className="rounded-inner border border-dashed border-rule-on-chrome px-3 py-1 text-xs text-on-chrome-muted"
+        className="max-w-[32rem] rounded-inner border border-dashed border-rule-on-field px-3 py-1 text-xs text-on-field-muted"
       >
         Stopping is not available on the shared sample — it replays in your browser and spends nothing,
         so there is nothing to stop. Start your own run to get the control.
       </span>
     ) : inFlight && !isDemo && onStop && job ? (
       job.stopping ? (
-        <span className="flex shrink-0 items-center gap-1.5 text-xs text-on-chrome-muted">
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-on-field-muted">
           <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> Stopping&hellip;
         </span>
       ) : (
@@ -232,30 +234,25 @@ export function GateShell({
       )
     ) : null;
   /**
-   * CENTRED AND OUTLINED (2026-10-07, Bhargav: "blends in a bit too much. add a border around it and center it in the
-   * rail"). Three columns, so the chip holds the rail's centre whether or not the stop control is on the line: the
-   * flanks are equal by construction and the stop control takes the right one.
+   * The name, then the ID in small mono, then the stop control at the far right. `min-h-8` is the stop pill's height,
+   * so the title does not grow when a run starts or stops working. Its `-mb-5` takes the column's 32px gap down to
+   * 12px, so the title reads as the rail's caption rather than a section of its own.
    */
-  const runLine =
+  const runTitle =
     runName || stopControl ? (
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] items-center gap-4">
-        <span />
-        {/* No run in progress -> no chip. An empty chip is worse than none: it reads as a run with no name. */}
+      <div data-testid="run-title" className="-mb-5 flex min-h-8 min-w-0 items-center justify-between gap-4 px-1">
+        {/* No run in progress -> no name. An empty title is worse than none: it reads as a run with no name. */}
         {runName ? (
-          <span
-            data-testid="run-chip"
-            title={runName}
-            className="flex min-w-0 items-center gap-2 rounded-pill border border-on-chrome-faint px-3 py-1"
-          >
-            <span className="max-w-[40rem] truncate text-xs font-semibold text-on-chrome">{runName}</span>
-            <span className="shrink-0 text-xs tabular-nums text-on-chrome-muted">
-              {costSoFar > 0 ? `spent ${formatUsd(costSoFar)}` : "nothing charged yet"}
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span data-testid="run-title-name" title={runName} className="truncate text-xl font-semibold text-on-field">
+              {runName}
             </span>
-          </span>
+            {jobId && <span className="shrink-0 font-mono text-xs text-on-field-faint">{jobId}</span>}
+          </div>
         ) : (
           <span />
         )}
-        <div className="flex min-w-0 justify-end">{stopControl}</div>
+        {stopControl}
       </div>
     ) : null;
   return (
@@ -278,6 +275,7 @@ export function GateShell({
           working surface scrolls beneath it rather than showing around its rounded corners. */}
       {/* The collapse marker. Zero height, and its -mt-8 cancels the column gap it would otherwise add, so the rail
           sits exactly where it did. It is NOT inside the pin: wrapping a sticky element leaves it nowhere to stick. */}
+      {runTitle}
       <div ref={railMarker} aria-hidden="true" className="-mt-8 h-0" />
       <div data-testid="gate-rail-pin" className="sticky top-0 z-30 -my-3 bg-surface-field py-3">
         <GateRail
@@ -285,7 +283,9 @@ export function GateShell({
           items={job ? runRailFor(gate, job, costSoFar) : (rail ?? railFor(gate))}
           jobId={jobId}
           runPosition={railReachOf(job)}
-          header={runLine}
+          total={
+            job ? { amount: formatUsd(costSoFar), note: costSoFar > 0 ? "charged so far" : "nothing charged" } : undefined
+          }
           compact={railCollapsed}
         />
       </div>

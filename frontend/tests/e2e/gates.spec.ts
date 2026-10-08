@@ -180,33 +180,48 @@ test.describe("five screens", () => {
     });
   }
 
-  test("@gates the run chip rides in the rail, with no app-bar row above it", async ({ page }) => {
-    // Bhargav, 2026-10-06: with the tagline gone the chip sat alone on an empty row; it moved into the rail, on
-    // every run. Pinned with the rail, the run's name and spend stay in view while the screen scrolls.
-    await page.goto(`/run/${PAUSED_JOB}/gate1`);
-    await page.waitForLoadState("networkidle");
-    const box = page.locator("[data-testid='gate-rail-box']");
-    await expect(box.locator("[data-testid='run-chip']")).toBeVisible();
-    await expect(box.locator("[data-testid='gate-rail'] > li")).toHaveCount(5);
-    // No chip outside the rail box.
-    await expect(page.locator("[data-testid='run-chip']")).toHaveCount(1);
-  });
-
-  test("@gates the run chip is outlined and centred in the rail", async ({ page }) => {
-    // Bhargav, 2026-10-07: in the rail the chip "blends in a bit too much" — it gets a border and sits centred.
+  test("@gates the run's name and ID sit in a title above the rail; the rail carries only the TOTAL", async ({ page }) => {
+    // Bhargav, 2026-10-08 (rail mockups, option C): the run line made the rail a whole row taller. The run's name and
+    // ID move out of the rail into a title on the ground above it, and the rail keeps a narrow TOTAL after Gate 4.
+    // The TOTAL is not a gate, so it is not in the gates' list — the rail is still five steps.
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.waitForLoadState("networkidle");
-    const chip = page.locator("[data-testid='run-chip']");
-    const style = await chip.evaluate((el) => {
-      const s = getComputedStyle(el);
-      return { width: parseFloat(s.borderTopWidth), style: s.borderTopStyle };
-    });
-    expect(style.width).toBeGreaterThanOrEqual(1);
-    expect(style.style).toBe("solid");
-    const c = await chip.boundingBox();
-    const r = await page.locator("[data-testid='gate-rail-box']").boundingBox();
-    expect(Math.abs(c!.x + c!.width / 2 - (r!.x + r!.width / 2))).toBeLessThanOrEqual(2);
+    const box = page.getByTestId("gate-rail-box");
+    const title = page.getByTestId("run-title");
+    await expect(title).toBeVisible();
+    await expect(title).toContainText("Demo · paused at Gate 1");
+    await expect(title).toContainText(PAUSED_JOB);
+    await expect(box.getByTestId("run-title")).toHaveCount(0);
+    const t = (await title.boundingBox())!;
+    const b = (await box.boundingBox())!;
+    expect(t.y + t.height, "the title is not above the rail").toBeLessThanOrEqual(b.y);
+
+    const total = box.getByTestId("rail-total");
+    await expect(total).toBeVisible();
+    await expect(total).toContainText(/total/i);
+    await expect(total).toContainText("$0");
+    await expect(box.locator("[data-testid='gate-rail'] > li")).toHaveCount(5);
+    await expect(box.locator("[data-testid='gate-rail'] [data-testid='rail-total']")).toHaveCount(0);
+    const gate4 = (await box.locator("li[data-gate='gate4']").boundingBox())!;
+    expect((await total.boundingBox())!.x, "the TOTAL is not after Gate 4").toBeGreaterThan(gate4.x + gate4.width - 1);
+    // One row of columns and nothing above it: 132px with the run line, ~92px without.
+    expect(b.height, "the rail still carries a row above the gates").toBeLessThan(110);
+  });
+
+  test("@gates the run title scrolls away with the screen; the pinned rail keeps the TOTAL", async ({ page }) => {
+    // Option C's stated cost: the title is on the ground, not pinned, so a scrolled screen no longer names the run.
+    // The rail still says what the run has spent.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const main = page.locator("main");
+    const top = (await main.boundingBox())!.y;
+    await main.evaluate((el) => el.scrollTo(0, 700));
+    await expect(page.getByTestId("gate-rail-box")).toHaveAttribute("data-compact", "true");
+    const t = (await page.getByTestId("run-title").boundingBox())!;
+    expect(t.y + t.height, "the run title is pinned").toBeLessThanOrEqual(top);
+    await expect(page.getByTestId("rail-total")).toBeVisible();
   });
 
   test("@gates the rail stays pinned at the top while the screen scrolls", async ({ page }) => {
@@ -224,10 +239,11 @@ test.describe("five screens", () => {
     expect(box.y - top, "the rail is not at the top of the screen").toBeLessThan(40);
   });
 
-  test("@gates scrolled down, the rail collapses to the chip and one line per gate", async ({ page }) => {
-    // Bhargav, 2026-10-07: as the reviewer scrolls, the rail tightens to the run chip and the five gates, one line
-    // each — the current gate keeps its name, the others just their number, and the spend lines go. Every gate stays
-    // in the line, so the rail still navigates while collapsed. At the top it opens up again.
+  test("@gates scrolled down, the rail collapses to one line per gate and the TOTAL", async ({ page }) => {
+    // Bhargav, 2026-10-07: as the reviewer scrolls, the rail tightens to the five gates, one line each — the current
+    // gate keeps its name, the others just their number, and the spend lines go. Every gate stays in the line, so the
+    // rail still navigates while collapsed. At the top it opens up again. (2026-10-08: the TOTAL folds the same way,
+    // to one line with its amount.)
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.waitForLoadState("networkidle");
@@ -240,7 +256,13 @@ test.describe("five screens", () => {
     await expect(box).toHaveAttribute("data-compact", "true");
     // Polled: the fold animates (~200ms), so the height arrives a moment after the state does.
     await expect.poll(async () => (await box.boundingBox())!.height, { message: "the collapsed rail is not tighter" }).toBeLessThan(full - 30);
-    await expect(box.getByTestId("run-chip")).toBeVisible();
+    const total = box.getByTestId("rail-total");
+    await expect(total).toBeVisible();
+    await expect(total).toContainText(/total\s*\$0/i);
+    // Polled, like the box above: the box can be under its threshold while the TOTAL's own fold is still finishing.
+    await expect
+      .poll(async () => (await total.boundingBox())!.height, { message: "the collapsed TOTAL is more than one line" })
+      .toBeLessThanOrEqual(36);
     const items = box.locator("[data-testid='gate-rail'] > li");
     await expect(items).toHaveCount(5);
     for (let i = 0; i < 5; i++) {
@@ -350,29 +372,27 @@ test.describe("five screens", () => {
     expect(nameless, `icon-only control(s) with no accessible name: ${nameless.join(" | ")}`).toEqual([]);
   });
 
-  test("@gates five screens — the chrome renders no run chip when there is no run", async ({ page }) => {
-    // A job id with no fixture: `getResult` 404s, so the hook never produces a job. The chip must be
-    // ABSENT, not empty — an empty chip reads as a run with no name.
+  test("@gates five screens — the chrome renders no run title and no TOTAL when there is no run", async ({ page }) => {
+    // A job id with no fixture: `getResult` 404s, so the hook never produces a job. The title must be
+    // ABSENT, not empty — an empty title reads as a run with no name — and a TOTAL of no run is a made-up $0.
     await page.goto("/run/no-such-run/gate1");
     await page.waitForLoadState("networkidle");
-    await expect(page.locator("[data-testid='run-chip']")).toHaveCount(0);
+    await expect(page.getByTestId("run-title")).toHaveCount(0);
+    await expect(page.getByTestId("rail-total")).toHaveCount(0);
     // The chrome itself still renders, so the screen is never a blank page.
     await expect(page.locator("[data-testid='gate-rail'] > li")).toHaveCount(5);
   });
 
-  test("@gates five screens — a long run name is clamped and the app bar height never reflows", async ({ page }) => {
+  test("@gates five screens — a long run name is clamped and the title's height never reflows", async ({ page }) => {
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.waitForLoadState("networkidle");
-    const before = await page.locator("[data-testid='run-chip']").evaluate((el) => {
-      const bar = el.parentElement!;
-      return bar.getBoundingClientRect().height;
-    });
-    const after = await page.locator("[data-testid='run-chip']").evaluate((el) => {
-      const label = el.firstElementChild as HTMLElement;
+    const title = page.getByTestId("run-title");
+    const before = await title.evaluate((el) => el.getBoundingClientRect().height);
+    const after = await title.evaluate((el) => {
+      const label = el.querySelector<HTMLElement>("[data-testid='run-title-name']")!;
       label.textContent = "A run name so long that it would wrap several times over ".repeat(6);
-      const bar = el.parentElement!;
       return {
-        height: bar.getBoundingClientRect().height,
+        height: el.getBoundingClientRect().height,
         clamped: label.scrollWidth > label.clientWidth,
       };
     });
@@ -490,6 +510,9 @@ test.describe("the stop control", () => {
 
     const stop = page.getByRole("button", { name: /stop/i }).first();
     await expect(stop).toBeVisible();
+    // Option C (2026-10-08): the full "Stop run" pill sits at the right of the run's title, not on the rail.
+    await expect(page.getByTestId("run-title").getByRole("button", { name: /stop/i })).toBeVisible();
+    await expect(page.getByTestId("gate-rail-box").getByRole("button", { name: /stop/i })).toHaveCount(0);
     await stop.click();
 
     const dialog = page.getByRole("alertdialog");
