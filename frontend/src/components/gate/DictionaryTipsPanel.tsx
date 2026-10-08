@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
@@ -101,15 +101,10 @@ export function DictionaryTipsPanel({ className }: { className?: string }) {
             ? "Hide the checklist of what to fix in your dictionary before uploading it"
             : "Show the checklist of what to fix in your dictionary before uploading it"
         }
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className={disclosureRow("field")}
       >
-        <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
-          Before you upload — check your dictionary
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn("h-4 w-4 shrink-0 text-on-field-muted transition-transform", open && "rotate-180")}
-        />
+        <DisclosureLabel ground="field">Before you upload — check your dictionary</DisclosureLabel>
+        <DisclosureChevron ground="field" open={open} />
       </CollapsibleTrigger>
       <CollapsibleContent>
         <ul className="mt-3 flex flex-col gap-2">

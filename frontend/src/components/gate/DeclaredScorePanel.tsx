@@ -14,6 +14,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
@@ -418,7 +419,7 @@ export function DeclaredScorePanel({
         // The status rides the accessible name too (H4): an aria-label REPLACES the content, so without it a
         // screen reader would hear "show the panel" while the screen says a score is declared.
         aria-label={`${open ? "Hide" : "Show"} the declared-score panel${status ? ` — ${status}` : ""}`}
-        className="flex w-full items-center justify-between gap-3 text-left"
+        className={disclosureRow("field", "gap-3")}
       >
         {/*
           ONE LINE, AT THE HOW-TO STRIP'S EXACT HEIGHT. Stacking the title over the summary made this
@@ -428,9 +429,7 @@ export function DeclaredScorePanel({
           which is a worse placement than the one it is fixing.
         */}
         <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
-          <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
-            A score you want to build from this run
-          </span>
+          <DisclosureLabel ground="field">A score you want to build from this run</DisclosureLabel>
           {status ? (
             /*
               A DECLARED SCORE SAYS SO ON THE CLOSED STRIP (H4, final review round 2 — *"still there — fix
@@ -460,13 +459,7 @@ export function DeclaredScorePanel({
             </span>
           )}
         </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn(
-            "h-4 w-4 shrink-0 text-on-field-muted transition-transform",
-            open && "rotate-180",
-          )}
-        />
+        <DisclosureChevron ground="field" open={open} />
       </CollapsibleTrigger>
       <CollapsibleContent>
         <section
@@ -553,7 +546,7 @@ export function DeclaredScorePanel({
                 }}
               />
               <div className="flex min-w-0 flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                <span className="text-sm font-semibold text-on-raised">
                   What was read — free
                 </span>
                 <pre
@@ -805,7 +798,7 @@ function PastedSourceRecord({ record, showScore }: { record: PastedRecord; showS
       className="flex min-w-0 flex-col gap-1"
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-        <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+        <span className="text-sm font-semibold text-on-raised">
           What was entered — pasted text
         </span>
         {showScore && <span className="text-xs font-semibold text-on-raised">{record.scoreName}</span>}
@@ -953,7 +946,7 @@ function ScoreComponentRow({
           {matchedGroup && match && (
             <div className="flex flex-col gap-1">
               <div className="flex items-baseline gap-2">
-                <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                <span className="text-sm font-semibold text-on-raised">
                   Matched group
                 </span>
                 <span className="font-mono text-xs tabular-nums text-on-raised-muted">
@@ -1001,7 +994,7 @@ function ScoreComponentRow({
 
           {otherCandidates.length > 0 && (
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+              <span className="text-sm font-semibold text-on-raised">
                 {matchedGroup
                   ? "Other concepts retrieved"
                   : "Concepts retrieved — none measured this"}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { ROLE_FORMAT } from "@/types";
@@ -187,15 +187,10 @@ export function ColumnRolesPanel({ className }: { className?: string }) {
             ? "Hide the reference explaining what each column-mapping role means"
             : "Show the reference explaining what each column-mapping role means"
         }
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className={disclosureRow("field")}
       >
-        <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
-          What each column role means, and the bare minimum
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn("h-4 w-4 shrink-0 text-on-field-muted transition-transform", open && "rotate-180")}
-        />
+        <DisclosureLabel ground="field">What each column role means, and the bare minimum</DisclosureLabel>
+        <DisclosureChevron ground="field" open={open} />
       </CollapsibleTrigger>
       <CollapsibleContent>
         <p data-testid="roles-bare-minimum" className="mt-3 max-w-[78ch] text-sm text-on-field">
@@ -216,7 +211,7 @@ export function ColumnRolesPanel({ className }: { className?: string }) {
         <div className="mt-3 flex flex-col gap-3">
           {GROUPS.map((group) => (
             <div key={group.heading} className="flex flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
+              <span className="text-sm font-semibold text-on-field">
                 {group.heading}
               </span>
               <ul className="flex flex-col gap-1.5">

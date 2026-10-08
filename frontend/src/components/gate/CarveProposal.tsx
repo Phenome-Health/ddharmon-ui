@@ -132,7 +132,7 @@ export function CarveProposal({
         {/* THE EYEBROW + THE JUDGE'S OWN THEME SENTENCE + THE AXIS — the mockup's clean finding, not the
             old heavy proposal box. The proposer stays "the coherence judge" (via COHERENCE_COPY's label),
             the one name the column, the filter and the borrowed-label pill also use. */}
-        <p className={cn("text-xs font-bold uppercase tracking-eyebrow", style.ink)}>Coherence finding — {label}</p>
+        <p className={cn("text-sm font-semibold", style.ink)}>Coherence finding — {label}</p>
         {summary && <p className={cn("max-w-[68ch] text-sm font-medium", style.ink)}>{summary}</p>}
         {axis && (
           <p className={cn("text-xs", style.ink)}>

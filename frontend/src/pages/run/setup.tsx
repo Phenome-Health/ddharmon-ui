@@ -3,7 +3,7 @@ import { Link, useParams, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
-import { ChevronDown, Eye, EyeOff, Upload, X } from "lucide-react";
+import { Eye, EyeOff, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
@@ -17,8 +17,8 @@ import {
   PreparedExport,
   WorkbookExport,
 } from "@/components/gate/PreparedExport";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { InfoTip } from "@/components/ui/info-tip";
 import {
@@ -1586,25 +1586,17 @@ export default function SetupPage() {
         >
           <CollapsibleTrigger
             aria-label={dictsOpen ? "Hide the dictionaries and their column mapping" : "Show the dictionaries and their column mapping"}
-            className="flex w-full items-center justify-between gap-2 text-left"
+            className={disclosureRow("field")}
           >
             <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
-                What this run was set up with
-              </span>
+              <DisclosureLabel ground="field">What this run was set up with</DisclosureLabel>
               <span data-testid="setup-dictionaries-summary" className="truncate text-sm text-on-field">
                 {dicts.length} {dicts.length === 1 ? "dictionary" : "dictionaries"}
                 {totalFields === null ? "" : ` · ${totalFields.toLocaleString()} variables`} · the column
                 mapping is fixed for this run
               </span>
             </span>
-            <ChevronDown
-              aria-hidden="true"
-              className={cn(
-                "h-4 w-4 shrink-0 text-on-field-muted transition-transform",
-                dictsOpen && "rotate-180",
-              )}
-            />
+            <DisclosureChevron ground="field" open={dictsOpen} />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-4">{dictionariesSection}</CollapsibleContent>
         </Collapsible>

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import * as SelectPrimitive from "@radix-ui/react-select"
-import { Check, ChevronDown, ChevronUp } from "lucide-react"
+import { Check, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -25,8 +25,10 @@ const SelectTrigger = React.forwardRef<
     {...props}
   >
     {children}
+    {/* Up-down arrows, not a chevron (08-30b, controls lab round 1): a chevron alone reads as "this folds open",
+        the pair as "this picks one of several" — and the disclosures now own the single chevron. */}
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-4 w-4 opacity-50" />
+      <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-on-raised-faint" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ))

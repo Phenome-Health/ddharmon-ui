@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { DisclosureChevron, DisclosureLabel } from "@/components/ui/disclosure";
 import { cn } from "@/lib/utils";
 import { type ColumnSort } from "@/lib/column-sort";
 
@@ -284,27 +284,17 @@ export function InheritedPanel({
       open={defaultOpen}
       className="group rounded-inner border border-rule-on-raised bg-surface-inset"
     >
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-4 py-2.5 [&::-webkit-details-marker]:hidden">
-        <ChevronRight
-          aria-hidden="true"
-          className="h-4 w-4 shrink-0 text-on-inset-muted transition-transform group-open:rotate-90"
-        />
-        <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
-          From {from}
-          <span className="font-normal normal-case tracking-normal text-on-inset-faint">
-            {" "}
-            · {label} · read-only
-          </span>
-        </span>
+      {/* The shared disclosure header (08-30b): the whole row lights on hover, a trailing chevron, no Show/Hide
+          words. The label leads in sentence case; where it came from and that it is read-only follow it, quieter. */}
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 rounded-inner px-4 py-2.5 transition-colors hover:bg-surface-inset-strong group-open:rounded-b-none [&::-webkit-details-marker]:hidden">
+        <DisclosureLabel ground="inset" className="first-letter:uppercase">
+          {label}
+        </DisclosureLabel>
+        <span className="text-xs text-on-inset-muted">from {from} · read-only</span>
         {detail && (
           <span className="text-xs text-on-inset-muted">{detail}</span>
         )}
-        <span className="ml-auto text-xs font-semibold text-on-inset-muted group-open:hidden">
-          Show
-        </span>
-        <span className="ml-auto hidden text-xs font-semibold text-on-inset-muted group-open:inline">
-          Hide
-        </span>
+        <DisclosureChevron ground="inset" className="ml-auto group-open:rotate-180" />
       </summary>
       <div className="border-t border-rule-quiet-on-raised px-4 py-3">
         {children}

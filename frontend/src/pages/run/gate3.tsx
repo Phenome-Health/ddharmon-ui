@@ -642,7 +642,7 @@ export default function Gate3Page() {
                         className="flex flex-col gap-1"
                       >
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
+                          <span className="text-sm font-semibold text-on-inset">
                             {targetIsOwn ? "Synthesized CDE" : "Selected CDE"}
                           </span>
                           {/* An adopt's / a refine's catalog CDE links to its repository page; a

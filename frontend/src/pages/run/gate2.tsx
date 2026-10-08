@@ -496,7 +496,7 @@ export default function Gate2Page() {
                 back to the isChosen candidate, so the model's choice is the default target, re-pickable below. */}
             {record.rationale && (
               <div data-testid="model-rationale" className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                <span className="text-sm font-semibold text-on-raised">
                   Why this CDE — model rationale
                 </span>
                 <p className="border-l-2 border-rule-control-on-raised pl-3 text-sm italic text-on-raised">

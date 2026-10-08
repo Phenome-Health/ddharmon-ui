@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DisclosureChevron, DisclosureLabel } from "@/components/ui/disclosure";
 import {
   Collapsible,
   CollapsibleContent,
@@ -859,7 +860,7 @@ function DestinationTray({
       aria-label={label}
       className="flex min-w-0 flex-col gap-2"
     >
-      <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+      <span className="text-sm font-semibold text-on-raised">
         {heading}
       </span>
       <input
@@ -1081,7 +1082,7 @@ function UnassignedPool({
           className="flex w-full flex-col gap-3"
         >
           <div className="flex w-full flex-wrap items-baseline gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            <h2 className="text-sm font-semibold text-on-raised">
               In no group
             </h2>
             {/* THE COUNT, where a reviewer meets it on the way to Continue — what is parked outside every
@@ -1571,7 +1572,7 @@ function ExpandedGroup({
               data-battery-suspect="true"
               className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-4 py-3"
             >
-              <p className="text-xs font-bold uppercase tracking-eyebrow text-on-warn">
+              <p className="text-sm font-semibold text-on-warn">
                 Checked — but likely a battery
               </p>
               <p className="mt-1 max-w-[80ch] text-sm text-on-warn">
@@ -1673,7 +1674,7 @@ function ExpandedGroup({
             onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
             className="bg-surface-inset"
           >
-            <span className="w-full text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
+            <span className="w-full text-sm font-semibold text-on-inset">
               In no group
               {poolCount > 0 && (
                 <span className="ml-2 font-mono normal-case tracking-normal">
@@ -2392,13 +2393,14 @@ function GroupDetail({
 
       {group.idealCde && (
         <details
-          className="rounded-inner border border-rule-on-raised"
+          className="group rounded-inner border border-rule-on-raised"
           open={stale}
         >
-          <summary className="cursor-pointer px-4 py-2.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            Generated ideal CDE{" "}
-            <span className="font-normal normal-case tracking-normal text-on-raised-faint">
-              — from the original grouping
+          {/* The shared disclosure header (08-30b): whole row lights on hover, trailing chevron. */}
+          <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-inner px-4 py-2.5 transition-colors hover:bg-surface-inset group-open:rounded-b-none [&::-webkit-details-marker]:hidden">
+            <DisclosureLabel ground="raised">Generated ideal CDE</DisclosureLabel>
+            <span className="text-xs text-on-raised-faint">
+              from the original grouping
             </span>
             {stale && (
               <span
@@ -2408,6 +2410,7 @@ function GroupDetail({
                 membership changed — regenerated at Gate 2
               </span>
             )}
+            <DisclosureChevron ground="raised" className="ml-auto group-open:rotate-180" />
           </summary>
           {stale && (
             <p className="px-4 pt-2 text-xs leading-relaxed text-on-raised-muted">

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { cn } from "@/lib/utils";
 import type { GatePosition } from "@/types";
 
@@ -120,15 +120,10 @@ export function HowToPanel({ gate, lead, className }: { gate: GatePosition; lead
         // The accessible name states the ACTION and its OBJECT, not just "toggle" — an icon-only control
         // whose name does not say what it operates on is a defect, not a style choice (UI-SPEC §6).
         aria-label={open ? "Hide how to use this screen" : "Show how to use this screen"}
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className={disclosureRow("field")}
       >
-        <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
-          How to use this screen
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn("h-4 w-4 shrink-0 text-on-field-muted transition-transform", open && "rotate-180")}
-        />
+        <DisclosureLabel ground="field">How to use this screen</DisclosureLabel>
+        <DisclosureChevron ground="field" open={open} />
       </CollapsibleTrigger>
       <CollapsibleContent>
         {lead && (
