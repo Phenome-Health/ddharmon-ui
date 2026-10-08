@@ -558,15 +558,17 @@ test.describe("gate2 screen", () => {
     expect(listFirst).toBe(true);
   });
 
-  test("@gate2 #2 the ranked-candidates legend and row indicators are legible on the white card", async ({
+  test("@gate2 #2 the ranked-candidates header and row marks are legible on the white card", async ({
     page,
   }) => {
     // Live-test-2 #2: the legend (model's pick, metadata richness, N PV, cos) and the column key were set
     // in `--on-raised-faint` — the HAIRLINE role, which index.css says is never text — and the empty
     // richness dots in `--surface-track` (~1.2:1 on white), so "3 of 5" read as three dots of nothing.
+    // (Review round 3 retired the legend strip, the star and the cos bar; the header, the word tags, the value
+    // counts, the similarity number and the dots carry the same floors.)
     await serveFinished(page, oneRankedConcept);
     await openGate2(page);
-    await expect(page.locator("[data-testid='candidate-legend']")).toBeVisible();
+    await expect(page.getByTestId("candidate-columns")).toBeVisible();
     const ratios = await page.evaluate(() => {
       type Rgba = [number, number, number, number];
       const parse = (v: string): Rgba => {
@@ -628,14 +630,13 @@ test.describe("gate2 screen", () => {
       const q = (sel: string) => Array.from(document.querySelectorAll(sel));
       const text = (sel: string) => q(sel).map((e) => ratio(getComputedStyle(e).color, e));
       return {
-        legend: text("[data-testid='candidate-legend']"),
         columns: text("[data-testid='candidate-columns']"),
         pv: q("[data-testid='candidate-pv']").map((e) => ratio(getComputedStyle(e).color, e, true)),
+        similarity: text("[data-testid='candidate-similarity']"),
+        tags: q("[data-testid='candidate-tag']").map((e) => ratio(getComputedStyle(e).color, e, true)),
         chevron: q("[data-testid='candidate-expand'] svg[aria-hidden='true']").map((e) =>
           ratio(getComputedStyle(e).color, e),
         ),
-        stars: q("[data-testid='pick-star']").map((e) => ratio(getComputedStyle(e).fill, e)),
-        cosBars: q("[data-testid='cos-bar-fill']").map((e) => ratio(getComputedStyle(e).backgroundColor, e)),
         // a dot's mark is its fill when present, else its ring
         dots: q("[data-testid='richness-dot']").map((e) => {
           const cs = getComputedStyle(e);
@@ -644,14 +645,13 @@ test.describe("gate2 screen", () => {
         }),
       };
     });
-    expect(ratios.legend.length).toBeGreaterThan(0);
+    expect(ratios.columns.length).toBeGreaterThan(0);
+    expect(ratios.tags.length).toBeGreaterThan(0);
     expect(ratios.dots.length).toBeGreaterThan(0);
     expect(ratios.chevron.length).toBeGreaterThan(0);
-    for (const r of [...ratios.legend, ...ratios.columns, ...ratios.pv])
-      expect(r, "legend / column key / PV text must clear AA (4.5:1)").toBeGreaterThanOrEqual(4.5);
-    expect(ratios.stars.length).toBeGreaterThan(0);
-    expect(ratios.cosBars.length).toBeGreaterThan(0);
-    for (const r of [...ratios.dots, ...ratios.chevron, ...ratios.stars, ...ratios.cosBars])
+    for (const r of [...ratios.columns, ...ratios.pv, ...ratios.similarity, ...ratios.tags])
+      expect(r, "header / values / similarity / tag text must clear AA (4.5:1)").toBeGreaterThanOrEqual(4.5);
+    for (const r of [...ratios.dots, ...ratios.chevron])
       expect(r, "a meaningful mark must clear the graphical floor (3:1)").toBeGreaterThanOrEqual(3);
   });
 
@@ -1697,5 +1697,84 @@ test.describe("gate2 reshaped at gate 1", () => {
   test("@gate2 a part of an accepted division says it is one", async ({ page }) => {
     const note = await open(page, (r) => ({ ...r, groupId: PART, id: PART, readjudicatedFrom: GROUP }), PART);
     await expect(note).toContainText(/one part of a division you accepted/i);
+  });
+});
+
+// --- Gate 2's ranked candidates without a key (review round 3, legend option A) -------------------------------
+
+test.describe("gate2 candidate table — no key, the columns say it", () => {
+  // Bhargav picked A of the legend mockups: "A + add hover tooltips for values, metadata similarity. remove X/Y
+  // metadata, just dots. for similarity just number, no bar."
+  async function openOne(page: Page): Promise<Locator> {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await serveFinished(page, oneRankedConcept);
+    await openGate2(page);
+    const rows = page.locator("[data-testid='candidate-row']");
+    await expect(rows.first()).toBeVisible();
+    return rows;
+  }
+
+  test("@gate2 no key strip; one header — #, CDE, Values, Metadata, Similarity", async ({ page }) => {
+    await openOne(page);
+    await expect(page.locator("[data-testid='candidate-legend']")).toHaveCount(0);
+    const head = page.getByTestId("candidate-columns");
+    await expect(head.locator(":scope > *")).toHaveText(["#", "CDE", "Values", "Metadata", "Similarity"]);
+  });
+
+  test("@gate2 Values, Metadata and Similarity each explain themselves on hover", async ({ page }) => {
+    await openOne(page);
+    const head = page.getByTestId("candidate-columns");
+    for (const [label, says] of [
+      ["Values", /permissible values/i],
+      ["Metadata", /5 catalog/i],
+      ["Similarity", /embedding/i],
+    ] as const) {
+      await head.getByText(label, { exact: true }).hover();
+      await expect(page.getByRole("tooltip")).toContainText(says);
+      // Moved in steps, as a hand moves: Radix keeps a tooltip open across one jump while it waits for the next move.
+      await page.mouse.move(0, 0, { steps: 8 });
+      await expect(page.getByRole("tooltip")).toHaveCount(0);
+    }
+  });
+
+  test("@gate2 every header sits over its own column", async ({ page }) => {
+    const rows = await openOne(page);
+    const head = page.getByTestId("candidate-columns");
+    for (const [label, cell] of [
+      ["Values", "candidate-pv"],
+      ["Metadata", "candidate-metadata"],
+      ["Similarity", "candidate-similarity"],
+    ] as const) {
+      const h = (await head.getByText(label, { exact: true }).boundingBox())!;
+      const c = (await rows.first().getByTestId(cell).boundingBox())!;
+      // Right-aligned columns: the header's right edge is the cell's right edge.
+      expect(Math.abs(h.x + h.width - (c.x + c.width)), `${label} is not over its column`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test("@gate2 a row: values in words, metadata as dots alone, similarity as a number alone", async ({ page }) => {
+    const rows = await openOne(page);
+    const row = rows.first();
+    await expect(row.getByTestId("candidate-pv")).toHaveText(/^(\d+ values?|—)$/);
+    await expect(row.getByTestId("candidate-metadata").locator("[data-testid='richness-dot']")).toHaveCount(5);
+    expect(((await row.getByTestId("candidate-metadata").textContent()) ?? "").trim()).toBe("");
+    await expect(row.getByTestId("candidate-similarity")).toHaveText(/^\d\.\d{3}$/);
+    await expect(page.locator("[data-testid='cos-bar-fill']")).toHaveCount(0);
+  });
+
+  test("@gate2 the marks are words: 'your target', and 'model's pick' only when it is not your target", async ({ page }) => {
+    const rows = await openOne(page);
+    await expect(page.locator("[data-testid='pick-star'], [data-testid='candidate-chosen-mark']")).toHaveCount(0);
+    const chosen = page.locator("[data-testid='candidate-row'][data-chosen='true']");
+    await expect(chosen.getByTestId("candidate-tag")).toHaveText("your target");
+    // As delivered the model's pick IS the target, so it says nothing more.
+    await expect(page.getByText("model's pick", { exact: true })).toHaveCount(0);
+    await pickCandidate(page, page.locator("[data-testid='candidate-row']:not([data-chosen='true'])").first());
+    const pick = page.locator("[data-testid='candidate-row'][data-model-pick='true']");
+    await expect(pick.getByTestId("candidate-tag")).toHaveText("model's pick");
+    await expect(page.locator("[data-testid='candidate-row'][data-chosen='true']").getByTestId("candidate-tag")).toHaveText(
+      "your target",
+    );
+    expect(await rows.count()).toBeGreaterThan(1);
   });
 });
