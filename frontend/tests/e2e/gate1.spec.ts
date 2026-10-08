@@ -59,6 +59,16 @@ import {
  *   run: npm run test:e2e -- --grep "@gate1"
  */
 
+/**
+ * REDUCED MOTION for this file's drags (08-30b review round 1). The gate rail now FOLDS over ~200ms when a scroll
+ * crosses its threshold, and a drag that starts right after a `scrollIntoViewIfNeeded` would compute its drop point
+ * while the layout is still easing — landing a few pixels off. A pointer follows its target, so this is a test-timing
+ * hazard, not a reviewer's; the fold itself is asserted, with motion on, in gates.spec.ts.
+ */
+// `contextOptions`, not the top-level `reducedMotion` option: on Playwright 1.62 the latter does not reach the page
+// (probed: matchMedia stayed false), the former does.
+test.use({ contextOptions: { reducedMotion: "reduce" } });
+
 async function openGate1(page: Page): Promise<void> {
   await page.goto(`/run/${PAUSED_JOB}/gate1`);
   await page.waitForLoadState("networkidle");

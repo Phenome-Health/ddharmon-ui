@@ -17,6 +17,16 @@ import {
 import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
 
 /**
+ * REDUCED MOTION for this file's drags (08-30b review round 1). The gate rail now FOLDS over ~200ms when a scroll
+ * crosses its threshold, and a drag that starts right after a `scrollIntoViewIfNeeded` would compute its drop point
+ * while the layout is still easing — landing a few pixels off. A pointer follows its target, so this is a test-timing
+ * hazard, not a reviewer's; the fold itself is asserted, with motion on, in gates.spec.ts.
+ */
+// `contextOptions`, not the top-level `reducedMotion` option: on Playwright 1.62 the latter does not reach the page
+// (probed: matchMedia stayed false), the former does.
+test.use({ contextOptions: { reducedMotion: "reduce" } });
+
+/**
  * 08-28 item 1c — the Gate 3 value-map editor's algebra, asserted in node (the frontend has no unit runner).
  *
  * F19: `codeMapToBuckets` matched the model's TARGET CODES ("9") against bucket LABELS ("Don't know"), so on a

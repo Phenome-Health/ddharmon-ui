@@ -104,7 +104,7 @@ function Inner({
         href={href}
         data-testid={`rail-link-${gate}`}
         aria-label={`${ahead ? "Go to" : "Back to"} ${name}`}
-        className="flex flex-col gap-1 rounded-inner focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        className="flex flex-col rounded-inner focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
       >
         {children}
       </Link>
@@ -116,13 +116,13 @@ function Inner({
         data-testid={`rail-ahead-${gate}`}
         aria-disabled="true"
         title={`${name} — this run has not reached this gate yet.`}
-        className="flex cursor-not-allowed flex-col gap-1 opacity-60"
+        className="flex cursor-not-allowed flex-col opacity-60"
       >
         {children}
       </span>
     );
   }
-  return <span className="flex flex-col gap-1">{children}</span>;
+  return <span className="flex flex-col">{children}</span>;
 }
 
 export function GateRail({
@@ -159,9 +159,22 @@ export function GateRail({
     <div
       data-testid="gate-rail-box"
       data-compact={String(compact)}
-      className={cn("flex flex-col rounded-card bg-surface-chrome", compact ? "gap-0.5 p-1.5" : "gap-1 p-2", className)}
+      className={cn(
+        "flex flex-col rounded-card bg-surface-chrome transition-[padding,gap] duration-200 ease-out motion-reduce:transition-none",
+        compact ? "gap-0.5 p-1.5" : "gap-1 p-2",
+        className,
+      )}
     >
-    {header && <div className={compact ? "px-3 pb-0.5 pt-0.5" : "px-3 pb-1 pt-1.5"}>{header}</div>}
+    {header && (
+      <div
+        className={cn(
+          "px-3 transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+          compact ? "pb-0.5 pt-0.5" : "pb-1 pt-1.5",
+        )}
+      >
+        {header}
+      </div>
+    )}
     <ol aria-label="Review gates" data-testid="gate-rail" className="grid grid-cols-5 gap-1">
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
@@ -184,7 +197,7 @@ export function GateRail({
             // screen-reader user has no way to tell which screen they are on.
             aria-current={isCurrent ? "step" : undefined}
             className={cn(
-              "flex min-h-8 flex-col gap-1 rounded-inner px-3",
+              "flex min-h-8 flex-col gap-1 rounded-inner px-3 transition-[padding] duration-200 ease-out motion-reduce:transition-none",
               compact ? "justify-center py-1" : "py-2",
               // Navy rail (mockup parity): the active gate is a solid blue pill; the rest are plain columns
               // ON the navy bar. The per-gate cost stays — the mockup dropped it, but a reviewer standing
@@ -215,19 +228,31 @@ export function GateRail({
               )}
               {isDone && <span className="sr-only">completed</span>}
             </span>
-            {!compact && <span className="truncate text-sm font-semibold">{item.label}</span>}
-            {!compact && (
-            <span
-              data-cost={item.cost.kind}
+            {/* The name and the spend FOLD rather than unmount (review round 1: the instant swap read as
+                "jerky"): a 0fr↔1fr grid row eases the height, the fade covers the clip, and `invisible` lands at the
+                end of the fold so a folded line is out of the a11y tree and the tab order. No motion if reduced. */}
+            <div
+              data-rail-detail
+              aria-hidden={compact ? true : undefined}
               className={cn(
-                "text-xs",
-                item.cost.kind === "realized" ? "font-semibold" : "font-normal",
-                isCurrent ? "text-on-accent-surface" : "text-on-chrome-muted",
+                "grid transition-[grid-template-rows,opacity,visibility] duration-200 ease-out motion-reduce:transition-none",
+                compact ? "invisible grid-rows-[0fr] opacity-0" : "visible grid-rows-[1fr] opacity-100",
               )}
             >
-              {item.cost.text}
-            </span>
-            )}
+              <div className="flex min-h-0 flex-col gap-1 overflow-hidden pt-1">
+                <span className="truncate text-sm font-semibold">{item.label}</span>
+                <span
+                  data-cost={item.cost.kind}
+                  className={cn(
+                    "text-xs",
+                    item.cost.kind === "realized" ? "font-semibold" : "font-normal",
+                    isCurrent ? "text-on-accent-surface" : "text-on-chrome-muted",
+                  )}
+                >
+                  {item.cost.text}
+                </span>
+              </div>
+            </div>
             </Inner>
           </li>
         );

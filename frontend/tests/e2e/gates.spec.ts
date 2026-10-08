@@ -96,7 +96,8 @@ test.describe("staged review", () => {
       "data-cost",
       "forecast",
     );
-    await expect(page.getByText(/Already spent to reach this gate/)).toBeVisible();
+    // The sum block's realized line (reworded in review round 1: "Spent so far").
+    await expect(page.locator("[data-sum-line='realized']")).toHaveText(/^Spent so far/);
   });
 
   test("@gates the how-to panel names where spending starts", async ({ page }) => {
@@ -237,7 +238,8 @@ test.describe("five screens", () => {
 
     await main.evaluate((el) => el.scrollTo(0, 700));
     await expect(box).toHaveAttribute("data-compact", "true");
-    expect((await box.boundingBox())!.height, "the collapsed rail is not tighter").toBeLessThan(full - 30);
+    // Polled: the fold animates (~200ms), so the height arrives a moment after the state does.
+    await expect.poll(async () => (await box.boundingBox())!.height, { message: "the collapsed rail is not tighter" }).toBeLessThan(full - 30);
     await expect(box.getByTestId("run-chip")).toBeVisible();
     const items = box.locator("[data-testid='gate-rail'] > li");
     await expect(items).toHaveCount(5);
@@ -245,12 +247,37 @@ test.describe("five screens", () => {
       expect((await items.nth(i).boundingBox())!.height, `gate column ${i} is more than one line`).toBeLessThanOrEqual(36);
     }
     await expect(box.locator("li[aria-current='step']")).toContainText("Gate 1 · Concept groups");
-    await expect(box.locator("li[data-gate='gate2']")).toHaveText("Gate 2");
-    await expect(box.locator("[data-cost]")).toHaveCount(0);
+    // The names and spend lines FOLD AWAY rather than unmount (review round 1: the instant swap was "jerky"), so
+    // they stay in the DOM, hidden and out of the accessibility tree, and animate back on the way up.
+    await expect(box.locator("[data-rail-detail]")).toHaveCount(5);
+    for (const line of await box.locator("[data-rail-detail]").all()) {
+      await expect(line).toBeHidden();
+      await expect(line).toHaveAttribute("aria-hidden", "true");
+    }
+    await expect(box.locator("li[data-gate='gate2'] [data-rail-detail]")).toBeHidden();
 
     await main.evaluate((el) => el.scrollTo(0, 0));
     await expect(box).toHaveAttribute("data-compact", "false");
     await expect(box.locator("[data-cost]")).toHaveCount(5);
+    for (const line of await box.locator("[data-rail-detail]").all()) await expect(line).toBeVisible();
+  });
+
+  test("@gates the rail folds with a short animation, and not at all for reduced motion", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const detail = page.locator("[data-testid='gate-rail-box'] [data-rail-detail]").first();
+    const timing = () =>
+      detail.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { property: cs.transitionProperty, duration: parseFloat(cs.transitionDuration) };
+      });
+    const t = await timing();
+    expect(t.property).toContain("grid-template-rows");
+    expect(t.duration).toBeGreaterThan(0.1);
+    expect(t.duration).toBeLessThanOrEqual(0.3);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect((await timing()).property).toBe("none");
   });
 
   test("@gates the rail does not flicker at the collapse boundary", async ({ page }) => {
