@@ -174,11 +174,15 @@ export function SpecMappingEditor({
           data-from={recommendedFrom}
           className="text-xs text-on-raised-muted"
         >
-          {recommendedFrom === "model"
-            ? "ddharmon's recommended mapping (the model's recode)"
-            : "The model produced no mapping — a $0 starting point matched on value labels"}
-          {edited && <span className="ml-1 font-semibold text-status-warn">· edited</span>}
-          {!readOnly && " — drag a value to change where it lands"}
+          {/* Only what VARIES per tile (review round 1: "repetitive"). That a tile starts from ddharmon's recommended
+              mapping, and that a value is dragged to move it, is said ONCE above the tiles (Gate 3's value-mapping
+              header); a tile names only its exception — no model mapping — and whether it was edited. */}
+          {recommendedFrom !== "model" && "The model produced no mapping — a $0 starting point matched on value labels"}
+          {edited && (
+            <span className={cn("font-semibold text-status-warn", recommendedFrom !== "model" && "ml-1")}>
+              {recommendedFrom !== "model" ? "· edited" : "Edited"}
+            </span>
+          )}
         </span>
         {edited && !readOnly && (
           <Button

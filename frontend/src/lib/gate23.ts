@@ -582,7 +582,8 @@ export function needsRepickConfirmation(affected: number): boolean {
 // --- Gate 3: one decision per source variable, MERGED on every save (08-27 audit B1) --------------------
 
 /** The reviewer-edit fields a `gate3_spec_edit` decision carries. Each control patches ONE of them. */
-export const SPEC_EDIT_FIELDS = ["note", "mapping", "numberMap", "bins", "rejected"] as const;
+// `approved` (review round 1) marks a recode the reviewer has checked; like `rejected` it is stored only when true.
+export const SPEC_EDIT_FIELDS = ["note", "mapping", "numberMap", "bins", "rejected", "approved"] as const;
 export type SpecEditField = (typeof SPEC_EDIT_FIELDS)[number];
 
 /**
@@ -598,7 +599,7 @@ export function mergeSpecEdit(
   const out: Record<string, unknown> = {};
   for (const f of SPEC_EDIT_FIELDS) {
     const v = f in patch ? patch[f] : prev?.[f];
-    if (v === undefined || (f === "rejected" && v !== true)) continue;
+    if (v === undefined || ((f === "rejected" || f === "approved") && v !== true)) continue;
     out[f] = v;
   }
   return out;

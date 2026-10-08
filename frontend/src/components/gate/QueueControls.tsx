@@ -405,9 +405,10 @@ export function CohortLegend({ roster }: { roster: readonly string[] }) {
 }
 
 /**
- * A QUEUE ROW'S RIGHT COLUMN: the cohort strip, then the variable count and the state tag under it — vars
- * first (lab round 5), so the name has the left column to itself. Right-aligned so every strip shares an
- * edge with the legend above the list.
+ * A QUEUE ROW'S RIGHT COLUMN: the cohort strip, the state tag under it, and the variable count under that.
+ * Stacked, not side by side (review round 1 on the live build: "there's not enough room"), so the column is
+ * only as wide as its widest line and the name keeps the left column to itself. Right-aligned so every strip
+ * shares an edge with the legend above the list.
  */
 export function QueueRowFacts({
   cohorts,
@@ -421,17 +422,15 @@ export function QueueRowFacts({
   state?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-end gap-1.5 pt-0.5">
+    <div className="flex flex-col items-end gap-1 pt-0.5">
       <CohortStrip cohorts={cohorts} roster={roster} />
-      <span className="flex items-center gap-1.5">
-        {typeof vars === "number" && (
-          <span data-testid="row-vars" className="whitespace-nowrap text-xs text-on-raised-faint">
-            {vars} {vars === 1 ? "var" : "vars"}
-          </span>
-        )}
-        {/* A flex gap draws the space; this one is for the TEXT, so the row reads "7 vars split", not "7 varssplit". */}{" "}
-        {state}
-      </span>
+      {state}
+      {/* A flex gap draws the space; this one is for the TEXT, so the row reads "split 7 vars", not "split7 vars". */}{" "}
+      {typeof vars === "number" && (
+        <span data-testid="row-vars" className="whitespace-nowrap text-xs text-on-raised-faint">
+          {vars} {vars === 1 ? "var" : "vars"}
+        </span>
+      )}
     </div>
   );
 }

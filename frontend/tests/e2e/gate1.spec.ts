@@ -347,7 +347,7 @@ test.describe("gate1 ledger", () => {
 
     const realized = sum.locator("[data-sum-line='realized']");
     const forecast = sum.locator("[data-sum-line='in-scope']");
-    await expect(realized).toContainText(/already spent/i);
+    await expect(realized).toContainText(/spent so far/i);
     // Distinct by more than position: the realized line carries its own weight, so the two cannot be
     // read in the same voice.
     const weights = await Promise.all(

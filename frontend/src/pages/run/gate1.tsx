@@ -1703,55 +1703,38 @@ function SumBlock({
   nIdeals?: number;
   idealsUsd?: number;
 }) {
+  // SAID ONCE, BRIEFLY (review round 1 on the live build: "verbose and redundant"). The lab's footer register —
+  // "N ticked · $X to match them at Gate 2" — for the purchase; the realized spend first and in its own weight;
+  // the whole-corpus comparison only while it differs from the purchase, since "all 55 would be $0.61" under
+  // "55 of 55 · $0.61" says the same number twice.
   return (
-    <div data-testid="sum-block" className="flex flex-col gap-1">
-      <p
-        data-sum-line="realized"
-        className="text-sm font-semibold text-on-raised"
-      >
+    <div data-testid="sum-block" className="flex flex-col gap-0.5">
+      <p data-sum-line="realized" className="text-sm font-semibold text-on-raised">
+        Spent so far:{" "}
         {realized > 0 ? (
-          <>
-            Already spent to reach this gate:{" "}
-            <span className="font-mono tabular-nums">
-              {formatUsd(realized)}
-            </span>{" "}
-            — naming the concepts, dividing them, and checking them.
-          </>
+          <span className="font-mono tabular-nums">{formatUsd(realized)}</span>
         ) : (
-          <>
-            Already spent to reach this gate: nothing — this run is a saved
-            replay, so it was not billed.
-          </>
+          "nothing — a saved replay"
         )}
       </p>
-      <p
-        data-sum-line="in-scope"
-        className="text-sm font-normal text-on-raised"
-      >
-        {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} in scope —{" "}
-        <span className="font-mono tabular-nums">
-          {formatUsd(inScopeTotal)}
-        </span>{" "}
-        to match them against common data elements at Gate 2.
+      <p data-sum-line="in-scope" className="text-sm font-normal text-on-raised">
+        {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} ticked ·{" "}
+        <span className="font-mono tabular-nums">{formatUsd(inScopeTotal)}</span> to match at Gate 2
       </p>
       {nIdeals > 0 && (
         /* Named rather than folded in silently: these are calls the reviewer's own edits bought (a New group has
            no description yet; a reshaped one's was written for other members), so the quote says so. */
         <p data-sum-line="ideals" className="text-xs font-normal text-on-raised-muted">
-          {nIdeals} new ideal {nIdeals === 1 ? "description" : "descriptions"} — one for
-          each group you made or changed —{" "}
-          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>, included
-          above.
+          {nIdeals} new ideal {nIdeals === 1 ? "description" : "descriptions"} included (
+          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>), for groups you made or changed
         </p>
       )}
-      <p
-        data-sum-line="whole-corpus"
-        className="text-sm font-normal text-on-raised-faint"
-      >
-        All {nGroups} {nGroups === 1 ? "group" : "groups"} would be{" "}
-        <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>
-        .
-      </p>
+      {nInScope < nGroups && (
+        <p data-sum-line="whole-corpus" className="text-sm font-normal text-on-raised-faint">
+          All {nGroups} {nGroups === 1 ? "group" : "groups"}:{" "}
+          <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -2331,17 +2314,6 @@ function GroupDetail({
         </details>
       )}
 
-      {/* SAME FRAME, LATER GATES (mockup parity). The queue on the left and this detail pane are the shell
-          every gate reuses; naming what slots in here next is the mockup's own note, kept verbatim in tone. */}
-      <div className="rounded-inner border border-dashed border-rule-on-raised bg-surface-inset px-4 py-3 text-xs text-on-inset-muted">
-        <span className="font-semibold text-on-inset">
-          Same layout, later gates:
-        </span>{" "}
-        Gate 2 slots a ranked CDE-candidate panel into this pane (score ·
-        collection · endorsement · select) plus the cosine to the chosen
-        element; Gate 3 adds a transform spec per source row. The left queue and
-        this detail frame do not change.
-      </div>
     </div>
   );
 }

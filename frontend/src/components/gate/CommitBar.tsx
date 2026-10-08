@@ -129,6 +129,13 @@ export function CommitBar({
             </p>
           )}
           {keyField}
+          {/* Beside the button, where the other gates put their spend line — on a row of its own it made Gate 4's
+              bar a line taller than every other gate's (review round 1). */}
+          {assurance && (
+            <p data-testid="commit-assurance" className="max-w-[80ch] text-xs text-on-raised-muted">
+              {assurance}
+            </p>
+          )}
         </div>
         <Button
           type="button"
@@ -145,11 +152,6 @@ export function CommitBar({
         </Button>
       </div>
 
-      {assurance && (
-        <p data-testid="commit-assurance" className="max-w-[80ch] text-xs text-on-raised-muted">
-          {assurance}
-        </p>
-      )}
     </div>
   );
 }

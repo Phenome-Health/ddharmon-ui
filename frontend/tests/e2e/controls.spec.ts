@@ -348,9 +348,9 @@ test.describe("controls gate1 panel", () => {
       }));
     expect(await centres(strip)).toEqual(await centres(legend));
 
-    // Vars, then the state tag, under the strip; the per-row price is gone.
+    // The state tag, then the variable count, under the strip (review round 1 stacked them); the per-row price is gone.
     const facts = row.locator("[data-testid='row-vars']").locator("xpath=..");
-    await expect(facts.locator("[data-testid='row-vars'] + [data-testid='coherence-mark']")).toHaveCount(1);
+    await expect(facts.locator("[data-testid='coherence-mark'] + [data-testid='row-vars']")).toHaveCount(1);
     await expect(row.locator("[data-testid='coherence-mark']")).toHaveAttribute("data-variant", "tag");
     await expect(row).not.toContainText("$");
     // The price is said once, under the list.
@@ -412,5 +412,111 @@ test.describe("controls how-to copy", () => {
     await expect(howTo).toContainText("filters in the search box");
     // The search is one line; "one term per line" described the multi-term box 08-16f removed.
     await expect(howTo).not.toContainText("one term per line");
+  });
+});
+
+// --- review round 1 on the live build (Lavish session 63f9db85f44e22f4) --------------------------------------
+
+test.describe("controls review round 1", () => {
+  test("@controls Gate 1's detail pane carries no 'same layout, later gates' note", async ({ page }) => {
+    await openGate1(page);
+    await expect(page.locator("[data-testid='gate1-detail']")).not.toContainText("Same layout, later gates");
+  });
+
+  test("@controls under the strip the state tag comes first and the variable count sits beneath it", async ({ page }) => {
+    await openGate1(page);
+    const row = rows(page).first();
+    const tag = await row.locator("[data-testid='coherence-mark']").boundingBox();
+    const vars = await row.locator("[data-testid='row-vars']").boundingBox();
+    const strip = await row.locator("[data-testid='cohort-strip']").boundingBox();
+    expect(tag!.y).toBeGreaterThanOrEqual(strip!.y + strip!.height - 1);
+    expect(vars!.y).toBeGreaterThanOrEqual(tag!.y + tag!.height - 1);
+  });
+
+  test("@controls the legend stays over its squares when the list shows a classic scrollbar", async ({ page }) => {
+    await openGate1(page);
+    // A mouse-driven Mac (or "always show scrollbars") gives the scrolling list a real ~15px gutter. Headless
+    // Chromium hides scrollbars outright, so stand in for the gutter with the same width of padding on the list:
+    // whatever narrows the list must move the legend with the squares — true only if the legend is IN the list.
+    const list = page.locator("[data-testid='gate1-rows']");
+    await expect(list.locator("[data-testid='cohort-legend']")).toHaveCount(1);
+    await list.evaluate((el) => {
+      el.style.paddingRight = "15px";
+    });
+    const centres = (l: Locator) =>
+      l.locator("[data-cohort]").evaluateAll((els) =>
+        els.map((e) => {
+          const r = e.getBoundingClientRect();
+          return Math.round(r.left + r.width / 2);
+        }),
+      );
+    const legend = page.locator("[data-testid='gate1-queue'] [data-testid='cohort-legend']");
+    expect(await centres(rows(page).first().locator("[data-testid='cohort-strip']"))).toEqual(await centres(legend));
+  });
+
+  test("@controls Gate 4's bar is the same height as the other gates' — its assurance shares the button's row", async ({
+    page,
+  }) => {
+    const height = async (gate: string) => {
+      await open(page, `/run/${FINISHED}/${gate}`);
+      return page.locator("[data-testid='commit-bar']").evaluate((e) => Math.round(e.getBoundingClientRect().height));
+    };
+    const g3 = await height("gate3");
+    const g4 = await height("gate4");
+    await expect(page.locator("[data-testid='commit-assurance']")).toBeVisible();
+    expect(g4).toBe(g3);
+  });
+
+  test("@controls the spend summary says each fact once, briefly", async ({ page }) => {
+    await openGate1(page);
+    const sum = page.locator("[data-testid='sum-block']");
+    await expect(sum.locator("[data-sum-line='realized']")).toHaveText(/^Spent so far: /);
+    await expect(sum.locator("[data-sum-line='in-scope']")).toHaveText(/^0 of \d+ groups ticked · \$[\d.]+ to match at Gate 2$/);
+    // Nothing ticked, so the whole-corpus figure is the comparison worth showing.
+    await expect(sum.locator("[data-sum-line='whole-corpus']")).toHaveText(/^All \d+ groups: \$[\d.]+$/);
+    // With every group ticked the two figures are the same number, so the comparison is dropped.
+    await page.locator("[data-testid='bulk-scope-toggle']").click();
+    await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "all");
+    await expect(sum.locator("[data-sum-line='whole-corpus']")).toHaveCount(0);
+    expect(((await sum.textContent()) ?? "").length).toBeLessThan(120);
+  });
+
+  test("@controls Gate 3 states the recommended-mapping caption once, not on every value-map tile", async ({ page }) => {
+    await open(page, `/run/${FINISHED}/gate3`);
+    const concepts = page.locator("[data-testid='gate3-concept']");
+    const editors = page.locator("[data-testid='gate3-detail'] [data-testid='spec-mapping-editor']");
+    // Walk to a concept with two or more value-map tiles.
+    for (let i = 0; i < (await concepts.count()) && (await editors.count()) < 2; i++) await concepts.nth(i).click();
+    expect(await editors.count()).toBeGreaterThan(1);
+    await expect(page.locator("[data-testid='gate3-detail']").getByText(/drag a value to change where it lands/)).toHaveCount(1);
+  });
+
+  test("@controls a Gate 3 recode tile folds, and Approve folds it and says so — after a reload too", async ({ page }) => {
+    await open(page, `/run/${FINISHED}/gate3`);
+    const tile = page.locator("[data-testid='gate3-detail'] [data-testid='spec-row']").first();
+    const fold = tile.locator("[data-testid='spec-collapse']");
+    const body = tile.locator("[data-testid='spec-body']");
+    await expect(fold).toHaveAttribute("aria-expanded", "true");
+    await expect(body).toBeVisible();
+    await fold.click();
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+    await expect(body).toBeHidden();
+    await fold.click();
+    await expect(body).toBeVisible();
+
+    const source = await tile.getAttribute("data-source");
+    await tile.locator("[data-testid='spec-approve']").click();
+    await expect(tile).toHaveAttribute("data-approved", "true");
+    await expect(body).toBeHidden();
+    await expect(tile.locator("[data-testid='spec-approved-badge']")).toBeVisible();
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const again = page.locator(`[data-testid='gate3-detail'] [data-testid='spec-row'][data-source='${source}']`);
+    await expect(again).toHaveAttribute("data-approved", "true");
+    await expect(again.locator("[data-testid='spec-body']")).toBeHidden();
+    // Approval is undone from the folded tile's header.
+    await again.locator("[data-testid='spec-unapprove']").click();
+    await expect(again).toHaveAttribute("data-approved", "false");
   });
 });

@@ -59,11 +59,13 @@ export function ConceptWorkbench({
         {tools && <div className="flex items-center justify-between gap-2 pl-5 pr-4">{tools}</div>}
         {aboveList}
         <div className="flex min-h-0 flex-1 flex-col border-y border-rule-quiet-on-raised">
-          {legend && <div className="border-b border-rule-quiet-on-raised">{legend}</div>}
           <div
             data-testid={`${gate}-rows`}
             className="min-h-0 flex-1 divide-y divide-rule-quiet-on-raised overflow-y-auto"
           >
+            {/* The legend lives INSIDE the scrolling list, pinned to its top: a classic (non-overlay) scrollbar
+                narrows the list, and a legend outside it would then sit a gutter's width right of its squares. */}
+            {legend && <div className="sticky top-0 z-10 bg-surface-raised">{legend}</div>}
             {rows}
           </div>
         </div>

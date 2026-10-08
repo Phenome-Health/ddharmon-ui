@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CommitBar } from "@/components/gate/CommitBar";
@@ -218,6 +218,9 @@ export default function Gate3Page() {
   const [rejecting, setRejecting] = useState<string | null>(null);
   // Rejected rows the reviewer has OPENED to look at the mapping they turned down (H10) — a view toggle, never saved.
   const [openRejected, setOpenRejected] = useState<Record<string, true>>({});
+  // A tile the reviewer folded or unfolded by hand (review round 1). Unset, a tile follows its approval: an
+  // approved recode starts folded, everything else open.
+  const [folded, setFolded] = useState<Record<string, boolean>>({});
   // Rows whose last save this session LANDED (08-26 #12). Set only off `write`'s resolved value — never
   // off having pressed Save — so the confirmation is evidence the store took the decision.
   const [savedKeys, setSavedKeys] = useState<Record<string, true>>({});
@@ -361,7 +364,12 @@ export default function Gate3Page() {
     patch: Parameters<typeof mergeSpecEdit>[1],
   ): Promise<boolean> {
     const key = specs.itemKey({ sourceVariable });
-    const extra = mergeSpecEdit(specs.decisions[key] as Record<string, unknown> | undefined, patch);
+    // An edit or a rejection supersedes an approval: "approved" means THIS version was checked.
+    const supersedes = "mapping" in patch || "numberMap" in patch || "bins" in patch || patch.rejected === true;
+    const extra = mergeSpecEdit(
+      specs.decisions[key] as Record<string, unknown> | undefined,
+      supersedes ? { ...patch, approved: false } : patch,
+    );
     const ok = await specs.write(
       { sourceVariable },
       {
@@ -837,6 +845,11 @@ export default function Gate3Page() {
                     <h3 className="text-sm font-semibold text-on-raised">
                       Value mapping ({activeCount})
                     </h3>
+                    {/* SAID ONCE for every tile below (review round 1: the caption repeated on each). */}
+                    <p data-testid="value-map-explainer" className="max-w-[80ch] text-xs text-on-raised-muted">
+                      Each recode starts from ddharmon&apos;s recommended mapping (the model&apos;s recode)
+                      {frozen ? "." : " — drag a value to change where it lands, and Approve a tile once you have checked it."}
+                    </p>
                     {rows.map(({ sourceVariable, transform, state }) => {
                       // REMOVED from this concept (review round 2): the recode is not built and no export carries
                       // the variable, so the row folds to one line that says so — and offers the Undo.
@@ -879,6 +892,16 @@ export default function Gate3Page() {
                       // the reviewer opens it to see what was turned down, read-only — and the row says what
                       // rejecting did instead of reading as if the recode will be exported.
                       const showRecode = !rejected || !!openRejected[itemKey];
+                      // Approve (review round 1): a reviewer working through the recodes one by one marks each as
+                      // checked; it folds, so what is left open is what is left to do.
+                      const approved = decision?.approved === true && !rejected;
+                      const isFolded = folded[itemKey] ?? approved;
+                      const hasEdit =
+                        !!decision &&
+                        (decision.mapping !== undefined ||
+                          decision.numberMap !== undefined ||
+                          decision.bins !== undefined ||
+                          (typeof decision.note === "string" && decision.note.trim() !== ""));
                       const noteValue =
                         itemKey in drafts
                           ? drafts[itemKey]
@@ -989,6 +1012,7 @@ export default function Gate3Page() {
                           }
                           data-review={String(review)}
                           data-rejected={String(rejected)}
+                          data-approved={String(approved)}
                           data-stale={String(specs.isStale(itemKey))}
                           data-concept-mismatch={String(
                             matchState === "flagged",
@@ -1003,6 +1027,19 @@ export default function Gate3Page() {
                           )}
                         >
                           <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              data-testid="spec-collapse"
+                              aria-expanded={!isFolded}
+                              aria-label={`${isFolded ? "Expand" : "Collapse"} the recode for ${sourceVariable}`}
+                              onClick={() => setFolded((prev) => ({ ...prev, [itemKey]: !isFolded }))}
+                              className="-ml-1 grid h-6 w-6 shrink-0 place-content-center rounded-inner text-on-raised-muted transition-colors hover:bg-surface-inset hover:text-on-raised"
+                            >
+                              <ChevronDown
+                                aria-hidden="true"
+                                className={cn("h-4 w-4 transition-transform duration-200", isFolded && "-rotate-90")}
+                              />
+                            </button>
                             <span className="rounded bg-surface-inset px-1.5 py-0.5 font-mono text-xs text-on-inset-muted">
                               {transform ? transform.kind : state}
                             </span>
@@ -1065,7 +1102,7 @@ export default function Gate3Page() {
                             )}
                             {/* A STANDING mark, read off the store (so it survives a reload): this block
                                 carries a reviewer decision, not only the pipeline's recommendation (#12). */}
-                            {specs.isTouched(itemKey) && (
+                            {specs.isTouched(itemKey) && (rejected || hasEdit) && (
                               <span
                                 data-testid="spec-edited-badge"
                                 className={cn(
@@ -1078,243 +1115,287 @@ export default function Gate3Page() {
                                 {decision?.rejected ? "rejected" : "edited"}
                               </span>
                             )}
-                          </div>
-
-                          {rejected && (
-                            <div className="flex flex-col gap-1">
-                              <p
-                                data-testid="spec-rejected-note"
-                                className="max-w-[68ch] text-xs text-on-raised"
-                              >
-                                <span className="font-semibold">Rejected.</span> This recode is left out of
-                                the notebook and the mapping table, and logged as rejected in the decision log.
-                                Un-reject brings it back exactly as it was.
-                              </p>
-                              <button
-                                type="button"
-                                data-testid="spec-rejected-toggle"
-                                aria-expanded={showRecode}
-                                onClick={() =>
-                                  setOpenRejected((prev) => {
-                                    const next = { ...prev };
-                                    if (next[itemKey]) delete next[itemKey];
-                                    else next[itemKey] = true;
-                                    return next;
-                                  })
-                                }
-                                className="w-fit text-left text-xs font-semibold text-link-on-raised underline underline-offset-2"
-                              >
-                                {showRecode
-                                  ? "Hide the rejected mapping ▴"
-                                  : "Show the rejected mapping (read-only) ▾"}
-                              </button>
-                            </div>
-                          )}
-
-                          {showRecode && (
-                            <div className={cn("flex flex-col gap-2", rejected && "opacity-75")}>
-                              {state === "failed" && (
-                                <p className="max-w-[68ch] text-xs text-on-raised-muted">
-                                  Spec generation ran for this run and did not
-                                  generate a recode for this variable. It is routed
-                                  to review rather than dropped — the variable is
-                                  still in scope and still needs an answer.
-                                </p>
-                              )}
-                              {state === "not-generated" && (
-                                <p className="max-w-[68ch] text-xs text-on-raised-muted">
-                                  No transform spec was generated for this run, so
-                                  nothing has been attempted for this variable.
-                                </p>
-                              )}
-                              {state === "no-transform" && (
-                                <p className="max-w-[68ch] text-xs text-on-raised-muted">
-                                  No transform required — the source values already
-                                  match the target&apos;s value domain.
-                                </p>
-                              )}
-                              {/* 08-28 1c (F16): the model could not produce this recode. Never "no transform
-                                  required" — that reading exported raw codes as if they already fit. */}
-                              {state === "needs-you" && (
-                                <p
-                                  data-testid="spec-needs-you"
-                                  className="max-w-[68ch] text-xs text-on-raised"
+                            {approved && (
+                              <>
+                                <span
+                                  data-testid="spec-approved-badge"
+                                  className="inline-flex items-center gap-1 rounded-pill bg-surface-ok px-2 py-0.5 text-xs font-semibold text-on-ok"
                                 >
-                                  <span className="font-semibold text-on-warn">
-                                    {unproduced} — needs you.
-                                  </span>{" "}
-                                  {transform?.kind === "unit"
-                                    ? `No unit conversion could be authored (${transform.sourceUnit ?? "?"} → ${transform.targetUnit ?? "?"}), so the notebook leaves this variable as a REVIEW REQUIRED stub rather than a no-op conversion.`
-                                    : persistedMapping
-                                      ? "The model could not map any of this variable's values; your mapping below is what the export applies."
-                                      : shape === "value-map"
-                                        ? "The model could not map any of this variable's values onto the target, so nothing is exported for it until you place its values below."
-                                        : "The model could not map any of this variable's values onto the target, so the notebook leaves it as a REVIEW REQUIRED stub — nothing is copied across."}
-                                </p>
-                              )}
-
-                              {/* The recode surface is chosen by the TARGET type (see `recodeShape`), so a coded
-                              source landing on a numeric CDE gets a code→number table instead of chips with
-                              nowhere to drop. Each surface renders for an OK spec AND a FAILED one (seeded from a
-                              $0 heuristic), so a reviewer fixes the recode rather than only annotating it. */}
-                              {shape === "value-map" && (
-                                <SpecMappingEditor
-                                  sourceOptions={sourceOptions}
-                                  targetValues={mappingBuckets}
-                                  value={mappingValue}
-                                  recommended={recommended.mapping}
-                                  recommendedFrom={recommended.from}
-                                  readOnly={frozen || rejected}
-                                  onChange={(m) =>
-                                    void saveSpec(record, sourceVariable, { mapping: m })
-                                  }
-                                />
-                              )}
-                              {shape === "code-to-number" && (
-                                <SpecNumberMap
-                                  sourceOptions={sourceOptions}
-                                  targetUnits={targetUnits}
-                                  value={numberMapValue}
-                                  recommended={recommendedNumberMap}
-                                  readOnly={frozen || rejected}
-                                  onChange={(m) =>
-                                    void saveSpec(record, sourceVariable, { numberMap: m })
-                                  }
-                                />
-                              )}
-                              {shape === "binning" && (
-                                <SpecBinning
-                                  value={binsValue}
-                                  recommended={recommendedBins}
-                                  readOnly={frozen || rejected}
-                                  onChange={(b) =>
-                                    void saveSpec(record, sourceVariable, { bins: b })
-                                  }
-                                />
-                              )}
-                              {shape === "recode-detail" &&
-                                transform &&
-                                state === "ok" && (
-                                  <RecodeDetail
-                                    t={transform}
-                                    srcLabels={srcLabels}
-                                    tgtLabels={tgtLabels}
-                                  />
+                                  <Check aria-hidden="true" className="h-3 w-3" />
+                                  approved
+                                </span>
+                                {!frozen && (
+                                  <button
+                                    type="button"
+                                    data-testid="spec-unapprove"
+                                    onClick={() => void saveSpec(record, sourceVariable, { approved: false })}
+                                    className="text-xs font-semibold text-link-on-raised hover:underline"
+                                  >
+                                    Undo approval
+                                  </button>
                                 )}
-                            </div>
-                          )}
-
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Input
-                              data-testid="spec-note-input"
-                              aria-label={`Note on the recode for ${sourceVariable}`}
-                              placeholder={rejected ? "Why was it rejected? (optional)" : "Your note on this recode"}
-                              value={noteValue}
-                              disabled={frozen}
-                              onChange={(e) => {
-                                // Typing again means the confirmation no longer describes what is on screen.
-                                unmarkSaved(itemKey);
-                                const value = e.target.value;
-                                setDrafts((prev) => ({ ...prev, [itemKey]: value }));
-                              }}
-                              className="max-w-96 text-xs"
-                            />
-                            <Button
-                              data-testid="spec-save"
-                              size="sm"
-                              variant="outline"
-                              disabled={frozen}
-                              onClick={() =>
-                                void saveNote(record, sourceVariable, noteValue)
-                              }
-                            >
-                              {/* It only ever saved the note; on a rejected row, where nothing else is editable, say so. */}
-                              {rejected ? "Save note" : "Save"}
-                            </Button>
-                            {rejected ? (
-                              <Button
-                                data-testid="spec-unreject"
-                                size="sm"
-                                variant="outline"
-                                disabled={frozen}
-                                onClick={() => void saveSpec(record, sourceVariable, { rejected: false })}
-                              >
-                                Un-reject
-                              </Button>
-                            ) : (
-                              <Button
-                                data-testid="spec-reject"
-                                size="sm"
-                                variant="outline"
-                                disabled={frozen}
-                                onClick={() => setRejecting(itemKey)}
-                              >
-                                Reject
-                              </Button>
-                            )}
-                            {/* Review round 2: take a ROGUE variable out of this concept. Free, nothing re-runs, and
-                                Undo is right there on the removed line — so no confirmation step. Last in the
-                                strip, so on a narrow pane it is the one that wraps. */}
-                            <Button
-                              data-testid="spec-remove"
-                              size="sm"
-                              variant="outline"
-                              disabled={frozen || !removable}
-                              title={
-                                removable
-                                  ? "Take this variable out of this concept: it leaves the transform specs and every export. You can undo it until you continue."
-                                  : "A concept keeps at least one variable — reject this recode instead to leave it out of the notebook."
-                              }
-                              onClick={() => void removeMember(record, sourceVariable)}
-                            >
-                              Remove from this concept
-                            </Button>
-                            {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
-                                failed write rolls back and toasts instead, so this never claims a miss. */}
-                            {savedKeys[itemKey] && (
-                              <span
-                                data-testid="spec-saved"
-                                role="status"
-                                className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
-                              >
-                                <Check
-                                  aria-hidden="true"
-                                  className="h-3.5 w-3.5 text-status-ok"
-                                />
-                                {specs.local ? "Saved in this browser" : "Saved"}
-                              </span>
+                              </>
                             )}
                           </div>
+                          {!isFolded && (
+                            <div data-testid="spec-body" className="flex flex-col gap-2">
+                              {rejected && (
+                                <div className="flex flex-col gap-1">
+                                  <p
+                                    data-testid="spec-rejected-note"
+                                    className="max-w-[68ch] text-xs text-on-raised"
+                                  >
+                                    <span className="font-semibold">Rejected.</span> This recode is left out of
+                                    the notebook and the mapping table, and logged as rejected in the decision log.
+                                    Un-reject brings it back exactly as it was.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    data-testid="spec-rejected-toggle"
+                                    aria-expanded={showRecode}
+                                    onClick={() =>
+                                      setOpenRejected((prev) => {
+                                        const next = { ...prev };
+                                        if (next[itemKey]) delete next[itemKey];
+                                        else next[itemKey] = true;
+                                        return next;
+                                      })
+                                    }
+                                    className="w-fit text-left text-xs font-semibold text-link-on-raised underline underline-offset-2"
+                                  >
+                                    {showRecode
+                                      ? "Hide the rejected mapping ▴"
+                                      : "Show the rejected mapping (read-only) ▾"}
+                                  </button>
+                                </div>
+                              )}
 
-                          {rejecting === itemKey && (
-                            <div
-                              data-testid="reject-confirm"
-                              role="alertdialog"
-                              aria-label="Reject this recode"
-                              className="flex flex-col gap-2 rounded-inner border border-rule-on-raised px-4 py-3"
-                            >
-                              <p className="max-w-[68ch] text-xs text-on-raised">
-                                {REJECT_CONFIRMATION}
-                              </p>
-                              <div className="flex gap-2">
-                                <Button
-                                  data-testid="reject-accept"
-                                  size="sm"
-                                  onClick={() => {
-                                    void saveSpec(record, sourceVariable, { rejected: true });
-                                    setRejecting(null);
+                              {showRecode && (
+                                <div className={cn("flex flex-col gap-2", rejected && "opacity-75")}>
+                                  {state === "failed" && (
+                                    <p className="max-w-[68ch] text-xs text-on-raised-muted">
+                                      Spec generation ran for this run and did not
+                                      generate a recode for this variable. It is routed
+                                      to review rather than dropped — the variable is
+                                      still in scope and still needs an answer.
+                                    </p>
+                                  )}
+                                  {state === "not-generated" && (
+                                    <p className="max-w-[68ch] text-xs text-on-raised-muted">
+                                      No transform spec was generated for this run, so
+                                      nothing has been attempted for this variable.
+                                    </p>
+                                  )}
+                                  {state === "no-transform" && (
+                                    <p className="max-w-[68ch] text-xs text-on-raised-muted">
+                                      No transform required — the source values already
+                                      match the target&apos;s value domain.
+                                    </p>
+                                  )}
+                                  {/* 08-28 1c (F16): the model could not produce this recode. Never "no transform
+                                      required" — that reading exported raw codes as if they already fit. */}
+                                  {state === "needs-you" && (
+                                    <p
+                                      data-testid="spec-needs-you"
+                                      className="max-w-[68ch] text-xs text-on-raised"
+                                    >
+                                      <span className="font-semibold text-on-warn">
+                                        {unproduced} — needs you.
+                                      </span>{" "}
+                                      {transform?.kind === "unit"
+                                        ? `No unit conversion could be authored (${transform.sourceUnit ?? "?"} → ${transform.targetUnit ?? "?"}), so the notebook leaves this variable as a REVIEW REQUIRED stub rather than a no-op conversion.`
+                                        : persistedMapping
+                                          ? "The model could not map any of this variable's values; your mapping below is what the export applies."
+                                          : shape === "value-map"
+                                            ? "The model could not map any of this variable's values onto the target, so nothing is exported for it until you place its values below."
+                                            : "The model could not map any of this variable's values onto the target, so the notebook leaves it as a REVIEW REQUIRED stub — nothing is copied across."}
+                                    </p>
+                                  )}
+
+                                  {/* The recode surface is chosen by the TARGET type (see `recodeShape`), so a coded
+                                  source landing on a numeric CDE gets a code→number table instead of chips with
+                                  nowhere to drop. Each surface renders for an OK spec AND a FAILED one (seeded from a
+                                  $0 heuristic), so a reviewer fixes the recode rather than only annotating it. */}
+                                  {shape === "value-map" && (
+                                    <SpecMappingEditor
+                                      sourceOptions={sourceOptions}
+                                      targetValues={mappingBuckets}
+                                      value={mappingValue}
+                                      recommended={recommended.mapping}
+                                      recommendedFrom={recommended.from}
+                                      readOnly={frozen || rejected}
+                                      onChange={(m) =>
+                                        void saveSpec(record, sourceVariable, { mapping: m })
+                                      }
+                                    />
+                                  )}
+                                  {shape === "code-to-number" && (
+                                    <SpecNumberMap
+                                      sourceOptions={sourceOptions}
+                                      targetUnits={targetUnits}
+                                      value={numberMapValue}
+                                      recommended={recommendedNumberMap}
+                                      readOnly={frozen || rejected}
+                                      onChange={(m) =>
+                                        void saveSpec(record, sourceVariable, { numberMap: m })
+                                      }
+                                    />
+                                  )}
+                                  {shape === "binning" && (
+                                    <SpecBinning
+                                      value={binsValue}
+                                      recommended={recommendedBins}
+                                      readOnly={frozen || rejected}
+                                      onChange={(b) =>
+                                        void saveSpec(record, sourceVariable, { bins: b })
+                                      }
+                                    />
+                                  )}
+                                  {shape === "recode-detail" &&
+                                    transform &&
+                                    state === "ok" && (
+                                      <RecodeDetail
+                                        t={transform}
+                                        srcLabels={srcLabels}
+                                        tgtLabels={tgtLabels}
+                                      />
+                                    )}
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Input
+                                  data-testid="spec-note-input"
+                                  aria-label={`Note on the recode for ${sourceVariable}`}
+                                  placeholder={rejected ? "Why was it rejected? (optional)" : "Your note on this recode"}
+                                  value={noteValue}
+                                  disabled={frozen}
+                                  onChange={(e) => {
+                                    // Typing again means the confirmation no longer describes what is on screen.
+                                    unmarkSaved(itemKey);
+                                    const value = e.target.value;
+                                    setDrafts((prev) => ({ ...prev, [itemKey]: value }));
                                   }}
-                                >
-                                  Reject
-                                </Button>
+                                  className="max-w-96 text-xs"
+                                />
                                 <Button
+                                  data-testid="spec-save"
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => setRejecting(null)}
+                                  disabled={frozen}
+                                  onClick={() =>
+                                    void saveNote(record, sourceVariable, noteValue)
+                                  }
                                 >
-                                  Cancel
+                                  {/* It only ever saved the note; on a rejected row, where nothing else is editable, say so. */}
+                                  {rejected ? "Save note" : "Save"}
                                 </Button>
+                                {!rejected && !approved && (
+                                  <Button
+                                    data-testid="spec-approve"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={frozen}
+                                    onClick={() => {
+                                      // Folded by the approval itself, so drop any hand fold that would hold it open.
+                                      setFolded((prev) => {
+                                        const next = { ...prev };
+                                        delete next[itemKey];
+                                        return next;
+                                      });
+                                      void saveSpec(record, sourceVariable, { approved: true });
+                                    }}
+                                  >
+                                    <Check aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+                                    Approve
+                                  </Button>
+                                )}
+                                {rejected ? (
+                                  <Button
+                                    data-testid="spec-unreject"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={frozen}
+                                    onClick={() => void saveSpec(record, sourceVariable, { rejected: false })}
+                                  >
+                                    Un-reject
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    data-testid="spec-reject"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={frozen}
+                                    onClick={() => setRejecting(itemKey)}
+                                  >
+                                    Reject
+                                  </Button>
+                                )}
+                                {/* Review round 2: take a ROGUE variable out of this concept. Free, nothing re-runs, and
+                                    Undo is right there on the removed line — so no confirmation step. Last in the
+                                    strip, so on a narrow pane it is the one that wraps. */}
+                                <Button
+                                  data-testid="spec-remove"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={frozen || !removable}
+                                  title={
+                                    removable
+                                      ? "Take this variable out of this concept: it leaves the transform specs and every export. You can undo it until you continue."
+                                      : "A concept keeps at least one variable — reject this recode instead to leave it out of the notebook."
+                                  }
+                                  onClick={() => void removeMember(record, sourceVariable)}
+                                >
+                                  Remove from this concept
+                                </Button>
+                                {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
+                                    failed write rolls back and toasts instead, so this never claims a miss. */}
+                                {savedKeys[itemKey] && (
+                                  <span
+                                    data-testid="spec-saved"
+                                    role="status"
+                                    className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
+                                  >
+                                    <Check
+                                      aria-hidden="true"
+                                      className="h-3.5 w-3.5 text-status-ok"
+                                    />
+                                    {specs.local ? "Saved in this browser" : "Saved"}
+                                  </span>
+                                )}
                               </div>
+
+                              {rejecting === itemKey && (
+                                <div
+                                  data-testid="reject-confirm"
+                                  role="alertdialog"
+                                  aria-label="Reject this recode"
+                                  className="flex flex-col gap-2 rounded-inner border border-rule-on-raised px-4 py-3"
+                                >
+                                  <p className="max-w-[68ch] text-xs text-on-raised">
+                                    {REJECT_CONFIRMATION}
+                                  </p>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      data-testid="reject-accept"
+                                      size="sm"
+                                      onClick={() => {
+                                        void saveSpec(record, sourceVariable, { rejected: true });
+                                        setRejecting(null);
+                                      }}
+                                    >
+                                      Reject
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setRejecting(null)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
