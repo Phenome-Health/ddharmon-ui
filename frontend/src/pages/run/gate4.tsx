@@ -160,28 +160,8 @@ export default function Gate4Page() {
       resumed={isParkedAt(jobState, "gate4")}
     >
       <div className="flex flex-col gap-6">
-        {/* Surface 1 — notebook language, + the lifted reproducibility disclosure. */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3" data-testid="notebook-language">
-            <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">Notebook language</span>
-            <div className="inline-flex rounded-inner border border-rule-on-field p-0.5">
-              {(["py", "r"] as const).map((l) => (
-                <button
-                  key={l}
-                  type="button"
-                  data-testid={`notebook-lang-${l}`}
-                  data-active={String(lang === l)}
-                  onClick={() => setLang(l)}
-                  className={cn(
-                    "rounded-inner px-3 py-1 text-sm font-semibold",
-                    lang === l ? "bg-surface-raised text-on-raised shadow-card" : "text-on-field-muted",
-                  )}
-                >
-                  {l === "py" ? "Python" : "R"}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Surface 1 — the lifted reproducibility disclosure. (The notebook language moved onto the notebook's tile.) */}
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <ReproducibilityInfo coreVersion={coreVersion} />
         </div>
 
@@ -210,6 +190,8 @@ export default function Gate4Page() {
         {/* Surface 2 — what ships: the real artifacts, then the honest gaps. */}
         <section className="flex flex-col gap-3" data-testid="export-set">
           <h2 className="text-sm font-semibold text-on-field">What leaves the tool</h2>
+          {/* Two to a row (review round 3: "so much whitespace, i think we can half the width and have 2 columns"). */}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {artifacts.map((a) => (
             <ArtifactTile
               key={a.id}
@@ -225,6 +207,34 @@ export default function Gate4Page() {
                 a.id === "notebook"
                   ? "The notebook runs where your data already lives. Your data never enters ddharmon."
                   : undefined
+              }
+              beside={
+                a.id === "notebook" ? (
+                  // Beside the filename it changes, so the effect of the toggle is right next to it.
+                  <div
+                    role="group"
+                    aria-label="Notebook language"
+                    data-testid="notebook-language"
+                    className="inline-flex rounded-inner border border-rule-on-raised p-0.5"
+                  >
+                    {(["py", "r"] as const).map((l) => (
+                      <button
+                        key={l}
+                        type="button"
+                        data-testid={`notebook-lang-${l}`}
+                        data-active={String(lang === l)}
+                        aria-pressed={lang === l}
+                        onClick={() => setLang(l)}
+                        className={cn(
+                          "rounded-inner px-2.5 py-0.5 text-xs font-semibold",
+                          lang === l ? "bg-surface-inset-strong text-on-raised" : "text-on-raised-muted hover:text-on-raised",
+                        )}
+                      >
+                        {l === "py" ? "Python" : "R"}
+                      </button>
+                    ))}
+                  </div>
+                ) : undefined
               }
             >
               {a.id === "eitl_tsv" && (
@@ -249,6 +259,7 @@ export default function Gate4Page() {
               {g.body}
             </NotAvailable>
           ))}
+          </div>
         </section>
 
         {/* The two stated limitations — notes, not hidden (UI-SPEC §0.2 "Explicitly OUT"). */}

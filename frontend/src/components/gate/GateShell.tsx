@@ -310,7 +310,25 @@ export function GateShell({
           single call site — the same rule and the same reason as the stop control above. */}
       <RunProgress job={job} />
 
-      <HowToPanel gate={gate} lead={subhead} />
+      <HowToPanel
+        gate={gate}
+        lead={subhead}
+        note={
+          // SAID ONCE (review round 3, Bhargav: "Remove the box from each concept; say it once in the Gate 2 and Gate 3
+          // 'How to use this screen' panels"). It used to be a tile on every concept's detail pane. Still stated,
+          // because a run with no concept-match flags must not read as one whose every match was checked.
+          job && (gate === "gate2" || gate === "gate3") && !(config?.conceptGate ?? config?.concept_gate) ? (
+            <p
+              data-testid="how-to-concept-gate"
+              data-claim="not-enabled"
+              className="mt-3 max-w-[80ch] text-xs text-on-field-muted"
+            >
+              This run left the concept-match check off, so no row is flagged for measuring a different concept than its
+              CDE — a missing flag is not a pass. The check is a Setup option: start a new run with it on to get it.
+            </p>
+          ) : undefined
+        }
+      />
 
       {/* The working surface. */}
       <div className={cn("flex flex-col gap-4")}>{children}</div>

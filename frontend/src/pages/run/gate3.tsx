@@ -76,6 +76,7 @@ import {
   withoutRemovedMembers,
 } from "@/lib/member-exclusion";
 import { cn } from "@/lib/utils";
+import { disclosureRow } from "@/components/ui/disclosure";
 import { permissibleValueLabels, sourceValueLabels } from "@/types";
 import type { JobResult, UIRecord, GatePosition } from "@/types";
 
@@ -500,6 +501,7 @@ export default function Gate3Page() {
               key={record.groupId}
               id={record.groupId}
               testid="gate3-concept"
+              query={query}
               label={labelOf(record)}
               marks={
                 matchState === "flagged" && (
@@ -776,6 +778,7 @@ export default function Gate3Page() {
                     ? null
                     : (transform?.coverage ?? null);
                 const unproduced = specUnproduced(transform);
+                const toggleFold = () => setFolded((prev) => ({ ...prev, [itemKey]: !isFolded }));
                 return (
                   <div
                     key={sourceVariable}
@@ -792,16 +795,24 @@ export default function Gate3Page() {
                     data-concept-mismatch={String(
                       matchState === "flagged",
                     )}
+                    // EVERY tile wears the 4px left edge (review round 3: "some of these boxes have shading on the left
+                    // side and others don't, why? i prefer the shading for all"). It used to mark the tiles routed to
+                    // review, in blue — but the blue never rendered (tailwind-merge let the later border colour win), and
+                    // the "routed to review" pill in the header says it anyway.
                     className={cn(
-                      "flex flex-col gap-2 rounded-inner border px-4 py-3",
-                      review
-                        ? "border-l-4 border-l-accent-action border-rule-on-raised"
-                        : "border-rule-on-raised",
+                      "flex flex-col gap-2 rounded-inner border border-l-4 border-rule-on-raised px-4 py-3",
                       // H10: a rejected row is drawn dashed — present, but not part of what is exported.
                       rejected && "border-dashed",
                     )}
                   >
-                    <div className="flex flex-wrap items-center gap-2">
+                    {/* THE WHOLE HEADER FOLDS THE TILE (review round 3: "I want dropdown click area to be as wide as the
+                        element, not just the arrow"), lit on hover like every other fold. The arrow stays the
+                        keyboard's control; it and Undo approval stop their clicks here so one press is one action. */}
+                    <div
+                      data-testid="spec-row-header"
+                      onClick={toggleFold}
+                      className={cn(disclosureRow("raised"), "flex-wrap justify-start")}
+                    >
                       <span className="rounded bg-surface-inset px-1.5 py-0.5 font-mono text-xs text-on-inset-muted">
                         {transform ? transform.kind : state}
                       </span>
@@ -890,7 +901,10 @@ export default function Gate3Page() {
                             <button
                               type="button"
                               data-testid="spec-unapprove"
-                              onClick={() => void saveSpec(record, sourceVariable, { approved: false })}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void saveSpec(record, sourceVariable, { approved: false });
+                              }}
                               className="text-xs font-semibold text-link-on-raised hover:underline"
                             >
                               Undo approval
@@ -905,7 +919,10 @@ export default function Gate3Page() {
                         data-testid="spec-collapse"
                         aria-expanded={!isFolded}
                         aria-label={`${isFolded ? "Expand" : "Collapse"} the recode for ${sourceVariable}`}
-                        onClick={() => setFolded((prev) => ({ ...prev, [itemKey]: !isFolded }))}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFold();
+                        }}
                         className="-mr-1 ml-auto grid h-6 w-6 shrink-0 place-content-center rounded-inner text-on-raised-muted transition-colors hover:bg-surface-inset hover:text-on-raised"
                       >
                         <ChevronDown
@@ -1036,6 +1053,8 @@ export default function Gate3Page() {
                               data-testid="spec-approve"
                               size="sm"
                               variant="outline"
+                              // Review round 3: "Green and red shading on Approve and reject respectively".
+                              className="border-status-ok bg-surface-ok text-on-ok hover:bg-surface-ok hover:brightness-95"
                               disabled={frozen}
                               onClick={() => {
                                 // Folded by the approval itself, so drop any hand fold that would hold it open.
@@ -1065,6 +1084,7 @@ export default function Gate3Page() {
                               data-testid="spec-reject"
                               size="sm"
                               variant="outline"
+                              className="border-rule-danger bg-surface-danger text-on-danger hover:bg-surface-danger hover:brightness-95"
                               disabled={frozen}
                               onClick={() => setRejecting(itemKey)}
                             >
@@ -1208,18 +1228,7 @@ export default function Gate3Page() {
                   />
 
                   {/* Global not-available tiles for the run, shown in-pane so the reviewer sees them per concept. */}
-                  {!conceptGateOn && (
-                    <NotAvailable
-                      slug="concept-gate"
-                      thing="Concept-match check"
-                      claim="not-enabled"
-                    >
-                      A second model pass can check whether an assigned element
-                      measures the same concept, not just the same values. It is
-                      off by default so no run pays for it unless it asks. Start
-                      a new run with it enabled to include the check.
-                    </NotAvailable>
-                  )}
+                  {/* The concept-match check being OFF is said once, in the how-to (GateShell), not on every concept. */}
                   {!specsGenerated && (
                     <NotAvailable
                       slug="specgen"

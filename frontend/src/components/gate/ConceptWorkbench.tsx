@@ -1,4 +1,5 @@
 import { DisclosureChevron, DisclosureLabel } from "@/components/ui/disclosure";
+import { Highlight } from "@/components/ui/highlight";
 import { cn } from "@/lib/utils";
 import { QueueRowFacts } from "@/components/gate/QueueControls";
 
@@ -102,11 +103,14 @@ export function ConceptQueueRow({
   roster,
   count,
   selected,
+  query,
   onSelect,
 }: {
   id: string;
   testid?: string;
   label: string;
+  /** The queue's search, so the row can highlight what it matched in the name (review round 3). */
+  query?: string;
   /** Exceptional badges shown under the name (Gate 3's concept-match flag). */
   marks?: React.ReactNode;
   /** The row's state tag — the verdict, as a `VerdictPill variant="tag"`. */
@@ -124,6 +128,7 @@ export function ConceptQueueRow({
       tabIndex={0}
       data-testid={testid}
       data-concept-id={id}
+      data-search-label={label}
       aria-current={selected}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -147,7 +152,7 @@ export function ConceptQueueRow({
           )}
           title={label}
         >
-          {label}
+          <Highlight text={label} query={query} />
         </div>
         {marks && <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">{marks}</div>}
       </div>

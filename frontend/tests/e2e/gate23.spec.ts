@@ -865,15 +865,15 @@ test.describe("gate2 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate2(page);
-    const tile = page.locator(
-      "[data-testid='not-available'][data-thing='concept-gate']",
-    );
-    await expect(tile).toBeVisible();
+    // Said ONCE, in the how-to (review round 3 — it used to repeat on every concept's detail pane).
+    const note = page.getByTestId("how-to-concept-gate");
+    await expect(note).toBeVisible();
+    await expect(page.locator("[data-testid='not-available'][data-thing='concept-gate']")).toHaveCount(0);
     // It names the option and does NOT read as a permanent product gap — the capability exists.
-    await expect(tile).toContainText("Concept-match check");
+    await expect(note).toContainText("concept-match check");
     // And it is not a control: an enable button here would 409, because no route can add a paid stage to
     // a run that has already been created. See the summary's blocker.
-    await expect(tile.locator("button")).toHaveCount(0);
+    await expect(note.locator("button")).toHaveCount(0);
   });
 });
 
@@ -1020,19 +1020,17 @@ test.describe("gate3 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate3(page);
-    const tile = page.locator(
-      "[data-testid='not-available'][data-thing='concept-gate']",
-    );
-    await expect(tile).toBeVisible();
-    await expect(tile).toHaveAttribute("data-claim", "not-enabled");
-    await expect(tile).toContainText(
-      "Concept-match check — not enabled for this run.",
-    );
+    // Said ONCE, in the how-to (review round 3 — it used to repeat on every concept's detail pane).
+    const note = page.getByTestId("how-to-concept-gate");
+    await expect(note).toBeVisible();
+    await expect(page.locator("[data-testid='not-available'][data-thing='concept-gate']")).toHaveCount(0);
+    await expect(note).toHaveAttribute("data-claim", "not-enabled");
+    await expect(note).toContainText(/left the concept-match check off/i);
     // Never a silent pass, and never a permanent product gap: the capability exists, this run did not buy it.
     await expect(
       page.locator("[data-testid='concept-match-flag']"),
     ).toHaveCount(0);
-    await expect(tile).not.toContainText(/not supported|cannot|never/i);
+    await expect(note).not.toContainText(/not supported|cannot|never/i);
   });
 
   test("@gate3 on an opted-in run a flagged spec shows the flag and routes to review", async ({
@@ -1062,6 +1060,7 @@ test.describe("gate3 screen", () => {
     await expect(
       page.locator("[data-testid='not-available'][data-thing='concept-gate']"),
     ).toHaveCount(0);
+    await expect(page.getByTestId("how-to-concept-gate")).toHaveCount(0);
   });
 
   test("@gate3 a spec edit survives a reload", async ({ page }) => {

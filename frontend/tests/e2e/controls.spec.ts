@@ -632,3 +632,161 @@ test.describe("controls review round 2 (Gate 3 recode tiles)", () => {
     expect(Math.abs(heading.x - b.x - (label.x - p.x)), "the heading's inset differs from the panels'").toBeLessThanOrEqual(1);
   });
 });
+
+test.describe("controls review round 3", () => {
+  test("@controls the Continue bar keeps a band of ground around it mid-page, like the pinned rail", async ({ page }) => {
+    // Bhargav: "i dont like how this box overlaps onto the main panels when i'm mid page. it should keep its separation
+    // like the gate rail up top".
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, `/run/${FINISHED}/gate3`);
+    const main = page.locator("main");
+    await main.evaluate((el) => el.scrollTo(0, Math.max(0, (el.scrollHeight - el.clientHeight) / 2)));
+    await page.waitForTimeout(300);
+    const band = await page.getByTestId("commit-bar").evaluate((bar) => {
+      const r = bar.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const above = document.elementFromPoint(x, r.top - 6);
+      const scroller = bar.closest("main")!.getBoundingClientRect();
+      return {
+        aboveIsBand: !!above?.closest("[data-testid='commit-bar-pin']"),
+        below: Math.round(scroller.bottom - r.bottom),
+      };
+    });
+    expect(band.aboveIsBand, "content shows right above the bar").toBe(true);
+    expect(band.below, "the bar touches the bottom of the screen").toBeGreaterThanOrEqual(10);
+  });
+
+  // Gate 1 on the PAUSED demo: the finished demo's static fixture has no groups at Gate 1.
+  for (const [gate, row, run] of [
+    ["gate1", "ledger-row", PAUSED],
+    ["gate2", "gate2-concept", FINISHED],
+    ["gate3", "gate3-concept", FINISHED],
+  ] as const) {
+    test(`@controls ${gate}: a search highlights what it matched in the queue's names`, async ({ page }) => {
+      // Bhargav: "when i search something here, i want the matched text to be highlighted like gmail does".
+      await open(page, `/run/${run}/${gate}`);
+      const rows = page.locator(`[data-testid='${row}']`);
+      await expect(rows.first()).toBeVisible();
+      const name = ((await rows.first().getAttribute("data-search-label")) ?? "").trim();
+      const word = name.split(/\s+/).find((w) => w.length >= 5) ?? name;
+      // A word's first letters: Gate 1 matches the starts of words, Gates 2-3 anywhere — a prefix serves both.
+      const term = word.slice(0, 4);
+      await page.getByTestId("term-search").fill(term.toUpperCase());
+      const hits = page.locator(`[data-testid='${row}'] mark[data-search-hit]`);
+      await expect(hits.first()).toBeVisible();
+      for (const t of await hits.allTextContents()) expect(t.toLowerCase()).toBe(term.toLowerCase());
+      await page.getByTestId("term-search").fill("");
+      await expect(page.locator(`[data-testid='${row}'] mark[data-search-hit]`)).toHaveCount(0);
+    });
+  }
+
+  async function openTile(page: Page): Promise<Locator> {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, `/run/${FINISHED}/gate3`);
+    const tile = page
+      .locator("[data-testid='gate3-detail'] [data-testid='spec-row'][data-approved='false'][data-rejected='false']")
+      .first();
+    await expect(tile.locator("[data-testid='spec-body']")).toBeVisible();
+    return tile;
+  }
+  /** A computed colour as [r, g, b], whatever syntax the browser reports it in (rgb(), color(srgb …), oklch …). */
+  const rgbOf = (l: Locator) =>
+    l.evaluate((el) => {
+      const ctx = document.createElement("canvas").getContext("2d")!;
+      ctx.fillStyle = getComputedStyle(el).backgroundColor;
+      ctx.fillRect(0, 0, 1, 1);
+      return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    });
+
+  test("@controls Approve is shaded green and Reject red", async ({ page }) => {
+    const tile = await openTile(page);
+    const [ar, ag, ab] = await rgbOf(tile.locator("[data-testid='spec-approve']"));
+    expect(ag, "Approve is not green").toBeGreaterThan(ar);
+    expect(ag, "Approve is not green").toBeGreaterThan(ab);
+    const [rr, rg, rb] = await rgbOf(tile.locator("[data-testid='spec-reject']"));
+    expect(rr, "Reject is not red").toBeGreaterThan(rg);
+    expect(rr, "Reject is not red").toBeGreaterThan(rb);
+  });
+
+  test("@controls the whole header row of a recode tile folds it, not just the arrow", async ({ page }) => {
+    // Bhargav: "similar to source variables or how to use this screen, I want dropdown click area to be as wide as the
+    // element, not just the arrow".
+    const tile = await openTile(page);
+    const fold = tile.locator("[data-testid='spec-collapse']");
+    const header = tile.locator("[data-testid='spec-row-header']");
+    await expect(fold).toHaveAttribute("aria-expanded", "true");
+    await header.click({ position: { x: 8, y: 8 } });
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+    await header.click({ position: { x: 8, y: 8 } });
+    await expect(fold).toHaveAttribute("aria-expanded", "true");
+    // The arrow still works on its own — one click, one fold (not two that cancel out).
+    await fold.click();
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("@controls every recode tile wears the left shading, not only the ones routed to review", async ({ page }) => {
+    // Bhargav: "some of these boxes have shading on the left side and others don't, why? i prefer the shading for all".
+    await open(page, `/run/${FINISHED}/gate3`);
+    const concepts = page.locator("[data-testid='gate3-concept']");
+    const tiles = page.locator("[data-testid='gate3-detail'] [data-testid='spec-row']");
+    let seen = { review: 0, plain: 0 };
+    for (let i = 0; i < Math.min(await concepts.count(), 10); i++) {
+      await concepts.nth(i).click();
+      for (const t of await tiles.all()) {
+        expect(await t.evaluate((el) => getComputedStyle(el).borderLeftWidth)).toBe("4px");
+        (await t.getAttribute("data-review")) === "true" ? (seen.review += 1) : (seen.plain += 1);
+      }
+    }
+    expect(seen.plain, "no tile outside review was checked").toBeGreaterThan(0);
+  });
+
+  test("@controls Gate 4: the notebook language toggle sits in the notebook's own tile", async ({ page }) => {
+    // Bhargav: "move this toggle into/near the notebook export cell".
+    await open(page, `/run/${FINISHED}/gate4`);
+    const tile = page.locator("[data-testid='artifact-tile'][data-thing='notebook']");
+    await expect(page.getByTestId("notebook-language")).toHaveCount(1);
+    await expect(tile.getByTestId("notebook-language")).toBeVisible();
+    await tile.getByTestId("notebook-lang-r").click();
+    await expect(tile.getByTestId("artifact-filename")).toContainText(".r.ipynb");
+  });
+
+  test("@controls Gate 4: the export tiles sit two to a row", async ({ page }) => {
+    // Bhargav: "so much whitespace, i think we can half the width and have 2 columns".
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, `/run/${FINISHED}/gate4`);
+    const set = (await page.getByTestId("export-set").boundingBox())!;
+    const tiles = page.locator("[data-testid='export-set'] [data-testid='artifact-tile']");
+    const [a, b] = [(await tiles.nth(0).boundingBox())!, (await tiles.nth(1).boundingBox())!];
+    expect(Math.abs(a.y - b.y), "the first two tiles are not side by side").toBeLessThanOrEqual(2);
+    expect(a.width, "a tile still spans the full width").toBeLessThan(set.width * 0.6);
+  });
+});
+
+test.describe("controls repeated copy (review round 3)", () => {
+  for (const gate of ["gate2", "gate3"] as const) {
+    test(`@controls ${gate}: the concept-match check being off is said once, in the how-to — not on every concept`, async ({
+      page,
+    }) => {
+      // Bhargav: "Remove the box from each concept; say it once in the Gate 2 and Gate 3 'How to use this screen'
+      // panels. this falls under examples of repetitive text".
+      await open(page, `/run/${FINISHED}/${gate}`);
+      const concepts = page.locator(`[data-testid='${gate}-concept']`);
+      for (let i = 0; i < 2; i++) {
+        await concepts.nth(i).click();
+        await expect(page.locator("[data-testid='not-available'][data-thing='concept-gate']")).toHaveCount(0);
+      }
+      const note = page.getByTestId("how-to").getByTestId("how-to-concept-gate");
+      await expect(note).toHaveCount(1);
+      await expect(note).toBeVisible();
+    });
+  }
+
+  test("@controls a run that bought the concept-match check says nothing about it in the how-to", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      run.config = { ...(run.config as object), conceptGate: true };
+    });
+    await open(page, `/run/${FINISHED}/gate2`);
+    await expect(page.getByTestId("how-to")).toBeVisible();
+    await expect(page.getByTestId("how-to-concept-gate")).toHaveCount(0);
+  });
+});

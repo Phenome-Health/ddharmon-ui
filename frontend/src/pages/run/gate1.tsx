@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DisclosureChevron, DisclosureLabel } from "@/components/ui/disclosure";
+import { Highlight } from "@/components/ui/highlight";
 import {
   Collapsible,
   CollapsibleContent,
@@ -1770,11 +1771,14 @@ function QueueRow({
   readOnly,
   renamedTo,
   reviewer = false,
+  query,
   onSelect,
   onScopeChange,
   onDropMember,
 }: {
   group: ConceptGroup;
+  /** The queue's search, so the row can highlight what it matched in the name (review round 3). */
+  query?: string;
   /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
    *  as a tag and the reason this row is pinned to the top of the queue. */
   scoreTag?: string[];
@@ -1806,6 +1810,7 @@ function QueueRow({
       data-testid="ledger-row"
       data-group-id={group.groupId}
       data-row-id={group.groupId}
+      data-search-label={label.text}
       data-reviewer={reviewer ? "true" : undefined}
       data-spine={
         isFlagged(group) ? "unresolved" : changed ? "changed" : "none"
@@ -1908,7 +1913,9 @@ function QueueRow({
           )}
           title={label.text}
         >
-          <span data-label-source={label.source}>{label.text}</span>
+          <span data-label-source={label.source}>
+            <Highlight text={label.text} query={query} mode="word-prefix" />
+          </span>
           {label.source === "reviewer" && <RenamedMark />}
           {label.source === "judge" && <BorrowedMark />}
           {changed && !reviewer && (
@@ -3565,6 +3572,7 @@ export default function Gate1Page() {
               {reviewerRows.map((g) => (
                 <QueueRow
                   key={g.groupId}
+                  query={query}
                   group={g}
                   reviewer
                   scoreTag={scoreTagByGroup.get(g.groupId)}
@@ -3641,6 +3649,7 @@ export default function Gate1Page() {
                 visible.map((g) => (
                   <QueueRow
                     key={g.groupId}
+                    query={query}
                     group={g}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
                     scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}

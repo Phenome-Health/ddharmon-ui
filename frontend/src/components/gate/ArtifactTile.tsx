@@ -30,6 +30,11 @@ export interface ArtifactTileProps {
   children?: React.ReactNode;
   /** A standing assurance for this artifact (the notebook tile's data-never-enters line, §8.6). */
   assurance?: React.ReactNode;
+  /**
+   * A control that changes the filename, set on the filename's line — the notebook's language toggle (review round 3:
+   * "move this toggle into/near the notebook export cell"). Shown whenever the artifact is ready, selected or not.
+   */
+  beside?: React.ReactNode;
   className?: string;
 }
 
@@ -44,6 +49,7 @@ export function ArtifactTile({
   onPreview,
   children,
   assurance,
+  beside,
   className,
 }: ArtifactTileProps) {
   const ready = state === "ready";
@@ -86,9 +92,12 @@ export function ArtifactTile({
           </div>
           <p className="max-w-[68ch] text-xs text-on-raised-muted">{description}</p>
           {ready && (
-            <p data-testid="artifact-filename" className="font-mono text-xs text-on-raised-faint">
-              {filename}
-            </p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <p data-testid="artifact-filename" className="font-mono text-xs text-on-raised-faint">
+                {filename}
+              </p>
+              {beside}
+            </div>
           )}
           {state === "generating" && (
             <p data-testid="artifact-generating" className="text-xs text-on-raised-muted">

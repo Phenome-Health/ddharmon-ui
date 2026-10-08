@@ -104,7 +104,21 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
  * screen's one statement of what it is for and what to do; folding it away by default hid exactly the text a
  * first-time reviewer needs. It can still be folded for the visit.
  */
-export function HowToPanel({ gate, lead, className }: { gate: GatePosition; lead?: string; className?: string }) {
+export function HowToPanel({
+  gate,
+  lead,
+  note,
+  className,
+}: {
+  gate: GatePosition;
+  lead?: string;
+  /**
+   * A fact about THIS run that holds for every row on the screen, said once under the steps rather than on every
+   * row's detail pane (review round 3) — e.g. that the run left the concept-match check off.
+   */
+  note?: React.ReactNode;
+  className?: string;
+}) {
   const [open, setOpen] = useState(true);
   const steps = HOW_TO[gate];
   return (
@@ -139,6 +153,7 @@ export function HowToPanel({ gate, lead, className }: { gate: GatePosition; lead
             </li>
           ))}
         </ol>
+        {note}
       </CollapsibleContent>
     </Collapsible>
   );

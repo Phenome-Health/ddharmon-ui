@@ -483,6 +483,9 @@
   --surface-warn:          var(--brand-amber-pale);
   --on-warn:               var(--status-warn);
   --rule-warn:             var(--brand-amber-mid);
+  /* A search hit in a list (review round 3: "highlighted like gmail does"). The mid amber, not the pale one: the pale
+     amber vanished on the selected row's info tint. Text keeps its own colour over it. */
+  --surface-highlight:     var(--brand-amber-mid);
 
   --status-danger:         var(--brand-crimson-ink);
   --surface-danger:        color-mix(in srgb, var(--brand-crimson) 6%, var(--surface-raised));
@@ -651,6 +654,7 @@
   --color-rule-ok: var(--rule-ok);
   --color-status-warn: var(--status-warn);
   --color-surface-warn: var(--surface-warn);
+  --color-surface-highlight: var(--surface-highlight);
   --color-on-warn: var(--on-warn);
   --color-rule-warn: var(--rule-warn);
   --color-status-danger: var(--status-danger);
