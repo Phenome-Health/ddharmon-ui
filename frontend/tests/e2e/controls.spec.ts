@@ -790,3 +790,103 @@ test.describe("controls repeated copy (review round 3)", () => {
     await expect(page.getByTestId("how-to-concept-gate")).toHaveCount(0);
   });
 });
+
+test.describe("controls review round 4", () => {
+  /** The first word (≥5 letters) of `text`, cut to its first four — a prefix both search rules find. */
+  const termFrom = (text: string) => ((text.split(/[^A-Za-z]+/).find((w) => w.length >= 5) ?? text).slice(0, 4));
+
+  for (const [gate, run] of [
+    ["gate2", FINISHED],
+    ["gate3", FINISHED],
+    ["gate1", PAUSED],
+  ] as const) {
+    test(`@controls ${gate}: a search also highlights its matches in the open concept's title`, async ({ page }) => {
+      // Bhargav: "search highlighting should also extend here: if I search 'physical' then the match in the group name
+      // should show highlighted".
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await open(page, `/run/${run}/${gate}`);
+      const title = page.locator(`[data-testid='${gate}-detail'] [data-testid='concept-title']`);
+      await expect(title).toBeVisible();
+      const term = termFrom((await title.textContent()) ?? "");
+      await page.getByTestId("term-search").fill(term);
+      await expect(title.locator("mark[data-search-hit]").first()).toBeVisible();
+      for (const t of await title.locator("mark[data-search-hit]").allTextContents()) expect(t.toLowerCase()).toBe(term.toLowerCase());
+    });
+  }
+
+  test("@controls gate1: a search highlights its matches in the variables table too, not only the names", async ({ page }) => {
+    // Bhargav: "search highlighting should extend to any field thats being used for retrieval".
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, `/run/${PAUSED}/gate1`);
+    const detail = page.getByTestId("gate1-detail");
+    const firstName = detail.locator("[data-testid='source-rows'] tbody tr td span.font-mono").first();
+    await expect(firstName).toBeVisible();
+    const term = termFrom((await firstName.textContent()) ?? "");
+    await page.getByTestId("term-search").fill(term);
+    await expect(detail.locator("[data-testid='source-rows'] mark[data-search-hit]").first()).toBeVisible();
+  });
+
+  test("@controls the queue stays pinned under the rail while the detail scrolls", async ({ page }) => {
+    // Bhargav: "during scroll, sidebar should remained pinned but right side panel can move".
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, `/run/${FINISHED}/gate3`);
+    const main = page.locator("main");
+    await main.evaluate((el) => el.scrollTo(0, 900));
+    await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBeGreaterThan(400);
+    await page.waitForTimeout(400); // the rail's fold
+    const pin = (await page.getByTestId("gate-rail-pin").boundingBox())!;
+    const queue = (await page.getByTestId("gate3-queue").boundingBox())!;
+    const search = (await page.getByTestId("term-search").boundingBox())!;
+    const bar = (await page.getByTestId("commit-bar-pin").boundingBox())!;
+    expect(queue.y, "the queue slid under the rail").toBeGreaterThanOrEqual(pin.y + pin.height - 1);
+    expect(queue.y, "the queue is not pinned near the top").toBeLessThan(pin.y + pin.height + 24);
+    expect(search.y, "the search box is hidden").toBeGreaterThanOrEqual(pin.y + pin.height);
+    expect(queue.y + queue.height, "the queue runs under the Continue bar").toBeLessThanOrEqual(bar.y + 1);
+  });
+
+  async function rejectFirstTile(page: Page): Promise<Locator> {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, `/run/${FINISHED}/gate3`);
+    // A tile with a summary line: a failed recode has none, and the test reads it. Walk the queue to one.
+    const withSummary = page.locator(
+      "[data-testid='gate3-detail'] [data-testid='spec-row'][data-rejected='false']:has([data-testid='spec-row-summary'])",
+    );
+    const concepts = page.locator("[data-testid='gate3-concept']");
+    for (let i = 0; i < 12 && (await withSummary.count()) === 0; i++) await concepts.nth(i).click();
+    const source = await withSummary.first().getAttribute("data-source");
+    const tile = page.locator(`[data-testid='gate3-detail'] [data-testid='spec-row'][data-source='${source}']`);
+    await tile.locator("[data-testid='spec-reject']").click();
+    await page.getByTestId("reject-accept").click();
+    await expect(tile).toHaveAttribute("data-rejected", "true");
+    return tile;
+  }
+  const rgbOf = (l: Locator, prop: "backgroundColor" | "borderTopColor" | "color") =>
+    l.evaluate((el, p) => {
+      const ctx = document.createElement("canvas").getContext("2d")!;
+      ctx.fillStyle = getComputedStyle(el)[p];
+      ctx.fillRect(0, 0, 1, 1);
+      return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    }, prop);
+
+  test("@controls the 'rejected' tag wears Reject's red", async ({ page }) => {
+    // Bhargav: "should match the red color of the reject option".
+    const tile = await rejectFirstTile(page);
+    const tag = tile.locator("[data-testid='spec-edited-badge']");
+    await expect(tag).toHaveText("rejected");
+    const [r, g, b] = await rgbOf(tag, "backgroundColor");
+    expect(r, "the tag is not red").toBeGreaterThan(g);
+    expect(r, "the tag is not red").toBeGreaterThan(b);
+  });
+
+  test("@controls a rejected tile says so once: the tag — no dashed border, no 'rejected' in the summary", async ({ page }) => {
+    // Bhargav: "when I reject, the cell gets both the reject tag and the dashed line left edge. this is redundant
+    // messaging ... the reject tag is enough. keep left side shadow solid".
+    const tile = await rejectFirstTile(page);
+    const border = await tile.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { top: cs.borderTopStyle, left: cs.borderLeftStyle, leftW: cs.borderLeftWidth };
+    });
+    expect(border).toEqual({ top: "solid", left: "solid", leftW: "4px" });
+    await expect(tile.locator("[data-testid='spec-row-summary']")).toHaveText("not exported");
+  });
+});

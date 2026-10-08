@@ -2060,8 +2060,8 @@ function ReviewerGroupDetail({
                 className="min-w-[18rem] rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-xl font-semibold text-on-raised"
               />
             ) : (
-              <h2 className="text-xl font-semibold leading-tight text-on-raised" title={group.concept}>
-                {group.concept}
+              <h2 data-testid="concept-title" className="text-xl font-semibold leading-tight text-on-raised" title={group.concept}>
+                <Highlight text={group.concept} />
               </h2>
             )}
             {!editing && <NewGroupMark />}
@@ -2232,10 +2232,11 @@ function GroupDetail({
               />
             ) : (
               <h2
+                data-testid="concept-title"
                 className="text-xl font-semibold leading-tight text-on-raised"
                 title={label.text}
               >
-                {label.text}
+                <Highlight text={label.text} />
               </h2>
             )}
             {label.source === "reviewer" && !editing && <RenamedMark />}
@@ -2316,7 +2317,8 @@ function GroupDetail({
             </p>
           )}
           <p className="max-w-[90ch] px-4 py-3 text-sm leading-relaxed text-on-raised-muted">
-            {group.idealCde}
+            {/* Searched (searchableText), so a match here is highlighted too (review round 4). */}
+            <Highlight text={group.idealCde} />
           </p>
         </details>
       )}
@@ -3452,6 +3454,7 @@ export default function Gate1Page() {
         <ConceptWorkbench
           gate="gate1"
           testid="ledger"
+          search={{ query, mode: "word-prefix" }}
           detailRef={detailPaneRef}
           toolbar={
             <section

@@ -423,6 +423,7 @@ export default function Gate3Page() {
     >
       <ConceptWorkbench
         gate="gate3"
+        search={{ query, mode: "substring" }}
         toolbar={
           <>
             <QueueSearch
@@ -799,11 +800,9 @@ export default function Gate3Page() {
                     // side and others don't, why? i prefer the shading for all"). It used to mark the tiles routed to
                     // review, in blue — but the blue never rendered (tailwind-merge let the later border colour win), and
                     // the "routed to review" pill in the header says it anyway.
-                    className={cn(
-                      "flex flex-col gap-2 rounded-inner border border-l-4 border-rule-on-raised px-4 py-3",
-                      // H10: a rejected row is drawn dashed — present, but not part of what is exported.
-                      rejected && "border-dashed",
-                    )}
+                    // ONE SIGNAL FOR REJECTED (review round 4: "the reject tag is enough"): the border no longer turns
+                    // dashed, and the summary no longer repeats the word — the red "rejected" tag says it once.
+                    className="flex flex-col gap-2 rounded-inner border border-l-4 border-rule-on-raised px-4 py-3"
                   >
                     {/* THE WHOLE HEADER FOLDS THE TILE (review round 3: "I want dropdown click area to be as wide as the
                         element, not just the arrow"), lit on hover like every other fold. The arrow stays the
@@ -830,7 +829,7 @@ export default function Gate3Page() {
                             )}
                           >
                             {/* A rejected recode is not exported, so its header never describes what it would map. */}
-                            {rejected ? "not exported — rejected" : headline}
+                            {rejected ? "not exported" : headline}
                           </span>
                         </>
                       )}
@@ -880,8 +879,9 @@ export default function Gate3Page() {
                           data-testid="spec-edited-badge"
                           className={cn(
                             "rounded-pill border px-2 py-0.5 text-xs",
+                            // Rejected wears the Reject button's red (review round 4).
                             decision?.rejected
-                              ? "border-status-warn text-on-warn"
+                              ? "border-rule-danger bg-surface-danger text-on-danger"
                               : "border-rule-on-raised text-on-raised-muted",
                           )}
                         >
@@ -1107,22 +1107,23 @@ export default function Gate3Page() {
                           >
                             Remove from this concept
                           </Button>
+                          {/* After the decisions, not inside the note's group, where it squeezed the note field. */}
+                          {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
+                              failed write rolls back and toasts instead, so this never claims a miss. */}
+                          {savedKeys[itemKey] && (
+                            <span
+                              data-testid="spec-saved"
+                              role="status"
+                              className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
+                            >
+                              <Check
+                                aria-hidden="true"
+                                className="h-3.5 w-3.5 text-status-ok"
+                              />
+                              {specs.local ? "Saved in this browser" : "Saved"}
+                            </span>
+                          )}
                           <div className="ml-auto flex min-w-64 flex-1 items-center justify-end gap-2">
-                            {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
-                                failed write rolls back and toasts instead, so this never claims a miss. */}
-                            {savedKeys[itemKey] && (
-                              <span
-                                data-testid="spec-saved"
-                                role="status"
-                                className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
-                              >
-                                <Check
-                                  aria-hidden="true"
-                                  className="h-3.5 w-3.5 text-status-ok"
-                                />
-                                {specs.local ? "Saved in this browser" : "Saved"}
-                              </span>
-                            )}
                             <Input
                               data-testid="spec-note-input"
                               aria-label={`Note on the recode for ${sourceVariable}`}

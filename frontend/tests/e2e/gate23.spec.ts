@@ -1533,13 +1533,14 @@ test.describe("gate3 spec edits merge", () => {
     await row.locator("[data-testid='reject-accept']").click();
 
     await expect(row).toHaveAttribute("data-rejected", "true");
-    await expect(row).toHaveCSS("border-top-style", "dashed");
+    // Review round 4: no dashed border — the red "rejected" tag is the one signal ("the reject tag is enough").
+    await expect(row).toHaveCSS("border-top-style", "solid");
     await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(0);
     await expect(row.locator("[data-testid='spec-rejected-note']")).toContainText(
       /left out of the notebook and the mapping table/i,
     );
     await expect(row.locator("[data-testid='spec-rejected-note']")).toContainText(/Un-reject/);
-    await expect(summary).toHaveText("not exported — rejected");
+    await expect(summary).toHaveText("not exported");
     await expect(row.locator("[data-testid='spec-row-coverage']")).toHaveCount(0);
     await expect(row.locator("[data-testid='spec-note-input']")).toHaveAttribute(
       "placeholder",

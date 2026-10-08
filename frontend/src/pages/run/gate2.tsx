@@ -401,6 +401,7 @@ export default function Gate2Page() {
     <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
       <ConceptWorkbench
         gate="gate2"
+        search={{ query, mode: "substring" }}
         toolbar={
           <>
             <QueueSearch

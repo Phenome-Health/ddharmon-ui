@@ -166,6 +166,14 @@ function useRailCollapsed(marker: RefObject<HTMLElement | null>): boolean {
   return collapsed;
 }
 
+/**
+ * THE FOLDED RAIL PIN'S HEIGHT, for whatever pins beneath it — the gates' queue sidebar (review round 4). 68px = the
+ * pin's two 12px bands + the compact rail box (6px padding, a 32px row, 6px). A CONSTANT, not a measured height:
+ * anything pinned is pinned only once the screen has scrolled, and by then the rail has folded — while a live value
+ * would slide the queue 52px as the rail folds, under a drag in flight. `gates.spec` asserts the folded pin is this tall.
+ */
+export const RAIL_PIN_FOLDED_PX = 68;
+
 export function GateShell({
   gate,
   title,

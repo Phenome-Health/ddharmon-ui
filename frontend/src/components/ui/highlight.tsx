@@ -1,4 +1,27 @@
+import { createContext, useContext } from "react";
+
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+type HighlightMode = "substring" | "word-prefix";
+
+/**
+ * The gate's live search, for every `Highlight` under it that is not given a query of its own — the queue rows AND
+ * the open concept's detail (review round 4: "search highlighting should extend to any field thats being used for
+ * retrieval"), the way Gmail marks the terms in the open message as well as in the list. `ConceptWorkbench` provides it.
+ */
+const SearchHighlight = createContext<{ query?: string; mode: HighlightMode }>({ mode: "substring" });
+
+export function SearchHighlightProvider({
+  query,
+  mode,
+  children,
+}: {
+  query?: string;
+  mode: HighlightMode;
+  children: React.ReactNode;
+}) {
+  return <SearchHighlight.Provider value={{ query, mode }}>{children}</SearchHighlight.Provider>;
+}
 
 /**
  * The queue's search hits (review round 3, Bhargav: "when i search something here, i want the matched text to be
@@ -12,13 +35,16 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function Highlight({
   text,
   query,
-  mode = "substring",
+  mode,
 }: {
   text: string;
+  /** Omit both to follow the surrounding `SearchHighlightProvider`. */
   query?: string;
-  mode?: "substring" | "word-prefix";
+  mode?: HighlightMode;
 }) {
-  const q = query?.trim();
+  const ctx = useContext(SearchHighlight);
+  const q = (query ?? ctx.query)?.trim();
+  mode = mode ?? ctx.mode;
   if (!q) return <>{text}</>;
   let pattern: RegExp;
   if (mode === "word-prefix") {

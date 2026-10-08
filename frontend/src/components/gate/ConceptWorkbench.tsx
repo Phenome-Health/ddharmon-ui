@@ -1,5 +1,7 @@
+import { useEffect, useRef, type RefObject } from "react";
 import { DisclosureChevron, DisclosureLabel } from "@/components/ui/disclosure";
-import { Highlight } from "@/components/ui/highlight";
+import { RAIL_PIN_FOLDED_PX } from "@/components/gate/GateShell";
+import { Highlight, SearchHighlightProvider } from "@/components/ui/highlight";
 import { cn } from "@/lib/utils";
 import { QueueRowFacts } from "@/components/gate/QueueControls";
 
@@ -18,6 +20,47 @@ import { QueueRowFacts } from "@/components/gate/QueueControls";
  * `footer`. `gate` prefixes the testids (`gate2-queue`, `gate2-rows`, `gate2-detail`) so each screen's e2e
  * can target its own frame.
  */
+/**
+ * WHERE THE QUEUE PINS, AND HOW TALL IT IS (review round 4: "during scroll, sidebar should remain pinned but right side
+ * panel can move"). It used to pin at `top-4` — under the `z-30` rail, which hid its search box — and to be
+ * `100vh - 7rem` tall whatever sat below it, so at the end of the page the grid's end pushed it up under the rail.
+ *
+ * Now: top = the folded rail pin (a constant — see `RAIL_PIN_FOLDED_PX`); height = the scroller's visible height,
+ * less that, less everything the page puts BELOW the grid (the Continue bar's pin, the gap, the page's padding). So
+ * the queue fits between the rail and the bar at every scroll position, the end of the page included. Set inline at
+ * the `lg` breakpoint, where the queue is sticky; re-measured when a size changes, never on scroll.
+ */
+function usePinnedQueue(grid: RefObject<HTMLElement | null>, queue: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const g = grid.current;
+    const q = queue.current;
+    const scroller = g?.closest("main");
+    if (!g || !q || !scroller) return;
+    const wide = window.matchMedia("(min-width: 64rem)");
+    const measure = () => {
+      if (!wide.matches) {
+        q.style.top = "";
+        q.style.maxHeight = "";
+        return;
+      }
+      const gridBottom = g.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      const below = Math.max(0, scroller.scrollHeight - gridBottom);
+      q.style.top = `${RAIL_PIN_FOLDED_PX}px`;
+      q.style.maxHeight = `${Math.max(240, scroller.clientHeight - RAIL_PIN_FOLDED_PX - below)}px`;
+    };
+    measure();
+    const resize = new ResizeObserver(measure);
+    resize.observe(scroller);
+    resize.observe(g);
+    if (g.parentElement) resize.observe(g.parentElement);
+    wide.addEventListener("change", measure);
+    return () => {
+      resize.disconnect();
+      wide.removeEventListener("change", measure);
+    };
+  }, [grid, queue]);
+}
+
 export function ConceptWorkbench({
   gate,
   testid,
@@ -30,6 +73,7 @@ export function ConceptWorkbench({
   footer,
   detail,
   detailRef,
+  search,
 }: {
   gate: string;
   /** The grid's testid; defaults to `${gate}-ledger`. Gate 1's predates the frame and stays `ledger`. */
@@ -45,14 +89,23 @@ export function ConceptWorkbench({
   footer?: React.ReactNode;
   detail: React.ReactNode;
   detailRef?: React.Ref<HTMLElement>;
+  /** The queue's live search, so the rows AND the open concept's detail highlight what it matched (rounds 3-4). */
+  search?: { query: string; mode: "substring" | "word-prefix" };
 }) {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const queueRef = useRef<HTMLElement>(null);
+  usePinnedQueue(gridRef, queueRef);
   return (
+    <SearchHighlightProvider query={search?.query} mode={search?.mode ?? "substring"}>
     <div
+      ref={gridRef}
       data-testid={testid ?? `${gate}-ledger`}
       className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(340px,384px)_minmax(0,1fr)] lg:items-start"
     >
       <aside
         data-testid={`${gate}-queue`}
+        ref={queueRef}
+        // Pinned under the rail and sized to what is visible by `usePinnedQueue`; these classes are the first paint.
         className="flex flex-col gap-3 overflow-hidden rounded-card bg-surface-raised py-4 shadow-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)]"
       >
         {toolbar && <div className="flex flex-col gap-2 px-4">{toolbar}</div>}
@@ -82,6 +135,7 @@ export function ConceptWorkbench({
         {detail}
       </section>
     </div>
+    </SearchHighlightProvider>
   );
 }
 
@@ -185,7 +239,7 @@ export function ConceptDetailHeader({
             className="text-xl font-semibold leading-tight text-on-raised"
             title={title}
           >
-            {title}
+            <Highlight text={title} />
           </h2>
           {badges}
         </div>

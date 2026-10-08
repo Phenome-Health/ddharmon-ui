@@ -283,6 +283,11 @@ test.describe("five screens", () => {
 
     await main.evaluate((el) => el.scrollTo(0, 700));
     await expect(box).toHaveAttribute("data-compact", "true");
+    // The folded PIN is exactly GateShell's `--rail-pin-collapsed` (4.25rem): the queue sidebar pins beneath it by
+    // that constant, so a rail that folds to any other height would hide the queue's top or leave a gap.
+    await expect
+      .poll(async () => (await page.getByTestId("gate-rail-pin").boundingBox())!.height, { message: "the folded pin is not 68px" })
+      .toBeCloseTo(68, 0);
     // Polled: the fold animates (~200ms), so the height arrives a moment after the state does.
     await expect.poll(async () => (await box.boundingBox())!.height, { message: "the collapsed rail is not tighter" }).toBeLessThan(full - 30);
     const total = box.getByTestId("rail-total");
