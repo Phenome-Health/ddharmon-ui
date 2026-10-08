@@ -11,6 +11,7 @@ import { estimateScoreMatchUsd, formatUsd } from "@/lib/estimate";
 import { gate4MatchRefusal, matchActionLabel, type DeclaredScore } from "@/lib/score-match";
 import { GATE4_VERDICT_LABEL, gate4ScoreHeader, gate4ScoreVerdict } from "@/lib/gate4-score";
 import {
+  MISSING_IS_A_RUN_RESULT,
   PARTIAL_IS_NOT_THE_SCORE,
   PRESENCE_IS_PER_DICTIONARY,
   SCOPE_VERDICT_COPY,
@@ -254,6 +255,12 @@ export function Gate4ScorePanel({
                 );
               })}
             </ol>
+          )}
+          {/* Said once for the list (round 5 sweep), when a looked-for component has no match. */}
+          {!spec && score.components.some((name) => matchOf.get(name) !== undefined && !matchOf.get(name)?.conceptId) && (
+            <p data-testid="missing-is-a-run-result" className="text-xs text-on-raised-muted">
+                  {MISSING_IS_A_RUN_RESULT}
+                </p>
           )}
 
           {spec && (

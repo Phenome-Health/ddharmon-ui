@@ -1577,16 +1577,7 @@ function ExpandedGroup({
           </MemberList>
         )}
 
-        {canRegroup && (
-          <p className="text-xs text-on-raised-muted">
-            Drag a {gridCarriesMembers ? "row" : "variable"} onto a group in the
-            list on the left to move it there, or onto &ldquo;In no group&rdquo;
-            to take it out of every group.
-            {gridCarriesMembers &&
-              " Without a mouse, use the × beside a row's drag handle to take that variable out of this group."}{" "}
-            Your moves are saved as you make them.
-          </p>
-        )}
+        {/* The drag instructions are said ONCE, in the how-to's step 5 (review round 5: "repeated text"). */}
 
         {/*
         THE DOOR ONTO THE POOL — a real destination with its own identifier, not a sentinel special-cased

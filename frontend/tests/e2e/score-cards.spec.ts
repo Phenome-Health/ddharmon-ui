@@ -180,6 +180,13 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await expect(spread).toContainText("2 in scope");
   });
 
+  test("@gate1 that ticked groups continue to Gate 2 is said once, in the info strip — not on every card", async ({ page }) => {
+    // Round 5 repeated-copy sweep: "→ continues to Gate 2" sat on every card with a group in scope.
+    const panel = await openGate1Panel(page);
+    await expect(panel.getByText("→ continues to Gate 2")).toHaveCount(0);
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/continue to Gate 2/i);
+  });
+
   test("@gate1 the info strip says it is a free search, not a judgement, and states the cut-off", async ({ page }) => {
     const panel = await openGate1Panel(page);
     const info = panel.getByTestId("score-suggestion-info");
@@ -533,5 +540,8 @@ test.describe("score cards — Gate 4 (the match)", () => {
     const gait = g4Card(panel, "Slow gait");
     await expect(gait).toHaveAttribute("data-verdict", "infeasible");
     await expect(gait.getByTestId("score-match-summary")).toContainText(/2 candidate concepts/);
+    // What a missing match is NOT is the panel's to say, once — never on the row (round 5 sweep).
+    await expect(gait).not.toContainText(/not a finding/i);
+    await expect(panel.getByTestId("missing-is-a-run-result")).toHaveCount(1);
   });
 });

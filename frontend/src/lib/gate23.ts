@@ -604,3 +604,21 @@ export function mergeSpecEdit(
   }
   return out;
 }
+
+/**
+ * A concept's target as a reviewer would search for it (review round 5: "when I search 'alcohol' I dont get this var.
+ * it should be surfaced based on CDE and/or var members"): the Gate 2 pick, else the model's pick — a catalog CDE's
+ * name — or, when the target is the generated element, its (possibly edited) name. "" when there is nothing to name.
+ */
+export function targetSearchName(
+  record: Pick<UIRecord, "candidates" | "gencde">,
+  pick?: { chosen?: unknown; gencdeEdit?: unknown },
+): string {
+  const chosen =
+    (typeof pick?.chosen === "string" ? pick.chosen : undefined) ?? record.candidates.find((c) => c.isChosen)?.cdeId ?? "";
+  if (chosen === "" || (!!record.gencde && chosen === record.gencde.gencdeId)) {
+    const edit = pick?.gencdeEdit as { name?: string } | undefined;
+    return edit?.name ?? record.gencde?.preferredName ?? record.gencde?.title ?? "";
+  }
+  return chosen;
+}

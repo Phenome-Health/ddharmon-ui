@@ -275,6 +275,20 @@ function isConfirmed(d: SetupDict): boolean {
   return d.confirmedRoles !== null && sameRoles(d.confirmedRoles, d.roles);
 }
 
+/**
+ * WHERE A DICTIONARY'S PREPOPULATED MAPPING CAME FROM, as one sentence — a function so the page can tell when every
+ * card would say the same thing, and say it once above them instead (round 5 repeated-copy sweep).
+ */
+function prefillProvenance(prefill: NonNullable<SetupDict["prefill"]>): string {
+  if (prefill.source === "rerun")
+    return `Column assignments carried over from “${prefill.from}”, the run you are re-running. Edit any of them below.`;
+  if (prefill.source === "demo")
+    return "Column assignments prepopulated from the demo mapping for this file. Edit any of them below.";
+  return prefill.at
+    ? `Column assignments prepopulated from your previous mapping of this file (saved ${new Date(prefill.at).toLocaleDateString()}). Edit any of them below.`
+    : "Column assignments prepopulated from your previous mapping of this file. Edit any of them below.";
+}
+
 /** A file that never became a dictionary, and why. Rendered problem-then-next-step (UI-SPEC §8.4). */
 interface FileProblem {
   key: string;
@@ -442,6 +456,17 @@ export default function SetupPage() {
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const [dicts, setDicts] = useState<SetupDict[]>([]);
+  // SAID ONCE ABOVE THE CARDS (round 5 repeated-copy sweep). The provenance line when every card shares it; the
+  // dictionaries whose name check cannot run (their files were not kept); the first confirmed card, the only one
+  // that explains what its embedding-text download contains.
+  const readyDicts = dicts.filter((d) => d.state !== "parsing");
+  const prefillLines = readyDicts.map((d) => (d.prefill ? prefillProvenance(d.prefill) : null));
+  const sharedPrefill =
+    readyDicts.length > 1 && prefillLines.every((line) => line !== null && line === prefillLines[0])
+      ? prefillLines[0]
+      : null;
+  const noNameCheck = readyDicts.filter((d) => !d.rows);
+  const firstConfirmedKey = dicts.find((d) => d.origin === "upload" && isConfirmed(d))?.key;
   const [problems, setProblems] = useState<FileProblem[]>([]);
 
   // --- run configuration. Same vocabulary as the shipped New Run form, so a run described here and a run
@@ -1277,7 +1302,27 @@ export default function SetupPage() {
             </GateEmptyState>
           </div>
         ) : (
-          dicts.map((d) => (
+          <>
+          {/* SAID ONCE, ABOVE THE CARDS (round 5 repeated-copy sweep): a fact true of every card used to be said
+              on every card. Where it differs between cards, each card says its own. */}
+          {sharedPrefill && (
+            <p data-testid="prefill-provenance" className="text-xs text-on-field-muted">
+              {sharedPrefill}
+            </p>
+          )}
+          {noNameCheck.length > 1 && (
+            <p
+              data-testid="name-check-unavailable"
+              className="rounded-inner border border-dashed border-rule-on-field px-3 py-2 text-xs text-on-field-muted"
+            >
+              <span className="font-semibold text-on-field">
+                Row count against unique-name count — not available for {noNameCheck.map((d) => d.cohortName).join(", ")}.
+              </span>{" "}
+              Their source files are not kept with the run, so the names cannot be counted here. It is not a report that
+              every name was unique. Re-upload a file to run the check on it.
+            </p>
+          )}
+          {dicts.map((d) => (
             <article
               key={d.key}
               data-testid="dict-card"
@@ -1333,23 +1378,17 @@ export default function SetupPage() {
                       than wondering why the columns arrived pre-assigned. Only shown when the mapping was
                       actually prefilled (demo manifest or this browser's own prior mapping of the same
                       columns) — never for the identity fallback, which is not a "from a previous run" claim. */}
-                  {d.prefill && (
+                  {/* Said here only when it differs from the line said once above the cards (round 5 sweep). */}
+                  {d.prefill && !sharedPrefill && (
                     <p data-testid="prefill-provenance" className="text-xs text-on-raised-muted">
-                      {d.prefill.source === "rerun"
-                        ? `Column assignments carried over from “${d.prefill.from}”, the run you are re-running. Edit any of them below.`
-                        : d.prefill.source === "demo"
-                          ? "Column assignments prepopulated from the demo mapping for this file. Edit any of them below."
-                          : d.prefill.at
-                            ? `Column assignments prepopulated from your previous mapping of this file (saved ${new Date(
-                                d.prefill.at,
-                              ).toLocaleDateString()}). Edit any of them below.`
-                            : "Column assignments prepopulated from your previous mapping of this file. Edit any of them below."}
+                      {prefillProvenance(d.prefill)}
                     </p>
                   )}
                   <DictionaryMappingTable
                     headers={d.headers}
                     roles={d.roles}
                     rows={d.rows}
+                    nameCheckSaidAbove={noNameCheck.length > 1}
                     disabled={runStarted}
                     onRolesChange={(roles) => setRoles(d.key, roles)}
                   />
@@ -1375,10 +1414,12 @@ export default function SetupPage() {
                   note={exportNote[d.key]}
                   error={exportError[d.key]}
                   available={!IS_STATIC}
+                  explain={d.key === firstConfirmedKey}
                 />
               )}
             </article>
-          ))
+          ))}
+          </>
         )}
       </section>
   );

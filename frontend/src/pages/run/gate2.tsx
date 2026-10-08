@@ -49,6 +49,7 @@ import {
   citeCandidateOrdinals,
   needsRepickConfirmation,
   repickConfirmation,
+  targetSearchName,
 } from "@/lib/gate23";
 import type { JobResult, RunMode, UIRecord, GatePosition } from "@/types";
 
@@ -227,7 +228,9 @@ export default function Gate2Page() {
     let rows = records;
     if (q) {
       rows = rows.filter((r) => {
-        const hay = `${labelOf(r)} ${r.cohorts?.join(" ") ?? ""} ${r.members?.join(" ") ?? ""}`.toLowerCase();
+        // The name, the current CDE (review round 5), the cohorts and the variables.
+        const hay =
+          `${labelOf(r)} ${targetSearchName(r, picks.decisions[r.groupId])} ${r.cohorts?.join(" ") ?? ""} ${r.members?.join(" ") ?? ""}`.toLowerCase();
         return hay.includes(q);
       });
     }
@@ -244,7 +247,7 @@ export default function Gate2Page() {
     }
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, query, xcOnly, cohortFilter, verdicts, colSort, renames.decisions]);
+  }, [records, query, xcOnly, cohortFilter, verdicts, colSort, renames.decisions, picks.decisions]);
 
   // The run's cohorts in their fixed order — the strip's columns and the legend over them.
   const roster = useMemo(() => cohortRoster(jobState?.result?.summary?.cohorts, records), [jobState?.result?.summary?.cohorts, records]);
@@ -407,7 +410,7 @@ export default function Gate2Page() {
             <QueueSearch
               value={query}
               onChange={setQuery}
-              placeholder="Search concept, variable, cohort…"
+              placeholder="Search concept, CDE, variable, cohort…"
               ariaLabel="Filter concepts"
               activeFilters={filterChips.length}
               filters={

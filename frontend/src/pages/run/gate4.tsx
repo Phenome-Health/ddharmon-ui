@@ -190,6 +190,12 @@ export default function Gate4Page() {
         {/* Surface 2 — what ships: the real artifacts, then the honest gaps. */}
         <section className="flex flex-col gap-3" data-testid="export-set">
           <h2 className="text-sm font-semibold text-on-field">What leaves the tool</h2>
+          {/* Said once for the set (round 5 sweep): every tile shares the run's state, so every tile used to say it. */}
+          {artifactState === "generating" && (
+            <p data-testid="artifacts-generating" className="text-xs text-on-field-muted">
+              The run is still producing these files — each becomes selectable once the run finishes producing it.
+            </p>
+          )}
           {/* Two to a row (review round 3: "so much whitespace, i think we can half the width and have 2 columns"). */}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {artifacts.map((a) => (

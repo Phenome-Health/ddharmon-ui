@@ -55,6 +55,7 @@ import {
   targetValuesFromSpecs,
   type BinRule,
   type NumberMapEntry,
+  targetSearchName,
 } from "@/lib/gate23";
 import {
   catalogTargetValues,
@@ -77,6 +78,8 @@ import {
 } from "@/lib/member-exclusion";
 import { cn } from "@/lib/utils";
 import { disclosureRow } from "@/components/ui/disclosure";
+import { Highlight } from "@/components/ui/highlight";
+import { definitionWithoutName } from "@/lib/cde-identity";
 import { permissibleValueLabels, sourceValueLabels } from "@/types";
 import type { JobResult, UIRecord, GatePosition } from "@/types";
 
@@ -260,7 +263,15 @@ export default function Gate3Page() {
           : g.rows,
       }))
       .filter((g) => g.rows.length > 0)
-      .filter((g) => !q || labelOf(g.record).toLowerCase().includes(q))
+      // The name, the chosen CDE and the variables (review round 5) — what a reviewer searches a concept by.
+      .filter(
+        (g) =>
+          !q ||
+          [labelOf(g.record), targetSearchName(g.record, picks.decisions[g.record.groupId]), ...g.record.members]
+            .join(" ")
+            .toLowerCase()
+            .includes(q),
+      )
       .filter((g) => !xcOnly || g.record.crossCohort)
       .filter((g) => {
         if (cohortFilter.length === 0) return true;
@@ -268,7 +279,7 @@ export default function Gate3Page() {
         return cohortFilter.every((c) => left.includes(c));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, arithmeticOnly, xcOnly, cohortFilter, query, renames.decisions, exclusions.decisions]);
+  }, [groups, arithmeticOnly, xcOnly, cohortFilter, query, renames.decisions, exclusions.decisions, picks.decisions]);
 
   // The run's cohorts in their fixed order — the strip's columns and the legend over them.
   const roster = useMemo(
@@ -429,7 +440,7 @@ export default function Gate3Page() {
             <QueueSearch
               value={query}
               onChange={setQuery}
-              placeholder="Search concept…"
+              placeholder="Search concept, CDE, variable…"
               ariaLabel="Filter concepts"
               activeFilters={filterChips.length}
               filters={
@@ -572,7 +583,7 @@ export default function Gate3Page() {
                 : (chosenCandidate?.cdeId ?? chosenTargetId ?? "none chosen");
               const targetDef = targetIsOwn
                 ? (gencdeEdit?.definition ?? record.gencde?.definition ?? "")
-                : (chosenCandidate?.definition ?? "");
+                : definitionWithoutName(chosenCandidate?.definition, chosenCandidate?.cdeId);
               // The catalog element's tinyId, for its repository link (review round 2): the pick's own when it
               // recorded one (a repeated name is told apart by it, 08-28 F13), else the candidate's, else the
               // record's CDE. A generated target has none — `CatalogLink` never links it.
@@ -966,14 +977,7 @@ export default function Gate3Page() {
 
                         {showRecode && (
                           <div className={cn("flex flex-col gap-2", rejected && "opacity-75")}>
-                            {state === "failed" && (
-                              <p className="max-w-[68ch] text-xs text-on-raised-muted">
-                                Spec generation ran for this run and did not
-                                generate a recode for this variable. It is routed
-                                to review rather than dropped — the variable is
-                                still in scope and still needs an answer.
-                              </p>
-                            )}
+                            {/* Why a failed tile is failed is said once, in the value-mapping intro (round 5 sweep). */}
                             {/* 08-28 1c (F16): the model could not produce this recode. Never "no transform
                                 required" — that reading exported raw codes as if they already fit. */}
                             {state === "needs-you" && (
@@ -1262,7 +1266,11 @@ export default function Gate3Page() {
                   <InheritedPanel
                     from="Gate 2"
                     label="chosen target"
-                    detail={targetName}
+                    detail={
+                      <span data-testid="target-name">
+                        <Highlight text={targetName} />
+                      </span>
+                    }
                     defaultOpen
                     testid="inherited-target"
                   >
@@ -1420,6 +1428,9 @@ export default function Gate3Page() {
                         ]
                           .filter(Boolean)
                           .join("")}
+                      {/* SAID ONCE for every failed tile below (round 5 sweep) — each used to carry this paragraph. */}
+                      {rows.some((r) => r.state === "failed") &&
+                        " A tile marked failed had no recode generated: it is routed to review rather than dropped, still in scope, and still needs an answer."}
                     </p>
                     {/* One concept-level line instead of the full sentence on every stale tile (review round 1). */}
                     {rows.some((r) => specs.isStale(specs.itemKey({ sourceVariable: r.sourceVariable }))) && (

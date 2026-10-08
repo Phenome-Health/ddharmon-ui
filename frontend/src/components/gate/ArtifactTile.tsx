@@ -99,11 +99,8 @@ export function ArtifactTile({
               {beside}
             </div>
           )}
-          {state === "generating" && (
-            <p data-testid="artifact-generating" className="text-xs text-on-raised-muted">
-              Still generating — it will be selectable once the run finishes producing it.
-            </p>
-          )}
+          {/* "generating" is said ONCE for the set, above the tiles (Gate 4, round 5 sweep) — every tile shares the run's
+              state, so a line on each said it four times. The tile keeps `data-state` and its disabled checkbox. */}
           {state === "failed" && (
             <p data-testid="artifact-failed" className="text-xs font-semibold text-status-danger">
               Couldn't build this artifact on this run. This is a failure, not a format we don't offer — retry the run to produce it.

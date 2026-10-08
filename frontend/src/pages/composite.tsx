@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
-import { coveredCohorts, GROUP_SELECT_THRESHOLD, missingReason, offeredGroups } from "@/lib/score-scope";
+import { MISSING_IS_A_RUN_RESULT, coveredCohorts, GROUP_SELECT_THRESHOLD, missingReason, offeredGroups } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
@@ -723,6 +723,12 @@ export function ScoreComponentsCard({
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2 space-y-2">
             {spec.matches.map(renderRow)}
+            {/* Said once for the list (round 5 sweep), when a component has no match. */}
+            {nFound < spec.matches.length && (
+              <p data-testid="missing-is-a-run-result" className="text-xs text-on-raised-muted">
+                  {MISSING_IS_A_RUN_RESULT}
+                </p>
+            )}
           </CollapsibleContent>
         </Collapsible>
       </CardContent>

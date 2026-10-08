@@ -91,6 +91,11 @@ export interface DictionaryMappingTableProps {
   rows?: DictRow[] | null;
   /** True when this dictionary belongs to a run that has already started — read-back, not an editor. */
   disabled?: boolean;
+  /**
+   * The page has said, once above every card, that the name check cannot run (round 5 sweep) — so this card does not
+   * say it again. The check's ABSENCE is still stated; only the repetition goes.
+   */
+  nameCheckSaidAbove?: boolean;
 }
 
 export function DictionaryMappingTable({
@@ -99,6 +104,7 @@ export function DictionaryMappingTable({
   onRolesChange,
   rows,
   disabled = false,
+  nameCheckSaidAbove = false,
 }: DictionaryMappingTableProps) {
   const extras = extraRoles(roles);
   /** True when one of the advanced roles is already pointed at a column on this dictionary. */
@@ -124,7 +130,7 @@ export function DictionaryMappingTable({
     <div className="flex flex-col gap-3">
       {/* The row-count against the unique-name-count check. ALWAYS rendered when it can be run — a check
           that only appears when it fires is indistinguishable from a check that was never run. */}
-      {check === null ? (
+      {check === null && nameCheckSaidAbove ? null : check === null ? (
         <p
           data-testid="name-check-unavailable"
           className="rounded-inner border border-dashed border-rule-on-raised px-3 py-2 text-xs text-on-raised-muted"

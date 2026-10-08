@@ -146,15 +146,22 @@ export function scopeVerdictFor(evidence: readonly ComponentEvidence[]): ScopeVe
  * the only claim the evidence supports.
  */
 export function missingReason(e: ComponentEvidence): string {
+  // SHORT, PER COMPONENT (round 5 repeated-copy sweep): the reason a component has no match. What that reason is NOT
+  // — a finding about the cohorts — is true of every unmatched component alike, so it is said once per panel
+  // (`MISSING_IS_A_RUN_RESULT`) rather than on each row. Each state still names the run, never the cohort.
   if (!e.searched) return "Not looked for yet on this run.";
   if (e.shortlistSize > 0) {
-    return (
-      `${e.shortlistSize} candidate concept${e.shortlistSize === 1 ? "" : "s"} from this run were ` +
-      "retrieved and rejected — none of them measures this component. The concepts exist; they do not fit."
-    );
+    return `${e.shortlistSize} candidate concept${e.shortlistSize === 1 ? "" : "s"} retrieved in this run and rejected — none fits.`;
   }
-  return "Retrieval returned nothing for this component in this run. That is not a finding about your cohorts — it is what this run retrieved.";
+  return "Nothing retrieved for this component in this run.";
 }
+
+/**
+ * The one sentence a score panel says ONCE, under its components, when any of them has no match: what a missing
+ * match is, and what it is not. It used to close every unmatched component's own reason.
+ */
+export const MISSING_IS_A_RUN_RESULT =
+  "A component with no match is a statement about what this run retrieved — not a finding about your cohorts.";
 
 /** The sentence that stops `partial` being read as a qualified yes. */
 export const PARTIAL_IS_NOT_THE_SCORE =

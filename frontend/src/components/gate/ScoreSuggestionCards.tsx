@@ -80,6 +80,11 @@ export function ScoreSuggestionCards({
               component&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
               of them measure it. Other in-scope groups the search reached say why they are in scope.
             </li>
+            {/* SAID ONCE, HERE (round 5 sweep): "→ continues to Gate 2" sat on every card with a group in scope. */}
+            <li>
+              <span className="font-semibold text-on-raised">In scope.</span> A card&rsquo;s ticked groups continue to
+              Gate 2 with the rest of your scope.
+            </li>
             {/* SAID ONCE, HERE (Bhargav 2026-10-05): on a 49-item score this caveat repeated on every unsuggested card. */}
             <li>
               <span className="font-semibold text-on-raised">Nothing suggested.</span> This search reached no group at
@@ -350,7 +355,6 @@ function SuggestionRow({
                     <span className="text-on-raised-muted"> ({spreadCohorts.join(", ")})</span>
                   )}
                 </span>
-                <span className="ml-auto text-[11px] font-semibold text-link-on-raised">→ continues to Gate 2</span>
               </>
             )}
           </div>

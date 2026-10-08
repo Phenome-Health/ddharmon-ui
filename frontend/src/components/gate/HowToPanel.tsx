@@ -71,7 +71,9 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
     // announces that it can be picked up — was not in it. One line, in the same numbered register, placed
     // where it happens: after the group is open, before the charge.
     {
-      text: "Drag a variable out of an open group onto another group to move it there, or onto In no group to pull it out — moves save as you make them.",
+      // The keyboard way joined this step when the open group's own drag paragraph went (review round 5), in the
+      // same length — the panel is orientation, held under 700 characters by gate1.spec.
+      text: "Drag a variable onto another group, or onto In no group to pull it out; without a mouse, use the × by its handle. Moves save as you go.",
     },
     {
       text: "Press Continue to Gate 2. The naming, splitting and judging that produced this screen were already charged on Set up; this button buys the assignment step, and its amount is on it.",

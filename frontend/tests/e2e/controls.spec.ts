@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { NO_FILTERS, applyFilters } from "@/lib/ledger";
 import { cohortInitials, tickedOfShown } from "@/lib/queue-controls";
+import { MISSING_IS_A_RUN_RESULT, missingReason } from "@/lib/score-scope";
 import type { CoherenceState, ConceptGroup } from "@/types";
 import { fixtureGroups } from "./gate1-fixture";
 import { serveFinished } from "./gate23-fixture";
@@ -888,5 +889,130 @@ test.describe("controls review round 4", () => {
     });
     expect(border).toEqual({ top: "solid", left: "solid", leftW: "4px" });
     await expect(tile.locator("[data-testid='spec-row-summary']")).toHaveText("not exported");
+  });
+});
+
+test.describe("controls review round 5", () => {
+  /** The first word (≥5 letters) of `text` that `label` does not contain — so finding it proves the row matched on it. */
+  const wordNotIn = (text: string, label: string) =>
+    text.split(/[^A-Za-z]+/).find((w) => w.length >= 5 && !label.toLowerCase().includes(w.toLowerCase()));
+
+  for (const [gate, targetSel] of [
+    ["gate3", "[data-testid='target-name']"],
+    ["gate2", "[data-testid='current-target']"],
+  ] as const) {
+    test(`@controls ${gate}: the search finds a concept by its chosen CDE, not only by its name`, async ({ page }) => {
+      // Bhargav: "when I search 'alcohol' I dont get this var. it should be surfaced based on CDE and/or var members".
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await open(page, `/run/${FINISHED}/${gate}`);
+      const rows = page.locator(`[data-testid='${gate}-concept']`);
+      let id: string | null = null;
+      let word: string | undefined;
+      for (let i = 0; i < 20 && !word; i++) {
+        await rows.nth(i).click();
+        const label = (await rows.nth(i).getAttribute("data-search-label")) ?? "";
+        const target = ((await page.locator(`[data-testid='${gate}-detail']`).locator(targetSel).first().textContent()) ?? "").replace(/^target:\s*/, "");
+        word = wordNotIn(target, label);
+        id = await rows.nth(i).getAttribute("data-concept-id");
+      }
+      expect(word, "no concept whose target names a word its own name lacks").toBeTruthy();
+      await page.getByTestId("term-search").fill(word!);
+      await expect(page.locator(`[data-testid='${gate}-concept'][data-concept-id='${id}']`)).toBeVisible();
+    });
+  }
+
+  test("@controls gate3: the search finds a concept by one of its variables", async ({ page }) => {
+    await open(page, `/run/${FINISHED}/gate3`);
+    const row = page.locator("[data-testid='gate3-concept']").first();
+    await row.click();
+    const id = await row.getAttribute("data-concept-id");
+    const label = (await row.getAttribute("data-search-label")) ?? "";
+    const sources = await page.locator("[data-testid='gate3-detail'] [data-testid='spec-row']").evaluateAll((els) =>
+      els.map((e) => (e.getAttribute("data-source") ?? "").split(":").pop() ?? ""),
+    );
+    const variable = sources.find((s) => s.length >= 5 && !label.toLowerCase().includes(s.toLowerCase()));
+    expect(variable).toBeTruthy();
+    await page.getByTestId("term-search").fill(variable!);
+    await expect(page.locator(`[data-testid='gate3-concept'][data-concept-id='${id}']`)).toBeVisible();
+  });
+
+  test("@controls gate1: the drag instructions are said once, in the how-to — not again in the open group", async ({ page }) => {
+    // Bhargav: "repeated text" — the open group repeated the how-to's drag step.
+    await open(page, `/run/${PAUSED}/gate1`);
+    await expect(page.getByTestId("gate1-detail").getByText(/onto a group in the list on the left/i)).toHaveCount(0);
+    const how = page.getByTestId("how-to");
+    await expect(how.getByText(/Drag a variable onto another group/)).toHaveCount(1);
+    // The one thing the paragraph said that the how-to did not: the keyboard way.
+    await expect(how).toContainText(/without a mouse/i);
+  });
+});
+
+test.describe("controls repeated copy (round 5 sweep)", () => {
+  // Bhargav: "in this pass also look for other examples of repeated text that can be consolidated". Each of these was a
+  // sentence true of the whole list, said again on every item; each is now said once.
+  test("@controls Setup: a run without its source files says once that the name check is unavailable", async ({ page }) => {
+    await open(page, `/run/${FINISHED}/setup`);
+    const cards = page.getByTestId("dict-card");
+    expect(await cards.count()).toBeGreaterThan(1);
+    await expect(page.getByTestId("name-check-unavailable")).toHaveCount(1);
+    await expect(cards.getByTestId("name-check-unavailable")).toHaveCount(0);
+  });
+
+  test("@controls Gate 2: a candidate's definition does not open by repeating its name", async ({ page }) => {
+    await open(page, `/run/${FINISHED}/gate2`);
+    const rows = page.locator("[data-testid='candidate-row']");
+    await expect(rows.first()).toBeVisible();
+    for (const row of (await rows.all()).slice(0, 8)) {
+      const name = ((await row.getByTestId("candidate-name").textContent()) ?? "").trim().toLowerCase();
+      // No definition line at all is fine (the definition was only the name); a line must not open with the name.
+      const line = row.getByTestId("candidate-definition");
+      if ((await line.count()) === 0) continue;
+      const def = ((await line.textContent()) ?? "").trim().toLowerCase();
+      expect(def, "an empty definition line").not.toBe("");
+      expect(def.startsWith(name), `"${def.slice(0, 60)}" repeats "${name}"`).toBe(false);
+    }
+  });
+
+  test("@controls Gate 3: why a failed recode is failed is said once per concept, in the value-mapping intro", async ({ page }) => {
+    await open(page, `/run/${FINISHED}/gate3`);
+    const concepts = page.locator("[data-testid='gate3-concept']");
+    const detail = page.getByTestId("gate3-detail");
+    let sawFailed = false;
+    for (let i = 0; i < Math.min(await concepts.count(), 10); i++) {
+      await concepts.nth(i).click();
+      const failed = await detail.locator("[data-testid='spec-row'][data-state='failed']").count();
+      const said = await detail.getByText(/no recode generated|did not generate a recode/i).count();
+      expect(said, `concept ${i}: said ${said} times for ${failed} failed tiles`).toBeLessThanOrEqual(1);
+      if (failed > 0) {
+        sawFailed = true;
+        await expect(detail.getByTestId("value-map-explainer")).toContainText(/no recode generated/i);
+      }
+    }
+    expect(sawFailed, "no concept with a failed tile was checked").toBe(true);
+  });
+
+  test("@controls Gate 4: while the files are still generating, that is said once for the set", async ({ page }) => {
+    await serveFinished(page, (run) => {
+      if (run.result) run.result.records = [];
+    });
+    await open(page, `/run/${FINISHED}/gate4`);
+    const tiles = page.locator("[data-testid='artifact-tile'][data-state='generating']");
+    expect(await tiles.count()).toBeGreaterThan(1);
+    await expect(page.getByText(/selectable once the run finishes/i)).toHaveCount(1);
+    await expect(page.getByText(/still generating/i)).toHaveCount(0);
+  });
+
+  test("@controls score panels: a component's missing match is a short state; the 'not a finding' sentence is the panel's", () => {
+    const base = { name: "gait", matched: false };
+    for (const e of [
+      { ...base, searched: false, shortlistSize: 0 },
+      { ...base, searched: true, shortlistSize: 0 },
+      { ...base, searched: true, shortlistSize: 8 },
+    ]) {
+      const said = missingReason(e);
+      expect(said.length, said).toBeLessThan(70);
+      expect(said).not.toMatch(/not a finding/i);
+    }
+    expect(MISSING_IS_A_RUN_RESULT).toMatch(/not a finding about your cohorts/i);
   });
 });

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ExternalLink, Check, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { candidateLabel } from "@/lib/cde-identity";
+import { candidateLabel, definitionWithoutName } from "@/lib/cde-identity";
 import { cdeDetailUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import type { UICandidate } from "@/types";
@@ -218,12 +218,17 @@ export function CandidateTable({
                       </span>
                     )}
                   </span>
-                  <span className="mt-0.5 flex items-center gap-2 pl-5">
-                    {c.endorsed && (
-                      <span className="rounded-pill border border-status-ok px-1.5 py-0 text-xs text-on-ok">NIH-endorsed</span>
-                    )}
-                    <span className="line-clamp-1 text-xs text-on-raised-muted">{c.definition || "—"}</span>
-                  </span>
+                  {/* No line at all when the definition was only the name: a "—" under every such row is noise. */}
+                  {(c.endorsed || definitionWithoutName(c.definition, c.cdeId)) && (
+                    <span className="mt-0.5 flex items-center gap-2 pl-5">
+                      {c.endorsed && (
+                        <span className="rounded-pill border border-status-ok px-1.5 py-0 text-xs text-on-ok">NIH-endorsed</span>
+                      )}
+                      <span data-testid="candidate-definition" className="line-clamp-1 text-xs text-on-raised-muted">
+                        {definitionWithoutName(c.definition, c.cdeId)}
+                      </span>
+                    </span>
+                  )}
                 </span>
                 <span
                   data-testid="candidate-pv"
@@ -256,7 +261,7 @@ export function CandidateTable({
                   )}
                   <div>
                     <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">Definition</span>
-                    <p className="text-sm text-on-raised-muted">{c.definition || "—"}</p>
+                    <p className="text-sm text-on-raised-muted">{definitionWithoutName(c.definition, c.cdeId) || "—"}</p>
                   </div>
                   <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-on-raised-muted">
                     {c.dataType && (

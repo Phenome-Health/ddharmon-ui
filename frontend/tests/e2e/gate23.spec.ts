@@ -969,7 +969,8 @@ test.describe("gate3 screen", () => {
       .first();
     await expect(failed).toBeVisible();
     await expect(failed).toHaveAttribute("data-review", "true");
-    await expect(failed).toContainText("did not generate");
+    // Why it is failed is said once for the concept, in the value-mapping intro (round 5 sweep), not on the tile.
+    await expect(page.getByTestId("value-map-explainer")).toContainText(/no recode generated/i);
   });
 
   test("@gate3 no-transform-required is distinct from not-generated", async ({

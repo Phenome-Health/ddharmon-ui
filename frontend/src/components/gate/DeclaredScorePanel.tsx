@@ -35,6 +35,7 @@ import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
 import type { NamedGroup } from "@/lib/ledger";
 import {
+  MISSING_IS_A_RUN_RESULT,
   CUTOFF_UNSTATED,
   PARTIAL_IS_NOT_THE_SCORE,
   PRESENCE_IS_PER_DICTIONARY,
@@ -730,6 +731,12 @@ export function DeclaredScorePanel({
                     />
                   ))}
                 </ul>
+              )}
+              {/* Said once for the list (round 5 sweep), when a looked-for component has no match. */}
+              {evidence.some((e) => e.searched && !e.matched) && (
+                <p data-testid="missing-is-a-run-result" className="text-xs text-on-raised-muted">
+                  {MISSING_IS_A_RUN_RESULT}
+                </p>
               )}
             </>
           ) : null}
