@@ -62,8 +62,8 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   // NEVER RENDERED. Kept only because `GatePosition` still carries the position — see the docstring.
   gate0: [{ text: "This screen was retired; the run pauses at this point on Set up instead." }],
   gate1: [
-    { text: "Check the totals above the list, and how many groups span two or more cohorts." },
-    { text: "Search for the concepts you care about, one term per line." },
+    { text: "Check the counts beside the select-all box, and use the filters in the search box to narrow by cohort or state." },
+    { text: "Search for the concepts you care about." },
     { text: "Tick the groups you want to take to Gate 2." },
     { text: "Open a group to see every variable in it and any proposed division." },
     // THE DRAG WAS MISSING (08-16c review). Bhargav read the list against the screen and the reshaping

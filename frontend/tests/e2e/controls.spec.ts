@@ -401,3 +401,16 @@ test.describe("controls gates 2-3 panel", () => {
     await expect(menu.locator("[data-testid='arithmetic-filter']")).toBeVisible();
   });
 });
+
+test.describe("controls how-to copy", () => {
+  test("@controls Gate 1's how-to names the controls the panel actually has", async ({ page }) => {
+    await openGate1(page);
+    const howTo = page.locator("[data-testid='how-to']");
+    // The totals line and the standalone cross-cohort toggle are gone: the counts ride the select-all box and
+    // the narrowing lives in the filters inside the search.
+    await expect(howTo).toContainText("select-all box");
+    await expect(howTo).toContainText("filters in the search box");
+    // The search is one line; "one term per line" described the multi-term box 08-16f removed.
+    await expect(howTo).not.toContainText("one term per line");
+  });
+});
