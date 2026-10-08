@@ -802,19 +802,6 @@ export default function Gate3Page() {
                     )}
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        data-testid="spec-collapse"
-                        aria-expanded={!isFolded}
-                        aria-label={`${isFolded ? "Expand" : "Collapse"} the recode for ${sourceVariable}`}
-                        onClick={() => setFolded((prev) => ({ ...prev, [itemKey]: !isFolded }))}
-                        className="-ml-1 grid h-6 w-6 shrink-0 place-content-center rounded-inner text-on-raised-muted transition-colors hover:bg-surface-inset hover:text-on-raised"
-                      >
-                        <ChevronDown
-                          aria-hidden="true"
-                          className={cn("h-4 w-4 transition-transform duration-200", isFolded && "-rotate-90")}
-                        />
-                      </button>
                       <span className="rounded bg-surface-inset px-1.5 py-0.5 font-mono text-xs text-on-inset-muted">
                         {transform ? transform.kind : state}
                       </span>
@@ -911,6 +898,21 @@ export default function Gate3Page() {
                           )}
                         </>
                       )}
+                      {/* The fold arrow TRAILS the header (review round 2: "dropdown arrow should be on the right to match
+                          UI convention"), and turns the way DisclosureChevron does: down while folded, up while open. */}
+                      <button
+                        type="button"
+                        data-testid="spec-collapse"
+                        aria-expanded={!isFolded}
+                        aria-label={`${isFolded ? "Expand" : "Collapse"} the recode for ${sourceVariable}`}
+                        onClick={() => setFolded((prev) => ({ ...prev, [itemKey]: !isFolded }))}
+                        className="-mr-1 ml-auto grid h-6 w-6 shrink-0 place-content-center rounded-inner text-on-raised-muted transition-colors hover:bg-surface-inset hover:text-on-raised"
+                      >
+                        <ChevronDown
+                          aria-hidden="true"
+                          className={cn("h-4 w-4 transition-transform duration-200", !isFolded && "rotate-180")}
+                        />
+                      </button>
                     </div>
                     {!isFolded && (
                       <div data-testid="spec-body" className="flex flex-col gap-2">
@@ -1026,33 +1028,9 @@ export default function Gate3Page() {
                           </div>
                         )}
 
+                        {/* Review round 2: the decisions lead on the left in the order a reviewer reaches for them —
+                            Approve, Reject, Remove — and the note and its Save sit apart on the right. */}
                         <div className="flex flex-wrap items-center gap-2">
-                          <Input
-                            data-testid="spec-note-input"
-                            aria-label={`Note on the recode for ${sourceVariable}`}
-                            placeholder={rejected ? "Why was it rejected? (optional)" : "Your note on this recode"}
-                            value={noteValue}
-                            disabled={frozen}
-                            onChange={(e) => {
-                              // Typing again means the confirmation no longer describes what is on screen.
-                              unmarkSaved(itemKey);
-                              const value = e.target.value;
-                              setDrafts((prev) => ({ ...prev, [itemKey]: value }));
-                            }}
-                            className="max-w-96 text-xs"
-                          />
-                          <Button
-                            data-testid="spec-save"
-                            size="sm"
-                            variant="outline"
-                            disabled={frozen}
-                            onClick={() =>
-                              void saveNote(record, sourceVariable, noteValue)
-                            }
-                          >
-                            {/* It only ever saved the note; on a rejected row, where nothing else is editable, say so. */}
-                            {rejected ? "Save note" : "Save"}
-                          </Button>
                           {!rejected && !approved && (
                             <Button
                               data-testid="spec-approve"
@@ -1069,7 +1047,6 @@ export default function Gate3Page() {
                                 void saveSpec(record, sourceVariable, { approved: true });
                               }}
                             >
-                              <Check aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
                               Approve
                             </Button>
                           )}
@@ -1095,8 +1072,7 @@ export default function Gate3Page() {
                             </Button>
                           )}
                           {/* Review round 2: take a ROGUE variable out of this concept. Free, nothing re-runs, and
-                              Undo is right there on the removed line — so no confirmation step. Last in the
-                              strip, so on a narrow pane it is the one that wraps. */}
+                              Undo is right there on the removed line — so no confirmation step. */}
                           <Button
                             data-testid="spec-remove"
                             size="sm"
@@ -1111,21 +1087,49 @@ export default function Gate3Page() {
                           >
                             Remove from this concept
                           </Button>
-                          {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
-                              failed write rolls back and toasts instead, so this never claims a miss. */}
-                          {savedKeys[itemKey] && (
-                            <span
-                              data-testid="spec-saved"
-                              role="status"
-                              className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
+                          <div className="ml-auto flex min-w-64 flex-1 items-center justify-end gap-2">
+                            {/* The save LANDED (`write` resolved true) — shown in the row it describes. A
+                                failed write rolls back and toasts instead, so this never claims a miss. */}
+                            {savedKeys[itemKey] && (
+                              <span
+                                data-testid="spec-saved"
+                                role="status"
+                                className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
+                              >
+                                <Check
+                                  aria-hidden="true"
+                                  className="h-3.5 w-3.5 text-status-ok"
+                                />
+                                {specs.local ? "Saved in this browser" : "Saved"}
+                              </span>
+                            )}
+                            <Input
+                              data-testid="spec-note-input"
+                              aria-label={`Note on the recode for ${sourceVariable}`}
+                              placeholder={rejected ? "Why was it rejected? (optional)" : "Your note on this recode"}
+                              value={noteValue}
+                              disabled={frozen}
+                              onChange={(e) => {
+                                // Typing again means the confirmation no longer describes what is on screen.
+                                unmarkSaved(itemKey);
+                                const value = e.target.value;
+                                setDrafts((prev) => ({ ...prev, [itemKey]: value }));
+                              }}
+                              className="min-w-0 max-w-96 flex-1 text-xs"
+                            />
+                            <Button
+                              data-testid="spec-save"
+                              size="sm"
+                              variant="outline"
+                              disabled={frozen}
+                              onClick={() =>
+                                void saveNote(record, sourceVariable, noteValue)
+                              }
                             >
-                              <Check
-                                aria-hidden="true"
-                                className="h-3.5 w-3.5 text-status-ok"
-                              />
-                              {specs.local ? "Saved in this browser" : "Saved"}
-                            </span>
-                          )}
+                              {/* It only ever saved the note; on a rejected row, where nothing else is editable, say so. */}
+                              {rejected ? "Save note" : "Save"}
+                            </Button>
+                          </div>
                         </div>
 
                         {rejecting === itemKey && (
@@ -1384,7 +1388,10 @@ export default function Gate3Page() {
                       );
                     })}
 
-                  <div className="flex flex-col gap-2">
+                  {/* Bordered like the inherited panels above it, with the same 16px inset, so the three line up exactly
+                      (review round 2). White, not inset: this is the part of the screen that is edited. */}
+                  <section data-testid="value-mapping" className="flex flex-col rounded-inner border border-rule-on-raised">
+                  <div className="flex flex-col gap-1 px-4 py-2.5">
                     <h3 className="text-sm font-semibold text-on-raised">
                       Value mapping ({activeCount})
                     </h3>
@@ -1410,8 +1417,11 @@ export default function Gate3Page() {
                         Tiles marked stale were decided before the target changed at Gate 2 — check them again.
                       </p>
                     )}
-                    {tiles}
                   </div>
+                  {tiles.length > 0 && (
+                    <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised px-4 py-3">{tiles}</div>
+                  )}
+                  </section>
                 </div>
               );
             })()

@@ -560,3 +560,75 @@ test.describe("controls repeated copy (review round 1)", () => {
     }
   });
 });
+
+test.describe("controls review round 2 (Gate 3 recode tiles)", () => {
+  /** The first tile with all of its actions on show: not approved (Approve hidden) and not rejected (Un-reject instead). */
+  async function openTile(page: Page): Promise<Locator> {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, `/run/${FINISHED}/gate3`);
+    const tile = page
+      .locator("[data-testid='gate3-detail'] [data-testid='spec-row'][data-approved='false'][data-rejected='false']")
+      .first();
+    await expect(tile.locator("[data-testid='spec-body']")).toBeVisible();
+    return tile;
+  }
+
+  test("@controls a recode tile's fold arrow sits at the right end of its header", async ({ page }) => {
+    // Bhargav: "dropdown arrow should be on the right to match UI convention" — as on every other fold (DisclosureChevron).
+    const tile = await openTile(page);
+    const fold = (await tile.locator("[data-testid='spec-collapse']").boundingBox())!;
+    const box = (await tile.boundingBox())!;
+    expect(fold.x, "the arrow is not on the right").toBeGreaterThan(box.x + box.width / 2);
+    expect(box.x + box.width - (fold.x + fold.width), "the arrow is not at the tile's right edge").toBeLessThanOrEqual(24);
+  });
+
+  test("@controls a recode tile's actions: Approve, Reject, Remove on the left; the note and Save on the right", async ({
+    page,
+  }) => {
+    // Bhargav: "Approve, Reject, Remove should be in that order & left aligned, note field and Save should be on right".
+    const tile = await openTile(page);
+    const at = async (id: string) => (await tile.locator(`[data-testid='${id}']`).boundingBox())!;
+    const [approve, reject, remove, note, save] = [
+      await at("spec-approve"),
+      await at("spec-reject"),
+      await at("spec-remove"),
+      await at("spec-note-input"),
+      await at("spec-save"),
+    ];
+    const box = (await tile.boundingBox())!;
+    expect(approve.x).toBeLessThan(reject.x);
+    expect(reject.x).toBeLessThan(remove.x);
+    expect(remove.x + remove.width).toBeLessThan(note.x);
+    expect(note.x).toBeLessThan(save.x);
+    // One row, pushed to both edges.
+    for (const b of [reject, remove, note, save]) expect(Math.abs(b.y + b.height / 2 - (approve.y + approve.height / 2))).toBeLessThanOrEqual(2);
+    expect(approve.x - box.x, "Approve is not at the left edge").toBeLessThanOrEqual(20);
+    expect(box.x + box.width - (save.x + save.width), "Save is not at the right edge").toBeLessThanOrEqual(20);
+  });
+
+  test("@controls Approve carries no tick — a tick reads as already approved", async ({ page }) => {
+    // Bhargav: "I dont like the checkmark next to approve, it's confusing - makes it seems like the var has already been approved".
+    const tile = await openTile(page);
+    await expect(tile.locator("[data-testid='spec-approve']")).toHaveText("Approve");
+    await expect(tile.locator("[data-testid='spec-approve'] svg")).toHaveCount(0);
+  });
+
+  test("@controls Value mapping is a bordered box, edge-aligned with the inherited panels above it", async ({ page }) => {
+    // Bhargav: "I want a rounded border around this like Source variables and chosen target elements, this way the
+    // alignment with those 2 elements can also be exact".
+    await openTile(page);
+    const detail = page.locator("[data-testid='gate3-detail']");
+    const box = detail.locator("[data-testid='value-mapping']");
+    const g = await geometry(box);
+    expect(parseFloat(g.border)).toBeGreaterThanOrEqual(1);
+    expect(parseFloat(g.radius)).toBeGreaterThan(0);
+    const panel = detail.locator("[data-testid='inherited-source-rows']");
+    const [b, p] = [(await box.boundingBox())!, (await panel.boundingBox())!];
+    expect(Math.abs(b.x - p.x), "left edges differ").toBeLessThanOrEqual(1);
+    expect(Math.abs(b.width - p.width), "widths differ").toBeLessThanOrEqual(1);
+    // The heading sits as far in as the panels' labels do.
+    const heading = (await box.getByRole("heading", { name: /value mapping/i }).boundingBox())!;
+    const label = (await panel.locator("[data-disclosure-label]").boundingBox())!;
+    expect(Math.abs(heading.x - b.x - (label.x - p.x)), "the heading's inset differs from the panels'").toBeLessThanOrEqual(1);
+  });
+});
