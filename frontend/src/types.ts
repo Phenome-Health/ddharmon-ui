@@ -852,12 +852,21 @@ export interface DictSpec {
   columnRoles: Record<string, string>;
 }
 
-// One selectable model in the "New Run" picker. The catalog comes from the LiteLLM proxy's
-// GET /model/info when a proxy is configured, else a built-in fallback list (see api.listModels).
+// One model in the "New Run" picker, from GET /api/harmonize/models (see api.listModels). The list is core's
+// registry (`ddharmon.llm.models`) when the server's core has one, else the UI's fallback list; with a LiteLLM
+// proxy configured the ids are the proxy's, each marked validated from that same list.
 export interface ModelInfo {
   id: string; // the model tag the engine routes on (e.g. "claude-sonnet-4-6", "gemini/gemini-1.5-pro")
   provider: string; // "anthropic" | "openai" | "gemini" | "local" | "other"
   label: string; // human-facing label for the dropdown
+  validated: boolean; // ddharmon's prompts and benchmarks were validated against it — only these are selectable
+}
+
+// The picker's whole list: the models, which one a new run starts on, and where the list came from.
+export interface ModelCatalog {
+  models: ModelInfo[];
+  default: string; // the id a new run is pre-set to (validated, and one of `models`)
+  source: string; // "core" | "fallback" | "proxy"
 }
 
 export interface RunConfig {

@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { InfoTip, RoleInfo } from "@/components/ui/info-tip";
 import { IS_STATIC, listModels, startHarmonize } from "@/lib/api";
 import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
+import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { roleRequirementReason } from "@/lib/dictionary";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { useAuthState } from "@/auth";
@@ -33,6 +34,7 @@ import {
   type CdeSet,
   type ColumnRole,
   type CostBreakdown,
+  type ModelInfo,
   type RunMode,
   type TimeEstimate,
 } from "@/types";
@@ -46,9 +48,8 @@ const NONE = "__none__";
 // goes stale there (08-13 review; extracted 08-13b).
 
 // Models validated end-to-end with ddharmon are selectable; the rest render greyed-out/disabled until we
-// finish testing them. So far only Anthropic's Claude Sonnet 4.6 has been validated. Matched tolerantly so a
-// proxy-returned id like "anthropic/claude-sonnet-4-6" also counts.
-const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
+// finish testing them. WHICH ones are validated is the model list's `validated` flag (decided in core, served by
+// GET /api/harmonize/models) — never a model name matched here, so a model bump needs no edit to this file.
 
 interface DictFile {
   file: File;
@@ -147,7 +148,8 @@ export default function HomePage() {
     ? `${totalFields.toLocaleString()} variables · ${dicts.length} cohort${dicts.length > 1 ? "s" : ""} · ${runMode}`
     : "";
 
-  // Model catalog for the picker — from the proxy (via the backend) or a built-in fallback.
+  // The picker's model list, its validated flags and its default — from the backend (core's registry, its own
+  // fallback list, or a LiteLLM proxy), or the bundled snapshot of that endpoint in the static build.
   const { data: catalog } = useQuery({ queryKey: ["models"], queryFn: listModels });
   const models = useMemo(() => catalog?.models ?? [], [catalog]);
   const providers = useMemo(() => {
@@ -157,18 +159,22 @@ export default function HomePage() {
     return out;
   }, [models]);
   const modelsForProvider = useMemo(() => models.filter((m) => m.provider === provider), [models, provider]);
-  // Keep `model` valid for the chosen provider: default to the first available whenever the current pick is
-  // empty or not in the provider's list (after the catalog loads, or when the provider changes).
+  // Keep `model` valid. The first time the list arrives nothing is picked yet: land on the list's default, its
+  // provider included. After that, a provider change (or a pick that is not a validated model of the provider)
+  // re-picks within the provider — the default if it is one of its models, else its first validated model.
   useEffect(() => {
-    if (!modelsForProvider.length) return;
-    // Default to the first TESTED model for the provider (so Anthropic lands on Sonnet 4.6); fall back to the
-    // first listed only if the provider has no tested model yet. Also re-default if the current pick is a
-    // now-disabled (untested) model.
-    const valid = model && modelsForProvider.some((m) => m.id === model && isModelTested(m.id));
-    if (!valid) setModel((modelsForProvider.find((m) => isModelTested(m.id)) ?? modelsForProvider[0]).id);
-  }, [modelsForProvider, model]);
+    if (!catalog) return;
+    const def = catalog.models.find((m) => m.id === catalog.default && m.validated);
+    if (!model && def) {
+      setProvider(def.provider);
+      setModel(def.id);
+      return;
+    }
+    const next = pickModel(catalog, provider, model);
+    if (next && next !== model) setModel(next);
+  }, [catalog, provider, model]);
   const providerLabel = PROVIDER_LABELS[provider] ?? provider;
-  const isProviderTested = (p: string): boolean => models.some((m) => m.provider === p && isModelTested(m.id));
+  const isProviderTested = (p: string): boolean => models.some((m) => m.provider === p && m.validated);
   const keyInfo = PROVIDER_KEY_INFO[provider];
 
   async function run() {
@@ -398,10 +404,10 @@ export default function HomePage() {
             {needsKey && (
               <div className="grid gap-1.5">
                 <Label className="flex items-center gap-1 text-xs">
-                  Provider <InfoTip text={OPTION_HELP.provider} label="About the provider options" />
+                  Provider <InfoTip text={providerHelp(models)} label="About the provider options" />
                 </Label>
                 <Select value={provider} onValueChange={setProvider}>
-                  <SelectTrigger className="h-8">
+                  <SelectTrigger className="h-8" data-testid="provider-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -420,15 +426,15 @@ export default function HomePage() {
             {needsKey && (
               <div className="grid gap-1.5">
                 <Label className="flex items-center gap-1 text-xs">
-                  Model <InfoTip text={OPTION_HELP.model} label="About the model options" />
+                  Model <InfoTip text={modelHelp(models)} label="About the model options" />
                 </Label>
                 <Select value={model} onValueChange={setModel} disabled={!modelsForProvider.length}>
-                  <SelectTrigger className="h-8">
+                  <SelectTrigger className="h-8" data-testid="model-select">
                     <SelectValue placeholder={modelsForProvider.length ? undefined : "No models available"} />
                   </SelectTrigger>
                   <SelectContent>
                     {modelsForProvider.map((m) => {
-                      const tested = isModelTested(m.id);
+                      const tested = m.validated;
                       return (
                         <SelectItem key={m.id} value={m.id} disabled={!tested}>
                           {m.label + (tested ? "" : " · not yet tested")}
@@ -689,10 +695,6 @@ const OPTION_HELP: Record<string, string> = {
     "Which Common Data Element catalog your variables are matched against. Full repo (the default) is the complete catalog (~22.7k) — broader coverage, including common measures such as body weight, PHQ and PROMIS, with more candidates to weigh per concept. NIH-endorsed is a small, curated set (~174) that lacks those, so they would come out as generated elements.",
   runMode:
     "How the run executes. Batch: the LLM stages run asynchronously via the Anthropic Batch API — ~50% cheaper, but results can take a while (worst case, hours). Synchronous: the same pipeline with immediate LLM calls — finishes in minutes with predictable wall-clock, at roughly 2× the batch cost. Preview: no LLM at all — clustering + candidate retrieval only, so you can inspect the groupings for free before spending credits. Batch and Synchronous both need your API key below.",
-  provider:
-    "Which LLM provider runs concept assignment. Only providers we've validated end-to-end with ddharmon are selectable; the others are shown greyed-out and will unlock as we finish testing them. So far ddharmon has been tested only with Anthropic (Claude Sonnet 4.6). Anthropic uses the cost-bounded Batch API; other providers will run synchronously via the self-hosted proxy.",
-  model:
-    "The specific model the pipeline calls for concept assignment and transform specs. Only models we've validated with ddharmon are selectable — so far that's Anthropic's Claude Sonnet 4.6. Greyed-out models are shown for visibility and become available once we've completed testing on them.",
   apiKey:
     "Your provider API key authorizes this run's LLM calls (concept assignment + transform specs). It's sent over HTTPS for this run only — never written to disk, logs, or the saved run config, and it's cleared when you reload the page. Not needed for Preview mode or local/on-prem models, which need no provider key.",
   displayName: "An optional label to recognize this run in the Runs list. Doesn't affect results.",
@@ -701,3 +703,22 @@ const OPTION_HELP: Record<string, string> = {
   suggestAnalysisIdeas:
     "After the run, do one extra LLM pass (same model, provider, and key as the run) suggesting concrete downstream cross-cohort analyses this harmonization unlocks — ready on the results page, no second key entry. Metadata-only (it suggests, never runs anything). A small added cost, shown in the estimate; off automatically in Preview mode.",
 };
+
+// The provider and model help name the validated models FROM THE LIST, so the copy cannot go stale on a bump.
+function providerHelp(models: ModelInfo[]): string {
+  const tested = validatedByProvider(models, PROVIDER_LABELS);
+  return (
+    "Which LLM provider runs concept assignment. Only providers we've validated end-to-end with ddharmon are selectable; the others are shown greyed-out and will unlock as we finish testing them." +
+    (tested ? ` So far ddharmon has been tested only with ${tested}.` : "") +
+    " Anthropic uses the cost-bounded Batch API; other providers will run synchronously via the self-hosted proxy."
+  );
+}
+
+function modelHelp(models: ModelInfo[]): string {
+  const tested = validatedModelNames(models);
+  return (
+    "The specific model the pipeline calls for concept assignment and transform specs. Only models we've validated with ddharmon are selectable" +
+    (tested ? ` — so far that's ${tested}.` : ".") +
+    " Greyed-out models are shown for visibility and become available once we've completed testing on them."
+  );
+}
