@@ -35,6 +35,7 @@ import {
   startHarmonize,
 } from "@/lib/api";
 import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
+import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
 import {
@@ -52,7 +53,15 @@ import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatD
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { RunKeyField } from "@/components/gate/RunKeyField";
-import { DEFAULT_CDE_SET, type CdeSet, type GatePosition, type JobResult, type RunDictionary, type RunMode } from "@/types";
+import {
+  DEFAULT_CDE_SET,
+  type CdeSet,
+  type GatePosition,
+  type JobResult,
+  type ModelInfo,
+  type RunDictionary,
+  type RunMode,
+} from "@/types";
 
 /**
  * PER-LINE DETAIL FOR THE CONSOLIDATED BILL (review 2026-08-26).
@@ -153,12 +162,29 @@ const GATE_FREE_REASON: Partial<Record<GatePosition, string>> = {
   gate4: "no charge",
 };
 
-/**
- * Only Sonnet 4.6 has been validated end to end against this pipeline. Untested choices are OFFERED but
- * DISABLED, the same treatment the shipped New Run form gives them — visible so the picker does not
- * misrepresent what exists, unselectable so a run cannot be pointed at an unvalidated model.
- */
-const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
+// The provider and model ⓘ name the validated models FROM THE LIST, so the copy cannot go stale on a model bump.
+function providerHelp(models: ModelInfo[]): string {
+  const tested = validatedByProvider(models, PROVIDER_LABELS);
+  return (
+    "Which API the model stages call. " +
+    (tested
+      ? `This pipeline is validated end to end only with ${tested}`
+      : "No provider is validated end to end against this pipeline yet") +
+    "; anything else is listed so you can see it exists, and disabled so a run cannot be pointed at it."
+  );
+}
+
+function modelHelp(models: ModelInfo[]): string {
+  const tested = validatedModelNames(models);
+  return (
+    "The model the paid stages run on. " +
+    (tested
+      ? `This pipeline's prompts and benchmarks were validated only against ${tested}; every other model is listed but disabled.`
+      : "No model is validated against this pipeline's prompts and benchmarks yet, so every one is disabled.") +
+    " Model choice changes both cost and the quality of concept grouping and assignment."
+  );
+}
+
 
 /**
  * Set up — the first of the six staged-review screens (08-13).
@@ -526,15 +552,27 @@ export default function SetupPage() {
   const models = useMemo(() => modelCatalog?.models ?? [], [modelCatalog]);
   const modelsForProvider = useMemo(() => models.filter((m) => m.provider === provider), [models, provider]);
   const providers = useMemo(() => [...new Set(models.map((m) => m.provider))], [models]);
-  const isProviderTested = (pr: string): boolean =>
-    models.some((m) => m.provider === pr && isModelTested(m.id));
-  // Land on the first TESTED model for the provider, so Anthropic defaults to Sonnet 4.6 rather than to
-  // whatever the catalogue happens to list first.
+  /**
+   * Which models are selectable is DATA from core's model list (`validated`), never a model name written here —
+   * a model bump is a core release plus a repin. Untested choices are OFFERED but DISABLED, the same treatment the
+   * New Run form gives them: visible so the picker does not misrepresent what exists, unselectable so a run
+   * cannot be pointed at an unvalidated model.
+   */
+  const isProviderTested = (pr: string): boolean => models.some((m) => m.provider === pr && m.validated);
+  // Keep `model` valid, as New Run does. The first time the list arrives nothing is picked yet: land on the list's
+  // default, its provider included. After that, a provider change (or a pick that is not a validated model of the
+  // provider) re-picks within the provider — the default if it is one of its models, else its first validated one.
   useEffect(() => {
-    if (!modelsForProvider.length) return;
-    const ok = model && modelsForProvider.some((m) => m.id === model && isModelTested(m.id));
-    if (!ok) setModel((modelsForProvider.find((m) => isModelTested(m.id)) ?? modelsForProvider[0]).id);
-  }, [modelsForProvider, model]);
+    if (!modelCatalog) return;
+    const def = modelCatalog.models.find((m) => m.id === modelCatalog.default && m.validated);
+    if (!model && def) {
+      setProvider(def.provider);
+      setModel(def.id);
+      return;
+    }
+    const next = pickModel(modelCatalog, provider, model);
+    if (next && next !== model) setModel(next);
+  }, [modelCatalog, provider, model]);
   const fieldsByDataset = useMemo(
     () => Object.fromEntries((demos?.datasets ?? []).map((d) => [d.id, d.nFields])),
     [demos],
@@ -1859,7 +1897,7 @@ export default function SetupPage() {
               <label htmlFor="provider" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
                 Provider
                 <InfoTip
-                  text="Which API the model stages call. Anthropic is the only provider validated end to end against this pipeline; anything else is listed so you can see it exists, and disabled so a run cannot be pointed at it."
+                  text={providerHelp(models)}
                   label="About the provider options"
                 />
               </label>
@@ -1889,7 +1927,7 @@ export default function SetupPage() {
               <label htmlFor="model" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
                 Model
                 <InfoTip
-                  text="The model the paid stages run on. Claude Sonnet 4.6 is the only one this pipeline's prompts and benchmarks were validated against, so it is the default and the others are disabled. Model choice changes both cost and the quality of concept grouping and assignment."
+                  text={modelHelp(models)}
                   label="About the model options"
                 />
               </label>
@@ -1903,7 +1941,7 @@ export default function SetupPage() {
               >
                 {modelsForProvider.length === 0 && <option value="">No models available</option>}
                 {modelsForProvider.map((m) => {
-                  const tested = isModelTested(m.id);
+                  const tested = m.validated;
                   return (
                     <option key={m.id} value={m.id} disabled={!tested}>
                       {m.label}
