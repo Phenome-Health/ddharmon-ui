@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Star, ExternalLink, Check, ChevronRight } from "lucide-react";
+import { ExternalLink, Check, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { candidateLabel } from "@/lib/cde-identity";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { candidateLabel, definitionWithoutName } from "@/lib/cde-identity";
 import { cdeDetailUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import type { UICandidate } from "@/types";
@@ -29,40 +30,57 @@ import type { UICandidate } from "@/types";
 // star, the filled richness dots and the cos bar all rendered pale-on-white at ~1.15:1. The accent as a MARK
 // on the card is the `accent-on-raised` role.
 
-/** The richness fields a reviewer weighs — how many are actually populated for this candidate. */
-const RICHNESS_FIELDS = ["questionText", "dataType", "units", "permissibleValues", "stewardOrg"] as const;
-
-function richnessOf(c: UICandidate): number {
-  let n = 0;
-  if (c.questionText) n++;
-  if (c.dataType) n++;
-  if (c.units) n++;
-  if (c.permissibleValues && c.permissibleValues.length > 0) n++;
-  if (c.stewardOrg) n++;
-  return n;
-}
+/** The richness fields a reviewer weighs, in the order the meter's tooltip names them. */
+const RICHNESS_FIELDS: { label: string; has: (c: UICandidate) => boolean }[] = [
+  { label: "question text", has: (c) => !!c.questionText },
+  { label: "data type", has: (c) => !!c.dataType },
+  { label: "units", has: (c) => !!c.units },
+  { label: "permissible values", has: (c) => !!c.permissibleValues && c.permissibleValues.length > 0 },
+  { label: "steward", has: (c) => !!c.stewardOrg },
+];
 
 function cos(x: number | null | undefined): string {
   return x == null ? "—" : x.toFixed(3);
 }
 
-function MiniBar({ value }: { value: number }) {
+/**
+ * ONE SET OF FIXED COLUMNS for the header and every row (review round 3). The header strip and the rows used to be
+ * two grids whose last two columns were `auto`, so each sized them to its own content and FIELDS / COS sat over the
+ * wrong cells. The header now also lives INSIDE the scroll box (sticky), so a scrollbar narrows both alike.
+ */
+const COLUMNS = "grid-cols-[1.75rem_minmax(0,1fr)_4.5rem_5.5rem_6rem]";
+
+/**
+ * A column header that explains itself on hover (Bhargav: "add hover tooltips for values, metadata similarity") —
+ * the dotted underline says there is more to read, and it takes focus so a keyboard reaches the same words.
+ */
+function HeadTip({ label, tip }: { label: string; tip: string }) {
   return (
-    <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-surface-track">
-      <div data-testid="cos-bar-fill" className="h-full rounded-full bg-accent-on-raised" style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} />
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} className="cursor-help justify-self-end underline decoration-dotted decoration-1 underline-offset-[3px]">
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs whitespace-normal text-left font-normal normal-case leading-relaxed tracking-normal">
+        {tip}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
-/** A compact "how many of the richness fields are present" meter — dots, so it scans without reading. */
-function RichnessMeter({ score }: { score: number }) {
+/**
+ * The metadata meter — five dots, no count beside them (review round 3: "remove X/Y metadata, just dots"). Which
+ * fields are present is on hover, so the number the words used to carry is not lost, only folded.
+ */
+function RichnessMeter({ c }: { c: UICandidate }) {
+  const has = RICHNESS_FIELDS.filter((f) => f.has(c)).map((f) => f.label);
+  const missing = RICHNESS_FIELDS.filter((f) => !f.has(c)).map((f) => f.label);
+  const score = has.length;
   const total = RICHNESS_FIELDS.length;
+  const said = `${score} of ${total} metadata fields.${has.length ? ` Has: ${has.join(", ")}.` : ""}${missing.length ? ` Missing: ${missing.join(", ")}.` : ""}`;
   return (
-    <span
-      className="inline-flex items-center gap-0.5"
-      title={`${score} of ${total} metadata fields present`}
-      aria-label={`richness ${score} of ${total}`}
-    >
+    <span className="inline-flex items-center gap-0.5" title={said} aria-label={said}>
       {Array.from({ length: total }).map((_, i) => (
         <span
           key={i}
@@ -108,50 +126,37 @@ export function CandidateTable({
   const ordered = [...candidates].sort(
     (a, b) => (b.isChosen ? 1 : 0) - (a.isChosen ? 1 : 0) || a.rank - b.rank,
   );
-  const bestRank = candidates.reduce(
-    (best, c) => (c.cosine > (candidates.find((x) => x.rank === best)?.cosine ?? -Infinity) ? c.rank : best),
-    candidates[0].rank,
-  );
 
   return (
     <div className="flex flex-col gap-1.5">
-      {/* Column key — the ranked table's header, as a light strip above the expandable rows. */}
-      <div
-        data-testid="candidate-columns"
-        className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-3 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-      >
-        <span>#</span>
-        <span>CDE</span>
-        <span className="text-right" title="How many of the 5 catalog metadata fields this CDE has (question, data type, units, permissible values, steward)">
-          Fields
-        </span>
-        <span className="text-right" title="Embedding cosine similarity — the retrieval signal, which can differ from the model's concept-fit pick">
-          cos
-        </span>
-      </div>
-      {/* Icon/column key — so the glyphs are legible without hovering each one. Set in the MUTED text role:
-          it was `--on-raised-faint`, the hairline role that is never text, and measured 3.18:1 (#2). */}
-      <div
-        data-testid="candidate-legend"
-        className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-xs text-on-raised-muted"
-      >
-        <span className="inline-flex items-center gap-1">
-          <Star data-testid="pick-star" className="h-3 w-3 fill-accent-on-raised text-accent-on-raised" />
-          model&apos;s pick
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <RichnessMeter score={3} /> metadata richness
-        </span>
-        <span>
-          <b className="font-semibold text-on-raised-muted">N PV</b> = permissible values
-        </span>
-        <span>click a row for full metadata</span>
-      </div>
+      {/* NO KEY STRIP (review round 3, legend option A). The columns are named for what they hold, the three that
+          need it explain themselves on hover, and the row marks are words — so there is nothing to look up. */}
       <div className="max-h-[30rem] overflow-y-auto rounded-inner border border-rule-quiet-on-raised divide-y divide-rule-quiet-on-raised">
+        <div
+          data-testid="candidate-columns"
+          className={cn(
+            "sticky top-0 z-10 grid items-center gap-3 bg-surface-raised px-3 py-1.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted",
+            COLUMNS,
+          )}
+        >
+          <span>#</span>
+          <span>CDE</span>
+          <HeadTip
+            label="Values"
+            tip="How many permissible values the CDE lists. Weigh them against this group's source values — open a row to see them."
+          />
+          <HeadTip
+            label="Metadata"
+            tip="How many of the 5 catalog metadata fields the CDE fills: question text, data type, units, permissible values, steward. Hover a row's dots for which."
+          />
+          <HeadTip
+            label="Similarity"
+            tip="Embedding similarity between the group and the CDE — the retrieval signal. It can disagree with the model's pick, which ranks on concept fit (the # column)."
+          />
+        </div>
         {ordered.map((c) => {
           const chosen = c.cdeId === chosenId;
           const open = c.cdeId === effectiveExpanded;
-          const score = richnessOf(c);
           const pvCount = c.permissibleValues?.length ?? 0;
           return (
             <div
@@ -170,7 +175,8 @@ export function CandidateTable({
                 title={open ? "Hide this CDE's metadata" : "Show this CDE's metadata (permissible values, data type, steward…)"}
                 onClick={() => setExpandedId(open ? "" : c.cdeId)}
                 className={cn(
-                  "grid w-full grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-3 py-2 text-left",
+                  "grid w-full items-center gap-3 px-3 py-2 text-left",
+                  COLUMNS,
                   chosen ? "bg-surface-ok/40" : "hover:bg-surface-inset",
                 )}
               >
@@ -190,50 +196,57 @@ export function CandidateTable({
                     <span data-testid="candidate-name" className="truncate text-sm font-semibold text-on-raised">
                       {candidateLabel(c, candidates)}
                     </span>
+                    {/* The marks are WORDS, so no key is needed: your target, and the model's pick only when it is
+                        not your target (as delivered they are the same row, and saying both would say nothing). */}
                     {chosen && (
-                      <span title="Your selected target">
-                        <Check className="h-3.5 w-3.5 shrink-0 text-status-ok" data-testid="candidate-chosen-mark" />
+                      <span
+                        data-testid="candidate-tag"
+                        data-tag="target"
+                        className="shrink-0 rounded-pill bg-surface-ok px-2 py-0.5 text-xs font-semibold text-on-ok"
+                      >
+                        your target
                       </span>
                     )}
                     {c.isChosen && !chosen && (
-                      <span title="The model's pick — ranked best on concept fit">
-                        <Star
-                          data-testid="pick-star"
-                          className="h-3.5 w-3.5 shrink-0 fill-accent-on-raised text-accent-on-raised"
-                        />
-                      </span>
-                    )}
-                    {c.rank === bestRank && !c.isChosen && (
                       <span
-                        title="Strongest embedding similarity — but not the model's concept-fit pick"
-                        className="shrink-0 rounded bg-surface-inset px-1 py-0.5 text-xs font-semibold text-on-inset-muted"
+                        data-testid="candidate-tag"
+                        data-tag="model-pick"
+                        title="The model's pick — ranked best on concept fit"
+                        className="shrink-0 rounded-pill border border-rule-on-raised px-2 py-0.5 text-xs font-semibold text-on-raised-muted"
                       >
-                        highest cos
+                        model&apos;s pick
                       </span>
                     )}
                   </span>
-                  <span className="mt-0.5 flex items-center gap-2 pl-5">
-                    {c.endorsed && (
-                      <span className="rounded-pill border border-status-ok px-1.5 py-0 text-xs text-on-ok">NIH-endorsed</span>
-                    )}
-                    <span className="line-clamp-1 text-xs text-on-raised-muted">{c.definition || "—"}</span>
-                  </span>
-                </span>
-                <span className="flex items-center justify-end gap-2 text-right">
-                  {pvCount > 0 && (
-                    <span
-                      data-testid="candidate-pv"
-                      className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-semibold text-on-inset-muted"
-                      title="permissible values"
-                    >
-                      {pvCount} PV
+                  {/* No line at all when the definition was only the name: a "—" under every such row is noise. */}
+                  {(c.endorsed || definitionWithoutName(c.definition, c.cdeId)) && (
+                    <span className="mt-0.5 flex items-center gap-2 pl-5">
+                      {c.endorsed && (
+                        <span className="rounded-pill border border-status-ok px-1.5 py-0 text-xs text-on-ok">NIH-endorsed</span>
+                      )}
+                      <span data-testid="candidate-definition" className="line-clamp-1 text-xs text-on-raised-muted">
+                        {definitionWithoutName(c.definition, c.cdeId)}
+                      </span>
                     </span>
                   )}
-                  <RichnessMeter score={score} />
                 </span>
-                <span className="flex items-center justify-end gap-2">
-                  <MiniBar value={c.cosine} />
-                  <span className="w-10 text-right tabular-nums text-xs text-on-raised">{cos(c.cosine)}</span>
+                <span
+                  data-testid="candidate-pv"
+                  title={pvCount > 0 ? `${pvCount} permissible values — open the row to see them` : "No permissible values listed"}
+                  className={cn("text-right text-xs tabular-nums", pvCount > 0 ? "text-on-raised" : "text-on-raised-muted")}
+                >
+                  {pvCount > 0 ? `${pvCount} ${pvCount === 1 ? "value" : "values"}` : "—"}
+                </span>
+                <span data-testid="candidate-metadata" className="flex justify-end">
+                  <RichnessMeter c={c} />
+                </span>
+                {/* The number alone (review round 3: "for similarity just number, no bar"). */}
+                <span
+                  data-testid="candidate-similarity"
+                  title="Embedding similarity to the group"
+                  className="text-right text-xs tabular-nums text-on-raised"
+                >
+                  {cos(c.cosine)}
                 </span>
               </button>
 
@@ -248,7 +261,7 @@ export function CandidateTable({
                   )}
                   <div>
                     <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">Definition</span>
-                    <p className="text-sm text-on-raised-muted">{c.definition || "—"}</p>
+                    <p className="text-sm text-on-raised-muted">{definitionWithoutName(c.definition, c.cdeId) || "—"}</p>
                   </div>
                   <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-on-raised-muted">
                     {c.dataType && (

@@ -224,7 +224,10 @@ test.describe("Setup — a re-run opens prefilled, and nothing starts until Star
     await expect(alpha.nth(1)).toHaveValue("description");
     await expect(alpha.nth(2)).toHaveValue("units");
     await expect(cards.nth(1).getByTestId("role-select").nth(2)).toHaveValue("");
-    await expect(cards.nth(0).getByTestId("prefill-provenance")).toContainText("Spring run");
+    // Every card came from the same run, so where the roles came from is said ONCE, above the cards (round 5 sweep).
+    await expect(page.getByTestId("prefill-provenance")).toHaveCount(1);
+    await expect(page.getByTestId("prefill-provenance")).toContainText("Spring run");
+    await expect(cards.getByTestId("prefill-provenance")).toHaveCount(0);
 
     // The same options — every one of them still an editable control, including the run mode.
     await expect(page.getByTestId("run-mode")).toHaveValue("sync");

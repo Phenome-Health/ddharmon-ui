@@ -104,7 +104,7 @@ function Inner({
         href={href}
         data-testid={`rail-link-${gate}`}
         aria-label={`${ahead ? "Go to" : "Back to"} ${name}`}
-        className="flex flex-col gap-1 rounded-inner focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        className="flex flex-col rounded-inner focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
       >
         {children}
       </Link>
@@ -116,13 +116,13 @@ function Inner({
         data-testid={`rail-ahead-${gate}`}
         aria-disabled="true"
         title={`${name} — this run has not reached this gate yet.`}
-        className="flex cursor-not-allowed flex-col gap-1 opacity-60"
+        className="flex cursor-not-allowed flex-col opacity-60"
       >
         {children}
       </span>
     );
   }
-  return <span className="flex flex-col gap-1">{children}</span>;
+  return <span className="flex flex-col">{children}</span>;
 }
 
 export function GateRail({
@@ -131,6 +131,8 @@ export function GateRail({
   className,
   jobId,
   runPosition,
+  total,
+  compact = false,
 }: {
   current: GatePosition;
   /** One entry per gate, in order. Exactly five; a short list is a bug, not a collapsed rail. */
@@ -143,14 +145,33 @@ export function GateRail({
   jobId?: string;
   /** Where the run actually is. Gates at or behind it are reachable; gates ahead of it are not. */
   runPosition?: GatePosition | null;
+  /**
+   * THE RUN'S TOTAL, after Gate 4 (2026-10-08, Bhargav's pick C of the rail mockups). The run line used to be a row
+   * of its own above the gates — a whole row of rail height for one chip — so the run's name moved to a title on the
+   * ground above the rail (GateShell) and only the spend stayed here. It sits BESIDE the gates' list, not in it: it
+   * is not a step, and the rail is still five. Omit it (no run) and the rail is the five gates alone.
+   */
+  total?: { amount: string; note: string };
+  /**
+   * COLLAPSED (2026-10-07, Bhargav: "as the user scrolls down, the rail collapses into a tighter version"). All five
+   * gates and the total, one line each: the current gate keeps its name, the others just their number, the total
+   * keeps its amount, and the spend lines go. Every gate stays in the line, so the rail still navigates while the
+   * reviewer is deep in a screen.
+   */
+  compact?: boolean;
 }) {
   const currentIndex = GATE_SEQUENCE.indexOf(current);
   return (
-    <ol
-      aria-label="Review gates"
-      data-testid="gate-rail"
-      className={cn("grid grid-cols-5 gap-1 rounded-card bg-surface-chrome p-2", className)}
+    <div
+      data-testid="gate-rail-box"
+      data-compact={String(compact)}
+      className={cn(
+        "flex gap-1 rounded-card bg-surface-chrome transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+        compact ? "p-1.5" : "p-2",
+        className,
+      )}
     >
+    <ol aria-label="Review gates" data-testid="gate-rail" className="grid min-w-0 flex-1 grid-cols-5 gap-1">
       {items.map((item, i) => {
         const isCurrent = item.gate === current;
         const isDone = i < currentIndex;
@@ -172,7 +193,8 @@ export function GateRail({
             // screen-reader user has no way to tell which screen they are on.
             aria-current={isCurrent ? "step" : undefined}
             className={cn(
-              "flex min-h-8 flex-col gap-1 rounded-inner px-3 py-2",
+              "flex min-h-8 flex-col gap-1 rounded-inner px-3 transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+              compact ? "justify-center py-1" : "py-2",
               // Navy rail (mockup parity): the active gate is a solid blue pill; the rest are plain columns
               // ON the navy bar. The per-gate cost stays — the mockup dropped it, but a reviewer standing
               // downstream of real spend needs the realized-vs-forecast split (UI-SPEC §7.1.3), so it is
@@ -194,25 +216,72 @@ export function GateRail({
                 isCurrent ? "text-on-accent-surface" : isDone ? "text-on-chrome" : "text-on-chrome-muted",
               )}
             >
-              {isDone && <Check aria-hidden="true" className="h-3 w-3" />}
+              {isDone && <Check aria-hidden="true" className="h-3 w-3 shrink-0" />}
               {item.gate === "setup" ? "Set up" : `Gate ${item.gate.slice(4)}`}
+              {/* Collapsed, the current gate keeps its name on the same line; the others are just their number. */}
+              {compact && isCurrent && (
+                <span className="min-w-0 truncate normal-case tracking-normal">{` \u00b7 ${item.label}`}</span>
+              )}
               {isDone && <span className="sr-only">completed</span>}
             </span>
-            <span className="truncate text-sm font-semibold">{item.label}</span>
-            <span
-              data-cost={item.cost.kind}
+            {/* The name and the spend FOLD rather than unmount (review round 1: the instant swap read as
+                "jerky"): a 0fr↔1fr grid row eases the height, the fade covers the clip, and `invisible` lands at the
+                end of the fold so a folded line is out of the a11y tree and the tab order. No motion if reduced. */}
+            <div
+              data-rail-detail
+              aria-hidden={compact ? true : undefined}
               className={cn(
-                "text-xs",
-                item.cost.kind === "realized" ? "font-semibold" : "font-normal",
-                isCurrent ? "text-on-accent-surface" : "text-on-chrome-muted",
+                "grid transition-[grid-template-rows,opacity,visibility] duration-200 ease-out motion-reduce:transition-none",
+                compact ? "invisible grid-rows-[0fr] opacity-0" : "visible grid-rows-[1fr] opacity-100",
               )}
             >
-              {item.cost.text}
-            </span>
+              <div className="flex min-h-0 flex-col gap-1 overflow-hidden pt-1">
+                <span className="truncate text-sm font-semibold">{item.label}</span>
+                <span
+                  data-cost={item.cost.kind}
+                  className={cn(
+                    "text-xs",
+                    item.cost.kind === "realized" ? "font-semibold" : "font-normal",
+                    isCurrent ? "text-on-accent-surface" : "text-on-chrome-muted",
+                  )}
+                >
+                  {item.cost.text}
+                </span>
+              </div>
+            </div>
             </Inner>
           </li>
         );
       })}
     </ol>
+    {total && (
+      // Set like a gate column, so it folds with them: a label line that stays, and the rest on the same 0fr/1fr fold.
+      // Collapsed, the amount rides up onto the label line, as the current gate's name does.
+      <div
+        data-testid="rail-total"
+        className={cn(
+          "flex min-h-8 w-32 shrink-0 flex-col items-end gap-1 border-l border-rule-on-chrome px-3 text-right text-on-chrome transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+          compact ? "justify-center py-1" : "py-2",
+        )}
+      >
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-eyebrow text-on-chrome-muted">
+          Total
+          {compact && <span className="normal-case tabular-nums tracking-normal text-on-chrome">{total.amount}</span>}
+        </span>
+        <div
+          aria-hidden={compact ? true : undefined}
+          className={cn(
+            "grid transition-[grid-template-rows,opacity,visibility] duration-200 ease-out motion-reduce:transition-none",
+            compact ? "invisible grid-rows-[0fr] opacity-0" : "visible grid-rows-[1fr] opacity-100",
+          )}
+        >
+          <div className="flex min-h-0 flex-col items-end gap-1 overflow-hidden pt-1">
+            <span className="text-sm font-semibold tabular-nums">{total.amount}</span>
+            <span className="text-xs text-on-chrome-muted">{total.note}</span>
+          </div>
+        </div>
+      </div>
+    )}
+    </div>
   );
 }

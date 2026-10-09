@@ -85,6 +85,11 @@ export function CommitBar({
   className,
 }: CommitBarProps) {
   return (
+    // THE GROUND BAND (review round 3, Bhargav: "i dont like how this box overlaps onto the main panels when i'm mid
+    // page. it should keep its separation like the gate rail up top"). The pin is sticky and painted the page's ground
+    // colour, so mid-page the panels scroll away under 12px of ground above the bar and 12px below it, as they do
+    // under the rail's pin. `-mt-3` gives back the band's top, so at the end of the page the gap above is unchanged.
+    <div data-testid="commit-bar-pin" className="sticky bottom-0 z-10 -mt-3 bg-surface-field pb-3 pt-3">
     <div
       data-testid="commit-bar"
       // The amount as DATA as well as words. A gate asserting "this press carries a non-zero charge" has
@@ -93,7 +98,7 @@ export function CommitBar({
       data-total={total === undefined || done ? "" : String(total)}
       data-first-charge={String(firstCharge)}
       className={cn(
-        "sticky bottom-0 z-10 flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
+        "flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
         className,
       )}
     >
@@ -129,6 +134,13 @@ export function CommitBar({
             </p>
           )}
           {keyField}
+          {/* Beside the button, where the other gates put their spend line — on a row of its own it made Gate 4's
+              bar a line taller than every other gate's (review round 1). */}
+          {assurance && (
+            <p data-testid="commit-assurance" className="max-w-[80ch] text-xs text-on-raised-muted">
+              {assurance}
+            </p>
+          )}
         </div>
         <Button
           type="button"
@@ -145,11 +157,7 @@ export function CommitBar({
         </Button>
       </div>
 
-      {assurance && (
-        <p data-testid="commit-assurance" className="max-w-[80ch] text-xs text-on-raised-muted">
-          {assurance}
-        </p>
-      )}
+    </div>
     </div>
   );
 }

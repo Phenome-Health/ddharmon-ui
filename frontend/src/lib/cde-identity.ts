@@ -45,3 +45,22 @@ export function pickedCandidateId(
   const hit = ext && pick.chosen ? candidates.find((c) => c.cdeExternalId === ext) : undefined;
   return hit ? hit.cdeId : pick.chosen;
 }
+
+/**
+ * A catalog definition WITHOUT the element's name at its head (round 5 repeated-copy sweep). The flattened catalog
+ * often prefixes a definition with the element's name — sometimes twice ("Other relative PhenX Other relative PhenX")
+ * — so a row read "<name>" over "<name> <name> <definition>". The name is stripped, case-insensitively and as often
+ * as it leads; what is left is the definition proper, or "" when the definition was only the name.
+ */
+export function definitionWithoutName(definition: string | null | undefined, name: string | null | undefined): string {
+  let d = (definition ?? "").trim();
+  const n = (name ?? "").trim();
+  if (!n) return d;
+  while (d.toLowerCase().startsWith(n.toLowerCase())) {
+    const rest = d.slice(n.length);
+    // Only a whole-name prefix: the next character must end the name (a space, punctuation, or the end).
+    if (rest && /^[\w]/.test(rest)) break;
+    d = rest.replace(/^[\s:;,.\-–—]+/, "").trim();
+  }
+  return d;
+}

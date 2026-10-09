@@ -41,6 +41,44 @@ function csv(rows: string[][]): string {
   return rows.map((r) => r.join(",")).join("\n");
 }
 
+/** One entry of the model list (`GET /api/harmonize/models`, `static-data/models.json` in this build). */
+interface SetupModel {
+  id: string;
+  label: string;
+  provider: string;
+  validated: boolean;
+}
+
+/** Swap the bundled model list for one of the test's own. */
+async function serveSetupModels(page: Page, models: SetupModel[], defaultId: string): Promise<void> {
+  await page.route("**/static-data/models.json", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ models, default: defaultId, source: "core" }),
+    }),
+  );
+}
+
+/** Every option in Setup's model dropdown, as its value and whether it can be picked. */
+async function modelSelectOptions(page: Page): Promise<{ value: string; disabled: boolean }[]> {
+  return page.getByTestId("model").evaluate((el) =>
+    Array.from((el as HTMLSelectElement).options)
+      .filter((o) => o.value)
+      .map((o) => ({ value: o.value, disabled: o.disabled })),
+  );
+}
+
+/** Hover one ⓘ and return its tooltip; the previous tooltip is dismissed first so only one is ever open. */
+async function setupTooltip(page: Page, label: string): Promise<Locator> {
+  await page.mouse.move(0, 0, { steps: 8 });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await page.getByRole("button", { name: label }).hover();
+  const tip = page.getByRole("tooltip");
+  await expect(tip).toBeVisible();
+  return tip;
+}
+
 /** A dictionary: one row per VARIABLE. */
 function dictionaryCsv(n: number, { repeat = false }: { repeat?: boolean } = {}): string {
   const header = ["variable_name", "description", "units"];
@@ -833,18 +871,116 @@ test.describe("Setup — the review pass: layout melded with the New Run form", 
     // Present outside preview mode...
     await expect(page.getByTestId("provider")).toBeVisible();
     await expect(page.getByTestId("model")).toBeVisible();
-    // ...and every model the picker leaves ENABLED is one the pipeline was validated against.
-    const enabled = await page.getByTestId("model").evaluate((el) =>
-      Array.from((el as HTMLSelectElement).options)
-        .filter((o) => !o.disabled && o.value)
-        .map((o) => o.value),
+    // ...and the models the picker leaves ENABLED are exactly the ones the bundled list marks validated for the
+    // provider shown — read from the list itself, so a model bump never needs this test edited.
+    const listPath = path.resolve(path.dirname(test.info().file), "..", "..", "public", "static-data", "models.json");
+    const list = JSON.parse(readFileSync(listPath, "utf8")) as { models: SetupModel[] };
+    const provider = await page.getByTestId("provider").inputValue();
+    const validated = list.models.filter((m) => m.provider === provider && m.validated).map((m) => m.id);
+    expect(validated.length).toBeGreaterThan(0);
+    expect(await modelSelectOptions(page)).toEqual(
+      list.models
+        .filter((m) => m.provider === provider)
+        .map((m) => ({ value: m.id, disabled: !m.validated })),
     );
-    expect(enabled.length).toBeGreaterThan(0);
-    for (const id of enabled) expect(id).toMatch(/sonnet.*4[.-]6/i);
     // Preview calls no provider, so neither control is shown.
     await page.getByTestId("run-mode").selectOption("preview");
     await expect(page.getByTestId("provider")).toHaveCount(0);
     await expect(page.getByTestId("model")).toHaveCount(0);
+  });
+
+  /*
+   * THE PICKER FOLLOWS THE MODEL LIST, NOT A NAME WRITTEN INTO THIS SCREEN (feature/model-registry). Which models
+   * ddharmon was validated against is decided in core and served as `{models, default}` — in this static build by
+   * `static-data/models.json`. The list is swapped for one whose validated default is a model this UI has never
+   * heard of: if Setup still lands on, enables, or names Sonnet 4.6, it is reading a hardcoded name. New Run's
+   * picker is held to the same rule in `model-picker.spec.ts`.
+   */
+  test("@setup @models a list naming a different validated model: the picker and its help follow the list", async ({
+    page,
+  }) => {
+    await serveSetupModels(
+      page,
+      [
+        { id: "claude-next-5", label: "Claude Next 5", provider: "anthropic", validated: true },
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", validated: false },
+        { id: "gpt-4o", label: "GPT-4o", provider: "openai", validated: false },
+      ],
+      "claude-next-5",
+    );
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByTestId("model")).toHaveValue("claude-next-5");
+    expect(await modelSelectOptions(page)).toEqual([
+      { value: "claude-next-5", disabled: false },
+      { value: "claude-sonnet-4-6", disabled: true },
+    ]);
+
+    const modelTip = await setupTooltip(page, "About the model options");
+    await expect(modelTip).toContainText("Claude Next 5");
+    await expect(modelTip).not.toContainText("Sonnet");
+    const providerTip = await setupTooltip(page, "About the provider options");
+    await expect(providerTip).toContainText("Anthropic (Claude Next 5)");
+    await expect(providerTip).not.toContainText("Sonnet");
+  });
+
+  test("@setup @models the first selection is the list's default, its provider included", async ({ page }) => {
+    await serveSetupModels(
+      page,
+      [
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", validated: true },
+        { id: "gemini/gemini-3-pro", label: "Gemini 3 Pro", provider: "gemini", validated: true },
+      ],
+      "gemini/gemini-3-pro",
+    );
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByTestId("provider")).toHaveValue("gemini");
+    await expect(page.getByTestId("model")).toHaveValue("gemini/gemini-3-pro");
+    // Two validated models across two providers are both named, each under its provider.
+    await expect(await setupTooltip(page, "About the provider options")).toContainText(
+      "Anthropic (Claude Sonnet 4.6) and Google Gemini (Gemini 3 Pro)",
+    );
+  });
+
+  test("@setup @models a re-run keeps the earlier run's validated model over the list's default", async ({ page }) => {
+    // The list's default is only where a NEW pick lands. Re-run seeds the earlier run's model once the list has
+    // loaded; landing on the default must not overwrite it while it is still a validated model.
+    await serveSetupModels(
+      page,
+      [
+        { id: "claude-next-5", label: "Claude Next 5", provider: "anthropic", validated: true },
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", validated: true },
+      ],
+      "claude-next-5",
+    );
+    await page.route("**/static-data/jobs.json", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            jobId: "earlier",
+            displayName: "Earlier run",
+            status: "complete",
+            phase: "complete",
+            gatePosition: "gate4",
+            completed: 2,
+            total: 2,
+            errorMessage: null,
+            config: { run_mode: "batch", model_tag: "claude-sonnet-4-6" },
+            decisions: {},
+            createdAt: 1787802198.7035,
+            updatedAt: 1787802205.341791,
+            nRecords: 42,
+          },
+        ]),
+      }),
+    );
+    await page.goto("/run/new/setup?rerun=earlier");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("model")).toHaveValue("claude-sonnet-4-6");
   });
 
   test("@setup the same dictionary added twice is flagged, and named", async ({ page }) => {
@@ -1572,8 +1708,14 @@ test.describe("Setup — the boundary, with the report retired", () => {
     ]) {
       await expect(page.getByTestId(id), `${id} belonged to the retired report`).toHaveCount(0);
     }
-    // And its prose is not paraphrased somewhere else on the screen either.
-    const text = await page.locator("main").innerText();
+    // And its prose is not paraphrased somewhere else on the screen either. The how-to panel is excluded: it is
+    // open by default since 2026-10-06, and its own step legitimately places the embedded-text check "before you
+    // spend" (asserted by the 08-14g how-to test below) — that is the how-to's contract, not the report's prose.
+    const text = await page.locator("main").evaluate((el) => {
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.querySelector("[data-testid='how-to']")?.remove();
+      return clone.innerText;
+    });
     expect(text).not.toMatch(/what preparation found/i);
     expect(text).not.toMatch(/before you spend/i);
   });
@@ -2478,7 +2620,8 @@ test.describe("Setup — the how-to describes the screen that exists (08-14g)", 
     await page.waitForLoadState("networkidle");
     const panel = page.getByTestId("how-to");
     await expect(panel).toBeVisible();
-    await panel.getByRole("button").first().click();
+    // Open by default since 2026-10-06 — asserted, not clicked (a click would now fold it).
+    await expect(panel.getByRole("button", { name: "Hide how to use this screen" })).toBeVisible();
     return panel;
   };
 

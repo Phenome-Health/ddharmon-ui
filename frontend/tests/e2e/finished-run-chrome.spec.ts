@@ -111,7 +111,7 @@ test.describe("finished run — the rail", () => {
   });
 
   for (const viewed of ["setup", "gate1", "gate2", "gate3", "gate4"] as GatePosition[]) {
-    test(`@finished-chrome @rail viewed from ${viewed}, every passed gate shows its spend and the rail sums to the header`, async ({
+    test(`@finished-chrome @rail viewed from ${viewed}, every passed gate shows its spend and the rail sums to its TOTAL`, async ({
       page,
     }) => {
       await openParkedAtGate4(page, viewed);
@@ -127,14 +127,14 @@ test.describe("finished run — the rail", () => {
         await expect(cost).toHaveText(text);
       }
       await expect(page.locator("[data-testid='gate-rail']")).not.toContainText("est. pending");
-      // THE INVARIANT: the rail's realized columns sum to what the header says the run spent.
+      // THE INVARIANT: the rail's realized columns sum to what its TOTAL says the run spent.
       const texts = await page
         .locator("[data-testid='gate-rail'] [data-cost='realized']")
         .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
       const sum = texts.reduce((s, t) => s + usd(t), 0);
-      const chip = await page.locator("[data-testid='run-chip']").textContent();
-      expect(usd(chip)).toBeCloseTo(TOTAL, 10);
-      expect(sum).toBeCloseTo(usd(chip), 10);
+      const total = await page.getByTestId("rail-total").textContent();
+      expect(usd(total)).toBeCloseTo(TOTAL, 10);
+      expect(sum).toBeCloseTo(usd(total), 10);
     });
   }
 });
@@ -225,8 +225,12 @@ test.describe("finished run — the resume banner", () => {
     });
   }
 
-  test("@finished-chrome @resume Gate 4, where the run IS parked, still shows it", async ({ page }) => {
+  test("@finished-chrome @resume Gate 4, where the run IS parked, says the run is complete", async ({ page }) => {
+    // Bhargav, 2026-10-07: "Paused at Gate 4" is weird — there is nothing left to resume. Every stage has run by
+    // Gate 4; what remains is the export, so the banner says the run is complete instead of offering a resume.
     await openParkedAtGate4(page, "gate4");
-    await expect(page.locator("[data-testid='resume-banner']")).toContainText("Paused at Gate 4");
+    const banner = page.locator("[data-testid='resume-banner']");
+    await expect(banner).toContainText("Run complete");
+    await expect(banner).not.toContainText(/paused|resume/i);
   });
 });

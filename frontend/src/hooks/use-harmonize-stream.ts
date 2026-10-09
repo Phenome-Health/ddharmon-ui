@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { JobResult } from "@/types";
 import { IS_STATIC, appendAuthToken, cancelJob, getResult } from "@/lib/api";
+import { streamPayload } from "@/lib/stream-payload";
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 1500;
@@ -29,9 +30,6 @@ const POLL_MS = 8000;
 export interface StreamError {
   message: string;
 }
-
-/** The keys the thin frame does NOT carry, and which therefore come from the fetched payload. */
-type Payload = Pick<JobResult, "result" | "decisions" | "analysisIdeas" | "composites" | "config" | "dictionaries">;
 
 /**
  * Frames at which the stream closes: terminal, plus a gate pause (which has no worker to report) — EXCEPT a Full-auto
@@ -283,22 +281,11 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
   const merged = useMemo<JobResult | null>(() => {
     if (!jobState) return null;
     if (IS_STATIC) return jobState;
-    const fetched = payloadQuery.data;
-    // The six payload keys are ALWAYS present, defaulted, even before the first fetch lands. Consumers
-    // read `jobState.config.demo` and `jobState.decisions` unguarded, so handing them an object missing
-    // those keys would turn a thinner frame into a runtime crash — the defect a purely subtractive change
-    // would have shipped.
-    const payload: Payload = {
-      result: fetched?.result ?? null,
-      decisions: fetched?.decisions ?? {},
-      analysisIdeas: fetched?.analysisIdeas ?? null,
-      composites: fetched?.composites ?? null,
-      config: fetched?.config ?? {},
-      // The run's own column mapping (backend projection of dict_specs). Only /result carries it — the SSE
-      // frame does not — so it must ride in the fetched payload or the back-to-Setup replay reads nothing.
-      dictionaries: fetched?.dictionaries ?? [],
-    };
-    return { ...payload, ...jobState };
+    // The payload keys, ALWAYS present and defaulted even before the first fetch lands (`lib/stream-payload.ts`):
+    // consumers read `jobState.config.demo` and `jobState.decisions` unguarded, so handing them an object missing
+    // those keys would turn a thinner frame into a runtime crash — the defect a purely subtractive change would
+    // have shipped.
+    return { ...streamPayload(payloadQuery.data), ...jobState };
   }, [jobState, payloadQuery.data]);
 
   return { jobState: merged, done, error, cancel, reconnecting };

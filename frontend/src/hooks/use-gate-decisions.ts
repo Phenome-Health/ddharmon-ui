@@ -8,6 +8,7 @@ import {
   decisionItemKey,
   deriveStaleness,
   indexDecisions,
+  isEmptyDecisionPayload,
   mergeDecisionIndex,
   optionSetKey,
   shouldHydrate,
@@ -117,9 +118,19 @@ export function useGateDecisions(
     pinned,
     enabled = true,
     frozen = false,
+    baseline = null,
   }: {
     pinned?: boolean;
     enabled?: boolean;
+    /**
+     * Decisions the run SHIPS with — the shared demo's declared score (`job.demoScore`, via `shippedDeclaration`).
+     *
+     * A BASELINE, not an edit: merged UNDER the tab's own decisions (a guest's write to the same item wins) and never
+     * written to the sandbox, so the banner's unsaved count stays what the guest did, and a fresh tab opens on the
+     * demo as shipped. Merged once per run, when it first arrives — it rides the run's payload, which lands after
+     * the first render. `null` (every real run) changes nothing.
+     */
+    baseline?: GroupedDecisions | null;
     /**
      * The run has already PASSED this gate, so the screen is a RECORD (08-16c Task 2).
      *
@@ -175,6 +186,14 @@ export function useGateDecisions(
     baseRef.current = seedBases(baseRef.current, versions[kind]);
     setIndex((prev) => mergeDecisionIndex(indexDecisions(payload), prev));
   }, [jobId, data, kind]);
+
+  const baselineRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!baseline || !jobId || baselineRef.current === jobId || isEmptyDecisionPayload(baseline)) return;
+    baselineRef.current = jobId;
+    // The tab's own decisions win: a guest who re-declared a component keeps their version on every reload.
+    setIndex((prev) => mergeDecisionIndex(indexDecisions(baseline), prev));
+  }, [jobId, baseline]);
 
   const stale = useMemo(() => {
     const derived = deriveStaleness(index);

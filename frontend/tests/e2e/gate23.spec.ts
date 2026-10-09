@@ -558,15 +558,17 @@ test.describe("gate2 screen", () => {
     expect(listFirst).toBe(true);
   });
 
-  test("@gate2 #2 the ranked-candidates legend and row indicators are legible on the white card", async ({
+  test("@gate2 #2 the ranked-candidates header and row marks are legible on the white card", async ({
     page,
   }) => {
     // Live-test-2 #2: the legend (model's pick, metadata richness, N PV, cos) and the column key were set
     // in `--on-raised-faint` — the HAIRLINE role, which index.css says is never text — and the empty
     // richness dots in `--surface-track` (~1.2:1 on white), so "3 of 5" read as three dots of nothing.
+    // (Review round 3 retired the legend strip, the star and the cos bar; the header, the word tags, the value
+    // counts, the similarity number and the dots carry the same floors.)
     await serveFinished(page, oneRankedConcept);
     await openGate2(page);
-    await expect(page.locator("[data-testid='candidate-legend']")).toBeVisible();
+    await expect(page.getByTestId("candidate-columns")).toBeVisible();
     const ratios = await page.evaluate(() => {
       type Rgba = [number, number, number, number];
       const parse = (v: string): Rgba => {
@@ -628,14 +630,13 @@ test.describe("gate2 screen", () => {
       const q = (sel: string) => Array.from(document.querySelectorAll(sel));
       const text = (sel: string) => q(sel).map((e) => ratio(getComputedStyle(e).color, e));
       return {
-        legend: text("[data-testid='candidate-legend']"),
         columns: text("[data-testid='candidate-columns']"),
         pv: q("[data-testid='candidate-pv']").map((e) => ratio(getComputedStyle(e).color, e, true)),
+        similarity: text("[data-testid='candidate-similarity']"),
+        tags: q("[data-testid='candidate-tag']").map((e) => ratio(getComputedStyle(e).color, e, true)),
         chevron: q("[data-testid='candidate-expand'] svg[aria-hidden='true']").map((e) =>
           ratio(getComputedStyle(e).color, e),
         ),
-        stars: q("[data-testid='pick-star']").map((e) => ratio(getComputedStyle(e).fill, e)),
-        cosBars: q("[data-testid='cos-bar-fill']").map((e) => ratio(getComputedStyle(e).backgroundColor, e)),
         // a dot's mark is its fill when present, else its ring
         dots: q("[data-testid='richness-dot']").map((e) => {
           const cs = getComputedStyle(e);
@@ -644,14 +645,13 @@ test.describe("gate2 screen", () => {
         }),
       };
     });
-    expect(ratios.legend.length).toBeGreaterThan(0);
+    expect(ratios.columns.length).toBeGreaterThan(0);
+    expect(ratios.tags.length).toBeGreaterThan(0);
     expect(ratios.dots.length).toBeGreaterThan(0);
     expect(ratios.chevron.length).toBeGreaterThan(0);
-    for (const r of [...ratios.legend, ...ratios.columns, ...ratios.pv])
-      expect(r, "legend / column key / PV text must clear AA (4.5:1)").toBeGreaterThanOrEqual(4.5);
-    expect(ratios.stars.length).toBeGreaterThan(0);
-    expect(ratios.cosBars.length).toBeGreaterThan(0);
-    for (const r of [...ratios.dots, ...ratios.chevron, ...ratios.stars, ...ratios.cosBars])
+    for (const r of [...ratios.columns, ...ratios.pv, ...ratios.similarity, ...ratios.tags])
+      expect(r, "header / values / similarity / tag text must clear AA (4.5:1)").toBeGreaterThanOrEqual(4.5);
+    for (const r of [...ratios.dots, ...ratios.chevron])
       expect(r, "a meaningful mark must clear the graphical floor (3:1)").toBeGreaterThanOrEqual(3);
   });
 
@@ -865,15 +865,15 @@ test.describe("gate2 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate2(page);
-    const tile = page.locator(
-      "[data-testid='not-available'][data-thing='concept-gate']",
-    );
-    await expect(tile).toBeVisible();
+    // Said ONCE, in the how-to (review round 3 — it used to repeat on every concept's detail pane).
+    const note = page.getByTestId("how-to-concept-gate");
+    await expect(note).toBeVisible();
+    await expect(page.locator("[data-testid='not-available'][data-thing='concept-gate']")).toHaveCount(0);
     // It names the option and does NOT read as a permanent product gap — the capability exists.
-    await expect(tile).toContainText("Concept-match check");
+    await expect(note).toContainText("concept-match check");
     // And it is not a control: an enable button here would 409, because no route can add a paid stage to
     // a run that has already been created. See the summary's blocker.
-    await expect(tile.locator("button")).toHaveCount(0);
+    await expect(note.locator("button")).toHaveCount(0);
   });
 });
 
@@ -926,9 +926,13 @@ test.describe("gate3 screen", () => {
   }) => {
     await serveFinished(page, undefined, { keep: 0 });
     await openGate3(page);
-    const filter = page.locator("[data-testid='arithmetic-filter']");
+    // A box in the filter menu inside the search since 08-30b; ticking it leaves a chip that says it is on.
+    await page.locator("[data-testid='filter-open']").click();
+    const filter = page.locator("[data-testid='filter-menu'] [data-testid='arithmetic-filter']");
     await expect(filter).toBeVisible();
     await filter.click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-testid='filter-chip']", { hasText: "Arithmetic recodes only" })).toBeVisible();
     const rows = page.locator("[data-testid='spec-row']");
     await expect(rows.first()).toBeVisible();
     const all = await rows.evaluateAll((els) =>
@@ -965,7 +969,8 @@ test.describe("gate3 screen", () => {
       .first();
     await expect(failed).toBeVisible();
     await expect(failed).toHaveAttribute("data-review", "true");
-    await expect(failed).toContainText("did not generate");
+    // Why it is failed is said once for the concept, in the value-mapping intro (round 5 sweep), not on the tile.
+    await expect(page.getByTestId("value-map-explainer")).toContainText(/no recode generated/i);
   });
 
   test("@gate3 no-transform-required is distinct from not-generated", async ({
@@ -982,7 +987,8 @@ test.describe("gate3 screen", () => {
       .locator("[data-testid='spec-row'][data-state='no-transform']")
       .first();
     await expect(none).toBeVisible();
-    await expect(none).toContainText("No transform required");
+    // Said once, in the header ("identity (already aligned)") — not again in the body (review round 1).
+    await expect(none).toContainText("already aligned");
     await expect(none).not.toContainText("did not generate");
   });
 
@@ -1015,19 +1021,17 @@ test.describe("gate3 screen", () => {
   }) => {
     await serveFinished(page);
     await openGate3(page);
-    const tile = page.locator(
-      "[data-testid='not-available'][data-thing='concept-gate']",
-    );
-    await expect(tile).toBeVisible();
-    await expect(tile).toHaveAttribute("data-claim", "not-enabled");
-    await expect(tile).toContainText(
-      "Concept-match check — not enabled for this run.",
-    );
+    // Said ONCE, in the how-to (review round 3 — it used to repeat on every concept's detail pane).
+    const note = page.getByTestId("how-to-concept-gate");
+    await expect(note).toBeVisible();
+    await expect(page.locator("[data-testid='not-available'][data-thing='concept-gate']")).toHaveCount(0);
+    await expect(note).toHaveAttribute("data-claim", "not-enabled");
+    await expect(note).toContainText(/left the concept-match check off/i);
     // Never a silent pass, and never a permanent product gap: the capability exists, this run did not buy it.
     await expect(
       page.locator("[data-testid='concept-match-flag']"),
     ).toHaveCount(0);
-    await expect(tile).not.toContainText(/not supported|cannot|never/i);
+    await expect(note).not.toContainText(/not supported|cannot|never/i);
   });
 
   test("@gate3 on an opted-in run a flagged spec shows the flag and routes to review", async ({
@@ -1057,6 +1061,7 @@ test.describe("gate3 screen", () => {
     await expect(
       page.locator("[data-testid='not-available'][data-thing='concept-gate']"),
     ).toHaveCount(0);
+    await expect(page.getByTestId("how-to-concept-gate")).toHaveCount(0);
   });
 
   test("@gate3 a spec edit survives a reload", async ({ page }) => {
@@ -1529,13 +1534,14 @@ test.describe("gate3 spec edits merge", () => {
     await row.locator("[data-testid='reject-accept']").click();
 
     await expect(row).toHaveAttribute("data-rejected", "true");
-    await expect(row).toHaveCSS("border-top-style", "dashed");
+    // Review round 4: no dashed border — the red "rejected" tag is the one signal ("the reject tag is enough").
+    await expect(row).toHaveCSS("border-top-style", "solid");
     await expect(row.locator("[data-testid='spec-mapping-editor']")).toHaveCount(0);
     await expect(row.locator("[data-testid='spec-rejected-note']")).toContainText(
       /left out of the notebook and the mapping table/i,
     );
     await expect(row.locator("[data-testid='spec-rejected-note']")).toContainText(/Un-reject/);
-    await expect(summary).toHaveText("not exported — rejected");
+    await expect(summary).toHaveText("not exported");
     await expect(row.locator("[data-testid='spec-row-coverage']")).toHaveCount(0);
     await expect(row.locator("[data-testid='spec-note-input']")).toHaveAttribute(
       "placeholder",
@@ -1693,5 +1699,84 @@ test.describe("gate2 reshaped at gate 1", () => {
   test("@gate2 a part of an accepted division says it is one", async ({ page }) => {
     const note = await open(page, (r) => ({ ...r, groupId: PART, id: PART, readjudicatedFrom: GROUP }), PART);
     await expect(note).toContainText(/one part of a division you accepted/i);
+  });
+});
+
+// --- Gate 2's ranked candidates without a key (review round 3, legend option A) -------------------------------
+
+test.describe("gate2 candidate table — no key, the columns say it", () => {
+  // Bhargav picked A of the legend mockups: "A + add hover tooltips for values, metadata similarity. remove X/Y
+  // metadata, just dots. for similarity just number, no bar."
+  async function openOne(page: Page): Promise<Locator> {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await serveFinished(page, oneRankedConcept);
+    await openGate2(page);
+    const rows = page.locator("[data-testid='candidate-row']");
+    await expect(rows.first()).toBeVisible();
+    return rows;
+  }
+
+  test("@gate2 no key strip; one header — #, CDE, Values, Metadata, Similarity", async ({ page }) => {
+    await openOne(page);
+    await expect(page.locator("[data-testid='candidate-legend']")).toHaveCount(0);
+    const head = page.getByTestId("candidate-columns");
+    await expect(head.locator(":scope > *")).toHaveText(["#", "CDE", "Values", "Metadata", "Similarity"]);
+  });
+
+  test("@gate2 Values, Metadata and Similarity each explain themselves on hover", async ({ page }) => {
+    await openOne(page);
+    const head = page.getByTestId("candidate-columns");
+    for (const [label, says] of [
+      ["Values", /permissible values/i],
+      ["Metadata", /5 catalog/i],
+      ["Similarity", /embedding/i],
+    ] as const) {
+      await head.getByText(label, { exact: true }).hover();
+      await expect(page.getByRole("tooltip")).toContainText(says);
+      // Moved in steps, as a hand moves: Radix keeps a tooltip open across one jump while it waits for the next move.
+      await page.mouse.move(0, 0, { steps: 8 });
+      await expect(page.getByRole("tooltip")).toHaveCount(0);
+    }
+  });
+
+  test("@gate2 every header sits over its own column", async ({ page }) => {
+    const rows = await openOne(page);
+    const head = page.getByTestId("candidate-columns");
+    for (const [label, cell] of [
+      ["Values", "candidate-pv"],
+      ["Metadata", "candidate-metadata"],
+      ["Similarity", "candidate-similarity"],
+    ] as const) {
+      const h = (await head.getByText(label, { exact: true }).boundingBox())!;
+      const c = (await rows.first().getByTestId(cell).boundingBox())!;
+      // Right-aligned columns: the header's right edge is the cell's right edge.
+      expect(Math.abs(h.x + h.width - (c.x + c.width)), `${label} is not over its column`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test("@gate2 a row: values in words, metadata as dots alone, similarity as a number alone", async ({ page }) => {
+    const rows = await openOne(page);
+    const row = rows.first();
+    await expect(row.getByTestId("candidate-pv")).toHaveText(/^(\d+ values?|—)$/);
+    await expect(row.getByTestId("candidate-metadata").locator("[data-testid='richness-dot']")).toHaveCount(5);
+    expect(((await row.getByTestId("candidate-metadata").textContent()) ?? "").trim()).toBe("");
+    await expect(row.getByTestId("candidate-similarity")).toHaveText(/^\d\.\d{3}$/);
+    await expect(page.locator("[data-testid='cos-bar-fill']")).toHaveCount(0);
+  });
+
+  test("@gate2 the marks are words: 'your target', and 'model's pick' only when it is not your target", async ({ page }) => {
+    const rows = await openOne(page);
+    await expect(page.locator("[data-testid='pick-star'], [data-testid='candidate-chosen-mark']")).toHaveCount(0);
+    const chosen = page.locator("[data-testid='candidate-row'][data-chosen='true']");
+    await expect(chosen.getByTestId("candidate-tag")).toHaveText("your target");
+    // As delivered the model's pick IS the target, so it says nothing more.
+    await expect(page.getByText("model's pick", { exact: true })).toHaveCount(0);
+    await pickCandidate(page, page.locator("[data-testid='candidate-row']:not([data-chosen='true'])").first());
+    const pick = page.locator("[data-testid='candidate-row'][data-model-pick='true']");
+    await expect(pick.getByTestId("candidate-tag")).toHaveText("model's pick");
+    await expect(page.locator("[data-testid='candidate-row'][data-chosen='true']").getByTestId("candidate-tag")).toHaveText(
+      "your target",
+    );
+    expect(await rows.count()).toBeGreaterThan(1);
   });
 });

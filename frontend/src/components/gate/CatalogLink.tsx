@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { Highlight } from "@/components/ui/highlight";
 import { catalogPageFor } from "@/lib/links";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +25,13 @@ export function CatalogLink({
   className?: string;
 }) {
   const href = catalogPageFor({ externalId, generated });
-  if (!href) return <span className={className}>{name}</span>;
+  // The name follows the gate's search highlight (review round 5: the CDE is searched, so its match is marked).
+  if (!href)
+    return (
+      <span className={className}>
+        <Highlight text={name} />
+      </span>
+    );
   return (
     <a
       data-testid="catalog-link"
@@ -37,7 +44,7 @@ export function CatalogLink({
         className,
       )}
     >
-      {name}
+      <Highlight text={name} />
       <ExternalLink aria-hidden="true" className="h-3 w-3 shrink-0 self-center" />
     </a>
   );

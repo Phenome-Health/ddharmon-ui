@@ -1,7 +1,7 @@
 /**
  * I2 (display half) — every place a gate screen states money spent agrees with every other, and with the run.
  *
- * The header chip, the rail's per-gate realized amounts, and Gate 3/4's "Already spent to reach this gate" are
+ * The rail's TOTAL, the rail's per-gate realized amounts, and Gate 3/4's "Already spent to reach this gate" are
  * three views of one number. The walk found them disagreeing (F3 header reset mid-leg, F14 per-leg totals,
  * F10 a rail value changing after the fact). The server-side half (ledger ⊇, monotonic) is in the driver.
  */
@@ -24,13 +24,13 @@ async function railByGate(page: Page): Promise<Record<string, number>> {
 }
 
 test.describe("I2 spend display", () => {
-  test("header chip == the run's cost == rail realized sum == 'already spent'", async ({ page, request }) => {
+  test("rail TOTAL == the run's cost == rail realized sum == 'already spent'", async ({ page, request }) => {
     onlyAt("gate1", "gate2", "gate3", "gate4");
     const run = await job(request);
     await gotoGate(page, STAGE);
-    const chip = page.getByTestId("run-chip");
-    await expect(chip).toBeVisible();
-    const header = usd(await chip.textContent());
+    const total = page.getByTestId("rail-total");
+    await expect(total).toBeVisible();
+    const header = usd(await total.textContent());
     // Every screen amount is rounded to the cent, so "equal" means within half a cent of the unrounded figure,
     // and a sum of N rounded cells may differ from the rounded total by up to N half-cents.
     const cent = 0.005 + 1e-9;

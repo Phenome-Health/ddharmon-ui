@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { asOwnedRun, serveRun } from "./gate1-fixture";
 
 /**
  * The staged-review gate walk — the tracer's end-to-end assertion.
@@ -32,6 +33,8 @@ async function conceptGroupIds(page: import("@playwright/test").Page): Promise<s
 
 test.describe("staged review", () => {
   test("@gates the reviewer can resume at gate 1 with the same concept groups after a reload", async ({ page }) => {
+    // The reviewer's OWN run: the shared demo shows no resume banner (it was built parked; nobody stopped it).
+    await serveRun(page, asOwnedRun);
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.evaluate(() => document.fonts.ready);
     await page.waitForLoadState("networkidle");
@@ -93,7 +96,8 @@ test.describe("staged review", () => {
       "data-cost",
       "forecast",
     );
-    await expect(page.getByText(/Already spent to reach this gate/)).toBeVisible();
+    // The sum block's realized line (reworded in review round 1: "Spent so far").
+    await expect(page.locator("[data-sum-line='realized']")).toHaveText(/^Spent so far/);
   });
 
   test("@gates the how-to panel names where spending starts", async ({ page }) => {
@@ -103,9 +107,8 @@ test.describe("staged review", () => {
     // Written for someone who has never used the tool: numbered actions, in order, naming their control,
     // and saying plainly when money starts being spent. Since §0.1's reversal that is the run's FIRST
     // charge, and since the Gate 0 demotion (2026-08-26) that press lives on Set up.
-    const toggle = page.getByRole("button", { name: /how to use this screen/i });
-    await expect(toggle).toBeVisible();
-    await toggle.click();
+    // Open by default (2026-10-06): the reviewer reads it without a click.
+    await expect(page.getByRole("button", { name: "Hide how to use this screen" })).toBeVisible();
     await expect(page.getByText(/already charged on Set up/i)).toBeVisible();
     // …and it does not still send the reviewer to a screen that no longer exists.
     await expect(page.getByText(/Gate 0/i)).toHaveCount(0);
@@ -137,20 +140,13 @@ test.describe("five screens", () => {
       // Resolves: NOT the 404 fallback, which is the only other thing a `/run/...` path could hit.
       await expect(page.getByText("404 — page not found")).toHaveCount(0);
 
-      // (2) Masthead: an eyebrow, a display h1 and a subhead — on every screen, not just the built one.
-      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-
-      // (2b) The eyebrow. Setup is not a gate number; the four gates read 1..4 OF FOUR. Asserted from the
-      // DOM rather than from `eyebrowFor`'s source, because the formula was deliberately left untouched by
-      // the demotion and the only evidence it is still right is what it renders.
-      // Scoped to `main`: AppShell renders its own <header> for the app bar, outside <main>.
-      const eyebrow = (await page.locator("main header p").first().textContent())?.trim() ?? "";
-      if (gate === "setup") {
-        expect(eyebrow).toBe("Set up");
-        expect(eyebrow).not.toMatch(/gate\s*\d/i);
-      } else {
-        expect(eyebrow).toBe(`Gate ${gate.slice(4)} of 4`);
-      }
+      // (2) No masthead (2026-10-06, Bhargav: "rail shows this already"). The screen keeps ONE h1 for
+      // assistive technology — the gate's name, the rail's own label — but draws no eyebrow, title or
+      // subhead, and the app bar carries no tagline. The rail is the screen's visible title.
+      const h1 = page.getByRole("heading", { level: 1 });
+      await expect(h1).toHaveCount(1);
+      await expect(h1).toHaveClass(/\bsr-only\b/);
+      await expect(page.getByText("Harmonize data dictionaries against common data elements")).toHaveCount(0);
 
       // (3) The rail is FIVE columns on every screen, and marks THIS gate for assistive technology. Five
       // regardless of how many gates are behind the reviewer: a rail that shortens as gates complete makes
@@ -177,10 +173,198 @@ test.describe("five screens", () => {
       await expect(page.locator("[data-testid='gate-rail'] li[data-state='done']")).toHaveCount(i);
       await expect(page.locator("[data-testid='gate-rail'] li[data-state='ahead']")).toHaveCount(4 - i);
 
-      // (4) The how-to panel is present on every screen.
-      await expect(page.getByRole("button", { name: /how to use this screen/i })).toBeVisible();
+      // (4) The how-to panel is present on every screen, and OPEN by default: it carries the screen's
+      // one-line purpose now that the masthead is gone.
+      await expect(page.getByRole("button", { name: "Hide how to use this screen" })).toBeVisible();
+      await expect(page.getByTestId("how-to").locator("li").first()).toBeVisible();
     });
   }
+
+  test("@gates the run's name and ID sit in a title above the rail; the rail carries only the TOTAL", async ({ page }) => {
+    // Bhargav, 2026-10-08 (rail mockups, option C): the run line made the rail a whole row taller. The run's name and
+    // ID move out of the rail into a title on the ground above it, and the rail keeps a narrow TOTAL after Gate 4.
+    // The TOTAL is not a gate, so it is not in the gates' list — the rail is still five steps.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const box = page.getByTestId("gate-rail-box");
+    const title = page.getByTestId("run-title");
+    await expect(title).toBeVisible();
+    await expect(title).toContainText("Demo · paused at Gate 1");
+    await expect(title).toContainText(PAUSED_JOB);
+    await expect(box.getByTestId("run-title")).toHaveCount(0);
+    const t = (await title.boundingBox())!;
+    const b = (await box.boundingBox())!;
+    expect(t.y + t.height, "the title is not above the rail").toBeLessThanOrEqual(b.y);
+
+    const total = box.getByTestId("rail-total");
+    await expect(total).toBeVisible();
+    await expect(total).toContainText(/total/i);
+    await expect(total).toContainText("$0");
+    await expect(box.locator("[data-testid='gate-rail'] > li")).toHaveCount(5);
+    await expect(box.locator("[data-testid='gate-rail'] [data-testid='rail-total']")).toHaveCount(0);
+    const gate4 = (await box.locator("li[data-gate='gate4']").boundingBox())!;
+    expect((await total.boundingBox())!.x, "the TOTAL is not after Gate 4").toBeGreaterThan(gate4.x + gate4.width - 1);
+    // One row of columns and nothing above it: 132px with the run line, ~92px without.
+    expect(b.height, "the rail still carries a row above the gates").toBeLessThan(110);
+  });
+
+  test("@gates the screen's blocks sit close together: no gap over 16px, and the title hugs the rail", async ({ page }) => {
+    // Bhargav, 2026-10-08: "vertical gaps between all these elements need to be reduced, I want a tighter overall
+    // feel". Measured between the shell's own blocks (banner, title, rail, notices, how-to, working surface) and
+    // between the working surface's panels — the rail by its navy box, not the pin's padding around it.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const gaps = await page.getByTestId("gate-rail-pin").evaluate((pin) => {
+      const shell = pin.parentElement!;
+      const blocks = (root: Element) =>
+        [...root.children]
+          .filter((el) => {
+            const cs = getComputedStyle(el);
+            return cs.position !== "absolute" && cs.position !== "fixed" && el.getBoundingClientRect().height > 0;
+          })
+          .map((el) => {
+            const r = (el === pin ? el.firstElementChild! : el).getBoundingClientRect();
+            return { name: el.getAttribute("data-testid") ?? el.className.slice(0, 40), top: r.top, bottom: r.bottom };
+          });
+      const between = (bs: ReturnType<typeof blocks>) =>
+        bs.slice(1).map((b, i) => ({ between: `${bs[i].name} -> ${b.name}`, gap: Math.round(b.top - bs[i].bottom) }));
+      const shellBlocks = blocks(shell);
+      return [...between(shellBlocks), ...between(blocks(shell.lastElementChild!))];
+    });
+    expect(gaps.length).toBeGreaterThan(3);
+    for (const g of gaps) expect(g.gap, g.between).toBeLessThanOrEqual(16);
+    expect(gaps.find((g) => g.between === "run-title -> gate-rail-pin")?.gap, "the title sits apart from the rail").toBeLessThanOrEqual(8);
+  });
+
+  test("@gates the run title scrolls away with the screen; the pinned rail keeps the TOTAL", async ({ page }) => {
+    // Option C's stated cost: the title is on the ground, not pinned, so a scrolled screen no longer names the run.
+    // The rail still says what the run has spent.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const main = page.locator("main");
+    const top = (await main.boundingBox())!.y;
+    await main.evaluate((el) => el.scrollTo(0, 700));
+    await expect(page.getByTestId("gate-rail-box")).toHaveAttribute("data-compact", "true");
+    const t = (await page.getByTestId("run-title").boundingBox())!;
+    expect(t.y + t.height, "the run title is pinned").toBeLessThanOrEqual(top);
+    await expect(page.getByTestId("rail-total")).toBeVisible();
+  });
+
+  test("@gates the rail stays pinned at the top while the screen scrolls", async ({ page }) => {
+    // Bhargav, 2026-10-06: scrolling down must not hide where you are in the flow.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const main = page.locator("main");
+    const rail = page.locator("[data-testid='gate-rail-box']");
+    const top = (await main.boundingBox())!.y;
+    await main.evaluate((el) => el.scrollTo(0, 1200));
+    await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBeGreaterThan(300);
+    const box = (await rail.boundingBox())!;
+    expect(box.y, "the rail scrolled out of view").toBeGreaterThanOrEqual(top - 1);
+    expect(box.y - top, "the rail is not at the top of the screen").toBeLessThan(40);
+  });
+
+  test("@gates scrolled down, the rail collapses to one line per gate and the TOTAL", async ({ page }) => {
+    // Bhargav, 2026-10-07: as the reviewer scrolls, the rail tightens to the five gates, one line each — the current
+    // gate keeps its name, the others just their number, and the spend lines go. Every gate stays in the line, so the
+    // rail still navigates while collapsed. At the top it opens up again. (2026-10-08: the TOTAL folds the same way,
+    // to one line with its amount.)
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const main = page.locator("main");
+    const box = page.getByTestId("gate-rail-box");
+    await expect(box).toHaveAttribute("data-compact", "false");
+    const full = (await box.boundingBox())!.height;
+
+    await main.evaluate((el) => el.scrollTo(0, 700));
+    await expect(box).toHaveAttribute("data-compact", "true");
+    // The folded PIN is exactly GateShell's `--rail-pin-collapsed` (4.25rem): the queue sidebar pins beneath it by
+    // that constant, so a rail that folds to any other height would hide the queue's top or leave a gap.
+    await expect
+      .poll(async () => (await page.getByTestId("gate-rail-pin").boundingBox())!.height, { message: "the folded pin is not 68px" })
+      .toBeCloseTo(68, 0);
+    // Polled: the fold animates (~200ms), so the height arrives a moment after the state does.
+    await expect.poll(async () => (await box.boundingBox())!.height, { message: "the collapsed rail is not tighter" }).toBeLessThan(full - 30);
+    const total = box.getByTestId("rail-total");
+    await expect(total).toBeVisible();
+    await expect(total).toContainText(/total\s*\$0/i);
+    // Polled, like the box above: the box can be under its threshold while the TOTAL's own fold is still finishing.
+    await expect
+      .poll(async () => (await total.boundingBox())!.height, { message: "the collapsed TOTAL is more than one line" })
+      .toBeLessThanOrEqual(36);
+    const items = box.locator("[data-testid='gate-rail'] > li");
+    await expect(items).toHaveCount(5);
+    for (let i = 0; i < 5; i++) {
+      expect((await items.nth(i).boundingBox())!.height, `gate column ${i} is more than one line`).toBeLessThanOrEqual(36);
+    }
+    await expect(box.locator("li[aria-current='step']")).toContainText("Gate 1 · Concept groups");
+    // The names and spend lines FOLD AWAY rather than unmount (review round 1: the instant swap was "jerky"), so
+    // they stay in the DOM, hidden and out of the accessibility tree, and animate back on the way up.
+    await expect(box.locator("[data-rail-detail]")).toHaveCount(5);
+    for (const line of await box.locator("[data-rail-detail]").all()) {
+      await expect(line).toBeHidden();
+      await expect(line).toHaveAttribute("aria-hidden", "true");
+    }
+    await expect(box.locator("li[data-gate='gate2'] [data-rail-detail]")).toBeHidden();
+
+    await main.evaluate((el) => el.scrollTo(0, 0));
+    await expect(box).toHaveAttribute("data-compact", "false");
+    await expect(box.locator("[data-cost]")).toHaveCount(5);
+    for (const line of await box.locator("[data-rail-detail]").all()) await expect(line).toBeVisible();
+  });
+
+  test("@gates the rail folds with a short animation, and not at all for reduced motion", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const detail = page.locator("[data-testid='gate-rail-box'] [data-rail-detail]").first();
+    const timing = () =>
+      detail.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { property: cs.transitionProperty, duration: parseFloat(cs.transitionDuration) };
+      });
+    const t = await timing();
+    expect(t.property).toContain("grid-template-rows");
+    expect(t.duration).toBeGreaterThan(0.1);
+    expect(t.duration).toBeLessThanOrEqual(0.3);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect((await timing()).property).toBe("none");
+  });
+
+  test("@gates the rail does not flicker at the collapse boundary", async ({ page }) => {
+    // Collapsing shortens the rail, and the browser's scroll anchoring scrolls back by that much to keep the reader's
+    // row in place. If that pull-back crossed the re-open threshold the rail would open, close, open... Scroll down in
+    // small steps and count the changes: one, and only one.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const flips = await page.locator("main").evaluate(async (el) => {
+      const rail = document.querySelector("[data-testid='gate-rail-box']")!;
+      let last = rail.getAttribute("data-compact");
+      let n = 0;
+      const seen = new MutationObserver(() => {
+        const now = rail.getAttribute("data-compact");
+        if (now !== last) (n += 1), (last = now);
+      });
+      seen.observe(rail, { attributes: true, attributeFilter: ["data-compact"] });
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // RELATIVE steps, like a trackpad: an absolute scrollTop would overwrite the anchoring pull-back and hide the bug.
+      for (let i = 0; i < 100; i += 1) {
+        el.scrollBy(0, 4);
+        await frame();
+      }
+      await new Promise((r) => setTimeout(r, 300));
+      seen.disconnect();
+      return n;
+    });
+    expect(flips, "the rail changed state more than once while scrolling one way").toBe(1);
+    await expect(page.getByTestId("gate-rail-box")).toHaveAttribute("data-compact", "true");
+  });
 
   test("@gates five screens — a passed gate reads as realized while a future one reads as a forecast", async ({
     page,
@@ -222,29 +406,27 @@ test.describe("five screens", () => {
     expect(nameless, `icon-only control(s) with no accessible name: ${nameless.join(" | ")}`).toEqual([]);
   });
 
-  test("@gates five screens — the chrome renders no run chip when there is no run", async ({ page }) => {
-    // A job id with no fixture: `getResult` 404s, so the hook never produces a job. The chip must be
-    // ABSENT, not empty — an empty chip reads as a run with no name.
+  test("@gates five screens — the chrome renders no run title and no TOTAL when there is no run", async ({ page }) => {
+    // A job id with no fixture: `getResult` 404s, so the hook never produces a job. The title must be
+    // ABSENT, not empty — an empty title reads as a run with no name — and a TOTAL of no run is a made-up $0.
     await page.goto("/run/no-such-run/gate1");
     await page.waitForLoadState("networkidle");
-    await expect(page.locator("[data-testid='run-chip']")).toHaveCount(0);
+    await expect(page.getByTestId("run-title")).toHaveCount(0);
+    await expect(page.getByTestId("rail-total")).toHaveCount(0);
     // The chrome itself still renders, so the screen is never a blank page.
     await expect(page.locator("[data-testid='gate-rail'] > li")).toHaveCount(5);
   });
 
-  test("@gates five screens — a long run name is clamped and the app bar height never reflows", async ({ page }) => {
+  test("@gates five screens — a long run name is clamped and the title's height never reflows", async ({ page }) => {
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.waitForLoadState("networkidle");
-    const before = await page.locator("[data-testid='run-chip']").evaluate((el) => {
-      const bar = el.parentElement!;
-      return bar.getBoundingClientRect().height;
-    });
-    const after = await page.locator("[data-testid='run-chip']").evaluate((el) => {
-      const label = el.firstElementChild as HTMLElement;
+    const title = page.getByTestId("run-title");
+    const before = await title.evaluate((el) => el.getBoundingClientRect().height);
+    const after = await title.evaluate((el) => {
+      const label = el.querySelector<HTMLElement>("[data-testid='run-title-name']")!;
       label.textContent = "A run name so long that it would wrap several times over ".repeat(6);
-      const bar = el.parentElement!;
       return {
-        height: bar.getBoundingClientRect().height,
+        height: el.getBoundingClientRect().height,
         clamped: label.scrollWidth > label.clientWidth,
       };
     });
@@ -362,6 +544,9 @@ test.describe("the stop control", () => {
 
     const stop = page.getByRole("button", { name: /stop/i }).first();
     await expect(stop).toBeVisible();
+    // Option C (2026-10-08): the full "Stop run" pill sits at the right of the run's title, not on the rail.
+    await expect(page.getByTestId("run-title").getByRole("button", { name: /stop/i })).toBeVisible();
+    await expect(page.getByTestId("gate-rail-box").getByRole("button", { name: /stop/i })).toHaveCount(0);
     await stop.click();
 
     const dialog = page.getByRole("alertdialog");

@@ -8,7 +8,6 @@ import {
   AUTO_ACCEPTED_LABEL,
   AUTO_DECIDED_AFTER,
   AUTO_REVISABLE_KINDS,
-  DEMO_PRACTICE_COPY,
   REVIEW_MODE_COPY,
   autoAcceptedGates,
   autoGateStates,
@@ -17,7 +16,7 @@ import {
   isGateLocked,
   reviewModeOf,
 } from "@/lib/review-mode";
-import { SANDBOX_PREFIX, sandboxStateFrom, sandboxWorkCount } from "@/lib/sandbox";
+import { SANDBOX_BANNER_COPY, SANDBOX_PREFIX, sandboxStateFrom, sandboxWorkCount } from "@/lib/sandbox";
 import { FINISHED_JOB, autoRun, serveAutoRun } from "./full-auto-fixture";
 
 /**
@@ -373,6 +372,8 @@ test.describe("Full auto — the guest demo it builds", () => {
     await page.locator("[data-testid='gate3-continue']").click();
     await expect(page).toHaveURL(new RegExp(`/run/${FINISHED_JOB}/gate4$`));
     await expect(page.getByTestId("sandbox-banner")).toBeVisible();
+    // The demo was BUILT parked here; the guest did not stop anywhere, so no "Paused at Gate 4" banner.
+    await expect(page.locator("[data-testid='resume-banner']")).toHaveCount(0);
 
     const state = await held(page);
     expect(sandboxWorkCount(state)).toBe(3);
@@ -392,8 +393,12 @@ test.describe("Full auto — the guest demo it builds", () => {
     await serveAutoRun(page, { demo: true });
     const writes = watchWrites(page);
     await open(page, "gate1");
-    // The banner says the controls are there to try, not that the grouping is locked.
-    await expect(page.getByTestId("auto-accepted-banner")).toContainText(DEMO_PRACTICE_COPY);
+    // The sandbox banner says the controls are there to try; the yellow banner neither repeats it nor claims the
+    // grouping is locked (2026-10-06: said once).
+    await expect(page.getByTestId("sandbox-banner")).toContainText(SANDBOX_BANNER_COPY);
+    const auto = page.getByTestId("auto-accepted-banner");
+    await expect(auto).toBeVisible();
+    await expect(auto).not.toContainText(/shared demo|stays as committed|in this tab/i);
 
     // Scope starts as the run sent it (every group in), and a guest can take a group out.
     const rows = page.locator("[data-testid='ledger-row']");

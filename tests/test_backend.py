@@ -2442,14 +2442,15 @@ def test_parse_ideas_salvages_truncated_json():
 
 def test_build_llm_client_pins_model_and_routes():
     """The shared client-builder honors the run's picked Claude model (the SDK's own default is a stale
-    snapshot), falls back to a current default, strips a proxy prefix, and buckets providers correctly."""
-    from backend.engine.llm import DEFAULT_CLAUDE_MODEL, build_llm_client, is_anthropic_model
+    snapshot), falls back to the picker's default, strips a proxy prefix, and buckets providers correctly."""
+    from backend.engine.llm import build_llm_client, is_anthropic_model
+    from backend.engine.models import default_model
 
     assert is_anthropic_model(None) and is_anthropic_model("claude-sonnet-4-6") and is_anthropic_model("anthropic/x")
     assert not is_anthropic_model("gpt-4o") and not is_anthropic_model("gemini/gemini-1.5-pro")
     # Anthropic path (construction is lazy — no API call): model pinned / defaulted / de-prefixed.
     assert build_llm_client("claude-sonnet-4-6", "k").model_name == "claude-sonnet-4-6"
-    assert build_llm_client(None, "k").model_name == DEFAULT_CLAUDE_MODEL
+    assert build_llm_client(None, "k").model_name == default_model()
     assert build_llm_client("anthropic/claude-opus-4-8", "k").model_name == "claude-opus-4-8"
 
 

@@ -180,7 +180,7 @@ export function ScoreComponentProposal({
           className="flex flex-col gap-2 rounded-inner border border-dashed border-rule-control-on-raised px-4 py-3"
         >
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            <span className="text-sm font-semibold text-on-raised">
               Proposed by a model — nothing is declared until you accept it
             </span>
             <span className="max-w-[80ch] text-xs text-on-raised-muted">

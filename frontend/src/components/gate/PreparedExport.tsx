@@ -107,6 +107,7 @@ export function DictionaryEmbeddingExport({
   note,
   error,
   available,
+  explain = true,
 }: {
   cohortName: string;
   confirmed: boolean;
@@ -118,6 +119,11 @@ export function DictionaryEmbeddingExport({
   note?: string;
   error?: string;
   available: boolean;
+  /**
+   * Say what the download contains (and that this preview cannot make it) — true on the FIRST confirmed card only
+   * (round 5 sweep): with five dictionaries confirmed, the same two sentences sat under all five links.
+   */
+  explain?: boolean;
 }) {
   return (
     <div
@@ -161,7 +167,7 @@ export function DictionaryEmbeddingExport({
           {blockedReason}
         </p>
       )}
-      {confirmed && (
+      {confirmed && explain && (
         // NOT GATED ON `available`. What the export contains, and that reaching it is free, are claims
         // about the FLOW — they are just as true in a preview with no server as on the deployed app, and
         // hiding them there would make the absence notice read as "this feature costs something we
@@ -172,7 +178,7 @@ export function DictionaryEmbeddingExport({
           clustering for that variable. It costs nothing and starts no run.
         </p>
       )}
-      {confirmed && !available && (
+      {confirmed && !available && explain && (
         <p data-testid="dict-embedding-unavailable" className="max-w-[68ch] text-xs text-on-raised-muted">
           This preview has no server to compose the embedding text, so the download is unavailable here.
         </p>

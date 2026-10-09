@@ -702,10 +702,13 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                 before = _spec_summary(spec)
                 edit = {k: d[k] for k in SPEC_EDIT_FIELDS if d.get(k)}
                 # F7: "annotated" only with a note; a row with neither an edit nor a note is the model's spec.
+                # Review round 1: an APPROVED row with no edit is the model's spec, checked — said so.
                 if d.get("rejected"):
                     after = "rejected"
                 elif edit:
                     after = "edited"
+                elif d.get("approved") is True:
+                    after = "approved"
                 else:
                     after = "annotated" if note.strip() else REVERTED_TO_MODEL
                 if edit:

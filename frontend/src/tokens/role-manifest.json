@@ -217,6 +217,13 @@
       "what": "The wash an informational callout sits on.",
       "foregrounds": [{ "role": "--on-info", "utility": "text-on-info", "level": "AA", "what": "The callout's own text. 5.00:1." }],
       "rules": [{ "role": "--rule-info", "utility": "border-rule-info" }]
+    },
+    {
+      "role": "--surface-highlight",
+      "utility": "bg-surface-highlight",
+      "what": "A search hit, marked inside the text it matched (review round 3: \"highlighted like gmail does\") — the queue's names and the open concept's fields. The brand's mid amber: the pale one vanished on the selected row's info tint. Its text is the mark's OWN foreground, never the surrounding colour: a selected row's blue title or a blue CDE link measured 3.40:1 on this amber, under AA, so the mark sets --on-raised the way Gmail sets black on its yellow.",
+      "foregrounds": [{ "role": "--on-raised", "utility": "text-on-raised", "level": "AAA", "what": "The matched text. 12.69:1 — clears AAA but not the AAA-body 13 bar; a hit is a word or two inside a name, never running copy." }],
+      "rules": []
     }
   ],
   "graphicalMarks": {

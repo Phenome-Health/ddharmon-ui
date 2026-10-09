@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import { CheckCircle2, ChevronDown, CircleDashed } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { NamedGroup } from "@/lib/ledger";
 import { countsForCard, type GroupScopeWhy, type SuggestionCard, type SuggestionCardGroup } from "@/lib/score-suggestion-cards";
@@ -61,7 +62,7 @@ export function ScoreSuggestionCards({
           data-testid="score-suggestion-info"
           className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
         >
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+          <p className="mb-1.5 text-sm font-semibold text-on-raised">
             Score builder · how suggestions work
           </p>
           <ul className="flex flex-col gap-1 text-on-raised-muted">
@@ -79,6 +80,11 @@ export function ScoreSuggestionCards({
               component&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
               of them measure it. Other in-scope groups the search reached say why they are in scope.
             </li>
+            {/* SAID ONCE, HERE (round 5 sweep): "→ continues to Gate 2" sat on every card with a group in scope. */}
+            <li>
+              <span className="font-semibold text-on-raised">In scope.</span> A card&rsquo;s ticked groups continue to
+              Gate 2 with the rest of your scope.
+            </li>
             {/* SAID ONCE, HERE (Bhargav 2026-10-05): on a 49-item score this caveat repeated on every unsuggested card. */}
             <li>
               <span className="font-semibold text-on-raised">Nothing suggested.</span> This search reached no group at
@@ -91,11 +97,11 @@ export function ScoreSuggestionCards({
           </p>
         </div>
         <Collapsible defaultOpen>
-          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            <span>
+          <CollapsibleTrigger className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">
               Components · {nWith}/{cards.length} with a suggestion
-            </span>
-            <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+            </DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2 space-y-2">
             {cards.map((card) => (
@@ -349,7 +355,6 @@ function SuggestionRow({
                     <span className="text-on-raised-muted"> ({spreadCohorts.join(", ")})</span>
                   )}
                 </span>
-                <span className="ml-auto text-[11px] font-semibold text-link-on-raised">→ continues to Gate 2</span>
               </>
             )}
           </div>

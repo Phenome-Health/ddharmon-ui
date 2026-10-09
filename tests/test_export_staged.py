@@ -727,6 +727,26 @@ def test_a_gate3_row_is_annotated_only_when_it_carries_a_note():
     assert by["B:smk"][5] == "annotated"
 
 
+def test_an_approved_gate3_row_is_logged_approved_unless_it_was_edited_or_rejected():
+    """Review round 1: Approve marks a recode checked; it is not "reverted to model spec" — and an edit or a
+    rejection on the same row still says what the reviewer did to it."""
+    from backend.export_decisions import decision_log_rows
+
+    grouped = {
+        "gate3_spec_edit": [
+            _spec("A:smoke", approved=True),
+            _spec("B:smk", approved=True, note="checked by hand"),
+            _spec("C:cig", approved=True, mapping={"1": "Yes"}),
+            _spec("D:pk", approved=True, rejected=True),
+        ]
+    }
+    by = {r[3]: r for r in decision_log_rows(_result(), {}, grouped)}
+    assert by["A:smoke"][5] == "approved"
+    assert (by["B:smk"][5], by["B:smk"][6]) == ("approved", "checked by hand")
+    assert by["C:cig"][5] == "edited"
+    assert by["D:pk"][5] == "rejected"
+
+
 def test_a_mapping_edit_logs_a_per_code_diff_against_the_models_map_in_target_codes():
     """Q3: the log's detail names each code whose TARGET code changed, ``-121: 9 -> missing``, in code order."""
     from backend.export_decisions import decision_log_rows

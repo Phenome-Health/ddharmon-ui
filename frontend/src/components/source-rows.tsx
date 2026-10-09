@@ -21,6 +21,7 @@
 // a second for Gate 1 is the duplication the audit exists to catch.
 import { GripVertical, Undo2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Highlight } from "@/components/ui/highlight";
 import { cn } from "@/lib/utils";
 import { MEMBER_DRAG_TYPE } from "@/components/gate/MemberChip";
 import { useDropHighlight } from "@/hooks/use-drop-highlight";
@@ -185,7 +186,10 @@ function TextCell({ value, className }: { value?: string; className?: string }) 
   if (!value) return <td className="px-2.5 py-1.5 align-top text-on-raised-muted">—</td>;
   return (
     <td className={cn("px-2.5 py-1.5 align-top text-on-raised", className)} title={value}>
-      <span className="block min-w-[12rem] max-w-[24rem] whitespace-pre-wrap break-words">{value}</span>
+      {/* The gate's search, marked here as in the queue (review round 4) — the provider is the workbench's. */}
+      <span className="block min-w-[12rem] max-w-[24rem] whitespace-pre-wrap break-words">
+        <Highlight text={value} />
+      </span>
     </td>
   );
 }
@@ -416,7 +420,9 @@ export function SourceRows({
                       {r.name}
                     </span>
                   ) : (
-                    <span className="whitespace-nowrap font-mono text-on-raised">{r.name}</span>
+                    <span className="whitespace-nowrap font-mono text-on-raised">
+                      <Highlight text={r.name} />
+                    </span>
                   )}
                 </td>
                 {showDesc && <TextCell value={r.description} />}

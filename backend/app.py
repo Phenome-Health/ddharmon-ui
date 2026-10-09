@@ -76,6 +76,7 @@ from backend.db import JobDB
 from backend.demos import demo_job_id, is_staged, list_demos, load_snapshot, seed_demos, seed_snapshot
 from backend.engine import CONTRACT_VERSION
 from backend.engine.adapter import cost_block, load_spec
+from backend.engine.models import model_catalog, proxy_catalog
 from backend.jobs import (
     _PINNED_CONFIG_KEYS,
     AWAITING_REVIEW,
@@ -205,19 +206,14 @@ _DB_PATH = Path(os.environ.get("DDHARMON_UI_DB", _WORK_ROOT / "jobs.db"))
 
 # --- LiteLLM proxy (multi-provider gateway) --------------------------------------------------
 # When LITELLM_PROXY_URL is set, the model picker's catalog comes from the proxy's /v1/models and
-# non-Anthropic runs route through it. Unset (the default) → the picker shows a built-in fallback
-# catalog and only Anthropic executes. LITELLM_MASTER_KEY authorizes the proxy's admin endpoints
+# non-Anthropic runs route through it. Unset (the default) → the picker shows the model catalog (core's
+# registry, else the UI's fallback) and only Anthropic executes. LITELLM_MASTER_KEY authorizes the proxy's admin endpoints
 # (catalog listing); it is read server-side only and is NEVER sent to the browser.
 LITELLM_PROXY_URL = os.environ.get("LITELLM_PROXY_URL", "").rstrip("/")
 LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 
-# Built-in fallback model catalog (used when no proxy is configured) — mirrors the frontend fallback.
-_FALLBACK_MODELS: list[dict[str, str]] = [
-    {"id": "claude-sonnet-4-6", "provider": "anthropic", "label": "Claude Sonnet 4.6"},
-    {"id": "claude-opus-4-8", "provider": "anthropic", "label": "Claude Opus 4.8"},
-    {"id": "gpt-4o", "provider": "openai", "label": "GPT-4o"},
-    {"id": "gemini/gemini-1.5-pro", "provider": "gemini", "label": "Gemini 1.5 Pro"},
-]
+# The model list itself (and the one server default) lives in ``backend/engine/models.py``: core's registry when
+# this core has one, else the UI's fallback list.
 
 
 def _provider_for_model(model_id: str) -> str:
@@ -700,10 +696,13 @@ async def start_batch(
 # --- /models ---------------------------------------------------------------------------------
 @app.get("/api/harmonize/models")
 def list_models() -> dict[str, Any]:
-    """Model catalog for the New Run picker. With a LiteLLM proxy configured (LITELLM_PROXY_URL), proxy its
-    OpenAI-compatible /v1/models catalog; otherwise return a built-in fallback list. The master key is used
-    server-side only (never returned to the browser). Any proxy error falls back to the built-in catalog so
-    the picker always renders."""
+    """Model list for the New Run picker: ``{"models": [{"id", "label", "provider", "validated"}], "default": id,
+    "source": "core" | "fallback" | "proxy"}``.
+
+    The list and the default come from :func:`model_catalog` (core's registry, else the UI's fallback). With a
+    LiteLLM proxy configured (LITELLM_PROXY_URL) the ids are the proxy's /v1/models instead, each marked validated
+    from that same catalog. The master key is used server-side only (never returned to the browser). Any proxy
+    error falls back to the catalog so the picker always renders."""
     if LITELLM_PROXY_URL:
         try:
             import httpx
@@ -712,17 +711,13 @@ def list_models() -> dict[str, Any]:
             resp = httpx.get(f"{LITELLM_PROXY_URL}/v1/models", headers=headers, timeout=5.0)
             resp.raise_for_status()
             data = resp.json().get("data", [])
-            models: list[dict[str, str]] = []
-            for m in data:
-                mid = m.get("id") if isinstance(m, dict) else None
-                if mid:
-                    models.append({"id": mid, "provider": _provider_for_model(mid), "label": mid})
-            if models:
-                return {"models": models, "source": "proxy"}
+            ids = [m["id"] for m in data if isinstance(m, dict) and m.get("id")]
+            if ids:
+                return proxy_catalog(ids, _provider_for_model)
         except Exception:
-            # Proxy unreachable / misconfigured — fall through to the built-in catalog so the picker still works.
+            # Proxy unreachable / misconfigured — fall through to the catalog so the picker still works.
             pass
-    return {"models": list(_FALLBACK_MODELS), "source": "fallback"}
+    return model_catalog()
 
 
 # --- SSE + result ----------------------------------------------------------------------------
@@ -2538,6 +2533,15 @@ def composite(
     job = store.get(job_id)
     if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
+    # THE SHARED DEMO IS REFUSED FIRST, before a client exists or anything is billed. The save below refuses it
+    # too, but only AFTER the derivation had run and been billed — a signed-in user with a key paid for a spec
+    # that was then thrown away. A pinned run never spends; its shipped score is content, not a derivation.
+    with _writable_run():
+        if _is_pinned(job):
+            raise ReadOnlyRunError(
+                f"{job_id} is the shared demo and cannot spend on matching a score — clone it into a run of your "
+                "own to match or derive one there"
+            )
     payload, records, staged = _harmonized(job, subject)
     if not records:
         raise HTTPException(status_code=409, detail="This run has no harmonized concepts to build a score from.")

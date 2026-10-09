@@ -68,15 +68,8 @@ export function SpecBinning({
   return (
     <div data-testid="spec-binning" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-on-raised-muted">
-          Categorical target — a source number falls into a band by its range;
-          edit the boundaries
-          {edited && (
-            <span className="ml-1 font-semibold text-status-warn">
-              · edited
-            </span>
-          )}
-        </span>
+        {/* What the bands do is said once above the tiles (Gate 3's explainer); the tile names only its state. */}
+        <span className="text-xs font-semibold text-status-warn">{edited ? "Edited" : ""}</span>
         {edited && !readOnly && (
           <Button
             data-testid="binning-reset"
@@ -132,9 +125,6 @@ export function SpecBinning({
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        <span className="text-on-raised-muted">
-          A source number outside every band → Missing.
-        </span>
         {issues.length > 0 && (
           <span
             data-testid="bin-warning"

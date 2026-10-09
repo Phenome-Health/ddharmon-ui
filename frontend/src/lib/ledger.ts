@@ -162,7 +162,10 @@ const byId = (a: ConceptGroup, b: ConceptGroup) => (a.groupId < b.groupId ? -1 :
 export interface LedgerFilters {
   /** Coherence states to keep. Empty means every state — an empty filter is not a filter. */
   verdicts: CoherenceState[];
-  /** Cohorts a group must draw on at least one of. Empty means every cohort. */
+  /**
+   * Cohorts a group must draw on EVERY one of — "CLSA + UKBB" asks what those two share (08-30b, controls lab
+   * final check). Empty means every cohort.
+   */
   cohorts: string[];
   /** Only groups the reviewer has already decided something about. */
   touchedOnly: boolean;
@@ -189,7 +192,7 @@ export function applyFilters(
 ): ConceptGroup[] {
   return groups.filter((g) => {
     if (f.verdicts.length > 0 && !f.verdicts.includes(g.coherence)) return false;
-    if (f.cohorts.length > 0 && !g.cohorts.some((c) => f.cohorts.includes(c))) return false;
+    if (!f.cohorts.every((c) => g.cohorts.includes(c))) return false;
     if (f.touchedOnly && !state.isTouched(g.groupId)) return false;
     if (f.inScopeOnly && !state.isInScope(g.groupId)) return false;
     return true;

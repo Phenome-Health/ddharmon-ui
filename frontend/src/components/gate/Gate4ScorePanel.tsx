@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RunKeyField } from "@/components/gate/RunKeyField";
@@ -10,6 +11,7 @@ import { estimateScoreMatchUsd, formatUsd } from "@/lib/estimate";
 import { gate4MatchRefusal, matchActionLabel, type DeclaredScore } from "@/lib/score-match";
 import { GATE4_VERDICT_LABEL, gate4ScoreHeader, gate4ScoreVerdict } from "@/lib/gate4-score";
 import {
+  MISSING_IS_A_RUN_RESULT,
   PARTIAL_IS_NOT_THE_SCORE,
   PRESENCE_IS_PER_DICTIONARY,
   SCOPE_VERDICT_COPY,
@@ -156,12 +158,10 @@ export function Gate4ScorePanel({
           data-testid="gate4-score-toggle"
           // The accessible name states the ACTION and its OBJECT (UI-SPEC §6), as the how-to toggle's does.
           aria-label={`${open ? "Hide" : "Show"} the declared score ${score.scoreName}`}
-          className="flex w-full items-center justify-between gap-3 text-left"
+          className={disclosureRow("raised", "gap-3")}
         >
           <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-              The score you declared at Gate 1
-            </span>
+            <DisclosureLabel ground="raised">The score you declared at Gate 1</DisclosureLabel>
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
               <h2 className="text-sm font-semibold text-on-raised">{score.scoreName}</h2>
               {/* THE STATE, ON THE FOLDED HEADER: matched or not, and — unmatched — the price of matching. */}
@@ -174,10 +174,7 @@ export function Gate4ScorePanel({
               </span>
             </span>
           </span>
-          <ChevronDown
-            aria-hidden="true"
-            className={cn("h-4 w-4 shrink-0 text-on-raised-muted transition-transform", open && "rotate-180")}
-          />
+          <DisclosureChevron ground="raised" open={open} />
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-4 pt-4">
           <p className="max-w-[80ch] text-xs text-on-raised-muted">
@@ -259,12 +256,18 @@ export function Gate4ScorePanel({
               })}
             </ol>
           )}
+          {/* Said once for the list (round 5 sweep), when a looked-for component has no match. */}
+          {!spec && score.components.some((name) => matchOf.get(name) !== undefined && !matchOf.get(name)?.conceptId) && (
+            <p data-testid="missing-is-a-run-result" className="text-xs text-on-raised-muted">
+                  {MISSING_IS_A_RUN_RESULT}
+                </p>
+          )}
 
           {spec && (
             <>
               {spec.feasibility.perCohort.length > 0 && (
                 <div className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                  <span className="text-sm font-semibold text-on-raised">
                     Per cohort
                   </span>
                   <ul className="flex flex-col gap-0.5 text-xs text-on-raised">
@@ -281,7 +284,7 @@ export function Gate4ScorePanel({
               )}
 
               <div className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                <span className="text-sm font-semibold text-on-raised">
                   The recipe — you run it; ddharmon never computes the score
                 </span>
                 <ol className="flex flex-col gap-2">

@@ -3,7 +3,7 @@ import { Link, useParams, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
-import { ChevronDown, Eye, EyeOff, Upload, X } from "lucide-react";
+import { Eye, EyeOff, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { GateShell, railFor, realizedRailArgs } from "@/components/gate/GateShell";
@@ -17,8 +17,8 @@ import {
   PreparedExport,
   WorkbookExport,
 } from "@/components/gate/PreparedExport";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { InfoTip } from "@/components/ui/info-tip";
 import {
@@ -35,6 +35,7 @@ import {
   startHarmonize,
 } from "@/lib/api";
 import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
+import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
 import {
@@ -52,7 +53,15 @@ import { COLUMN_ROLES, PROVIDER_LABELS, estimateRunTime, formatDuration, formatD
 import demoManifest from "@/data/demo-column-assignments.json";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { RunKeyField } from "@/components/gate/RunKeyField";
-import { DEFAULT_CDE_SET, type CdeSet, type GatePosition, type JobResult, type RunDictionary, type RunMode } from "@/types";
+import {
+  DEFAULT_CDE_SET,
+  type CdeSet,
+  type GatePosition,
+  type JobResult,
+  type ModelInfo,
+  type RunDictionary,
+  type RunMode,
+} from "@/types";
 
 /**
  * PER-LINE DETAIL FOR THE CONSOLIDATED BILL (review 2026-08-26).
@@ -153,12 +162,29 @@ const GATE_FREE_REASON: Partial<Record<GatePosition, string>> = {
   gate4: "no charge",
 };
 
-/**
- * Only Sonnet 4.6 has been validated end to end against this pipeline. Untested choices are OFFERED but
- * DISABLED, the same treatment the shipped New Run form gives them — visible so the picker does not
- * misrepresent what exists, unselectable so a run cannot be pointed at an unvalidated model.
- */
-const isModelTested = (id: string): boolean => /sonnet.*4[.-]6/i.test(id);
+// The provider and model ⓘ name the validated models FROM THE LIST, so the copy cannot go stale on a model bump.
+function providerHelp(models: ModelInfo[]): string {
+  const tested = validatedByProvider(models, PROVIDER_LABELS);
+  return (
+    "Which API the model stages call. " +
+    (tested
+      ? `This pipeline is validated end to end only with ${tested}`
+      : "No provider is validated end to end against this pipeline yet") +
+    "; anything else is listed so you can see it exists, and disabled so a run cannot be pointed at it."
+  );
+}
+
+function modelHelp(models: ModelInfo[]): string {
+  const tested = validatedModelNames(models);
+  return (
+    "The model the paid stages run on. " +
+    (tested
+      ? `This pipeline's prompts and benchmarks were validated only against ${tested}; every other model is listed but disabled.`
+      : "No model is validated against this pipeline's prompts and benchmarks yet, so every one is disabled.") +
+    " Model choice changes both cost and the quality of concept grouping and assignment."
+  );
+}
+
 
 /**
  * Set up — the first of the six staged-review screens (08-13).
@@ -273,6 +299,20 @@ function sameRoles(a: Record<string, string>, b: Record<string, string>): boolea
 /** Whether this dictionary's CURRENT mapping is the one the reviewer marked complete. */
 function isConfirmed(d: SetupDict): boolean {
   return d.confirmedRoles !== null && sameRoles(d.confirmedRoles, d.roles);
+}
+
+/**
+ * WHERE A DICTIONARY'S PREPOPULATED MAPPING CAME FROM, as one sentence — a function so the page can tell when every
+ * card would say the same thing, and say it once above them instead (round 5 repeated-copy sweep).
+ */
+function prefillProvenance(prefill: NonNullable<SetupDict["prefill"]>): string {
+  if (prefill.source === "rerun")
+    return `Column assignments carried over from “${prefill.from}”, the run you are re-running. Edit any of them below.`;
+  if (prefill.source === "demo")
+    return "Column assignments prepopulated from the demo mapping for this file. Edit any of them below.";
+  return prefill.at
+    ? `Column assignments prepopulated from your previous mapping of this file (saved ${new Date(prefill.at).toLocaleDateString()}). Edit any of them below.`
+    : "Column assignments prepopulated from your previous mapping of this file. Edit any of them below.";
 }
 
 /** A file that never became a dictionary, and why. Rendered problem-then-next-step (UI-SPEC §8.4). */
@@ -442,6 +482,17 @@ export default function SetupPage() {
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const [dicts, setDicts] = useState<SetupDict[]>([]);
+  // SAID ONCE ABOVE THE CARDS (round 5 repeated-copy sweep). The provenance line when every card shares it; the
+  // dictionaries whose name check cannot run (their files were not kept); the first confirmed card, the only one
+  // that explains what its embedding-text download contains.
+  const readyDicts = dicts.filter((d) => d.state !== "parsing");
+  const prefillLines = readyDicts.map((d) => (d.prefill ? prefillProvenance(d.prefill) : null));
+  const sharedPrefill =
+    readyDicts.length > 1 && prefillLines.every((line) => line !== null && line === prefillLines[0])
+      ? prefillLines[0]
+      : null;
+  const noNameCheck = readyDicts.filter((d) => !d.rows);
+  const firstConfirmedKey = dicts.find((d) => d.origin === "upload" && isConfirmed(d))?.key;
   const [problems, setProblems] = useState<FileProblem[]>([]);
 
   // --- run configuration. Same vocabulary as the shipped New Run form, so a run described here and a run
@@ -501,15 +552,27 @@ export default function SetupPage() {
   const models = useMemo(() => modelCatalog?.models ?? [], [modelCatalog]);
   const modelsForProvider = useMemo(() => models.filter((m) => m.provider === provider), [models, provider]);
   const providers = useMemo(() => [...new Set(models.map((m) => m.provider))], [models]);
-  const isProviderTested = (pr: string): boolean =>
-    models.some((m) => m.provider === pr && isModelTested(m.id));
-  // Land on the first TESTED model for the provider, so Anthropic defaults to Sonnet 4.6 rather than to
-  // whatever the catalogue happens to list first.
+  /**
+   * Which models are selectable is DATA from core's model list (`validated`), never a model name written here —
+   * a model bump is a core release plus a repin. Untested choices are OFFERED but DISABLED, the same treatment the
+   * New Run form gives them: visible so the picker does not misrepresent what exists, unselectable so a run
+   * cannot be pointed at an unvalidated model.
+   */
+  const isProviderTested = (pr: string): boolean => models.some((m) => m.provider === pr && m.validated);
+  // Keep `model` valid, as New Run does. The first time the list arrives nothing is picked yet: land on the list's
+  // default, its provider included. After that, a provider change (or a pick that is not a validated model of the
+  // provider) re-picks within the provider — the default if it is one of its models, else its first validated one.
   useEffect(() => {
-    if (!modelsForProvider.length) return;
-    const ok = model && modelsForProvider.some((m) => m.id === model && isModelTested(m.id));
-    if (!ok) setModel((modelsForProvider.find((m) => isModelTested(m.id)) ?? modelsForProvider[0]).id);
-  }, [modelsForProvider, model]);
+    if (!modelCatalog) return;
+    const def = modelCatalog.models.find((m) => m.id === modelCatalog.default && m.validated);
+    if (!model && def) {
+      setProvider(def.provider);
+      setModel(def.id);
+      return;
+    }
+    const next = pickModel(modelCatalog, provider, model);
+    if (next && next !== model) setModel(next);
+  }, [modelCatalog, provider, model]);
   const fieldsByDataset = useMemo(
     () => Object.fromEntries((demos?.datasets ?? []).map((d) => [d.id, d.nFields])),
     [demos],
@@ -1277,7 +1340,27 @@ export default function SetupPage() {
             </GateEmptyState>
           </div>
         ) : (
-          dicts.map((d) => (
+          <>
+          {/* SAID ONCE, ABOVE THE CARDS (round 5 repeated-copy sweep): a fact true of every card used to be said
+              on every card. Where it differs between cards, each card says its own. */}
+          {sharedPrefill && (
+            <p data-testid="prefill-provenance" className="text-xs text-on-field-muted">
+              {sharedPrefill}
+            </p>
+          )}
+          {noNameCheck.length > 1 && (
+            <p
+              data-testid="name-check-unavailable"
+              className="rounded-inner border border-dashed border-rule-on-field px-3 py-2 text-xs text-on-field-muted"
+            >
+              <span className="font-semibold text-on-field">
+                Row count against unique-name count — not available for {noNameCheck.map((d) => d.cohortName).join(", ")}.
+              </span>{" "}
+              Their source files are not kept with the run, so the names cannot be counted here. It is not a report that
+              every name was unique. Re-upload a file to run the check on it.
+            </p>
+          )}
+          {dicts.map((d) => (
             <article
               key={d.key}
               data-testid="dict-card"
@@ -1333,23 +1416,17 @@ export default function SetupPage() {
                       than wondering why the columns arrived pre-assigned. Only shown when the mapping was
                       actually prefilled (demo manifest or this browser's own prior mapping of the same
                       columns) — never for the identity fallback, which is not a "from a previous run" claim. */}
-                  {d.prefill && (
+                  {/* Said here only when it differs from the line said once above the cards (round 5 sweep). */}
+                  {d.prefill && !sharedPrefill && (
                     <p data-testid="prefill-provenance" className="text-xs text-on-raised-muted">
-                      {d.prefill.source === "rerun"
-                        ? `Column assignments carried over from “${d.prefill.from}”, the run you are re-running. Edit any of them below.`
-                        : d.prefill.source === "demo"
-                          ? "Column assignments prepopulated from the demo mapping for this file. Edit any of them below."
-                          : d.prefill.at
-                            ? `Column assignments prepopulated from your previous mapping of this file (saved ${new Date(
-                                d.prefill.at,
-                              ).toLocaleDateString()}). Edit any of them below.`
-                            : "Column assignments prepopulated from your previous mapping of this file. Edit any of them below."}
+                      {prefillProvenance(d.prefill)}
                     </p>
                   )}
                   <DictionaryMappingTable
                     headers={d.headers}
                     roles={d.roles}
                     rows={d.rows}
+                    nameCheckSaidAbove={noNameCheck.length > 1}
                     disabled={runStarted}
                     onRolesChange={(roles) => setRoles(d.key, roles)}
                   />
@@ -1375,10 +1452,12 @@ export default function SetupPage() {
                   note={exportNote[d.key]}
                   error={exportError[d.key]}
                   available={!IS_STATIC}
+                  explain={d.key === firstConfirmedKey}
                 />
               )}
             </article>
-          ))
+          ))}
+          </>
         )}
       </section>
   );
@@ -1435,8 +1514,11 @@ export default function SetupPage() {
         stage === "preflight"
           ? "Your dictionaries are loaded, prepared and grouped, all on this machine. Commit the run's first charge when you are ready — nothing has been charged for anything so far."
           : stage === "past"
-            ? "What this run was set up with. It is a record now, not a decision — the column mapping is fixed for a run that has started, and this run is already past its first charge."
-            : "Add a data dictionary per cohort, map its columns, and choose how the run should be priced. Mark each dictionary complete to export the exact text that will be clustered — all of that is free. Nothing is charged until you press Start run."
+            ? // The "moved on" notice right below the rail already says this screen is a record.
+              undefined
+            : // Trimmed to what the steps below do not already say (2026-10-07): they walk the dictionaries,
+              // the export and the run mode one by one, so the lead carries only the money claim.
+              "Everything on this screen is free — nothing is charged until you press Start run."
       }
       rail={railFor("setup", realizedRailArgs(jobState?.result?.cost, costSoFar))}
       runName={jobState?.displayName}
@@ -1583,25 +1665,17 @@ export default function SetupPage() {
         >
           <CollapsibleTrigger
             aria-label={dictsOpen ? "Hide the dictionaries and their column mapping" : "Show the dictionaries and their column mapping"}
-            className="flex w-full items-center justify-between gap-2 text-left"
+            className={disclosureRow("field")}
           >
             <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
-                What this run was set up with
-              </span>
+              <DisclosureLabel ground="field">What this run was set up with</DisclosureLabel>
               <span data-testid="setup-dictionaries-summary" className="truncate text-sm text-on-field">
                 {dicts.length} {dicts.length === 1 ? "dictionary" : "dictionaries"}
                 {totalFields === null ? "" : ` · ${totalFields.toLocaleString()} variables`} · the column
                 mapping is fixed for this run
               </span>
             </span>
-            <ChevronDown
-              aria-hidden="true"
-              className={cn(
-                "h-4 w-4 shrink-0 text-on-field-muted transition-transform",
-                dictsOpen && "rotate-180",
-              )}
-            />
+            <DisclosureChevron ground="field" open={dictsOpen} />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-4">{dictionariesSection}</CollapsibleContent>
         </Collapsible>
@@ -1823,7 +1897,7 @@ export default function SetupPage() {
               <label htmlFor="provider" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
                 Provider
                 <InfoTip
-                  text="Which API the model stages call. Anthropic is the only provider validated end to end against this pipeline; anything else is listed so you can see it exists, and disabled so a run cannot be pointed at it."
+                  text={providerHelp(models)}
                   label="About the provider options"
                 />
               </label>
@@ -1853,7 +1927,7 @@ export default function SetupPage() {
               <label htmlFor="model" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
                 Model
                 <InfoTip
-                  text="The model the paid stages run on. Claude Sonnet 4.6 is the only one this pipeline's prompts and benchmarks were validated against, so it is the default and the others are disabled. Model choice changes both cost and the quality of concept grouping and assignment."
+                  text={modelHelp(models)}
                   label="About the model options"
                 />
               </label>
@@ -1867,7 +1941,7 @@ export default function SetupPage() {
               >
                 {modelsForProvider.length === 0 && <option value="">No models available</option>}
                 {modelsForProvider.map((m) => {
-                  const tested = isModelTested(m.id);
+                  const tested = m.validated;
                   return (
                     <option key={m.id} value={m.id} disabled={!tested}>
                       {m.label}

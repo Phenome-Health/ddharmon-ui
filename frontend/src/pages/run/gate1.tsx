@@ -17,6 +17,8 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DisclosureChevron, DisclosureLabel } from "@/components/ui/disclosure";
+import { Highlight } from "@/components/ui/highlight";
 import {
   Collapsible,
   CollapsibleContent,
@@ -26,13 +28,13 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell } from "@/components/gate/GateShell";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
 import { LedgerRow } from "@/components/gate/LedgerRow";
-import { CoherenceMark } from "@/components/gate/CoherenceMark";
+import { COHERENCE_COPY, CoherenceMark } from "@/components/gate/CoherenceMark";
+import { ConceptWorkbench } from "@/components/gate/ConceptWorkbench";
 import { CohortCoverage } from "@/components/gate/CohortCoverage";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CarveProposal } from "@/components/gate/CarveProposal";
 import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
-import { GroupingStrip } from "@/components/gate/GroupingStrip";
 import { BreadthFilter } from "@/components/gate/BreadthFilter";
 import {
   MEMBER_DRAG_TYPE,
@@ -43,7 +45,18 @@ import {
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RunKeyField } from "@/components/gate/RunKeyField";
 import { SourceRows, hasSourceRows } from "@/components/source-rows";
-import { LedgerToolbar } from "@/components/gate/LedgerToolbar";
+import {
+  CohortLegend,
+  FilterCheck,
+  FilterChips,
+  FilterSection,
+  QueueRowFacts,
+  QueueSearch,
+  SegmentedSort,
+  SelectAllShown,
+  type FilterChip,
+} from "@/components/gate/QueueControls";
+import { tickedOfShown } from "@/lib/queue-controls";
 import { gate1BillableGroups, gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
 import { isGateLocked } from "@/lib/review-mode";
@@ -52,7 +65,6 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
-import { DEMO_CONTINUE_NOTE } from "@/lib/sandbox";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
 import {
@@ -61,7 +73,6 @@ import {
   applyFilters,
   activeFilterCount,
   bulkScopePlan,
-  bulkScopeState,
   cohortRoster,
   groupLabel,
   effectiveMembers,
@@ -93,6 +104,7 @@ import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { SUGGESTION_TAG_COPY, scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
 import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
+import { shippedDeclaration, shippedSuggestions } from "@/lib/demo-score";
 import { cn } from "@/lib/utils";
 import type {
   CoherenceState,
@@ -125,7 +137,15 @@ import type {
  * with a forecast would imply the reviewer is scoping before any money moved. What is still true, and is
  * the honest claim, is that they scope before the *bulk*: assignment is 77% of the run.
  *
- * NO CLUSTER-SIZE CONTROL, EVER. See `GroupingStrip` for the three reasons.
+ * NO CLUSTER-SIZE CONTROL, EVER (D-17), for three independent reasons any one of which would be sufficient:
+ *   1. Re-clustering INVALIDATES THE FROZEN SUBSTRATE. UMAP + HDBSCAN is not bit-reproducible, so a partition
+ *      cannot be recovered by re-running with the same parameters — the run would be a different run.
+ *   2. It RE-PAYS the clustering step and strands every decision already made: a scope or a regroup is keyed
+ *      to a group that no longer exists under the new partition.
+ *   3. The public design page publishes a hand-tuned cluster size as the REJECTED alternative; a slider here
+ *      would contradict a live public claim about how the tool works.
+ * A group is reshaped by moving variables into or out of it. (The four-figure grouping strip that carried this
+ * note was removed on 2026-10-06: its totals moved into the queue header, beside the list they count.)
  */
 
 /** The two things a scope decision can say. Written out so the payload and the UI cannot disagree. */
@@ -278,85 +298,6 @@ function ReSplitMark({ parent }: { parent: string }) {
       <Scissors aria-hidden="true" className="h-3 w-3" />
       re-split
     </span>
-  );
-}
-
-/**
- * Select or deselect every VISIBLE group in one action (08-16c Task 7).
- *
- * PLAIN SELECT/DESELECT LANGUAGE, and that is the 08-16c review talking. This read "All 28 groups shown
- * are in scope." / "Put all 28 shown in scope", and Bhargav: *"this wording is confusing. just use simple
- * 'select all' 'deselect all' language."* The rows carry CHECKBOXES, so select is the verb the control
- * already has; "in scope" is what the selection MEANS and it is still said where the meaning is needed —
- * the "Going forward" filter, the sum block, the Continue bar. It is not a second vocabulary, it is the
- * plain name for the gesture. This spec's own tests had been calling it select-all all along.
- *
- * IT STILL NAMES ITS OWN SCOPE — the word SHOWN, in every string, and the count beside it. "All 117" is a
- * different promise from "all 12 in this filter", and the reviewer has to read which one before pressing
- * rather than discover it after. Simplifying the register may not cost that distinction: a control that
- * silently acted on filtered-out rows is the trap this was written to avoid.
- *
- * IT REPORTS A REAL TRI-STATE. Claiming "all" over a partially-selected set is the same class of lie as
- * a checkbox that submits while looking disabled.
- *
- * IT LOCKS WHILE IT RUNS. There is no bulk endpoint — `write`/`clear` are per-item promises — so this is
- * N sequential requests, and `use-gate-decisions`' conflict handling is written for one decision at a
- * time. A second bulk press landing mid-flight is exactly the half-succeeded burst that has no story here.
- */
-function BulkScopeControl({
-  count,
-  state,
-  busy,
-  frozen = false,
-  onBulk,
-}: {
-  count: number;
-  state: "all" | "none" | "some";
-  busy: boolean;
-  /** The gate is a record — the control is shown so the state is readable, but it cannot act. */
-  frozen?: boolean;
-  onBulk: (target: "in" | "out") => void;
-}) {
-  const noun = count === 1 ? "group" : "groups";
-  return (
-    <div
-      data-testid="bulk-scope"
-      data-state={state}
-      className="flex flex-wrap items-center gap-2 text-sm text-on-raised-muted"
-    >
-      <span>
-        {state === "all"
-          ? `All ${count} ${noun} shown are selected.`
-          : state === "none"
-            ? `None of the ${count} ${noun} shown are selected.`
-            : `Some of the ${count} ${noun} shown are selected.`}
-      </span>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        data-testid="bulk-scope-in"
-        disabled={busy || frozen || count === 0 || state === "all"}
-        onClick={() => onBulk("in")}
-      >
-        Select all {count} shown
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        data-testid="bulk-scope-out"
-        disabled={busy || frozen || count === 0 || state === "none"}
-        onClick={() => onBulk("out")}
-      >
-        Deselect all {count} shown
-      </Button>
-      {busy && (
-        <span role="status" data-testid="bulk-scope-busy">
-          Saving…
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -853,7 +794,7 @@ function DestinationTray({
       aria-label={label}
       className="flex min-w-0 flex-col gap-2"
     >
-      <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+      <span className="text-sm font-semibold text-on-raised">
         {heading}
       </span>
       <input
@@ -1075,7 +1016,7 @@ function UnassignedPool({
           className="flex w-full flex-col gap-3"
         >
           <div className="flex w-full flex-wrap items-baseline gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+            <h2 className="text-sm font-semibold text-on-raised">
               In no group
             </h2>
             {/* THE COUNT, where a reviewer meets it on the way to Continue — what is parked outside every
@@ -1565,7 +1506,7 @@ function ExpandedGroup({
               data-battery-suspect="true"
               className="rounded-inner border-l-4 border-l-status-warn bg-surface-warn px-4 py-3"
             >
-              <p className="text-xs font-bold uppercase tracking-eyebrow text-on-warn">
+              <p className="text-sm font-semibold text-on-warn">
                 Checked — but likely a battery
               </p>
               <p className="mt-1 max-w-[80ch] text-sm text-on-warn">
@@ -1637,16 +1578,7 @@ function ExpandedGroup({
           </MemberList>
         )}
 
-        {canRegroup && (
-          <p className="text-xs text-on-raised-muted">
-            Drag a {gridCarriesMembers ? "row" : "variable"} onto a group in the
-            list on the left to move it there, or onto &ldquo;In no group&rdquo;
-            to take it out of every group.
-            {gridCarriesMembers &&
-              " Without a mouse, use the × beside a row's drag handle to take that variable out of this group."}{" "}
-            Your moves are saved as you make them.
-          </p>
-        )}
+        {/* The drag instructions are said ONCE, in the how-to's step 5 (review round 5: "repeated text"). */}
 
         {/*
         THE DOOR ONTO THE POOL — a real destination with its own identifier, not a sentinel special-cased
@@ -1667,7 +1599,7 @@ function ExpandedGroup({
             onDropMember={(memberId) => onMove(memberId, UNASSIGNED_GROUP_ID)}
             className="bg-surface-inset"
           >
-            <span className="w-full text-xs font-semibold uppercase tracking-eyebrow text-on-inset-muted">
+            <span className="w-full text-sm font-semibold text-on-inset">
               In no group
               {poolCount > 0 && (
                 <span className="ml-2 font-mono normal-case tracking-normal">
@@ -1764,57 +1696,52 @@ function SumBlock({
   nIdeals?: number;
   idealsUsd?: number;
 }) {
+  // SAID ONCE, BRIEFLY (review round 1 on the live build: "verbose and redundant"). The lab's footer register —
+  // "N ticked · $X to match them at Gate 2" — for the purchase; the realized spend first and in its own weight;
+  // the whole-corpus comparison only while it differs from the purchase, since "all 55 would be $0.61" under
+  // "55 of 55 · $0.61" says the same number twice.
   return (
-    <div data-testid="sum-block" className="flex flex-col gap-1">
-      <p
-        data-sum-line="realized"
-        className="text-sm font-semibold text-on-raised"
-      >
+    <div data-testid="sum-block" className="flex flex-col gap-0.5">
+      <p data-sum-line="realized" className="text-sm font-semibold text-on-raised">
+        Spent so far:{" "}
         {realized > 0 ? (
-          <>
-            Already spent to reach this gate:{" "}
-            <span className="font-mono tabular-nums">
-              {formatUsd(realized)}
-            </span>{" "}
-            — naming the concepts, dividing them, and checking them.
-          </>
+          <span className="font-mono tabular-nums">{formatUsd(realized)}</span>
         ) : (
-          <>
-            Already spent to reach this gate: nothing — this run is a saved
-            replay, so it was not billed.
-          </>
+          "nothing — a saved replay"
         )}
       </p>
-      <p
-        data-sum-line="in-scope"
-        className="text-sm font-normal text-on-raised"
-      >
-        {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} in scope —{" "}
-        <span className="font-mono tabular-nums">
-          {formatUsd(inScopeTotal)}
-        </span>{" "}
-        to match them against common data elements at Gate 2.
+      <p data-sum-line="in-scope" className="text-sm font-normal text-on-raised">
+        {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} ticked ·{" "}
+        <span className="font-mono tabular-nums">{formatUsd(inScopeTotal)}</span> to match at Gate 2
       </p>
       {nIdeals > 0 && (
         /* Named rather than folded in silently: these are calls the reviewer's own edits bought (a New group has
            no description yet; a reshaped one's was written for other members), so the quote says so. */
         <p data-sum-line="ideals" className="text-xs font-normal text-on-raised-muted">
-          {nIdeals} new ideal {nIdeals === 1 ? "description" : "descriptions"} — one for
-          each group you made or changed —{" "}
-          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>, included
-          above.
+          {nIdeals} new ideal {nIdeals === 1 ? "description" : "descriptions"} included (
+          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>), for groups you made or changed
         </p>
       )}
-      <p
-        data-sum-line="whole-corpus"
-        className="text-sm font-normal text-on-raised-faint"
-      >
-        All {nGroups} {nGroups === 1 ? "group" : "groups"} would be{" "}
-        <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>
-        .
-      </p>
+      {nInScope < nGroups && (
+        <p data-sum-line="whole-corpus" className="text-sm font-normal text-on-raised-faint">
+          All {nGroups} {nGroups === 1 ? "group" : "groups"}:{" "}
+          <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>
+        </p>
+      )}
     </div>
   );
+}
+
+/**
+ * The State section of the filter menu (08-30b): the four coherence states in triage order, as boxes — tick
+ * several, tick none and every state shows, so there is no "All states" entry. Labels come from the one register
+ * the row's tag reads (`COHERENCE_COPY`), sentence-cased for a menu.
+ */
+const STATE_FILTER_ORDER: CoherenceState[] = ["split", "qualify", "not_judged", "single"];
+
+function stateLabel(state: CoherenceState): string {
+  const label = COHERENCE_COPY[state].label;
+  return label[0].toUpperCase() + label.slice(1);
 }
 
 /**
@@ -1828,7 +1755,7 @@ function QueueRow({
   group,
   scoreTag,
   scoreTagSource = "match",
-  price,
+  roster,
   count,
   inScope,
   changed,
@@ -1836,11 +1763,14 @@ function QueueRow({
   readOnly,
   renamedTo,
   reviewer = false,
+  query,
   onSelect,
   onScopeChange,
   onDropMember,
 }: {
   group: ConceptGroup;
+  /** The queue's search, so the row can highlight what it matched in the name (review round 3). */
+  query?: string;
   /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
    *  as a tag and the reason this row is pinned to the top of the queue. */
   scoreTag?: string[];
@@ -1849,7 +1779,8 @@ function QueueRow({
   scoreTagSource?: "match" | "suggestion";
   /** A New group the reviewer made (08-28 Wave 2): marked as theirs, never with a coherence cell. */
   reviewer?: boolean;
-  price: number;
+  /** Every cohort in the run, in its fixed order — the strip's columns, under the queue's one legend. */
+  roster: string[];
   count: number;
   inScope: boolean;
   changed: boolean;
@@ -1871,6 +1802,7 @@ function QueueRow({
       data-testid="ledger-row"
       data-group-id={group.groupId}
       data-row-id={group.groupId}
+      data-search-label={label.text}
       data-reviewer={reviewer ? "true" : undefined}
       data-spine={
         isFlagged(group) ? "unresolved" : changed ? "changed" : "none"
@@ -1909,7 +1841,7 @@ function QueueRow({
             }
       }
       className={cn(
-        "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 border-l-4 px-4 py-2.5 text-left",
+        "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-2.5 border-l-4 px-4 py-2.5 text-left",
         isFlagged(group)
           ? "border-l-status-warn"
           : changed
@@ -1922,7 +1854,7 @@ function QueueRow({
           "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
       )}
     >
-      <div className="mt-0.5" onClick={(e) => e.stopPropagation()}>
+      <div className="mt-px" onClick={(e) => e.stopPropagation()}>
         <Checkbox
           data-testid="queue-scope"
           checked={inScope}
@@ -1931,6 +1863,9 @@ function QueueRow({
           aria-label={`Send ${label.text} to Gate 2`}
         />
       </div>
+      {/* THE NAME HAS THE LEFT COLUMN TO ITSELF (08-30b, lab round 5): up to three lines, and a short name makes
+          a short row. What is unusual about the group — a score it feeds, a re-split, a template suspicion, an
+          outsized membership — still rides under it; the routine facts moved right. */}
       <div className="min-w-0">
         {scoreTag && scoreTag.length > 0 && (
           <div className="mb-1 flex flex-wrap gap-1">
@@ -1965,12 +1900,14 @@ function QueueRow({
         )}
         <div
           className={cn(
-            "line-clamp-2 text-sm font-semibold leading-snug",
+            "line-clamp-3 text-sm font-semibold leading-snug",
             selected ? "text-accent-on-raised" : "text-on-raised",
           )}
           title={label.text}
         >
-          <span data-label-source={label.source}>{label.text}</span>
+          <span data-label-source={label.source}>
+            <Highlight text={label.text} query={query} mode="word-prefix" />
+          </span>
           {label.source === "reviewer" && <RenamedMark />}
           {label.source === "judge" && <BorrowedMark />}
           {changed && !reviewer && (
@@ -1979,75 +1916,30 @@ function QueueRow({
             </span>
           )}
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-          {reviewer ? <NewGroupMark /> : <CoherenceMark state={group.coherence} />}
-          {group.readjudicatedFrom && (
-            <ReSplitMark parent={group.readjudicatedFrom} />
-          )}
-          {group.matrixSuspect &&
-            (group.coherence === "not_judged" ||
-              group.coherence === "single") && (
-              <TemplateSuspicion judged={group.coherence === "single"} />
+        {(group.readjudicatedFrom ||
+          (group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single")) ||
+          count >= BIG_GROUP_MIN) && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {group.readjudicatedFrom && (
+              <ReSplitMark parent={group.readjudicatedFrom} />
             )}
-          {count >= BIG_GROUP_MIN && <LargeGroupMark count={count} />}
-          <span className="flex flex-wrap gap-1">
-            {group.cohorts.map((c) => (
-              <span
-                key={c}
-                className="rounded bg-surface-inset px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-inset-muted"
-              >
-                {c}
-              </span>
-            ))}
-          </span>
-          <span className="text-xs text-on-raised-faint">
-            {count} {count === 1 ? "var" : "vars"}
-          </span>
-        </div>
+            {group.matrixSuspect &&
+              (group.coherence === "not_judged" ||
+                group.coherence === "single") && (
+                <TemplateSuspicion judged={group.coherence === "single"} />
+              )}
+            {count >= BIG_GROUP_MIN && <LargeGroupMark count={count} />}
+          </div>
+        )}
       </div>
-      <span className="whitespace-nowrap pt-0.5 font-mono text-xs tabular-nums text-on-raised-muted">
-        {formatUsd(price)}
-      </span>
-    </div>
-  );
-}
-
-/**
- * The queue's sort control — the review-queue's sortable columns, condensed to a header strip above a card
- * list. Same shared `ColumnSort`/`toggleSort` the old ledger headers used, so the two surfaces order a
- * group the same way.
- */
-function QueueSortHeader({
-  sort,
-  onSort,
-}: {
-  sort: ColumnSort<LedgerSortKey> | null;
-  onSort: (key: LedgerSortKey) => void;
-}) {
-  const cols: { k: LedgerSortKey; label: string }[] = [
-    { k: "concept", label: "Concept" },
-    { k: "verdict", label: "State" },
-    { k: "cohorts", label: "# cohorts" },
-    { k: "vars", label: "Vars" },
-  ];
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-faint">
-      <span className="mr-auto">Sort</span>
-      {cols.map((c) => (
-        <button
-          key={c.k}
-          type="button"
-          data-testid={`sort-${c.k}`}
-          onClick={() => onSort(c.k)}
-          className={cn(
-            "hover:text-accent-on-raised",
-            sort?.key === c.k && "text-accent-on-raised",
-          )}
-        >
-          {c.label}
-          {sort?.key === c.k ? (sort.dir === "asc" ? " ↑" : " ↓") : " ⇅"}
-        </button>
-      ))}
+      {/* The facts column: cohort strip, then the variable count and the state. The per-row price is gone
+          (lab round 2: "repetitive") — the sum block under the list says it once. */}
+      <QueueRowFacts
+        cohorts={group.cohorts}
+        roster={roster}
+        vars={count}
+        state={reviewer ? <NewGroupMark /> : <CoherenceMark state={group.coherence} variant="tag" />}
+      />
     </div>
   );
 }
@@ -2160,8 +2052,8 @@ function ReviewerGroupDetail({
                 className="min-w-[18rem] rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-xl font-semibold text-on-raised"
               />
             ) : (
-              <h2 className="text-xl font-semibold leading-tight text-on-raised" title={group.concept}>
-                {group.concept}
+              <h2 data-testid="concept-title" className="text-xl font-semibold leading-tight text-on-raised" title={group.concept}>
+                <Highlight text={group.concept} />
               </h2>
             )}
             {!editing && <NewGroupMark />}
@@ -2332,10 +2224,11 @@ function GroupDetail({
               />
             ) : (
               <h2
+                data-testid="concept-title"
                 className="text-xl font-semibold leading-tight text-on-raised"
                 title={label.text}
               >
-                {label.text}
+                <Highlight text={label.text} />
               </h2>
             )}
             {label.source === "reviewer" && !editing && <RenamedMark />}
@@ -2386,13 +2279,14 @@ function GroupDetail({
 
       {group.idealCde && (
         <details
-          className="rounded-inner border border-rule-on-raised"
+          className="group rounded-inner border border-rule-on-raised"
           open={stale}
         >
-          <summary className="cursor-pointer px-4 py-2.5 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            Generated ideal CDE{" "}
-            <span className="font-normal normal-case tracking-normal text-on-raised-faint">
-              — from the original grouping
+          {/* The shared disclosure header (08-30b): whole row lights on hover, trailing chevron. */}
+          <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-inner px-4 py-2.5 transition-colors hover:bg-surface-inset group-open:rounded-b-none [&::-webkit-details-marker]:hidden">
+            <DisclosureLabel ground="raised">Generated ideal CDE</DisclosureLabel>
+            <span className="text-xs text-on-raised-faint">
+              from the original grouping
             </span>
             {stale && (
               <span
@@ -2402,6 +2296,7 @@ function GroupDetail({
                 membership changed — regenerated at Gate 2
               </span>
             )}
+            <DisclosureChevron ground="raised" className="ml-auto group-open:rotate-180" />
           </summary>
           {stale && (
             <p className="px-4 pt-2 text-xs leading-relaxed text-on-raised-muted">
@@ -2414,22 +2309,12 @@ function GroupDetail({
             </p>
           )}
           <p className="max-w-[90ch] px-4 py-3 text-sm leading-relaxed text-on-raised-muted">
-            {group.idealCde}
+            {/* Searched (searchableText), so a match here is highlighted too (review round 4). */}
+            <Highlight text={group.idealCde} />
           </p>
         </details>
       )}
 
-      {/* SAME FRAME, LATER GATES (mockup parity). The queue on the left and this detail pane are the shell
-          every gate reuses; naming what slots in here next is the mockup's own note, kept verbatim in tone. */}
-      <div className="rounded-inner border border-dashed border-rule-on-raised bg-surface-inset px-4 py-3 text-xs text-on-inset-muted">
-        <span className="font-semibold text-on-inset">
-          Same layout, later gates:
-        </span>{" "}
-        Gate 2 slots a ranked CDE-candidate panel into this pane (score ·
-        collection · endorsement · select) plus the cosine to the chosen
-        element; Gate 3 adds a transform spec per source row. The left queue and
-        this detail frame do not change.
-      </div>
     </div>
   );
 }
@@ -2568,12 +2453,26 @@ export default function Gate1Page() {
     [newGroups.decisions],
   );
   /**
+   * THE SHARED DEMO'S SHIPPED SCORE (`lib/demo-score.ts`): its declaration is the baseline the rows below start from
+   * (a guest's own re-declaration wins, and only that counts as their edit), and its Gate 1 hints stand in for the
+   * suggestions route, which a guest's tab never asks. Null on every real run.
+   */
+  const demoScore = jobState?.demoScore;
+  const shippedRows = useMemo(() => shippedDeclaration(demoScore, pinned), [demoScore, pinned]);
+  const shippedHints = useMemo(() => shippedSuggestions(demoScore, pinned), [demoScore, pinned]);
+  /**
    * The declared score's rows — ONE hook instance, handed to the score panel, so a declaration made there is seen
    * here at once (a second instance would hydrate once and never see the panel's later writes).
    */
-  const swaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen });
+  const swaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen, baseline: shippedRows });
   const declared = useMemo(() => declaredScores(swaps.all), [swaps.all]);
-  const latestSpec = jobState?.composites?.at(-1) ?? null;
+  /**
+   * The Gate 4 match, when it is Gate 1's score input. NOT when the shared demo ships its score: that match is Gate
+   * 4's, and a guest walks Gate 1 before it — so Gate 1 shows what it showed when the demo was built, the free hints,
+   * and the match waits on Gate 4 where it was made. Any other run (a pinned fixture with a match included) is as it
+   * was: a match, once there is one, is Gate 1's input.
+   */
+  const latestSpec = shippedHints ? null : (jobState?.composites?.at(-1) ?? null);
   /**
    * Gate 1's FREE score suggestions (08-28 Decision 6, option A): the retrieval half of the match, $0, no judge.
    *
@@ -2610,6 +2509,8 @@ export default function Gate1Page() {
     // suggested group for the length of a request.
     placeholderData: keepPreviousData,
   });
+  /** The free hints this screen reads: the shipped ones on the demo, else the route's answer. */
+  const suggestionData = shippedHints ?? suggestionsQuery.data;
   /**
    * THE ONE INPUT to the score-seeded scope and the queue's score tags: the Gate 4 match when the run has one, else
    * the free suggestions (`scoreScopeInput`). Both go through `scoreSeededGroups`, each at its own scale's cut-off.
@@ -2620,9 +2521,9 @@ export default function Gate1Page() {
     () =>
       scoreScopeInput(
         latestSpec,
-        frozen || latestSpec ? null : suggestionsQuery.data,
+        frozen || latestSpec ? null : suggestionData,
       ),
-    [latestSpec, frozen, suggestionsQuery.data],
+    [latestSpec, frozen, suggestionData],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
   const scoreSeed = useMemo(
@@ -2631,7 +2532,7 @@ export default function Gate1Page() {
   );
   /** What the score panel says about the suggestions, when they are the input (or could not be made). */
   const suggestionNote = useMemo(() => {
-    const s = !frozen && !latestSpec ? suggestionsQuery.data : undefined;
+    const s = !frozen && !latestSpec ? suggestionData : undefined;
     // No score searched for: the server holds no declaration for this run (the shared demo keeps its declaration in
     // this browser, which the server never sees) — so there is nothing to say, not "nothing was found".
     if (!s || s.scores.length === 0) return null;
@@ -2641,7 +2542,7 @@ export default function Gate1Page() {
       nComponents: scoreInput.source === "suggestion" ? scoreInput.matches.length : 0,
       unavailable: "",
     };
-  }, [frozen, latestSpec, suggestionsQuery.data, scoreSeed, scoreInput]);
+  }, [frozen, latestSpec, suggestionData, scoreSeed, scoreInput]);
   /** The reviewer's own name for a group, or undefined. Read straight off the persisted decisions. */
   const renamedOf = (groupId: string): string | undefined => {
     const chosen = renames.decisions[groupId]?.chosen;
@@ -3109,6 +3010,12 @@ export default function Gate1Page() {
   const nIdeals = inScopeGroups.filter((g) => needsIdeal(g.groupId)).length;
   const filledReviewerRows = reviewerRows.filter((g) => memberCount(g) > 0);
   const nCrossCohort = groups.filter((g) => g.crossCohort).length;
+  // The filter menu's figures: how many groups each cohort box would keep on its own.
+  const cohortCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of groups) for (const c of g.cohorts) m.set(c, (m.get(c) ?? 0) + 1);
+    return m;
+  }, [groups]);
 
   // PARTITION FIRST, then search, then filter, then sort. The order matters: the partition is a structural
   // fact about the corpus and the other three are the reviewer's own narrowing, so a bucket count must not
@@ -3152,6 +3059,25 @@ export default function Gate1Page() {
     renames.decisions,
     scoreTagByGroup,
   ]);
+
+  // Variables per SHOWN group, for the select-all counts (ticked of shown).
+  const visibleVars = new Map(visible.map((g) => [g.groupId, memberCount(g)]));
+
+  // Every filter that is on, as a removable chip under the search (08-30b) — Cross-cohort only first, then the
+  // cohorts, then the states, in the order the menu lists them.
+  const filterChips: FilterChip[] = [
+    ...(xcOnly ? [{ key: "xc", label: "Cross-cohort only", onRemove: () => setXcOnly(false) }] : []),
+    ...filters.cohorts.map((c) => ({
+      key: `co:${c}`,
+      label: c,
+      onRemove: () => setFilters({ ...filters, cohorts: filters.cohorts.filter((x) => x !== c) }),
+    })),
+    ...filters.verdicts.map((st) => ({
+      key: `st:${st}`,
+      label: stateLabel(st),
+      onRemove: () => setFilters({ ...filters, verdicts: filters.verdicts.filter((x) => x !== st) }),
+    })),
+  ];
 
   /**
    * Apply a bulk scope change to the VISIBLE rows, one request at a time.
@@ -3339,7 +3265,7 @@ export default function Gate1Page() {
       gate="gate1"
       // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
       jobId={jobId}
-      subhead="Each row is a group of variables that mean the same thing, with the name ddharmon generated for it. Choose which ones go on to be matched against common data elements."
+      subhead="Each row is a group of variables that mean the same thing, named by ddharmon."
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
@@ -3386,7 +3312,7 @@ export default function Gate1Page() {
         swaps={swaps}
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
-        suggestions={!frozen && !latestSpec ? (suggestionsQuery.data ?? null) : null}
+        suggestions={!frozen && !latestSpec ? (suggestionData ?? null) : null}
         spec={latestSpec}
         matchRefusal={matchRefusal}
         groupsById={groupsById}
@@ -3422,18 +3348,6 @@ export default function Gate1Page() {
           });
         }}
       />
-
-      {/* FOUR ZEROES ARE A CLAIM TOO. "0 concept groups · 0 parent clusters · 0 variables" reads as
-          "this run measured nothing", which is the same lie as the empty ledger and just as loud, so the
-          strip is withheld until the run has actually produced figures. */}
-      {!awaitingRun && !stoppedBeforeGate && (
-        <GroupingStrip
-          nGroups={groups.length}
-          nClusters={clusters}
-          nVariables={variables}
-          nCrossCohort={nCrossCohort}
-        />
-      )}
 
       {/* No groups to lay out — waiting, stopped, or an all-outliers run. Full width, not a pane. */}
       {awaitingRun ? (
@@ -3540,83 +3454,141 @@ export default function Gate1Page() {
         )
       ) : (
         /*
-          THE UNIFIED GATE-1 LAYOUT (08-16f). The prod master-detail (workbench) frame with the sidebar on
-          the LEFT: the left aside is the scannable / filterable / sortable queue (review-queue), and the
-          right section is the depth for the selected group (review-workbench). Each later gate slots its
-          own columns and controls into this same frame — Gate 2 the CDE candidates, Gate 3 the specs.
+          THE UNIFIED GATE-1 LAYOUT (08-16f), on the shared frame since the recurring-controls redesign (08-30b).
+          The prod master-detail (workbench) frame with the sidebar on the LEFT: the left aside is the scannable /
+          filterable / sortable queue (review-queue), and the right section is the depth for the selected group
+          (review-workbench). Gates 2 and 3 wear the same `ConceptWorkbench` and the same `QueueControls`.
         */
-        <div
-          data-testid="ledger"
-          className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(340px,384px)_minmax(0,1fr)] lg:items-start"
-        >
-          <aside
-            data-testid="gate1-queue"
-            className="flex flex-col gap-3 overflow-hidden rounded-card bg-surface-raised py-4 shadow-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)]"
-          >
-            <div className="px-4">
-              <LedgerToolbar
-                search={
-                  <input
-                    type="search"
-                    data-testid="term-search"
-                    value={query}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setQuery(v);
-                      setTerms(v.trim() ? [v.trim()] : null);
-                    }}
-                    placeholder="Search concept, variable, cohort…"
-                    aria-label="Filter concept groups"
-                    className="h-8 min-w-[11rem] flex-1 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2.5 text-sm text-on-raised placeholder:text-on-raised-faint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                  />
-                }
-                count={visible.length}
-                total={groups.length}
-                crossCohortOnly={xcOnly}
-                onCrossCohortOnlyChange={setXcOnly}
-                verdict={
-                  (filters.verdicts[0] ?? "all") as CoherenceState | "all"
-                }
-                onVerdictChange={(v) =>
-                  setFilters({ ...filters, verdicts: v === "all" ? [] : [v] })
+        <ConceptWorkbench
+          gate="gate1"
+          testid="ledger"
+          search={{ query, mode: "word-prefix" }}
+          detailRef={detailPaneRef}
+          toolbar={
+            <section
+              data-testid="ledger-toolbar"
+              aria-label="Narrow the concept groups"
+              className="flex flex-col gap-2"
+            >
+              <QueueSearch
+                value={query}
+                onChange={(v) => {
+                  setQuery(v);
+                  setTerms(v.trim() ? [v.trim()] : null);
+                }}
+                placeholder="Search concept, variable, cohort…"
+                ariaLabel="Filter concept groups"
+                activeFilters={filterChips.length}
+                filters={
+                  <>
+                    <FilterSection
+                      first
+                      title="Cohorts"
+                      columns={2}
+                      lead={
+                        <FilterCheck
+                          testid="cross-cohort-toggle"
+                          checked={xcOnly}
+                          onChange={setXcOnly}
+                          label="Cross-cohort only"
+                          count={nCrossCohort}
+                          countTestid="cross-cohort-count"
+                        />
+                      }
+                      hint="Spanning every cohort ticked"
+                    >
+                      {allCohorts.map((c) => (
+                        <FilterCheck
+                          key={c}
+                          testid={`filter-cohort-${c}`}
+                          checked={filters.cohorts.includes(c)}
+                          onChange={(on) =>
+                            setFilters({
+                              ...filters,
+                              cohorts: on ? [...filters.cohorts, c] : filters.cohorts.filter((x) => x !== c),
+                            })
+                          }
+                          label={c}
+                          count={cohortCounts.get(c) ?? 0}
+                        />
+                      ))}
+                    </FilterSection>
+                    <FilterSection title="State">
+                      {STATE_FILTER_ORDER.map((st) => (
+                        <FilterCheck
+                          key={st}
+                          testid={`filter-state-${st}`}
+                          checked={filters.verdicts.includes(st)}
+                          onChange={(on) =>
+                            setFilters({
+                              ...filters,
+                              verdicts: on ? [...filters.verdicts, st] : filters.verdicts.filter((x) => x !== st),
+                            })
+                          }
+                          label={stateLabel(st)}
+                          count={groups.filter((g) => g.coherence === st).length}
+                          countTestid={`filter-state-${st}-count`}
+                        />
+                      ))}
+                    </FilterSection>
+                  </>
                 }
               />
-            </div>
-            <QueueSortHeader
-              sort={colSort}
-              onSort={(key) => setColSort((cur) => toggleSort(cur, key))}
-            />
-            <div className="px-4">
-              <BulkScopeControl
-                frozen={frozen}
-                count={visible.length}
-                state={bulkScopeState(
+              <FilterChips
+                chips={filterChips}
+                onClear={() => {
+                  setXcOnly(false);
+                  setFilters(NO_FILTERS);
+                }}
+              />
+            </section>
+          }
+          tools={
+            <>
+              <SelectAllShown
+                counts={tickedOfShown(
                   visible.map((g) => g.groupId),
                   isInScope,
+                  (id) => visibleVars.get(id) ?? 0,
                 )}
                 busy={bulkBusy}
-                onBulk={(t) => void onBulkScope(t)}
+                frozen={frozen}
+                onToggle={(t) => void onBulkScope(t)}
               />
-            </div>
-            {!frozen && (
+              <SegmentedSort<LedgerSortKey>
+                cols={[
+                  { k: "concept", label: "Concept" },
+                  { k: "verdict", label: "State" },
+                  { k: "cohorts", label: "Cohorts" },
+                  { k: "vars", label: "Vars" },
+                ]}
+                sort={colSort}
+                onSort={(key) => setColSort((cur) => toggleSort(cur, key))}
+                onFlip={() => setColSort((cur) => (cur ? toggleSort(cur, cur.key) : cur))}
+              />
+            </>
+          }
+          aboveList={
+            !frozen && (
               <div className="px-4">
                 <NewGroupControl onCreate={(name) => void createGroup(name)} />
               </div>
-            )}
-            <div
-              data-testid="gate1-rows"
-              className="flex-1 divide-y divide-rule-quiet-on-raised overflow-y-auto border-y border-rule-quiet-on-raised"
-            >
+            )
+          }
+          legend={<CohortLegend roster={allCohorts} />}
+          rows={
+            <>
               {/* The reviewer's own groups lead the list, outside the search and filters: there are a handful,
                   they were just made, and they are where the next drag is going. */}
               {reviewerRows.map((g) => (
                 <QueueRow
                   key={g.groupId}
+                  query={query}
                   group={g}
                   reviewer
                   scoreTag={scoreTagByGroup.get(g.groupId)}
                   scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
-                  price={price + idealPerGroup}
+                  roster={allCohorts}
                   count={memberCount(g)}
                   inScope={isInScope(g.groupId)}
                   changed
@@ -3688,10 +3660,11 @@ export default function Gate1Page() {
                 visible.map((g) => (
                   <QueueRow
                     key={g.groupId}
+                    query={query}
                     group={g}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
                     scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
-                    price={needsIdeal(g.groupId) ? price + idealPerGroup : price}
+                    roster={allCohorts}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}
                     changed={isChanged(g.groupId)}
@@ -3713,7 +3686,9 @@ export default function Gate1Page() {
                   />
                 ))
               )}
-            </div>
+            </>
+          }
+          belowList={
             <button
               type="button"
               data-testid="gate1-pool-entry"
@@ -3759,9 +3734,7 @@ export default function Gate1Page() {
               )}
             >
               <span className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold uppercase tracking-eyebrow">
-                  In no group
-                </span>
+                <span className="text-sm font-semibold">In no group</span>
                 <span className="flex items-center gap-1.5">
                   <span className="font-mono text-sm font-semibold tabular-nums">
                     {poolCount}
@@ -3776,124 +3749,121 @@ export default function Gate1Page() {
                 Click to review · or drop a variable here
               </span>
             </button>
-            <div className="px-4">
-              <SumBlock
-                realized={costSoFar}
-                inScopeTotal={quote}
-                nIdeals={nIdeals}
-                idealsUsd={nIdeals * idealPerGroup}
-                wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerGroup, needsIdeal)}
-                nInScope={inScopeGroups.length}
-                nGroups={groups.length + filledReviewerRows.length}
-              />
-            </div>
-          </aside>
-
-          <section
-            ref={detailPaneRef}
-            data-testid="gate1-detail"
-            className="min-w-0 rounded-card bg-surface-raised p-5 shadow-card lg:p-6"
-          >
-            {poolSelected ? (
-              <UnassignedPool
-                reviewerRemoved={membership.unassigned}
-                fromPipeline={poolFromPipeline}
-                destinations={[]}
-                membersOf={(id) => membership.byGroup[id] ?? []}
-                sampleOnly={(o) => !hasFullMembership(o)}
-                fieldIndex={fieldIndex}
-                onMove={(memberId, toGroupId) =>
-                  void moveMember(memberId, toGroupId)
-                }
-                onRestoreMember={(memberId) => void restoreMember(memberId)}
-                readOnly={frozen}
-                defaultOpen
-              />
-            ) : selectedReviewer ? (
-              <ReviewerGroupDetail
-                group={selectedReviewer}
-                members={membership.byGroup[selectedReviewer.groupId] ?? []}
-                fieldIndex={fieldIndex}
-                movedMembers={movedMemberIds}
-                readOnly={frozen}
-                inScope={isInScope(selectedReviewer.groupId)}
-                onScopeChange={(next) => setGroupScope(selectedReviewer.groupId, next)}
-                onRename={(next) => void renameGroup(selectedReviewer.groupId, next)}
-                onDelete={() => void deleteGroup(selectedReviewer.groupId)}
-                onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
-                dividedFrom={(() => {
-                  const parent = groups.find((g) => g.groupId === selectedReviewer.readjudicatedFrom);
-                  return parent ? groupLabel(parent, renamedOf(parent.groupId)).text : undefined;
-                })()}
-              />
-            ) : detailGroup ? (
-              <GroupDetail
-                group={detailGroup}
-                count={memberCount(detailGroup)}
-                readOnly={frozen}
-                renameReadOnly={renameFrozen}
-                renamedTo={renamedOf(detailGroup.groupId)}
-                onRename={(next) => void onRename(detailGroup, next)}
-                inScope={isInScope(detailGroup.groupId)}
-                onScopeChange={(next) =>
-                  void scope.write(
-                    { groupId: detailGroup.groupId },
-                    {
-                      chosen: next ? IN_SCOPE : OUT_OF_SCOPE,
-                      alternatives: SCOPE_OPTIONS,
-                    },
-                  )
-                }
-                stale={touchedByRegroup.has(detailGroup.groupId)}
-              >
-                <ExpandedGroup
-                  highlightIds={scoreHighlight?.groupId === detailGroup.groupId ? scoreHighlight.ids : undefined}
-                  group={detailGroup}
-                  otherGroups={[]}
+          }
+          footer={
+            <SumBlock
+              realized={costSoFar}
+              inScopeTotal={quote}
+              nIdeals={nIdeals}
+              idealsUsd={nIdeals * idealPerGroup}
+              wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerGroup, needsIdeal)}
+              nInScope={inScopeGroups.length}
+              nGroups={groups.length + filledReviewerRows.length}
+            />
+          }
+          detail={
+            <>
+              {poolSelected ? (
+                <UnassignedPool
+                  reviewerRemoved={membership.unassigned}
+                  fromPipeline={poolFromPipeline}
+                  destinations={[]}
                   membersOf={(id) => membership.byGroup[id] ?? []}
                   sampleOnly={(o) => !hasFullMembership(o)}
-                  members={membership.byGroup[detailGroup.groupId] ?? []}
-                  poolCount={poolCount}
                   fieldIndex={fieldIndex}
-                  movedMembers={movedMemberIds}
                   onMove={(memberId, toGroupId) =>
                     void moveMember(memberId, toGroupId)
                   }
-                  onRestore={() => void restoreGroup(detailGroup.groupId)}
-                  canRegroup={hasFullMembership(detailGroup)}
-                  refusal={refusalFor}
-                  carvePrice={
-                    <>
-                      This costs money. Re-splitting this group into distinct
-                      concepts is paid work — at most about {formatUsd(price * 2)}{" "}
-                      for a group this size — and it starts as soon as you press
-                      the button. Each part then joins the list as a group of its
-                      own, in scope: at Gate 2 it is matched and gets an ideal
-                      description of its own, about{" "}
-                      {formatUsd(price + idealPerGroup)} a part, which the Continue
-                      quote shows before you commit. Your spend so far updates when
-                      the re-split finishes.
-                    </>
-                  }
-                  accepting={accepting === detailGroup.groupId}
-                  carveKeyField={
-                    carveKeyAsk?.groupId === detailGroup.groupId ? (
-                      <RunKeyField reason={carveKeyAsk.reason} action="Accept this division" />
-                    ) : undefined
-                  }
-                  onAcceptCarve={() => void acceptCarve(detailGroup.groupId)}
-                  onIgnoreCarve={() => undefined}
-                  divisionParts={reviewerRows.filter((g) => g.readjudicatedFrom === detailGroup.groupId)}
-                  onUndoDivision={frozen ? undefined : () => void undoDivision(detailGroup.groupId)}
+                  onRestoreMember={(memberId) => void restoreMember(memberId)}
+                  readOnly={frozen}
+                  defaultOpen
                 />
-              </GroupDetail>
-            ) : (
-              <p className="py-16 text-center text-sm text-on-raised-muted">
-                Select a concept group on the left.
-              </p>
-            )}
-          </section>
-        </div>
+              ) : selectedReviewer ? (
+                <ReviewerGroupDetail
+                  group={selectedReviewer}
+                  members={membership.byGroup[selectedReviewer.groupId] ?? []}
+                  fieldIndex={fieldIndex}
+                  movedMembers={movedMemberIds}
+                  readOnly={frozen}
+                  inScope={isInScope(selectedReviewer.groupId)}
+                  onScopeChange={(next) => setGroupScope(selectedReviewer.groupId, next)}
+                  onRename={(next) => void renameGroup(selectedReviewer.groupId, next)}
+                  onDelete={() => void deleteGroup(selectedReviewer.groupId)}
+                  onMove={(memberId, toGroupId) => void moveMember(memberId, toGroupId)}
+                  dividedFrom={(() => {
+                    const parent = groups.find((g) => g.groupId === selectedReviewer.readjudicatedFrom);
+                    return parent ? groupLabel(parent, renamedOf(parent.groupId)).text : undefined;
+                  })()}
+                />
+              ) : detailGroup ? (
+                <GroupDetail
+                  group={detailGroup}
+                  count={memberCount(detailGroup)}
+                  readOnly={frozen}
+                  renameReadOnly={renameFrozen}
+                  renamedTo={renamedOf(detailGroup.groupId)}
+                  onRename={(next) => void onRename(detailGroup, next)}
+                  inScope={isInScope(detailGroup.groupId)}
+                  onScopeChange={(next) =>
+                    void scope.write(
+                      { groupId: detailGroup.groupId },
+                      {
+                        chosen: next ? IN_SCOPE : OUT_OF_SCOPE,
+                        alternatives: SCOPE_OPTIONS,
+                      },
+                    )
+                  }
+                  stale={touchedByRegroup.has(detailGroup.groupId)}
+                >
+                  <ExpandedGroup
+                    highlightIds={scoreHighlight?.groupId === detailGroup.groupId ? scoreHighlight.ids : undefined}
+                    group={detailGroup}
+                    otherGroups={[]}
+                    membersOf={(id) => membership.byGroup[id] ?? []}
+                    sampleOnly={(o) => !hasFullMembership(o)}
+                    members={membership.byGroup[detailGroup.groupId] ?? []}
+                    poolCount={poolCount}
+                    fieldIndex={fieldIndex}
+                    movedMembers={movedMemberIds}
+                    onMove={(memberId, toGroupId) =>
+                      void moveMember(memberId, toGroupId)
+                    }
+                    onRestore={() => void restoreGroup(detailGroup.groupId)}
+                    canRegroup={hasFullMembership(detailGroup)}
+                    refusal={refusalFor}
+                    carvePrice={
+                      <>
+                        This costs money. Re-splitting this group into distinct
+                        concepts is paid work — at most about {formatUsd(price * 2)}{" "}
+                        for a group this size — and it starts as soon as you press
+                        the button. Each part then joins the list as a group of its
+                        own, in scope: at Gate 2 it is matched and gets an ideal
+                        description of its own, about{" "}
+                        {formatUsd(price + idealPerGroup)} a part, which the Continue
+                        quote shows before you commit. Your spend so far updates when
+                        the re-split finishes.
+                      </>
+                    }
+                    accepting={accepting === detailGroup.groupId}
+                    carveKeyField={
+                      carveKeyAsk?.groupId === detailGroup.groupId ? (
+                        <RunKeyField reason={carveKeyAsk.reason} action="Accept this division" />
+                      ) : undefined
+                    }
+                    onAcceptCarve={() => void acceptCarve(detailGroup.groupId)}
+                    onIgnoreCarve={() => undefined}
+                    divisionParts={reviewerRows.filter((g) => g.readjudicatedFrom === detailGroup.groupId)}
+                    onUndoDivision={frozen ? undefined : () => void undoDivision(detailGroup.groupId)}
+                  />
+                </GroupDetail>
+              ) : (
+                <p className="py-16 text-center text-sm text-on-raised-muted">
+                  Select a concept group on the left.
+                </p>
+              )}
+            </>
+          }
+        />
       )}
 
       {/* The pool renders full-width when the run grouped nothing — there is no sidebar to host it then. */}
@@ -3922,7 +3892,6 @@ export default function Gate1Page() {
         // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
         // cost there would claim a purchase that does not happen.
         total={pinned !== true && groups.length > 0 ? quote : undefined}
-        assurance={pinned === true ? DEMO_CONTINUE_NOTE : undefined}
         // `spentHere` is DELIBERATELY OMITTED here, and only on this screen. The ledger's sum block
         // directly above already leads with the realized figure — that placement is the requirement, not
         // a preference — so passing it to the bar as well rendered the same fact twice, in two different

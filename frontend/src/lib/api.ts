@@ -12,7 +12,7 @@ import type {
   GenCDE,
   JobResult,
   JobSummary,
-  ModelInfo,
+  ModelCatalog,
   RunConfig,
   ScoreDefinition,
   ScoreSuggestions,
@@ -105,21 +105,11 @@ export async function detectRoles(columns: string[]): Promise<{ columnRoles: Rec
   );
 }
 
-// Built-in fallback catalog for the model picker — used in static preview (no backend) and mirrors the
-// backend's fallback when no LiteLLM proxy is configured. Kept small and provider-diverse so the picker
-// is visibly multi-provider even without a proxy.
-const FALLBACK_MODELS: ModelInfo[] = [
-  { id: "claude-sonnet-4-6", provider: "anthropic", label: "Claude Sonnet 4.6" },
-  { id: "claude-opus-4-8", provider: "anthropic", label: "Claude Opus 4.8" },
-  { id: "gpt-4o", provider: "openai", label: "GPT-4o" },
-  { id: "gemini/gemini-1.5-pro", provider: "gemini", label: "Gemini 1.5 Pro" },
-];
-
-export async function listModels(): Promise<{ models: ModelInfo[]; source: string }> {
-  // The picker's catalog: the backend proxies GET /model/info from the LiteLLM proxy when one is
-  // configured, else returns a built-in fallback. In static preview there is no backend, so serve the
-  // same fallback client-side.
-  if (IS_STATIC) return { models: FALLBACK_MODELS, source: "static" };
+export async function listModels(): Promise<ModelCatalog> {
+  // The picker's list, which models are validated, and the default — all decided server-side (core's model
+  // registry when the server's core has one, else the backend's fallback list), so no model is named here. The
+  // static build reads the snapshot of that endpoint that `scripts/build_static_fixtures.py` writes.
+  if (IS_STATIC) return json(await fetch(`${STATIC_BASE}/models.json`));
   return json(await fetch(`${BASE}/models`, { headers: await authed() }));
 }
 

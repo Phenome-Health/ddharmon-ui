@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { cn } from "@/lib/utils";
 import type { GatePosition } from "@/types";
 
@@ -62,8 +62,8 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   // NEVER RENDERED. Kept only because `GatePosition` still carries the position — see the docstring.
   gate0: [{ text: "This screen was retired; the run pauses at this point on Set up instead." }],
   gate1: [
-    { text: "Read the grouping strip: how many concept groups formed, and from how many clusters." },
-    { text: "Search for the concepts you care about, one term per line." },
+    { text: "Check the counts beside the select-all box, and use the filters in the search box to narrow by cohort or state." },
+    { text: "Search for the concepts you care about." },
     { text: "Tick the groups you want to take to Gate 2." },
     { text: "Open a group to see every variable in it and any proposed division." },
     // THE DRAG WAS MISSING (08-16c review). Bhargav read the list against the screen and the reshaping
@@ -71,7 +71,9 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
     // announces that it can be picked up — was not in it. One line, in the same numbered register, placed
     // where it happens: after the group is open, before the charge.
     {
-      text: "Drag a variable out of an open group onto another group to move it there, or onto In no group to pull it out — moves save as you make them.",
+      // The keyboard way joined this step when the open group's own drag paragraph went (review round 5), in the
+      // same length — the panel is orientation, held under 700 characters by gate1.spec.
+      text: "Drag a variable onto another group, or onto In no group to pull it out; without a mouse, use the × by its handle. Moves save as you go.",
     },
     {
       text: "Press Continue to Gate 2. The naming, splitting and judging that produced this screen were already charged on Set up; this button buys the assignment step, and its amount is on it.",
@@ -99,8 +101,27 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   ],
 };
 
-export function HowToPanel({ gate, className }: { gate: GatePosition; className?: string }) {
-  const [open, setOpen] = useState(false);
+/**
+ * OPEN BY DEFAULT (2026-10-06, Bhargav). The masthead's subhead now arrives as `lead`, so this panel is the
+ * screen's one statement of what it is for and what to do; folding it away by default hid exactly the text a
+ * first-time reviewer needs. It can still be folded for the visit.
+ */
+export function HowToPanel({
+  gate,
+  lead,
+  note,
+  className,
+}: {
+  gate: GatePosition;
+  lead?: string;
+  /**
+   * A fact about THIS run that holds for every row on the screen, said once under the steps rather than on every
+   * row's detail pane (review round 3) — e.g. that the run left the concept-match check off.
+   */
+  note?: React.ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(true);
   const steps = HOW_TO[gate];
   return (
     <Collapsible
@@ -115,17 +136,17 @@ export function HowToPanel({ gate, className }: { gate: GatePosition; className?
         // The accessible name states the ACTION and its OBJECT, not just "toggle" — an icon-only control
         // whose name does not say what it operates on is a defect, not a style choice (UI-SPEC §6).
         aria-label={open ? "Hide how to use this screen" : "Show how to use this screen"}
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className={disclosureRow("field")}
       >
-        <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">
-          How to use this screen
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn("h-4 w-4 shrink-0 text-on-field-muted transition-transform", open && "rotate-180")}
-        />
+        <DisclosureLabel ground="field">How to use this screen</DisclosureLabel>
+        <DisclosureChevron ground="field" open={open} />
       </CollapsibleTrigger>
       <CollapsibleContent>
+        {lead && (
+          <p data-testid="how-to-lead" className="mt-3 max-w-[80ch] text-sm text-on-field">
+            {lead}
+          </p>
+        )}
         <ol className="mt-3 space-y-2">
           {steps.map((step, i) => (
             <li key={i} className="flex gap-3 text-sm text-on-field">
@@ -134,6 +155,7 @@ export function HowToPanel({ gate, className }: { gate: GatePosition; className?
             </li>
           ))}
         </ol>
+        {note}
       </CollapsibleContent>
     </Collapsible>
   );

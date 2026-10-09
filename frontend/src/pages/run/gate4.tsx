@@ -36,6 +36,7 @@ import {
   verdictBreakdown,
 } from "@/lib/gate4";
 import { SCORE_ARTIFACT, declaredScores, scoreExport, specForScore } from "@/lib/score-match";
+import { shippedDeclaration } from "@/lib/demo-score";
 import type { CompositeSpec } from "@/types";
 
 /**
@@ -62,8 +63,14 @@ export default function Gate4Page() {
   // The decision log reads EVERY kind's decisions (`all`); the requested kind only names which sandbox key
   // this hook writes, and Gate 4 writes none of them (artifact selection is ephemeral UI state, not a
   // persisted gate decision — the `gate4_export_selection` kind is per-record inclusion, a different thing).
+  // On the shared demo the shipped declared score is the baseline (`lib/demo-score.ts`): Gate 4 shows that declaration
+  // and its shipped match, and a guest's own re-declaration on Gate 1 (held in the tab) wins over it.
+  const demoScore = jobState?.demoScore;
+  const pinnedRun = resolvePinned(jobState?.config);
+  const shippedRows = useMemo(() => shippedDeclaration(demoScore, pinnedRun), [demoScore, pinnedRun]);
   const gate = useGateDecisions(jobId, "gate4_export_selection", {
-    pinned: resolvePinned(jobState?.config),
+    pinned: pinnedRun,
+    baseline: shippedRows,
   });
 
   const [lang, setLang] = useState<NotebookLang>("py");
@@ -152,7 +159,7 @@ export default function Gate4Page() {
     <GateShell
       gate="gate4"
       jobId={jobId}
-      subhead="Choose what to take away, check it before it goes, and read the decision trail behind it. Downloading is free."
+      subhead="Downloading is free."
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       job={jobState}
@@ -160,28 +167,8 @@ export default function Gate4Page() {
       resumed={isParkedAt(jobState, "gate4")}
     >
       <div className="flex flex-col gap-6">
-        {/* Surface 1 — notebook language, + the lifted reproducibility disclosure. */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3" data-testid="notebook-language">
-            <span className="text-xs font-semibold uppercase tracking-eyebrow text-on-field-muted">Notebook language</span>
-            <div className="inline-flex rounded-inner border border-rule-on-field p-0.5">
-              {(["py", "r"] as const).map((l) => (
-                <button
-                  key={l}
-                  type="button"
-                  data-testid={`notebook-lang-${l}`}
-                  data-active={String(lang === l)}
-                  onClick={() => setLang(l)}
-                  className={cn(
-                    "rounded-inner px-3 py-1 text-sm font-semibold",
-                    lang === l ? "bg-surface-raised text-on-raised shadow-card" : "text-on-field-muted",
-                  )}
-                >
-                  {l === "py" ? "Python" : "R"}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Surface 1 — the lifted reproducibility disclosure. (The notebook language moved onto the notebook's tile.) */}
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <ReproducibilityInfo coreVersion={coreVersion} />
         </div>
 
@@ -210,6 +197,14 @@ export default function Gate4Page() {
         {/* Surface 2 — what ships: the real artifacts, then the honest gaps. */}
         <section className="flex flex-col gap-3" data-testid="export-set">
           <h2 className="text-sm font-semibold text-on-field">What leaves the tool</h2>
+          {/* Said once for the set (round 5 sweep): every tile shares the run's state, so every tile used to say it. */}
+          {artifactState === "generating" && (
+            <p data-testid="artifacts-generating" className="text-xs text-on-field-muted">
+              The run is still producing these files — each becomes selectable once the run finishes producing it.
+            </p>
+          )}
+          {/* Two to a row (review round 3: "so much whitespace, i think we can half the width and have 2 columns"). */}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {artifacts.map((a) => (
             <ArtifactTile
               key={a.id}
@@ -225,6 +220,34 @@ export default function Gate4Page() {
                 a.id === "notebook"
                   ? "The notebook runs where your data already lives. Your data never enters ddharmon."
                   : undefined
+              }
+              beside={
+                a.id === "notebook" ? (
+                  // Beside the filename it changes, so the effect of the toggle is right next to it.
+                  <div
+                    role="group"
+                    aria-label="Notebook language"
+                    data-testid="notebook-language"
+                    className="inline-flex rounded-inner border border-rule-on-raised p-0.5"
+                  >
+                    {(["py", "r"] as const).map((l) => (
+                      <button
+                        key={l}
+                        type="button"
+                        data-testid={`notebook-lang-${l}`}
+                        data-active={String(lang === l)}
+                        aria-pressed={lang === l}
+                        onClick={() => setLang(l)}
+                        className={cn(
+                          "rounded-inner px-2.5 py-0.5 text-xs font-semibold",
+                          lang === l ? "bg-surface-inset-strong text-on-raised" : "text-on-raised-muted hover:text-on-raised",
+                        )}
+                      >
+                        {l === "py" ? "Python" : "R"}
+                      </button>
+                    ))}
+                  </div>
+                ) : undefined
               }
             >
               {a.id === "eitl_tsv" && (
@@ -249,6 +272,7 @@ export default function Gate4Page() {
               {g.body}
             </NotAvailable>
           ))}
+          </div>
         </section>
 
         {/* The two stated limitations — notes, not hidden (UI-SPEC §0.2 "Explicitly OUT"). */}
