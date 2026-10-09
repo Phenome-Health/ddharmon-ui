@@ -19,8 +19,16 @@ import type {
   UIRecord,
 } from "@/types";
 import type { ComponentProposal, ReadDocument } from "@/lib/score-proposal";
+import { withApiOrigin } from "@/lib/api-origin";
 
-const BASE = "/api/harmonize";
+// Same-origin in every deployed build; a local backend in the Lavish review surface (`lib/api-origin.ts`).
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN as string | undefined;
+const BASE = withApiOrigin(API_ORIGIN, "/api/harmonize");
+
+/** A run's live-progress stream (SSE). Here, beside BASE, so it follows the same build-time API origin. */
+export function streamUrl(jobId: string): string {
+  return `${BASE}/stream/${jobId}`;
+}
 /** The six screens in order — the client-side half of contract.py's `GatePosition` literal. */
 export const GATE_ORDER: GatePosition[] = ["setup", "gate0", "gate1", "gate2", "gate3", "gate4"];
 export const IS_STATIC = import.meta.env.VITE_STATIC === "1";

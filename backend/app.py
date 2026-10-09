@@ -44,7 +44,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import backend.artifact_kinds  # noqa: F401 — importing registers the artifact kinds
-from backend import batch_reconcile, billing, cde_cache, export_decisions
+from backend import batch_reconcile, billing, build_identity, cde_cache, export_decisions
 from backend.artifact_kinds import (
     ACCEPTED_GENCDE,
     GATE1_GROUP_SCOPE,
@@ -3327,6 +3327,11 @@ def _core_version() -> str:
 # `scripts/warm_cde_cache.py`; re-checked by itself when a catalog file or the cache file changes.
 _cde_warmth = cde_cache.WarmthMonitor(lambda: CDE_FILES, lambda path: load_spec(cde_spec_for(path)))
 
+# Which build this server is (see `backend/build_identity.py`). Read once: the checkout and the installed core do not
+# change under a running process — a deploy restarts it.
+_UI_BUILD = build_identity.ui_build(_REPO_ROOT)
+_CORE_COMMIT = build_identity.core_commit()
+
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
@@ -3337,6 +3342,10 @@ def health() -> dict[str, Any]:
     built SPA are in place (a run with ``cdeSet != none`` needs the matching CDE file). ``channel``
     (``prod`` default / ``dev``) and ``coreVersion`` distinguish the dev deployment — which pins the
     core to an unreleased GitHub ref — from prod, which tracks the PyPI release.
+
+    ``uiCommit`` / ``uiTree`` name the UI checkout this server runs (its git HEAD and HEAD's tree; the tree is what
+    matches across `integration/dev`'s merge commits) and ``coreCommit`` the git commit core was installed from —
+    ``None`` when unknowable. The deploy runbook compares them with the build Bhargav approved in Lavish.
 
     ``cdeCache`` reports, per catalog, how many of its rows the shared embedding cache already holds:
     ``{"checkedAt", "catalogs": {name: {"rows", "cached", "warm"}}}``. It never blocks this probe: the first
@@ -3350,6 +3359,9 @@ def health() -> dict[str, Any]:
         "contractVersion": CONTRACT_VERSION,
         "channel": os.environ.get("DDHARMON_CHANNEL", "prod"),
         "coreVersion": _core_version(),
+        "coreCommit": _CORE_COMMIT,
+        "uiCommit": _UI_BUILD["commit"],
+        "uiTree": _UI_BUILD["tree"],
         "cde": {name: path.exists() for name, path in CDE_FILES.items()},
         "cdeCache": _cde_warmth.snapshot(),
         "frontendBuilt": _DIST.exists(),

@@ -14,6 +14,7 @@ import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
 import { PhMark } from "@/components/ph-logo";
 import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
 import { GlobalStatusBanner } from "@/components/global-status-banner";
+import { BuildStamp } from "@/components/build-stamp";
 
 // Dev channel: a build pinned to an UNRELEASED core (git ref), deployed to dev.ddharmon.io for
 // pre-PyPI validation. Baked in at build time (VITE_APP_CHANNEL=dev); defaults to prod so a normal
@@ -93,6 +94,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               Dev · unreleased core
             </span>
           )}
+          {IS_DEV_CHANNEL && <BuildStamp className="mr-2" />}
           {IS_STATIC && (
             <span className="mr-2 rounded bg-warning-bg px-2 py-0.5 text-xs font-semibold text-warning">
               Preview · sample data
