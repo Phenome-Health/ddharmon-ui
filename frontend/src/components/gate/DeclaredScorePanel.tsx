@@ -174,6 +174,10 @@ export interface DeclaredScorePanelProps {
    * per-component cards are drawn from. `null` (or no dense score in it) keeps the plain declared list.
    */
   suggestions?: ScoreSuggestions | null;
+  /** The cut-off the free search is split at — the reviewer's `gate1_score_cutoff`, else the payload's own. */
+  cutoff?: number;
+  /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent on a frozen gate → the control is read-only. */
+  onCutoffChange?: (next: number | null) => void;
   /**
    * A composite spec already derived for this run, when one exists. This is the ONLY source of match
    * evidence — the panel never infers a match, because inferring one is what `match_components` is paid
@@ -224,6 +228,8 @@ export function DeclaredScorePanel({
   swaps: sharedSwaps,
   suggestionNote = null,
   suggestions = null,
+  cutoff,
+  onCutoffChange,
   spec,
   matchRefusal,
   onMatch,
@@ -347,8 +353,8 @@ export function DeclaredScorePanel({
 
   /** The free search's cards, one per declared component — `[]` keeps the plain list (no dense score, or none asked). */
   const cards = useMemo(
-    () => (spec ? [] : suggestionCards(declared.map((d) => d.name), suggestions)),
-    [spec, declared, suggestions],
+    () => (spec ? [] : suggestionCards(declared.map((d) => d.name), suggestions, cutoff)),
+    [spec, declared, suggestions, cutoff],
   );
 
   const verdict = scopeVerdictFor(evidence);
@@ -721,7 +727,9 @@ export function DeclaredScorePanel({
               {cards.length > 0 ? (
                 <ScoreSuggestionCards
                   cards={cards}
-                  threshold={suggestions!.threshold}
+                  threshold={cutoff ?? suggestions!.threshold}
+                  defaultThreshold={suggestions!.threshold}
+                  onThresholdChange={frozen ? undefined : onCutoffChange}
                   groupsById={groupsById}
                   fieldIndex={fieldIndex}
                   isGroupInScope={isGroupInScope}

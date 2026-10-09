@@ -723,11 +723,13 @@ def test_every_gate_decision_kind_is_registered_with_an_identity(artifacts):
     08-28: 1d's ``gate3_combine_rule`` (how several of one cohort's variables become one target column, keyed
     on the (cohort, target) column it governs) and Wave 2's ``gate1_new_group`` (a group the reviewer made,
     keyed on that group's own ``rev:<uuid>`` id). Raised 10 -> 11 by review round 2's ``gate3_member_exclusion``
-    (a variable the reviewer removed from one concept, keyed on the (group, variable) pair it removes).
+    (a variable the reviewer removed from one concept, keyed on the (group, variable) pair it removes). Raised
+    11 -> 12 by review round 6's ``gate1_score_cutoff`` (the score panel's suggestion cut-off — one setting per run,
+    keyed on the setting itself, the thing decided).
     """
     from backend.artifacts import registry as global_registry
 
-    assert len(GATE_DECISION_KINDS) == 11
+    assert len(GATE_DECISION_KINDS) == 12
     for name in GATE_DECISION_KINDS:
         assert not global_registry.get(name).singleton, f"{name} must key on the thing decided"
 
@@ -1120,10 +1122,12 @@ def _a_valid_decision(kind: str) -> dict:
     added to the registry is covered here without anyone remembering to add it."""
     from backend.artifact_kinds import (
         _DECISION_IDENTITY_FIELDS,
+        GATE1_SCORE_CUTOFF,
         GATE3_MEMBER_EXCLUSION,
         MEMBER_EXCLUDE,
         MEMBER_KEEP,
         REVIEWER_GROUP_PREFIX,
+        SCORE_CUTOFF_SETTING,
         SKOS_RELATIONS,
     )
 
@@ -1136,6 +1140,10 @@ def _a_valid_decision(kind: str) -> dict:
         options = list(SKOS_RELATIONS[:2])
     elif kind == GATE3_MEMBER_EXCLUSION:
         options = [MEMBER_EXCLUDE, MEMBER_KEEP]
+    elif kind == GATE1_SCORE_CUTOFF:
+        # A cut-off holds a number in range, keyed on its one setting; the alternative is the default it replaced.
+        payload["setting"] = SCORE_CUTOFF_SETTING
+        options = ["0.55", "0.62"]
     else:
         options = ["x", "y"]
     return {

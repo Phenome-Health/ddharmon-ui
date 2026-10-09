@@ -128,6 +128,7 @@ const GATE_OF: Record<GateDecisionKind, string> = {
   gate1_new_group: "Gate 1",
   gate1_regroup: "Gate 1",
   gate1_rename: "Gate 1",
+  gate1_score_cutoff: "Gate 1",
   gate2_candidate_pick: "Gate 2",
   gate2_relation: "Gate 2",
   gate3_spec_edit: "Gate 3",
@@ -143,6 +144,7 @@ const DECISION_GATE: Record<GateDecisionKind, string> = {
   gate1_new_group: "gate1",
   gate1_regroup: "gate1",
   gate1_rename: "gate1",
+  gate1_score_cutoff: "gate1",
   gate2_candidate_pick: "gate2",
   gate2_relation: "gate2",
   gate3_spec_edit: "gate3",
@@ -162,6 +164,7 @@ const ACTION_OF: Record<GateDecisionKind, string> = {
   gate1_new_group: "Created a group",
   gate1_regroup: "Moved a variable",
   gate1_rename: "Renamed a group",
+  gate1_score_cutoff: "Set the score suggestion cut-off",
   gate2_candidate_pick: "Picked a target",
   gate2_relation: "Set a relation",
   gate3_spec_edit: "Edited a transform spec",
@@ -291,6 +294,10 @@ function detailOf(
       return `from ${nameOf(d.fromGroupId) ?? "no group"} to ${nameOf(d.chosen) ?? "no group"}`;
     case "gate1_rename":
       return typeof d.generatedName === "string" ? `${q(d.generatedName)} → ${q(d.chosen)}` : `→ ${q(d.chosen)}`;
+    case "gate1_score_cutoff": {
+      const def = Array.isArray(d.alternatives) ? d.alternatives[0] : undefined;
+      return def ? `${String(d.chosen)} (default ${String(def)})` : String(d.chosen);
+    }
     case "gate2_candidate_pick": {
       if (d.chosen === "") return d.gencdeEdit ? "your own CDE, edited" : "none of these";
       // The MODEL's pick — from the stamp once the Gate 2 -> 3 leg re-targeted the record (F17).
@@ -666,6 +673,10 @@ export function decisionLogCsvRows(
       if (kind === "gate1_rename") {
         const gid = String(d.groupId || item);
         before = String(d.generatedName || byGroup.get(gid)?.concept || groups.get(gid)?.concept || "");
+      } else if (kind === "gate1_score_cutoff") {
+        // The default it replaced (the one alternative) -> the reviewer's (the server's decision_log_rows).
+        const def = Array.isArray(d.alternatives) ? String(d.alternatives[0] ?? "") : "";
+        before = def ? `${def} (default)` : "";
       } else if (kind === "gate1_regroup") {
         before = String(d.fromGroupId || "");
         if (passedGate1) detail = appliedMoves.has(item) ? "applied" : "not applied";

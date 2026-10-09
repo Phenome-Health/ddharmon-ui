@@ -102,6 +102,7 @@ import {
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { SUGGESTION_TAG_COPY, scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
+import { SCORE_CUTOFF_KIND, SCORE_CUTOFF_SETTING, effectiveCutoff } from "@/lib/score-cutoff";
 import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
 import { shippedDeclaration, shippedSuggestions } from "@/lib/demo-score";
@@ -2512,6 +2513,23 @@ export default function Gate1Page() {
   /** The free hints this screen reads: the shipped ones on the demo, else the route's answer. */
   const suggestionData = shippedHints ?? suggestionsQuery.data;
   /**
+   * THE REVIEWER'S SUGGESTION CUT-OFF (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
+   * default 0.62"). A Gate 1 decision like scope itself: persisted per run (held in the tab on the demo), frozen with
+   * the gate. It replaces the payload's threshold everywhere the free search is cut — the cards, the tags and the
+   * seeded scope — and only there: Gate 4's judge works on its own scale. Undefined until there is a dense answer.
+   */
+  const cutoffs = useGateDecisions(jobId, SCORE_CUTOFF_KIND, { pinned, frozen });
+  const cutoff =
+    suggestionData?.scored ? effectiveCutoff(cutoffs.decisions[SCORE_CUTOFF_SETTING], suggestionData.threshold) : undefined;
+  /** Set (a number) or reset (`null` — the row is deleted and the payload's threshold applies again). */
+  const setCutoff = (next: number | null) => {
+    const setting = { setting: SCORE_CUTOFF_SETTING };
+    if (next === null) return void cutoffs.clear(setting);
+    // The one alternative is the default it replaces, so the decision log can say "0.55 (default 0.62)".
+    const def = suggestionData?.threshold;
+    void cutoffs.write(setting, { chosen: next.toFixed(2), alternatives: def != null ? [def.toFixed(2)] : [] });
+  };
+  /**
    * THE ONE INPUT to the score-seeded scope and the queue's score tags: the Gate 4 match when the run has one, else
    * the free suggestions (`scoreScopeInput`). Both go through `scoreSeededGroups`, each at its own scale's cut-off.
    * Every OFFERED group is tagged and pinned to the top; only the auto-selected subset (`scoreSeed`) starts in scope
@@ -2522,8 +2540,9 @@ export default function Gate1Page() {
       scoreScopeInput(
         latestSpec,
         frozen || latestSpec ? null : suggestionData,
+        cutoff,
       ),
-    [latestSpec, frozen, suggestionData],
+    [latestSpec, frozen, suggestionData, cutoff],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
   const scoreSeed = useMemo(
@@ -3315,6 +3334,8 @@ export default function Gate1Page() {
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
         suggestions={!frozen && !latestSpec ? (suggestionData ?? null) : null}
+        cutoff={cutoff}
+        onCutoffChange={frozen ? undefined : setCutoff}
         spec={latestSpec}
         matchRefusal={matchRefusal}
         groupsById={groupsById}

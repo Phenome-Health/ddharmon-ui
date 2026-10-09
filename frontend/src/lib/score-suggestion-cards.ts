@@ -70,6 +70,8 @@ export function countsForCard(g: SuggestionCardGroup, inScope: boolean): boolean
 export function suggestionCards(
   declared: readonly string[],
   s: ScoreSuggestions | null | undefined,
+  /** The reviewer's cut-off (`gate1_score_cutoff`) when they chose one, else the payload's own threshold. */
+  cutoff?: number,
 ): SuggestionCard[] {
   if (!s?.scored || !(s.scores?.length)) return [];
   const byComponent = new Map<string, Map<string, Omit<SuggestionCardGroup, "suggested">>>();
@@ -87,7 +89,7 @@ export function suggestionCards(
   return declared.map((component) => {
     const groups = [...(byComponent.get(component.trim().toLowerCase())?.values() ?? [])]
       .sort((a, b) => b.score - a.score)
-      .map((g) => ({ ...g, suggested: g.score >= s.threshold }));
+      .map((g) => ({ ...g, suggested: g.score >= (cutoff ?? s.threshold) }));
     return {
       component,
       groups,

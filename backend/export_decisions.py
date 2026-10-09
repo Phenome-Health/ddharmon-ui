@@ -74,6 +74,7 @@ from backend.artifact_kinds import (
     GATE1_NEW_GROUP,
     GATE1_REGROUP,
     GATE1_RENAME,
+    GATE1_SCORE_CUTOFF,
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
     GATE3_COMBINE_RULE,
@@ -114,6 +115,7 @@ GATE_OF = {
     GATE1_NEW_GROUP: "Gate 1",
     GATE1_REGROUP: "Gate 1",
     GATE1_RENAME: "Gate 1",
+    GATE1_SCORE_CUTOFF: "Gate 1",
     GATE2_CANDIDATE_PICK: "Gate 2",
     GATE2_RELATION: "Gate 2",
     GATE3_SPEC_EDIT: "Gate 3",
@@ -127,6 +129,7 @@ ACTION_OF = {
     GATE1_NEW_GROUP: "Created a group",
     GATE1_REGROUP: "Moved a variable",
     GATE1_RENAME: "Renamed a group",
+    GATE1_SCORE_CUTOFF: "Set the score suggestion cut-off",
     GATE2_CANDIDATE_PICK: "Picked a target",
     GATE2_RELATION: "Set a relation",
     GATE3_SPEC_EDIT: "Edited a transform spec",
@@ -667,6 +670,10 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                     or (groups.get(gid) or {}).get("concept")
                     or ""
                 )
+            elif kind == GATE1_SCORE_CUTOFF:
+                # The default it replaced (core's calibrated value, carried as the one alternative) -> the reviewer's.
+                default = (d.get("alternatives") or [""])[0]
+                before = f"{default} (default)" if default else ""
             elif kind == GATE1_REGROUP:
                 before = str(d.get("fromGroupId") or "")
                 # Past Gate 1 the regrouping is frozen: a move in it was applied by the pipeline; one outside it was

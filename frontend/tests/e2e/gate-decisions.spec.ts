@@ -84,6 +84,9 @@ test.describe("gate decisions", () => {
       // explicitly rather than counted, so a new kind cannot arrive without a human confirming it keys on
       // the thing decided — the property this whole table exists to protect.
       "gate1_rename",
+      // Added by review round 6: the score panel's suggestion cut-off — ONE setting per run, keyed on the setting
+      // itself (the thing decided), so a second write replaces the first instead of adding a row.
+      "gate1_score_cutoff",
       "gate2_candidate_pick",
       "gate2_relation",
       // Added by 08-28 1d: how several of one cohort's variables become one target column, keyed on the
@@ -102,6 +105,8 @@ test.describe("gate decisions", () => {
     expect(DECISION_IDENTITY_FIELDS.gate1_new_group).toEqual(["groupId"]);
     expect(decisionItemKey("gate1_new_group", { groupId: "rev:1" })).toBe("rev:1");
     expect(DECISION_IDENTITY_FIELDS.gate1_rename).toEqual(["groupId"]);
+    expect(DECISION_IDENTITY_FIELDS.gate1_score_cutoff).toEqual(["setting"]);
+    expect(decisionItemKey("gate1_score_cutoff", { setting: "suggestion_cutoff" })).toBe("suggestion_cutoff");
     expect(decisionItemKey("gate1_rename", { groupId: "c1#g0" })).toBe("c1#g0");
     expect(decisionItemKey("gate1_regroup", { memberId: "ukbb:21001" })).toBe("ukbb:21001");
     expect(decisionItemKey("gate2_relation", { groupId: "c1#g0", targetId: "CDE:9" })).toBe("c1#g0|CDE:9");

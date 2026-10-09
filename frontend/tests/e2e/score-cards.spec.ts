@@ -194,7 +194,8 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await expect(info).toContainText("$0");
     await expect(info).toContainText(/not a judgement/i);
     await expect(info).toContainText(/membership, not a match/i);
-    await expect(info).toContainText(TAU.toFixed(2));
+    // The cut-off is the reviewer's to change now (round 6): it sits in the sentence as an editable field.
+    await expect(info.getByTestId("score-cutoff-input")).toHaveValue(TAU.toFixed(2));
   });
 
   test("@gate1 opened, a card lists every group reached best-first, the cut-off drawn between, the best match by its question", async ({

@@ -1,9 +1,10 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { CheckCircle2, CircleDashed } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { NamedGroup } from "@/lib/ledger";
+import { SCORE_CUTOFF_MAX, SCORE_CUTOFF_MIN, parseCutoff } from "@/lib/score-cutoff";
 import { countsForCard, type GroupScopeWhy, type SuggestionCard, type SuggestionCardGroup } from "@/lib/score-suggestion-cards";
 import { cn } from "@/lib/utils";
 import type { FieldDetail } from "@/types";
@@ -32,6 +33,8 @@ import type { FieldDetail } from "@/types";
 export function ScoreSuggestionCards({
   cards,
   threshold,
+  defaultThreshold,
+  onThresholdChange,
   groupsById,
   fieldIndex,
   isGroupInScope,
@@ -40,8 +43,12 @@ export function ScoreSuggestionCards({
   onOpenGroup,
 }: {
   cards: SuggestionCard[];
-  /** The payload's own cut-off (core's calibrated value). */
+  /** The cut-off the cards are split at: the reviewer's (`gate1_score_cutoff`), else the payload's own. */
   threshold: number;
+  /** The payload's own cut-off (core's calibrated value) — what reset returns to. */
+  defaultThreshold?: number;
+  /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent → the cut-off is shown, not editable. */
+  onThresholdChange?: (next: number | null) => void;
   groupsById?: Map<string, NamedGroup>;
   fieldIndex?: Record<string, FieldDetail>;
   isGroupInScope?: (groupId: string) => boolean;
@@ -103,8 +110,26 @@ export function ScoreSuggestionCards({
             </li>
           </ul>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
-            Every group scoring <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span> or higher
-            starts in scope and is tagged Suggested — one cut-off for every component. Your checks always win.
+            Every group scoring{" "}
+            {onThresholdChange ? (
+              <CutoffInput value={threshold} onCommit={onThresholdChange} />
+            ) : (
+              <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span>
+            )}{" "}
+            or higher starts in scope and is tagged Suggested — one cut-off for every component. Your checks always win.
+            {onThresholdChange && defaultThreshold != null && Math.abs(threshold - defaultThreshold) > 1e-9 && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  data-testid="score-cutoff-reset"
+                  onClick={() => onThresholdChange(null)}
+                  className="font-semibold text-link-on-raised underline underline-offset-2"
+                >
+                  reset to {defaultThreshold.toFixed(2)}
+                </button>
+              </>
+            )}
           </p>
           </CollapsibleContent>
         </Collapsible>
@@ -142,6 +167,63 @@ export function ScoreSuggestionCards({
         </Collapsible>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * The suggestion cut-off, editable in place (review round 6 — Bhargav: "should be user-selectable with default 0.62").
+ *
+ * A number field in the sentence it governs, so the control and what it does are read together. Enter or leaving the
+ * field applies it at once; typing a valid value applies it after a short pause (the spin arrows included). A value
+ * outside [0.30, 0.95] is marked invalid and never applied; leaving the field then puts the applied value back, so the
+ * field never shows a cut-off the screen is not using.
+ */
+function CutoffInput({ value, onCommit }: { value: number; onCommit: (next: number) => void }) {
+  const [draft, setDraft] = useState(value.toFixed(2));
+  const [invalid, setInvalid] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Follow the applied value (a reset, a reload, another tab's write) — the draft is only ever a pending edit of it.
+  useEffect(() => {
+    setDraft(value.toFixed(2));
+    setInvalid(false);
+  }, [value]);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+  const commit = (text: string, revertIfInvalid: boolean) => {
+    if (timer.current) clearTimeout(timer.current);
+    const next = parseCutoff(text);
+    if (next === null) {
+      if (revertIfInvalid) {
+        setDraft(value.toFixed(2));
+        setInvalid(false);
+      } else setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    if (Math.abs(next - value) > 1e-9) onCommit(next);
+  };
+  return (
+    <input
+      type="number"
+      data-testid="score-cutoff-input"
+      aria-label="Suggestion cut-off"
+      aria-invalid={invalid}
+      title={`The similarity a group must reach to be suggested — between ${SCORE_CUTOFF_MIN.toFixed(2)} and ${SCORE_CUTOFF_MAX.toFixed(2)}.`}
+      min={SCORE_CUTOFF_MIN}
+      max={SCORE_CUTOFF_MAX}
+      step={0.01}
+      value={draft}
+      onChange={(e) => {
+        const text = e.target.value;
+        setDraft(text);
+        if (timer.current) clearTimeout(timer.current);
+        if (parseCutoff(text) !== null) timer.current = setTimeout(() => commit(text, false), 400);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit(e.currentTarget.value, false);
+      }}
+      onBlur={(e) => commit(e.currentTarget.value, true)}
+      className="mx-0.5 inline-block h-[18px] w-[7ch] rounded-inner border border-rule-control-on-raised bg-surface-raised px-1 py-0 align-baseline font-mono text-xs text-on-raised aria-[invalid=true]:border-status-danger"
+    />
   );
 }
 

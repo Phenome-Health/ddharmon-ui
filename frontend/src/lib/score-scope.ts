@@ -284,12 +284,14 @@ export const SUGGESTION_TAG_COPY = "Suggested by your score — a free search; t
  * neither tagged nor seeded. `scored: false` (no dense encoder) offers nothing — a lexical score is not comparable
  * across components and is never thresholded in its place.
  */
-export function suggestionMatches(s: ScoreSuggestions | null | undefined): ScoreScopeMatch[] {
+export function suggestionMatches(s: ScoreSuggestions | null | undefined, cutoff?: number): ScoreScopeMatch[] {
   if (!s?.scored) return [];
+  // The reviewer's cut-off (`gate1_score_cutoff`, `lib/score-cutoff.ts`) when they chose one, else the payload's own.
+  const at = cutoff ?? s.threshold;
   const out: ScoreScopeMatch[] = [];
   for (const score of s.scores ?? []) {
     for (const c of score.components ?? []) {
-      const groups = (c.groups ?? []).filter((g) => g.score >= s.threshold);
+      const groups = (c.groups ?? []).filter((g) => g.score >= at);
       if (groups.length === 0) continue;
       out.push({
         component: c.component,
@@ -314,10 +316,12 @@ export function suggestionMatches(s: ScoreSuggestions | null | undefined): Score
 export function scoreScopeInput(
   spec: { matches: readonly ScoreScopeMatch[] } | null | undefined,
   suggestions: ScoreSuggestions | null | undefined,
+  cutoff?: number,
 ): { source: "match" | "suggestion" | "none"; matches: readonly ScoreScopeMatch[]; threshold: number } {
   if (spec) return { source: "match", matches: spec.matches ?? [], threshold: GROUP_SELECT_THRESHOLD };
-  const matches = suggestionMatches(suggestions);
-  if (matches.length > 0) return { source: "suggestion", matches, threshold: suggestions!.threshold };
+  // `cutoff` is the free search's only — the judge's match (above) keeps its own scale, untouched by it.
+  const matches = suggestionMatches(suggestions, cutoff);
+  if (matches.length > 0) return { source: "suggestion", matches, threshold: cutoff ?? suggestions!.threshold };
   return { source: "none", matches: [], threshold: GROUP_SELECT_THRESHOLD };
 }
 
