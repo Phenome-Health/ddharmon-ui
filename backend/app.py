@@ -2533,6 +2533,15 @@ def composite(
     job = store.get(job_id)
     if job is None or not _visible_to(job, subject):
         raise HTTPException(status_code=404, detail="Job not found")
+    # THE SHARED DEMO IS REFUSED FIRST, before a client exists or anything is billed. The save below refuses it
+    # too, but only AFTER the derivation had run and been billed — a signed-in user with a key paid for a spec
+    # that was then thrown away. A pinned run never spends; its shipped score is content, not a derivation.
+    with _writable_run():
+        if _is_pinned(job):
+            raise ReadOnlyRunError(
+                f"{job_id} is the shared demo and cannot spend on matching a score — clone it into a run of your "
+                "own to match or derive one there"
+            )
     payload, records, staged = _harmonized(job, subject)
     if not records:
         raise HTTPException(status_code=409, detail="This run has no harmonized concepts to build a score from.")

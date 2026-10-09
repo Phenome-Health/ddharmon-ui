@@ -104,6 +104,7 @@ import { toggleSort, type ColumnSort } from "@/lib/column-sort";
 import { SUGGESTION_TAG_COPY, scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
 import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
+import { shippedDeclaration, shippedSuggestions } from "@/lib/demo-score";
 import { cn } from "@/lib/utils";
 import type {
   CoherenceState,
@@ -2452,12 +2453,26 @@ export default function Gate1Page() {
     [newGroups.decisions],
   );
   /**
+   * THE SHARED DEMO'S SHIPPED SCORE (`lib/demo-score.ts`): its declaration is the baseline the rows below start from
+   * (a guest's own re-declaration wins, and only that counts as their edit), and its Gate 1 hints stand in for the
+   * suggestions route, which a guest's tab never asks. Null on every real run.
+   */
+  const demoScore = jobState?.demoScore;
+  const shippedRows = useMemo(() => shippedDeclaration(demoScore, pinned), [demoScore, pinned]);
+  const shippedHints = useMemo(() => shippedSuggestions(demoScore, pinned), [demoScore, pinned]);
+  /**
    * The declared score's rows — ONE hook instance, handed to the score panel, so a declaration made there is seen
    * here at once (a second instance would hydrate once and never see the panel's later writes).
    */
-  const swaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen });
+  const swaps = useGateDecisions(jobId, "composite_swap", { pinned, frozen, baseline: shippedRows });
   const declared = useMemo(() => declaredScores(swaps.all), [swaps.all]);
-  const latestSpec = jobState?.composites?.at(-1) ?? null;
+  /**
+   * The Gate 4 match, when it is Gate 1's score input. NOT when the shared demo ships its score: that match is Gate
+   * 4's, and a guest walks Gate 1 before it — so Gate 1 shows what it showed when the demo was built, the free hints,
+   * and the match waits on Gate 4 where it was made. Any other run (a pinned fixture with a match included) is as it
+   * was: a match, once there is one, is Gate 1's input.
+   */
+  const latestSpec = shippedHints ? null : (jobState?.composites?.at(-1) ?? null);
   /**
    * Gate 1's FREE score suggestions (08-28 Decision 6, option A): the retrieval half of the match, $0, no judge.
    *
@@ -2494,6 +2509,8 @@ export default function Gate1Page() {
     // suggested group for the length of a request.
     placeholderData: keepPreviousData,
   });
+  /** The free hints this screen reads: the shipped ones on the demo, else the route's answer. */
+  const suggestionData = shippedHints ?? suggestionsQuery.data;
   /**
    * THE ONE INPUT to the score-seeded scope and the queue's score tags: the Gate 4 match when the run has one, else
    * the free suggestions (`scoreScopeInput`). Both go through `scoreSeededGroups`, each at its own scale's cut-off.
@@ -2504,9 +2521,9 @@ export default function Gate1Page() {
     () =>
       scoreScopeInput(
         latestSpec,
-        frozen || latestSpec ? null : suggestionsQuery.data,
+        frozen || latestSpec ? null : suggestionData,
       ),
-    [latestSpec, frozen, suggestionsQuery.data],
+    [latestSpec, frozen, suggestionData],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
   const scoreSeed = useMemo(
@@ -2515,7 +2532,7 @@ export default function Gate1Page() {
   );
   /** What the score panel says about the suggestions, when they are the input (or could not be made). */
   const suggestionNote = useMemo(() => {
-    const s = !frozen && !latestSpec ? suggestionsQuery.data : undefined;
+    const s = !frozen && !latestSpec ? suggestionData : undefined;
     // No score searched for: the server holds no declaration for this run (the shared demo keeps its declaration in
     // this browser, which the server never sees) — so there is nothing to say, not "nothing was found".
     if (!s || s.scores.length === 0) return null;
@@ -2525,7 +2542,7 @@ export default function Gate1Page() {
       nComponents: scoreInput.source === "suggestion" ? scoreInput.matches.length : 0,
       unavailable: "",
     };
-  }, [frozen, latestSpec, suggestionsQuery.data, scoreSeed, scoreInput]);
+  }, [frozen, latestSpec, suggestionData, scoreSeed, scoreInput]);
   /** The reviewer's own name for a group, or undefined. Read straight off the persisted decisions. */
   const renamedOf = (groupId: string): string | undefined => {
     const chosen = renames.decisions[groupId]?.chosen;
@@ -3295,7 +3312,7 @@ export default function Gate1Page() {
         swaps={swaps}
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
-        suggestions={!frozen && !latestSpec ? (suggestionsQuery.data ?? null) : null}
+        suggestions={!frozen && !latestSpec ? (suggestionData ?? null) : null}
         spec={latestSpec}
         matchRefusal={matchRefusal}
         groupsById={groupsById}

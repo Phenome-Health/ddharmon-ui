@@ -58,6 +58,11 @@ _MANIFEST = _DIR / "manifest.json"
 # snapshots stay untouched). Built offline by ``scripts/build_demo_analysis_ideas.py`` with the SAME
 # generator the live feature uses; surfaced on the seeded demo job so a guest sees them without an LLM call.
 _IDEAS = _DIR / "analysis_ideas.json"
+# The demo's DECLARED SCORE, keyed by snapshot filename like the ideas: ``{declaration, suggestions, composite}`` —
+# the ``composite_swap`` rows the score panel would write, Gate 1's free hints for them and Gate 4's paid match. Built
+# offline by ``scripts/build_demo_score.py`` against a clone of the demo's run, so a guest sees the whole score flow
+# (declare, hint, match) without a paid or guest-blocked call. Shipped content, like the ideas — not anyone's work.
+_SCORE = _DIR / "score.json"
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -74,6 +79,29 @@ def _load_demo_ideas() -> dict[str, Any]:
         return json.loads(_IDEAS.read_text())
     except (ValueError, OSError):
         return {}
+
+
+def _load_demo_scores() -> dict[str, Any]:
+    """Snapshot-filename -> the demo's shipped declared score (empty when the sidecar is absent or unreadable)."""
+    if not _SCORE.exists():
+        return {}
+    try:
+        data = json.loads(_SCORE.read_text())
+    except (ValueError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _score_fields(score: Any) -> dict[str, Any]:
+    """The job fields a shipped score seeds: Gate 4's match as the run's composites, and the declaration + Gate 1's
+    hints as ``demo_score`` (what the gate screens read in place of the browser sandbox and the paid/blocked calls).
+    Nothing when there is no score, or only part of one: a declaration without its match is not the flow shown."""
+    if not isinstance(score, dict) or not score.get("declaration") or not score.get("composite"):
+        return {}
+    return {
+        "composites": [score["composite"]],
+        "demo_score": {"declaration": score["declaration"], "suggestions": score.get("suggestions")},
+    }
 
 
 def _key(datasets: list[str]) -> tuple[str, ...]:
@@ -174,6 +202,7 @@ def seed_demos(store: JobStore) -> list[str]:
     """
     ids: list[str] = []
     ideas_by_snapshot = _load_demo_ideas()
+    scores_by_snapshot = _load_demo_scores()
     for combo in list_demos().get("combos", []):
         if not combo.get("available"):
             continue
@@ -187,19 +216,21 @@ def seed_demos(store: JobStore) -> list[str]:
         # Pre-generated ideas (sidecar keyed by snapshot filename, else inline on the snapshot) → the demo
         # shows them without an LLM call. Absent → the panel just offers "generate" as for a real run.
         ideas = ideas_by_snapshot.get(combo["snapshot"]) or snap.get("analysisIdeas")
-        if seed_snapshot(store, job_id, snap, ideas=ideas):
+        if seed_snapshot(store, job_id, snap, ideas=ideas, score=scores_by_snapshot.get(combo["snapshot"])):
             ids.append(job_id)
     return ids
 
 
-def seed_snapshot(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: Any = None) -> bool:
+def seed_snapshot(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: Any = None, score: Any = None) -> bool:
     """Seed ONE demo snapshot as ``job_id`` — a completed run, or (staged) a pinned run parked at Gate 4.
+
+    ``score`` is the demo's shipped declared score (see :data:`_SCORE`), attached either way.
 
     Returns False when it could not be seeded: a staged demo needs a work root to hold its checkpoints, and a
     store without one (a bare test store) has nowhere to put them.
     """
     if is_staged(snap):
-        return _seed_staged(store, job_id, snap, ideas=ideas)
+        return _seed_staged(store, job_id, snap, ideas=ideas, score=score)
     result = snap.get("result", snap)
     display = snap.get("displayName") or "Demo run"
     datasets = snap.get("datasets") or []
@@ -207,18 +238,20 @@ def seed_snapshot(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: 
     fields: dict[str, Any] = {"status": "complete", "phase": "complete", "result": result}
     if ideas:
         fields["analysis_ideas"] = ideas
+    fields.update(_score_fields(score))
     store.update(job_id, **fields)
     return True
 
 
-def _seed_staged(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: Any = None) -> bool:
+def _seed_staged(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: Any = None, score: Any = None) -> bool:
     """Write the four gate checkpoints to the demo's work dir, then park the pinned run at Gate 4 over them.
 
     The run is created ``demo: True``, which is what makes it immutable (every write refused), TTL-exempt and
     never persisted to the durable store — so a restart re-seeds it from the shipped file, exactly as before.
     Its realized cost is what the run cost to BUILD (shown on the rail as what each gate spent); a guest is
     never charged anything, since a pinned run cannot be resumed. Gate 4 hosts the analysis ideas, so the
-    pre-generated ones ride along, as they do on a finished demo.
+    pre-generated ones ride along, as they do on a finished demo — and so does the shipped declared score (its
+    declaration and Gate 1 hints for the walk, its Gate 4 match as the run's composites).
     """
     from backend.checkpoint import checkpoint_path, write_checkpoint
 
@@ -243,4 +276,6 @@ def _seed_staged(store: JobStore, job_id: str, snap: dict[str, Any], *, ideas: A
     store.checkpoint(job_id, gate=STAGED_DEMO_GATE, checkpoint_ref=ref, realized_cost=cost)
     if ideas:
         store.update(job_id, analysis_ideas=ideas)
+    if fields := _score_fields(score):
+        store.update(job_id, **fields)
     return True

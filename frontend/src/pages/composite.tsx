@@ -30,6 +30,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
+import { resolvePinned } from "@/hooks/use-gate-decisions";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
 import { MISSING_IS_A_RUN_RESULT, coveredCohorts, GROUP_SELECT_THRESHOLD, missingReason, offeredGroups } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
@@ -113,7 +114,11 @@ export default function CompositePage() {
     );
   }
 
-  const canDerive = (mode === "ref" ? ref.trim() : text.trim()).length > 0 && busy === "";
+  // THE SHARED DEMO NEVER SPENDS. Deriving is two paid model calls, and the server refuses a pinned run before it
+  // builds a client; the button says so here instead of sending a request that can only be refused. Its shipped
+  // score (if any) still shows below, as every run's stored spec does.
+  const demo = resolvePinned(jobState.config as Record<string, unknown> | undefined) === true;
+  const canDerive = !demo && (mode === "ref" ? ref.trim() : text.trim()).length > 0 && busy === "";
 
   return (
     <div className="space-y-6">
@@ -227,6 +232,12 @@ export default function CompositePage() {
             Two LLM calls: transcribe the score, then match its components to this run's concepts. Editing a
             match afterwards re-derives for free.
           </p>
+          {demo && (
+            <p data-testid="composite-demo-refusal" className="text-xs font-semibold text-on-raised">
+              This is the shared demo, which never spends money. Clone it into a run of your own to derive a score
+              against its concepts.
+            </p>
+          )}
           {busy === "extract" && (
             <p className="flex items-center gap-1.5 text-xs text-on-raised-muted">
               <Loader2 className="h-3 w-3 animate-spin" /> Reading the document…
