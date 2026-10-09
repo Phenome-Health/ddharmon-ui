@@ -681,6 +681,44 @@ test.describe("controls review round 3", () => {
     });
   }
 
+  test("@controls a search hit is readable whatever colour the text around it is", async ({ page }) => {
+    // The amber highlight is `--surface-highlight` in role-manifest.json, measured at AAA for its one foreground.
+    // A hit used to keep the text colour around it, so in the SELECTED row's blue title (and a blue CDE link) the
+    // matched word read blue on amber at 3.40:1, under AA. The mark now sets its own foreground, as Gmail does.
+    await open(page, `/run/${PAUSED}/gate1`);
+    const selected = page.locator("[data-testid='ledger-row'][aria-current='true']").first();
+    await expect(selected).toBeVisible();
+    const name = ((await selected.getAttribute("data-search-label")) ?? "").trim();
+    const term = (name.split(/\s+/).find((w) => w.length >= 5) ?? name).slice(0, 4);
+    await page.getByTestId("term-search").fill(term);
+    const hits = page.locator("mark[data-search-hit]");
+    await expect(selected.locator("mark[data-search-hit]").first()).toBeVisible();
+    const ratios = await hits.evaluateAll((els) => {
+      const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+      const px = (bg: string, fg?: string) => {
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, 1, 1);
+        if (fg) {
+          ctx.fillStyle = fg; // alpha foregrounds (the muted inks) composite over the highlight, as they render
+          ctx.fillRect(0, 0, 1, 1);
+        }
+        return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+      };
+      const lum = ([r, g, b]: number[]) => {
+        const c = (v: number) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        return 0.2126 * c(r) + 0.7152 * c(g) + 0.0722 * c(b);
+      };
+      return els.map((el) => {
+        const cs = getComputedStyle(el);
+        const [a, b] = [lum(px(cs.backgroundColor)), lum(px(cs.backgroundColor, cs.color))];
+        return { text: el.textContent, ratio: Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100 };
+      });
+    });
+    expect(ratios.length).toBeGreaterThan(0);
+    for (const r of ratios) expect(r.ratio, `hit "${r.text}" is ${r.ratio}:1`).toBeGreaterThanOrEqual(7);
+  });
+
   async function openTile(page: Page): Promise<Locator> {
     await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, `/run/${FINISHED}/gate3`);

@@ -60,7 +60,7 @@ export function Highlight({
       {parts.map((part, i) =>
         // `split` with one capturing group puts every match at an odd index.
         i % 2 === 1 ? (
-          <mark key={i} data-search-hit className="rounded-[2px] bg-surface-highlight px-px text-current">
+          <mark key={i} data-search-hit className="rounded-[2px] bg-surface-highlight px-px text-on-raised">
             {part}
           </mark>
         ) : (
