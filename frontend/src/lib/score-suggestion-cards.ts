@@ -40,7 +40,8 @@ export interface SuggestionCard {
  * components) — so a card can say why a group it did not suggest is in scope.
  */
 export interface GroupScopeWhy {
-  by: "chosen" | "made" | "score" | "none";
+  /** `auto`: Full auto sent it (a Gate 1 Full auto committed) — never the reviewer's choice. */
+  by: "chosen" | "made" | "score" | "auto" | "none";
   /** For `score`: the components whose suggestion seeded it. */
   components: string[];
 }

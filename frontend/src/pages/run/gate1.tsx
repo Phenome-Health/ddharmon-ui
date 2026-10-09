@@ -59,7 +59,7 @@ import {
 import { tickedOfShown } from "@/lib/queue-controls";
 import { gate1BillableGroups, gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
-import { isGateLocked } from "@/lib/review-mode";
+import { isAutoAccepted, isGateLocked } from "@/lib/review-mode";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
@@ -2632,12 +2632,14 @@ export default function Gate1Page() {
    * suggestion is in scope, but not this card's).
    */
   const scopeWhy = (groupId: string): GroupScopeWhy => {
-    if (frozen && sentScope) return { by: sentScope.has(groupId) ? "chosen" : "none", components: [] };
+    // The scope Gate 1 SENT: the reviewer's at Continue, or Full auto's (every group) — said as such (round 6).
+    const sentBy = isAutoAccepted(runConfig, "gate1") ? "auto" : "chosen";
+    if (frozen && sentScope) return { by: sentScope.has(groupId) ? sentBy : "none", components: [] };
     const chosen = scope.decisions[groupId]?.chosen;
     if (chosen === IN_SCOPE) return { by: "chosen", components: [] };
     if (chosen === OUT_OF_SCOPE) return { by: "none", components: [] };
     if (isReviewerGroupId(groupId)) return { by: "made", components: [] };
-    if (sentScope) return { by: sentScope.has(groupId) ? "chosen" : "none", components: [] };
+    if (sentScope) return { by: sentScope.has(groupId) ? sentBy : "none", components: [] };
     const seededBy = scoreSeed.get(groupId);
     return seededBy ? { by: "score", components: seededBy } : { by: "none", components: [] };
   };

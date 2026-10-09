@@ -9,6 +9,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme="light"
       className="toaster group"
+      // CLEAR OF THE CONTINUE BAR (review round 6): the pinned bar fills the bottom 84px of every gate screen and
+      // its primary action sits at the right, where toasts stack — a toast over "Start run" swallowed the click. 104 =
+      // the bar's 84 + the 16px rhythm. Pages without the bar just float their toasts a little higher.
+      offset={{ bottom: 104, right: 32 }}
       toastOptions={{
         classNames: {
           toast:

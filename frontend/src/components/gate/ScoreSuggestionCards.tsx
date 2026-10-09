@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { CheckCircle2, ChevronDown, CircleDashed } from "lucide-react";
+import { CheckCircle2, CircleDashed } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -52,19 +52,28 @@ export function ScoreSuggestionCards({
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
 }) {
   const nWith = cards.filter((c) => c.nSuggested > 0).length;
+  // Distinct groups suggested across the components — the count the panel's note used to say (round 6).
+  const nGroups = new Set(cards.flatMap((c) => c.groups.filter((g) => g.suggested).map((g) => g.groupId))).size;
   return (
     <Card data-testid="score-suggestions">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">Components → this run&rsquo;s groups</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div
+        {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
+        <Collapsible
+          defaultOpen
           data-testid="score-suggestion-info"
           className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
         >
-          <p className="mb-1.5 text-sm font-semibold text-on-raised">
-            Score builder · how suggestions work
-          </p>
+          <CollapsibleTrigger
+            data-testid="score-suggestion-info-toggle"
+            className={disclosureRow("raised", "group")}
+          >
+            <DisclosureLabel ground="raised">Score builder · how suggestions work</DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-1.5">
           <ul className="flex flex-col gap-1 text-on-raised-muted">
             <li>
               <span className="font-semibold text-on-raised">Free search.</span> Each component is searched against
@@ -85,25 +94,37 @@ export function ScoreSuggestionCards({
               <span className="font-semibold text-on-raised">In scope.</span> A card&rsquo;s ticked groups continue to
               Gate 2 with the rest of your scope.
             </li>
-            {/* SAID ONCE, HERE (Bhargav 2026-10-05): on a 49-item score this caveat repeated on every unsuggested card. */}
+            {/* SAID ONCE, HERE (Bhargav 2026-10-05, again round 6): the per-card sentence repeated on every unsuggested
+                card, so a card says it with its dashed marker alone. */}
             <li>
-              <span className="font-semibold text-on-raised">Nothing suggested.</span> This search reached no group at
-              the cut-off — not a finding about your cohorts. Gate 4&rsquo;s match decides.
+              <span className="font-semibold text-on-raised">Nothing suggested</span> (a dashed circle). This search
+              reached no group at the cut-off — not a finding about your cohorts. Gate 4&rsquo;s match decides. Open the
+              component to check the groups under the cut-off.
             </li>
           </ul>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
             Every group scoring <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span> or higher
             starts in scope and is tagged Suggested — one cut-off for every component. Your checks always win.
           </p>
-        </div>
+          </CollapsibleContent>
+        </Collapsible>
         <Collapsible defaultOpen>
           <CollapsibleTrigger className={disclosureRow("raised", "group")}>
             <DisclosureLabel ground="raised">
-              Components · {nWith}/{cards.length} with a suggestion
+              Components · {nWith}/{cards.length} with a suggestion · {nGroups} group{nGroups === 1 ? "" : "s"}{" "}
+              suggested
             </DisclosureLabel>
             <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2 space-y-2">
+            {/* SAID ONCE (round 6): the figure's label heads the column instead of riding on every row. */}
+            <div
+              data-testid="score-suggestion-columns"
+              className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+            >
+              <span>Component</span>
+              <span>Best similarity</span>
+            </div>
             {cards.map((card) => (
               <SuggestionRow
                 key={card.component}
@@ -154,6 +175,7 @@ function SuggestionRow({
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [belowOpen, setBelowOpen] = useState(false);
   const inScope = (gid: string) => isGroupInScope?.(gid) ?? false;
   const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId));
   const scoped = card.groups.filter(counts);
@@ -167,19 +189,19 @@ function SuggestionRow({
   const header = (
     <>
       {suggested ? (
-        <CheckCircle2 className="h-4 w-4 shrink-0 text-status-ok" />
+        <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0 text-status-ok" />
       ) : (
-        <CircleDashed className="h-4 w-4 shrink-0 text-on-raised-muted" />
+        <span data-testid="score-suggestion-none" role="img" aria-label="Nothing suggested" title="Nothing suggested">
+          <CircleDashed aria-hidden="true" className="h-4 w-4 shrink-0 text-on-raised-muted" />
+        </span>
       )}
       <span className="min-w-0 flex-1 text-sm font-semibold text-on-raised">{card.component}</span>
       {card.best != null && (
-        <span className="flex shrink-0 items-baseline gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted/70">
-            best similarity
-          </span>
-          <span data-testid="score-suggestion-similarity" className="font-mono text-xs tabular-nums text-on-raised">
-            {card.best.toFixed(2)}
-          </span>
+        <span
+          data-testid="score-suggestion-similarity"
+          className={cn("shrink-0 font-mono text-xs tabular-nums", suggested ? "text-on-raised" : "text-on-raised-muted")}
+        >
+          {card.best.toFixed(2)}
         </span>
       )}
     </>
@@ -198,7 +220,9 @@ function SuggestionRow({
           ? `In scope for ${why.components.join(", ")}`
           : why?.by === "made"
             ? "In scope — your group"
-            : "In scope — your choice"
+            : why?.by === "auto"
+              ? "In scope — sent by Full auto"
+              : "In scope — your choice"
         : null;
     const ci = g.bestMember.indexOf(":");
     const cohort = ci >= 0 ? g.bestMember.slice(0, ci) : "";
@@ -301,33 +325,23 @@ function SuggestionRow({
       data-suggested={suggested ? "true" : "false"}
     >
       {card.groups.length > 0 ? (
+        // The whole row lights on hover and folds, like every other fold (round 6) — `disclosureRow`, inset by the
+        // card's own padding rather than bled past it.
         <button
           type="button"
           data-testid="score-suggestion-expand"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+          className={cn(disclosureRow("raised"), "mx-0 my-0 w-full justify-start rounded-md px-3 py-2.5")}
         >
           {header}
-          <ChevronDown
-            aria-hidden="true"
-            className={cn("h-4 w-4 shrink-0 text-on-raised-muted transition-transform", open && "rotate-180")}
-          />
+          <DisclosureChevron ground="raised" open={open} />
         </button>
       ) : (
-        <div className="flex w-full items-center gap-2 px-3 py-2.5">{header}</div>
+        <div className="flex w-full items-center gap-2 px-3 py-2.5 pr-9">{header}</div>
       )}
 
-      <div className="flex flex-col gap-1.5 px-3 pb-2.5 pl-9 text-xs">
-        {!suggested && (
-          // ONE short line: what "nothing suggested" means is said once, in the info strip above.
-          <p data-testid="score-suggestion-none" className="max-w-[80ch] text-[11px] text-on-raised-muted">
-            <span className="font-semibold text-on-raised">Nothing suggested</span>
-            {nBelow > 0
-              ? ` — ${nBelow} group${nBelow === 1 ? "" : "s"} reached below the cut-off; open to check ${nBelow === 1 ? "it" : "them"}.`
-              : " — the search reached no group."}
-          </p>
-        )}
+      <div className="flex flex-col gap-1.5 px-3 pl-9 text-xs empty:hidden [&:not(:empty)]:pb-2.5">
         {(suggested || scoped.length > 0) && (
           <div
             data-testid="score-suggestion-spread"
@@ -364,21 +378,30 @@ function SuggestionRow({
       {open && card.groups.length > 0 && (
         <div className="border-t border-border/60 px-3 py-2.5 pl-9 text-xs">
           <div className="flex flex-col gap-1.5">
-            {card.groups.map((g, i) => (
-              <Fragment key={g.groupId}>
-                {i > 0 && card.groups[i - 1]!.suggested && !g.suggested && (
-                  <div
-                    data-testid="score-suggestion-cutoff"
-                    className="flex items-center gap-2 py-0.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-                  >
-                    <span className="h-px flex-1 bg-border" />
-                    below the suggestion cut-off {threshold.toFixed(2)}
-                    <span className="h-px flex-1 bg-border" />
-                  </div>
-                )}
-                {renderGroup(g)}
-              </Fragment>
+            {card.groups.filter((g) => g.suggested).map((g) => (
+              <Fragment key={g.groupId}>{renderGroup(g)}</Fragment>
             ))}
+            {nBelow > 0 && (
+              // THE CUT-OFF LINE IS THE FOLD (round 6, Bhargav: "collapsible and hidden by default"): what the search
+              // reached below it is there to catch a miss, not to read every time.
+              <button
+                type="button"
+                data-testid="score-suggestion-cutoff"
+                aria-expanded={belowOpen}
+                onClick={() => setBelowOpen((o) => !o)}
+                className={cn(
+                  disclosureRow("raised"),
+                  "mx-0 my-0 w-full gap-2 py-1 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted",
+                )}
+              >
+                <span className="h-px flex-1 bg-border" />
+                {nBelow} group{nBelow === 1 ? "" : "s"} below the cut-off {threshold.toFixed(2)}
+                <span className="h-px flex-1 bg-border" />
+                <DisclosureChevron ground="raised" open={belowOpen} className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {belowOpen &&
+              card.groups.filter((g) => !g.suggested).map((g) => <Fragment key={g.groupId}>{renderGroup(g)}</Fragment>)}
           </div>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
             Checked groups are in Gate 1&rsquo;s scope and continue to Gate 2 — the same checkbox as the list below.

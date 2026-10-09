@@ -178,7 +178,9 @@ test.describe("The demo's declared score — on screen", () => {
     const panel = page.getByTestId("score-panel");
     await expect(panel.getByTestId("score-suggestions")).toBeVisible();
     await expect(panel.locator("[data-testid='score-suggestion']")).toHaveCount(49);
-    await expect(panel.getByTestId("score-suggestions-note")).toBeVisible();
+    // The note is said by the strip + the cards' header when the cards are drawn (round 6).
+    await expect(panel.getByTestId("score-suggestion-info")).toBeVisible();
+    await expect(panel.getByTestId("score-suggestions-note")).toHaveCount(0);
     await expect(panel.locator("[data-testid='score-match']")).toHaveCount(0);
     await expect(panel.getByTestId("score-match-price")).toBeVisible();
 
@@ -234,6 +236,8 @@ test.describe("The demo's declared score — on screen", () => {
     const requests = watchRequests(page);
     await open(page, "gate1");
     await page.getByTestId("score-panel-toggle").click();
+    // The shipped score is declared, so the form is folded behind "Declare a different score" (round 6).
+    await page.getByTestId("score-declare-toggle").click();
     await page.locator("#score-name").fill(SCORE_NAME);
     await page.getByTestId("score-components").fill("Glaucoma");
     await page.getByRole("button", { name: "Declare these components" }).click();

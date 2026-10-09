@@ -323,7 +323,10 @@ test.describe("pasted source record on the static build", () => {
     await page.reload();
     await page.waitForLoadState("networkidle");
     await openPanel(page);
-    // The box is empty again (it is a draft) — so what still shows is the PERSISTED record, not component state.
+    // A score is declared, so the form is folded (round 6); opened, the box is empty again (it is a draft) — so what
+    // still shows is the PERSISTED record, not component state.
+    await expect(page.getByTestId("score-declare-toggle")).toHaveAttribute("aria-expanded", "false");
+    await page.getByTestId("score-declare-toggle").click();
     await expect(page.locator("[data-testid='score-components']")).toHaveValue("");
     await expect(page.locator(RECORD)).toBeVisible();
     expect(await exactText(page)).toBe(PASTED);
@@ -361,7 +364,9 @@ test.describe("pasted source record on the static build", () => {
     await declareThroughPanel(page, SCORE, "Weak grip strength");
     await expect(page.locator(RECORD)).toHaveAttribute("data-long", "false");
     await expect(page.locator(TEXT)).toBeVisible();
-    // The same score, declared again from a longer paste: the record is the new text, and it is long.
+    // The same score, declared again from a longer paste: the record is the new text, and it is long. Declaring
+    // folded the form (round 6), so it is opened again first.
+    await page.getByTestId("score-declare-toggle").click();
     await page.locator("[data-testid='score-components']").fill(lines(30));
     await page.getByRole("button", { name: "Declare these components" }).click();
     await expect(page.locator(RECORD)).toHaveCount(1);

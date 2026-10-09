@@ -262,11 +262,15 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     await serveOwned(page);
     await openGate1(page);
     await page.locator("[data-testid='score-panel-toggle']").click();
-    const note = page.locator("[data-testid='score-suggestions-note']");
-    await expect(note).toBeVisible();
-    await expect(note).toContainText(/free search/i);
-    await expect(note).toContainText(/verdict is on Gate 4/i);
-    await expect(note).toContainText(`${reached().filter((x) => x.score >= TAU).length} groups`);
+    // Said ONCE (round 6): with the cards drawn, the strip says free search + Gate 4's verdict and the cards' header
+    // carries the count; the note that repeated all three is shown only when there are no cards.
+    const panel = page.locator("[data-testid='score-panel']");
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/free search/i);
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/verdict is Gate 4/i);
+    await expect(panel.getByTestId("score-suggestions")).toContainText(
+      `${new Set(reached().filter((x) => x.score >= TAU).map((x) => x.group.groupId)).size} groups suggested`,
+    );
+    await expect(page.locator("[data-testid='score-suggestions-note']")).toHaveCount(0);
   });
 
   test("@gate1 an explicit opt-out wins over a suggestion", async ({ page }) => {

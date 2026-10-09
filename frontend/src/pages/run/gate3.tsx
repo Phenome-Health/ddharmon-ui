@@ -22,8 +22,10 @@ import {
   FilterChips,
   FilterSection,
   QueueSearch,
+  SegmentedSort,
   type FilterChip,
 } from "@/components/gate/QueueControls";
+import { type ColumnSort, toggleSort } from "@/lib/column-sort";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RecodeDetail, transformSummary } from "@/components/gate/RecodeDetail";
 import { SpecMappingEditor } from "@/components/gate/SpecMappingEditor";
@@ -115,6 +117,10 @@ const REJECT_CONFIRMATION =
   "Reject this recode? It will be excluded from the notebook and the mapping table, and recorded as " +
   "rejected in the decision log.";
 
+
+/** Gate 3's queue sorts (review round 6) — Gate 2's columns, so the two queues behave alike. */
+type Gate3SortKey = "concept" | "verdict" | "vars";
+const VERDICTS = ["adopt", "refine", "novel"] as const;
 
 export default function Gate3Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
@@ -211,10 +217,13 @@ export default function Gate3Page() {
   );
 
   // The filter menu inside the search (08-30b): Cross-cohort only and the cohorts (a concept must span EVERY
-  // ticked cohort, as it stands after any removals here), then the arithmetic-recode filter.
+  // ticked cohort, as it stands after any removals here), the verdicts (review round 6: "bring over filter
+  // functionality from gate 1/2"), then the arithmetic-recode filter. The sort is Gate 2's.
   const [arithmeticOnly, setArithmeticOnly] = useState(false);
   const [xcOnly, setXcOnly] = useState(false);
   const [cohortFilter, setCohortFilter] = useState<string[]>([]);
+  const [verdicts, setVerdicts] = useState<string[]>([]);
+  const [colSort, setColSort] = useState<ColumnSort<Gate3SortKey> | null>(null);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
   // Unsaved note text PER ROW — a single draft slot lost row A's text the moment row B was typed in.
@@ -277,9 +286,17 @@ export default function Gate3Page() {
         if (cohortFilter.length === 0) return true;
         const left = cohortsLeft(g.record, removedIn(g.record.groupId));
         return cohortFilter.every((c) => left.includes(c));
+      })
+      .filter((g) => verdicts.length === 0 || verdicts.includes(g.record.verdict))
+      .sort((a, b) => {
+        if (!colSort) return 0;
+        const dir = colSort.dir === "asc" ? 1 : -1;
+        if (colSort.key === "vars") return (a.record.nMembers - b.record.nMembers) * dir;
+        if (colSort.key === "verdict") return (a.record.verdict ?? "").localeCompare(b.record.verdict ?? "") * dir;
+        return labelOf(a.record).localeCompare(labelOf(b.record)) * dir;
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, arithmeticOnly, xcOnly, cohortFilter, query, renames.decisions, exclusions.decisions, picks.decisions]);
+  }, [groups, arithmeticOnly, xcOnly, cohortFilter, verdicts, colSort, query, renames.decisions, exclusions.decisions, picks.decisions]);
 
   // The run's cohorts in their fixed order — the strip's columns and the legend over them.
   const roster = useMemo(
@@ -290,6 +307,7 @@ export default function Gate3Page() {
   const filterChips: FilterChip[] = [
     ...(xcOnly ? [{ key: "xc", label: "Cross-cohort only", onRemove: () => setXcOnly(false) }] : []),
     ...cohortFilter.map((c) => ({ key: `co:${c}`, label: c, onRemove: () => setCohortFilter((f) => f.filter((x) => x !== c)) })),
+    ...verdicts.map((v) => ({ key: `v:${v}`, label: v, onRemove: () => setVerdicts((f) => f.filter((x) => x !== v)) })),
     ...(arithmeticOnly
       ? [{ key: "arith", label: "Arithmetic recodes only", onRemove: () => setArithmeticOnly(false) }]
       : []),
@@ -472,6 +490,18 @@ export default function Gate3Page() {
                       />
                     ))}
                   </FilterSection>
+                  <FilterSection title="Verdict">
+                    {VERDICTS.map((v) => (
+                      <FilterCheck
+                        key={v}
+                        testid={`filter-verdict-${v}`}
+                        checked={verdicts.includes(v)}
+                        onChange={(on) => setVerdicts((f) => (on ? [...f, v] : f.filter((x) => x !== v)))}
+                        label={v[0].toUpperCase() + v.slice(1)}
+                        count={groups.filter((g) => g.record.verdict === v).length}
+                      />
+                    ))}
+                  </FilterSection>
                   {/* A STANDING FILTER, not a per-row chip: the reviewer asks for the risk category. */}
                   <FilterSection title="Recodes">
                     <FilterCheck
@@ -491,16 +521,29 @@ export default function Gate3Page() {
               onClear={() => {
                 setXcOnly(false);
                 setCohortFilter([]);
+                setVerdicts([]);
                 setArithmeticOnly(false);
               }}
             />
           </>
         }
         tools={
-          <span data-testid="queue-count" className="text-xs text-on-raised-muted">
-            <span className="font-mono tabular-nums text-on-raised">{visible.length}</span>{" "}
-            {visible.length === 1 ? "concept" : "concepts"}
-          </span>
+          <>
+            <span data-testid="queue-count" className="text-xs text-on-raised-muted">
+              <span className="font-mono tabular-nums text-on-raised">{visible.length}</span>{" "}
+              {visible.length === 1 ? "concept" : "concepts"}
+            </span>
+            <SegmentedSort<Gate3SortKey>
+              cols={[
+                { k: "concept", label: "Concept" },
+                { k: "verdict", label: "Verdict" },
+                { k: "vars", label: "Vars" },
+              ]}
+              sort={colSort}
+              onSort={(key) => setColSort((cur) => toggleSort(cur, key))}
+              onFlip={() => setColSort((cur) => (cur ? toggleSort(cur, cur.key) : cur))}
+            />
+          </>
         }
         legend={<CohortLegend roster={roster} />}
         rows={visible.map(({ record, rows }) => {

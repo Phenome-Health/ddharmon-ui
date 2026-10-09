@@ -400,6 +400,8 @@ export function DeclaredScorePanel({
     );
   }
 
+  /** A score is on the panel — declared here, or matched at Gate 4 — so the form to declare one folds away. */
+  const hasScore = !!spec || declared.length > 0;
   return (
     <Collapsible
       open={open}
@@ -468,7 +470,23 @@ export function DeclaredScorePanel({
           aria-label="A published score you want this run to support"
           className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
         >
-          {(!spec || showDeclareForm) && (
+          {/* ONCE A SCORE IS DECLARED, THE FORM FOLDS (review round 6, Bhargav: "hidden by default since a score has
+              already been entered, collapsed panel should say declare a different score"). Before, only a Gate 4
+              match folded it, so Gate 1 — which never has a match — kept the whole empty form open under a declared
+              49-item score. */}
+          {hasScore && (
+            <button
+              type="button"
+              data-testid="score-declare-toggle"
+              aria-expanded={showDeclareForm}
+              onClick={() => setShowDeclareForm((v) => !v)}
+              className={disclosureRow("raised")}
+            >
+              <DisclosureLabel ground="raised">Declare a different score</DisclosureLabel>
+              <DisclosureChevron ground="raised" open={showDeclareForm} />
+            </button>
+          )}
+          {(!hasScore || showDeclareForm) && (
             <>
           <div className="flex flex-col gap-1">
             {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
@@ -605,15 +623,6 @@ export function DeclaredScorePanel({
           </div>
             </>
           )}
-          {spec && (
-            <button
-              type="button"
-              onClick={() => setShowDeclareForm((v) => !v)}
-              className="w-fit text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
-            >
-              {showDeclareForm ? "Hide" : "Declare a different score"}
-            </button>
-          )}
 
           {/*
             THE RECORD OF A PASTED SOURCE (final review round 2). Bhargav: *"if score builder source is pasted text,
@@ -678,7 +687,9 @@ export function DeclaredScorePanel({
                 put groups in scope, that it cost nothing, and that it is NOT the verdict. Never phrased as a match —
                 a suggestion is a search result, and only Gate 4's match says a group measures a component.
               */}
-              {suggestionNote && (
+              {/* Only WITHOUT the cards (round 6 repeated-copy): with them, the strip says it is a free search and the
+                  verdict is Gate 4's, and the cards' header carries the counts — this note said all three again. */}
+              {suggestionNote && cards.length === 0 && (
                 <p
                   data-testid="score-suggestions-note"
                   className="max-w-[80ch] rounded-inner border border-dashed border-rule-on-raised px-4 py-3 text-xs text-on-raised"

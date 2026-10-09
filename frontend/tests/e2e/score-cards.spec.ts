@@ -161,7 +161,7 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     const glaucoma = cardOf(panel, "Glaucoma");
     await expect(glaucoma).toHaveAttribute("data-suggested", "true");
     await expect(glaucoma.getByTestId("score-suggestion-similarity")).toHaveText("0.91");
-    await expect(glaucoma).toContainText(/best similarity/i);
+    await expect(panel.getByTestId("score-suggestion-columns")).toContainText(/best similarity/i);
     // Never the judge's slot: a cosine is a different scale from the match's confidence.
     await expect(panel.locator("[data-testid='score-suggestions']")).not.toContainText(/mean best/i);
     await expect(panel.locator("[data-testid='score-match']")).toHaveCount(0);
@@ -204,6 +204,9 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     const card = cardOf(panel, "Glaucoma");
     await card.getByTestId("score-suggestion-expand").click();
     const groups = card.getByTestId("score-suggestion-group");
+    // Below the cut-off is folded away until asked for (round 6); the fold IS the cut-off line.
+    await expect(groups).toHaveCount(2);
+    await card.getByTestId("score-suggestion-cutoff").click();
     await expect(groups).toHaveCount(3);
     const expected = reached().filter((x) => x.component === "Glaucoma");
     for (const [i, x] of expected.entries()) {
@@ -228,6 +231,7 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await card.getByTestId("score-suggestion-expand").click();
     const [top, , below] = reached().filter((x) => x.component === "Glaucoma").map((x) => x.group.groupId);
     const row = (gid: string) => card.locator(`[data-testid='score-suggestion-group'][data-group='${gid}']`);
+    await card.getByTestId("score-suggestion-cutoff").click();
     await expect(row(top!)).toHaveAttribute("data-in-scope", "true");
     await expect(row(below!)).toHaveAttribute("data-in-scope", "false");
 
@@ -257,6 +261,7 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await expect(card.getByTestId("score-suggestion-spread")).toContainText("1 in scope");
     await expect(card.getByTestId("score-suggestion-spread")).toContainText(`${fixtureGroups()[2]!.nMembers} variables`);
     await card.getByTestId("score-suggestion-expand").click();
+    await card.getByTestId("score-suggestion-cutoff").click();
     const row = card.locator(`[data-testid='score-suggestion-group'][data-group='${borrowed}']`);
     await expect(row).toHaveAttribute("data-in-scope", "true");
     await expect(row).toHaveAttribute("data-counted", "false");
@@ -270,10 +275,12 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     const panel = await openGate1Panel(page);
     const tinnitus = cardOf(panel, "Tinnitus");
     await expect(tinnitus).toHaveAttribute("data-suggested", "false");
-    await expect(tinnitus.getByTestId("score-suggestion-none")).toContainText(/nothing suggested/i);
-    await expect(tinnitus.getByTestId("score-suggestion-none")).toContainText(/1 group reached below the cut-off/i);
+    await expect(tinnitus.getByTestId("score-suggestion-none")).toHaveAccessibleName(/nothing suggested/i);
+    // What it reached below the cut-off is the fold's own label, one click away — not a sentence on the card.
+    await tinnitus.getByTestId("score-suggestion-expand").click();
+    await expect(tinnitus.getByTestId("score-suggestion-cutoff")).toContainText(/1 group below the cut-off/i);
     const migraine = cardOf(panel, "Migraine");
-    await expect(migraine.getByTestId("score-suggestion-none")).toContainText(/nothing suggested/i);
+    await expect(migraine.getByTestId("score-suggestion-none")).toHaveAccessibleName(/nothing suggested/i);
     await expect(migraine.getByTestId("score-suggestion-similarity")).toHaveCount(0);
     for (const card of [tinnitus, migraine]) await expect(card).not.toContainText(/missing|not found|lacks/i);
   });
@@ -287,8 +294,7 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await expect(panel.getByTestId("score-suggestion-info")).toContainText(/not a finding about your cohorts/i);
     await expect(cards.getByText(/not a finding about your cohorts/i)).toHaveCount(1);
     for (const c of ["Tinnitus", "Migraine"]) {
-      const none = cardOf(panel, c).getByTestId("score-suggestion-none");
-      await expect(none).not.toContainText(/not a finding|Gate 4/i);
+      await expect(cardOf(panel, c)).not.toContainText(/not a finding|Gate 4/i);
     }
   });
 
@@ -301,6 +307,91 @@ test.describe("score cards — Gate 1 (the free search)", () => {
 });
 
 // --- Gate 4: the match cards ------------------------------------------------------------------------------------
+
+test.describe("score panel — review round 6 (Bhargav, live Lavish build 2026-10-09)", () => {
+  test("@gate1 the 'how suggestions work' strip is a fold, open until closed", async ({ page }) => {
+    const panel = await openGate1Panel(page);
+    const toggle = panel.getByTestId("score-suggestion-info-toggle");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/free search/i);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(panel.getByText(/retrieval only, no model call/i)).toHaveCount(0);
+  });
+
+  test("@gate1 a component row folds like every other fold: the whole row lights on hover", async ({ page }) => {
+    const panel = await openGate1Panel(page);
+    const trigger = cardOf(panel, "Glaucoma").getByTestId("score-suggestion-expand");
+    const bg = () => trigger.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const before = await bg();
+    await trigger.hover();
+    await expect.poll(bg).not.toBe(before);
+  });
+
+  test("@gate1 'best similarity' and 'nothing suggested' are said once for the list, not on every component", async ({
+    page,
+  }) => {
+    const panel = await openGate1Panel(page);
+    const list = panel.getByTestId("score-suggestions");
+    await expect(list.getByText(/best similarity/i)).toHaveCount(1);
+    // No visible sentence per unsuggested card; the strip says what the dashed marker means.
+    await expect(list.getByText(/reached below the cut-off/i)).toHaveCount(0);
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/nothing suggested/i);
+  });
+
+  test("@gate1 groups below the cut-off are folded away until asked for", async ({ page }) => {
+    const panel = await openGate1Panel(page);
+    const card = cardOf(panel, "Glaucoma");
+    await card.getByTestId("score-suggestion-expand").click();
+    const below = card.locator("[data-testid='score-suggestion-group'][data-suggested='false']");
+    const fold = card.getByTestId("score-suggestion-cutoff");
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+    await expect(fold).toContainText(/1 group below the cut-off 0\.62/i);
+    await expect(below).toHaveCount(0);
+    await fold.click();
+    await expect(below).toHaveCount(1);
+  });
+
+  test("@gate1 on a run Full auto passed, a group's scope says Full auto sent it — never 'your choice'", async ({
+    page,
+  }) => {
+    // Bhargav: "why are these checked if they didnt meet the cutoff?" — Full auto sends every group to Gate 2, and the
+    // card called that the reviewer's choice.
+    const panel = await openGate1Panel(page, suggestions(), (run) => {
+      run.gatePosition = "gate4";
+      run.result!.gatePosition = "gate4";
+      // The shared demo (Bhargav's case): parked at Gate 4 by Full auto, still practisable, and carrying its SHIPPED
+      // score — the declaration and Gate 1's hints — which is what a demo's cards read (it never asks the route).
+      (run as JobResult).demoScore = { declaration: declaration(DECLARED) as Record<string, unknown>[], suggestions: suggestions() };
+      run.config = {
+        ...(run.config ?? {}),
+        demo: true,
+        review_mode: "auto",
+        gate_decided_by: { gate1: "auto", gate2: "auto", gate3: "auto" },
+        gate1_scope: fixtureGroups().map((g) => g.groupId),
+      } as JobResult["config"];
+    });
+    const card = cardOf(panel, "Glaucoma");
+    await card.getByTestId("score-suggestion-expand").click();
+    await card.getByTestId("score-suggestion-cutoff").click();
+    const below = card.locator("[data-testid='score-suggestion-group'][data-suggested='false']");
+    await expect(below.getByTestId("score-suggestion-group-toggle")).toBeChecked();
+    await expect(below.getByTestId("score-suggestion-scope-why")).toHaveText(/sent by Full auto/i);
+    await expect(panel.getByTestId("score-suggestion-scope-why").filter({ hasText: /your choice/i })).toHaveCount(0);
+  });
+
+  test("@gate1 once a score is declared, the declaration form is folded behind 'Declare a different score'", async ({
+    page,
+  }) => {
+    const panel = await openGate1Panel(page);
+    const fold = panel.getByTestId("score-declare-toggle");
+    await expect(fold).toHaveText(/declare a different score/i);
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+    await expect(panel.getByTestId("score-components")).toHaveCount(0);
+    await fold.click();
+    await expect(panel.getByTestId("score-components")).toBeVisible();
+  });
+});
 
 const G4_SCORE = "Fried frailty phenotype";
 const G4_DECLARED = ["Weight loss", "Weak grip strength", "Slow gait"];
