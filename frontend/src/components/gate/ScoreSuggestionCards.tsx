@@ -1,11 +1,18 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { CheckCircle2, CircleDashed } from "lucide-react";
+import { CheckCircle2, Circle, CircleDashed } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { NamedGroup } from "@/lib/ledger";
+import { cohortRoster, type NamedGroup } from "@/lib/ledger";
 import { SCORE_CUTOFF_MAX, SCORE_CUTOFF_MIN, parseCutoff } from "@/lib/score-cutoff";
-import { countsForCard, type GroupScopeWhy, type SuggestionCard, type SuggestionCardGroup } from "@/lib/score-suggestion-cards";
+import {
+  countsForCard,
+  keptCohorts,
+  searchCoverage,
+  type GroupScopeWhy,
+  type SuggestionCard,
+  type SuggestionCardGroup,
+} from "@/lib/score-suggestion-cards";
 import { cn } from "@/lib/utils";
 import type { FieldDetail } from "@/types";
 
@@ -36,6 +43,7 @@ export function ScoreSuggestionCards({
   defaultThreshold,
   onThresholdChange,
   groupsById,
+  cohorts,
   fieldIndex,
   isGroupInScope,
   groupScopeWhy,
@@ -50,6 +58,8 @@ export function ScoreSuggestionCards({
   /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent → the cut-off is shown, not editable. */
   onThresholdChange?: (next: number | null) => void;
   groupsById?: Map<string, NamedGroup>;
+  /** The run's cohorts (Gate 1's roster) — the reached-by-search table's columns. Absent → the groups' own cohorts. */
+  cohorts?: readonly string[];
   fieldIndex?: Record<string, FieldDetail>;
   isGroupInScope?: (groupId: string) => boolean;
   /** Why a group is in scope, so a card counts only its own (see `countsForCard`). */
@@ -61,6 +71,12 @@ export function ScoreSuggestionCards({
   const nWith = cards.filter((c) => c.nSuggested > 0).length;
   // Distinct groups suggested across the components — the count the panel's note used to say (round 6).
   const nGroups = new Set(cards.flatMap((c) => c.groups.filter((g) => g.suggested).map((g) => g.groupId))).size;
+  const coverage = searchCoverage(
+    cards,
+    cohorts ?? cohortRoster(null, [...(groupsById?.values() ?? [])].map((n) => n.group)),
+    (gid) => groupsById?.get(gid)?.group.cohorts,
+    (gid) => isGroupInScope?.(gid) ?? false,
+  );
   return (
     <Card data-testid="score-suggestions">
       <CardHeader className="pb-2">
@@ -165,6 +181,95 @@ export function ScoreSuggestionCards({
             ))}
           </CollapsibleContent>
         </Collapsible>
+        {/*
+          PER-COHORT, REACHED BY SEARCH (review round 6 note L7, "no cohort coverage table?" — option (b), 2026-10-13).
+          Gate 4 carries the full table next to the match; this is the scoping half, from the free search alone. The
+          mark is a neutral dot, never Gate 4's check or cross: it says the search reached the cohort, not that the
+          cohort has the component, and a blank is never "missing".
+        */}
+        <Collapsible defaultOpen data-testid="search-coverage">
+          <CollapsibleTrigger className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">Per-cohort coverage · reached by search</DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-on-raised-muted">
+                    <th scope="col" className="py-1.5 pr-3 font-semibold">
+                      Component
+                    </th>
+                    {coverage.cohorts.map((c) => (
+                      <th
+                        key={c}
+                        scope="col"
+                        data-testid="search-coverage-cohort"
+                        className="px-2 py-1.5 text-center font-semibold"
+                      >
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.rows.map((r) => (
+                    <tr
+                      key={r.component}
+                      data-testid="search-coverage-row"
+                      data-component={r.component}
+                      className="border-b border-border/60 last:border-0"
+                    >
+                      <th scope="row" className="py-1.5 pr-3 text-left font-normal text-on-raised">
+                        {r.component}
+                      </th>
+                      {coverage.cohorts.map((c) => {
+                        const hit = r.reached.includes(c);
+                        return (
+                          <td
+                            key={c}
+                            data-testid="search-coverage-cell"
+                            data-cohort={c}
+                            data-reached={String(hit)}
+                            className="px-2 py-1.5 text-center"
+                          >
+                            {hit ? (
+                              <span role="img" aria-label={`Reached in ${c}`} className="inline-flex">
+                                <Circle aria-hidden="true" className="h-2.5 w-2.5 fill-current text-on-raised" />
+                              </span>
+                            ) : (
+                              <span className="sr-only">Not reached by this search</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  <tr className="border-t border-border font-semibold">
+                    <th scope="row" className="py-1.5 pr-3 text-left text-on-raised">
+                      Reached
+                    </th>
+                    {coverage.cohorts.map((c) => (
+                      <td
+                        key={c}
+                        data-testid="search-coverage-total"
+                        className="px-2 py-1.5 text-center font-mono tabular-nums text-on-raised"
+                      >
+                        {coverage.reachedPerCohort[c]}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p data-testid="search-coverage-note" className="mt-2 text-[11px] text-on-raised-muted">
+              A dot: one of the component&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
+              scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
+              search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match says
+              which variables measure each component, in its own table.
+            </p>
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );
@@ -261,10 +366,11 @@ function SuggestionRow({
   const inScope = (gid: string) => isGroupInScope?.(gid) ?? false;
   const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId));
   const scoped = card.groups.filter(counts);
-  // What is IN the groups in scope — membership, counted from Gate 1's own groups (never inferred as a match).
+  // What is IN the groups in scope — membership, counted from Gate 1's own groups (never inferred as a match). The
+  // cohorts come from `keptCohorts`, as the reached-by-search table's do, so the card and the table cannot disagree.
   const scopedGroups = scoped.map((g) => groupsById?.get(g.groupId)?.group).filter((g) => g != null);
   const spreadVars = scopedGroups.reduce((s, g) => s + g.nMembers, 0);
-  const spreadCohorts = [...new Set(scopedGroups.flatMap((g) => g.cohorts))];
+  const spreadCohorts = keptCohorts(card, (gid) => groupsById?.get(gid)?.group.cohorts, inScope);
   const suggested = card.nSuggested > 0;
   const nBelow = card.groups.length - card.nSuggested;
 

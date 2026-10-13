@@ -3339,6 +3339,7 @@ export default function Gate1Page() {
         spec={latestSpec}
         matchRefusal={matchRefusal}
         groupsById={groupsById}
+        cohorts={allCohorts}
         groupByVariable={groupByVariable}
         fieldIndex={jobState?.result?.fieldIndex}
         isGroupInScope={isInScope}

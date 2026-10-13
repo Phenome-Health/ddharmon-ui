@@ -216,7 +216,11 @@ test.describe("The demo's declared score — on screen", () => {
     const bound = score.composite.matches.filter((m) => m.conceptId).length;
     await expect(card.locator("[data-testid='score-match'][data-verdict='full']")).toHaveCount(bound);
     await expect(card.locator("[data-testid='score-match'][data-verdict='infeasible']")).toHaveCount(49 - bound);
-    await expect(card.locator("[data-testid='gate4-score-cohort']")).toHaveCount(f.perCohort.length);
+    // The full per-cohort table (round 6 note L7): a Computable cell per cohort, and no repeated sentence list.
+    await expect(card.locator("[data-testid='score-coverage'] [data-testid='coverage-computable']")).toHaveCount(
+      f.perCohort.length,
+    );
+    await expect(card.locator("[data-testid='gate4-score-cohort']")).toHaveCount(0);
 
     // The paid control stays honestly refused on the demo, with its existing copy.
     await expect(card.getByTestId("gate4-score-match")).toHaveCount(0);

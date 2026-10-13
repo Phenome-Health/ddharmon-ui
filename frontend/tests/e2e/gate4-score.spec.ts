@@ -347,8 +347,22 @@ test.describe("Gate 4 declared score", () => {
     const gait = panel.locator(`[data-testid="score-match"][data-component="Slow gait"]`);
     await expect(gait).toHaveAttribute("data-verdict", "infeasible");
     await expect(gait).toContainText(/2 candidate concepts/);
-    // Per-cohort computability and the recipe itself.
-    await expect(panel.getByTestId("gate4-score-cohort")).toHaveCount(2);
+    // The FULL per-cohort table, next to the match (round 6 note L7, "no cohort coverage table?" — option (b),
+    // 2026-10-13): a row per component, a column per cohort, read off the match's own coverage.
+    const coverage = panel.getByTestId("score-coverage");
+    const cell = (component: string, cohort: string) =>
+      coverage.locator(
+        `[data-testid='coverage-row'][data-component='${component}'] [data-testid='coverage-cell'][data-cohort='${cohort}']`,
+      );
+    await expect(coverage.getByTestId("coverage-row")).toHaveCount(3);
+    await expect(cell("Weight loss", "UKBB")).toHaveAttribute("data-present", "true");
+    await expect(cell("Weight loss", "AoU")).toHaveAttribute("data-present", "true");
+    await expect(cell("Weak grip strength", "AoU")).toHaveAttribute("data-present", "false");
+    await expect(cell("Slow gait", "UKBB")).toHaveAttribute("data-present", "false");
+    await expect(coverage.getByTestId("coverage-computable")).toHaveText(["no", "no"]);
+    // SAID ONCE: the table's Computable row replaces the one-sentence-per-cohort list it would repeat.
+    await expect(panel.getByTestId("gate4-score-cohort")).toHaveCount(0);
+    // The recipe itself.
     await expect(panel.getByTestId("gate4-score-step")).toHaveCount(2);
     await expect(panel.getByTestId("gate4-score-step").first()).toContainText("weight_loss_flag = weight_loss");
     await expect(panel.getByTestId("gate4-score-billed")).toContainText("$0.12");

@@ -290,62 +290,6 @@ export function SpecView({
   // built. That is the prohibited emission, arrived at by a default rather than by a judgement.
   const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.indeterminate;
 
-  // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
-  // groups only when components actually carry a `domain`; with none, the flat table below renders
-  // unchanged — never a code-side, score-specific grouping. Domains appear in the order their first
-  // component appears in the definition.
-  const hasDomains = definition.components.some((c) => c.domain);
-  const coverageDomains = useMemo(() => {
-    if (!hasDomains) return [] as { domain: string; matches: ComponentMatch[] }[];
-    const domainByComponent = new Map(
-      definition.components.map((c) => [c.name, c.domain || "Other"] as const),
-    );
-    const order: string[] = [];
-    const byDomain = new Map<string, ComponentMatch[]>();
-    for (const m of spec.matches) {
-      const d = domainByComponent.get(m.component) ?? "Other";
-      if (!byDomain.has(d)) {
-        byDomain.set(d, []);
-        order.push(d);
-      }
-      byDomain.get(d)!.push(m);
-    }
-    return order.map((d) => ({ domain: d, matches: byDomain.get(d)! }));
-  }, [spec.matches, definition.components, hasDomains]);
-  // A cohort "covers" a domain when at least one of its components is COVERED in that cohort — union
-  // coverage (`coveredCohorts`), not raw group membership.
-  const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
-    matches.some((m) => coveredCohorts(m).includes(cohort));
-  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables. Reads
-  // the SAME union coverage as the found-component detail and the group list, so the table cannot disagree.
-  const coverageComponentRow = (m: ComponentMatch) => (
-    <tr
-      key={m.component}
-      data-testid="coverage-row"
-      data-component={m.component}
-      className="border-b border-border/60 last:border-0"
-    >
-      <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
-      {feasibility.perCohort.map((c) => {
-        const present = coveredCohorts(m).includes(c.cohort);
-        return (
-          <td
-            key={c.cohort}
-            data-testid="coverage-cell"
-            data-cohort={c.cohort}
-            data-present={present ? "true" : "false"}
-            className="px-2 py-1.5 text-center"
-          >
-            {present ? (
-              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
-            ) : (
-              <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
-            )}
-          </td>
-        );
-      })}
-    </tr>
-  );
 
   return (
     <div className="space-y-4">
@@ -423,107 +367,7 @@ export function SpecView({
       />
 
       {/* --- per-cohort coverage --- */}
-      <Card>
-        <Collapsible defaultOpen>
-          <CardHeader className="pb-2">
-            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
-              <CardTitle className="text-sm">
-                Per-cohort coverage
-                {hasDomains && (
-                  <span className="ml-2 font-normal text-xs text-on-raised-muted">
-                    by {coverageDomains.length} domains
-                  </span>
-                )}
-              </CardTitle>
-              <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-          </CardHeader>
-          <CollapsibleContent>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-border text-left text-on-raised-muted">
-                      <th className="py-1.5 pr-3 font-semibold">Component</th>
-                      {feasibility.perCohort.map((c) => (
-                        <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
-                          {c.cohort}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {hasDomains
-                      ? coverageDomains.map(({ domain, matches }) => (
-                          <Fragment key={domain}>
-                            <tr className="border-b border-border bg-muted/40">
-                              <td
-                                colSpan={feasibility.perCohort.length + 1}
-                                className="px-1 py-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-                              >
-                                {domain}
-                              </td>
-                            </tr>
-                            {matches.map(coverageComponentRow)}
-                            {/* The domain-level readout the reviewer asked for: a cohort need only supply
-                                ONE item in a sub-scale for that domain to be represented in it. */}
-                            <tr
-                              data-testid="coverage-domain-covers"
-                              data-domain={domain}
-                              className="border-b border-border/60 text-on-raised-muted"
-                            >
-                              <td className="py-1 pl-3 pr-3 italic">covers ≥1</td>
-                              {feasibility.perCohort.map((c) => (
-                                <td key={c.cohort} className="px-2 py-1 text-center">
-                                  {cohortCoversDomain(matches, c.cohort) ? (
-                                    <CheckCircle2 className="mx-auto h-3 w-3 text-status-ok" />
-                                  ) : (
-                                    <XCircle className="mx-auto h-3 w-3 text-on-raised-muted/40" />
-                                  )}
-                                </td>
-                              ))}
-                            </tr>
-                          </Fragment>
-                        ))
-                      : spec.matches.map(coverageComponentRow)}
-                    <tr className="border-t border-border font-semibold">
-                      <td className="py-1.5 pr-3 text-on-raised">Present</td>
-                      {feasibility.perCohort.map((c) => (
-                        <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
-                          {
-                            spec.matches.filter((m) =>
-                              coveredCohorts(m).includes(c.cohort),
-                            ).length
-                          }
-                        </td>
-                      ))}
-                    </tr>
-                    <tr className="font-semibold">
-                      <td className="py-1.5 pr-3 text-on-raised">Computable</td>
-                      {feasibility.perCohort.map((c) => (
-                        <td key={c.cohort} className="px-2 py-1.5 text-center">
-                          {c.computable ? (
-                            <span className="text-status-ok">yes</span>
-                          ) : (
-                            <span className="text-on-raised-muted">no</span>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-2 text-xs text-on-raised-muted">
-                A cohort is computable only when every required component is present in it.
-                {hasDomains &&
-                  " “covers ≥1” is looser — it asks only whether a cohort supplies any item in a domain."}{" "}
-                Presence is per data dictionary — participant-level missingness, and therefore effective N,
-                cannot be derived from metadata.
-              </p>
-            </CardContent>
-          </CollapsibleContent>
-        </Collapsible>
-      </Card>
+      <ScoreCoverageCard spec={spec} />
 
       {/* --- derivation --- */}
       {!hideDerivation && (
@@ -581,6 +425,189 @@ export function SpecView({
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * The full per-cohort coverage table — a row per component, a column per cohort, read off a MATCH's union coverage
+ * (`coveredCohorts`), with the Present and Computable rows under it. Shared by this page's `SpecView` and Gate 4's
+ * declared-score panel (review round 6 note L7, "no cohort coverage table?" — option (b), 2026-10-13), so the two
+ * screens cannot draw it differently. Gate 1 has no match and so never draws this one: its table is the free
+ * search's "reached by search" (`ScoreSuggestionCards`).
+ */
+export function ScoreCoverageCard({
+  spec,
+  presenceStated = false,
+}: {
+  spec: CompositeSpec;
+  /** The surrounding screen already says presence is per data dictionary (Gate 4's panel) — said once, not twice. */
+  presenceStated?: boolean;
+}) {
+  const { definition, feasibility } = spec;
+  // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
+  // groups only when components actually carry a `domain`; with none, the flat table below renders
+  // unchanged — never a code-side, score-specific grouping. Domains appear in the order their first
+  // component appears in the definition.
+  const hasDomains = definition.components.some((c) => c.domain);
+  const coverageDomains = useMemo(() => {
+    if (!hasDomains) return [] as { domain: string; matches: ComponentMatch[] }[];
+    const domainByComponent = new Map(
+      definition.components.map((c) => [c.name, c.domain || "Other"] as const),
+    );
+    const order: string[] = [];
+    const byDomain = new Map<string, ComponentMatch[]>();
+    for (const m of spec.matches) {
+      const d = domainByComponent.get(m.component) ?? "Other";
+      if (!byDomain.has(d)) {
+        byDomain.set(d, []);
+        order.push(d);
+      }
+      byDomain.get(d)!.push(m);
+    }
+    return order.map((d) => ({ domain: d, matches: byDomain.get(d)! }));
+  }, [spec.matches, definition.components, hasDomains]);
+  // A cohort "covers" a domain when at least one of its components is COVERED in that cohort — union
+  // coverage (`coveredCohorts`), not raw group membership.
+  const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
+    matches.some((m) => coveredCohorts(m).includes(cohort));
+  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables. Reads
+  // the SAME union coverage as the found-component detail and the group list, so the table cannot disagree.
+  const coverageComponentRow = (m: ComponentMatch) => (
+    <tr
+      key={m.component}
+      data-testid="coverage-row"
+      data-component={m.component}
+      className="border-b border-border/60 last:border-0"
+    >
+      <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
+      {feasibility.perCohort.map((c) => {
+        const present = coveredCohorts(m).includes(c.cohort);
+        return (
+          <td
+            key={c.cohort}
+            data-testid="coverage-cell"
+            data-cohort={c.cohort}
+            data-present={present ? "true" : "false"}
+            className="px-2 py-1.5 text-center"
+          >
+            {present ? (
+              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
+            ) : (
+              <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+
+  return (
+    <Card data-testid="score-coverage">
+      <Collapsible defaultOpen>
+        <CardHeader className="pb-2">
+          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
+            <CardTitle className="text-sm">
+              Per-cohort coverage
+              {hasDomains && (
+                <span className="ml-2 font-normal text-xs text-on-raised-muted">
+                  by {coverageDomains.length} domains
+                </span>
+              )}
+            </CardTitle>
+            <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-on-raised-muted">
+                    <th className="py-1.5 pr-3 font-semibold">Component</th>
+                    {feasibility.perCohort.map((c) => (
+                      <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
+                        {c.cohort}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {hasDomains
+                    ? coverageDomains.map(({ domain, matches }) => (
+                        <Fragment key={domain}>
+                          <tr className="border-b border-border bg-muted/40">
+                            <td
+                              colSpan={feasibility.perCohort.length + 1}
+                              className="px-1 py-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+                            >
+                              {domain}
+                            </td>
+                          </tr>
+                          {matches.map(coverageComponentRow)}
+                          {/* The domain-level readout the reviewer asked for: a cohort need only supply
+                              ONE item in a sub-scale for that domain to be represented in it. */}
+                          <tr
+                            data-testid="coverage-domain-covers"
+                            data-domain={domain}
+                            className="border-b border-border/60 text-on-raised-muted"
+                          >
+                            <td className="py-1 pl-3 pr-3 italic">covers ≥1</td>
+                            {feasibility.perCohort.map((c) => (
+                              <td key={c.cohort} className="px-2 py-1 text-center">
+                                {cohortCoversDomain(matches, c.cohort) ? (
+                                  <CheckCircle2 className="mx-auto h-3 w-3 text-status-ok" />
+                                ) : (
+                                  <XCircle className="mx-auto h-3 w-3 text-on-raised-muted/40" />
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        </Fragment>
+                      ))
+                    : spec.matches.map(coverageComponentRow)}
+                  <tr className="border-t border-border font-semibold">
+                    <td className="py-1.5 pr-3 text-on-raised">Present</td>
+                    {feasibility.perCohort.map((c) => (
+                      <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
+                        {
+                          spec.matches.filter((m) =>
+                            coveredCohorts(m).includes(c.cohort),
+                          ).length
+                        }
+                      </td>
+                    ))}
+                  </tr>
+                  <tr className="font-semibold">
+                    <td className="py-1.5 pr-3 text-on-raised">Computable</td>
+                    {feasibility.perCohort.map((c) => (
+                      <td
+                        key={c.cohort}
+                        data-testid="coverage-computable"
+                        data-cohort={c.cohort}
+                        className="px-2 py-1.5 text-center"
+                      >
+                        {c.computable ? (
+                          <span className="text-status-ok">yes</span>
+                        ) : (
+                          <span className="text-on-raised-muted">no</span>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-on-raised-muted">
+              A cohort is computable only when every required component is present in it.
+              {hasDomains &&
+                " “covers ≥1” is looser — it asks only whether a cohort supplies any item in a domain."}
+              {!presenceStated &&
+                " Presence is per data dictionary — participant-level missingness, and therefore effective N, cannot be derived from metadata."}
+            </p>
+          </CardContent>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
   );
 }
 

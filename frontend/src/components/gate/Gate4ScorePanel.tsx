@@ -22,7 +22,7 @@ import {
   type ScopeVerdict,
 } from "@/lib/score-scope";
 import { cn } from "@/lib/utils";
-import { ScoreComponentsCard } from "@/pages/composite";
+import { ScoreComponentsCard, ScoreCoverageCard } from "@/pages/composite";
 import type { CompositeSpec, FieldDetail, UIRecord } from "@/types";
 
 /**
@@ -265,23 +265,12 @@ export function Gate4ScorePanel({
 
           {spec && (
             <>
-              {spec.feasibility.perCohort.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-semibold text-on-raised">
-                    Per cohort
-                  </span>
-                  <ul className="flex flex-col gap-0.5 text-xs text-on-raised">
-                    {spec.feasibility.perCohort.map((c) => (
-                      <li key={c.cohort} data-testid="gate4-score-cohort" data-computable={String(c.computable)}>
-                        <span className="font-mono font-semibold">{c.cohort}</span> —{" "}
-                        {c.computable
-                          ? "every required component is present"
-                          : `${c.present.length} of ${c.present.length + c.missing.length} components present`}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              {/*
+                THE FULL PER-COHORT TABLE, NEXT TO THE MATCH (review round 6 note L7, "no cohort coverage table?" — option
+                (b), 2026-10-13): the composite page's own table, shared, so the two cannot draw it differently. Its
+                Computable row replaces the one-sentence-per-cohort list that would only repeat it.
+              */}
+              {spec.feasibility.perCohort.length > 0 && <ScoreCoverageCard spec={spec} presenceStated />}
 
               <div className="flex flex-col gap-1">
                 <span className="text-sm font-semibold text-on-raised">

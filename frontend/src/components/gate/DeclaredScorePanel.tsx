@@ -199,6 +199,8 @@ export interface DeclaredScorePanelProps {
    * Absent where the run has no groups (the demo's empty Gate 1).
    */
   groupsById?: Map<string, NamedGroup>;
+  /** The run's cohorts (Gate 1's roster) — the columns of the score cards' reached-by-search table. */
+  cohorts?: readonly string[];
   /** variableId ("cohort:var") → its concept groupId, so a variable-level retrieval candidate (a missing
    *  component's shortlist is variable-level) can be rolled up to the ONE group it belongs to — deduped and
    *  linkable — instead of listing many look-alike raw variables that cannot open a group. */
@@ -235,6 +237,7 @@ export function DeclaredScorePanel({
   onMatch,
   matching = false,
   groupsById,
+  cohorts,
   groupByVariable,
   fieldIndex,
   onOpenGroup,
@@ -731,6 +734,7 @@ export function DeclaredScorePanel({
                   defaultThreshold={suggestions!.threshold}
                   onThresholdChange={frozen ? undefined : onCutoffChange}
                   groupsById={groupsById}
+                  cohorts={cohorts}
                   fieldIndex={fieldIndex}
                   isGroupInScope={isGroupInScope}
                   groupScopeWhy={groupScopeWhy}
