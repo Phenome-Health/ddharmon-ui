@@ -405,7 +405,8 @@ export function CohortLegend({ roster }: { roster: readonly string[] }) {
 }
 
 /**
- * A QUEUE ROW'S RIGHT COLUMN: the cohort strip, the state tag under it, and the variable count under that.
+ * A QUEUE ROW'S RIGHT COLUMN: the cohort strip, the state tag under it, a coherence-family PATTERN beside the state
+ * when there is one (layout C, 2026-10-13: the template check), and the variable count under that.
  * Stacked, not side by side (review round 1 on the live build: "there's not enough room"), so the column is
  * only as wide as its widest line and the name keeps the left column to itself. Right-aligned so every strip
  * shares an edge with the legend above the list.
@@ -415,16 +416,20 @@ export function QueueRowFacts({
   roster,
   vars,
   state,
+  pattern,
 }: {
   cohorts: readonly string[];
   roster: readonly string[];
   vars?: number;
   state?: React.ReactNode;
+  /** A pattern in the coherence family (the $0 template check) — it sits with the state it qualifies. */
+  pattern?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-end gap-1 pt-0.5">
+    <div data-testid="row-facts" className="flex flex-col items-end gap-1 pt-0.5">
       <CohortStrip cohorts={cohorts} roster={roster} />
       {state}
+      {pattern}
       {/* A flex gap draws the space; this one is for the TEXT, so the row reads "split 7 vars", not "split7 vars". */}{" "}
       {typeof vars === "number" && (
         <span data-testid="row-vars" className="whitespace-nowrap text-xs text-on-raised-faint">

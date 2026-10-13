@@ -268,31 +268,14 @@ test.describe("gate1 ledger", () => {
     for (const st of states) expect(["not_judged", "single"]).toContain(st);
 
     // It is a suspicion, not an adjudication: the copy says which, and it is not styled as a verdict.
-    await expect(marks.first()).toHaveText(/repeating template/i);
+    // Layout C (2026-10-13): one word on the face, beside the state; the title says what kind of signal it is.
+    await expect(marks.first()).toHaveText("template");
     await expect(marks.first()).toHaveAttribute("data-signal", "deterministic");
   });
 
-  test("@gate1 the spine ranks an unresolved judgment above a correction the reviewer made", async ({
-    page,
-  }) => {
-    await openGate1(page);
-    // Amber = the judge flagged this and nobody resolved it. The action colour = you changed it. Both,
-    // and amber wins: a reviewer who edited a flagged group still has an open judgment to resolve.
-    const flagged = page.locator(
-      "[data-testid='ledger-row'][data-spine='unresolved']",
-    );
-    await expect(flagged.first()).toBeVisible();
-    const flaggedIds = await flagged.evaluateAll((els) =>
-      els.map((el) => el.getAttribute("data-row-id")),
-    );
-    const expected = fixtureGroups()
-      .filter((g) => isFlagged(g))
-      .map((g) => g.groupId);
-    // Only the cross-cohort bucket is on screen by default, so the rendered set is a subset — but every
-    // rendered amber row must be one the judge actually flagged.
-    expect(flaggedIds.every((id) => expected.includes(id!))).toBe(true);
-    expect(flaggedIds.length).toBeGreaterThan(0);
-  });
+  // "The spine ranks an unresolved judgment above a correction" was RETIRED by layout C (Bhargav, 2026-10-13): a split
+  // is said once, by its state tag, so the amber edge is gone and the edge means only "you changed it". The new rule
+  // is pinned in `queue-row-c.spec.ts`.
 
   test("@gate1 the queue header carries the run's counts and the screen offers no cluster-size control", async ({
     page,

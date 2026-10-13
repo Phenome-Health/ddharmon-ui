@@ -13,13 +13,13 @@ import { Link, useParams } from "wouter";
 import {
   AlertTriangle,
   ArrowLeft,
-  Calculator,
   CheckCircle2,
   ChevronDown,
+  CircleDashed,
+  ClipboardList,
   FileText,
   Link2,
   Loader2,
-  CircleDashed,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -127,7 +127,7 @@ export default function CompositePage() {
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
         <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
-          <Calculator className="h-5 w-5 text-on-field" /> Composite variable
+          <ClipboardList className="h-5 w-5 text-on-field" /> Composite variable
         </h1>
         <p className="mt-1.5 max-w-3xl text-sm text-on-field-muted">
           Point at a paper, repo, PDF, or Word supplement that defines a score — a frailty index, an intrinsic-capacity score,
@@ -224,7 +224,7 @@ export default function CompositePage() {
               Hybrid retrieval (slower first call, better matching on large runs)
             </label>
             <Button onClick={() => void derive()} disabled={!canDerive} className="ml-auto gap-1.5">
-              {busy === "derive" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Calculator className="h-3.5 w-3.5" />}
+              {busy === "derive" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
               Derive
             </Button>
           </div>

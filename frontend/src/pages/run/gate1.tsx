@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import {
-  Calculator,
   ChevronDown,
   ChevronRight,
+  ClipboardList,
   Grid3x3,
   Pencil,
   Plus,
@@ -180,32 +180,18 @@ function TemplateSuspicion({ judged = false }: { judged?: boolean }) {
       className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
     >
       <Grid3x3 aria-hidden="true" className="h-3 w-3 shrink-0" />
-      repeating template
+      {/* One word on the face (layout C, 2026-10-13), beside the state it qualifies; the title carries the claim. */}
+      template
     </span>
   );
 }
 
-/** At or above this many variables, a group is hard to review by hand without at least one re-split. */
-const BIG_GROUP_MIN = 10;
-
-/**
- * A "large group" nudge (Bhargav: a 10+-variable group is hard to tackle without at least one re-split, so
- * mark them especially). PURELY LOCAL — member count, no model call — so it is a prioritisation hint, not a
- * judgement: it marks the groups worth spending an "Accept this division" / auto-refine pass on before the
- * manual work begins.
- */
-function LargeGroupMark({ count }: { count: number }) {
-  return (
-    <span
-      data-testid="large-group-mark"
-      title={`${count} variables — a large group. These usually need at least one re-split before they resolve cleanly at Gate 2; a good candidate for "Accept this division" or an auto-refine pass before hand-editing.`}
-      className="inline-flex items-center gap-1 rounded-pill bg-surface-warn px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-warn"
-    >
-      <Scissors aria-hidden="true" className="h-3 w-3 shrink-0" />
-      large
-    </span>
-  );
-}
+/*
+  NO "LARGE" MARK (layout C, Bhargav 2026-10-13). There was a LARGE pill on 10+-variable groups. Size is the variable
+  count, which every row already shows, and "a large group doesn't have to be a bad thing unless it's actually
+  incoherent" — which is the coherence judge's call, not a member-count rule. The queue's Vars sort is there when size
+  matters.
+*/
 
 /**
  * THE PROVENANCE PILLS MARK THE EXCEPTIONS, NOT THE RULE (08-16c review).
@@ -1805,9 +1791,9 @@ function QueueRow({
       data-row-id={group.groupId}
       data-search-label={label.text}
       data-reviewer={reviewer ? "true" : undefined}
-      data-spine={
-        isFlagged(group) ? "unresolved" : changed ? "changed" : "none"
-      }
+      // THE EDGE MEANS ONE THING: you changed this row (layout C, 2026-10-13). A split used to colour it amber too,
+      // saying the state a second time beside its own tag.
+      data-spine={changed ? "changed" : "none"}
       aria-current={selected}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -1843,11 +1829,7 @@ function QueueRow({
       }
       className={cn(
         "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-2.5 border-l-4 px-4 py-2.5 text-left",
-        isFlagged(group)
-          ? "border-l-status-warn"
-          : changed
-            ? "border-l-accent-action"
-            : "border-l-transparent",
+        changed ? "border-l-accent-action" : "border-l-transparent",
         selected
           ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]"
           : "hover:bg-surface-inset",
@@ -1872,8 +1854,9 @@ function QueueRow({
           <div className="mb-1 flex flex-wrap gap-1">
             {scoreTag.map((name) =>
               scoreTagSource === "suggestion" ? (
-                // A SUGGESTION, drawn by form (dashed) and named as one: a free search reached this group, and the
-                // verdict is still Gate 4's. The title carries the whole claim, the face carries "Suggested".
+                // A SUGGESTION, drawn by form (dashed): a free search reached this group, and the verdict is still Gate
+                // 4's. The score builder's icon and the component's name are the face (layout C, 2026-10-13 — the
+                // word "Suggested" went); the dashed outline and the title carry the claim.
                 <span
                   key={name}
                   data-testid="queue-score-tag"
@@ -1881,8 +1864,8 @@ function QueueRow({
                   className="inline-flex max-w-full items-center gap-1 rounded-pill border border-dashed border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
                   title={`${SUGGESTION_TAG_COPY} (the “${name}” component)`}
                 >
-                  <Search className="h-2.5 w-2.5 shrink-0" />
-                  <span className="truncate">Suggested · {name}</span>
+                  <ClipboardList aria-hidden="true" className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{name}</span>
                 </span>
               ) : (
                 <span
@@ -1892,7 +1875,7 @@ function QueueRow({
                   className="inline-flex max-w-full items-center gap-1 rounded-pill border border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
                   title={`Matched to the “${name}” component of a declared score`}
                 >
-                  <Calculator className="h-2.5 w-2.5 shrink-0" />
+                  <ClipboardList aria-hidden="true" className="h-3 w-3 shrink-0" />
                   <span className="truncate">{name}</span>
                 </span>
               ),
@@ -1917,29 +1900,25 @@ function QueueRow({
             </span>
           )}
         </div>
-        {(group.readjudicatedFrom ||
-          (group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single")) ||
-          count >= BIG_GROUP_MIN) && (
+        {group.readjudicatedFrom && (
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            {group.readjudicatedFrom && (
-              <ReSplitMark parent={group.readjudicatedFrom} />
-            )}
-            {group.matrixSuspect &&
-              (group.coherence === "not_judged" ||
-                group.coherence === "single") && (
-                <TemplateSuspicion judged={group.coherence === "single"} />
-              )}
-            {count >= BIG_GROUP_MIN && <LargeGroupMark count={count} />}
+            <ReSplitMark parent={group.readjudicatedFrom} />
           </div>
         )}
       </div>
-      {/* The facts column: cohort strip, then the variable count and the state. The per-row price is gone
-          (lab round 2: "repetitive") — the sum block under the list says it once. */}
+      {/* The facts column: cohort strip, the state, the template check beside it (layout C), then the variable
+          count — which is the size, said once. The per-row price is gone (lab round 2: "repetitive") — the sum block
+          under the list says it once. */}
       <QueueRowFacts
         cohorts={group.cohorts}
         roster={roster}
         vars={count}
         state={reviewer ? <NewGroupMark /> : <CoherenceMark state={group.coherence} variant="tag" />}
+        pattern={
+          group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single") ? (
+            <TemplateSuspicion judged={group.coherence === "single"} />
+          ) : undefined
+        }
       />
     </div>
   );

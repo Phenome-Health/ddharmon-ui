@@ -7,11 +7,11 @@ import {
   ArrowUpDown,
   Ban,
   Bug,
-  Calculator,
   Check,
   ChevronDown,
   ChevronRight,
   CircleStop,
+  ClipboardList,
   Download,
   FileCode,
   Info,
@@ -818,7 +818,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <Calculator className="h-4 w-4 text-accent-on-raised" /> Composite variable
+                <ClipboardList className="h-4 w-4 text-accent-on-raised" /> Composite variable
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-3">
@@ -828,7 +828,7 @@ export default function DashboardPage() {
               </p>
               <Link href={`/job/${jobId}/composite`}>
                 <Button variant="outline" className="gap-1.5">
-                  <Calculator className="h-3.5 w-3.5" /> Build a composite
+                  <ClipboardList className="h-3.5 w-3.5" /> Build a composite
                 </Button>
               </Link>
             </CardContent>

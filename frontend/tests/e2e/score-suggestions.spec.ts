@@ -240,7 +240,10 @@ test.describe("Gate 1 score suggestions — the screen", () => {
       if (suggested) {
         const tag = tagsOf(page, group.groupId).first();
         await expect(tag).toHaveAttribute("data-tag-source", "suggestion");
-        await expect(tag).toContainText("Suggested");
+        // Layout C (2026-10-13): the score builder's icon replaces the word "Suggested"; the dashed outline and the
+        // title still say it is a suggestion, not a match.
+        await expect(tag).not.toContainText("Suggested");
+        await expect(tag.locator("svg.lucide-clipboard-list")).toHaveCount(1);
         await expect(tag).toContainText(component);
         await expect(tag).toHaveAttribute("title", new RegExp(SUGGESTION_TAG_COPY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       }
@@ -322,6 +325,8 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     const matched = fixtureGroups()[0]!.groupId;
     await expect(scopeOf(page, matched)).toHaveAttribute("aria-checked", "true");
     await expect(tagsOf(page, matched).first()).toHaveAttribute("data-tag-source", "match");
+    // One icon for the score builder everywhere (2026-10-13): the match chip carries it too, outline solid.
+    await expect(tagsOf(page, matched).first().locator("svg.lucide-clipboard-list")).toHaveCount(1);
     // The suggestion-only groups are not seeded: the match is the input, not a blend of the two.
     await expect(scopeOf(page, reached()[1]!.group.groupId)).toHaveAttribute("aria-checked", "false");
     expect(requests).toEqual([]);

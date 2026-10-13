@@ -286,6 +286,8 @@ test.describe("Gate 4 declared score", () => {
     // Folded by default, like the how-to strip and Gate 1's score strip — and the header still says it all.
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(toggle).toContainText(SCORE);
+    // The score builder's one icon (2026-10-13), as on Gate 1's strip and the queue chips.
+    await expect(toggle.locator("svg.lucide-clipboard-list")).toHaveCount(1);
     const state = panel.getByTestId("gate4-score-state");
     await expect(state).toHaveAttribute("data-state", "unmatched");
     await expect(state).toHaveText(gate4ScoreHeader(DECLARED.length, null, { refused: false }).text);

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleDashed,
+  ClipboardList,
   FileText,
   Loader2,
   XCircle,
@@ -440,7 +441,10 @@ export function DeclaredScorePanel({
           exists. A two-line header would be this change starting to compete with the data it sits above,
           which is a worse placement than the one it is fixing.
         */}
-        <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        {/* The score builder's one icon, everywhere it appears (Bhargav, 2026-10-13: ClipboardList — generic enough
+            for "a bunch of things I'm interested in harmonizing even if they don't belong to a common score"). */}
+        <ClipboardList aria-hidden="true" className="h-4 w-4 shrink-0 text-on-field" />
+        <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <DisclosureLabel ground="field">A score you want to build from this run</DisclosureLabel>
           {status ? (
             /*

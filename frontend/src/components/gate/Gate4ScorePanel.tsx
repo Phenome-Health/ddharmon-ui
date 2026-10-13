@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, ClipboardList, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -160,7 +160,9 @@ export function Gate4ScorePanel({
           aria-label={`${open ? "Hide" : "Show"} the declared score ${score.scoreName}`}
           className={disclosureRow("raised", "gap-3")}
         >
-          <span className="flex min-w-0 flex-col gap-0.5">
+          {/* The score builder's one icon (2026-10-13), as on Gate 1's strip and the queue chips. */}
+          <ClipboardList aria-hidden="true" className="h-4 w-4 shrink-0 text-on-raised" />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <DisclosureLabel ground="raised">The score you declared at Gate 1</DisclosureLabel>
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
               <h2 className="text-sm font-semibold text-on-raised">{score.scoreName}</h2>
