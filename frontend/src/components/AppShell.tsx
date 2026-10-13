@@ -106,7 +106,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div
             data-testid="app-nav-panel"
             className={cn(
-              "absolute inset-y-0 left-0 z-30 flex flex-col overflow-hidden border-r border-rule-on-chrome bg-surface-chrome px-2 py-3 transition-[width] duration-150 ease-out motion-reduce:transition-none",
+              // z-40: above the page's own pinned bars (the gate rail's pin is z-30), below dialogs and popovers (z-50).
+              "absolute inset-y-0 left-0 z-40 flex flex-col overflow-hidden border-r border-rule-on-chrome bg-surface-chrome px-2 py-3 transition-[width] duration-150 ease-out motion-reduce:transition-none",
               expanded ? "w-60" : "w-14",
             )}
           >

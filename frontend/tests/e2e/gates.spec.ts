@@ -883,6 +883,26 @@ test.describe("app chrome — no top bar, a hover-to-expand rail", () => {
     await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "false");
   });
 
+  test("@gates the open rail sits above the page's own pinned bars — the gate rail never paints over it", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    await page.locator(NAV).hover();
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "true");
+    await expect
+      .poll(async () => (await page.locator("[data-testid='app-nav-panel']").boundingBox())!.width)
+      .toBeGreaterThanOrEqual(200);
+    // A point inside the open panel that the sticky gate rail also covers (the rail spans the content's width).
+    const pin = (await page.locator("[data-testid='gate-rail-pin']").boundingBox())!;
+    const panel = (await page.locator("[data-testid='app-nav-panel']").boundingBox())!;
+    const x = Math.min(pin.x + 20, panel.x + panel.width - 10);
+    const y = pin.y + pin.height / 2;
+    const topmostIsPanel = await page.evaluate(
+      ([px, py]) => !!document.elementFromPoint(px, py)?.closest("[data-testid='app-nav-panel']"),
+      [x, y] as const,
+    );
+    expect(topmostIsPanel).toBe(true);
+  });
+
   test("@gates keyboard focus in the rail expands it, and tabbing out collapses it", async ({ page }) => {
     await page.goto("/jobs");
     await page.waitForLoadState("networkidle");
