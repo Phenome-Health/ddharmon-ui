@@ -202,3 +202,76 @@ test.describe("the reached-by-search table — Gate 1", () => {
     await expect(cell(table, "Glaucoma", "CLSA")).toHaveAttribute("data-reached", "true");
   });
 });
+
+/**
+ * Review round 7 (Bhargav, 2026-10-13, live Lavish build b013d95) — the score panel's layout.
+ */
+test.describe("the score panel — review round 7", () => {
+  test("@gate1 the info strip names the figure 'Best similarity', the label the column already uses", async ({ page }) => {
+    const panel = await openOwned(page);
+    const info = panel.getByTestId("score-suggestion-info");
+    await expect(info).toContainText("Best similarity.");
+    await expect(info).not.toContainText("The figure.");
+  });
+
+  test("@gate1 the cut-off sentence stays out of the how-it-works fold — folding that keeps the cut-off in view", async ({
+    page,
+  }) => {
+    const panel = await openOwned(page);
+    await expect(panel.getByTestId("score-suggestion-info").getByTestId("score-cutoff-input")).toHaveCount(0);
+    await panel.getByTestId("score-suggestion-info-toggle").click();
+    await expect(panel.getByTestId("score-cutoff-line")).toBeVisible();
+    await expect(panel.getByTestId("score-cutoff-input")).toBeVisible();
+    // The chip lost the word "Suggested" (layout C); the sentence no longer promises it.
+    await expect(panel.getByTestId("score-cutoff-line")).not.toContainText("tagged Suggested");
+  });
+
+  test("@gate1 the cut-off field shows its whole value — nothing clipped behind spin arrows", async ({ page }) => {
+    const panel = await openOwned(page);
+    const input = panel.getByTestId("score-cutoff-input");
+    await expect(input).toHaveValue("0.62");
+    const fits = await input.evaluate((el) => (el as HTMLInputElement).scrollWidth <= (el as HTMLInputElement).clientWidth);
+    expect(fits).toBe(true);
+  });
+
+  test("@gate1 the coverage table comes first, then the components — each its own outlined fold", async ({ page }) => {
+    const panel = await openOwned(page);
+    const card = panel.getByTestId("score-suggestions");
+    const order = await card
+      .locator("[data-testid='search-coverage'], [data-testid='score-suggestion-components']")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+    expect(order).toEqual(["search-coverage", "score-suggestion-components"]);
+    for (const id of ["search-coverage", "score-suggestion-components"]) {
+      const box = card.getByTestId(id);
+      const border = await box.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { style: s.borderTopStyle, width: s.borderTopWidth };
+      });
+      expect(border.style, id).toBe("solid");
+      expect(border.width, id).not.toBe("0px");
+      const toggle = card.getByTestId(`${id}-toggle`);
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await toggle.click();
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    }
+    await expect(card.getByTestId("search-coverage-row")).toHaveCount(0);
+    await expect(card.getByTestId("score-suggestion")).toHaveCount(0);
+  });
+
+  test("@gate1 a component in the table links to its card: the list opens, the card opens, and it comes into view", async ({
+    page,
+  }) => {
+    const panel = await openOwned(page);
+    const card = panel.getByTestId("score-suggestions");
+    // Fold the list first: the link must open it, not depend on it being open.
+    await card.getByTestId("score-suggestion-components-toggle").click();
+    await expect(card.getByTestId("score-suggestion")).toHaveCount(0);
+    await card
+      .locator("[data-testid='search-coverage-row'][data-component='Glaucoma'] [data-testid='search-coverage-component']")
+      .click();
+    const glaucoma = card.locator("[data-testid='score-suggestion'][data-component='Glaucoma']");
+    await expect(glaucoma).toBeVisible();
+    await expect(glaucoma.getByTestId("score-suggestion-expand")).toHaveAttribute("aria-expanded", "true");
+    await expect(glaucoma).toBeInViewport();
+  });
+});

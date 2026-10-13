@@ -130,11 +130,9 @@ test.describe("score builder auto-select threshold", () => {
         String(confidence >= GROUP_SELECT_THRESHOLD),
       );
     }
-    // The sum block counts exactly the auto-selected groups — the set the commit bar prices and Continue sends.
+    // The count beside select-all counts exactly the auto-selected groups — the set the commit bar prices and Continue sends.
     const selected = r.filter((x) => x.confidence >= GROUP_SELECT_THRESHOLD).length;
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(
-      new RegExp(`^${selected} of `),
-    );
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(new RegExp(`^${selected}/`));
     await expect(page.locator("[data-testid='commit-bar'] button")).toBeEnabled();
   });
 
@@ -179,6 +177,6 @@ test.describe("score builder auto-select threshold", () => {
       // Above the threshold in the LATER score, but not what Gate 1 sent — the record must not claim it was.
       await expect(scopeOf(page, group.groupId)).toHaveAttribute("aria-checked", "false");
     }
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(/^1 of /);
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(/^1\//);
   });
 });

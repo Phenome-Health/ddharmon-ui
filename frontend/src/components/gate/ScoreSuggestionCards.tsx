@@ -77,6 +77,14 @@ export function ScoreSuggestionCards({
     (gid) => groupsById?.get(gid)?.group.cohorts,
     (gid) => isGroupInScope?.(gid) ?? false,
   );
+  // THE LIST IS CONTROLLED so the table's component links can open it (review round 7): a link into a folded list
+  // opens the list, then the card, then brings the card into view.
+  const [listOpen, setListOpen] = useState(true);
+  const [openRequest, setOpenRequest] = useState<{ component: string; n: number } | null>(null);
+  const goToCard = (component: string) => {
+    setListOpen(true);
+    setOpenRequest((cur) => ({ component, n: (cur?.n ?? 0) + 1 }));
+  };
   return (
     <Card data-testid="score-suggestions">
       <CardHeader className="pb-2">
@@ -84,11 +92,7 @@ export function ScoreSuggestionCards({
       </CardHeader>
       <CardContent className="space-y-3">
         {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
-        <Collapsible
-          defaultOpen
-          data-testid="score-suggestion-info"
-          className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
-        >
+        <Collapsible defaultOpen data-testid="score-suggestion-info" className={FOLD_BOX}>
           <CollapsibleTrigger
             data-testid="score-suggestion-info-toggle"
             className={disclosureRow("raised", "group")}
@@ -102,10 +106,11 @@ export function ScoreSuggestionCards({
               <span className="font-semibold text-on-raised">Free search.</span> Each component is searched against
               this run&rsquo;s variables by meaning — retrieval only, no model call, $0.
             </li>
+            {/* Named as the column names it (review round 7: "The figure." was ambiguous). */}
             <li>
-              <span className="font-semibold text-on-raised">The figure.</span> How close a group&rsquo;s
-              best-matching variable is to the component (0–1 similarity). A search score, not a judgement — the
-              verdict is Gate 4&rsquo;s match.
+              <span className="font-semibold text-on-raised">Best similarity.</span> How close a group&rsquo;s
+              best-matching variable is to the component (0–1). A search score, not a judgement — the verdict is Gate
+              4&rsquo;s match.
             </li>
             <li>
               <span className="font-semibold text-on-raised">Variables · cohorts.</span> Everything in this
@@ -125,70 +130,42 @@ export function ScoreSuggestionCards({
               component to check the groups under the cut-off.
             </li>
           </ul>
-          <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
-            Every group scoring{" "}
-            {onThresholdChange ? (
-              <CutoffInput value={threshold} onCommit={onThresholdChange} />
-            ) : (
-              <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span>
-            )}{" "}
-            or higher starts in scope and is tagged Suggested — one cut-off for every component. Your checks always win.
-            {onThresholdChange && defaultThreshold != null && Math.abs(threshold - defaultThreshold) > 1e-9 && (
-              <>
-                {" "}
-                <button
-                  type="button"
-                  data-testid="score-cutoff-reset"
-                  onClick={() => onThresholdChange(null)}
-                  className="font-semibold text-link-on-raised underline underline-offset-2"
-                >
-                  reset to {defaultThreshold.toFixed(2)}
-                </button>
-              </>
-            )}
-          </p>
           </CollapsibleContent>
         </Collapsible>
-        <Collapsible defaultOpen>
-          <CollapsibleTrigger className={disclosureRow("raised", "group")}>
-            <DisclosureLabel ground="raised">
-              Components · {nWith}/{cards.length} with a suggestion · {nGroups} group{nGroups === 1 ? "" : "s"}{" "}
-              suggested
-            </DisclosureLabel>
-            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2 space-y-2">
-            {/* SAID ONCE (round 6): the figure's label heads the column instead of riding on every row. */}
-            <div
-              data-testid="score-suggestion-columns"
-              className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-            >
-              <span>Component</span>
-              <span>Best similarity</span>
-            </div>
-            {cards.map((card) => (
-              <SuggestionRow
-                key={card.component}
-                card={card}
-                threshold={threshold}
-                groupsById={groupsById}
-                fieldIndex={fieldIndex}
-                isGroupInScope={isGroupInScope}
-                groupScopeWhy={groupScopeWhy}
-                onGroupScopeChange={onGroupScopeChange}
-                onOpenGroup={onOpenGroup}
-              />
-            ))}
-          </CollapsibleContent>
-        </Collapsible>
+        {/* THE CUT-OFF STAYS IN VIEW (review round 7: "outside the collapsible zone"): it is a control, and it governs
+            the table and the cards below, so folding the explanation must not fold it away. */}
+        <p data-testid="score-cutoff-line" className="px-1 text-xs text-on-raised-muted">
+          Every group scoring{" "}
+          {onThresholdChange ? (
+            <CutoffInput value={threshold} onCommit={onThresholdChange} />
+          ) : (
+            <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span>
+          )}{" "}
+          or higher starts in scope, marked as a suggestion in the queue — one cut-off for every component. Your checks
+          always win.
+          {onThresholdChange && defaultThreshold != null && Math.abs(threshold - defaultThreshold) > 1e-9 && (
+            <>
+              {" "}
+              <button
+                type="button"
+                data-testid="score-cutoff-reset"
+                onClick={() => onThresholdChange(null)}
+                className="font-semibold text-link-on-raised underline underline-offset-2"
+              >
+                reset to {defaultThreshold.toFixed(2)}
+              </button>
+            </>
+          )}
+        </p>
         {/*
           PER-COHORT, REACHED BY SEARCH (review round 6 note L7, "no cohort coverage table?" — option (b), 2026-10-13).
           Gate 4 carries the full table next to the match; this is the scoping half, from the free search alone. The
           mark is a neutral dot, never Gate 4's check or cross: it says the search reached the cohort, not that the
-          cohort has the component, and a blank is never "missing".
+          cohort has the component, and a blank is never "missing". FIRST, in its own outlined fold (round 7): the
+          overview leads, and each component name links down to its card.
         */}
-        <Collapsible defaultOpen data-testid="search-coverage">
-          <CollapsibleTrigger className={disclosureRow("raised", "group")}>
+        <Collapsible defaultOpen data-testid="search-coverage" className={FOLD_BOX}>
+          <CollapsibleTrigger data-testid="search-coverage-toggle" className={disclosureRow("raised", "group")}>
             <DisclosureLabel ground="raised">Per-cohort coverage · reached by search</DisclosureLabel>
             <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
           </CollapsibleTrigger>
@@ -220,8 +197,16 @@ export function ScoreSuggestionCards({
                       data-component={r.component}
                       className="border-b border-border/60 last:border-0"
                     >
-                      <th scope="row" className="py-1.5 pr-3 text-left font-normal text-on-raised">
-                        {r.component}
+                      <th scope="row" className="py-1.5 pr-3 text-left font-normal">
+                        <button
+                          type="button"
+                          data-testid="search-coverage-component"
+                          onClick={() => goToCard(r.component)}
+                          title={`Open the ${r.component} card below`}
+                          className="text-left text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
+                        >
+                          {r.component}
+                        </button>
                       </th>
                       {coverage.cohorts.map((c) => {
                         const hit = r.reached.includes(c);
@@ -270,16 +255,61 @@ export function ScoreSuggestionCards({
             </p>
           </CollapsibleContent>
         </Collapsible>
+        {/* The component cards, in their own outlined fold (review round 7). */}
+        <Collapsible
+          open={listOpen}
+          onOpenChange={setListOpen}
+          data-testid="score-suggestion-components"
+          className={FOLD_BOX}
+        >
+          <CollapsibleTrigger
+            data-testid="score-suggestion-components-toggle"
+            className={disclosureRow("raised", "group")}
+          >
+            <DisclosureLabel ground="raised">
+              Components · {nWith}/{cards.length} with a suggestion · {nGroups} group{nGroups === 1 ? "" : "s"}{" "}
+              suggested
+            </DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2 space-y-2">
+            {/* SAID ONCE (round 6): the figure's label heads the column instead of riding on every row. */}
+            <div
+              data-testid="score-suggestion-columns"
+              className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+            >
+              <span>Component</span>
+              <span>Best similarity</span>
+            </div>
+            {cards.map((card) => (
+              <SuggestionRow
+                key={card.component}
+                card={card}
+                openRequest={openRequest?.component === card.component ? openRequest.n : 0}
+                threshold={threshold}
+                groupsById={groupsById}
+                fieldIndex={fieldIndex}
+                isGroupInScope={isGroupInScope}
+                groupScopeWhy={groupScopeWhy}
+                onGroupScopeChange={onGroupScopeChange}
+                onOpenGroup={onOpenGroup}
+              />
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );
 }
 
+/** The panel's folds share one outlined box (review round 7: each section "should have an outline"). */
+const FOLD_BOX = "rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs";
+
 /**
  * The suggestion cut-off, editable in place (review round 6 — Bhargav: "should be user-selectable with default 0.62").
  *
  * A number field in the sentence it governs, so the control and what it does are read together. Enter or leaving the
- * field applies it at once; typing a valid value applies it after a short pause (the spin arrows included). A value
+ * field applies it at once; typing a valid value applies it after a short pause (ArrowUp/ArrowDown included). A value
  * outside [0.30, 0.95] is marked invalid and never applied; leaving the field then puts the applied value back, so the
  * field never shows a cut-off the screen is not using.
  */
@@ -327,7 +357,9 @@ function CutoffInput({ value, onCommit }: { value: number; onCommit: (next: numb
         if (e.key === "Enter") commit(e.currentTarget.value, false);
       }}
       onBlur={(e) => commit(e.currentTarget.value, true)}
-      className="mx-0.5 inline-block h-[18px] w-[7ch] rounded-inner border border-rule-control-on-raised bg-surface-raised px-1 py-0 align-baseline font-mono text-xs text-on-raised aria-[invalid=true]:border-status-danger"
+      // WIDE ENOUGH FOR ITS VALUE (review round 7: "poorly formatted" — the spin arrows ate the last digit). The
+      // native arrows go; ArrowUp/ArrowDown still step it, and typing applies after the pause.
+      className="mx-0.5 inline-block h-6 w-14 rounded-inner border border-rule-control-on-raised bg-surface-raised px-1.5 py-0 text-center align-middle font-mono text-xs text-on-raised [appearance:textfield] aria-[invalid=true]:border-status-danger [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
     />
   );
 }
@@ -344,6 +376,7 @@ function variableLabel(id: string, fieldIndex?: Record<string, FieldDetail>): st
 
 function SuggestionRow({
   card,
+  openRequest = 0,
   threshold,
   groupsById,
   fieldIndex,
@@ -353,6 +386,8 @@ function SuggestionRow({
   onOpenGroup,
 }: {
   card: SuggestionCard;
+  /** A link into this card from the coverage table (review round 7): each new number opens it and brings it into view. */
+  openRequest?: number;
   threshold: number;
   groupsById?: Map<string, NamedGroup>;
   fieldIndex?: Record<string, FieldDetail>;
@@ -363,6 +398,13 @@ function SuggestionRow({
 }) {
   const [open, setOpen] = useState(false);
   const [belowOpen, setBelowOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!openRequest) return;
+    setOpen(true);
+    // After the list (and this card) have laid out, so the scroll lands on the card's real position.
+    requestAnimationFrame(() => rootRef.current?.scrollIntoView({ block: "center" }));
+  }, [openRequest]);
   const inScope = (gid: string) => isGroupInScope?.(gid) ?? false;
   const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId));
   const scoped = card.groups.filter(counts);
@@ -507,6 +549,7 @@ function SuggestionRow({
 
   return (
     <div
+      ref={rootRef}
       className="rounded-md border border-border"
       data-testid="score-suggestion"
       data-component={card.component}

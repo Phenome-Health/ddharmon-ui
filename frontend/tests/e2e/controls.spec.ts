@@ -3,7 +3,7 @@ import { NO_FILTERS, applyFilters } from "@/lib/ledger";
 import { cohortInitials, tickedOfShown } from "@/lib/queue-controls";
 import { MISSING_IS_A_RUN_RESULT, missingReason } from "@/lib/score-scope";
 import type { CoherenceState, ConceptGroup } from "@/types";
-import { fixtureGroups } from "./gate1-fixture";
+import { asOwnedRun, fixtureGroups, serveRun } from "./gate1-fixture";
 import { serveFinished } from "./gate23-fixture";
 
 /**
@@ -355,8 +355,8 @@ test.describe("controls gate1 panel", () => {
     await expect(facts.locator("[data-testid='coherence-mark'] + [data-testid='row-vars']")).toHaveCount(1);
     await expect(row.locator("[data-testid='coherence-mark']")).toHaveAttribute("data-variant", "tag");
     await expect(row).not.toContainText("$");
-    // The price is said once, under the list.
-    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(1);
+    // The price is said once, on the Continue bar — the sum block under the list went in review round 7.
+    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(0);
   });
 });
 
@@ -470,17 +470,18 @@ test.describe("controls review round 1", () => {
   });
 
   test("@controls the spend summary says each fact once, briefly", async ({ page }) => {
+    // Review round 7: the sum block under the queue repeated the rail (spent), the select-all count (ticked) and the
+    // Continue bar (price), so it went. What only it said — the whole-run comparison — rides the bar's note.
+    await serveRun(page, asOwnedRun); // owned: the shared demo's bar prices nothing (08-18)
     await openGate1(page);
-    const sum = page.locator("[data-testid='sum-block']");
-    await expect(sum.locator("[data-sum-line='realized']")).toHaveText(/^Spent so far: /);
-    await expect(sum.locator("[data-sum-line='in-scope']")).toHaveText(/^0 of \d+ groups ticked · \$[\d.]+ to match at Gate 2$/);
+    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(0);
+    const note = page.getByTestId("commit-assurance");
     // Nothing ticked, so the whole-corpus figure is the comparison worth showing.
-    await expect(sum.locator("[data-sum-line='whole-corpus']")).toHaveText(/^All \d+ groups: \$[\d.]+$/);
+    await expect(note.locator("[data-sum-line='whole-corpus']")).toHaveText(/^All \d+ groups would be \$[\d.]+\.$/);
     // With every group ticked the two figures are the same number, so the comparison is dropped.
     await page.locator("[data-testid='bulk-scope-toggle']").click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "all");
-    await expect(sum.locator("[data-sum-line='whole-corpus']")).toHaveCount(0);
-    expect(((await sum.textContent()) ?? "").length).toBeLessThan(120);
+    await expect(page.locator("[data-sum-line='whole-corpus']")).toHaveCount(0);
   });
 
   test("@controls Gate 3 states the recommended-mapping caption once, not on every value-map tile", async ({ page }) => {

@@ -322,37 +322,20 @@ test.describe("gate1 ledger", () => {
     ).toEqual([]);
   });
 
-  test("@gate1 the sum block leads with realized spend and closes with the whole-corpus comparison", async ({
+  test("@gate1 no sum block under the queue: spend is the rail's, the count the header's, the price the Continue bar's", async ({
     page,
   }) => {
+    // Review round 7 (Bhargav, 2026-10-13): "Spent so far" repeated the rail's total, "N of M groups ticked" the count
+    // beside select-all, and "$X to match at Gate 2" the Continue bar — so the block went and the queue got its room.
+    await serveRun(page, asOwnedRun); // an owned run: the shared demo's bar quotes no price (08-18)
     await openGate1(page);
-    const sum = page.locator("[data-testid='sum-block']");
-    await expect(sum).toBeVisible();
-
-    // FIRST, and visually distinct: what reaching this gate already cost. After the post-split reversal
-    // the reviewer is standing downstream of real spend, and a screen that opened with a forecast would
-    // imply otherwise.
-    const lines = sum.locator("[data-sum-line]");
-    const order = await lines.evaluateAll((els) =>
-      els.map((el) => el.getAttribute("data-sum-line")),
-    );
-    expect(order).toEqual(["realized", "in-scope", "whole-corpus"]);
-
-    const realized = sum.locator("[data-sum-line='realized']");
-    const forecast = sum.locator("[data-sum-line='in-scope']");
-    await expect(realized).toContainText(/spent so far/i);
-    // Distinct by more than position: the realized line carries its own weight, so the two cannot be
-    // read in the same voice.
-    const weights = await Promise.all(
-      [realized, forecast].map((l) =>
-        l.evaluate((el) => getComputedStyle(el).fontWeight),
-      ),
-    );
-    expect(weights[0]).not.toBe(weights[1]);
-
-    // Scoping is legible only against a denominator, so the comparison is shown too.
-    await expect(sum.locator("[data-sum-line='whole-corpus']")).toContainText(
-      /all \d+ (concept )?groups/i,
+    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(0);
+    await expect(page.getByTestId("rail-total")).toBeVisible();
+    await expect(page.getByTestId("bulk-count-groups")).toBeVisible();
+    await expect(page.locator("[data-testid='commit-bar']")).toHaveAttribute("data-total", /\d/);
+    // What only the block said is kept, on the bar: with part of the run in scope, what the whole run would cost.
+    await expect(page.locator("[data-testid='commit-assurance'] [data-sum-line='whole-corpus']")).toContainText(
+      /all \d+ groups/i,
     );
   });
 
@@ -664,20 +647,18 @@ test.describe("gate1 toolbar", () => {
     page,
   }) => {
     await openGate1(page);
-    // The "reviewed" readout was retired (08-16f); the in-scope count lives in the sum block, over the
-    // WHOLE corpus — the sum block and the commit bar price the same set.
-    const inScopeLine = page.locator(
-      "[data-testid='sum-block'] [data-sum-line='in-scope']",
-    );
+    // The "reviewed" readout was retired (08-16f); the in-scope count is the one beside select-all (the sum block
+    // that repeated it went in review round 7).
+    const inScopeLine = page.getByTestId("bulk-count-groups");
     const total = fixtureGroups().length;
     // NEW DEFAULT (08-23b subset): nothing is in scope until the reviewer selects — the deliberate act.
-    await expect(inScopeLine).toContainText(`0 of ${total}`);
+    await expect(inScopeLine).toContainText(`0/${total}`);
 
     // Put one group IN scope — a real decision, written through the shared layer.
     const first = page.locator("[data-testid='ledger-row']").first();
     const id = await first.getAttribute("data-row-id");
     await first.locator("[data-testid='queue-scope']").click();
-    await expect(inScopeLine).toContainText(`1 of ${total}`);
+    await expect(inScopeLine).toContainText(`1/${total}`);
 
     // R6: derived from the persisted decisions, so it is still there after a reload.
     await page.reload();
@@ -685,7 +666,7 @@ test.describe("gate1 toolbar", () => {
     await expect(
       page.locator("[data-testid='ledger-row']").first(),
     ).toBeVisible();
-    await expect(inScopeLine).toContainText(`1 of ${total}`);
+    await expect(inScopeLine).toContainText(`1/${total}`);
     await expect(
       page.locator(`[data-testid='ledger-row'][data-row-id='${id}']`),
     ).toHaveAttribute("data-spine", /changed|unresolved/);
@@ -4654,10 +4635,12 @@ test.describe("gate1 new group", () => {
   }) => {
     await serveRun(page, asOwnedRun); // an owned run: the shared demo's bar quotes no price (08-18)
     await openGate1(page);
-    const line = page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']");
+    // The count beside select-all and the Continue bar's amount (the sum block that repeated both went in round 7).
+    const count = page.getByTestId("bulk-count-groups");
+    const bar = page.locator("[data-testid='commit-bar']");
     const read = async () => {
-      const text = (await line.textContent()) ?? "";
-      return { n: Number(text.match(/^(\d+) of/)?.[1]), usd: text.match(/(<?\$[\d.]+)/)?.[1] ?? "" };
+      const text = (await count.textContent()) ?? "";
+      return { n: Number(text.match(/^(\d+)\//)?.[1]), usd: (await bar.getAttribute("data-total")) ?? "" };
     };
     const before = await read();
     const row = await createGroup(page, "Eye conditions");
@@ -4666,7 +4649,6 @@ test.describe("gate1 new group", () => {
     const after = await read();
     expect(after.n).toBe(before.n + 1);
     expect(after.usd).not.toBe(before.usd);
-    await expect(page.locator("[data-testid='commit-bar']")).toContainText(after.usd);
   });
 });
 
@@ -4810,12 +4792,13 @@ test.describe("gate1 accepted division", () => {
   test("@gate1 the quote prices each part — its match and its own ideal — and nothing for the emptied group", async ({
     page,
   }) => {
+    await serveRun(page, asOwnedRun); // owned: the shared demo's bar prices nothing, so it carries no quote note
     await openDivided(page);
-    const ideals = page.locator("[data-testid='sum-block'] [data-sum-line='ideals']");
+    // On the Continue bar since round 7 — the quote's own note, beside the amount it explains.
+    const ideals = page.locator("[data-testid='commit-assurance'] [data-sum-line='ideals']");
     await expect(ideals).toBeVisible();
     await expect(ideals).toContainText(/^2 new ideal descriptions/);
-    const inScope = page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']");
-    await expect(inScope).toContainText(/^2 of /);
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(/^2\//);
   });
 
   test("@gate1 undoing the division puts every variable back and removes the parts", async ({ page }) => {
@@ -4862,6 +4845,7 @@ test.describe("gate1 regenerated ideals", () => {
   test("@gate1 moving a variable between two in-scope groups adds their two regenerated ideals to the quote", async ({
     page,
   }) => {
+    await serveRun(page, asOwnedRun); // owned: the shared demo's bar prices nothing, so it carries no quote note
     await openGate1(page);
     const members = gate1Fixture().result!.conceptGroupMembers!;
     const other = fixtureGroups().find((g) => g.groupId !== BIG && !g.membersTruncated && (members[g.groupId]?.length ?? 0) > 1)!.groupId;
@@ -4870,7 +4854,7 @@ test.describe("gate1 regenerated ideals", () => {
       await box.scrollIntoViewIfNeeded();
       if (!(await box.isChecked())) await box.click();
     }
-    const ideals = page.locator("[data-testid='sum-block'] [data-sum-line='ideals']");
+    const ideals = page.locator("[data-testid='commit-assurance'] [data-sum-line='ideals']");
     await expect(ideals).toHaveCount(0); // nothing changed yet: no ideal is regenerated, nothing extra is quoted
     const detail = await expandRow(page, BIG);
     const member = detail.locator("[data-testid='member-row']").first();

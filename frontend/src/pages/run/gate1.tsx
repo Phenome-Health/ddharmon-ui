@@ -1655,67 +1655,43 @@ function ExpandedGroup({
 }
 
 /**
- * The sum block, in three lines and in this order.
+ * The Continue bar's quote note: what only the old sum block said (review round 7, 2026-10-13).
  *
- * REALIZED FIRST, and visually distinct. The first line is money already gone; the two below it are
- * forecasts. They are told apart by WEIGHT as well as position, because after the post-split reversal the
- * reviewer is standing downstream of real spend and a block that rendered both in one voice would invite
- * reading a forecast as a receipt.
- *
- * THE WHOLE-CORPUS LINE IS WHAT MAKES SCOPING LEGIBLE. "This costs $4.10" means nothing on its own; "this
- * costs $4.10 of the $9.80 the whole run would" is a decision.
+ * The sum block under the queue went: "Spent so far" repeated the rail's TOTAL, "N of M groups ticked" the count beside
+ * select-all, and "$X to match at Gate 2" the bar's own amount. Two lines said something nowhere else does, so they
+ * ride the bar beside the amount they explain: the new ideal descriptions the reviewer's own edits bought (a New group
+ * has no description yet; a reshaped one's was written for other members), and — while only part of the run is in
+ * scope — what the whole run would cost, the denominator that makes scoping legible. The bar shows it only when one applies.
  */
-function SumBlock({
-  realized,
-  inScopeTotal,
+function QuoteNote({
   wholeCorpus,
   nInScope,
   nGroups,
   nIdeals = 0,
   idealsUsd = 0,
 }: {
-  realized: number;
-  inScopeTotal: number;
   wholeCorpus: number;
   nInScope: number;
   nGroups: number;
-  /** How many of the groups sent buy a generated ideal (New or reshaped), and what those calls cost. */
   nIdeals?: number;
   idealsUsd?: number;
 }) {
-  // SAID ONCE, BRIEFLY (review round 1 on the live build: "verbose and redundant"). The lab's footer register —
-  // "N ticked · $X to match them at Gate 2" — for the purchase; the realized spend first and in its own weight;
-  // the whole-corpus comparison only while it differs from the purchase, since "all 55 would be $0.61" under
-  // "55 of 55 · $0.61" says the same number twice.
   return (
-    <div data-testid="sum-block" className="flex flex-col gap-0.5">
-      <p data-sum-line="realized" className="text-sm font-semibold text-on-raised">
-        Spent so far:{" "}
-        {realized > 0 ? (
-          <span className="font-mono tabular-nums">{formatUsd(realized)}</span>
-        ) : (
-          "nothing — a saved replay"
-        )}
-      </p>
-      <p data-sum-line="in-scope" className="text-sm font-normal text-on-raised">
-        {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} ticked ·{" "}
-        <span className="font-mono tabular-nums">{formatUsd(inScopeTotal)}</span> to match at Gate 2
-      </p>
+    <>
       {nIdeals > 0 && (
-        /* Named rather than folded in silently: these are calls the reviewer's own edits bought (a New group has
-           no description yet; a reshaped one's was written for other members), so the quote says so. */
-        <p data-sum-line="ideals" className="text-xs font-normal text-on-raised-muted">
+        <span data-sum-line="ideals">
           {nIdeals} new ideal {nIdeals === 1 ? "description" : "descriptions"} included (
-          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>), for groups you made or changed
-        </p>
+          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>), for groups you made or changed.
+        </span>
       )}
+      {nIdeals > 0 && nInScope < nGroups && " "}
       {nInScope < nGroups && (
-        <p data-sum-line="whole-corpus" className="text-sm font-normal text-on-raised-faint">
-          All {nGroups} {nGroups === 1 ? "group" : "groups"}:{" "}
-          <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>
-        </p>
+        <span data-sum-line="whole-corpus">
+          All {nGroups} {nGroups === 1 ? "group" : "groups"} would be{" "}
+          <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>.
+        </span>
       )}
-    </div>
+    </>
   );
 }
 
@@ -3061,7 +3037,14 @@ export default function Gate1Page() {
   ]);
 
   // Variables per SHOWN group, for the select-all counts (ticked of shown).
-  const visibleVars = new Map(visible.map((g) => [g.groupId, memberCount(g)]));
+  /**
+   * WHAT SELECT-ALL COUNTS AND TOGGLES: every row the queue shows that could go to Gate 2 — the reviewer's own FILLED
+   * groups (they lead the list, outside search and filters) and the visible pipeline groups. Since review round 7 its
+   * count is the only in-scope count on screen (the sum block that also said it went), so it must not skip the groups
+   * the reviewer made. An empty New group has nothing to send and is not counted.
+   */
+  const shownForScope = [...filledReviewerRows, ...visible];
+  const visibleVars = new Map(shownForScope.map((g) => [g.groupId, memberCount(g)]));
 
   // Every filter that is on, as a removable chip under the search (08-30b) — Cross-cohort only first, then the
   // cohorts, then the states, in the order the menu lists them.
@@ -3089,7 +3072,7 @@ export default function Gate1Page() {
    * checkbox optimistically, because `isInScope` reads `scope.decisions` and always has.
    */
   async function onBulkScope(target: "in" | "out") {
-    const ids = visible.map((g) => g.groupId);
+    const ids = shownForScope.map((g) => g.groupId);
     const plan = bulkScopePlan(ids, target, isInScope);
     if (plan.clear.length === 0 && plan.write.length === 0) return;
     const value = target === "in" ? IN_SCOPE : OUT_OF_SCOPE;
@@ -3550,7 +3533,7 @@ export default function Gate1Page() {
             <>
               <SelectAllShown
                 counts={tickedOfShown(
-                  visible.map((g) => g.groupId),
+                  shownForScope.map((g) => g.groupId),
                   isInScope,
                   (id) => visibleVars.get(id) ?? 0,
                 )}
@@ -3753,17 +3736,6 @@ export default function Gate1Page() {
               </span>
             </button>
           }
-          footer={
-            <SumBlock
-              realized={costSoFar}
-              inScopeTotal={quote}
-              nIdeals={nIdeals}
-              idealsUsd={nIdeals * idealPerGroup}
-              wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerGroup, needsIdeal)}
-              nInScope={inScopeGroups.length}
-              nGroups={groups.length + filledReviewerRows.length}
-            />
-          }
           detail={
             <>
               {poolSelected ? (
@@ -3895,11 +3867,21 @@ export default function Gate1Page() {
         // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
         // cost there would claim a purchase that does not happen.
         total={pinned !== true && groups.length > 0 ? quote : undefined}
-        // `spentHere` is DELIBERATELY OMITTED here, and only on this screen. The ledger's sum block
-        // directly above already leads with the realized figure — that placement is the requirement, not
-        // a preference — so passing it to the bar as well rendered the same fact twice, in two different
-        // wordings ("$0" against "nothing"), a few pixels apart. Two amounts for one fact that disagree
-        // is worse than one amount stated once.
+        // `spentHere` is DELIBERATELY OMITTED here: the rail's TOTAL already carries the realized figure, and the
+        // queue's sum block that also said it went in review round 7. One amount for one fact.
+        assurance={
+          pinned !== true &&
+          groups.length > 0 &&
+          (nIdeals > 0 || inScopeGroups.length < groups.length + filledReviewerRows.length) ? (
+            <QuoteNote
+              wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerGroup, needsIdeal)}
+              nInScope={inScopeGroups.length}
+              nGroups={groups.length + filledReviewerRows.length}
+              nIdeals={nIdeals}
+              idealsUsd={nIdeals * idealPerGroup}
+            />
+          ) : undefined
+        }
         scopeLabel={`${inScopeGroups.length} ${inScopeGroups.length === 1 ? "group" : "groups"}`}
         onCommit={onContinue}
         busy={resuming}

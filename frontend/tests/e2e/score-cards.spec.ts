@@ -194,8 +194,8 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await expect(info).toContainText("$0");
     await expect(info).toContainText(/not a judgement/i);
     await expect(info).toContainText(/membership, not a match/i);
-    // The cut-off is the reviewer's to change now (round 6): it sits in the sentence as an editable field.
-    await expect(info.getByTestId("score-cutoff-input")).toHaveValue(TAU.toFixed(2));
+    // The cut-off is the reviewer's to change (round 6), in its own always-visible line below the strip (round 7).
+    await expect(panel.getByTestId("score-cutoff-line").getByTestId("score-cutoff-input")).toHaveValue(TAU.toFixed(2));
   });
 
   test("@gate1 opened, a card lists every group reached best-first, the cut-off drawn between, the best match by its question", async ({
@@ -334,7 +334,10 @@ test.describe("score panel — review round 6 (Bhargav, live Lavish build 2026-1
   }) => {
     const panel = await openGate1Panel(page);
     const list = panel.getByTestId("score-suggestions");
-    await expect(list.getByText(/best similarity/i)).toHaveCount(1);
+    // Once as the column's head, never on a component row. (The info strip explains it under the same name since
+    // round 7 — "The figure." was ambiguous — which is the explanation, not a repeat on the list.)
+    await expect(list.getByTestId("score-suggestion-columns").getByText(/best similarity/i)).toHaveCount(1);
+    await expect(list.getByTestId("score-suggestion").getByText(/best similarity/i)).toHaveCount(0);
     // No visible sentence per unsuggested card; the strip says what the dashed marker means.
     await expect(list.getByText(/reached below the cut-off/i)).toHaveCount(0);
     await expect(panel.getByTestId("score-suggestion-info")).toContainText(/nothing suggested/i);

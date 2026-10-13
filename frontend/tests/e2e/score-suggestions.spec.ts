@@ -249,9 +249,7 @@ test.describe("Gate 1 score suggestions — the screen", () => {
       }
     }
     const nSuggested = reached().filter((x) => x.score >= TAU).length;
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(
-      new RegExp(`^${nSuggested} of `),
-    );
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(new RegExp(`^${nSuggested}/`));
     // A read, and the only one: the free search is a GET with nothing to bill.
     expect(requests.length).toBeGreaterThan(0);
     expect(new Set(requests)).toEqual(new Set(["GET"]));
@@ -289,9 +287,7 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     await expect(tagsOf(page, top)).toHaveCount(1); // still named as suggested — the reviewer just declined it
     await expect(scopeOf(page, reached()[1]!.group.groupId)).toHaveAttribute("aria-checked", "true");
     const nSuggested = reached().filter((x) => x.score >= TAU).length;
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(
-      new RegExp(`^${nSuggested - 1} of `),
-    );
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(new RegExp(`^${nSuggested - 1}/`));
   });
 
   test("@gate1 a PASSED Gate 1 shows exactly the scope it sent — no suggestion is fetched or drawn", async ({ page }) => {
@@ -311,7 +307,7 @@ test.describe("Gate 1 score suggestions — the screen", () => {
       await expect(scopeOf(page, group.groupId)).toHaveAttribute("aria-checked", "false");
     }
     await expect(page.locator("[data-testid='queue-score-tag']")).toHaveCount(0);
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(/^1 of /);
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(/^1\//);
     expect(requests).toEqual([]);
   });
 
