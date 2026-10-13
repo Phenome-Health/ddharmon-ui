@@ -256,7 +256,7 @@ test.describe("score strip on the static build (H4)", () => {
     await expect(page.locator(TRIGGER)).not.toContainText(STRIP_SUMMARY);
     await expect(page.locator("[data-testid='score-strip']")).toHaveAttribute("data-declared", "true");
     // Screen readers hear it too: the trigger's accessible name carries the status, not only its pixels.
-    await expect(page.getByRole("button", { name: `Show the declared-score panel — ${want}` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Show the Concept Spotlight panel — ${want}` })).toBeVisible();
 
     await page.reload();
     await page.waitForLoadState("networkidle");

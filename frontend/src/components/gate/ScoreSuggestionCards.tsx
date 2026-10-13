@@ -97,7 +97,7 @@ export function ScoreSuggestionCards({
             data-testid="score-suggestion-info-toggle"
             className={disclosureRow("raised", "group")}
           >
-            <DisclosureLabel ground="raised">Score builder · how suggestions work</DisclosureLabel>
+            <DisclosureLabel ground="raised">Concept Spotlight · how suggestions work</DisclosureLabel>
             <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-1.5">

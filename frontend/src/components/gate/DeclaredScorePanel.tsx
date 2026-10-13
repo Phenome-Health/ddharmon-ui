@@ -431,7 +431,7 @@ export function DeclaredScorePanel({
         // rule governs what the name has to say.
         // The status rides the accessible name too (H4): an aria-label REPLACES the content, so without it a
         // screen reader would hear "show the panel" while the screen says a score is declared.
-        aria-label={`${open ? "Hide" : "Show"} the declared-score panel${status ? ` — ${status}` : ""}`}
+        aria-label={`${open ? "Hide" : "Show"} the Concept Spotlight panel${status ? ` — ${status}` : ""}`}
         className={disclosureRow("field", "gap-3")}
       >
         {/*
@@ -445,7 +445,9 @@ export function DeclaredScorePanel({
             for "a bunch of things I'm interested in harmonizing even if they don't belong to a common score"). */}
         <ClipboardList aria-hidden="true" className="h-4 w-4 shrink-0 text-on-field" />
         <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
-          <DisclosureLabel ground="field">A score you want to build from this run</DisclosureLabel>
+          {/* The module's NAME (Bhargav, 2026-10-13): Concept Spotlight — it surfaces the relevant groups from a sea of
+              variables, whether the list is a published score or the reviewer's own. */}
+          <DisclosureLabel ground="field">Concept Spotlight</DisclosureLabel>
           {status ? (
             /*
               A DECLARED SCORE SAYS SO ON THE CLOSED STRIP (H4, final review round 2 — *"still there — fix

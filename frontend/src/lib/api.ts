@@ -263,7 +263,7 @@ export async function deriveComposite(
   apiKey?: string,
 ): Promise<CompositeSpec> {
   if (IS_STATIC) throw new Error(STATIC_MSG);
-  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to derive a composite variable.");
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to match a Concept Spotlight.");
   const headers = await authed({
     "content-type": "application/json",
     ...(apiKey ? { "x-anthropic-key": apiKey } : {}),

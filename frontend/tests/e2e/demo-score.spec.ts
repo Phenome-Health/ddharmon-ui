@@ -279,6 +279,7 @@ test.describe("The demo's declared score — on screen", () => {
     const requests = watchRequests(page);
     await page.goto(`/job/${FINISHED_JOB}/composite`);
     await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Concept Spotlight");
     await expect(page.getByTestId("composite-demo-refusal")).toBeVisible();
     await page.getByPlaceholder(/Paste the methods section/).fill("A frailty index of 49 deficits.");
     await expect(page.getByRole("button", { name: "Derive" })).toBeDisabled();

@@ -818,7 +818,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <ClipboardList className="h-4 w-4 text-accent-on-raised" /> Composite variable
+                <ClipboardList className="h-4 w-4 text-accent-on-raised" /> Concept Spotlight
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-3">
@@ -828,7 +828,7 @@ export default function DashboardPage() {
               </p>
               <Link href={`/job/${jobId}/composite`}>
                 <Button variant="outline" className="gap-1.5">
-                  <ClipboardList className="h-3.5 w-3.5" /> Build a composite
+                  <ClipboardList className="h-3.5 w-3.5" /> Open Concept Spotlight
                 </Button>
               </Link>
             </CardContent>

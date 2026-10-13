@@ -288,6 +288,10 @@ test.describe("Gate 4 declared score", () => {
     await expect(toggle).toContainText(SCORE);
     // The score builder's one icon (2026-10-13), as on Gate 1's strip and the queue chips.
     await expect(toggle.locator("svg.lucide-clipboard-list")).toHaveCount(1);
+    // Its name (Bhargav, 2026-10-13): Concept Spotlight — a funnel that surfaces the relevant groups, whether the list
+    // is a published score or the reviewer's own.
+    await expect(toggle).toContainText("Concept Spotlight");
+    await expect(toggle).not.toContainText("The score you declared");
     const state = panel.getByTestId("gate4-score-state");
     await expect(state).toHaveAttribute("data-state", "unmatched");
     await expect(state).toHaveText(gate4ScoreHeader(DECLARED.length, null, { refused: false }).text);
@@ -329,6 +333,7 @@ test.describe("Gate 4 declared score", () => {
     expect(sent).toEqual([]);
     // The score leaves the tool in its own file even before a match — declared, stated as such.
     await expect(page.locator(`[data-testid="artifact-tile"][data-thing="score_json"]`)).toBeVisible();
+    await expect(page.locator(`[data-testid="artifact-tile"][data-thing="score_json"]`)).toContainText("Concept Spotlight");
   });
 
   test("@gate4 Match runs ONE call on the declaration and shows the verdict, coverage and recipe", async ({ page }) => {

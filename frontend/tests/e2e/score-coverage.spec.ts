@@ -207,6 +207,17 @@ test.describe("the reached-by-search table — Gate 1", () => {
  * Review round 7 (Bhargav, 2026-10-13, live Lavish build b013d95) — the score panel's layout.
  */
 test.describe("the score panel — review round 7", () => {
+  test("@gate1 the module is called Concept Spotlight: on the strip, in its accessible name, and on the how-it-works fold", async ({
+    page,
+  }) => {
+    const panel = await openOwned(page);
+    const toggle = page.getByTestId("score-panel-toggle");
+    await expect(toggle).toContainText("Concept Spotlight");
+    await expect(toggle).not.toContainText("A score you want to build");
+    await expect(toggle).toHaveAttribute("aria-label", /^Hide the Concept Spotlight panel/);
+    await expect(panel.getByTestId("score-suggestion-info-toggle")).toContainText("Concept Spotlight · how suggestions work");
+  });
+
   test("@gate1 the info strip names the figure 'Best similarity', the label the column already uses", async ({ page }) => {
     const panel = await openOwned(page);
     const info = panel.getByTestId("score-suggestion-info");

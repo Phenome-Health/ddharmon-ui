@@ -101,9 +101,9 @@ export function gate4MatchRefusal(opts: { pinned?: boolean }): { claim: "not-ena
 /** The export tile for the score file — offered only on a run that carries a declared or derived score. */
 export const SCORE_ARTIFACT: RealArtifact = {
   id: "score_json",
-  name: "Declared score (JSON)",
+  name: "Concept Spotlight (JSON)",
   description:
-    "The score you declared at Gate 1 — its components, the match verdict, per-cohort coverage and the derivation recipe. A recipe, never a computed score.",
+    "Your Concept Spotlight from Gate 1 — its components, the match verdict, per-cohort coverage and the derivation recipe. A recipe, never a computed score.",
   filename: "score_json.json",
 };
 

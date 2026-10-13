@@ -127,7 +127,7 @@ export default function CompositePage() {
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
         <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
-          <ClipboardList className="h-5 w-5 text-on-field" /> Composite variable
+          <ClipboardList className="h-5 w-5 text-on-field" /> Concept Spotlight
         </h1>
         <p className="mt-1.5 max-w-3xl text-sm text-on-field-muted">
           Point at a paper, repo, PDF, or Word supplement that defines a score — a frailty index, an intrinsic-capacity score,
@@ -703,7 +703,7 @@ export function ScoreComponentsCard({
           className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
         >
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            Score builder · how matching works
+            Concept Spotlight · how matching works
           </p>
           <ul className="flex flex-col gap-1 text-on-raised-muted">
             <li>

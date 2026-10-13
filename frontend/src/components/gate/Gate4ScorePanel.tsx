@@ -157,13 +157,14 @@ export function Gate4ScorePanel({
         <CollapsibleTrigger
           data-testid="gate4-score-toggle"
           // The accessible name states the ACTION and its OBJECT (UI-SPEC §6), as the how-to toggle's does.
-          aria-label={`${open ? "Hide" : "Show"} the declared score ${score.scoreName}`}
+          aria-label={`${open ? "Hide" : "Show"} the Concept Spotlight ${score.scoreName}`}
           className={disclosureRow("raised", "gap-3")}
         >
           {/* The score builder's one icon (2026-10-13), as on Gate 1's strip and the queue chips. */}
           <ClipboardList aria-hidden="true" className="h-4 w-4 shrink-0 text-on-raised" />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <DisclosureLabel ground="raised">The score you declared at Gate 1</DisclosureLabel>
+            {/* The module's name (2026-10-13), as on Gate 1's strip. */}
+            <DisclosureLabel ground="raised">Concept Spotlight · declared at Gate 1</DisclosureLabel>
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
               <h2 className="text-sm font-semibold text-on-raised">{score.scoreName}</h2>
               {/* THE STATE, ON THE FOLDED HEADER: matched or not, and — unmatched — the price of matching. */}
