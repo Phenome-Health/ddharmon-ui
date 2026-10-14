@@ -4,7 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleDashed,
-  ClipboardList,
+  Flashlight,
   FileText,
   Loader2,
   XCircle,
@@ -441,9 +441,9 @@ export function DeclaredScorePanel({
           exists. A two-line header would be this change starting to compete with the data it sits above,
           which is a worse placement than the one it is fixing.
         */}
-        {/* The score builder's one icon, everywhere it appears (Bhargav, 2026-10-13: ClipboardList — generic enough
-            for "a bunch of things I'm interested in harmonizing even if they don't belong to a common score"). */}
-        <ClipboardList aria-hidden="true" className="h-4 w-4 shrink-0 text-on-field" />
+        {/* Concept Spotlight's one icon, everywhere it appears: the Flashlight (Bhargav's pick, review round 8 note 9 —
+            it replaced the clipboard icon once the module was named for a spotlight). */}
+        <Flashlight aria-hidden="true" className="h-4 w-4 shrink-0 text-on-field" />
         <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
           {/* The module's NAME (Bhargav, 2026-10-13): Concept Spotlight — it surfaces the relevant groups from a sea of
               variables, whether the list is a published score or the reviewer's own. */}

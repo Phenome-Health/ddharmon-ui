@@ -3,7 +3,6 @@ import { Link, useLocation, useParams } from "wouter";
 import {
   ChevronDown,
   ChevronRight,
-  ClipboardList,
   Grid3x3,
   Pencil,
   Plus,
@@ -26,6 +25,7 @@ import {
 } from "@/components/ui/collapsible";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell } from "@/components/gate/GateShell";
+import { SpotlightMarker } from "@/components/gate/SpotlightMarker";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
 import { LedgerRow } from "@/components/gate/LedgerRow";
 import { COHERENCE_COPY, CoherenceMark } from "@/components/gate/CoherenceMark";
@@ -101,7 +101,7 @@ import {
   resumeTookEffect,
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
-import { SUGGESTION_TAG_COPY, scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
+import { scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
 import { SCORE_CUTOFF_KIND, SCORE_CUTOFF_SETTING, effectiveCutoff } from "@/lib/score-cutoff";
 import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
@@ -1718,6 +1718,7 @@ function QueueRow({
   group,
   scoreTag,
   scoreTagSource = "match",
+  scoreCutoff,
   roster,
   count,
   inScope,
@@ -1734,12 +1735,14 @@ function QueueRow({
   group: ConceptGroup;
   /** The queue's search, so the row can highlight what it matched in the name (review round 3). */
   query?: string;
-  /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
-   *  as a tag and the reason this row is pinned to the top of the queue. */
+  /** The Concept Spotlight component(s) that reached this group — the marker under the checkbox names them on hover,
+   *  and they are the reason this row is pinned to the top of the queue. */
   scoreTag?: string[];
   /** Where `scoreTag` came from: the Gate 4 MATCH (a verdict), or Gate 1's free SUGGESTION (08-28 Decision 6) —
    *  drawn differently, and saying so, because a suggestion is not a finding that the group measures it. */
   scoreTagSource?: "match" | "suggestion";
+  /** The suggestion cut-off in force, which the marker's tooltip states (a suggestion only). */
+  scoreCutoff?: number;
   /** A New group the reviewer made (08-28 Wave 2): marked as theirs, never with a coherence cell. */
   reviewer?: boolean;
   /** Every cohort in the run, in its fixed order — the strip's columns, under the queue's one legend. */
@@ -1813,7 +1816,14 @@ function QueueRow({
           "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
       )}
     >
-      <div className="mt-px" onClick={(e) => e.stopPropagation()}>
+      {/* The control column: the scope checkbox, and under it Concept Spotlight's marker (review round 8, note 9 —
+          P1): the Flashlight alone, its components on hover. Under the checkbox so the name keeps its column and starts
+          at the same place on every row. */}
+      <div
+        data-testid="queue-row-control"
+        className="mt-px flex flex-col items-center gap-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
         <Checkbox
           data-testid="queue-scope"
           checked={inScope}
@@ -1821,43 +1831,14 @@ function QueueRow({
           onCheckedChange={(v) => onScopeChange(v === true)}
           aria-label={`Send ${label.text} to Gate 2`}
         />
+        {scoreTag && scoreTag.length > 0 && (
+          <SpotlightMarker components={scoreTag} source={scoreTagSource} cutoff={scoreCutoff} />
+        )}
       </div>
       {/* THE NAME HAS THE LEFT COLUMN TO ITSELF (08-30b, lab round 5): up to three lines, and a short name makes
-          a short row. What is unusual about the group — a score it feeds, a re-split, a template suspicion, an
-          outsized membership — still rides under it; the routine facts moved right. */}
+          a short row. What is unusual about the group — a re-split — still rides under it; the routine facts moved
+          right, and the Concept Spotlight mark moved under the checkbox (round 8). */}
       <div className="min-w-0">
-        {scoreTag && scoreTag.length > 0 && (
-          <div className="mb-1 flex flex-wrap gap-1">
-            {scoreTag.map((name) =>
-              scoreTagSource === "suggestion" ? (
-                // A SUGGESTION, drawn by form (dashed): a free search reached this group, and the verdict is still Gate
-                // 4's. The score builder's icon and the component's name are the face (layout C, 2026-10-13 — the
-                // word "Suggested" went); the dashed outline and the title carry the claim.
-                <span
-                  key={name}
-                  data-testid="queue-score-tag"
-                  data-tag-source="suggestion"
-                  className="inline-flex max-w-full items-center gap-1 rounded-pill border border-dashed border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
-                  title={`${SUGGESTION_TAG_COPY} (the “${name}” component)`}
-                >
-                  <ClipboardList aria-hidden="true" className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{name}</span>
-                </span>
-              ) : (
-                <span
-                  key={name}
-                  data-testid="queue-score-tag"
-                  data-tag-source="match"
-                  className="inline-flex max-w-full items-center gap-1 rounded-pill border border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
-                  title={`Matched to the “${name}” component of a declared score`}
-                >
-                  <ClipboardList aria-hidden="true" className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{name}</span>
-                </span>
-              ),
-            )}
-          </div>
-        )}
         <div
           className={cn(
             "line-clamp-3 text-sm font-semibold leading-snug",
@@ -3574,6 +3555,7 @@ export default function Gate1Page() {
                   reviewer
                   scoreTag={scoreTagByGroup.get(g.groupId)}
                   scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
+                  scoreCutoff={cutoff}
                   roster={allCohorts}
                   count={memberCount(g)}
                   inScope={isInScope(g.groupId)}
@@ -3650,6 +3632,7 @@ export default function Gate1Page() {
                     group={g}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
                     scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
+                  scoreCutoff={cutoff}
                     roster={allCohorts}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}

@@ -19,7 +19,7 @@
 // whose row is a `ConceptGroup`. So it now takes the two things it ever read: the member ids and the
 // optional per-member detail. Both call sites pass what they hold, and there is still ONE grid — building
 // a second for Gate 1 is the duplication the audit exists to catch.
-import { ClipboardList, GripVertical, Undo2, X } from "lucide-react";
+import { Flashlight, GripVertical, Undo2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Highlight } from "@/components/ui/highlight";
 import { cn } from "@/lib/utils";
@@ -414,7 +414,7 @@ export function SourceRows({
                         title="Concept Spotlight found this variable for the group you opened from it."
                         className="inline-flex items-center gap-1 whitespace-nowrap rounded-pill border border-accent-action px-1.5 py-0.5 text-[10px] font-semibold text-accent-on-raised"
                       >
-                        <ClipboardList aria-hidden="true" className="h-3 w-3 shrink-0" />
+                        <Flashlight aria-hidden="true" className="h-3 w-3 shrink-0" />
                         Spotlight
                       </span>
                     )}

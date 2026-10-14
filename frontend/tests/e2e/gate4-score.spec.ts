@@ -286,8 +286,8 @@ test.describe("Gate 4 declared score", () => {
     // Folded by default, like the how-to strip and Gate 1's score strip — and the header still says it all.
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(toggle).toContainText(SCORE);
-    // The score builder's one icon (2026-10-13), as on Gate 1's strip and the queue chips.
-    await expect(toggle.locator("svg.lucide-clipboard-list")).toHaveCount(1);
+    // Concept Spotlight's one icon — the Flashlight since review round 8 — as on Gate 1's strip and queue marker.
+    await expect(toggle.locator("svg.lucide-flashlight")).toHaveCount(1);
     // Its name (Bhargav, 2026-10-13): Concept Spotlight — a funnel that surfaces the relevant groups, whether the list
     // is a published score or the reviewer's own.
     await expect(toggle).toContainText("Concept Spotlight");

@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { isFlagged } from "@/lib/ledger";
 import { PAUSED_JOB, fixtureGroups } from "./gate1-fixture";
@@ -12,9 +15,9 @@ import { PAUSED_JOB, fixtureGroups } from "./gate1-fixture";
  *     doesn't have to be a bad thing unless it's actually incoherent" — the coherence judge says that — and the
  *     queue's Vars sort is there when size matters.
  *   - The TEMPLATE check is a coherence-family pattern, so it sits with the state in the facts column, as one word.
- *   - The SCORE BUILDER has one icon everywhere, ClipboardList (Bhargav: generic enough to cover "a bunch of things
- *     I'm interested in harmonizing even if they don't belong to a common score"). Its queue chip is the icon and the
- *     component's name; the dashed outline says it is a suggestion (`score-suggestions.spec.ts`).
+ *   - CONCEPT SPOTLIGHT (the score builder) has one icon everywhere — the Flashlight since round 8 (note 9; it was
+ *     ClipboardList). In the queue it is a marker ALONE, under the checkbox; the components are named in the app's
+ *     tooltip on hover/focus, and the ring says suggestion (dashed) vs Gate 4 match (solid) (`score-suggestions.spec.ts`).
  *
  *   run: E2E_PORT=4199 npx playwright test tests/e2e/queue-row-c.spec.ts
  */
@@ -72,8 +75,19 @@ test.describe("Gate 1 queue rows — layout C", () => {
     await expect(marks.first()).toHaveAttribute("title", /question template/);
   });
 
-  test("@gate1 the score builder's icon heads the Gate 1 score strip", async ({ page }) => {
+  test("@gate1 Concept Spotlight's icon heads the Gate 1 score strip — the Flashlight", async ({ page }) => {
     await openGate1(page);
-    await expect(page.locator("[data-testid='score-panel-toggle'] svg.lucide-clipboard-list")).toHaveCount(1);
+    await expect(page.locator("[data-testid='score-panel-toggle'] svg.lucide-flashlight")).toHaveCount(1);
   });
+});
+
+test("@gate1 Concept Spotlight has ONE icon everywhere: no ClipboardList is left in the app", () => {
+  // Round 8, note 9: the strip, the queue marker, the Gate 4 header, the dashboard card and the Spotlight page all
+  // draw the Flashlight. A leftover ClipboardList would say the same thing with a second picture.
+  const src = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
+  const offenders = readdirSync(src, { recursive: true })
+    .map(String)
+    .filter((f) => /\.(tsx?|jsx?)$/.test(f))
+    .filter((f) => /\bClipboardList\b/.test(readFileSync(join(src, f), "utf8")));
+  expect(offenders).toEqual([]);
 });

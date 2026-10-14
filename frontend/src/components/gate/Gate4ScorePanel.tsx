@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, CircleDashed, ClipboardList, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, Flashlight, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -161,7 +161,7 @@ export function Gate4ScorePanel({
           className={disclosureRow("raised", "gap-3")}
         >
           {/* The score builder's one icon (2026-10-13), as on Gate 1's strip and the queue chips. */}
-          <ClipboardList aria-hidden="true" className="h-4 w-4 shrink-0 text-on-raised" />
+          <Flashlight aria-hidden="true" className="h-4 w-4 shrink-0 text-on-raised" />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             {/* The module's name (2026-10-13), as on Gate 1's strip. */}
             <DisclosureLabel ground="raised">Concept Spotlight · declared at Gate 1</DisclosureLabel>
