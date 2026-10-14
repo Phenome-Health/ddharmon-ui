@@ -917,18 +917,24 @@ export function verdictBreakdown(result: HarmonizationResult | null | undefined)
 
 /**
  * What the preview drawer renders for one artifact (final review round 2): a TABLE for the two delimited files,
- * CODE for the JSON and the notebook, and a sentence when the run has nothing to put in the file.
+ * CODE for the JSON, the NOTEBOOK file itself (review round 8), and a sentence when the run has nothing to put in
+ * the file.
  *
  * `text` is always the file's own text, exactly as excerpted — the table is PARSED from it, so the drawer shows
  * what the file says rather than a second rendering that could disagree. `note` is the drawer's own line under
  * the excerpt (the row cap, stated); it is never part of the file.
+ *
+ * A notebook carries no text here: it names the export `format` the drawer FETCHES and draws cell by cell
+ * (`NotebookPreview`). Its cells are written by the backend (`backend/notebook.py`) from the run plus the caller's
+ * gate decisions, and a summary assembled on this side could not match what opens in Jupyter.
  */
 export type ArtifactPreview =
   | { kind: "table"; delimiter: "," | "\t"; text: string; note?: string }
   | { kind: "code"; text: string }
+  | { kind: "notebook"; format: ExportFormat }
   | { kind: "empty"; text: string };
 
-/** The concepts a legacy preview excerpts — the cap the CSV / TSV / JSON / notebook previews have always had. */
+/** The concepts a legacy preview excerpts — the cap the CSV / TSV / JSON previews have always had. */
 const PREVIEW_RECORDS = 3;
 /** The decision-log preview's row cap: the header plus twelve decisions. */
 const PREVIEW_LOG_ROWS = 13;
@@ -950,13 +956,16 @@ export function previewTable(text: string, delimiter: "," | "\t"): { columns: st
 }
 
 /**
- * A faithful preview of what an artifact CONTAINS, derived from the run result on the client.
+ * A faithful preview of what an artifact CONTAINS.
  *
- * DERIVED, NOT FETCHED, and that is deliberate. The preview must show real generated content, never a
- * description of it (T-08-104) — a described preview looks like verification without being it. Deriving it
- * from the same `result`/`decisions` the download serializes means the preview is real content that is also
- * available in the backend-less build the e2e suite runs against, where fetching the file would 404. The
- * DOWNLOAD still pulls the byte-exact file from the export route; this is an excerpt of the same data.
+ * The tables and the JSON are DERIVED on the client, and that is deliberate. The preview must show real
+ * generated content, never a description of it (T-08-104) — a described preview looks like verification without
+ * being it. Deriving it from the same `result`/`decisions` the download serializes means the preview is real
+ * content that is also available in the backend-less build the e2e suite runs against, where fetching the file
+ * would 404. The DOWNLOAD still pulls the byte-exact file from the export route; this is an excerpt of the same data.
+ *
+ * The NOTEBOOK is the exception (review round 8): its cells are code and prose the backend writes, which no
+ * client-side excerpt reproduces, so its preview names the file to fetch rather than describing it.
  */
 export function artifactPreview(
   id: RealArtifact["id"],
@@ -1056,32 +1065,14 @@ export function artifactPreview(
     return { kind: "table", delimiter: "\t", text: [header, ...rows].map(tsvLine).join("\n"), note: recordsNote };
   }
 
-  // notebook: a faithful excerpt of what the notebook applies — the transforms, in the chosen language.
-  const langName = lang === "r" ? "R" : "Python";
-  // A rejected recode is left out of the notebook, and listed as left out — as the backend's notebook does.
-  const isRejected = (t: UITransform) => !!(t as ExportedTransform).rejected;
-  const lines: string[] = [
-    `# Harmonization transform notebook (${langName})`,
-    `# Applies ${records.reduce((n, r) => n + (r.transforms ?? []).filter((t) => !isRejected(t)).length, 0)} transform(s) across ${
-      all.length
-    } concept(s).`,
-    "# The notebook runs where your data already lives; your data never enters ddharmon.",
-    "",
-  ];
-  for (const r of records) {
-    lines.push(`# ${r.concept} — ${r.verdict}${r.cde?.id ? ` → ${r.cde.id}` : ""}`);
-    for (const t of r.transforms ?? []) {
-      lines.push(
-        isRejected(t)
-          ? `#   left out (recode rejected at Gate 3): ${t.sourceVariable ?? r.id}`
-          : `#   transform: ${t.kind ?? "recode"} on ${t.sourceVariable ?? r.id}`,
-      );
-    }
-  }
-  return { kind: "code", text: lines.join("\n") };
+  // notebook: the file itself, in the chosen language, fetched and drawn by the drawer (review round 8).
+  return { kind: "notebook", format: notebookFormat(lang) };
 }
 
-/** {@link artifactPreview} flattened to one string: the file's excerpt, then the drawer's note under it. */
+/**
+ * {@link artifactPreview} flattened to one string: the file's excerpt, then the drawer's note under it. A notebook
+ * has no client-side text — its preview is the fetched file — so it flattens to the empty string.
+ */
 export function previewFor(
   id: RealArtifact["id"],
   lang: NotebookLang,
@@ -1090,6 +1081,7 @@ export function previewFor(
   gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
 ): string {
   const preview = artifactPreview(id, lang, result, decisions, gateLog);
+  if (preview.kind === "notebook") return "";
   return preview.kind === "table" && preview.note ? `${preview.text}\n${preview.note}` : preview.text;
 }
 

@@ -13,11 +13,18 @@ import { cn } from "@/lib/utils";
  * file so the drawer itself never scrolls horizontally. The cells are PARSED from the file's text by a real
  * CSV parser (`previewTable`), never re-derived, so the table cannot say something the file does not.
  *
- * JSON AND THE NOTEBOOK STAY CODE, unwrapped, so nested keys keep the indentation the file has.
+ * JSON STAYS CODE, unwrapped, so nested keys keep the indentation the file has. The notebook is not drawn here: its
+ * preview is the fetched file, drawn cell by cell by `NotebookPreview` (review round 8).
  *
  * The row cap is unchanged; the drawer states it under the excerpt (`note`), outside the scrolling box.
  */
-export function ArtifactPreviewBody({ preview, className }: { preview: ArtifactPreview; className?: string }) {
+export function ArtifactPreviewBody({
+  preview,
+  className,
+}: {
+  preview: Exclude<ArtifactPreview, { kind: "notebook" }>;
+  className?: string;
+}) {
   // Keyed on the TEXT, not the object: the page builds a fresh preview object on every render.
   const delimiter = preview.kind === "table" ? preview.delimiter : null;
   const table = useMemo(

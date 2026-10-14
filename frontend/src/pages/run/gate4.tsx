@@ -16,12 +16,14 @@ import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ReproducibilityInfo } from "@/components/gate/ReproducibilityInfo";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ArtifactPreviewBody } from "@/components/gate/ArtifactPreviewBody";
+import { NotebookPreview } from "@/components/gate/NotebookPreview";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
-import { exportUrl } from "@/lib/api";
+import { fetchExport, saveBlob } from "@/lib/api";
 import { analysisPathFor } from "@/lib/gate-routes";
 import { isParkedAt } from "@/lib/run-state";
 import { cn } from "@/lib/utils";
+import { zipStore } from "@/lib/zip";
 import {
   NOT_AVAILABLE_GAPS,
   REAL_ARTIFACTS,
@@ -117,16 +119,27 @@ export default function Gate4Page() {
       return next;
     });
 
-  const download = () => {
-    for (const a of selectedArtifacts) {
-      const url = exportUrl(jobId, resolveFormat(a.id, lang));
-      const el = document.createElement("a");
-      el.href = url;
-      el.rel = "noopener";
-      el.download = "";
-      document.body.appendChild(el);
-      el.click();
-      el.remove();
+  // ONE ZIP of the selected files (review round 8, Bhargav: "gate 4 exports should download as a zip not
+  // individual"). Each file is fetched from the export route — the same bytes a single download carried — and named
+  // inside the zip by the filename its tile shows, so what the reviewer read before clicking is what they unpack.
+  const [zipping, setZipping] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const download = async () => {
+    setZipping(true);
+    setDownloadError(null);
+    try {
+      const files = await Promise.all(
+        selectedArtifacts.map(async (a) => ({
+          name: filenameFor(a),
+          data: new Uint8Array(await (await fetchExport(jobId, resolveFormat(a.id, lang))).arrayBuffer()),
+        })),
+      );
+      const stem = jobId.slice(0, 8).replace(/[^A-Za-z0-9_-]/g, "") || "run";
+      saveBlob(new Blob([zipStore(files)], { type: "application/zip" }), `ddharmon-${stem}.zip`);
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setZipping(false);
     }
   };
 
@@ -154,6 +167,17 @@ export default function Gate4Page() {
   );
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const filenameFor = (a: RealArtifact) => (a.id === "notebook" ? `harmonization.${lang}.ipynb` : a.filename);
+  // What the drawer shows for the open preview: the score file is built here, the notebook is FETCHED by its own
+  // component (review round 8), and every other file is derived from the run (`artifactPreview`).
+  const previewBody = !preview
+    ? null
+    : preview.id === "score_json"
+      ? ({ kind: "code", text: JSON.stringify(scoreExport(scores, composites), null, 2) } as const)
+      : artifactPreview(preview.id, lang, result, jobState?.decisions, {
+          index: gate.all,
+          config: jobState?.config as Record<string, unknown> | undefined,
+          gatePosition: jobState?.gatePosition,
+        });
 
   return (
     <GateShell
@@ -348,13 +372,19 @@ export default function Gate4Page() {
       <CommitBar
         action={downloadLabel(selectedCount)}
         actionTestId="download-artifacts"
-        onCommit={download}
+        onCommit={() => void download()}
+        busy={zipping}
         disabled={selectedCount === 0 || guestLocked}
         recheckNotice={
-          guestLocked || exportNote ? (
+          guestLocked || exportNote || downloadError ? (
             <span className="flex flex-col gap-1">
               {guestLocked && <GuestAuthNotice action="downloading the export" />}
               {exportNote && <span data-testid="demo-export-note">{exportNote}</span>}
+              {downloadError && (
+                <span data-testid="download-error" role="alert">
+                  The zip was not made: {downloadError}
+                </span>
+              )}
             </span>
           ) : undefined
         }
@@ -374,18 +404,10 @@ export default function Gate4Page() {
               </SheetDescription>
             )}
           </SheetHeader>
-          {preview && (
-            <ArtifactPreviewBody
-              preview={
-                preview.id === "score_json"
-                  ? { kind: "code", text: JSON.stringify(scoreExport(scores, composites), null, 2) }
-                  : artifactPreview(preview.id, lang, result, jobState?.decisions, {
-                      index: gate.all,
-                      config: jobState?.config as Record<string, unknown> | undefined,
-                      gatePosition: jobState?.gatePosition,
-                    })
-              }
-            />
+          {previewBody?.kind === "notebook" ? (
+            <NotebookPreview jobId={jobId} format={previewBody.format} guestLocked={guestLocked} />
+          ) : (
+            previewBody && <ArtifactPreviewBody preview={previewBody} />
           )}
         </SheetContent>
       </Sheet>

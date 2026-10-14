@@ -661,6 +661,29 @@ export function exportUrl(jobId: string, format: ExportFormat): string {
 }
 
 /**
+ * One export file's BYTES, for the code that needs the file rather than a link to it (review round 8): Gate 4's
+ * one-zip download and its notebook preview. Same route and same file as `exportUrl`, but a fetch can carry the
+ * Authorization header, so no token rides the URL.
+ *
+ * An HTML answer is treated as MISSING, as `fetchRetainedUpload` treats it: a static host answers an unknown path
+ * with the app's own `index.html` and a 200, and zipping that as `records_json.json` would hand the reviewer a page
+ * of markup under a data file's name.
+ */
+export async function fetchExport(jobId: string, format: ExportFormat): Promise<Blob> {
+  const url = IS_STATIC
+    ? `${STATIC_BASE}/exports/${jobId}.${EXPORT_EXT[format]}`
+    : `${BASE}/jobs/${encodeURIComponent(jobId)}/export?format=${format}`;
+  const res = await fetch(url, IS_STATIC ? undefined : { headers: await authed() });
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || type.includes("text/html")) {
+    const detail = (await res.json().catch(() => ({}))) as { detail?: string };
+    const why = res.ok ? "is not available in this build" : `could not be read (${res.status})`;
+    throw new Error(detail.detail || `The ${EXPORT_EXT[format]} export ${why}.`);
+  }
+  return res.blob();
+}
+
+/**
  * The pre-flight's prepared-dictionary export: ONE uploaded dictionary, returned with the preparation step's
  * output appended to the reviewer's own columns.
  *
