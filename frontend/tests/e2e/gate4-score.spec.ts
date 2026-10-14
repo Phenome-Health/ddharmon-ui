@@ -384,6 +384,39 @@ test.describe("Gate 4 declared score", () => {
     await expect(content).toContainText("weight_loss_flag = weight_loss");
   });
 
+  test("@gate4 round 8 note 3 — a split LEFTOVER the match reached is titled by what it is, never 'Unnamed group'", async ({
+    page,
+  }) => {
+    // Bhargav's note 3 ("why are these unnamed?"): core's split can leave members unplaced and sweep them into one
+    // more group that nothing names, carrying its CLUSTER's ideal. Gate 1 titles it by the shared rule
+    // (`groupLabel`); Gate 4's Spotlight cards read the record's raw, empty `concept` and said "Unnamed group".
+    const LEFT = "c9006b5971bea#g1";
+    const leftoverSpec = spec();
+    leftoverSpec.matches[0] = { ...leftoverSpec.matches[0]!, conceptId: LEFT, shortlist: [LEFT] };
+    await routeMatch(page, { status: 200, body: { ...leftoverSpec, billedUsd: 0.12 } });
+    await serveFinished(page, (run) => {
+      (run.config as Record<string, unknown>).demo = false; // the reviewer's own run: the shared demo cannot spend
+      const r = run.result!.records[0]!;
+      Object.assign(r, { id: LEFT, groupId: LEFT, clusterId: "c9006b5971bea", concept: "", nMembers: 38 });
+      r.idealCde = "Family history of mental health conditions — the CLUSTER's ideal, not this leftover's";
+    });
+    await page.addInitScript(
+      ([jobId, rows]) =>
+        sessionStorage.setItem(`ddharmon.sandbox.${jobId}`, JSON.stringify({ gateDecisions: { composite_swap: rows } })),
+      [FINISHED_JOB, declarationRows()] as const,
+    );
+    await page.goto(`/run/${FINISHED_JOB}/gate4`);
+    await page.waitForLoadState("networkidle");
+    const panel = page.getByTestId("gate4-score");
+    await unfoldScore(page);
+    await panel.getByTestId("gate4-score-match").click();
+    const weight = panel.locator(`[data-testid="score-match"][data-component="Weight loss"]`);
+    await weight.getByTestId("score-component-expand").click();
+    await expect(weight).toContainText("Not named by the split — 38 variables the model left over");
+    await expect(weight).not.toContainText("Unnamed group");
+    await expect(weight).not.toContainText("the CLUSTER's ideal");
+  });
+
   test("@gate4 a failed match is reported as a failure, never as a verdict", async ({ page }) => {
     await routeMatch(page, { status: 502, body: { detail: "The provider is overloaded." } });
     await openGate4(page);

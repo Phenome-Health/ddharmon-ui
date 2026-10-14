@@ -21,6 +21,7 @@ import {
   type ComponentEvidence,
   type ScopeVerdict,
 } from "@/lib/score-scope";
+import { conceptTitle } from "@/lib/ledger";
 import { cn } from "@/lib/utils";
 import { ScoreComponentsCard, ScoreCoverageCard } from "@/pages/composite";
 import type { CompositeSpec, FieldDetail, UIRecord } from "@/types";
@@ -119,7 +120,9 @@ export function Gate4ScorePanel({
     const byId = new Map(records.map((r) => [r.id, r]));
     return (id: string) => {
       const r = byId.get(id);
-      if (r) return { concept: r.concept ?? "", cohorts: r.cohorts ?? [], nMembers: r.nMembers };
+      // Titled by the ONE naming rule Gate 1 uses (`conceptTitle` → `groupLabel`), so a split leftover reads "Not
+      // named by the split — N variables …" here too, never "Unnamed group" or its cluster's ideal (round 8, note 3).
+      if (r) return { concept: conceptTitle(r, undefined), cohorts: r.cohorts ?? [], nMembers: r.nMembers };
       const fd = fieldIndex?.[id];
       if (fd) {
         const ci = id.indexOf(":");

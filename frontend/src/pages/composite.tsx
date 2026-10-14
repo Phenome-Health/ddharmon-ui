@@ -33,6 +33,7 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned } from "@/hooks/use-gate-decisions";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
 import { MISSING_IS_A_RUN_RESULT, coveredCohorts, GROUP_SELECT_THRESHOLD, missingReason, offeredGroups } from "@/lib/score-scope";
+import { conceptTitle } from "@/lib/ledger";
 import { cn } from "@/lib/utils";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
@@ -672,7 +673,8 @@ export function ScoreComponentsCard({
     resolveConcept ??
     ((id: string) => {
       const r = conceptById[id] ?? recordById[id];
-      return r ? { concept: r.concept ?? "", cohorts: r.cohorts ?? [] } : undefined;
+      // The one naming rule (`conceptTitle`), as Gate 1 and Gate 4 title a group (round 8, note 3).
+      return r ? { concept: conceptTitle(r, undefined), cohorts: r.cohorts ?? [] } : undefined;
     });
   const renderRow = (m: typeof spec.matches[number]) => (
     <MatchRow
