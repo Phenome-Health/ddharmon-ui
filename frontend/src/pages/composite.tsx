@@ -170,7 +170,7 @@ export default function CompositePage() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={7}
-                placeholder="Paste the methods section or the component table that defines the score…"
+                placeholder="Paste the methods section or the item table that defines the score…"
                 className="font-mono text-xs"
               />
               {extracted && (
@@ -230,7 +230,7 @@ export default function CompositePage() {
             </Button>
           </div>
           <p className="text-xs text-on-raised-muted">
-            Two LLM calls: transcribe the score, then match its components to this run's concepts. Editing a
+            Two LLM calls: transcribe the score, then match its items to this run's concepts. Editing a
             match afterwards re-derives for free.
           </p>
           {demo && (
@@ -302,7 +302,7 @@ export function SpecView({
             <Badge variant="neutral" className="text-xs">{definition.kind.replace(/_/g, " ")}</Badge>
             <span className={`ml-auto flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${style.className}`}>
               <style.Icon className="h-3.5 w-3.5" />
-              {style.label} · {feasibility.nRequiredMatched}/{feasibility.nRequired} required components
+              {style.label} · {feasibility.nRequiredMatched}/{feasibility.nRequired} required items
             </span>
           </div>
         </CardHeader>
@@ -376,7 +376,8 @@ export function SpecView({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Derivation</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
+        {/* `data-authored="core"`: the recipe's words are core's (derive_composite), not this screen's copy. */}
+        <CardContent data-authored="core" className="space-y-2">
           {derivation.map((s) => (
             <div key={s.order} className="rounded-md border border-border bg-muted/40 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -414,7 +415,7 @@ export function SpecView({
             <CardTitle className="text-sm">Caveats</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-1.5 text-xs text-on-raised">
+            <ul data-authored="core" className="space-y-1.5 text-xs text-on-raised">
               {feasibility.caveats.map((c) => (
                 <li key={c} className="flex gap-1.5">
                   <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-on-raised-muted" />
@@ -524,7 +525,7 @@ export function ScoreCoverageCard({
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border text-left text-on-raised-muted">
-                    <th className="py-1.5 pr-3 font-semibold">Component</th>
+                    <th className="py-1.5 pr-3 font-semibold">Item</th>
                     {feasibility.perCohort.map((c) => (
                       <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
                         {c.cohort}
@@ -599,7 +600,7 @@ export function ScoreCoverageCard({
               </table>
             </div>
             <p className="mt-2 text-xs text-on-raised-muted">
-              A cohort is computable only when every required component is present in it.
+              A cohort is computable only when every required item is present in it.
               {hasDomains &&
                 " “covers ≥1” is looser — it asks only whether a cohort supplies any item in a domain."}
               {!presenceStated &&
@@ -696,7 +697,7 @@ export function ScoreComponentsCard({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Components → this run's concepts</CardTitle>
+        <CardTitle className="text-sm">Items → this run's concepts</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. */}
@@ -709,7 +710,7 @@ export function ScoreComponentsCard({
           </p>
           <ul className="flex flex-col gap-1 text-on-raised-muted">
             <li>
-              <span className="font-semibold text-on-raised">Source-only.</span> Each component shows the
+              <span className="font-semibold text-on-raised">Source-only.</span> Each item shows the
               paper&rsquo;s own fields (name · categories · coding); generated prose is dropped unless it is
               verbatim in the document.
             </li>
@@ -718,8 +719,8 @@ export function ScoreComponentsCard({
               answer-option individually (0–1); a group&rsquo;s score is the mean of its rated members.
             </li>
             <li>
-              <span className="font-semibold text-on-raised">Component number.</span> The figure on each
-              component is the mean of the best match per cohort, over the cohorts found.
+              <span className="font-semibold text-on-raised">Item number.</span> The figure on each
+              item is the mean of the best match per cohort, over the cohorts found.
             </li>
           </ul>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
@@ -727,7 +728,7 @@ export function ScoreComponentsCard({
               // A RECORD (Gate 4): scope was settled on Gate 1, so there is no threshold to state and nothing selects.
               <>
                 Scope was settled on Gate 1, so nothing here selects: every group the match reached counts toward a
-                component&rsquo;s figure, as it does toward the coverage the verdict comes from.
+                item&rsquo;s figure, as it does toward the coverage the verdict comes from.
               </>
             ) : (
               <>
@@ -735,7 +736,7 @@ export function ScoreComponentsCard({
                     printed here (final review round 1, item 3). */}
                 Auto-select &amp; tag every group scoring{" "}
                 <span className="font-mono text-on-raised">{GROUP_SELECT_THRESHOLD.toFixed(2)}</span> or higher —
-                one threshold for the whole builder, applied to every component.
+                one threshold for the whole builder, applied to every item.
               </>
             )}
           </p>
@@ -747,8 +748,8 @@ export function ScoreComponentsCard({
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              This score was declared as a list of names, so no component has a coding rule from a source — set each
-              component&rsquo;s categories, coding or cutoff yourself. None is filled in for you.
+              This Spotlight list was declared as names only, so no item has a coding rule from a source — set each
+              item&rsquo;s categories, coding or cutoff yourself. None is filled in for you.
             </span>
           </p>
         )}
@@ -757,7 +758,7 @@ export function ScoreComponentsCard({
         <Collapsible defaultOpen>
           <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
             <span className="flex items-center gap-1.5">
-              Components · {nFound}/{spec.matches.length} found
+              Items · {nFound}/{spec.matches.length} found
             </span>
             <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
           </CollapsibleTrigger>
@@ -908,7 +909,7 @@ function MatchRow({
               checked={sel}
               disabled={readOnly}
               onChange={() => toggleGroup(g.groupId)}
-              aria-label={`Include the group ${g.label} for this component`}
+              aria-label={`Include the group ${g.label} for this item`}
               className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
             />
           )}
@@ -1140,7 +1141,7 @@ function MatchRow({
             <p className="text-on-raised-muted">
               <span className="font-semibold text-on-raised">Missing.</span>{" "}
               {match.shortlist.length > 0
-                ? `${match.shortlist.length} ${match.shortlist.length === 1 ? "candidate was" : "candidates were"} retrieved and none measures this component.`
+                ? `${match.shortlist.length} ${match.shortlist.length === 1 ? "candidate was" : "candidates were"} retrieved and none measures this item.`
                 : "Nothing in this run retrieved for it."}
             </p>
           )}

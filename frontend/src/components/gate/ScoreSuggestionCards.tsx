@@ -88,7 +88,7 @@ export function ScoreSuggestionCards({
   return (
     <Card data-testid="score-suggestions">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Components → this run&rsquo;s groups</CardTitle>
+        <CardTitle className="text-sm">Items → this run&rsquo;s groups</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
@@ -103,18 +103,18 @@ export function ScoreSuggestionCards({
           <CollapsibleContent className="mt-1.5">
           <ul className="flex flex-col gap-1 text-on-raised-muted">
             <li>
-              <span className="font-semibold text-on-raised">Free search.</span> Each component is searched against
+              <span className="font-semibold text-on-raised">Free search.</span> Each item is searched against
               this run&rsquo;s variables by meaning — retrieval only, no model call, $0.
             </li>
             {/* Named as the column names it (review round 7: "The figure." was ambiguous). */}
             <li>
               <span className="font-semibold text-on-raised">Best similarity.</span> How close a group&rsquo;s
-              best-matching variable is to the component (0–1). A search score, not a judgement — the verdict is Gate
+              best-matching variable is to the item (0–1). A search score, not a judgement — the verdict is Gate
               4&rsquo;s match.
             </li>
             <li>
               <span className="font-semibold text-on-raised">Variables · cohorts.</span> Everything in this
-              component&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
+              item&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
               of them measure it. Other in-scope groups the search reached say why they are in scope.
             </li>
             {/* SAID ONCE, HERE (round 5 sweep): "→ continues to Gate 2" sat on every card with a group in scope. */}
@@ -127,7 +127,7 @@ export function ScoreSuggestionCards({
             <li>
               <span className="font-semibold text-on-raised">Nothing suggested</span> (a dashed circle). This search
               reached no group at the cut-off — not a finding about your cohorts. Gate 4&rsquo;s match decides. Open the
-              component to check the groups under the cut-off.
+              item to check the groups under the cut-off.
             </li>
           </ul>
           </CollapsibleContent>
@@ -141,7 +141,7 @@ export function ScoreSuggestionCards({
           ) : (
             <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span>
           )}{" "}
-          or higher starts in scope, marked as a suggestion in the queue — one cut-off for every component. Your checks
+          or higher starts in scope, marked as a suggestion in the queue — one cut-off for every item. Your checks
           always win.
           {onThresholdChange && defaultThreshold != null && Math.abs(threshold - defaultThreshold) > 1e-9 && (
             <>
@@ -175,7 +175,7 @@ export function ScoreSuggestionCards({
                 <thead>
                   <tr className="border-b border-border text-left text-on-raised-muted">
                     <th scope="col" className="py-1.5 pr-3 font-semibold">
-                      Component
+                      Item
                     </th>
                     {coverage.cohorts.map((c) => (
                       <th
@@ -248,10 +248,10 @@ export function ScoreSuggestionCards({
               </table>
             </div>
             <p data-testid="search-coverage-note" className="mt-2 text-[11px] text-on-raised-muted">
-              A dot: one of the component&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
+              A dot: one of the item&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
               scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
               search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match says
-              which variables measure each component, in its own table.
+              which variables measure each item, in its own table.
             </p>
           </CollapsibleContent>
         </Collapsible>
@@ -267,7 +267,7 @@ export function ScoreSuggestionCards({
             className={disclosureRow("raised", "group")}
           >
             <DisclosureLabel ground="raised">
-              Components · {nWith}/{cards.length} with a suggestion · {nGroups} group{nGroups === 1 ? "" : "s"}{" "}
+              Items · {nWith}/{cards.length} with a suggestion · {nGroups} group{nGroups === 1 ? "" : "s"}{" "}
               suggested
             </DisclosureLabel>
             <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
@@ -278,7 +278,7 @@ export function ScoreSuggestionCards({
               data-testid="score-suggestion-columns"
               className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
             >
-              <span>Component</span>
+              <span>Item</span>
               <span>Best similarity</span>
             </div>
             {cards.map((card) => (
@@ -530,7 +530,7 @@ function SuggestionRow({
           {scopeReason ? (
             <span
               data-testid="score-suggestion-scope-why"
-              title="In Gate 1's scope, but not as this component's suggestion — so it is not counted on this card. Scope is one set for the gate: unchecking it here takes it out everywhere."
+              title="In Gate 1's scope, but not as this item's suggestion — so it is not counted on this card. Scope is one set for the gate: unchecking it here takes it out everywhere."
               className="shrink-0 rounded-full border border-dashed border-rule-on-raised px-1.5 py-0.5 text-[10px] font-semibold text-on-raised-muted"
             >
               {scopeReason}

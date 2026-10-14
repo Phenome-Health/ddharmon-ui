@@ -210,17 +210,17 @@ test.describe("declared score algebra", () => {
     const before = gate4ScoreHeader(DECLARED.length, null, { refused: false });
     expect(before.state).toBe("unmatched");
     expect(before.text).toBe(
-      `3 components · Not matched yet — matching is one model call, about ${formatUsd(estimateScoreMatchUsd(3))}`,
+      `3 items · Not matched yet — matching is one model call, about ${formatUsd(estimateScoreMatchUsd(3))}`,
     );
     // The shared demo never spends, so the header does not price a call it will refuse.
-    expect(gate4ScoreHeader(1, null, { refused: true }).text).toBe("1 component · Not matched yet — not available on the shared demo");
+    expect(gate4ScoreHeader(1, null, { refused: true }).text).toBe("1 item · Not matched yet — not available on the shared demo");
     const after = gate4ScoreHeader(DECLARED.length, spec(), { refused: false });
     expect(after.state).toBe("partial");
-    expect(after.text).toBe("3 components · Matched: Some components are present (2/3)");
+    expect(after.text).toBe("3 items · Matched: Some items are present (2/3)");
     // An unrecognized verdict reads as indeterminate, never as the negative claim.
     const odd = gate4ScoreHeader(3, spec({ verdict: "nonsense" as never }), { refused: false });
     expect(odd.state).toBe("indeterminate");
-    expect(odd.text).toBe("3 components · Matched: Cannot be determined yet (2/3)");
+    expect(odd.text).toBe("3 items · Matched: Cannot be determined yet (2/3)");
   });
 
   test("@gate4 Gate 1's promise points at Gate 4 instead of a verdict that never arrives", () => {
@@ -307,7 +307,7 @@ test.describe("Gate 4 declared score", () => {
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(panel.getByTestId("gate4-score-component")).toHaveCount(0);
-    await expect(state).toContainText("Matched: Some components are present (2/3)");
+    await expect(state).toContainText("Matched: Some items are present (2/3)");
     expect(sent).toHaveLength(1);
   });
 
@@ -448,7 +448,7 @@ test.describe("Gate 1 score strip copy", () => {
     await page.waitForLoadState("networkidle");
     await page.locator("[data-testid='score-panel-toggle']").click();
     await page.locator("[data-testid='score-components']").fill("Weak grip strength\nSlow walking speed");
-    await page.getByRole("button", { name: "Declare these components" }).click();
+    await page.getByRole("button", { name: "Declare these items" }).click();
     const verdict = page.locator("[data-testid='score-verdict']");
     await expect(verdict).toHaveAttribute("data-verdict", "indeterminate");
     await expect(verdict).not.toContainText(/not produced any concepts/i);

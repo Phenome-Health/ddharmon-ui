@@ -82,11 +82,11 @@ export function setupScopeVerdict(nConceptsAvailable: number): ScopeVerdict {
  * beside hundreds of concept groups, and Gate 4 beside the final records. What is missing is the match.
  */
 export const SCOPE_VERDICT_COPY: Record<ScopeVerdict, string> = {
-  full: "Every required component is present in this run.",
-  partial: "Some required components are present in this run; others are not.",
-  infeasible: "Every required component was looked for in this run and none was found.",
+  full: "Every required item is present in this run.",
+  partial: "Some required items are present in this run; others are not.",
+  infeasible: "Every required item was looked for in this run and none was found.",
   indeterminate:
-    "Cannot be determined yet — these components have not been matched against this run's concepts, so " +
+    "Cannot be determined yet — these items have not been matched against this run's concepts, so " +
     "there is no evidence either way. It is not a finding that the score cannot be built.",
 };
 
@@ -153,7 +153,7 @@ export function missingReason(e: ComponentEvidence): string {
   if (e.shortlistSize > 0) {
     return `${e.shortlistSize} candidate concept${e.shortlistSize === 1 ? "" : "s"} retrieved in this run and rejected — none fits.`;
   }
-  return "Nothing retrieved for this component in this run.";
+  return "Nothing retrieved for this item in this run.";
 }
 
 /**
@@ -161,11 +161,11 @@ export function missingReason(e: ComponentEvidence): string {
  * match is, and what it is not. It used to close every unmatched component's own reason.
  */
 export const MISSING_IS_A_RUN_RESULT =
-  "A component with no match is a statement about what this run retrieved — not a finding about your cohorts.";
+  "An item with no match is a statement about what this run retrieved — not a finding about your cohorts.";
 
 /** The sentence that stops `partial` being read as a qualified yes. */
 export const PARTIAL_IS_NOT_THE_SCORE =
-  "Partial coverage is not the published score. Computing it from the components that are present would " +
+  "Partial coverage is not the published score. Computing it from the items that are present would " +
   "produce a different measure with the same name.";
 
 /**
@@ -181,7 +181,7 @@ export const PRESENCE_IS_PER_DICTIONARY =
 
 /** Said where the source document stated no threshold. Never derived, never defaulted. */
 export const CUTOFF_UNSTATED =
-  "The source did not state a cutoff for this component. It is flagged for a human rather than filled in — " +
+  "The source did not state a cutoff for this item. It is flagged for a human rather than filled in — " +
   "a score's threshold is a clinical claim, and inventing a plausible one is the most consequential thing " +
   "this panel could get wrong.";
 
@@ -272,7 +272,7 @@ export type ScoreScopeMatch = Parameters<typeof offeredGroups>[0] & { component:
  * search (retrieval only, no model call, nothing billed), and it is NOT the verdict — the verdict is the paid match
  * on Gate 4, which is the only thing that ever says a group measures a component.
  */
-export const SUGGESTION_TAG_COPY = "Suggested by your score — a free search; the verdict is on Gate 4";
+export const SUGGESTION_TAG_COPY = "Suggested by your Spotlight list — a free search; the verdict is on Gate 4";
 
 /**
  * Gate 1's suggestions as score evidence: one entry per declared component, OFFERING only the groups whose

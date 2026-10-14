@@ -854,10 +854,10 @@
   [
    "Composite",
    "composite_swap",
-   "Declared a score",
+   "Declared a Spotlight list",
    "Frailty",
    "",
-   "2 components, 1 matched",
+   "2 items, 1 matched",
    "",
    "{\"components\":[\"grip\",\"gait\"],\"matched\":{\"gait\":\"c1#g0\"}}",
    "false"
@@ -865,10 +865,10 @@
   [
    "Composite",
    "composite_swap",
-   "Declared a score",
+   "Declared a Spotlight list",
    "PHQ",
    "",
-   "1 component",
+   "1 item",
    "",
    "{\"components\":[\"mood\"]}",
    "false"

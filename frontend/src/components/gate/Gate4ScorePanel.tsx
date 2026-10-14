@@ -184,7 +184,7 @@ export function Gate4ScorePanel({
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-4 pt-4">
           <p className="max-w-[80ch] text-xs text-on-raised-muted">
-            {n} {n === 1 ? "component" : "components"}, as declared. The declaration is a record now and is not
+            {n} {n === 1 ? "item" : "items"}, as declared. The declaration is a record now and is not
             edited here; matching reads it as it stands, against the concepts you are exporting.{" "}
             {PRESENCE_IS_PER_DICTIONARY}
           </p>
@@ -282,7 +282,7 @@ export function Gate4ScorePanel({
                 <span className="text-sm font-semibold text-on-raised">
                   The recipe — you run it; ddharmon never computes the score
                 </span>
-                <ol className="flex flex-col gap-2">
+                <ol data-authored="core" className="flex flex-col gap-2">
                   {spec.derivation.map((s) => (
                     <li
                       key={s.order}
@@ -309,7 +309,7 @@ export function Gate4ScorePanel({
               </div>
 
               {spec.feasibility.caveats.length > 0 && (
-                <ul className="flex flex-col gap-1 text-xs text-on-raised-muted">
+                <ul data-authored="core" className="flex flex-col gap-1 text-xs text-on-raised-muted">
                   {spec.feasibility.caveats.map((c) => (
                     <li key={c} className="flex gap-1.5">
                       <AlertTriangle aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
@@ -336,11 +336,11 @@ export function Gate4ScorePanel({
           <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
             <p data-testid="gate4-score-price" className="max-w-[80ch] text-xs font-semibold text-on-raised">
               Matching costs money: it is one model call over the concepts you are exporting — about{" "}
-              {formatUsd(estimateScoreMatchUsd(n))} for {n} {n === 1 ? "component" : "components"}. It is what turns
+              {formatUsd(estimateScoreMatchUsd(n))} for {n} {n === 1 ? "item" : "items"}. It is what turns
               the declaration into a verdict and a recipe. Nothing is charged until you press it.
             </p>
             {refusal ? (
-              <NotAvailable thing="Matching the declared score" claim={refusal.claim}>
+              <NotAvailable thing="Matching the declared Spotlight list" claim={refusal.claim}>
                 {refusal.reason}
               </NotAvailable>
             ) : (

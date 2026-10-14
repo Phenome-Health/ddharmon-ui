@@ -183,7 +183,7 @@ test("@gate4 the decision log says WHAT each decision did, by name, with scope c
   expect(picks.find((r) => r.thing === "g0")!.detail).toBe("Reviewer CDE (model picked Model CDE)");
   expect(picks.find((r) => r.thing === "g1")!.detail).toBe("your own CDE, edited");
   expect(by("gate3_spec_edit").detail).toBe("rejected · note: “wrong target”");
-  expect(by("composite_swap").action).toBe("Declared a score");
+  expect(by("composite_swap").action).toBe("Declared a Spotlight list");
 });
 
 test("@gate4 the decision log lists a New group by its name, and a move into it names it too (08-28 Wave 2)", () => {
@@ -514,8 +514,8 @@ test("@gate4 the in-app log: an empty Gate 3 save is the model's spec, a value m
   expect(rows.find((r) => r.thing === "U:b")!.detail).toBe("value map: -121: 9 → missing");
   const scores = rows.filter((r) => r.kind === "composite_swap");
   expect(scores.map((r) => r.thing)).toEqual(["Frailty", "PHQ"]); // not one row per component
-  expect(scores[0].action).toBe("Declared a score");
-  expect(scores[0].detail).toBe("2 components: grip, gait");
+  expect(scores[0].action).toBe("Declared a Spotlight list");
+  expect(scores[0].detail).toBe("2 items: grip, gait");
 });
 
 test("@gate4 the decision count is the number of entries the downloaded log carries (F21)", () => {

@@ -384,12 +384,12 @@ test.describe("score panel — review round 6 (Bhargav, live Lavish build 2026-1
     await expect(panel.getByTestId("score-suggestion-scope-why").filter({ hasText: /your choice/i })).toHaveCount(0);
   });
 
-  test("@gate1 once a score is declared, the declaration form is folded behind 'Declare a different score'", async ({
+  test("@gate1 once a score is declared, the declaration form is folded behind 'Declare a different Spotlight list'", async ({
     page,
   }) => {
     const panel = await openGate1Panel(page);
     const fold = panel.getByTestId("score-declare-toggle");
-    await expect(fold).toHaveText(/declare a different score/i);
+    await expect(fold).toHaveText(/declare a different Spotlight list/i);
     await expect(fold).toHaveAttribute("aria-expanded", "false");
     await expect(panel.getByTestId("score-components")).toHaveCount(0);
     await fold.click();
@@ -574,7 +574,7 @@ test.describe("score cards — Gate 4 (the match)", () => {
     page,
   }) => {
     const panel = await openGate4Matched(page);
-    await expect(panel.getByText("Components → this run's concepts")).toBeVisible();
+    await expect(panel.getByText("Items → this run's concepts")).toBeVisible();
     await expect(panel.locator("[data-testid='score-match']")).toHaveText(G4_DECLARED.map((c) => new RegExp(c)));
     // The one-line list is replaced, not doubled.
     await expect(panel.getByTestId("gate4-score-component")).toHaveCount(0);

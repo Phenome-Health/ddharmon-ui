@@ -137,7 +137,7 @@ ACTION_OF = {
     GATE3_MEMBER_EXCLUSION: "Removed a variable from a concept",
     GATE4_EXPORT_SELECTION: "Chose export inclusion",
     # The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
-    COMPOSITE_SWAP: "Declared a score",
+    COMPOSITE_SWAP: "Declared a Spotlight list",
 }
 
 #: The decision log's columns, in order. ``before``/``after`` are what the decision changed, where the
@@ -608,7 +608,8 @@ def _score_rows(grouped: dict[str, Any], stale: set[tuple[str, str]]) -> list[li
         names = [str(d.get("componentName") or "") for _, d in comps]
         matched = {str(d.get("componentName") or ""): str(d.get("chosen")) for _, d in comps if d.get("chosen")}
         n = len(names)
-        after = f"{n} component{'' if n == 1 else 's'}" + (f", {len(matched)} matched" if matched else "")
+        # The reader's word for one entry is an "item" (round 8, note 1); the JSON body keeps its `components` key.
+        after = f"{n} item{'' if n == 1 else 's'}" + (f", {len(matched)} matched" if matched else "")
         body: dict[str, Any] = {"components": names}
         if matched:
             body["matched"] = matched

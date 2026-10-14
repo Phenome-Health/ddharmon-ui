@@ -106,7 +106,7 @@ export const NOT_AVAILABLE_GAPS: readonly NotAvailableGap[] = [
   {
     slug: "composite-notebook",
     thing: "Composite recipes in the notebook",
-    body: "The notebook applies approved recodes; it has no notion of a derived variable, so a composite score you built is not computed by it. Export the score file to carry it.",
+    body: "The notebook applies approved recodes; it has no notion of a derived variable, so a composite score you built is not computed by it. Export the Concept Spotlight file to carry it.",
   },
 ] as const;
 
@@ -172,7 +172,7 @@ const ACTION_OF: Record<GateDecisionKind, string> = {
   gate3_member_exclusion: "Removed a variable from a concept",
   gate4_export_selection: "Chose export inclusion",
   // The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
-  composite_swap: "Declared a score",
+  composite_swap: "Declared a Spotlight list",
 };
 
 export interface DecisionLogRow {
@@ -593,7 +593,7 @@ function scoreGroups(byItem: Record<string, GateDecision>): { name: string; comp
   return [...scores].map(([name, components]) => ({ name, components }));
 }
 
-const componentCount = (n: number) => `${n} component${n === 1 ? "" : "s"}`;
+const componentCount = (n: number) => `${n} item${n === 1 ? "" : "s"}`;
 
 /** `_score_rows` in the backend: one CSV row per declared score, its components (and any matches) in `detail`. */
 function scoreCsvRows(byItem: Record<string, GateDecision>, stale: Set<string>): string[][] {

@@ -1535,7 +1535,7 @@ test.describe("gate1 score", () => {
     );
     await expect(gait).toHaveAttribute("data-matched", "false");
     await gait.locator("[data-testid='score-component-expand']").click();
-    await expect(gait).toContainText("3 candidates were retrieved and none measures this component");
+    await expect(gait).toContainText("3 candidates were retrieved and none measures this item");
     await expect(gait.locator("[data-testid='score-group']")).toHaveCount(0);
   });
 
@@ -1710,7 +1710,7 @@ test.describe("gate1 score", () => {
     // now that the panel is a dropdown (08-16c item E), and a loose name in a strict-mode locator is a
     // test that breaks on an unrelated label rather than on a behaviour.
     await page
-      .getByRole("button", { name: "Declare these components" })
+      .getByRole("button", { name: "Declare these items" })
       .click();
 
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(
@@ -1874,10 +1874,10 @@ test.describe("gate1 score", () => {
     await openScorePanel(page);
     const panel = page.locator("[data-testid='score-panel']");
 
-    // The verdict is DERIVED, not hard-coded: one required component matched and one did not, so the spec
+    // The verdict is DERIVED, not hard-coded: one required item matched and one did not, so the spec
     // reads "partially computable" with the required tally spelled out — never a colour left to be inferred.
     await expect(panel).toContainText(/partially computable/i);
-    await expect(panel).toContainText("1/2 required components");
+    await expect(panel).toContainText("1/2 required items");
 
     // The matched one and the missing one — each reported as a result, distinguishable by whether it
     // reached a group.
@@ -1889,7 +1889,7 @@ test.describe("gate1 score", () => {
     );
     await expect(missing).toHaveCount(1);
     await missing.locator("[data-testid='score-component-expand']").click();
-    await expect(missing).toContainText("3 candidates were retrieved and none measures this component");
+    await expect(missing).toContainText("3 candidates were retrieved and none measures this item");
 
     // NO CUTOFF IS INVENTED. The source stated none, so expanding the matched component flags it for a
     // human instead of deriving a plausible one, and no threshold number appears anywhere in the panel —
@@ -3158,7 +3158,7 @@ test.describe("gate1 frozen", () => {
     await openPastGate1(page);
     await openScorePanel(page);
     await expect(page.locator("[data-testid='score-components']")).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Declare these components" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Declare these items" })).toBeDisabled();
   });
 
   test("@gate1 a passed Gate 1 says it is a record and offers the way back", async ({

@@ -113,7 +113,7 @@ async function readPaper(page: Page): Promise<void> {
 }
 
 const OK: Answer = { status: 200, body: proposal() };
-const extractButton = (page: Page) => page.getByRole("button", { name: /Extract the components/ });
+const extractButton = (page: Page) => page.getByRole("button", { name: /Extract the items/ });
 
 // --- the algebra, in node --------------------------------------------------------------------------------
 
@@ -234,13 +234,13 @@ test.describe("gate1 score proposal", () => {
       .locator("[data-testid='score-proposal-item'][data-name='Grip strength']")
       .getByRole("checkbox")
       .check();
-    await page.getByRole("button", { name: /Use the 3 ticked components/ }).click();
+    await page.getByRole("button", { name: /Use the 3 ticked items/ }).click();
     await expect(page.locator("[data-testid='score-components']")).toHaveValue(
       "Help Bathing\nHelp Dressing\nGrip strength",
     );
     await expect(page.locator("#score-name")).toHaveValue("Frailty index (Searle 2008)");
     // The ordinary declare path — the one typing uses.
-    await page.getByRole("button", { name: "Declare these components" }).click();
+    await page.getByRole("button", { name: "Declare these items" }).click();
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(3);
     await page.reload();
     await page.waitForLoadState("networkidle");
@@ -254,7 +254,7 @@ test.describe("gate1 score proposal", () => {
     await page.locator("[data-testid='score-components']").fill("Weak grip");
     await extractButton(page).click();
     await page.locator("[data-testid='score-proposal-item'][data-name='Help Dressing']").getByRole("checkbox").uncheck();
-    await page.getByRole("button", { name: /Use the 1 ticked component\b/ }).click();
+    await page.getByRole("button", { name: /Use the 1 ticked item\b/ }).click();
     await expect(page.locator("[data-testid='score-components']")).toHaveValue("Weak grip\nHelp Bathing");
 
     await extractButton(page).click();
@@ -272,11 +272,11 @@ test.describe("gate1 score proposal", () => {
     await extractButton(page).click();
     const box = page.locator("[data-testid='score-extract']");
     await expect(box).toHaveAttribute("data-state", "nothing");
-    await expect(box).toContainText(/found no components/i);
+    await expect(box).toContainText(/found no items/i);
     await expect(page.locator("[data-testid='score-proposal']")).toHaveCount(0);
     await expect(page.locator("[data-testid='score-doc-text']")).toBeVisible();
     await page.locator("[data-testid='score-components']").fill("Help Bathing");
-    await expect(page.getByRole("button", { name: "Declare these components" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Declare these items" })).toBeEnabled();
   });
 
   test("@gate1 a failure says it FAILED — distinct from found nothing — and the text stays to read", async ({
@@ -292,7 +292,7 @@ test.describe("gate1 score proposal", () => {
     await expect(box).toHaveAttribute("data-state", "failed");
     await expect(box).toContainText(/did not produce|failed/i);
     await expect(box).toContainText("could not be read as a component list");
-    await expect(box).not.toContainText(/found no components/i);
+    await expect(box).not.toContainText(/found no items/i);
     await expect(page.locator("[data-testid='score-doc-text']")).toBeVisible();
   });
 
@@ -338,7 +338,7 @@ test.describe("gate1 score proposal", () => {
     await expect(na).toContainText(/shared demo/i);
     await expect(extractButton(page)).toHaveCount(0);
     await page.locator("[data-testid='score-components']").fill("Help Bathing");
-    await expect(page.getByRole("button", { name: "Declare these components" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Declare these items" })).toBeEnabled();
     expect(extracts).toEqual([]);
   });
 });

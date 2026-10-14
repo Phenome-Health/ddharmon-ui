@@ -365,7 +365,7 @@ export async function extractScoreComponents(
   doc: ReadDocument,
   apiKey?: string,
 ): Promise<ComponentProposal> {
-  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to extract the components.", 401);
+  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to extract the items.", 401);
   const headers = await authed({
     "content-type": "application/json",
     ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
@@ -389,7 +389,7 @@ export async function extractScoreComponents(
  * before spending (400/409) from an attempt that failed (5xx). A static build has no backend and says so.
  */
 export async function matchDeclaredScore(jobId: string, scoreName: string, apiKey?: string): Promise<CompositeSpec> {
-  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to match the declared score.", 401);
+  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to match the declared Spotlight list.", 401);
   const headers = await authed({
     "content-type": "application/json",
     ...(apiKey ? { "x-anthropic-key": apiKey } : {}),

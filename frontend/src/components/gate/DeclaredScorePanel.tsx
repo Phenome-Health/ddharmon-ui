@@ -131,17 +131,17 @@ const VERDICT_STYLE: Record<
   { label: string; className: string; Icon: typeof CheckCircle2 }
 > = {
   full: {
-    label: "Every component is present",
+    label: "Every item is present",
     className: "border-rule-ok bg-surface-ok text-on-ok",
     Icon: CheckCircle2,
   },
   partial: {
-    label: "Some components are present",
+    label: "Some items are present",
     className: "border-rule-warn bg-surface-warn text-on-warn",
     Icon: AlertTriangle,
   },
   infeasible: {
-    label: "None of the components was found",
+    label: "None of the items was found",
     className: "border-rule-danger bg-surface-danger text-on-danger",
     Icon: XCircle,
   },
@@ -482,7 +482,7 @@ export function DeclaredScorePanel({
       <CollapsibleContent>
         <section
           data-testid="score-panel"
-          aria-label="A published score you want this run to support"
+          aria-label="A Spotlight list you want this run to support"
           className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
         >
           {/* ONCE A SCORE IS DECLARED, THE FORM FOLDS (review round 6, Bhargav: "hidden by default since a score has
@@ -497,7 +497,7 @@ export function DeclaredScorePanel({
               onClick={() => setShowDeclareForm((v) => !v)}
               className={disclosureRow("raised")}
             >
-              <DisclosureLabel ground="raised">Declare a different score</DisclosureLabel>
+              <DisclosureLabel ground="raised">Declare a different Spotlight list</DisclosureLabel>
               <DisclosureChevron ground="raised" open={showDeclareForm} />
             </button>
           )}
@@ -508,9 +508,9 @@ export function DeclaredScorePanel({
             the title never carried — including `PRESENCE_IS_PER_DICTIONARY`, which is one of the four
             rules this panel exists to keep saying. */}
             <p className="max-w-[80ch] text-sm text-on-raised-muted">
-              Name the components of a published score — a frailty index, an
-              intrinsic-capacity score, an SES index — and this run will say
-              which of them its concepts can supply, and out of which.{" "}
+              List the items to look for — a published score (a frailty index, an
+              intrinsic-capacity score, an SES index) or a list of your own — and this
+              run will say which of them its concepts can supply, and out of which.{" "}
               {PRESENCE_IS_PER_DICTIONARY}
             </p>
           </div>
@@ -547,7 +547,7 @@ export function DeclaredScorePanel({
               >
                 Read {document.nChars.toLocaleString()} characters from{" "}
                 {document.provenance}. The text is shown beside the proposal —
-                have a model propose the components from it, or type them
+                have a model propose the items from it, or type them
                 yourself.
               </p>
             )}
@@ -599,7 +599,7 @@ export function DeclaredScorePanel({
               htmlFor="score-name"
               className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
             >
-              Score name
+              List name
             </label>
             <input
               id="score-name"
@@ -612,7 +612,7 @@ export function DeclaredScorePanel({
               htmlFor="score-components"
               className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
             >
-              Its components, one per line
+              Its items, one per line
             </label>
             <Textarea
               id="score-components"
@@ -632,7 +632,7 @@ export function DeclaredScorePanel({
                 onClick={() => void onDeclare()}
                 disabled={frozen || draft.trim().length === 0}
               >
-                Declare these components
+                Declare these items
               </Button>
             </div>
           </div>
@@ -714,7 +714,7 @@ export function DeclaredScorePanel({
                   ) : suggestionNote.nGroups > 0 ? (
                     <>
                       {SUGGESTION_TAG_COPY}. It reached {suggestionNote.nGroups} group
-                      {suggestionNote.nGroups === 1 ? "" : "s"} for {suggestionNote.nComponents} of these components;
+                      {suggestionNote.nGroups === 1 ? "" : "s"} for {suggestionNote.nComponents} of these items;
                       they start in scope and are tagged “Suggested” in the list. Uncheck any you do not want — your
                       choice always wins.
                     </>
@@ -777,14 +777,14 @@ export function DeclaredScorePanel({
               data-testid="score-match-price"
               className="max-w-[80ch] text-xs font-semibold text-on-raised"
             >
-              Matching these components onto this run&rsquo;s concepts costs
+              Matching these items onto this run&rsquo;s concepts costs
               money: it is one model call over the concepts, and it is what
               turns a declaration into a verdict. Nothing is charged until you
               press it.
             </p>
             {matchRefusal ? (
               <NotAvailable
-                thing="Matching the components"
+                thing="Matching the items"
                 claim={matchRefusal.claim}
               >
                 {matchRefusal.reason}

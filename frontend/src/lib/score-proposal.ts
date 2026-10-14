@@ -70,20 +70,20 @@ export interface ReadDocument {
 /** Step 1 — reading. $0: no model is called. */
 export const READ_IS_FREE =
   "Reading the document costs nothing — no model is called. It pulls the text out so you can see whether " +
-  "the component table survived extraction before anything is spent on it.";
+  "the item table survived extraction before anything is spent on it.";
 
 /** Step 2 — extracting. Paid, priced inline before it runs. */
 export function extractPrice(nChars: number): string {
   return (
-    `Extracting the components costs money: it is one model call that reads the ${nChars.toLocaleString()} ` +
-    "characters above and proposes the component names it finds. Nothing is charged until you press it, and " +
+    `Extracting the items costs money: it is one model call that reads the ${nChars.toLocaleString()} ` +
+    "characters above and proposes the item names it finds. Nothing is charged until you press it, and " +
     "the same text is never charged twice on this run. Nothing it proposes is declared until you accept it."
   );
 }
 
 /** The closed strip's one-line summary — all three states, visible without opening anything. */
 export const STRIP_SUMMARY =
-  "Reading a paper is free; extracting its components and matching them against this run each cost one model call.";
+  "Reading a paper is free; extracting its items and matching them against this run each cost one model call.";
 
 // --- refusals BEFORE the press ---------------------------------------------------------------------------
 
@@ -106,7 +106,7 @@ export function extractionRefusalFor(opts: {
       claim: "not-enabled",
       reason:
         "This is the shared demo, which never spends money. Clone it into a run of your own to have a model " +
-        "extract the components — or type them yourself below.",
+        "extract the items — or type them yourself below.",
     };
   }
   if (opts.frozen) {
@@ -122,7 +122,7 @@ export function extractionRefusalFor(opts: {
         `This document is ${opts.nChars.toLocaleString()} characters; extraction reads at most ` +
         `${MAX_COMPONENT_EXTRACT_CHARS.toLocaleString()}, and a longer one is refused rather than cut short — ` +
         "half a paper gives a plausible but incomplete list. Read the section or supplement that holds the " +
-        "component table instead, or type the components below.",
+        "item table instead, or type the items below.",
     };
   }
   return null;

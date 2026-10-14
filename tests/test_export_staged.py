@@ -797,10 +797,10 @@ def test_a_score_declaration_is_one_log_row_per_score_not_one_per_component():
     rows = [r for r in decision_log_rows(_result(), {}, grouped) if r[1] == "composite_swap"]
     assert [r[3] for r in rows] == ["Frailty", "PHQ"]
     frailty = rows[0]
-    assert frailty[0] == "Composite" and frailty[2] == "Declared a score"
-    assert frailty[5] == "3 components, 1 matched"
+    assert frailty[0] == "Composite" and frailty[2] == "Declared a Spotlight list"
+    assert frailty[5] == "3 items, 1 matched"
     assert json.loads(frailty[7]) == {"components": ["grip", "gait", "weight loss"], "matched": {"gait": "c1#g0"}}
-    assert rows[1][5] == "1 component" and json.loads(rows[1][7]) == {"components": ["mood"]}
+    assert rows[1][5] == "1 item" and json.loads(rows[1][7]) == {"components": ["mood"]}
 
 
 # --- 08-28 3f: the Gate 2 relation (SKOS predicate + note) reaches every export ----------------------------
