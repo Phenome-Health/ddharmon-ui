@@ -1608,8 +1608,8 @@ function ExpandedGroup({
           the run carries no field detail, in which case the chips above are the whole membership view. */}
         {highlightIds && highlightIds.size > 0 && (
           <p data-testid="score-highlight-note" role="note" className="text-xs text-on-raised-muted">
-            Highlighted: the {highlightIds.size} {highlightIds.size === 1 ? "variable" : "variables"} the score
-            matched for this group.
+            Highlighted: the {highlightIds.size} {highlightIds.size === 1 ? "variable" : "variables"} Concept
+            Spotlight found for this group.
           </p>
         )}
         <SourceRows

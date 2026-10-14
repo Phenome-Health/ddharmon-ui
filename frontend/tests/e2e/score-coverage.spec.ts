@@ -206,6 +206,23 @@ test.describe("the reached-by-search table — Gate 1", () => {
 /**
  * Review round 7 (Bhargav, 2026-10-13, live Lavish build b013d95) — the score panel's layout.
  */
+test.describe("the score panel — review round 8", () => {
+  test("@gate1 a card's group link opens the group with the variable the search matched best, marked so it is seen", async ({
+    page,
+  }) => {
+    const panel = await openOwned(page);
+    const glaucoma = panel.locator("[data-testid='score-suggestion'][data-component='Glaucoma']");
+    await glaucoma.getByTestId("score-suggestion-expand").click();
+    const best = fixtureGroups()[0]!.memberVariableNames[0]!;
+    await glaucoma.locator(`[data-testid='score-suggestion-group'][data-group='${gid(0)}'] [data-testid='score-open-group']`).click();
+    const pane = page.locator("[data-testid='gate1-detail']");
+    const row = pane.locator(`[data-testid='member-row'][data-member-id='${best}']`);
+    await expect(row).toHaveAttribute("data-highlighted", "true");
+    await expect(row.getByTestId("row-spotlight-tag")).toBeVisible();
+    await expect(pane.getByTestId("score-highlight-note")).toContainText("Concept Spotlight found");
+  });
+});
+
 test.describe("the score panel — review round 7", () => {
   test("@gate1 the module is called Concept Spotlight: on the strip, in its accessible name, and on the how-it-works fold", async ({
     page,

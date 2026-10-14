@@ -1658,10 +1658,15 @@ test.describe("gate1 score", () => {
 
     const pane = page.locator("[data-testid='gate1-detail']");
     await expect(pane.locator("[data-testid='score-highlight-note']")).toContainText(
-      `${vars.length} variables the score matched`,
+      `${vars.length} variables Concept Spotlight found`,
     );
     const lit = pane.locator("[data-testid='member-row'][data-highlighted='true']");
     await expect(lit).toHaveCount(vars.length);
+    // UNMISTAKABLE (review round 8: "highlight the var(s) that the group was chosen as a result of" — it was, in a
+    // tint too faint to see): each lit row carries the module's tag and an accent bar down its left edge.
+    await expect(lit.locator("[data-testid='row-spotlight-tag']")).toHaveCount(vars.length);
+    const bar = await lit.first().evaluate((el) => getComputedStyle(el).boxShadow);
+    expect(bar).toContain("inset");
     for (const v of vars) await expect(pane.locator(`[data-testid='member-row'][data-member-id='${v}']`)).toHaveAttribute("data-highlighted", "true");
     // matched rows lead the list, so a capped table can never hide them
     await expect(pane.locator("[data-testid='member-row']").first()).toHaveAttribute("data-highlighted", "true");
