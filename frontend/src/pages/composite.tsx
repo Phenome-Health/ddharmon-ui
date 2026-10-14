@@ -755,7 +755,7 @@ export function ScoreComponentsCard({
             {record ? (
               // A RECORD (Gate 4): scope was settled on Gate 1, so there is no threshold to state and nothing selects.
               <>
-                Scope was settled on Gate 1, so nothing here selects: every group the match reached counts toward a
+                Scope was settled on Gate 1, so nothing here selects: every group the match reached counts toward an
                 item&rsquo;s figure, as it does toward the coverage the verdict comes from.
               </>
             ) : (
