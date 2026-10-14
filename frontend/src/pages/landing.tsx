@@ -138,8 +138,9 @@ const STEPS = [
   {
     n: "04",
     icon: UserCheck,
-    title: "Stay in the loop",
-    body: "Each spec is a suggestion with confidence and a rationale. You approve, refine, or reject before anything is applied.",
+    // Review round 9 (Bhargav): broadened from "each spec is a suggestion" to the staged flow — every gate is a review.
+    title: "Review at every gate",
+    body: "The run pauses at four gates — concept groups, CDE matches, transform specs, export. At each you approve, edit or reject what was proposed; a paid step shows its price before you continue.",
   },
 ];
 

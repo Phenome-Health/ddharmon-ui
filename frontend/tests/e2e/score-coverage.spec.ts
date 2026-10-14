@@ -133,6 +133,15 @@ async function openOwned(page: Page): Promise<Locator> {
   return panel;
 }
 
+/** The coverage fold starts CLOSED (review round 9) — open it to read the table. */
+async function openCoverage(panel: Locator): Promise<Locator> {
+  const table = panel.getByTestId("search-coverage");
+  const toggle = panel.getByTestId("search-coverage-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  return table;
+}
+
 const cell = (table: Locator, component: string, cohort: string) =>
   table.locator(
     `[data-testid='search-coverage-row'][data-component='${component}'] [data-testid='search-coverage-cell'][data-cohort='${cohort}']`,
@@ -149,7 +158,7 @@ test.describe("the reached-by-search table — Gate 1", () => {
     page,
   }) => {
     const panel = await openOwned(page);
-    const table = panel.getByTestId("search-coverage");
+    const table = await openCoverage(panel);
     await expect(table).toBeVisible();
     await expect(table).toContainText(/reached by search/i);
     await expect(table.getByTestId("search-coverage-row")).toHaveText(DECLARED.map((c) => new RegExp(c)));
@@ -167,7 +176,7 @@ test.describe("the reached-by-search table — Gate 1", () => {
     page,
   }) => {
     const panel = await openOwned(page);
-    const table = panel.getByTestId("search-coverage");
+    const table = await openCoverage(panel);
     await expect(table).not.toContainText(/missing|not found|absent/i);
     const note = table.getByTestId("search-coverage-note");
     await expect(note).toContainText(/membership, not a match/i);
@@ -177,7 +186,7 @@ test.describe("the reached-by-search table — Gate 1", () => {
 
   test("@gate1 lowering the cut-off fills the table in", async ({ page }) => {
     const panel = await openOwned(page);
-    const table = panel.getByTestId("search-coverage");
+    const table = await openCoverage(panel);
     await expect(cell(table, "Tinnitus", "UKBB")).toHaveAttribute("data-reached", "false");
     await setCutoff(page, "0.50");
     await expect(cell(table, "Tinnitus", "UKBB")).toHaveAttribute("data-reached", "true");
@@ -189,7 +198,7 @@ test.describe("the reached-by-search table — Gate 1", () => {
     page,
   }) => {
     const panel = await openOwned(page);
-    const table = panel.getByTestId("search-coverage");
+    const table = await openCoverage(panel);
     const card = panel.locator("[data-testid='score-suggestion'][data-component='Glaucoma']");
     await expect(cell(table, "Glaucoma", "UKBB")).toHaveAttribute("data-reached", "true");
     await expect(card.getByTestId("score-suggestion-spread")).toContainText("UKBB");
@@ -262,7 +271,11 @@ test.describe("the score panel — review round 7", () => {
     expect(fits).toBe(true);
   });
 
-  test("@gate1 the coverage table comes first, then the components — each its own outlined fold", async ({ page }) => {
+  test("@gate1 the coverage table comes first, then the items — each its own outlined fold; coverage starts CLOSED", async ({
+    page,
+  }) => {
+    // Review round 9 (Bhargav): "have this collapsed by default — the 'how suggestions work' refers to the below panel,
+    // so better for the user to see that first and expand the coverage table only if they want."
     const panel = await openOwned(page);
     const card = panel.getByTestId("score-suggestions");
     const order = await card
@@ -278,9 +291,11 @@ test.describe("the score panel — review round 7", () => {
       expect(border.style, id).toBe("solid");
       expect(border.width, id).not.toBe("0px");
       const toggle = card.getByTestId(`${id}-toggle`);
-      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      const startsOpen = id !== "search-coverage";
+      await expect(toggle).toHaveAttribute("aria-expanded", String(startsOpen));
       await toggle.click();
-      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(toggle).toHaveAttribute("aria-expanded", String(!startsOpen));
+      if (id === "search-coverage") await toggle.click(); // back to closed, as the rest of the test expects
     }
     await expect(card.getByTestId("search-coverage-row")).toHaveCount(0);
     await expect(card.getByTestId("score-suggestion")).toHaveCount(0);
@@ -291,6 +306,7 @@ test.describe("the score panel — review round 7", () => {
   }) => {
     const panel = await openOwned(page);
     const card = panel.getByTestId("score-suggestions");
+    await openCoverage(panel); // closed by default since round 9
     // Fold the list first: the link must open it, not depend on it being open.
     await card.getByTestId("score-suggestion-components-toggle").click();
     await expect(card.getByTestId("score-suggestion")).toHaveCount(0);

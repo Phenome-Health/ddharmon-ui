@@ -216,7 +216,9 @@ test.describe("The demo's declared score — on screen", () => {
     const bound = score.composite.matches.filter((m) => m.conceptId).length;
     await expect(card.locator("[data-testid='score-match'][data-verdict='full']")).toHaveCount(bound);
     await expect(card.locator("[data-testid='score-match'][data-verdict='infeasible']")).toHaveCount(49 - bound);
-    // The full per-cohort table (round 6 note L7): a Computable cell per cohort, and no repeated sentence list.
+    // The full per-cohort table (round 6 note L7): a Computable cell per cohort, and no repeated sentence list. A fold
+    // closed by default since round 9 (note 5), as Gate 1's is.
+    await card.getByTestId("score-coverage-toggle").click();
     await expect(card.locator("[data-testid='score-coverage'] [data-testid='coverage-computable']")).toHaveCount(
       f.perCohort.length,
     );

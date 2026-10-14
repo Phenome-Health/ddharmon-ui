@@ -357,6 +357,7 @@ test.describe("Gate 4 declared score", () => {
     // The FULL per-cohort table, next to the match (round 6 note L7, "no cohort coverage table?" — option (b),
     // 2026-10-13): a row per component, a column per cohort, read off the match's own coverage.
     const coverage = panel.getByTestId("score-coverage");
+    await panel.getByTestId("score-coverage-toggle").click(); // a closed fold since round 9 (note 5)
     const cell = (component: string, cohort: string) =>
       coverage.locator(
         `[data-testid='coverage-row'][data-component='${component}'] [data-testid='coverage-cell'][data-cohort='${cohort}']`,
@@ -369,7 +370,8 @@ test.describe("Gate 4 declared score", () => {
     await expect(coverage.getByTestId("coverage-computable")).toHaveText(["no", "no"]);
     // SAID ONCE: the table's Computable row replaces the one-sentence-per-cohort list it would repeat.
     await expect(panel.getByTestId("gate4-score-cohort")).toHaveCount(0);
-    // The recipe itself.
+    // The recipe itself — a closed fold since round 9 (note 5).
+    await panel.getByTestId("gate4-score-recipe-toggle").click();
     await expect(panel.getByTestId("gate4-score-step")).toHaveCount(2);
     await expect(panel.getByTestId("gate4-score-step").first()).toContainText("weight_loss_flag = weight_loss");
     await expect(panel.getByTestId("gate4-score-billed")).toContainText("$0.12");
@@ -382,6 +384,47 @@ test.describe("Gate 4 declared score", () => {
     await expect(content).toContainText('"status": "matched"');
     await expect(content).toContainText('"verdict": "partial"');
     await expect(content).toContainText("weight_loss_flag = weight_loss");
+  });
+
+  test("@gate4 round 9 note 5 — Gate 4's Spotlight follows Gate 1's layout: same folds, same order, same defaults", async ({
+    page,
+  }) => {
+    // Bhargav: "update to match design changes made to gate 1 concept spotlight layout (dropdown behavior, order of
+    // elements, etc)". Gate 1 reads: how-it-works fold (open) → coverage fold (CLOSED, round 9) → items fold (open),
+    // each an outlined box. Gate 4 keeps its verdict on top and its recipe after, both in the same fold language.
+    await routeMatch(page, { status: 200, body: { ...spec(), billedUsd: 0.12 } });
+    await openGate4(page);
+    const panel = page.getByTestId("gate4-score");
+    await unfoldScore(page);
+    await panel.getByTestId("gate4-score-match").click();
+    await expect(panel.getByTestId("gate4-score-verdict")).toBeVisible();
+    const ORDER = ["gate4-score-verdict", "score-builder-info", "score-coverage", "score-match-components", "gate4-score-recipe"];
+    const order = await panel
+      .locator(ORDER.map((id) => `[data-testid='${id}']`).join(", "))
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+    expect(order).toEqual(ORDER);
+    const folds: [string, boolean][] = [
+      ["score-builder-info", true],
+      ["score-coverage", false],
+      ["score-match-components", true],
+      ["gate4-score-recipe", false],
+    ];
+    for (const [id, open] of folds) {
+      await expect(panel.getByTestId(`${id}-toggle`), id).toHaveAttribute("aria-expanded", String(open));
+      const border = await panel.getByTestId(id).evaluate((el) => {
+        const st = getComputedStyle(el);
+        return { style: st.borderTopStyle, width: st.borderTopWidth };
+      });
+      expect(border.style, id).toBe("solid");
+      expect(border.width, id).not.toBe("0px");
+    }
+    // The coverage fold names what it is, as Gate 1's does ("· reached by search"): here, the match.
+    await expect(panel.getByTestId("score-coverage-toggle")).toContainText("Per-cohort coverage · matched at Gate 4");
+    // Closed folds open on demand.
+    await panel.getByTestId("score-coverage-toggle").click();
+    await expect(panel.getByTestId("coverage-row").first()).toBeVisible();
+    await panel.getByTestId("gate4-score-recipe-toggle").click();
+    await expect(panel.getByTestId("gate4-score-step")).toHaveCount(2);
   });
 
   test("@gate4 round 8 note 3 — a split LEFTOVER the match reached is titled by what it is, never 'Unnamed group'", async ({

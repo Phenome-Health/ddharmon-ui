@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Circle, CircleDashed } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cohortRoster, type NamedGroup } from "@/lib/ledger";
 import { SCORE_CUTOFF_MAX, SCORE_CUTOFF_MIN, parseCutoff } from "@/lib/score-cutoff";
@@ -162,9 +162,11 @@ export function ScoreSuggestionCards({
           Gate 4 carries the full table next to the match; this is the scoping half, from the free search alone. The
           mark is a neutral dot, never Gate 4's check or cross: it says the search reached the cohort, not that the
           cohort has the component, and a blank is never "missing". FIRST, in its own outlined fold (round 7): the
-          overview leads, and each component name links down to its card.
+          overview leads, and each component name links down to its card. CLOSED by default (round 9, Bhargav): the
+          how-suggestions-work note speaks about the cards below, so the reader meets those first and opens the table
+          only when they want it.
         */}
-        <Collapsible defaultOpen data-testid="search-coverage" className={FOLD_BOX}>
+        <Collapsible data-testid="search-coverage" className={FOLD_BOX}>
           <CollapsibleTrigger data-testid="search-coverage-toggle" className={disclosureRow("raised", "group")}>
             <DisclosureLabel ground="raised">Per-cohort coverage · reached by search</DisclosureLabel>
             <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
@@ -303,7 +305,6 @@ export function ScoreSuggestionCards({
 }
 
 /** The panel's folds share one outlined box (review round 7: each section "should have an outline"). */
-const FOLD_BOX = "rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs";
 
 /**
  * The suggestion cut-off, editable in place (review round 6 — Bhargav: "should be user-selectable with default 0.62").

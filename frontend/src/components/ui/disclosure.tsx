@@ -45,6 +45,12 @@ export function disclosureRow(ground: DisclosureGround, className?: string): str
   );
 }
 
+/**
+ * The OUTLINED FOLD's box — one per section of a Concept Spotlight panel (Gate 1 round 7; Gate 4 joined it in round
+ * 9). A fold that is a peer of others draws this outline, so a reader sees where each section starts and ends.
+ */
+export const FOLD_BOX = "rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs";
+
 /** The section label every fold opens with — sentence case, 14px semibold, full ink. */
 export function DisclosureLabel({
   ground,

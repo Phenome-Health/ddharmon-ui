@@ -8,7 +8,7 @@
 //   3. Partial coverage is NOT the published score. The verdict and the caveats say so in those words.
 //
 // Metadata-only: the output is a recipe the analyst runs on their own rows. ddharmon never computes it.
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "wouter";
 import {
   AlertTriangle,
@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
@@ -440,10 +441,13 @@ export function SpecView({
 export function ScoreCoverageCard({
   spec,
   presenceStated = false,
+  foldLabel,
 }: {
   spec: CompositeSpec;
   /** The surrounding screen already says presence is per data dictionary (Gate 4's panel) — said once, not twice. */
   presenceStated?: boolean;
+  /** Draw as an outlined fold with this label, closed by default (Gate 4), instead of a card (this page). */
+  foldLabel?: string;
 }) {
   const { definition, feasibility } = spec;
   // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
@@ -503,24 +507,8 @@ export function ScoreCoverageCard({
     </tr>
   );
 
-  return (
-    <Card data-testid="score-coverage">
-      <Collapsible defaultOpen>
-        <CardHeader className="pb-2">
-          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
-            <CardTitle className="text-sm">
-              Per-cohort coverage
-              {hasDomains && (
-                <span className="ml-2 font-normal text-xs text-on-raised-muted">
-                  by {coverageDomains.length} domains
-                </span>
-              )}
-            </CardTitle>
-            <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
-          </CollapsibleTrigger>
-        </CardHeader>
-        <CollapsibleContent>
-          <CardContent>
+  const body = (
+    <>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -606,7 +594,44 @@ export function ScoreCoverageCard({
               {!presenceStated &&
                 " Presence is per data dictionary — participant-level missingness, and therefore effective N, cannot be derived from metadata."}
             </p>
-          </CardContent>
+    </>
+  );
+
+  // GATE 4 (review round 9, note 5): an outlined fold among the panel's other folds, CLOSED until opened — the same
+  // shape and default as Gate 1's "reached by search" table, so the two gates read alike.
+  if (foldLabel) {
+    return (
+      <Collapsible data-testid="score-coverage" className={FOLD_BOX}>
+        <CollapsibleTrigger data-testid="score-coverage-toggle" className={disclosureRow("raised", "group")}>
+          <DisclosureLabel ground="raised">
+            {foldLabel}
+            {hasDomains && ` · by ${coverageDomains.length} domains`}
+          </DisclosureLabel>
+          <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">{body}</CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  return (
+    <Card data-testid="score-coverage">
+      <Collapsible defaultOpen>
+        <CardHeader className="pb-2">
+          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
+            <CardTitle className="text-sm">
+              Per-cohort coverage
+              {hasDomains && (
+                <span className="ml-2 font-normal text-xs text-on-raised-muted">
+                  by {coverageDomains.length} domains
+                </span>
+              )}
+            </CardTitle>
+            <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent>{body}</CardContent>
         </CollapsibleContent>
       </Collapsible>
     </Card>
@@ -635,6 +660,7 @@ export function ScoreComponentsCard({
   onGroupScopeChange,
   resolveConcept,
   resolveGroupId,
+  coverage,
 }: {
   spec: CompositeSpec;
   conceptById: Record<string, UIRecord>;
@@ -648,6 +674,8 @@ export function ScoreComponentsCard({
     id: string,
   ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
   resolveGroupId?: (id: string) => string | undefined;
+  /** A fold drawn between how-it-works and the items (Gate 4's coverage table) — Gate 1's section order. */
+  coverage?: ReactNode;
 }) {
   const { definition } = spec;
   const record = variant === "record";
@@ -700,14 +728,14 @@ export function ScoreComponentsCard({
         <CardTitle className="text-sm">Items → this run's concepts</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. */}
-        <div
-          data-testid="score-builder-info"
-          className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
-        >
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            Concept Spotlight · how matching works
-          </p>
+        {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. A FOLD, open
+            until closed — the same shape as Gate 1's "how suggestions work" (review round 9, note 5). */}
+        <Collapsible defaultOpen data-testid="score-builder-info" className={FOLD_BOX}>
+          <CollapsibleTrigger data-testid="score-builder-info-toggle" className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">Concept Spotlight · how matching works</DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-1.5">
           <ul className="flex flex-col gap-1 text-on-raised-muted">
             <li>
               <span className="font-semibold text-on-raised">Source-only.</span> Each item shows the
@@ -740,7 +768,8 @@ export function ScoreComponentsCard({
               </>
             )}
           </p>
-        </div>
+          </CollapsibleContent>
+        </Collapsible>
         {declaredUncoded && (
           <p
             data-testid="score-coding-unstated-note"
@@ -753,14 +782,17 @@ export function ScoreComponentsCard({
             </span>
           </p>
         )}
+        {/* Gate 4's coverage fold, between how-it-works and the items — Gate 1's order (round 9, note 5). */}
+        {coverage}
         {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
-            The header carries the found/total tally; each row shows its own found/missing icon. */}
-        <Collapsible defaultOpen>
-          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            <span className="flex items-center gap-1.5">
+            The header carries the found/total tally; each row shows its own found/missing icon. An outlined fold,
+            open until closed, as Gate 1's items fold is. */}
+        <Collapsible defaultOpen data-testid="score-match-components" className={FOLD_BOX}>
+          <CollapsibleTrigger data-testid="score-match-components-toggle" className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">
               Items · {nFound}/{spec.matches.length} found
-            </span>
-            <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+            </DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2 space-y-2">
             {spec.matches.map(renderRow)}

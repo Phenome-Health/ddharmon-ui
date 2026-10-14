@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, CircleDashed, Flashlight, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RunKeyField } from "@/components/gate/RunKeyField";
@@ -221,6 +221,14 @@ export function Gate4ScorePanel({
               records={records}
               jobId={jobId}
               resolveConcept={resolveConcept}
+              coverage={
+                // THE FULL PER-COHORT TABLE (review round 6 note L7, option (b)): the composite page's own table,
+                // shared, so the two cannot draw it differently — drawn here as Gate 1 draws its table: an outlined
+                // fold between how-it-works and the items, CLOSED until opened (review round 9, note 5).
+                spec.feasibility.perCohort.length > 0 ? (
+                  <ScoreCoverageCard spec={spec} presenceStated foldLabel="Per-cohort coverage · matched at Gate 4" />
+                ) : undefined
+              }
             />
           ) : (
             <ol className="flex flex-col gap-2">
@@ -271,17 +279,17 @@ export function Gate4ScorePanel({
 
           {spec && (
             <>
-              {/*
-                THE FULL PER-COHORT TABLE, NEXT TO THE MATCH (review round 6 note L7, "no cohort coverage table?" — option
-                (b), 2026-10-13): the composite page's own table, shared, so the two cannot draw it differently. Its
-                Computable row replaces the one-sentence-per-cohort list that would only repeat it.
-              */}
-              {spec.feasibility.perCohort.length > 0 && <ScoreCoverageCard spec={spec} presenceStated />}
-
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-semibold text-on-raised">
-                  The recipe — you run it; ddharmon never computes the score
-                </span>
+              {/* THE RECIPE, A FOLD like every other section (review round 9, note 5), closed until opened: it is long
+                  (a step per item), and the export carries it whole. */}
+              <Collapsible data-testid="gate4-score-recipe" className={FOLD_BOX}>
+                <CollapsibleTrigger data-testid="gate4-score-recipe-toggle" className={disclosureRow("raised", "group")}>
+                  <DisclosureLabel ground="raised">
+                    The recipe · {spec.derivation.length} {spec.derivation.length === 1 ? "step" : "steps"} — you run it;
+                    ddharmon never computes the score
+                  </DisclosureLabel>
+                  <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2">
                 <ol data-authored="core" className="flex flex-col gap-2">
                   {spec.derivation.map((s) => (
                     <li
@@ -306,7 +314,8 @@ export function Gate4ScorePanel({
                     </li>
                   ))}
                 </ol>
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
 
               {spec.feasibility.caveats.length > 0 && (
                 <ul data-authored="core" className="flex flex-col gap-1 text-xs text-on-raised-muted">
