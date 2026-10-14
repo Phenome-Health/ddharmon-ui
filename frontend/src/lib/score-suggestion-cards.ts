@@ -40,7 +40,8 @@ export interface SuggestionCard {
  * components) — so a card can say why a group it did not suggest is in scope.
  */
 export interface GroupScopeWhy {
-  by: "chosen" | "made" | "score" | "none";
+  /** `auto`: Full auto sent it (a Gate 1 Full auto committed) — never the reviewer's choice. */
+  by: "chosen" | "made" | "score" | "auto" | "none";
   /** For `score`: the components whose suggestion seeded it. */
   components: string[];
 }
@@ -59,6 +60,56 @@ export function countsForCard(g: SuggestionCardGroup, inScope: boolean): boolean
 }
 
 /**
+ * The cohorts a card's COUNTED groups hold (`countsForCard`), in first-appearance order — group membership, not a
+ * match. The card's spread and the reached-by-search table both read this, so the two cannot disagree.
+ */
+export function keptCohorts(
+  card: SuggestionCard,
+  cohortsOf: (groupId: string) => readonly string[] | undefined,
+  inScope: (groupId: string) => boolean,
+): string[] {
+  const out: string[] = [];
+  for (const g of card.groups) {
+    if (!countsForCard(g, inScope(g.groupId))) continue;
+    for (const c of cohortsOf(g.groupId) ?? []) if (!out.includes(c)) out.push(c);
+  }
+  return out;
+}
+
+export interface SearchCoverage {
+  /** The columns: the run's roster, then any reached cohort the roster does not name (never silently dropped). */
+  cohorts: string[];
+  /** One row per card, in declared order; `reached` in column order. */
+  rows: { component: string; reached: string[] }[];
+  /** Per cohort, how many components the search reached in it. */
+  reachedPerCohort: Record<string, number>;
+}
+
+/**
+ * Gate 1's per-cohort table, REACHED BY SEARCH (review round 6 note L7, option (b)): each card's `keptCohorts`, laid
+ * out against the run's cohorts.
+ *
+ * Gate 1 has no match, so a mark says only that the free search REACHED the cohort — a suggested group kept in scope
+ * holds one of its variables. A blank is what this search reached at the cut-off, never a finding that the cohort
+ * lacks the component; Gate 4's match, with its own full table, is where presence is decided.
+ */
+export function searchCoverage(
+  cards: readonly SuggestionCard[],
+  roster: readonly string[],
+  cohortsOf: (groupId: string) => readonly string[] | undefined,
+  inScope: (groupId: string) => boolean,
+): SearchCoverage {
+  const kept = cards.map((card) => ({ component: card.component, cohorts: keptCohorts(card, cohortsOf, inScope) }));
+  const cohorts = [...roster];
+  for (const k of kept) for (const c of k.cohorts) if (!cohorts.includes(c)) cohorts.push(c);
+  const rows = kept.map((k) => ({ component: k.component, reached: cohorts.filter((c) => k.cohorts.includes(c)) }));
+  const reachedPerCohort = Object.fromEntries(
+    cohorts.map((c) => [c, rows.filter((r) => r.reached.includes(c)).length]),
+  );
+  return { cohorts, rows, reachedPerCohort };
+}
+
+/**
  * The cards for `declared`, or `[]` when there is nothing to draw them from — no dense score (`scored: false`: a
  * lexical score is never thresholded or shown in its place) or no score searched for at all. `[]` means the panel
  * keeps its plain declared list.
@@ -69,6 +120,8 @@ export function countsForCard(g: SuggestionCardGroup, inScope: boolean): boolean
 export function suggestionCards(
   declared: readonly string[],
   s: ScoreSuggestions | null | undefined,
+  /** The reviewer's cut-off (`gate1_score_cutoff`) when they chose one, else the payload's own threshold. */
+  cutoff?: number,
 ): SuggestionCard[] {
   if (!s?.scored || !(s.scores?.length)) return [];
   const byComponent = new Map<string, Map<string, Omit<SuggestionCardGroup, "suggested">>>();
@@ -86,7 +139,7 @@ export function suggestionCards(
   return declared.map((component) => {
     const groups = [...(byComponent.get(component.trim().toLowerCase())?.values() ?? [])]
       .sort((a, b) => b.score - a.score)
-      .map((g) => ({ ...g, suggested: g.score >= s.threshold }));
+      .map((g) => ({ ...g, suggested: g.score >= (cutoff ?? s.threshold) }));
     return {
       component,
       groups,

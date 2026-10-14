@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, Flashlight, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { RunKeyField } from "@/components/gate/RunKeyField";
@@ -21,8 +21,9 @@ import {
   type ComponentEvidence,
   type ScopeVerdict,
 } from "@/lib/score-scope";
+import { conceptTitle } from "@/lib/ledger";
 import { cn } from "@/lib/utils";
-import { ScoreComponentsCard } from "@/pages/composite";
+import { ScoreComponentsCard, ScoreCoverageCard } from "@/pages/composite";
 import type { CompositeSpec, FieldDetail, UIRecord } from "@/types";
 
 /**
@@ -119,7 +120,9 @@ export function Gate4ScorePanel({
     const byId = new Map(records.map((r) => [r.id, r]));
     return (id: string) => {
       const r = byId.get(id);
-      if (r) return { concept: r.concept ?? "", cohorts: r.cohorts ?? [], nMembers: r.nMembers };
+      // Titled by the ONE naming rule Gate 1 uses (`conceptTitle` → `groupLabel`), so a split leftover reads "Not
+      // named by the split — N variables …" here too, never "Unnamed group" or its cluster's ideal (round 8, note 3).
+      if (r) return { concept: conceptTitle(r, undefined), cohorts: r.cohorts ?? [], nMembers: r.nMembers };
       const fd = fieldIndex?.[id];
       if (fd) {
         const ci = id.indexOf(":");
@@ -157,11 +160,14 @@ export function Gate4ScorePanel({
         <CollapsibleTrigger
           data-testid="gate4-score-toggle"
           // The accessible name states the ACTION and its OBJECT (UI-SPEC §6), as the how-to toggle's does.
-          aria-label={`${open ? "Hide" : "Show"} the declared score ${score.scoreName}`}
+          aria-label={`${open ? "Hide" : "Show"} the Concept Spotlight ${score.scoreName}`}
           className={disclosureRow("raised", "gap-3")}
         >
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <DisclosureLabel ground="raised">The score you declared at Gate 1</DisclosureLabel>
+          {/* The score builder's one icon (2026-10-13), as on Gate 1's strip and the queue chips. */}
+          <Flashlight aria-hidden="true" className="h-4 w-4 shrink-0 text-on-raised" />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            {/* The module's name (2026-10-13), as on Gate 1's strip. */}
+            <DisclosureLabel ground="raised">Concept Spotlight · declared at Gate 1</DisclosureLabel>
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
               <h2 className="text-sm font-semibold text-on-raised">{score.scoreName}</h2>
               {/* THE STATE, ON THE FOLDED HEADER: matched or not, and — unmatched — the price of matching. */}
@@ -178,7 +184,7 @@ export function Gate4ScorePanel({
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-4 pt-4">
           <p className="max-w-[80ch] text-xs text-on-raised-muted">
-            {n} {n === 1 ? "component" : "components"}, as declared. The declaration is a record now and is not
+            {n} {n === 1 ? "item" : "items"}, as declared. The declaration is a record now and is not
             edited here; matching reads it as it stands, against the concepts you are exporting.{" "}
             {PRESENCE_IS_PER_DICTIONARY}
           </p>
@@ -215,6 +221,14 @@ export function Gate4ScorePanel({
               records={records}
               jobId={jobId}
               resolveConcept={resolveConcept}
+              coverage={
+                // THE FULL PER-COHORT TABLE (review round 6 note L7, option (b)): the composite page's own table,
+                // shared, so the two cannot draw it differently — drawn here as Gate 1 draws its table: an outlined
+                // fold between how-it-works and the items, CLOSED until opened (review round 9, note 5).
+                spec.feasibility.perCohort.length > 0 ? (
+                  <ScoreCoverageCard spec={spec} presenceStated foldLabel="Per-cohort coverage · matched at Gate 4" />
+                ) : undefined
+              }
             />
           ) : (
             <ol className="flex flex-col gap-2">
@@ -265,29 +279,18 @@ export function Gate4ScorePanel({
 
           {spec && (
             <>
-              {spec.feasibility.perCohort.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-semibold text-on-raised">
-                    Per cohort
-                  </span>
-                  <ul className="flex flex-col gap-0.5 text-xs text-on-raised">
-                    {spec.feasibility.perCohort.map((c) => (
-                      <li key={c.cohort} data-testid="gate4-score-cohort" data-computable={String(c.computable)}>
-                        <span className="font-mono font-semibold">{c.cohort}</span> —{" "}
-                        {c.computable
-                          ? "every required component is present"
-                          : `${c.present.length} of ${c.present.length + c.missing.length} components present`}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-semibold text-on-raised">
-                  The recipe — you run it; ddharmon never computes the score
-                </span>
-                <ol className="flex flex-col gap-2">
+              {/* THE RECIPE, A FOLD like every other section (review round 9, note 5), closed until opened: it is long
+                  (a step per item), and the export carries it whole. */}
+              <Collapsible data-testid="gate4-score-recipe" className={FOLD_BOX}>
+                <CollapsibleTrigger data-testid="gate4-score-recipe-toggle" className={disclosureRow("raised", "group")}>
+                  <DisclosureLabel ground="raised">
+                    The recipe · {spec.derivation.length} {spec.derivation.length === 1 ? "step" : "steps"} — you run it;
+                    ddharmon never computes the score
+                  </DisclosureLabel>
+                  <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2">
+                <ol data-authored="core" className="flex flex-col gap-2">
                   {spec.derivation.map((s) => (
                     <li
                       key={s.order}
@@ -311,10 +314,11 @@ export function Gate4ScorePanel({
                     </li>
                   ))}
                 </ol>
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
 
               {spec.feasibility.caveats.length > 0 && (
-                <ul className="flex flex-col gap-1 text-xs text-on-raised-muted">
+                <ul data-authored="core" className="flex flex-col gap-1 text-xs text-on-raised-muted">
                   {spec.feasibility.caveats.map((c) => (
                     <li key={c} className="flex gap-1.5">
                       <AlertTriangle aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
@@ -341,11 +345,11 @@ export function Gate4ScorePanel({
           <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
             <p data-testid="gate4-score-price" className="max-w-[80ch] text-xs font-semibold text-on-raised">
               Matching costs money: it is one model call over the concepts you are exporting — about{" "}
-              {formatUsd(estimateScoreMatchUsd(n))} for {n} {n === 1 ? "component" : "components"}. It is what turns
+              {formatUsd(estimateScoreMatchUsd(n))} for {n} {n === 1 ? "item" : "items"}. It is what turns
               the declaration into a verdict and a recipe. Nothing is charged until you press it.
             </p>
             {refusal ? (
-              <NotAvailable thing="Matching the declared score" claim={refusal.claim}>
+              <NotAvailable thing="Matching the declared Spotlight list" claim={refusal.claim}>
                 {refusal.reason}
               </NotAvailable>
             ) : (

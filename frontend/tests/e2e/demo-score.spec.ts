@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { shippedDeclaration, shippedSuggestions } from "@/lib/demo-score";
 import { SANDBOX_PREFIX, sandboxStateFrom, sandboxWorkCount } from "@/lib/sandbox";
 import { streamPayload } from "@/lib/stream-payload";
@@ -158,7 +158,7 @@ test.describe("The demo's declared score — on screen", () => {
     const strip = page.getByTestId("score-strip");
     await expect(strip).toHaveAttribute("data-declared", "true");
     await expect(page.getByTestId("score-strip-status")).toContainText(SCORE_NAME);
-    await expect(page.getByTestId("score-strip-status")).toContainText("49 components declared");
+    await expect(page.getByTestId("score-strip-status")).toContainText("49 items declared");
 
     // The free search's hints tag the groups they reached in the queue — as suggestions, never as a match.
     const tags = page.locator("[data-testid='queue-score-tag']");
@@ -178,7 +178,9 @@ test.describe("The demo's declared score — on screen", () => {
     const panel = page.getByTestId("score-panel");
     await expect(panel.getByTestId("score-suggestions")).toBeVisible();
     await expect(panel.locator("[data-testid='score-suggestion']")).toHaveCount(49);
-    await expect(panel.getByTestId("score-suggestions-note")).toBeVisible();
+    // The note is said by the strip + the cards' header when the cards are drawn (round 6).
+    await expect(panel.getByTestId("score-suggestion-info")).toBeVisible();
+    await expect(panel.getByTestId("score-suggestions-note")).toHaveCount(0);
     await expect(panel.locator("[data-testid='score-match']")).toHaveCount(0);
     await expect(panel.getByTestId("score-match-price")).toBeVisible();
 
@@ -214,7 +216,13 @@ test.describe("The demo's declared score — on screen", () => {
     const bound = score.composite.matches.filter((m) => m.conceptId).length;
     await expect(card.locator("[data-testid='score-match'][data-verdict='full']")).toHaveCount(bound);
     await expect(card.locator("[data-testid='score-match'][data-verdict='infeasible']")).toHaveCount(49 - bound);
-    await expect(card.locator("[data-testid='gate4-score-cohort']")).toHaveCount(f.perCohort.length);
+    // The full per-cohort table (round 6 note L7): a Computable cell per cohort, and no repeated sentence list. A fold
+    // closed by default since round 9 (note 5), as Gate 1's is.
+    await card.getByTestId("score-coverage-toggle").click();
+    await expect(card.locator("[data-testid='score-coverage'] [data-testid='coverage-computable']")).toHaveCount(
+      f.perCohort.length,
+    );
+    await expect(card.locator("[data-testid='gate4-score-cohort']")).toHaveCount(0);
 
     // The paid control stays honestly refused on the demo, with its existing copy.
     await expect(card.getByTestId("gate4-score-match")).toHaveCount(0);
@@ -234,15 +242,17 @@ test.describe("The demo's declared score — on screen", () => {
     const requests = watchRequests(page);
     await open(page, "gate1");
     await page.getByTestId("score-panel-toggle").click();
+    // The shipped score is declared, so the form is folded behind "Declare a different Spotlight list" (round 6).
+    await page.getByTestId("score-declare-toggle").click();
     await page.locator("#score-name").fill(SCORE_NAME);
     await page.getByTestId("score-components").fill("Glaucoma");
-    await page.getByRole("button", { name: "Declare these components" }).click();
+    await page.getByRole("button", { name: "Declare these items" }).click();
 
     // The re-declared component is the guest's (held in the tab); the other 48 are still the shipped baseline.
     await expect(page.getByTestId("sandbox-banner")).toHaveAttribute("data-unsaved", "1");
     const state = await held(page);
     expect(Object.keys(state.gateDecisions?.composite_swap ?? {})).toHaveLength(1);
-    await expect(page.getByTestId("score-strip-status")).toContainText("49 components declared");
+    await expect(page.getByTestId("score-strip-status")).toContainText("49 items declared");
     expect(requests).toEqual([]);
 
     const fresh = await context.newPage();
@@ -271,10 +281,63 @@ test.describe("The demo's declared score — on screen", () => {
     const requests = watchRequests(page);
     await page.goto(`/job/${FINISHED_JOB}/composite`);
     await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Concept Spotlight");
     await expect(page.getByTestId("composite-demo-refusal")).toBeVisible();
     await page.getByPlaceholder(/Paste the methods section/).fill("A frailty index of 49 deficits.");
     await expect(page.getByRole("button", { name: "Derive" })).toBeDisabled();
     await expect(page.locator("[data-testid='coverage-row']").first()).toBeVisible();
     expect(requests).toEqual([]);
+  });
+});
+
+// --- review round 8, note 1 (Bhargav, 2026-10-13): the words ----------------------------------------------------------
+
+/**
+ * One entry of a Concept Spotlight is an ITEM — the word a published scale already uses ("49 items"), which the strip
+ * used to set beside "49 items declared". What the reviewer declares is a SPOTLIGHT LIST; "score" is kept only
+ * where it really is a published score. Code identifiers keep their names (`ScoreComponent`, `componentName`, …).
+ * The guard reads the screens' visible text, so a new "component" in Spotlight copy fails here.
+ */
+test.describe("Concept Spotlight's words — items and a Spotlight list (round 8, note 1)", () => {
+  const COMPONENT = /\bcomponents?\b/i;
+  /** The screen's OWN copy: text core wrote (the recipe, the caveats — marked `data-authored="core"`) is left out. */
+  const ownCopy = (el: Locator) =>
+    el.evaluate((node) => {
+      const copy = node.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll("[data-authored='core']").forEach((n) => n.remove());
+      document.body.appendChild(copy);
+      const text = copy.innerText;
+      copy.remove();
+      return text;
+    });
+
+  test("@demo-score Gate 1 says ITEMS — on the strip, the open panel, a card and the form", async ({ page }) => {
+    const { run } = demoWithScore();
+    await serve(page, run);
+    await open(page, "gate1");
+    await expect(page.getByTestId("score-strip-status")).toContainText("49 items declared");
+    await page.getByTestId("score-panel-toggle").click();
+    const panel = page.getByTestId("score-panel");
+    await expect(panel.getByTestId("score-suggestions")).toBeVisible();
+    await panel.getByTestId("score-suggestion-expand").first().click();
+    expect(await ownCopy(page.getByTestId("score-strip"))).not.toMatch(COMPONENT);
+    expect(await ownCopy(panel)).not.toMatch(COMPONENT);
+    // The form asks for a Spotlight list and its items; "score" only where it IS a published score.
+    await panel.getByTestId("score-declare-toggle").click();
+    await expect(panel.getByTestId("score-declare-toggle")).toContainText("Declare a different Spotlight list");
+    await expect(panel.locator("label[for='score-name']")).toHaveText("List name");
+    await expect(panel.locator("label[for='score-components']")).toHaveText("Its items, one per line");
+    expect(await ownCopy(panel)).not.toMatch(COMPONENT);
+  });
+
+  test("@demo-score Gate 4's Spotlight says ITEMS — the header, the verdict and a card", async ({ page }) => {
+    const { run } = demoWithScore();
+    await serve(page, run);
+    await open(page, "gate4");
+    const card = page.getByTestId("gate4-score");
+    await card.getByTestId("gate4-score-toggle").click();
+    await card.getByTestId("score-component-expand").first().click();
+    expect(await ownCopy(card)).not.toMatch(COMPONENT);
+    await expect(card.getByTestId("gate4-score-verdict")).toContainText(/items? (are|is) present|items? was found|of the items/i);
   });
 });

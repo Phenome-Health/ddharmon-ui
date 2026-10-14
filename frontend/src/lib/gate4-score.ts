@@ -13,9 +13,9 @@ import type { CompositeSpec } from "@/types";
 
 /** The verdict's one-line name — shared by the header and the panel's verdict box. */
 export const GATE4_VERDICT_LABEL: Record<ScopeVerdict, string> = {
-  full: "Every component is present",
-  partial: "Some components are present",
-  infeasible: "None of the components was found",
+  full: "Every item is present",
+  partial: "Some items are present",
+  infeasible: "None of the items was found",
   indeterminate: "Cannot be determined yet",
 };
 
@@ -39,7 +39,7 @@ export function gate4ScoreHeader(
   spec: CompositeSpec | null | undefined,
   { refused }: { refused: boolean },
 ): { state: Gate4ScoreState; text: string } {
-  const count = `${nComponents} ${nComponents === 1 ? "component" : "components"}`;
+  const count = `${nComponents} ${nComponents === 1 ? "item" : "items"}`;
   if (!spec) {
     const how = refused
       ? "not available on the shared demo"

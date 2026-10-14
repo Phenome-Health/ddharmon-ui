@@ -19,7 +19,7 @@
 // whose row is a `ConceptGroup`. So it now takes the two things it ever read: the member ids and the
 // optional per-member detail. Both call sites pass what they hold, and there is still ONE grid — building
 // a second for Gate 1 is the duplication the audit exists to catch.
-import { GripVertical, Undo2, X } from "lucide-react";
+import { Flashlight, GripVertical, Undo2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Highlight } from "@/components/ui/highlight";
 import { cn } from "@/lib/utils";
@@ -363,7 +363,9 @@ export function SourceRows({
                   "border-b border-rule-quiet-on-raised last:border-0 hover:bg-surface-inset",
                   drag && "cursor-grab",
                   drag && drag.movedMembers.has(r.id) && "bg-surface-inset",
-                  highlightIds?.has(r.id) && "bg-surface-info",
+                  // UNMISTAKABLE (review round 8): the tint alone was too faint to see, so a lit row also carries an
+                  // accent bar down its left edge and the module's tag in its cohort cell.
+                  highlightIds?.has(r.id) && "bg-surface-info shadow-[inset_3px_0_0_var(--accent)]",
                 )}
               >
                 {drag && (
@@ -402,9 +404,21 @@ export function SourceRows({
                   </td>
                 )}
                 <td className="px-2.5 py-1.5 align-top">
-                  <Badge variant="neutral" className="font-normal">
-                    {r.cohort || "—"}
-                  </Badge>
+                  <span className="flex flex-col items-start gap-1">
+                    <Badge variant="neutral" className="font-normal">
+                      {r.cohort || "—"}
+                    </Badge>
+                    {highlightIds?.has(r.id) && (
+                      <span
+                        data-testid="row-spotlight-tag"
+                        title="Concept Spotlight found this variable for the group you opened from it."
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-pill border border-accent-action px-1.5 py-0.5 text-[10px] font-semibold text-accent-on-raised"
+                      >
+                        <Flashlight aria-hidden="true" className="h-3 w-3 shrink-0" />
+                        Spotlight
+                      </span>
+                    )}
+                  </span>
                 </td>
                 <td className="px-2.5 py-1.5 align-top">
                   {r.synthetic ? (

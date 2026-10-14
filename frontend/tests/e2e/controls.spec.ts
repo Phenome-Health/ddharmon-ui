@@ -3,7 +3,7 @@ import { NO_FILTERS, applyFilters } from "@/lib/ledger";
 import { cohortInitials, tickedOfShown } from "@/lib/queue-controls";
 import { MISSING_IS_A_RUN_RESULT, missingReason } from "@/lib/score-scope";
 import type { CoherenceState, ConceptGroup } from "@/types";
-import { fixtureGroups } from "./gate1-fixture";
+import { asOwnedRun, fixtureGroups, serveRun } from "./gate1-fixture";
 import { serveFinished } from "./gate23-fixture";
 
 /**
@@ -355,8 +355,8 @@ test.describe("controls gate1 panel", () => {
     await expect(facts.locator("[data-testid='coherence-mark'] + [data-testid='row-vars']")).toHaveCount(1);
     await expect(row.locator("[data-testid='coherence-mark']")).toHaveAttribute("data-variant", "tag");
     await expect(row).not.toContainText("$");
-    // The price is said once, under the list.
-    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(1);
+    // The price is said once, on the Continue bar — the sum block under the list went in review round 7.
+    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(0);
   });
 });
 
@@ -470,17 +470,18 @@ test.describe("controls review round 1", () => {
   });
 
   test("@controls the spend summary says each fact once, briefly", async ({ page }) => {
+    // Review round 7: the sum block under the queue repeated the rail (spent), the select-all count (ticked) and the
+    // Continue bar (price), so it went. What only it said — the whole-run comparison — rides the bar's note.
+    await serveRun(page, asOwnedRun); // owned: the shared demo's bar prices nothing (08-18)
     await openGate1(page);
-    const sum = page.locator("[data-testid='sum-block']");
-    await expect(sum.locator("[data-sum-line='realized']")).toHaveText(/^Spent so far: /);
-    await expect(sum.locator("[data-sum-line='in-scope']")).toHaveText(/^0 of \d+ groups ticked · \$[\d.]+ to match at Gate 2$/);
+    await expect(page.locator("[data-testid='sum-block']")).toHaveCount(0);
+    const note = page.getByTestId("commit-assurance");
     // Nothing ticked, so the whole-corpus figure is the comparison worth showing.
-    await expect(sum.locator("[data-sum-line='whole-corpus']")).toHaveText(/^All \d+ groups: \$[\d.]+$/);
+    await expect(note.locator("[data-sum-line='whole-corpus']")).toHaveText(/^All \d+ groups would be \$[\d.]+\.$/);
     // With every group ticked the two figures are the same number, so the comparison is dropped.
     await page.locator("[data-testid='bulk-scope-toggle']").click();
     await expect(page.locator("[data-testid='bulk-scope']")).toHaveAttribute("data-state", "all");
-    await expect(sum.locator("[data-sum-line='whole-corpus']")).toHaveCount(0);
-    expect(((await sum.textContent()) ?? "").length).toBeLessThan(120);
+    await expect(page.locator("[data-sum-line='whole-corpus']")).toHaveCount(0);
   });
 
   test("@controls Gate 3 states the recommended-mapping caption once, not on every value-map tile", async ({ page }) => {
@@ -1052,5 +1053,57 @@ test.describe("controls repeated copy (round 5 sweep)", () => {
       expect(said).not.toMatch(/not a finding/i);
     }
     expect(MISSING_IS_A_RUN_RESULT).toMatch(/not a finding about your cohorts/i);
+  });
+});
+
+test.describe("controls review round 6 (live Lavish build, 2026-10-09)", () => {
+  for (const [gate, run] of [
+    ["gate1", PAUSED],
+    ["gate2", FINISHED],
+    ["gate3", FINISHED],
+  ] as const) {
+    test(`@controls ${gate}: mid-page, the queue ends as far above the Continue bar as the page's end does`, async ({ page }) => {
+      // Bhargav: "sidebar bottom isnt aligned, should have same space from continue rail as the main panel". The pinned
+      // bar sat 24px lower mid-page than at the page's end (the content's bottom padding), while the queue was sized
+      // to the end — so mid-page the queue stopped 40px short of the bar, not the 16px rhythm.
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await open(page, `/run/${run}/${gate}`);
+      // "Mid-page" = both pinned: the queue under the rail, the bar at the bottom, the page's end still below.
+      const at = (to: "pinned" | "end") =>
+        page.locator("main").evaluate((m, where) => {
+          m.scrollTop = where === "end" ? m.scrollHeight : m.scrollHeight - m.clientHeight - 40;
+          return new Promise<{ gap: number; queuePinned: boolean }>((resolve) =>
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => {
+                const q = document.querySelector("aside[data-testid$='-queue']") as HTMLElement;
+                const qr = q.getBoundingClientRect();
+                const bar = document.querySelector("[data-testid='commit-bar']")!.getBoundingClientRect();
+                const top = parseFloat(q.style.top || "0") + m.getBoundingClientRect().top;
+                resolve({ gap: Math.round(bar.top - qr.bottom), queuePinned: Math.abs(qr.top - top) < 1 });
+              }),
+            ),
+          );
+        }, to);
+      const pinned = await at("pinned");
+      expect(pinned.queuePinned, "the page is too short to pin the queue — this check needs a longer fixture").toBe(true);
+      expect(pinned.gap).toBe(16);
+      expect((await at("end")).gap).toBe(16);
+    });
+  }
+
+  test("@controls gate3: the queue filters by verdict and sorts like Gate 2's", async ({ page }) => {
+    // Bhargav: "bring over filter functionality from gate 1/2".
+    await open(page, `/run/${FINISHED}/gate3`);
+    const queue = page.locator("[data-testid='gate3-queue']");
+    await expect(queue.locator("[data-testid='segmented-sort']")).toBeVisible();
+    await expect(queue.locator("[data-testid='segmented-sort']")).toContainText(/Concept.*Verdict.*Vars/);
+    await queue.getByRole("button", { name: /filter/i }).first().click();
+    const verdict = page.locator("[data-testid^='filter-verdict-']");
+    await expect(verdict.first()).toBeVisible();
+    const before = await page.locator("[data-testid='gate3-concept']").count();
+    await verdict.first().click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-testid='filter-chip']").first()).toBeVisible();
+    await expect.poll(() => page.locator("[data-testid='gate3-concept']").count()).toBeLessThan(before);
   });
 });

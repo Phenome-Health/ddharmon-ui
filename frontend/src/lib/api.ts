@@ -19,8 +19,16 @@ import type {
   UIRecord,
 } from "@/types";
 import type { ComponentProposal, ReadDocument } from "@/lib/score-proposal";
+import { withApiOrigin } from "@/lib/api-origin";
 
-const BASE = "/api/harmonize";
+// Same-origin in every deployed build; a local backend in the Lavish review surface (`lib/api-origin.ts`).
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN as string | undefined;
+const BASE = withApiOrigin(API_ORIGIN, "/api/harmonize");
+
+/** A run's live-progress stream (SSE). Here, beside BASE, so it follows the same build-time API origin. */
+export function streamUrl(jobId: string): string {
+  return `${BASE}/stream/${jobId}`;
+}
 /** The six screens in order — the client-side half of contract.py's `GatePosition` literal. */
 export const GATE_ORDER: GatePosition[] = ["setup", "gate0", "gate1", "gate2", "gate3", "gate4"];
 export const IS_STATIC = import.meta.env.VITE_STATIC === "1";
@@ -255,7 +263,7 @@ export async function deriveComposite(
   apiKey?: string,
 ): Promise<CompositeSpec> {
   if (IS_STATIC) throw new Error(STATIC_MSG);
-  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to derive a composite variable.");
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to match a Concept Spotlight.");
   const headers = await authed({
     "content-type": "application/json",
     ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
@@ -357,7 +365,7 @@ export async function extractScoreComponents(
   doc: ReadDocument,
   apiKey?: string,
 ): Promise<ComponentProposal> {
-  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to extract the components.", 401);
+  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to extract the items.", 401);
   const headers = await authed({
     "content-type": "application/json",
     ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
@@ -381,7 +389,7 @@ export async function extractScoreComponents(
  * before spending (400/409) from an attempt that failed (5xx). A static build has no backend and says so.
  */
 export async function matchDeclaredScore(jobId: string, scoreName: string, apiKey?: string): Promise<CompositeSpec> {
-  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to match the declared score.", 401);
+  if (AUTH_ENABLED && !_tokenGetter) throw new ApiError("Sign in to match the declared Spotlight list.", 401);
   const headers = await authed({
     "content-type": "application/json",
     ...(apiKey ? { "x-anthropic-key": apiKey } : {}),
@@ -650,6 +658,29 @@ export function exportUrl(jobId: string, format: ExportFormat): string {
   // A download href can't set an Authorization header; when the SSO gate is on, ride the freshest cached
   // token as a query param (the backend accepts ?token= for the same reason the SSE endpoint does).
   return _lastToken ? `${base}&token=${encodeURIComponent(_lastToken)}` : base;
+}
+
+/**
+ * One export file's BYTES, for the code that needs the file rather than a link to it (review round 8): Gate 4's
+ * one-zip download and its notebook preview. Same route and same file as `exportUrl`, but a fetch can carry the
+ * Authorization header, so no token rides the URL.
+ *
+ * An HTML answer is treated as MISSING, as `fetchRetainedUpload` treats it: a static host answers an unknown path
+ * with the app's own `index.html` and a 200, and zipping that as `records_json.json` would hand the reviewer a page
+ * of markup under a data file's name.
+ */
+export async function fetchExport(jobId: string, format: ExportFormat): Promise<Blob> {
+  const url = IS_STATIC
+    ? `${STATIC_BASE}/exports/${jobId}.${EXPORT_EXT[format]}`
+    : `${BASE}/jobs/${encodeURIComponent(jobId)}/export?format=${format}`;
+  const res = await fetch(url, IS_STATIC ? undefined : { headers: await authed() });
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || type.includes("text/html")) {
+    const detail = (await res.json().catch(() => ({}))) as { detail?: string };
+    const why = res.ok ? "is not available in this build" : `could not be read (${res.status})`;
+    throw new Error(detail.detail || `The ${EXPORT_EXT[format]} export ${why}.`);
+  }
+  return res.blob();
 }
 
 /**

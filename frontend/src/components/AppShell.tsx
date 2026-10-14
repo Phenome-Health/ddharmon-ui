@@ -1,23 +1,23 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { Plus, ListChecks, BookOpen, Workflow, Gauge, Lightbulb, Sparkles, Boxes, Building2, Milestone, Network, Github,
-  PanelLeftClose,
-  PanelLeftOpen,
+  UserRound,
 } from "lucide-react";
 import { UserButton } from "@clerk/react";
 import { cn } from "@/lib/utils";
-import { readNavCollapsed, writeNavCollapsed } from "@/lib/nav-collapse";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { IS_STATIC } from "@/lib/api";
 import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
 import { PhMark } from "@/components/ph-logo";
 import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
 import { GlobalStatusBanner } from "@/components/global-status-banner";
+import { BuildStamp } from "@/components/build-stamp";
 
 // Dev channel: a build pinned to an UNRELEASED core (git ref), deployed to dev.ddharmon.io for
-// pre-PyPI validation. Baked in at build time (VITE_APP_CHANNEL=dev); defaults to prod so a normal
-// build is never mislabeled. Surfaced as a prominent badge so a dev build is never mistaken for prod.
+// pre-PyPI validation. Baked in at build time (VITE_APP_CHANNEL=dev); defaults to prod. Its prominent badge went
+// with the top bar (review round 7, Bhargav: "remove the dev tag"); what remains is the build stamp in the rail's
+// footer, which names the code — the Lavish≡dev parity check reads it.
 const IS_DEV_CHANNEL = (import.meta.env.VITE_APP_CHANNEL as string | undefined) === "dev";
 
 function NavLink({
@@ -29,7 +29,8 @@ function NavLink({
   href: string;
   icon: ReactNode;
   label: string;
-  /** Icon-rail form: the label is still the accessible name, it is just not drawn (08-16c Task 5). */
+  /** Icon-rail form: the label is still the accessible name, it is just not drawn (08-16c Task 5; the rail rests
+   *  this way since review round 7 and opens on hover). */
   collapsed?: boolean;
 }) {
   const [loc] = useLocation();
@@ -43,8 +44,8 @@ function NavLink({
       title={collapsed ? label : undefined}
       data-nav-active={active ? "true" : "false"}
       className={cn(
-        "flex items-center rounded text-sm transition-colors",
-        collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
+        // One geometry in both forms, so the icon does not jump when the rail opens: it sits where the rail centres it.
+        "flex items-center gap-3 whitespace-nowrap rounded px-3 py-2 text-sm transition-colors",
         active
           ? "bg-on-chrome/12 font-semibold text-on-chrome"
           : "text-on-chrome-muted hover:bg-on-chrome/8 hover:text-on-chrome",
@@ -56,171 +57,163 @@ function NavLink({
   );
 }
 
+/** How long the pointer must rest on the rail before it opens — long enough that crossing it does not flash it open. */
+const NAV_HOVER_DELAY_MS = 120;
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { isGuest, exitGuest, email } = useAuthState();
   /**
-   * Seeded from storage on FIRST RENDER, not in an effect (08-16c Task 5). An effect would paint the
-   * expanded nav and then snap it shut on every navigation for a reviewer who chose collapsed — a flash
-   * of the state they explicitly turned off.
+   * THE RAIL EXPANDS ON HOVER (review round 7, Bhargav 2026-10-13: "a hover to expand mechanic, not a collapse
+   * button"). It rests as an icon rail and opens OVER the content — the aside keeps its rail width in the layout and
+   * the panel inside it widens — so the page never reflows under the pointer. Keyboard focus opens it too, but only
+   * KEYBOARD focus (`:focus-visible`): a clicked link keeps focus, and a rail that stayed open after every click
+   * would undo the point of it.
    */
-  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => readNavCollapsed());
-  const toggleNav = () => {
-    setNavCollapsed((cur) => {
-      writeNavCollapsed(!cur);
-      return !cur;
-    });
-  };
+  const [hovered, setHovered] = useState(false);
+  const [keyFocus, setKeyFocus] = useState(false);
+  const hoverTimer = useRef<number | null>(null);
+  const expanded = hovered || keyFocus;
+  const collapsed = !expanded;
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-surface-chrome">
+    <div data-testid="app-shell" className="flex h-screen flex-col overflow-hidden bg-surface-chrome">
       {/* Site-wide "under active development" notice — every page, both prod + dev channels. */}
       <GlobalStatusBanner />
-      {/* Top bar (biomapper-ui chrome): logo + breadcrumb, sticky. */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-rule-on-chrome bg-surface-chrome px-4">
-        <Link href="/" className="flex items-center gap-2.5">
-          <PhMark tone="ground" className="h-6 w-6" />
-          <div className="flex items-center gap-2 text-sm">
-            <span className="font-display font-semibold text-on-chrome">Phenome Health</span>
-            <span className="text-on-chrome-faint">/</span>
-            <span className="font-display text-on-chrome-muted">ddharmon</span>
-          </div>
-        </Link>
-        <div className="flex items-center gap-1">
-          {IS_DEV_CHANNEL && (
-            <span
-              title="Development build — pinned to an unreleased core from GitHub, not the PyPI release. For pre-release testing only."
-              className="mr-2 rounded border border-danger-border bg-danger-bg px-2 py-0.5 text-xs font-semibold uppercase tracking-eyebrow text-danger"
+      {/*
+        NO TOP BAR (review round 7, Bhargav: "I want the space from this top bar back"). It held the brand (now the
+        rail's home link), the dev tag (gone), the build stamp, the running-runs badge and the account (all now in the
+        rail). The 56px it took go to every screen.
+      */}
+      <div className="flex min-h-0 flex-1">
+        <aside
+          data-testid="app-nav"
+          data-expanded={expanded ? "true" : "false"}
+          className="relative hidden w-14 shrink-0 lg:block"
+          onMouseEnter={() => {
+            if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+            hoverTimer.current = window.setTimeout(() => setHovered(true), NAV_HOVER_DELAY_MS);
+          }}
+          onMouseLeave={() => {
+            if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+            setHovered(false);
+          }}
+          onFocusCapture={(e) => {
+            if ((e.target as HTMLElement).matches(":focus-visible")) setKeyFocus(true);
+          }}
+          onBlurCapture={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKeyFocus(false);
+          }}
+        >
+          <div
+            data-testid="app-nav-panel"
+            className={cn(
+              // z-40: above the page's own pinned bars (the gate rail's pin is z-30), below dialogs and popovers (z-50).
+              "absolute inset-y-0 left-0 z-40 flex flex-col overflow-hidden border-r border-rule-on-chrome bg-surface-chrome px-2 py-3 transition-[width] duration-150 ease-out motion-reduce:transition-none",
+              expanded ? "w-60" : "w-14",
+            )}
+          >
+            {/* HOME, AND THE PRODUCT'S NAME — what the top bar's brand was for. */}
+            <Link
+              href="/"
+              data-testid="app-home"
+              aria-label={collapsed ? "ddharmon — home" : undefined}
+              title={collapsed ? "ddharmon — home" : undefined}
+              className="mb-2 flex items-center gap-3 rounded px-3 py-2 text-on-chrome transition-colors hover:bg-on-chrome/8"
             >
-              Dev · unreleased core
-            </span>
-          )}
-          {IS_STATIC && (
-            <span className="mr-2 rounded bg-warning-bg px-2 py-0.5 text-xs font-semibold text-warning">
-              Preview · sample data
-            </span>
-          )}
-          <ActiveRunsIndicator />
-          {/* Account area — only when the SSO gate is active. Guests get a "Sign in" affordance; signed-in
-              users get Clerk's UserButton (which must live inside the ClerkProvider AuthProvider mounts). */}
-          {AUTH_ENABLED && (
-            <div className="ml-1 flex items-center gap-2">
-              {isGuest ? (
-                <>
-                  <span
-                    title={email ? `Signed in as ${email} — read-only demo (running is limited to Phenome Health accounts)` : undefined}
-                    className="max-w-[16rem] truncate rounded bg-surface-inset px-2 py-0.5 text-xs font-semibold text-on-inset-muted"
-                  >
-                    {email ? `${email} · read-only` : "Guest"}
-                  </span>
+              <PhMark tone="ground" className="h-4 w-4 shrink-0" />
+              {expanded && <span className="whitespace-nowrap font-display text-sm font-semibold">ddharmon</span>}
+            </Link>
+            {expanded && IS_STATIC && (
+              <span className="mx-3 mb-2 w-fit whitespace-nowrap rounded bg-warning-bg px-2 py-0.5 text-xs font-semibold text-warning">
+                Preview · sample data
+              </span>
+            )}
+            <ActiveRunsIndicator compact={collapsed} />
+            <nav id="app-nav-list" className="space-y-1">
+              <NavLink href="/guide" icon={<BookOpen className="h-4 w-4 shrink-0" />} label="Guide" collapsed={collapsed} />
+              <NavLink href="/methods" icon={<Workflow className="h-4 w-4 shrink-0" />} label="Methods" collapsed={collapsed} />
+              <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4 shrink-0" />} label="Benchmarks" collapsed={collapsed} />
+              <NavLink href="/design" icon={<Lightbulb className="h-4 w-4 shrink-0" />} label="Design" collapsed={collapsed} />
+              <NavLink href="/demo" icon={<Sparkles className="h-4 w-4 shrink-0" />} label="Demo" collapsed={collapsed} />
+              <NavLink href="/run/new/setup" icon={<Plus className="h-4 w-4 shrink-0" />} label="New run" collapsed={collapsed} />
+              <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4 shrink-0" />} label="Runs" collapsed={collapsed} />
+              <NavLink href="/related" icon={<Boxes className="h-4 w-4 shrink-0" />} label="Related work" collapsed={collapsed} />
+              <NavLink href="/roadmap" icon={<Milestone className="h-4 w-4 shrink-0" />} label="Roadmap" collapsed={collapsed} />
+              <NavLink href="/architecture" icon={<Network className="h-4 w-4 shrink-0" />} label="Architecture" collapsed={collapsed} />
+              <NavLink href="/phenome" icon={<Building2 className="h-4 w-4 shrink-0" />} label="Phenome Health" collapsed={collapsed} />
+            </nav>
+            <div className="mt-auto space-y-1 border-t border-rule-on-chrome pt-3 text-xs">
+              {/* THE ACCOUNT, moved from the top bar (round 7). Only when the SSO gate is active. Guests get a sign-in
+                  affordance; signed-in users get Clerk's UserButton (inside the ClerkProvider AuthProvider mounts). */}
+              {AUTH_ENABLED &&
+                (isGuest ? (
                   <button
                     type="button"
                     onClick={exitGuest}
-                    className="rounded px-2 py-1 text-xs font-semibold text-on-chrome transition-colors hover:bg-on-chrome/10"
+                    aria-label={email ? `Sign out (${email}, read-only)` : "Sign in"}
+                    title={
+                      email
+                        ? `Signed in as ${email} — read-only demo (running is limited to Phenome Health accounts)`
+                        : "Guest — sign in"
+                    }
+                    className="flex w-full items-center gap-3 rounded px-3 py-2 text-left text-on-chrome-muted transition-colors hover:bg-on-chrome/8 hover:text-on-chrome"
                   >
-                    {email ? "Sign out" : "Sign in"}
+                    <UserRound aria-hidden="true" className="h-4 w-4 shrink-0" />
+                    {expanded && (
+                      <span className="min-w-0 truncate">
+                        {email ? `${email} · read-only · Sign out` : "Guest · Sign in"}
+                      </span>
+                    )}
                   </button>
+                ) : (
+                  <div className="flex items-center px-1.5 py-1">
+                    <UserButton showName={expanded} />
+                  </div>
+                ))}
+              {expanded && (
+                <>
+                  <a
+                    href={PH.org}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mb-1 flex items-center gap-1.5 whitespace-nowrap rounded px-3 py-1.5 text-on-chrome-muted transition-colors hover:bg-on-chrome/10 hover:text-on-chrome"
+                  >
+                    <PhMark tone="ground" className="h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      A project of <span className="font-display font-semibold text-on-chrome">Phenome Health</span>
+                    </span>
+                  </a>
+                  <a
+                    href={ISSUES_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2 whitespace-nowrap rounded px-3 py-1.5 text-on-chrome-muted transition-colors hover:bg-on-chrome/10 hover:text-on-chrome"
+                  >
+                    <Github className="h-3.5 w-3.5" /> Report an issue
+                  </a>
+                  <a
+                    href={REPO_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block whitespace-nowrap px-3 text-xs text-on-chrome-muted transition-colors hover:text-on-chrome"
+                  >
+                    View source on GitHub
+                  </a>
+                  <a
+                    href="https://claude.com/claude-code"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block whitespace-nowrap px-3 text-xs text-on-chrome-muted transition-colors hover:text-on-chrome"
+                  >
+                    Built with Claude Code
+                  </a>
                 </>
-              ) : (
-                <UserButton />
               )}
+              {/* The build stamp stays in the DOM on the rail (screen-reader text) so a parity check can always read
+                  it; it is drawn when the rail opens. */}
+              {IS_DEV_CHANNEL && <BuildStamp className={expanded ? "block whitespace-nowrap px-3 pt-1" : "sr-only"} />}
             </div>
-          )}
-        </div>
-      </header>
-
-      <div className="flex min-h-0 flex-1">
-        {/* Left sidebar nav. */}
-        <aside
-          data-testid="app-nav"
-          data-collapsed={navCollapsed ? "true" : "false"}
-          className={cn(
-            "hidden shrink-0 flex-col border-r border-rule-on-chrome bg-surface-chrome py-4 lg:flex",
-            // The icon rail keeps every destination reachable and the current one identifiable; only the
-            // labels go. Full removal would have made "which page am I on" unanswerable from the chrome.
-            navCollapsed ? "w-14 px-2" : "w-60 px-3",
-          )}
-        >
-          {/* Inside the aside, so below the `lg:` breakpoint — where the nav is already hidden — the
-              control neither appears nor occupies space. */}
-          <button
-            type="button"
-            data-testid="app-nav-toggle"
-            onClick={toggleNav}
-            aria-expanded={!navCollapsed}
-            aria-controls="app-nav-list"
-            // Names the ACTION, not the state: "Collapse navigation" is what pressing it does.
-            aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-            title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
-            className={cn(
-              "mb-2 flex items-center gap-2 rounded px-2 py-1.5 text-xs text-on-chrome-muted transition-colors hover:bg-on-chrome/10 hover:text-on-chrome",
-              navCollapsed ? "justify-center" : "justify-start",
-            )}
-          >
-            {navCollapsed ? (
-              <PanelLeftOpen aria-hidden="true" className="h-4 w-4 shrink-0" />
-            ) : (
-              <PanelLeftClose aria-hidden="true" className="h-4 w-4 shrink-0" />
-            )}
-            {!navCollapsed && <span>Collapse</span>}
-          </button>
-          <nav id="app-nav-list" className="space-y-1">
-            <NavLink href="/guide" icon={<BookOpen className="h-4 w-4" />} label="Guide" collapsed={navCollapsed} />
-            <NavLink href="/methods" icon={<Workflow className="h-4 w-4" />} label="Methods" collapsed={navCollapsed} />
-            <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4" />} label="Benchmarks" collapsed={navCollapsed} />
-            <NavLink href="/design" icon={<Lightbulb className="h-4 w-4" />} label="Design" collapsed={navCollapsed} />
-            <NavLink href="/demo" icon={<Sparkles className="h-4 w-4" />} label="Demo" collapsed={navCollapsed} />
-            <NavLink href="/run/new/setup" icon={<Plus className="h-4 w-4" />} label="New run" collapsed={navCollapsed} />
-            <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4" />} label="Runs" collapsed={navCollapsed} />
-            <NavLink href="/related" icon={<Boxes className="h-4 w-4" />} label="Related work" collapsed={navCollapsed} />
-            <NavLink href="/roadmap" icon={<Milestone className="h-4 w-4" />} label="Roadmap" collapsed={navCollapsed} />
-            <NavLink href="/architecture" icon={<Network className="h-4 w-4" />} label="Architecture" collapsed={navCollapsed} />
-            <NavLink href="/phenome" icon={<Building2 className="h-4 w-4" />} label="Phenome Health" collapsed={navCollapsed} />
-          </nav>
-          <div
-            className={cn(
-              "mt-auto space-y-1 border-t border-rule-on-chrome pt-3 text-xs",
-              // The footer is prose + a mark. Collapsed there is no room for the words, so it goes rather
-              // than wrapping into an unreadable column.
-              navCollapsed && "hidden",
-            )}
-          >
-            <a
-              href={PH.org}
-              target="_blank"
-              rel="noreferrer"
-              className="mb-1 flex items-center gap-1.5 whitespace-nowrap rounded px-3 py-1.5 text-on-chrome-muted transition-colors hover:bg-on-chrome/10 hover:text-on-chrome"
-            >
-              <PhMark tone="ground" className="h-3.5 w-3.5 shrink-0" />
-              <span>
-                A project of <span className="font-display font-semibold text-on-chrome">Phenome Health</span>
-              </span>
-            </a>
-            <a
-              href={ISSUES_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-2 rounded px-3 py-1.5 text-on-chrome-muted transition-colors hover:bg-on-chrome/10 hover:text-on-chrome"
-            >
-              <Github className="h-3.5 w-3.5" /> Report an issue
-            </a>
-            <a
-              href={REPO_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="block px-3 text-xs text-on-chrome-muted transition-colors hover:text-on-chrome"
-            >
-              View source on GitHub
-            </a>
-            <a
-              href="https://claude.com/claude-code"
-              target="_blank"
-              rel="noreferrer"
-              className="block px-3 text-xs text-on-chrome-muted transition-colors hover:text-on-chrome"
-            >
-              Built with Claude Code
-            </a>
           </div>
         </aside>
-
         {/*
           Scrolling content region — and the app's ONLY vertical scroll context.
 

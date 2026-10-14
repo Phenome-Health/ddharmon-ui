@@ -8,18 +8,18 @@
 //   3. Partial coverage is NOT the published score. The verdict and the caveats say so in those words.
 //
 // Metadata-only: the output is a recipe the analyst runs on their own rows. ddharmon never computes it.
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "wouter";
 import {
   AlertTriangle,
   ArrowLeft,
-  Calculator,
   CheckCircle2,
   ChevronDown,
+  CircleDashed,
+  Flashlight,
   FileText,
   Link2,
   Loader2,
-  CircleDashed,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -27,12 +27,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { resolvePinned } from "@/hooks/use-gate-decisions";
 import { deriveComposite, extractCompositeDocument } from "@/lib/api";
 import { MISSING_IS_A_RUN_RESULT, coveredCohorts, GROUP_SELECT_THRESHOLD, missingReason, offeredGroups } from "@/lib/score-scope";
+import { conceptTitle } from "@/lib/ledger";
 import { cn } from "@/lib/utils";
 import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
 
@@ -127,7 +129,7 @@ export default function CompositePage() {
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
         <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
-          <Calculator className="h-5 w-5 text-on-field" /> Composite variable
+          <Flashlight className="h-5 w-5 text-on-field" /> Concept Spotlight
         </h1>
         <p className="mt-1.5 max-w-3xl text-sm text-on-field-muted">
           Point at a paper, repo, PDF, or Word supplement that defines a score — a frailty index, an intrinsic-capacity score,
@@ -169,7 +171,7 @@ export default function CompositePage() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={7}
-                placeholder="Paste the methods section or the component table that defines the score…"
+                placeholder="Paste the methods section or the item table that defines the score…"
                 className="font-mono text-xs"
               />
               {extracted && (
@@ -224,12 +226,12 @@ export default function CompositePage() {
               Hybrid retrieval (slower first call, better matching on large runs)
             </label>
             <Button onClick={() => void derive()} disabled={!canDerive} className="ml-auto gap-1.5">
-              {busy === "derive" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Calculator className="h-3.5 w-3.5" />}
+              {busy === "derive" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Flashlight className="h-3.5 w-3.5" />}
               Derive
             </Button>
           </div>
           <p className="text-xs text-on-raised-muted">
-            Two LLM calls: transcribe the score, then match its components to this run's concepts. Editing a
+            Two LLM calls: transcribe the score, then match its items to this run's concepts. Editing a
             match afterwards re-derives for free.
           </p>
           {demo && (
@@ -290,62 +292,6 @@ export function SpecView({
   // built. That is the prohibited emission, arrived at by a default rather than by a judgement.
   const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.indeterminate;
 
-  // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
-  // groups only when components actually carry a `domain`; with none, the flat table below renders
-  // unchanged — never a code-side, score-specific grouping. Domains appear in the order their first
-  // component appears in the definition.
-  const hasDomains = definition.components.some((c) => c.domain);
-  const coverageDomains = useMemo(() => {
-    if (!hasDomains) return [] as { domain: string; matches: ComponentMatch[] }[];
-    const domainByComponent = new Map(
-      definition.components.map((c) => [c.name, c.domain || "Other"] as const),
-    );
-    const order: string[] = [];
-    const byDomain = new Map<string, ComponentMatch[]>();
-    for (const m of spec.matches) {
-      const d = domainByComponent.get(m.component) ?? "Other";
-      if (!byDomain.has(d)) {
-        byDomain.set(d, []);
-        order.push(d);
-      }
-      byDomain.get(d)!.push(m);
-    }
-    return order.map((d) => ({ domain: d, matches: byDomain.get(d)! }));
-  }, [spec.matches, definition.components, hasDomains]);
-  // A cohort "covers" a domain when at least one of its components is COVERED in that cohort — union
-  // coverage (`coveredCohorts`), not raw group membership.
-  const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
-    matches.some((m) => coveredCohorts(m).includes(cohort));
-  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables. Reads
-  // the SAME union coverage as the found-component detail and the group list, so the table cannot disagree.
-  const coverageComponentRow = (m: ComponentMatch) => (
-    <tr
-      key={m.component}
-      data-testid="coverage-row"
-      data-component={m.component}
-      className="border-b border-border/60 last:border-0"
-    >
-      <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
-      {feasibility.perCohort.map((c) => {
-        const present = coveredCohorts(m).includes(c.cohort);
-        return (
-          <td
-            key={c.cohort}
-            data-testid="coverage-cell"
-            data-cohort={c.cohort}
-            data-present={present ? "true" : "false"}
-            className="px-2 py-1.5 text-center"
-          >
-            {present ? (
-              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
-            ) : (
-              <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
-            )}
-          </td>
-        );
-      })}
-    </tr>
-  );
 
   return (
     <div className="space-y-4">
@@ -357,7 +303,7 @@ export function SpecView({
             <Badge variant="neutral" className="text-xs">{definition.kind.replace(/_/g, " ")}</Badge>
             <span className={`ml-auto flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${style.className}`}>
               <style.Icon className="h-3.5 w-3.5" />
-              {style.label} · {feasibility.nRequiredMatched}/{feasibility.nRequired} required components
+              {style.label} · {feasibility.nRequiredMatched}/{feasibility.nRequired} required items
             </span>
           </div>
         </CardHeader>
@@ -423,107 +369,7 @@ export function SpecView({
       />
 
       {/* --- per-cohort coverage --- */}
-      <Card>
-        <Collapsible defaultOpen>
-          <CardHeader className="pb-2">
-            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
-              <CardTitle className="text-sm">
-                Per-cohort coverage
-                {hasDomains && (
-                  <span className="ml-2 font-normal text-xs text-on-raised-muted">
-                    by {coverageDomains.length} domains
-                  </span>
-                )}
-              </CardTitle>
-              <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-          </CardHeader>
-          <CollapsibleContent>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-border text-left text-on-raised-muted">
-                      <th className="py-1.5 pr-3 font-semibold">Component</th>
-                      {feasibility.perCohort.map((c) => (
-                        <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
-                          {c.cohort}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {hasDomains
-                      ? coverageDomains.map(({ domain, matches }) => (
-                          <Fragment key={domain}>
-                            <tr className="border-b border-border bg-muted/40">
-                              <td
-                                colSpan={feasibility.perCohort.length + 1}
-                                className="px-1 py-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-                              >
-                                {domain}
-                              </td>
-                            </tr>
-                            {matches.map(coverageComponentRow)}
-                            {/* The domain-level readout the reviewer asked for: a cohort need only supply
-                                ONE item in a sub-scale for that domain to be represented in it. */}
-                            <tr
-                              data-testid="coverage-domain-covers"
-                              data-domain={domain}
-                              className="border-b border-border/60 text-on-raised-muted"
-                            >
-                              <td className="py-1 pl-3 pr-3 italic">covers ≥1</td>
-                              {feasibility.perCohort.map((c) => (
-                                <td key={c.cohort} className="px-2 py-1 text-center">
-                                  {cohortCoversDomain(matches, c.cohort) ? (
-                                    <CheckCircle2 className="mx-auto h-3 w-3 text-status-ok" />
-                                  ) : (
-                                    <XCircle className="mx-auto h-3 w-3 text-on-raised-muted/40" />
-                                  )}
-                                </td>
-                              ))}
-                            </tr>
-                          </Fragment>
-                        ))
-                      : spec.matches.map(coverageComponentRow)}
-                    <tr className="border-t border-border font-semibold">
-                      <td className="py-1.5 pr-3 text-on-raised">Present</td>
-                      {feasibility.perCohort.map((c) => (
-                        <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
-                          {
-                            spec.matches.filter((m) =>
-                              coveredCohorts(m).includes(c.cohort),
-                            ).length
-                          }
-                        </td>
-                      ))}
-                    </tr>
-                    <tr className="font-semibold">
-                      <td className="py-1.5 pr-3 text-on-raised">Computable</td>
-                      {feasibility.perCohort.map((c) => (
-                        <td key={c.cohort} className="px-2 py-1.5 text-center">
-                          {c.computable ? (
-                            <span className="text-status-ok">yes</span>
-                          ) : (
-                            <span className="text-on-raised-muted">no</span>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-2 text-xs text-on-raised-muted">
-                A cohort is computable only when every required component is present in it.
-                {hasDomains &&
-                  " “covers ≥1” is looser — it asks only whether a cohort supplies any item in a domain."}{" "}
-                Presence is per data dictionary — participant-level missingness, and therefore effective N,
-                cannot be derived from metadata.
-              </p>
-            </CardContent>
-          </CollapsibleContent>
-        </Collapsible>
-      </Card>
+      <ScoreCoverageCard spec={spec} />
 
       {/* --- derivation --- */}
       {!hideDerivation && (
@@ -531,7 +377,8 @@ export function SpecView({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Derivation</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
+        {/* `data-authored="core"`: the recipe's words are core's (derive_composite), not this screen's copy. */}
+        <CardContent data-authored="core" className="space-y-2">
           {derivation.map((s) => (
             <div key={s.order} className="rounded-md border border-border bg-muted/40 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -569,7 +416,7 @@ export function SpecView({
             <CardTitle className="text-sm">Caveats</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-1.5 text-xs text-on-raised">
+            <ul data-authored="core" className="space-y-1.5 text-xs text-on-raised">
               {feasibility.caveats.map((c) => (
                 <li key={c} className="flex gap-1.5">
                   <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-on-raised-muted" />
@@ -581,6 +428,213 @@ export function SpecView({
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * The full per-cohort coverage table — a row per component, a column per cohort, read off a MATCH's union coverage
+ * (`coveredCohorts`), with the Present and Computable rows under it. Shared by this page's `SpecView` and Gate 4's
+ * declared-score panel (review round 6 note L7, "no cohort coverage table?" — option (b), 2026-10-13), so the two
+ * screens cannot draw it differently. Gate 1 has no match and so never draws this one: its table is the free
+ * search's "reached by search" (`ScoreSuggestionCards`).
+ */
+export function ScoreCoverageCard({
+  spec,
+  presenceStated = false,
+  foldLabel,
+}: {
+  spec: CompositeSpec;
+  /** The surrounding screen already says presence is per data dictionary (Gate 4's panel) — said once, not twice. */
+  presenceStated?: boolean;
+  /** Draw as an outlined fold with this label, closed by default (Gate 4), instead of a card (this page). */
+  foldLabel?: string;
+}) {
+  const { definition, feasibility } = spec;
+  // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
+  // groups only when components actually carry a `domain`; with none, the flat table below renders
+  // unchanged — never a code-side, score-specific grouping. Domains appear in the order their first
+  // component appears in the definition.
+  const hasDomains = definition.components.some((c) => c.domain);
+  const coverageDomains = useMemo(() => {
+    if (!hasDomains) return [] as { domain: string; matches: ComponentMatch[] }[];
+    const domainByComponent = new Map(
+      definition.components.map((c) => [c.name, c.domain || "Other"] as const),
+    );
+    const order: string[] = [];
+    const byDomain = new Map<string, ComponentMatch[]>();
+    for (const m of spec.matches) {
+      const d = domainByComponent.get(m.component) ?? "Other";
+      if (!byDomain.has(d)) {
+        byDomain.set(d, []);
+        order.push(d);
+      }
+      byDomain.get(d)!.push(m);
+    }
+    return order.map((d) => ({ domain: d, matches: byDomain.get(d)! }));
+  }, [spec.matches, definition.components, hasDomains]);
+  // A cohort "covers" a domain when at least one of its components is COVERED in that cohort — union
+  // coverage (`coveredCohorts`), not raw group membership.
+  const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
+    matches.some((m) => coveredCohorts(m).includes(cohort));
+  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables. Reads
+  // the SAME union coverage as the found-component detail and the group list, so the table cannot disagree.
+  const coverageComponentRow = (m: ComponentMatch) => (
+    <tr
+      key={m.component}
+      data-testid="coverage-row"
+      data-component={m.component}
+      className="border-b border-border/60 last:border-0"
+    >
+      <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
+      {feasibility.perCohort.map((c) => {
+        const present = coveredCohorts(m).includes(c.cohort);
+        return (
+          <td
+            key={c.cohort}
+            data-testid="coverage-cell"
+            data-cohort={c.cohort}
+            data-present={present ? "true" : "false"}
+            className="px-2 py-1.5 text-center"
+          >
+            {present ? (
+              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
+            ) : (
+              <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+
+  const body = (
+    <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-on-raised-muted">
+                    <th className="py-1.5 pr-3 font-semibold">Item</th>
+                    {feasibility.perCohort.map((c) => (
+                      <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
+                        {c.cohort}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {hasDomains
+                    ? coverageDomains.map(({ domain, matches }) => (
+                        <Fragment key={domain}>
+                          <tr className="border-b border-border bg-muted/40">
+                            <td
+                              colSpan={feasibility.perCohort.length + 1}
+                              className="px-1 py-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+                            >
+                              {domain}
+                            </td>
+                          </tr>
+                          {matches.map(coverageComponentRow)}
+                          {/* The domain-level readout the reviewer asked for: a cohort need only supply
+                              ONE item in a sub-scale for that domain to be represented in it. */}
+                          <tr
+                            data-testid="coverage-domain-covers"
+                            data-domain={domain}
+                            className="border-b border-border/60 text-on-raised-muted"
+                          >
+                            <td className="py-1 pl-3 pr-3 italic">covers ≥1</td>
+                            {feasibility.perCohort.map((c) => (
+                              <td key={c.cohort} className="px-2 py-1 text-center">
+                                {cohortCoversDomain(matches, c.cohort) ? (
+                                  <CheckCircle2 className="mx-auto h-3 w-3 text-status-ok" />
+                                ) : (
+                                  <XCircle className="mx-auto h-3 w-3 text-on-raised-muted/40" />
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        </Fragment>
+                      ))
+                    : spec.matches.map(coverageComponentRow)}
+                  <tr className="border-t border-border font-semibold">
+                    <td className="py-1.5 pr-3 text-on-raised">Present</td>
+                    {feasibility.perCohort.map((c) => (
+                      <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
+                        {
+                          spec.matches.filter((m) =>
+                            coveredCohorts(m).includes(c.cohort),
+                          ).length
+                        }
+                      </td>
+                    ))}
+                  </tr>
+                  <tr className="font-semibold">
+                    <td className="py-1.5 pr-3 text-on-raised">Computable</td>
+                    {feasibility.perCohort.map((c) => (
+                      <td
+                        key={c.cohort}
+                        data-testid="coverage-computable"
+                        data-cohort={c.cohort}
+                        className="px-2 py-1.5 text-center"
+                      >
+                        {c.computable ? (
+                          <span className="text-status-ok">yes</span>
+                        ) : (
+                          <span className="text-on-raised-muted">no</span>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-on-raised-muted">
+              A cohort is computable only when every required item is present in it.
+              {hasDomains &&
+                " “covers ≥1” is looser — it asks only whether a cohort supplies any item in a domain."}
+              {!presenceStated &&
+                " Presence is per data dictionary — participant-level missingness, and therefore effective N, cannot be derived from metadata."}
+            </p>
+    </>
+  );
+
+  // GATE 4 (review round 9, note 5): an outlined fold among the panel's other folds, CLOSED until opened — the same
+  // shape and default as Gate 1's "reached by search" table, so the two gates read alike.
+  if (foldLabel) {
+    return (
+      <Collapsible data-testid="score-coverage" className={FOLD_BOX}>
+        <CollapsibleTrigger data-testid="score-coverage-toggle" className={disclosureRow("raised", "group")}>
+          <DisclosureLabel ground="raised">
+            {foldLabel}
+            {hasDomains && ` · by ${coverageDomains.length} domains`}
+          </DisclosureLabel>
+          <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">{body}</CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  return (
+    <Card data-testid="score-coverage">
+      <Collapsible defaultOpen>
+        <CardHeader className="pb-2">
+          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
+            <CardTitle className="text-sm">
+              Per-cohort coverage
+              {hasDomains && (
+                <span className="ml-2 font-normal text-xs text-on-raised-muted">
+                  by {coverageDomains.length} domains
+                </span>
+              )}
+            </CardTitle>
+            <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent>{body}</CardContent>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
   );
 }
 
@@ -606,6 +660,7 @@ export function ScoreComponentsCard({
   onGroupScopeChange,
   resolveConcept,
   resolveGroupId,
+  coverage,
 }: {
   spec: CompositeSpec;
   conceptById: Record<string, UIRecord>;
@@ -619,6 +674,8 @@ export function ScoreComponentsCard({
     id: string,
   ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
   resolveGroupId?: (id: string) => string | undefined;
+  /** A fold drawn between how-it-works and the items (Gate 4's coverage table) — Gate 1's section order. */
+  coverage?: ReactNode;
 }) {
   const { definition } = spec;
   const record = variant === "record";
@@ -645,7 +702,8 @@ export function ScoreComponentsCard({
     resolveConcept ??
     ((id: string) => {
       const r = conceptById[id] ?? recordById[id];
-      return r ? { concept: r.concept ?? "", cohorts: r.cohorts ?? [] } : undefined;
+      // The one naming rule (`conceptTitle`), as Gate 1 and Gate 4 title a group (round 8, note 3).
+      return r ? { concept: conceptTitle(r, undefined), cohorts: r.cohorts ?? [] } : undefined;
     });
   const renderRow = (m: typeof spec.matches[number]) => (
     <MatchRow
@@ -667,20 +725,20 @@ export function ScoreComponentsCard({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Components → this run's concepts</CardTitle>
+        <CardTitle className="text-sm">Items → this run's concepts</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. */}
-        <div
-          data-testid="score-builder-info"
-          className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-xs"
-        >
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            Score builder · how matching works
-          </p>
+        {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. A FOLD, open
+            until closed — the same shape as Gate 1's "how suggestions work" (review round 9, note 5). */}
+        <Collapsible defaultOpen data-testid="score-builder-info" className={FOLD_BOX}>
+          <CollapsibleTrigger data-testid="score-builder-info-toggle" className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">Concept Spotlight · how matching works</DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-1.5">
           <ul className="flex flex-col gap-1 text-on-raised-muted">
             <li>
-              <span className="font-semibold text-on-raised">Source-only.</span> Each component shows the
+              <span className="font-semibold text-on-raised">Source-only.</span> Each item shows the
               paper&rsquo;s own fields (name · categories · coding); generated prose is dropped unless it is
               verbatim in the document.
             </li>
@@ -689,16 +747,16 @@ export function ScoreComponentsCard({
               answer-option individually (0–1); a group&rsquo;s score is the mean of its rated members.
             </li>
             <li>
-              <span className="font-semibold text-on-raised">Component number.</span> The figure on each
-              component is the mean of the best match per cohort, over the cohorts found.
+              <span className="font-semibold text-on-raised">Item number.</span> The figure on each
+              item is the mean of the best match per cohort, over the cohorts found.
             </li>
           </ul>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
             {record ? (
               // A RECORD (Gate 4): scope was settled on Gate 1, so there is no threshold to state and nothing selects.
               <>
-                Scope was settled on Gate 1, so nothing here selects: every group the match reached counts toward a
-                component&rsquo;s figure, as it does toward the coverage the verdict comes from.
+                Scope was settled on Gate 1, so nothing here selects: every group the match reached counts toward an
+                item&rsquo;s figure, as it does toward the coverage the verdict comes from.
               </>
             ) : (
               <>
@@ -706,11 +764,12 @@ export function ScoreComponentsCard({
                     printed here (final review round 1, item 3). */}
                 Auto-select &amp; tag every group scoring{" "}
                 <span className="font-mono text-on-raised">{GROUP_SELECT_THRESHOLD.toFixed(2)}</span> or higher —
-                one threshold for the whole builder, applied to every component.
+                one threshold for the whole builder, applied to every item.
               </>
             )}
           </p>
-        </div>
+          </CollapsibleContent>
+        </Collapsible>
         {declaredUncoded && (
           <p
             data-testid="score-coding-unstated-note"
@@ -718,19 +777,22 @@ export function ScoreComponentsCard({
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              This score was declared as a list of names, so no component has a coding rule from a source — set each
-              component&rsquo;s categories, coding or cutoff yourself. None is filled in for you.
+              This Spotlight list was declared as names only, so no item has a coding rule from a source — set each
+              item&rsquo;s categories, coding or cutoff yourself. None is filled in for you.
             </span>
           </p>
         )}
+        {/* Gate 4's coverage fold, between how-it-works and the items — Gate 1's order (round 9, note 5). */}
+        {coverage}
         {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
-            The header carries the found/total tally; each row shows its own found/missing icon. */}
-        <Collapsible defaultOpen>
-          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
-            <span className="flex items-center gap-1.5">
-              Components · {nFound}/{spec.matches.length} found
-            </span>
-            <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+            The header carries the found/total tally; each row shows its own found/missing icon. An outlined fold,
+            open until closed, as Gate 1's items fold is. */}
+        <Collapsible defaultOpen data-testid="score-match-components" className={FOLD_BOX}>
+          <CollapsibleTrigger data-testid="score-match-components-toggle" className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">
+              Items · {nFound}/{spec.matches.length} found
+            </DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2 space-y-2">
             {spec.matches.map(renderRow)}
@@ -879,7 +941,7 @@ function MatchRow({
               checked={sel}
               disabled={readOnly}
               onChange={() => toggleGroup(g.groupId)}
-              aria-label={`Include the group ${g.label} for this component`}
+              aria-label={`Include the group ${g.label} for this item`}
               className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
             />
           )}
@@ -1111,7 +1173,7 @@ function MatchRow({
             <p className="text-on-raised-muted">
               <span className="font-semibold text-on-raised">Missing.</span>{" "}
               {match.shortlist.length > 0
-                ? `${match.shortlist.length} ${match.shortlist.length === 1 ? "candidate was" : "candidates were"} retrieved and none measures this component.`
+                ? `${match.shortlist.length} ${match.shortlist.length === 1 ? "candidate was" : "candidates were"} retrieved and none measures this item.`
                 : "Nothing in this run retrieved for it."}
             </p>
           )}

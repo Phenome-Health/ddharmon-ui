@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { JobResult } from "@/types";
-import { IS_STATIC, appendAuthToken, cancelJob, getResult } from "@/lib/api";
+import { IS_STATIC, appendAuthToken, cancelJob, getResult, streamUrl } from "@/lib/api";
 import { streamPayload } from "@/lib/stream-payload";
 
 const MAX_RETRIES = 5;
@@ -154,7 +154,7 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
       if (!mountedRef.current) return;
       // EventSource can't set an Authorization header, so the Clerk token (when the SSO gate is on) rides
       // as ?token=; appendAuthToken is a no-op when auth is disabled (static/dev). Await it before opening.
-      const url = await appendAuthToken(`/api/harmonize/stream/${jobId}`);
+      const url = await appendAuthToken(streamUrl(jobId));
       if (!mountedRef.current) return;
       const es = new EventSource(url);
       esRef.current = es;

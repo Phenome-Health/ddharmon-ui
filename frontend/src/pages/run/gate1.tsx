@@ -1,7 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import {
-  Calculator,
   ChevronDown,
   ChevronRight,
   Grid3x3,
@@ -26,6 +25,7 @@ import {
 } from "@/components/ui/collapsible";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 import { GateShell } from "@/components/gate/GateShell";
+import { SpotlightMarker } from "@/components/gate/SpotlightMarker";
 import { GATE1_LEDGER_COLUMNS, Ledger } from "@/components/gate/Ledger";
 import { LedgerRow } from "@/components/gate/LedgerRow";
 import { COHERENCE_COPY, CoherenceMark } from "@/components/gate/CoherenceMark";
@@ -59,7 +59,7 @@ import {
 import { tickedOfShown } from "@/lib/queue-controls";
 import { gate1BillableGroups, gate1ScopePayload, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { isGatePast } from "@/lib/gate-routes";
-import { isGateLocked } from "@/lib/review-mode";
+import { isAutoAccepted, isGateLocked } from "@/lib/review-mode";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
@@ -101,7 +101,8 @@ import {
   resumeTookEffect,
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
-import { SUGGESTION_TAG_COPY, scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
+import { scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
+import { SCORE_CUTOFF_KIND, SCORE_CUTOFF_SETTING, effectiveCutoff } from "@/lib/score-cutoff";
 import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
 import { shippedDeclaration, shippedSuggestions } from "@/lib/demo-score";
@@ -179,32 +180,18 @@ function TemplateSuspicion({ judged = false }: { judged?: boolean }) {
       className="inline-flex items-center gap-1 text-xs text-on-raised-muted"
     >
       <Grid3x3 aria-hidden="true" className="h-3 w-3 shrink-0" />
-      repeating template
+      {/* One word on the face (layout C, 2026-10-13), beside the state it qualifies; the title carries the claim. */}
+      template
     </span>
   );
 }
 
-/** At or above this many variables, a group is hard to review by hand without at least one re-split. */
-const BIG_GROUP_MIN = 10;
-
-/**
- * A "large group" nudge (Bhargav: a 10+-variable group is hard to tackle without at least one re-split, so
- * mark them especially). PURELY LOCAL — member count, no model call — so it is a prioritisation hint, not a
- * judgement: it marks the groups worth spending an "Accept this division" / auto-refine pass on before the
- * manual work begins.
- */
-function LargeGroupMark({ count }: { count: number }) {
-  return (
-    <span
-      data-testid="large-group-mark"
-      title={`${count} variables — a large group. These usually need at least one re-split before they resolve cleanly at Gate 2; a good candidate for "Accept this division" or an auto-refine pass before hand-editing.`}
-      className="inline-flex items-center gap-1 rounded-pill bg-surface-warn px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide text-on-warn"
-    >
-      <Scissors aria-hidden="true" className="h-3 w-3 shrink-0" />
-      large
-    </span>
-  );
-}
+/*
+  NO "LARGE" MARK (layout C, Bhargav 2026-10-13). There was a LARGE pill on 10+-variable groups. Size is the variable
+  count, which every row already shows, and "a large group doesn't have to be a bad thing unless it's actually
+  incoherent" — which is the coherence judge's call, not a member-count rule. The queue's Vars sort is there when size
+  matters.
+*/
 
 /**
  * THE PROVENANCE PILLS MARK THE EXCEPTIONS, NOT THE RULE (08-16c review).
@@ -1621,8 +1608,8 @@ function ExpandedGroup({
           the run carries no field detail, in which case the chips above are the whole membership view. */}
         {highlightIds && highlightIds.size > 0 && (
           <p data-testid="score-highlight-note" role="note" className="text-xs text-on-raised-muted">
-            Highlighted: the {highlightIds.size} {highlightIds.size === 1 ? "variable" : "variables"} the score
-            matched for this group.
+            Highlighted: the {highlightIds.size} {highlightIds.size === 1 ? "variable" : "variables"} Concept
+            Spotlight found for this group.
           </p>
         )}
         <SourceRows
@@ -1668,67 +1655,43 @@ function ExpandedGroup({
 }
 
 /**
- * The sum block, in three lines and in this order.
+ * The Continue bar's quote note: what only the old sum block said (review round 7, 2026-10-13).
  *
- * REALIZED FIRST, and visually distinct. The first line is money already gone; the two below it are
- * forecasts. They are told apart by WEIGHT as well as position, because after the post-split reversal the
- * reviewer is standing downstream of real spend and a block that rendered both in one voice would invite
- * reading a forecast as a receipt.
- *
- * THE WHOLE-CORPUS LINE IS WHAT MAKES SCOPING LEGIBLE. "This costs $4.10" means nothing on its own; "this
- * costs $4.10 of the $9.80 the whole run would" is a decision.
+ * The sum block under the queue went: "Spent so far" repeated the rail's TOTAL, "N of M groups ticked" the count beside
+ * select-all, and "$X to match at Gate 2" the bar's own amount. Two lines said something nowhere else does, so they
+ * ride the bar beside the amount they explain: the new ideal descriptions the reviewer's own edits bought (a New group
+ * has no description yet; a reshaped one's was written for other members), and — while only part of the run is in
+ * scope — what the whole run would cost, the denominator that makes scoping legible. The bar shows it only when one applies.
  */
-function SumBlock({
-  realized,
-  inScopeTotal,
+function QuoteNote({
   wholeCorpus,
   nInScope,
   nGroups,
   nIdeals = 0,
   idealsUsd = 0,
 }: {
-  realized: number;
-  inScopeTotal: number;
   wholeCorpus: number;
   nInScope: number;
   nGroups: number;
-  /** How many of the groups sent buy a generated ideal (New or reshaped), and what those calls cost. */
   nIdeals?: number;
   idealsUsd?: number;
 }) {
-  // SAID ONCE, BRIEFLY (review round 1 on the live build: "verbose and redundant"). The lab's footer register —
-  // "N ticked · $X to match them at Gate 2" — for the purchase; the realized spend first and in its own weight;
-  // the whole-corpus comparison only while it differs from the purchase, since "all 55 would be $0.61" under
-  // "55 of 55 · $0.61" says the same number twice.
   return (
-    <div data-testid="sum-block" className="flex flex-col gap-0.5">
-      <p data-sum-line="realized" className="text-sm font-semibold text-on-raised">
-        Spent so far:{" "}
-        {realized > 0 ? (
-          <span className="font-mono tabular-nums">{formatUsd(realized)}</span>
-        ) : (
-          "nothing — a saved replay"
-        )}
-      </p>
-      <p data-sum-line="in-scope" className="text-sm font-normal text-on-raised">
-        {nInScope} of {nGroups} {nGroups === 1 ? "group" : "groups"} ticked ·{" "}
-        <span className="font-mono tabular-nums">{formatUsd(inScopeTotal)}</span> to match at Gate 2
-      </p>
+    <>
       {nIdeals > 0 && (
-        /* Named rather than folded in silently: these are calls the reviewer's own edits bought (a New group has
-           no description yet; a reshaped one's was written for other members), so the quote says so. */
-        <p data-sum-line="ideals" className="text-xs font-normal text-on-raised-muted">
+        <span data-sum-line="ideals">
           {nIdeals} new ideal {nIdeals === 1 ? "description" : "descriptions"} included (
-          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>), for groups you made or changed
-        </p>
+          <span className="font-mono tabular-nums">{formatUsd(idealsUsd)}</span>), for groups you made or changed.
+        </span>
       )}
+      {nIdeals > 0 && nInScope < nGroups && " "}
       {nInScope < nGroups && (
-        <p data-sum-line="whole-corpus" className="text-sm font-normal text-on-raised-faint">
-          All {nGroups} {nGroups === 1 ? "group" : "groups"}:{" "}
-          <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>
-        </p>
+        <span data-sum-line="whole-corpus">
+          All {nGroups} {nGroups === 1 ? "group" : "groups"} would be{" "}
+          <span className="font-mono tabular-nums">{formatUsd(wholeCorpus)}</span>.
+        </span>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1755,6 +1718,7 @@ function QueueRow({
   group,
   scoreTag,
   scoreTagSource = "match",
+  scoreCutoff,
   roster,
   count,
   inScope,
@@ -1771,12 +1735,14 @@ function QueueRow({
   group: ConceptGroup;
   /** The queue's search, so the row can highlight what it matched in the name (review round 3). */
   query?: string;
-  /** The declared-score component(s) this group is matched onto, when the run has a composite — rendered
-   *  as a tag and the reason this row is pinned to the top of the queue. */
+  /** The Concept Spotlight component(s) that reached this group — the marker under the checkbox names them on hover,
+   *  and they are the reason this row is pinned to the top of the queue. */
   scoreTag?: string[];
   /** Where `scoreTag` came from: the Gate 4 MATCH (a verdict), or Gate 1's free SUGGESTION (08-28 Decision 6) —
    *  drawn differently, and saying so, because a suggestion is not a finding that the group measures it. */
   scoreTagSource?: "match" | "suggestion";
+  /** The suggestion cut-off in force, which the marker's tooltip states (a suggestion only). */
+  scoreCutoff?: number;
   /** A New group the reviewer made (08-28 Wave 2): marked as theirs, never with a coherence cell. */
   reviewer?: boolean;
   /** Every cohort in the run, in its fixed order — the strip's columns, under the queue's one legend. */
@@ -1804,9 +1770,9 @@ function QueueRow({
       data-row-id={group.groupId}
       data-search-label={label.text}
       data-reviewer={reviewer ? "true" : undefined}
-      data-spine={
-        isFlagged(group) ? "unresolved" : changed ? "changed" : "none"
-      }
+      // THE EDGE MEANS ONE THING: you changed this row (layout C, 2026-10-13). A split used to colour it amber too,
+      // saying the state a second time beside its own tag.
+      data-spine={changed ? "changed" : "none"}
       aria-current={selected}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -1842,11 +1808,7 @@ function QueueRow({
       }
       className={cn(
         "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-2.5 border-l-4 px-4 py-2.5 text-left",
-        isFlagged(group)
-          ? "border-l-status-warn"
-          : changed
-            ? "border-l-accent-action"
-            : "border-l-transparent",
+        changed ? "border-l-accent-action" : "border-l-transparent",
         selected
           ? "bg-surface-info shadow-[inset_3px_0_0_var(--rule-info)]"
           : "hover:bg-surface-inset",
@@ -1854,7 +1816,14 @@ function QueueRow({
           "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
       )}
     >
-      <div className="mt-px" onClick={(e) => e.stopPropagation()}>
+      {/* The control column: the scope checkbox, and under it Concept Spotlight's marker (review round 8, note 9 —
+          P1): the Flashlight alone, its components on hover. Under the checkbox so the name keeps its column and starts
+          at the same place on every row. */}
+      <div
+        data-testid="queue-row-control"
+        className="mt-px flex flex-col items-center gap-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
         <Checkbox
           data-testid="queue-scope"
           checked={inScope}
@@ -1862,42 +1831,14 @@ function QueueRow({
           onCheckedChange={(v) => onScopeChange(v === true)}
           aria-label={`Send ${label.text} to Gate 2`}
         />
+        {scoreTag && scoreTag.length > 0 && (
+          <SpotlightMarker components={scoreTag} source={scoreTagSource} cutoff={scoreCutoff} />
+        )}
       </div>
       {/* THE NAME HAS THE LEFT COLUMN TO ITSELF (08-30b, lab round 5): up to three lines, and a short name makes
-          a short row. What is unusual about the group — a score it feeds, a re-split, a template suspicion, an
-          outsized membership — still rides under it; the routine facts moved right. */}
+          a short row. What is unusual about the group — a re-split — still rides under it; the routine facts moved
+          right, and the Concept Spotlight mark moved under the checkbox (round 8). */}
       <div className="min-w-0">
-        {scoreTag && scoreTag.length > 0 && (
-          <div className="mb-1 flex flex-wrap gap-1">
-            {scoreTag.map((name) =>
-              scoreTagSource === "suggestion" ? (
-                // A SUGGESTION, drawn by form (dashed) and named as one: a free search reached this group, and the
-                // verdict is still Gate 4's. The title carries the whole claim, the face carries "Suggested".
-                <span
-                  key={name}
-                  data-testid="queue-score-tag"
-                  data-tag-source="suggestion"
-                  className="inline-flex max-w-full items-center gap-1 rounded-pill border border-dashed border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
-                  title={`${SUGGESTION_TAG_COPY} (the “${name}” component)`}
-                >
-                  <Search className="h-2.5 w-2.5 shrink-0" />
-                  <span className="truncate">Suggested · {name}</span>
-                </span>
-              ) : (
-                <span
-                  key={name}
-                  data-testid="queue-score-tag"
-                  data-tag-source="match"
-                  className="inline-flex max-w-full items-center gap-1 rounded-pill border border-accent-action px-2 py-0.5 text-xs font-semibold text-accent-on-raised"
-                  title={`Matched to the “${name}” component of a declared score`}
-                >
-                  <Calculator className="h-2.5 w-2.5 shrink-0" />
-                  <span className="truncate">{name}</span>
-                </span>
-              ),
-            )}
-          </div>
-        )}
         <div
           className={cn(
             "line-clamp-3 text-sm font-semibold leading-snug",
@@ -1916,29 +1857,25 @@ function QueueRow({
             </span>
           )}
         </div>
-        {(group.readjudicatedFrom ||
-          (group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single")) ||
-          count >= BIG_GROUP_MIN) && (
+        {group.readjudicatedFrom && (
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            {group.readjudicatedFrom && (
-              <ReSplitMark parent={group.readjudicatedFrom} />
-            )}
-            {group.matrixSuspect &&
-              (group.coherence === "not_judged" ||
-                group.coherence === "single") && (
-                <TemplateSuspicion judged={group.coherence === "single"} />
-              )}
-            {count >= BIG_GROUP_MIN && <LargeGroupMark count={count} />}
+            <ReSplitMark parent={group.readjudicatedFrom} />
           </div>
         )}
       </div>
-      {/* The facts column: cohort strip, then the variable count and the state. The per-row price is gone
-          (lab round 2: "repetitive") — the sum block under the list says it once. */}
+      {/* The facts column: cohort strip, the state, the template check beside it (layout C), then the variable
+          count — which is the size, said once. The per-row price is gone (lab round 2: "repetitive") — the sum block
+          under the list says it once. */}
       <QueueRowFacts
         cohorts={group.cohorts}
         roster={roster}
         vars={count}
         state={reviewer ? <NewGroupMark /> : <CoherenceMark state={group.coherence} variant="tag" />}
+        pattern={
+          group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single") ? (
+            <TemplateSuspicion judged={group.coherence === "single"} />
+          ) : undefined
+        }
       />
     </div>
   );
@@ -2512,6 +2449,23 @@ export default function Gate1Page() {
   /** The free hints this screen reads: the shipped ones on the demo, else the route's answer. */
   const suggestionData = shippedHints ?? suggestionsQuery.data;
   /**
+   * THE REVIEWER'S SUGGESTION CUT-OFF (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
+   * default 0.62"). A Gate 1 decision like scope itself: persisted per run (held in the tab on the demo), frozen with
+   * the gate. It replaces the payload's threshold everywhere the free search is cut — the cards, the tags and the
+   * seeded scope — and only there: Gate 4's judge works on its own scale. Undefined until there is a dense answer.
+   */
+  const cutoffs = useGateDecisions(jobId, SCORE_CUTOFF_KIND, { pinned, frozen });
+  const cutoff =
+    suggestionData?.scored ? effectiveCutoff(cutoffs.decisions[SCORE_CUTOFF_SETTING], suggestionData.threshold) : undefined;
+  /** Set (a number) or reset (`null` — the row is deleted and the payload's threshold applies again). */
+  const setCutoff = (next: number | null) => {
+    const setting = { setting: SCORE_CUTOFF_SETTING };
+    if (next === null) return void cutoffs.clear(setting);
+    // The one alternative is the default it replaces, so the decision log can say "0.55 (default 0.62)".
+    const def = suggestionData?.threshold;
+    void cutoffs.write(setting, { chosen: next.toFixed(2), alternatives: def != null ? [def.toFixed(2)] : [] });
+  };
+  /**
    * THE ONE INPUT to the score-seeded scope and the queue's score tags: the Gate 4 match when the run has one, else
    * the free suggestions (`scoreScopeInput`). Both go through `scoreSeededGroups`, each at its own scale's cut-off.
    * Every OFFERED group is tagged and pinned to the top; only the auto-selected subset (`scoreSeed`) starts in scope
@@ -2522,8 +2476,9 @@ export default function Gate1Page() {
       scoreScopeInput(
         latestSpec,
         frozen || latestSpec ? null : suggestionData,
+        cutoff,
       ),
-    [latestSpec, frozen, suggestionData],
+    [latestSpec, frozen, suggestionData, cutoff],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
   const scoreSeed = useMemo(
@@ -2632,12 +2587,14 @@ export default function Gate1Page() {
    * suggestion is in scope, but not this card's).
    */
   const scopeWhy = (groupId: string): GroupScopeWhy => {
-    if (frozen && sentScope) return { by: sentScope.has(groupId) ? "chosen" : "none", components: [] };
+    // The scope Gate 1 SENT: the reviewer's at Continue, or Full auto's (every group) — said as such (round 6).
+    const sentBy = isAutoAccepted(runConfig, "gate1") ? "auto" : "chosen";
+    if (frozen && sentScope) return { by: sentScope.has(groupId) ? sentBy : "none", components: [] };
     const chosen = scope.decisions[groupId]?.chosen;
     if (chosen === IN_SCOPE) return { by: "chosen", components: [] };
     if (chosen === OUT_OF_SCOPE) return { by: "none", components: [] };
     if (isReviewerGroupId(groupId)) return { by: "made", components: [] };
-    if (sentScope) return { by: sentScope.has(groupId) ? "chosen" : "none", components: [] };
+    if (sentScope) return { by: sentScope.has(groupId) ? sentBy : "none", components: [] };
     const seededBy = scoreSeed.get(groupId);
     return seededBy ? { by: "score", components: seededBy } : { by: "none", components: [] };
   };
@@ -3061,7 +3018,14 @@ export default function Gate1Page() {
   ]);
 
   // Variables per SHOWN group, for the select-all counts (ticked of shown).
-  const visibleVars = new Map(visible.map((g) => [g.groupId, memberCount(g)]));
+  /**
+   * WHAT SELECT-ALL COUNTS AND TOGGLES: every row the queue shows that could go to Gate 2 — the reviewer's own FILLED
+   * groups (they lead the list, outside search and filters) and the visible pipeline groups. Since review round 7 its
+   * count is the only in-scope count on screen (the sum block that also said it went), so it must not skip the groups
+   * the reviewer made. An empty New group has nothing to send and is not counted.
+   */
+  const shownForScope = [...filledReviewerRows, ...visible];
+  const visibleVars = new Map(shownForScope.map((g) => [g.groupId, memberCount(g)]));
 
   // Every filter that is on, as a removable chip under the search (08-30b) — Cross-cohort only first, then the
   // cohorts, then the states, in the order the menu lists them.
@@ -3089,7 +3053,7 @@ export default function Gate1Page() {
    * checkbox optimistically, because `isInScope` reads `scope.decisions` and always has.
    */
   async function onBulkScope(target: "in" | "out") {
-    const ids = visible.map((g) => g.groupId);
+    const ids = shownForScope.map((g) => g.groupId);
     const plan = bulkScopePlan(ids, target, isInScope);
     if (plan.clear.length === 0 && plan.write.length === 0) return;
     const value = target === "in" ? IN_SCOPE : OUT_OF_SCOPE;
@@ -3313,9 +3277,12 @@ export default function Gate1Page() {
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
         suggestions={!frozen && !latestSpec ? (suggestionData ?? null) : null}
+        cutoff={cutoff}
+        onCutoffChange={frozen ? undefined : setCutoff}
         spec={latestSpec}
         matchRefusal={matchRefusal}
         groupsById={groupsById}
+        cohorts={allCohorts}
         groupByVariable={groupByVariable}
         fieldIndex={jobState?.result?.fieldIndex}
         isGroupInScope={isInScope}
@@ -3547,7 +3514,7 @@ export default function Gate1Page() {
             <>
               <SelectAllShown
                 counts={tickedOfShown(
-                  visible.map((g) => g.groupId),
+                  shownForScope.map((g) => g.groupId),
                   isInScope,
                   (id) => visibleVars.get(id) ?? 0,
                 )}
@@ -3588,6 +3555,7 @@ export default function Gate1Page() {
                   reviewer
                   scoreTag={scoreTagByGroup.get(g.groupId)}
                   scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
+                  scoreCutoff={cutoff}
                   roster={allCohorts}
                   count={memberCount(g)}
                   inScope={isInScope(g.groupId)}
@@ -3664,6 +3632,7 @@ export default function Gate1Page() {
                     group={g}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
                     scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
+                  scoreCutoff={cutoff}
                     roster={allCohorts}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}
@@ -3749,17 +3718,6 @@ export default function Gate1Page() {
                 Click to review · or drop a variable here
               </span>
             </button>
-          }
-          footer={
-            <SumBlock
-              realized={costSoFar}
-              inScopeTotal={quote}
-              nIdeals={nIdeals}
-              idealsUsd={nIdeals * idealPerGroup}
-              wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerGroup, needsIdeal)}
-              nInScope={inScopeGroups.length}
-              nGroups={groups.length + filledReviewerRows.length}
-            />
           }
           detail={
             <>
@@ -3892,11 +3850,21 @@ export default function Gate1Page() {
         // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
         // cost there would claim a purchase that does not happen.
         total={pinned !== true && groups.length > 0 ? quote : undefined}
-        // `spentHere` is DELIBERATELY OMITTED here, and only on this screen. The ledger's sum block
-        // directly above already leads with the realized figure — that placement is the requirement, not
-        // a preference — so passing it to the bar as well rendered the same fact twice, in two different
-        // wordings ("$0" against "nothing"), a few pixels apart. Two amounts for one fact that disagree
-        // is worse than one amount stated once.
+        // `spentHere` is DELIBERATELY OMITTED here: the rail's TOTAL already carries the realized figure, and the
+        // queue's sum block that also said it went in review round 7. One amount for one fact.
+        assurance={
+          pinned !== true &&
+          groups.length > 0 &&
+          (nIdeals > 0 || inScopeGroups.length < groups.length + filledReviewerRows.length) ? (
+            <QuoteNote
+              wholeCorpus={gate1QuoteUsd([...filledReviewerRows, ...groups], price, idealPerGroup, needsIdeal)}
+              nInScope={inScopeGroups.length}
+              nGroups={groups.length + filledReviewerRows.length}
+              nIdeals={nIdeals}
+              idealsUsd={nIdeals * idealPerGroup}
+            />
+          ) : undefined
+        }
         scopeLabel={`${inScopeGroups.length} ${inScopeGroups.length === 1 ? "group" : "groups"}`}
         onCommit={onContinue}
         busy={resuming}

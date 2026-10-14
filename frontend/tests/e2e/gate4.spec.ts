@@ -1,7 +1,11 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Download, type Page } from "@playwright/test";
+import { markdownBlocks, parseNotebook } from "@/lib/notebook";
+import { zipStore } from "@/lib/zip";
 import { indexDecisions, type DecisionIndex, type GroupedDecisions } from "@/lib/gate-decisions";
 import type { HarmonizationResult, UIRecord } from "@/types";
 import {
@@ -179,7 +183,7 @@ test("@gate4 the decision log says WHAT each decision did, by name, with scope c
   expect(picks.find((r) => r.thing === "g0")!.detail).toBe("Reviewer CDE (model picked Model CDE)");
   expect(picks.find((r) => r.thing === "g1")!.detail).toBe("your own CDE, edited");
   expect(by("gate3_spec_edit").detail).toBe("rejected · note: “wrong target”");
-  expect(by("composite_swap").action).toBe("Declared a score");
+  expect(by("composite_swap").action).toBe("Declared a Spotlight list");
 });
 
 test("@gate4 the decision log lists a New group by its name, and a move into it names it too (08-28 Wave 2)", () => {
@@ -207,9 +211,9 @@ test("@gate4 a preview is REAL generated content, not a description", () => {
   expect(parsed.length).toBeGreaterThan(0);
   expect(parsed[0]).toHaveProperty("verdict");
   expect(parsed[0].id).toBe(run.records[0].id);
-  // The notebook preview reflects the chosen language.
-  expect(previewFor("notebook", "r", run, {})).toContain("(R)");
-  expect(previewFor("notebook", "py", run, {})).toContain("(Python)");
+  // The notebook's preview is the notebook FILE, fetched and drawn by its cells (review round 8) — never a summary
+  // built here, which could not match what opens in Jupyter. See "Gate 4 — review round 8".
+  expect(artifactPreview("notebook", "r", run, {}).kind).toBe("notebook");
 });
 
 // --- 08-27: the decision-log CSV preview reads what the download carries ---------------------------------
@@ -327,8 +331,7 @@ test("@gate4 review 2 — on a staged run every preview reads the records the ex
   const c1 = rows.find((r) => r[0] === "c1#g0")!;
   expect([c1[columns.indexOf("n_members")], c1[columns.indexOf("cohorts")]]).toEqual(["1", "A"]);
   expect(rows.map((r) => r[columns.indexOf("concept")])).toEqual(["Participant âge", "Smoking status", "Diabetes"]);
-  // The notebook excerpt applies no removed variable.
-  expect(artifactPreview("notebook", "py", PARITY.result, {}, gateLog).text).not.toContain("B:smk");
+  // (The notebook's preview is the backend's own file since round 8; `tests/test_export_staged.py` pins what it leaves out.)
   // A LEGACY one-shot run (no gate position, no decisions) previews its raw records, exactly as its files do.
   const legacy = JSON.parse(
     artifactPreview("records_json", "py", PARITY.result, {}, { index: {}, config: {}, gatePosition: null }).text,
@@ -337,16 +340,9 @@ test("@gate4 review 2 — on a staged run every preview reads the records the ex
   expect(legacy[0]).not.toHaveProperty("removedMembers");
 });
 
-test("@gate4 review 2 — the notebook preview leaves a rejected recode out and says so", () => {
-  const d = (extra: Record<string, unknown>) => ({ alternatives: [], optionSetKey: "k", ...extra });
-  const index: DecisionIndex = { gate3_spec_edit: { "A:dm": d({ sourceVariable: "A:dm", chosen: "", rejected: true }) } };
-  const result = { ...PARITY.result, records: PARITY.result.records.filter((r) => r.groupId === "c3#g0") };
-  const nb = artifactPreview("notebook", "py", result, {}, { index, config: {}, gatePosition: "gate4" }).text;
-  expect(nb).toContain("#   transform: categorical on B:dm");
-  expect(nb).not.toContain("#   transform: categorical on A:dm");
-  expect(nb).toContain("#   left out (recode rejected at Gate 3): A:dm");
-  expect(nb).toContain("# Applies 1 transform(s) across 1 concept(s).");
-});
+// "The notebook preview leaves a rejected recode out and says so" was RETIRED in review round 8: the preview is the
+// backend's notebook itself now, and `tests/test_export_staged.py::test_an_edited_recode_exports_as_edited_and_a_
+// rejected_one_is_excluded_from_the_notebook` pins the rejection where the notebook is written.
 
 test("@gate4 review 2 — with every concept out of the export, a record preview says so; the log still previews", () => {
   const index = indexDecisions(PARITY.grouped);
@@ -439,12 +435,12 @@ test("@gate4 review 2 — a legacy CSV / TSV preview quotes a concept with a com
   }
 });
 
-test("@gate4 review 2 — JSON and the notebook stay code; an empty run says so instead of drawing an empty table", () => {
+test("@gate4 review 2 — JSON stays code, the notebook is drawn from its file; an empty run says so instead of drawing an empty table", () => {
   const run = finishedFixture().result as HarmonizationResult;
   const json = artifactPreview("records_json", "py", run, {});
   expect(json.kind).toBe("code");
   expect(JSON.parse(json.text)).toHaveLength(3);
-  expect(artifactPreview("notebook", "r", run, {}).kind).toBe("code");
+  expect(artifactPreview("notebook", "r", run, {}).kind).toBe("notebook");
   const empty = artifactPreview("eitl_tsv", "py", { ...run, records: [] }, {});
   expect(empty.kind).toBe("empty");
   // `previewFor` is the same content flattened to one string (the file's text, then its note).
@@ -518,8 +514,8 @@ test("@gate4 the in-app log: an empty Gate 3 save is the model's spec, a value m
   expect(rows.find((r) => r.thing === "U:b")!.detail).toBe("value map: -121: 9 → missing");
   const scores = rows.filter((r) => r.kind === "composite_swap");
   expect(scores.map((r) => r.thing)).toEqual(["Frailty", "PHQ"]); // not one row per component
-  expect(scores[0].action).toBe("Declared a score");
-  expect(scores[0].detail).toBe("2 components: grip, gait");
+  expect(scores[0].action).toBe("Declared a Spotlight list");
+  expect(scores[0].detail).toBe("2 items: grip, gait");
 });
 
 test("@gate4 the decision count is the number of entries the downloaded log carries (F21)", () => {
@@ -1014,4 +1010,137 @@ test("@gate4 3f a relation that restates the model's with no note is not an edit
   ).toBe(1);
   const noted = { ...same, note: "checked against the codebook" };
   expect(revisionRate({ gate2_relation: { "g1|SmokeCDE": noted } }, REL_RESULT, "1").edited).toBe(1);
+});
+
+// --- review round 8 (Bhargav, 2026-10-13): one zip, and the notebook as it opens ---------------------------------
+
+/** A small notebook in the backend's shape: a markdown header cell (heading, emphasis, a list), code, then markdown. */
+const NB = {
+  cells: [
+    {
+      cell_type: "markdown",
+      metadata: {},
+      source: [
+        "# Harmonization transforms — Demo\n",
+        "\n",
+        "_Generated by **ddharmon**._ Applies the specs.\n",
+        "\n",
+        "- Records: **3**\n",
+        "- Cohorts: A, B\n",
+      ],
+    },
+    { cell_type: "code", metadata: {}, execution_count: null, outputs: [], source: 'import pandas as pd\nraw_A = pd.read_csv("A.csv")' },
+    { cell_type: "markdown", metadata: {}, source: "## 2. Apply transform specs\n\nOne frame (`h_*`) per cohort." },
+  ],
+  metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" } },
+  nbformat: 4,
+  nbformat_minor: 5,
+};
+
+/** Read a zip with Python's own zipfile — an independent reader — failing on any bad CRC. */
+function unzipped(path: string): Record<string, string> {
+  const out = execFileSync("python3", [
+    "-c",
+    "import sys,zipfile,json; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; print(json.dumps({n: z.read(n).decode() for n in z.namelist()}))",
+    path,
+  ]).toString();
+  return JSON.parse(out) as Record<string, string>;
+}
+
+test("@gate4 a stored zip is a valid zip: every file, byte for byte, under its own name", () => {
+  const enc = new TextEncoder();
+  const files = [
+    { name: "eitl_tsv.tsv", data: enc.encode("record_id\tconcept\nc0#g0\tAge\n") },
+    { name: "harmonization.py.ipynb", data: enc.encode(JSON.stringify(NB)) },
+    { name: "notes-é.json", data: enc.encode('{"ok": true}') },
+  ];
+  const path = join(mkdtempSync(join(tmpdir(), "zip-")), "export.zip");
+  writeFileSync(path, zipStore(files));
+  expect(unzipped(path)).toEqual(Object.fromEntries(files.map((f) => [f.name, new TextDecoder().decode(f.data)])));
+});
+
+test("@gate4 a notebook parses into its cells, in order, with what each holds; its markdown into blocks", () => {
+  const nb = parseNotebook(JSON.stringify(NB))!;
+  expect(nb.language).toBe("python");
+  expect(nb.cells.map((c) => c.kind)).toEqual(["markdown", "code", "markdown"]);
+  expect(nb.cells[1]!.source).toBe('import pandas as pd\nraw_A = pd.read_csv("A.csv")');
+  expect(markdownBlocks(nb.cells[0]!.source).map((b) => b.kind)).toEqual(["heading", "paragraph", "list"]);
+  expect(parseNotebook("not a notebook")).toBeNull();
+});
+
+test.describe("Gate 4 — review round 8", () => {
+  test("@gate4 Download is ONE zip of the selected files, each under the filename its tile shows", async ({ page }) => {
+    await page.route("**/static-data/exports/*", (route) =>
+      route.fulfill({ status: 200, body: `contents of ${route.request().url().split("/").pop()}` }),
+    );
+    await gotoGate4(page);
+    const shown = await page.locator('[data-testid="artifact-tile"] [data-testid="artifact-filename"]').allTextContents();
+    const downloads: Download[] = [];
+    page.on("download", (d) => downloads.push(d));
+    const [dl] = await Promise.all([page.waitForEvent("download"), page.getByTestId("download-artifacts").click()]);
+    expect(dl.suggestedFilename()).toMatch(/\.zip$/);
+    const files = unzipped((await dl.path())!);
+    expect(Object.keys(files).sort()).toEqual(shown.map((f) => f.trim()).sort());
+    await page.waitForTimeout(500);
+    expect(downloads, "one download, not one per file").toHaveLength(1);
+  });
+
+  test("@gate4 the notebook preview is the notebook itself — its cells as Jupyter draws them, not a summary", async ({
+    page,
+  }) => {
+    const asked: string[] = [];
+    await page.route("**/static-data/exports/*.ipynb", (route) => {
+      asked.push(route.request().url());
+      return route.fulfill({ status: 200, contentType: "application/x-ipynb+json", body: JSON.stringify(NB) });
+    });
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="notebook"] [data-testid="artifact-preview"]').click();
+    const nb = page.getByTestId("notebook-preview");
+    await expect(nb.getByTestId("notebook-cell")).toHaveCount(3);
+    await expect(nb.locator("h1")).toHaveText("Harmonization transforms — Demo");
+    await expect(nb.locator("li")).toHaveText(["Records: 3", "Cohorts: A, B"]);
+    await expect(nb.locator("strong").first()).toHaveText("ddharmon");
+    await expect(nb.locator("[data-testid='notebook-cell'][data-kind='code'] pre")).toContainText('pd.read_csv("A.csv")');
+    await expect(nb).not.toContainText("# Harmonization transform notebook");
+    expect(asked.some((u) => u.endsWith(".py.ipynb"))).toBe(true);
+  });
+
+  test("@gate4 a file the host answers with its own page is MISSING: no zip, and the bar says why", async ({ page }) => {
+    // No route: the static host answers an unknown export path with the app's index.html and a 200. Zipping that
+    // would hand the reviewer a page of markup under a data file's name.
+    const downloads: Download[] = [];
+    page.on("download", (d) => downloads.push(d));
+    await gotoGate4(page);
+    await page.getByTestId("download-artifacts").click();
+    await expect(page.getByTestId("download-error")).toContainText("is not available in this build");
+    expect(downloads, "nothing is saved when a file is missing").toHaveLength(0);
+    await expect(page.getByTestId("download-artifacts")).toBeEnabled();
+  });
+
+  test("@gate4 a notebook the route refuses is said, not drawn as an empty notebook", async ({ page }) => {
+    await page.route("**/static-data/exports/*.ipynb", (route) =>
+      route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "Job not found or not complete" }) }),
+    );
+    await gotoGate4(page);
+    await page.locator('[data-testid="artifact-tile"][data-thing="notebook"] [data-testid="artifact-preview"]').click();
+    const nb = page.getByTestId("notebook-preview");
+    await expect(nb).toHaveAttribute("data-state", "error");
+    await expect(nb).toContainText("Job not found or not complete");
+    await expect(nb.getByTestId("notebook-cell")).toHaveCount(0);
+  });
+
+  test("@gate4 the R toggle previews the R notebook", async ({ page }) => {
+    const asked: string[] = [];
+    await page.route("**/static-data/exports/*.ipynb", (route) => {
+      asked.push(route.request().url());
+      const r = { ...NB, metadata: { kernelspec: { display_name: "R", language: "R", name: "ir" } } };
+      return route.fulfill({ status: 200, contentType: "application/x-ipynb+json", body: JSON.stringify(r) });
+    });
+    await gotoGate4(page);
+    await page.getByTestId("notebook-lang-r").click();
+    await page.locator('[data-testid="artifact-tile"][data-thing="notebook"] [data-testid="artifact-preview"]').click();
+    await expect(page.getByTestId("artifact-preview-filename")).toHaveText("harmonization.r.ipynb");
+    await expect(page.locator("[data-testid='notebook-cell'][data-kind='code'] pre")).toHaveAttribute("aria-label", "R code");
+    expect(asked.every((u) => u.endsWith(".r.ipynb"))).toBe(true);
+  });
 });

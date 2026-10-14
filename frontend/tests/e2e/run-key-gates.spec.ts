@@ -335,14 +335,14 @@ test.describe("run key on the gates' paid actions", () => {
       .locator("[data-testid='score-upload'] input[type='file']")
       .setInputFiles({ name: "paper.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 stub") });
     const extract = page.getByTestId("score-extract");
-    await press(extract.getByRole("button", { name: /Extract the components/ }));
+    await press(extract.getByRole("button", { name: /Extract the items/ }));
     await expect.poll(() => extracts.length).toBe(1);
     expect(keyOf(extracts[0])).toBeNull();
 
     const field = extract.getByTestId("run-key-field");
     await expect(field).toBeVisible();
     await field.getByTestId("run-key-input").fill(KEY);
-    await press(extract.getByRole("button", { name: /Extract the components/ }));
+    await press(extract.getByRole("button", { name: /Extract the items/ }));
     await expect.poll(() => extracts.length).toBe(2);
     expect(keyOf(extracts[1])).toBe(KEY);
   });

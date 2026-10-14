@@ -8,7 +8,7 @@ import { countInFlight, isInFlight, justEnded } from "@/lib/run-state";
 import type { JobSummary } from "@/types";
 
 // A run is a server-side job, so it keeps executing wherever the user navigates. This component — mounted
-// once in the AppShell header — is the app-wide observer of the user's runs: it shows a "N running" badge
+// once in the AppShell's nav rail (the top bar it lived in went in review round 7) — is the app-wide observer of the user's runs: it shows a "N running" badge
 // so an in-flight run is always visible, and fires a completion toast (from any page) when one finishes, so
 // the user never has to sit on the run page. It shares the ["jobs"] query cache with the Runs page.
 //
@@ -22,7 +22,8 @@ import type { JobSummary } from "@/types";
 // running is an honest zero, and hiding it strands nobody: the sidebar carries a permanent Runs link
 // (`AppShell.tsx:106`), which is the reviewer's route back to a parked run.
 
-export function ActiveRunsIndicator() {
+/** `compact`: the resting nav rail (review round 7) — the spinner and the count; the words are in the title. */
+export function ActiveRunsIndicator({ compact = false }: { compact?: boolean }) {
   const [, navigate] = useLocation();
   // Poll while any run is in flight; stop when everything is terminal (refetchInterval → false). Disabled on
   // the static preview, where jobs.json is a fixed fixture with nothing to observe.
@@ -81,10 +82,10 @@ export function ActiveRunsIndicator() {
       href="/jobs"
       title={`${active.length} run${active.length === 1 ? "" : "s"} in progress — view Runs`}
       data-testid="active-runs"
-      className="mr-1 flex items-center gap-1.5 rounded bg-surface-info px-2 py-0.5 text-xs font-semibold text-accent-on-raised transition-colors hover:bg-rule-info"
+      className="mb-2 flex items-center gap-1.5 whitespace-nowrap rounded bg-surface-info px-3 py-1 text-xs font-semibold text-accent-on-raised transition-colors hover:bg-rule-info"
     >
-      <Loader2 className="h-3 w-3 animate-spin" />
-      {active.length} running
+      <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+      {compact ? active.length : `${active.length} running`}
     </Link>
   );
 }

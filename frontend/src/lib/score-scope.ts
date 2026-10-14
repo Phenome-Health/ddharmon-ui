@@ -82,11 +82,11 @@ export function setupScopeVerdict(nConceptsAvailable: number): ScopeVerdict {
  * beside hundreds of concept groups, and Gate 4 beside the final records. What is missing is the match.
  */
 export const SCOPE_VERDICT_COPY: Record<ScopeVerdict, string> = {
-  full: "Every required component is present in this run.",
-  partial: "Some required components are present in this run; others are not.",
-  infeasible: "Every required component was looked for in this run and none was found.",
+  full: "Every required item is present in this run.",
+  partial: "Some required items are present in this run; others are not.",
+  infeasible: "Every required item was looked for in this run and none was found.",
   indeterminate:
-    "Cannot be determined yet — these components have not been matched against this run's concepts, so " +
+    "Cannot be determined yet — these items have not been matched against this run's concepts, so " +
     "there is no evidence either way. It is not a finding that the score cannot be built.",
 };
 
@@ -153,7 +153,7 @@ export function missingReason(e: ComponentEvidence): string {
   if (e.shortlistSize > 0) {
     return `${e.shortlistSize} candidate concept${e.shortlistSize === 1 ? "" : "s"} retrieved in this run and rejected — none fits.`;
   }
-  return "Nothing retrieved for this component in this run.";
+  return "Nothing retrieved for this item in this run.";
 }
 
 /**
@@ -161,11 +161,11 @@ export function missingReason(e: ComponentEvidence): string {
  * match is, and what it is not. It used to close every unmatched component's own reason.
  */
 export const MISSING_IS_A_RUN_RESULT =
-  "A component with no match is a statement about what this run retrieved — not a finding about your cohorts.";
+  "An item with no match is a statement about what this run retrieved — not a finding about your cohorts.";
 
 /** The sentence that stops `partial` being read as a qualified yes. */
 export const PARTIAL_IS_NOT_THE_SCORE =
-  "Partial coverage is not the published score. Computing it from the components that are present would " +
+  "Partial coverage is not the published score. Computing it from the items that are present would " +
   "produce a different measure with the same name.";
 
 /**
@@ -181,7 +181,7 @@ export const PRESENCE_IS_PER_DICTIONARY =
 
 /** Said where the source document stated no threshold. Never derived, never defaulted. */
 export const CUTOFF_UNSTATED =
-  "The source did not state a cutoff for this component. It is flagged for a human rather than filled in — " +
+  "The source did not state a cutoff for this item. It is flagged for a human rather than filled in — " +
   "a score's threshold is a clinical claim, and inventing a plausible one is the most consequential thing " +
   "this panel could get wrong.";
 
@@ -272,7 +272,7 @@ export type ScoreScopeMatch = Parameters<typeof offeredGroups>[0] & { component:
  * search (retrieval only, no model call, nothing billed), and it is NOT the verdict — the verdict is the paid match
  * on Gate 4, which is the only thing that ever says a group measures a component.
  */
-export const SUGGESTION_TAG_COPY = "Suggested by your score — a free search; the verdict is on Gate 4";
+export const SUGGESTION_TAG_COPY = "Suggested by your Spotlight list — a free search; the verdict is on Gate 4";
 
 /**
  * Gate 1's suggestions as score evidence: one entry per declared component, OFFERING only the groups whose
@@ -284,12 +284,14 @@ export const SUGGESTION_TAG_COPY = "Suggested by your score — a free search; t
  * neither tagged nor seeded. `scored: false` (no dense encoder) offers nothing — a lexical score is not comparable
  * across components and is never thresholded in its place.
  */
-export function suggestionMatches(s: ScoreSuggestions | null | undefined): ScoreScopeMatch[] {
+export function suggestionMatches(s: ScoreSuggestions | null | undefined, cutoff?: number): ScoreScopeMatch[] {
   if (!s?.scored) return [];
+  // The reviewer's cut-off (`gate1_score_cutoff`, `lib/score-cutoff.ts`) when they chose one, else the payload's own.
+  const at = cutoff ?? s.threshold;
   const out: ScoreScopeMatch[] = [];
   for (const score of s.scores ?? []) {
     for (const c of score.components ?? []) {
-      const groups = (c.groups ?? []).filter((g) => g.score >= s.threshold);
+      const groups = (c.groups ?? []).filter((g) => g.score >= at);
       if (groups.length === 0) continue;
       out.push({
         component: c.component,
@@ -314,10 +316,12 @@ export function suggestionMatches(s: ScoreSuggestions | null | undefined): Score
 export function scoreScopeInput(
   spec: { matches: readonly ScoreScopeMatch[] } | null | undefined,
   suggestions: ScoreSuggestions | null | undefined,
+  cutoff?: number,
 ): { source: "match" | "suggestion" | "none"; matches: readonly ScoreScopeMatch[]; threshold: number } {
   if (spec) return { source: "match", matches: spec.matches ?? [], threshold: GROUP_SELECT_THRESHOLD };
-  const matches = suggestionMatches(suggestions);
-  if (matches.length > 0) return { source: "suggestion", matches, threshold: suggestions!.threshold };
+  // `cutoff` is the free search's only — the judge's match (above) keeps its own scale, untouched by it.
+  const matches = suggestionMatches(suggestions, cutoff);
+  if (matches.length > 0) return { source: "suggestion", matches, threshold: cutoff ?? suggestions!.threshold };
   return { source: "none", matches: [], threshold: GROUP_SELECT_THRESHOLD };
 }
 

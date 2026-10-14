@@ -74,6 +74,7 @@ from backend.artifact_kinds import (
     GATE1_NEW_GROUP,
     GATE1_REGROUP,
     GATE1_RENAME,
+    GATE1_SCORE_CUTOFF,
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
     GATE3_COMBINE_RULE,
@@ -114,6 +115,7 @@ GATE_OF = {
     GATE1_NEW_GROUP: "Gate 1",
     GATE1_REGROUP: "Gate 1",
     GATE1_RENAME: "Gate 1",
+    GATE1_SCORE_CUTOFF: "Gate 1",
     GATE2_CANDIDATE_PICK: "Gate 2",
     GATE2_RELATION: "Gate 2",
     GATE3_SPEC_EDIT: "Gate 3",
@@ -127,6 +129,7 @@ ACTION_OF = {
     GATE1_NEW_GROUP: "Created a group",
     GATE1_REGROUP: "Moved a variable",
     GATE1_RENAME: "Renamed a group",
+    GATE1_SCORE_CUTOFF: "Set the score suggestion cut-off",
     GATE2_CANDIDATE_PICK: "Picked a target",
     GATE2_RELATION: "Set a relation",
     GATE3_SPEC_EDIT: "Edited a transform spec",
@@ -134,7 +137,7 @@ ACTION_OF = {
     GATE3_MEMBER_EXCLUSION: "Removed a variable from a concept",
     GATE4_EXPORT_SELECTION: "Chose export inclusion",
     # The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
-    COMPOSITE_SWAP: "Declared a score",
+    COMPOSITE_SWAP: "Declared a Spotlight list",
 }
 
 #: The decision log's columns, in order. ``before``/``after`` are what the decision changed, where the
@@ -605,7 +608,8 @@ def _score_rows(grouped: dict[str, Any], stale: set[tuple[str, str]]) -> list[li
         names = [str(d.get("componentName") or "") for _, d in comps]
         matched = {str(d.get("componentName") or ""): str(d.get("chosen")) for _, d in comps if d.get("chosen")}
         n = len(names)
-        after = f"{n} component{'' if n == 1 else 's'}" + (f", {len(matched)} matched" if matched else "")
+        # The reader's word for one entry is an "item" (round 8, note 1); the JSON body keeps its `components` key.
+        after = f"{n} item{'' if n == 1 else 's'}" + (f", {len(matched)} matched" if matched else "")
         body: dict[str, Any] = {"components": names}
         if matched:
             body["matched"] = matched
@@ -667,6 +671,10 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                     or (groups.get(gid) or {}).get("concept")
                     or ""
                 )
+            elif kind == GATE1_SCORE_CUTOFF:
+                # The default it replaced (core's calibrated value, carried as the one alternative) -> the reviewer's.
+                default = (d.get("alternatives") or [""])[0]
+                before = f"{default} (default)" if default else ""
             elif kind == GATE1_REGROUP:
                 before = str(d.get("fromGroupId") or "")
                 # Past Gate 1 the regrouping is frozen: a move in it was applied by the pipeline; one outside it was

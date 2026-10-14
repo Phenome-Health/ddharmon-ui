@@ -80,7 +80,7 @@ export function matchActionLabel(nComponents: number, again = false): string {
  */
 export const GATE1_MATCH_DEFERRED =
   "Matching happens on Gate 4 (Export), against the concepts as you leave this review — after scope, renames, " +
-  "target picks and edits. Declare the components now: it is free and it is saved, and Gate 4 shows this " +
+  "target picks and edits. Declare the items now: it is free and it is saved, and Gate 4 shows this " +
   "declaration and matches it for one model call.";
 
 /** Why Gate 4 cannot match here, or null when it can. The declaration is shown either way. */
@@ -101,9 +101,9 @@ export function gate4MatchRefusal(opts: { pinned?: boolean }): { claim: "not-ena
 /** The export tile for the score file — offered only on a run that carries a declared or derived score. */
 export const SCORE_ARTIFACT: RealArtifact = {
   id: "score_json",
-  name: "Declared score (JSON)",
+  name: "Concept Spotlight (JSON)",
   description:
-    "The score you declared at Gate 1 — its components, the match verdict, per-cohort coverage and the derivation recipe. A recipe, never a computed score.",
+    "Your Concept Spotlight from Gate 1 — its items, the match verdict, per-cohort coverage and the derivation recipe. A recipe, never a computed score.",
   filename: "score_json.json",
 };
 

@@ -408,8 +408,8 @@ export function guestAuthCopy(action: string): { title: string; body: string } {
  * What Gate 4's bar says on the demo when the tab holds edits (08-18), or null when it holds none.
  *
  * The screen and the files disagree there, and only this sentence reconciles them: Gate 4's previews and decision
- * log read the tab's sandbox, but a download is built server-side from the demo's own row, which holds nobody's
- * work. A visitor who downloaded after deciding things would otherwise believe the file carries what they decided.
+ * log read the tab's sandbox (all but the notebook's, which is the file itself — review round 8), but a download is
+ * built server-side from the demo's own row, which holds nobody's work. A visitor who downloaded after deciding things would otherwise believe the file carries what they decided.
  */
 export function demoExportNote(count: number): string | null {
   if (count <= 0) return null;

@@ -96,8 +96,9 @@ test.describe("staged review", () => {
       "data-cost",
       "forecast",
     );
-    // The sum block's realized line (reworded in review round 1: "Spent so far").
-    await expect(page.locator("[data-sum-line='realized']")).toHaveText(/^Spent so far/);
+    // Said once, on the rail: the sum block's "Spent so far" repeated it and went in review round 7.
+    await expect(page.locator("[data-sum-line='realized']")).toHaveCount(0);
+    await expect(page.getByTestId("rail-total")).toBeVisible();
   });
 
   test("@gates the how-to panel names where spending starts", async ({ page }) => {
@@ -833,94 +834,106 @@ test.describe("the run-progress readout", () => {
 });
 
 /**
- * The collapsible chrome sidebar (08-16c Task 5).
+ * The app chrome after review round 7 (Bhargav, 2026-10-13, live Lavish build b013d95).
  *
- * Bhargav: *"make the UI sidebar collapsible so we have more space to work with."* The aside is a fixed
- * `w-60` — 240px off every screen, including the two widest surfaces this phase has built.
+ * NO TOP BAR — "I want the space from this top bar back": the dev tag goes, the brand (already in the sidebar) leaves
+ * the bar, and the account moves to the sidebar. The page starts directly under the site-wide status banner.
+ *
+ * A HOVER-TO-EXPAND RAIL — "a hover to expand mechanic, not a collapse button": the nav rests as an icon rail and
+ * expands OVER the content while the pointer (or keyboard focus) is in it, so the content never reflows.
  */
-test.describe("app nav collapse", () => {
+test.describe("app chrome — no top bar, a hover-to-expand rail", () => {
   const NAV = "[data-testid='app-nav']";
-  const TOGGLE = "[data-testid='app-nav-toggle']";
 
-  test("@gates collapsing the nav gives the width to the content", async ({ page }) => {
-    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+  test("@gates there is no top bar: the rail and the page both start right under the status banner", async ({ page }) => {
+    await page.goto("/jobs");
     await page.waitForLoadState("networkidle");
-    const nav = page.locator(NAV);
-    await expect(nav).toHaveAttribute("data-collapsed", "false");
-    const wide = (await nav.boundingBox())!.width;
-    const contentWide = (await page.locator("main").boundingBox())!.width;
-
-    await page.locator(TOGGLE).click();
-    await expect(nav).toHaveAttribute("data-collapsed", "true");
-    const narrow = (await nav.boundingBox())!.width;
-    const contentNarrow = (await page.locator("main").boundingBox())!.width;
-
-    expect(narrow).toBeLessThan(wide);
-    // The freed width goes to the content rather than to empty space.
-    expect(contentNarrow).toBeGreaterThan(contentWide);
-    expect(contentNarrow - contentWide).toBeCloseTo(wide - narrow, 0);
+    await expect(page.locator("[data-testid='app-shell'] > header")).toHaveCount(0);
+    await expect(page.getByText(/unreleased core/i)).toHaveCount(0);
+    const nav = (await page.locator(NAV).boundingBox())!;
+    const main = (await page.locator("main").boundingBox())!;
+    expect(main.y).toBeCloseTo(nav.y, 0);
+    // Home and the brand live in the rail now.
+    await expect(page.locator(`${NAV} [data-testid='app-home']`)).toHaveAttribute("href", "/");
   });
 
-  test("@gates collapsing hides labels but removes no destination", async ({ page }) => {
+  test("@gates the nav rests as an icon rail, with no collapse button", async ({ page }) => {
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "false");
+    expect((await page.locator(NAV).boundingBox())!.width).toBeLessThanOrEqual(64);
+    await expect(page.locator("[data-testid='app-nav-toggle']")).toHaveCount(0);
+  });
+
+  test("@gates hovering the rail expands it OVER the content — the content does not move", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    const before = (await page.locator("main").boundingBox())!;
+    await page.locator(NAV).hover();
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "true");
+    await expect
+      .poll(async () => (await page.locator("[data-testid='app-nav-panel']").boundingBox())!.width)
+      .toBeGreaterThanOrEqual(200);
+    await expect(page.locator(`${NAV} nav`).getByText("Runs", { exact: true })).toBeVisible();
+    const after = (await page.locator("main").boundingBox())!;
+    expect(after.x).toBe(before.x);
+    expect(after.width).toBe(before.width);
+    // Leaving puts it back.
+    await page.mouse.move(before.x + before.width / 2, before.y + 200);
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "false");
+  });
+
+  test("@gates the open rail sits above the page's own pinned bars — the gate rail never paints over it", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    await page.locator(NAV).hover();
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "true");
+    await expect
+      .poll(async () => (await page.locator("[data-testid='app-nav-panel']").boundingBox())!.width)
+      .toBeGreaterThanOrEqual(200);
+    // A point inside the open panel that the sticky gate rail also covers (the rail spans the content's width).
+    const pin = (await page.locator("[data-testid='gate-rail-pin']").boundingBox())!;
+    const panel = (await page.locator("[data-testid='app-nav-panel']").boundingBox())!;
+    const x = Math.min(pin.x + 20, panel.x + panel.width - 10);
+    const y = pin.y + pin.height / 2;
+    const topmostIsPanel = await page.evaluate(
+      ([px, py]) => !!document.elementFromPoint(px, py)?.closest("[data-testid='app-nav-panel']"),
+      [x, y] as const,
+    );
+    expect(topmostIsPanel).toBe(true);
+  });
+
+  test("@gates keyboard focus in the rail expands it, and tabbing out collapses it", async ({ page }) => {
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    const inNav = () => page.evaluate((sel) => !!document.querySelector(sel)?.contains(document.activeElement), NAV);
+    for (let i = 0; i < 20 && !(await inNav()); i++) await page.keyboard.press("Tab");
+    expect(await inNav()).toBe(true);
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "true");
+    for (let i = 0; i < 40 && (await inNav()); i++) await page.keyboard.press("Tab");
+    expect(await inNav()).toBe(false);
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "false");
+  });
+
+  test("@gates a rail removes no destination, every one names itself, and the current page is identifiable", async ({
+    page,
+  }) => {
     await page.goto("/jobs");
     await page.waitForLoadState("networkidle");
     const links = page.locator(`${NAV} nav a`);
-    const before = await links.count();
-    await page.locator(TOGGLE).click();
-    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
-    expect(await links.count()).toBe(before);
-    // Every one still names itself, so the rail is navigable and announceable without its labels.
-    for (let i = 0; i < before; i++) {
+    expect(await links.count()).toBeGreaterThan(5);
+    for (let i = 0; i < (await links.count()); i++) {
       expect(await links.nth(i).getAttribute("aria-label")).toBeTruthy();
     }
-  });
-
-  test("@gates the current page is still identifiable with the labels gone", async ({ page }) => {
-    await page.goto("/jobs");
-    await page.waitForLoadState("networkidle");
-    await page.locator(TOGGLE).click();
     await expect(page.locator(`${NAV} a[data-nav-active='true']`)).toHaveCount(1);
     expect(await page.locator(`${NAV} a[data-nav-active='true']`).getAttribute("aria-label")).toBe("Runs");
   });
 
-  test("@gates the choice survives a move to another page and a reload", async ({ page }) => {
-    await page.goto("/jobs");
-    await page.waitForLoadState("networkidle");
-    await page.locator(TOGGLE).click();
-    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
-
-    await page.goto("/methods");
-    await page.waitForLoadState("networkidle");
-    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
-
-    await page.reload();
-    await page.waitForLoadState("networkidle");
-    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "true");
-
-    // Restore, so this spec leaves no state behind for the next one.
-    await page.locator(TOGGLE).click();
-    await expect(page.locator(NAV)).toHaveAttribute("data-collapsed", "false");
-  });
-
-  test("@gates the toggle states which ACTION it performs, not merely its state", async ({ page }) => {
-    await page.goto("/jobs");
-    await page.waitForLoadState("networkidle");
-    const toggle = page.locator(TOGGLE);
-    await expect(toggle).toHaveAttribute("aria-label", "Collapse navigation");
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-label", "Expand navigation");
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await toggle.click();
-  });
-
-  test("@gates below the lg breakpoint the nav is hidden and the toggle takes no space", async ({ page }) => {
+  test("@gates below the lg breakpoint the nav is hidden", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 900 });
     await page.goto("/jobs");
     await page.waitForLoadState("networkidle");
-    // The control lives INSIDE the aside, so it disappears with it rather than floating over the content.
     await expect(page.locator(NAV)).toBeHidden();
-    await expect(page.locator(TOGGLE)).toBeHidden();
   });
 });
 

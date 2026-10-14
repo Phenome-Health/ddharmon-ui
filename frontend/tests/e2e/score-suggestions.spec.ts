@@ -3,7 +3,6 @@ import { decisionItemKey, optionSetKey, type GateDecision } from "@/lib/gate-dec
 import { SANDBOX_PREFIX } from "@/lib/sandbox";
 import {
   GROUP_SELECT_THRESHOLD,
-  SUGGESTION_TAG_COPY,
   scoreScopeInput,
   scoreSeededGroups,
   scoreTaggedGroups,
@@ -68,7 +67,7 @@ function suggestions(over: Partial<ScoreSuggestions> = {}): ScoreSuggestions {
   };
 }
 
-/** The rows "Declare these components" writes: one `composite_swap` per component, chosen "" (not matched). */
+/** The rows "Declare these items" writes: one `composite_swap` per component, chosen "" (not matched). */
 function declaration(components: string[]): GateDecision[] {
   return components.map((componentName) => ({
     scoreName: SCORE,
@@ -240,15 +239,17 @@ test.describe("Gate 1 score suggestions — the screen", () => {
       if (suggested) {
         const tag = tagsOf(page, group.groupId).first();
         await expect(tag).toHaveAttribute("data-tag-source", "suggestion");
-        await expect(tag).toContainText("Suggested");
-        await expect(tag).toContainText(component);
-        await expect(tag).toHaveAttribute("title", new RegExp(SUGGESTION_TAG_COPY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        // Round 8, note 9 (Bhargav's picks): the Concept Spotlight marker is the Flashlight ALONE, under the checkbox
+        // — no name on the face. The dashed ring still says "a suggestion, not a match"; the names are on hover.
+        await expect(rowOf(page, group.groupId).locator("[data-testid='queue-row-control'] [data-testid='queue-score-tag']")).toHaveCount(1);
+        await expect(tag).toHaveText("");
+        await expect(tag.locator("svg.lucide-flashlight")).toHaveCount(1);
+        await expect(tag).toHaveAttribute("data-ring", "dashed");
+        await expect(tag).toHaveAttribute("aria-label", new RegExp(`Concept Spotlight.*${component}`));
       }
     }
     const nSuggested = reached().filter((x) => x.score >= TAU).length;
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(
-      new RegExp(`^${nSuggested} of `),
-    );
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(new RegExp(`^${nSuggested}/`));
     // A read, and the only one: the free search is a GET with nothing to bill.
     expect(requests.length).toBeGreaterThan(0);
     expect(new Set(requests)).toEqual(new Set(["GET"]));
@@ -262,11 +263,15 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     await serveOwned(page);
     await openGate1(page);
     await page.locator("[data-testid='score-panel-toggle']").click();
-    const note = page.locator("[data-testid='score-suggestions-note']");
-    await expect(note).toBeVisible();
-    await expect(note).toContainText(/free search/i);
-    await expect(note).toContainText(/verdict is on Gate 4/i);
-    await expect(note).toContainText(`${reached().filter((x) => x.score >= TAU).length} groups`);
+    // Said ONCE (round 6): with the cards drawn, the strip says free search + Gate 4's verdict and the cards' header
+    // carries the count; the note that repeated all three is shown only when there are no cards.
+    const panel = page.locator("[data-testid='score-panel']");
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/free search/i);
+    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/verdict is Gate 4/i);
+    await expect(panel.getByTestId("score-suggestions")).toContainText(
+      `${new Set(reached().filter((x) => x.score >= TAU).map((x) => x.group.groupId)).size} groups suggested`,
+    );
+    await expect(page.locator("[data-testid='score-suggestions-note']")).toHaveCount(0);
   });
 
   test("@gate1 an explicit opt-out wins over a suggestion", async ({ page }) => {
@@ -282,9 +287,50 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     await expect(tagsOf(page, top)).toHaveCount(1); // still named as suggested — the reviewer just declined it
     await expect(scopeOf(page, reached()[1]!.group.groupId)).toHaveAttribute("aria-checked", "true");
     const nSuggested = reached().filter((x) => x.score >= TAU).length;
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(
-      new RegExp(`^${nSuggested - 1} of `),
-    );
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(new RegExp(`^${nSuggested - 1}/`));
+  });
+
+  test("@gate1 hovering the Spotlight marker shows the app's tooltip: the components, the cut-off, Gate 4's verdict", async ({
+    page,
+  }) => {
+    await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
+    await serveSuggestions(page, suggestions());
+    await serveOwned(page);
+    await openGate1(page);
+    const top = reached()[0]!;
+    await tagsOf(page, top.group.groupId).hover();
+    const tip = page.getByRole("tooltip");
+    await expect(tip).toContainText("Concept Spotlight reached this group for");
+    await expect(tip).toContainText(top.component);
+    await expect(tip).toContainText(`A free search at the ${TAU.toFixed(2)} cut-off`);
+    await expect(tip).toContainText("The verdict is Gate 4's");
+  });
+
+  test("@gate1 the Spotlight marker's tooltip opens on keyboard focus too", async ({ page }) => {
+    await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
+    await serveSuggestions(page, suggestions());
+    await serveOwned(page);
+    await openGate1(page);
+    const top = reached()[0]!;
+    await tagsOf(page, top.group.groupId).focus();
+    await expect(page.getByRole("tooltip")).toContainText(top.component);
+  });
+
+  test("@gate1 a group two components reach carries ONE marker, and its tooltip names both", async ({ page }) => {
+    const both = reached()[0]!.group;
+    const body = suggestions();
+    body.scores[0]!.components = ["Glaucoma", "Hearing difficulty"].map((component) => ({
+      component,
+      groups: [{ groupId: both.groupId, score: 0.8, bestMember: both.memberVariableNames[0] ?? "" }],
+    }));
+    await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
+    await serveSuggestions(page, body);
+    await serveOwned(page);
+    await openGate1(page);
+    await expect(tagsOf(page, both.groupId)).toHaveCount(1);
+    await tagsOf(page, both.groupId).hover();
+    const items = page.locator("[data-testid='queue-score-tip'] li");
+    await expect(items).toHaveText(["Glaucoma", "Hearing difficulty"]);
   });
 
   test("@gate1 a PASSED Gate 1 shows exactly the scope it sent — no suggestion is fetched or drawn", async ({ page }) => {
@@ -304,7 +350,7 @@ test.describe("Gate 1 score suggestions — the screen", () => {
       await expect(scopeOf(page, group.groupId)).toHaveAttribute("aria-checked", "false");
     }
     await expect(page.locator("[data-testid='queue-score-tag']")).toHaveCount(0);
-    await expect(page.locator("[data-testid='sum-block'] [data-sum-line='in-scope']")).toContainText(/^1 of /);
+    await expect(page.getByTestId("bulk-count-groups")).toContainText(/^1\//);
     expect(requests).toEqual([]);
   });
 
@@ -318,6 +364,12 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     const matched = fixtureGroups()[0]!.groupId;
     await expect(scopeOf(page, matched)).toHaveAttribute("aria-checked", "true");
     await expect(tagsOf(page, matched).first()).toHaveAttribute("data-tag-source", "match");
+    // One icon for Concept Spotlight everywhere (round 8: the Flashlight): a Gate 4 match carries it too, ring solid.
+    await expect(tagsOf(page, matched).first().locator("svg.lucide-flashlight")).toHaveCount(1);
+    await expect(tagsOf(page, matched).first()).toHaveAttribute("data-ring", "solid");
+    await tagsOf(page, matched).first().hover();
+    await expect(page.getByRole("tooltip")).toContainText("matched this group at Gate 4");
+    await expect(page.getByRole("tooltip")).not.toContainText("free search");
     // The suggestion-only groups are not seeded: the match is the input, not a blend of the two.
     await expect(scopeOf(page, reached()[1]!.group.groupId)).toHaveAttribute("aria-checked", "false");
     expect(requests).toEqual([]);

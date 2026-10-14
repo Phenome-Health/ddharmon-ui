@@ -11,6 +11,7 @@ across the store.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import time
 from collections.abc import Callable, Iterable
@@ -141,6 +142,20 @@ GATE1_REGROUP = "gate1_regroup"
 #: asking to erase what the pipeline decided (08-16c Task 3).
 GATE1_RENAME = "gate1_rename"
 
+#: Gate 1: the score panel's SUGGESTION CUT-OFF, chosen by the reviewer (review round 6 — Bhargav: the "0.62" "should
+#: be user-selectable with default 0.62"). The cut-off decides which groups a declared score suggests — tagged in the
+#: queue and seeded into Gate 1's scope — so it is a decision about scope: one per run, keyed on the setting itself
+#: (:data:`SCORE_CUTOFF_SETTING`), frozen with Gate 1. ``chosen`` is the cut-off as a decimal string; ``alternatives``
+#: carries the default it replaced (core's calibrated value, from the suggestions payload). Reset DELETES the row —
+#: the default is then the payload's own, so a stored row always holds a number.
+GATE1_SCORE_CUTOFF = "gate1_score_cutoff"
+#: The one item key a ``gate1_score_cutoff`` row has.
+SCORE_CUTOFF_SETTING = "suggestion_cutoff"
+#: The range a reviewer may set it in. Below 0.30 the free search's cosine stops meaning "about this component";
+#: above 0.95 almost nothing clears it. Mirrored in ``frontend/src/lib/score-cutoff.ts``.
+SCORE_CUTOFF_MIN = 0.30
+SCORE_CUTOFF_MAX = 0.95
+
 #: Gate 2: which retrieved CDE candidate this concept group takes. Keyed on the group.
 GATE2_CANDIDATE_PICK = "gate2_candidate_pick"
 
@@ -191,6 +206,7 @@ GATE_DECISION_KINDS = (
     GATE1_NEW_GROUP,
     GATE1_REGROUP,
     GATE1_RENAME,
+    GATE1_SCORE_CUTOFF,
     GATE2_CANDIDATE_PICK,
     GATE2_RELATION,
     GATE3_SPEC_EDIT,
@@ -208,6 +224,7 @@ DECISION_GATE: dict[str, str] = {
     GATE1_NEW_GROUP: "gate1",
     GATE1_REGROUP: "gate1",
     GATE1_RENAME: "gate1",
+    GATE1_SCORE_CUTOFF: "gate1",
     COMPOSITE_SWAP: "gate1",
     GATE2_CANDIDATE_PICK: "gate2",
     GATE2_RELATION: "gate2",
@@ -242,6 +259,7 @@ _DECISION_IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     GATE1_NEW_GROUP: ("groupId",),
     GATE1_REGROUP: ("memberId",),
     GATE1_RENAME: ("groupId",),
+    GATE1_SCORE_CUTOFF: ("setting",),
     GATE2_CANDIDATE_PICK: ("groupId",),
     GATE2_RELATION: ("groupId", "targetId"),
     GATE3_SPEC_EDIT: ("sourceVariable",),
@@ -368,6 +386,25 @@ def _relation_validate(payload: dict[str, Any]) -> None:
         )
 
 
+def _score_cutoff_validate(payload: dict[str, Any]) -> None:
+    """A cut-off row is the one setting, holding a number in range — or it is refused.
+
+    Every reader takes ``chosen`` as the cut-off, so a row holding anything else would silently suggest by a value
+    nobody chose. Clearing it is a DELETE of the row (the payload's default then applies), never ``""``.
+    """
+    _decision_validate(payload)
+    if payload.get("setting") != SCORE_CUTOFF_SETTING:
+        raise ValueError(f"a {GATE1_SCORE_CUTOFF} row is keyed on setting={SCORE_CUTOFF_SETTING!r}")
+    try:
+        value = float(payload["chosen"])
+    except ValueError:
+        raise ValueError(f"a score cut-off must be a number — {payload['chosen']!r} is not") from None
+    if not math.isfinite(value) or not SCORE_CUTOFF_MIN <= value <= SCORE_CUTOFF_MAX:
+        raise ValueError(
+            f"a score cut-off must be between {SCORE_CUTOFF_MIN:.2f} and {SCORE_CUTOFF_MAX:.2f} — {payload['chosen']!r} is not"
+        )
+
+
 def reviewer_group_name(payload: dict[str, Any]) -> str:
     """A New group's name: its ``name`` field, else the ``chosen`` it also carries. Stripped; ``""`` if neither."""
     return str(payload.get("name") or payload.get("chosen") or "").strip()
@@ -467,6 +504,13 @@ registry.register(
         name=GATE1_RENAME,
         identity=_decision_identity(GATE1_RENAME),
         validate=_decision_validate,
+    )
+)
+registry.register(
+    ArtifactKind(
+        name=GATE1_SCORE_CUTOFF,
+        identity=_decision_identity(GATE1_SCORE_CUTOFF),
+        validate=_score_cutoff_validate,
     )
 )
 registry.register(

@@ -29,7 +29,7 @@ import { PAUSED_JOB, asOwnedRun, serveRun } from "./gate1-fixture";
 
 const SCORE = "Frailty index (Searle 2008)";
 
-/** The rows "Declare these components" writes: one `composite_swap` per component, chosen "" (not matched). */
+/** The rows "Declare these items" writes: one `composite_swap` per component, chosen "" (not matched). */
 function declared(scoreName: string, components: string[], extra: Record<string, unknown> = {}): GateDecision[] {
   return components.map((componentName) => ({
     scoreName,
@@ -107,32 +107,32 @@ test.describe("score strip status (H4)", () => {
 
   test("@gate1 a declared score names itself, counts its components, and says it is not matched yet", () => {
     expect(stripStatus(indexOf(declared(SCORE, THREE)), null)).toBe(
-      `${SCORE} · 3 components declared · not matched yet`,
+      `${SCORE} · 3 items declared · not matched yet`,
     );
     // One component is "component", not "components".
     expect(stripStatus(indexOf(declared(SCORE, ["Weak grip strength"])), null)).toBe(
-      `${SCORE} · 1 component declared · not matched yet`,
+      `${SCORE} · 1 item declared · not matched yet`,
     );
   });
 
   test("@gate1 a match under the score's own name (any case) gives the match state: N of M found", () => {
     const spec = specOf(SCORE.toUpperCase(), THREE, 2);
     expect(stripStatus(indexOf(declared(SCORE, THREE)), spec)).toBe(
-      `${SCORE} · 3 components declared · matched: 2 of 3 found`,
+      `${SCORE} · 3 items declared · matched: 2 of 3 found`,
     );
     // A spec derived under ANOTHER score's name is not this score's match.
     expect(stripStatus(indexOf(declared(SCORE, THREE)), specOf("SES index", THREE, 3))).toBe(
-      `${SCORE} · 3 components declared · not matched yet`,
+      `${SCORE} · 3 items declared · not matched yet`,
     );
   });
 
   test("@gate1 a score derived with no declaration behind it still reads as a score, not an invitation", () => {
-    expect(stripStatus({}, specOf("SES index", THREE, 1))).toBe("SES index · 3 components · matched: 1 of 3 found");
+    expect(stripStatus({}, specOf("SES index", THREE, 1))).toBe("SES index · 3 items · matched: 1 of 3 found");
   });
 
   test("@gate1 a second declared score is counted, not hidden", () => {
     const index = indexOf(declared(SCORE, THREE), declared("SES index", ["Income"]));
-    expect(stripStatus(index, null)).toBe(`${SCORE} · 3 components declared · not matched yet · and 1 more score`);
+    expect(stripStatus(index, null)).toBe(`${SCORE} · 3 items declared · not matched yet · and 1 more score`);
     const three = indexOf(declared(SCORE, THREE), declared("SES index", ["Income"]), declared("IC score", ["Gait"]));
     expect(stripStatus(three, null)).toMatch(/· and 2 more scores$/);
   });
@@ -231,7 +231,7 @@ async function declareThroughPanel(page: Page, scoreName: string, components: st
   await expect(page.locator("[data-testid='score-panel']")).toBeVisible();
   await page.locator("#score-name").fill(scoreName);
   await page.locator("[data-testid='score-components']").fill(components);
-  await page.getByRole("button", { name: "Declare these components" }).click();
+  await page.getByRole("button", { name: "Declare these items" }).click();
   await expect(page.locator("[data-testid='score-component']")).toHaveCount(declaredComponents(components).length);
 }
 
@@ -251,12 +251,12 @@ test.describe("score strip on the static build (H4)", () => {
     // Close it again: the claim is about the strip as a returning reviewer meets it, closed.
     await page.locator(TRIGGER).click();
     await expect(page.locator("[data-testid='score-panel']")).toHaveCount(0);
-    const want = `${SCORE} · 3 components declared · not matched yet`;
+    const want = `${SCORE} · 3 items declared · not matched yet`;
     await expect(page.locator(STATUS)).toHaveText(want);
     await expect(page.locator(TRIGGER)).not.toContainText(STRIP_SUMMARY);
     await expect(page.locator("[data-testid='score-strip']")).toHaveAttribute("data-declared", "true");
     // Screen readers hear it too: the trigger's accessible name carries the status, not only its pixels.
-    await expect(page.getByRole("button", { name: `Show the declared-score panel — ${want}` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Show the Concept Spotlight panel — ${want}` })).toBeVisible();
 
     await page.reload();
     await page.waitForLoadState("networkidle");
@@ -274,7 +274,7 @@ test.describe("score strip on the static build (H4)", () => {
     // Truncated, with the whole line kept as its title.
     const clipped = await page.locator(STATUS).evaluate((el) => el.scrollWidth > el.clientWidth);
     expect(clipped).toBe(true);
-    await expect(page.locator(STATUS)).toHaveAttribute("title", `${long.trim()} · 3 components declared · not matched yet`);
+    await expect(page.locator(STATUS)).toHaveAttribute("title", `${long.trim()} · 3 items declared · not matched yet`);
     // Compared against the how-to COLLAPSED — it opens by default since 2026-10-06.
     await page.getByRole("button", { name: "Hide how to use this screen" }).click();
     const howto = await page.locator("[data-testid='how-to']").boundingBox();
@@ -288,7 +288,7 @@ test.describe("score strip on the static build (H4)", () => {
     });
     await seedDeclaration(page, declared(SCORE, THREE));
     await openGate1(page);
-    await expect(page.locator(STATUS)).toHaveText(`${SCORE} · 3 components declared · matched: 2 of 3 found`);
+    await expect(page.locator(STATUS)).toHaveText(`${SCORE} · 3 items declared · matched: 2 of 3 found`);
   });
 });
 
@@ -323,7 +323,10 @@ test.describe("pasted source record on the static build", () => {
     await page.reload();
     await page.waitForLoadState("networkidle");
     await openPanel(page);
-    // The box is empty again (it is a draft) — so what still shows is the PERSISTED record, not component state.
+    // A score is declared, so the form is folded (round 6); opened, the box is empty again (it is a draft) — so what
+    // still shows is the PERSISTED record, not component state.
+    await expect(page.getByTestId("score-declare-toggle")).toHaveAttribute("aria-expanded", "false");
+    await page.getByTestId("score-declare-toggle").click();
     await expect(page.locator("[data-testid='score-components']")).toHaveValue("");
     await expect(page.locator(RECORD)).toBeVisible();
     expect(await exactText(page)).toBe(PASTED);
@@ -361,9 +364,11 @@ test.describe("pasted source record on the static build", () => {
     await declareThroughPanel(page, SCORE, "Weak grip strength");
     await expect(page.locator(RECORD)).toHaveAttribute("data-long", "false");
     await expect(page.locator(TEXT)).toBeVisible();
-    // The same score, declared again from a longer paste: the record is the new text, and it is long.
+    // The same score, declared again from a longer paste: the record is the new text, and it is long. Declaring
+    // folded the form (round 6), so it is opened again first.
+    await page.getByTestId("score-declare-toggle").click();
     await page.locator("[data-testid='score-components']").fill(lines(30));
-    await page.getByRole("button", { name: "Declare these components" }).click();
+    await page.getByRole("button", { name: "Declare these items" }).click();
     await expect(page.locator(RECORD)).toHaveCount(1);
     await expect(page.locator(RECORD)).toHaveAttribute("data-long", "true");
     await expect(page.locator(TEXT)).toHaveCount(0);
@@ -406,7 +411,7 @@ test.describe("pasted source record on the static build", () => {
       .setInputFiles({ name: "searle-2008.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 stub") });
     await expect(page.locator("[data-testid='score-doc-text']")).toBeVisible();
     await page.locator("[data-testid='score-components']").fill("Help Bathing\nHelp Dressing");
-    await page.getByRole("button", { name: "Declare these components" }).click();
+    await page.getByRole("button", { name: "Declare these items" }).click();
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
     await expect(page.locator(RECORD)).toHaveCount(0);
     // What was stored: the document's handle, never its text.

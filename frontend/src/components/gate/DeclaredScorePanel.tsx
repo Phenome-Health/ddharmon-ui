@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleDashed,
+  Flashlight,
   FileText,
   Loader2,
   XCircle,
@@ -130,17 +131,17 @@ const VERDICT_STYLE: Record<
   { label: string; className: string; Icon: typeof CheckCircle2 }
 > = {
   full: {
-    label: "Every component is present",
+    label: "Every item is present",
     className: "border-rule-ok bg-surface-ok text-on-ok",
     Icon: CheckCircle2,
   },
   partial: {
-    label: "Some components are present",
+    label: "Some items are present",
     className: "border-rule-warn bg-surface-warn text-on-warn",
     Icon: AlertTriangle,
   },
   infeasible: {
-    label: "None of the components was found",
+    label: "None of the items was found",
     className: "border-rule-danger bg-surface-danger text-on-danger",
     Icon: XCircle,
   },
@@ -174,6 +175,10 @@ export interface DeclaredScorePanelProps {
    * per-component cards are drawn from. `null` (or no dense score in it) keeps the plain declared list.
    */
   suggestions?: ScoreSuggestions | null;
+  /** The cut-off the free search is split at — the reviewer's `gate1_score_cutoff`, else the payload's own. */
+  cutoff?: number;
+  /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent on a frozen gate → the control is read-only. */
+  onCutoffChange?: (next: number | null) => void;
   /**
    * A composite spec already derived for this run, when one exists. This is the ONLY source of match
    * evidence — the panel never infers a match, because inferring one is what `match_components` is paid
@@ -195,6 +200,8 @@ export interface DeclaredScorePanelProps {
    * Absent where the run has no groups (the demo's empty Gate 1).
    */
   groupsById?: Map<string, NamedGroup>;
+  /** The run's cohorts (Gate 1's roster) — the columns of the score cards' reached-by-search table. */
+  cohorts?: readonly string[];
   /** variableId ("cohort:var") → its concept groupId, so a variable-level retrieval candidate (a missing
    *  component's shortlist is variable-level) can be rolled up to the ONE group it belongs to — deduped and
    *  linkable — instead of listing many look-alike raw variables that cannot open a group. */
@@ -224,11 +231,14 @@ export function DeclaredScorePanel({
   swaps: sharedSwaps,
   suggestionNote = null,
   suggestions = null,
+  cutoff,
+  onCutoffChange,
   spec,
   matchRefusal,
   onMatch,
   matching = false,
   groupsById,
+  cohorts,
   groupByVariable,
   fieldIndex,
   onOpenGroup,
@@ -347,8 +357,8 @@ export function DeclaredScorePanel({
 
   /** The free search's cards, one per declared component — `[]` keeps the plain list (no dense score, or none asked). */
   const cards = useMemo(
-    () => (spec ? [] : suggestionCards(declared.map((d) => d.name), suggestions)),
-    [spec, declared, suggestions],
+    () => (spec ? [] : suggestionCards(declared.map((d) => d.name), suggestions, cutoff)),
+    [spec, declared, suggestions, cutoff],
   );
 
   const verdict = scopeVerdictFor(evidence);
@@ -400,6 +410,8 @@ export function DeclaredScorePanel({
     );
   }
 
+  /** A score is on the panel — declared here, or matched at Gate 4 — so the form to declare one folds away. */
+  const hasScore = !!spec || declared.length > 0;
   return (
     <Collapsible
       open={open}
@@ -419,7 +431,7 @@ export function DeclaredScorePanel({
         // rule governs what the name has to say.
         // The status rides the accessible name too (H4): an aria-label REPLACES the content, so without it a
         // screen reader would hear "show the panel" while the screen says a score is declared.
-        aria-label={`${open ? "Hide" : "Show"} the declared-score panel${status ? ` — ${status}` : ""}`}
+        aria-label={`${open ? "Hide" : "Show"} the Concept Spotlight panel${status ? ` — ${status}` : ""}`}
         className={disclosureRow("field", "gap-3")}
       >
         {/*
@@ -429,8 +441,13 @@ export function DeclaredScorePanel({
           exists. A two-line header would be this change starting to compete with the data it sits above,
           which is a worse placement than the one it is fixing.
         */}
-        <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
-          <DisclosureLabel ground="field">A score you want to build from this run</DisclosureLabel>
+        {/* Concept Spotlight's one icon, everywhere it appears: the Flashlight (Bhargav's pick, review round 8 note 9 —
+            it replaced the clipboard icon once the module was named for a spotlight). */}
+        <Flashlight aria-hidden="true" className="h-4 w-4 shrink-0 text-on-field" />
+        <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          {/* The module's NAME (Bhargav, 2026-10-13): Concept Spotlight — it surfaces the relevant groups from a sea of
+              variables, whether the list is a published score or the reviewer's own. */}
+          <DisclosureLabel ground="field">Concept Spotlight</DisclosureLabel>
           {status ? (
             /*
               A DECLARED SCORE SAYS SO ON THE CLOSED STRIP (H4, final review round 2 — *"still there — fix
@@ -465,19 +482,35 @@ export function DeclaredScorePanel({
       <CollapsibleContent>
         <section
           data-testid="score-panel"
-          aria-label="A published score you want this run to support"
+          aria-label="A Spotlight list you want this run to support"
           className="mt-3 flex flex-col gap-4 rounded-card bg-surface-raised px-6 py-4 shadow-card"
         >
-          {(!spec || showDeclareForm) && (
+          {/* ONCE A SCORE IS DECLARED, THE FORM FOLDS (review round 6, Bhargav: "hidden by default since a score has
+              already been entered, collapsed panel should say declare a different score"). Before, only a Gate 4
+              match folded it, so Gate 1 — which never has a match — kept the whole empty form open under a declared
+              49-item score. */}
+          {hasScore && (
+            <button
+              type="button"
+              data-testid="score-declare-toggle"
+              aria-expanded={showDeclareForm}
+              onClick={() => setShowDeclareForm((v) => !v)}
+              className={disclosureRow("raised")}
+            >
+              <DisclosureLabel ground="raised">Declare a different Spotlight list</DisclosureLabel>
+              <DisclosureChevron ground="raised" open={showDeclareForm} />
+            </button>
+          )}
+          {(!hasScore || showDeclareForm) && (
             <>
           <div className="flex flex-col gap-1">
             {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
             the title never carried — including `PRESENCE_IS_PER_DICTIONARY`, which is one of the four
             rules this panel exists to keep saying. */}
             <p className="max-w-[80ch] text-sm text-on-raised-muted">
-              Name the components of a published score — a frailty index, an
-              intrinsic-capacity score, an SES index — and this run will say
-              which of them its concepts can supply, and out of which.{" "}
+              List the items to look for — a published score (a frailty index, an
+              intrinsic-capacity score, an SES index) or a list of your own — and this
+              run will say which of them its concepts can supply, and out of which.{" "}
               {PRESENCE_IS_PER_DICTIONARY}
             </p>
           </div>
@@ -514,7 +547,7 @@ export function DeclaredScorePanel({
               >
                 Read {document.nChars.toLocaleString()} characters from{" "}
                 {document.provenance}. The text is shown beside the proposal —
-                have a model propose the components from it, or type them
+                have a model propose the items from it, or type them
                 yourself.
               </p>
             )}
@@ -566,7 +599,7 @@ export function DeclaredScorePanel({
               htmlFor="score-name"
               className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
             >
-              Score name
+              List name
             </label>
             <input
               id="score-name"
@@ -579,7 +612,7 @@ export function DeclaredScorePanel({
               htmlFor="score-components"
               className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
             >
-              Its components, one per line
+              Its items, one per line
             </label>
             <Textarea
               id="score-components"
@@ -599,20 +632,11 @@ export function DeclaredScorePanel({
                 onClick={() => void onDeclare()}
                 disabled={frozen || draft.trim().length === 0}
               >
-                Declare these components
+                Declare these items
               </Button>
             </div>
           </div>
             </>
-          )}
-          {spec && (
-            <button
-              type="button"
-              onClick={() => setShowDeclareForm((v) => !v)}
-              className="w-fit text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
-            >
-              {showDeclareForm ? "Hide" : "Declare a different score"}
-            </button>
           )}
 
           {/*
@@ -678,7 +702,9 @@ export function DeclaredScorePanel({
                 put groups in scope, that it cost nothing, and that it is NOT the verdict. Never phrased as a match —
                 a suggestion is a search result, and only Gate 4's match says a group measures a component.
               */}
-              {suggestionNote && (
+              {/* Only WITHOUT the cards (round 6 repeated-copy): with them, the strip says it is a free search and the
+                  verdict is Gate 4's, and the cards' header carries the counts — this note said all three again. */}
+              {suggestionNote && cards.length === 0 && (
                 <p
                   data-testid="score-suggestions-note"
                   className="max-w-[80ch] rounded-inner border border-dashed border-rule-on-raised px-4 py-3 text-xs text-on-raised"
@@ -688,7 +714,7 @@ export function DeclaredScorePanel({
                   ) : suggestionNote.nGroups > 0 ? (
                     <>
                       {SUGGESTION_TAG_COPY}. It reached {suggestionNote.nGroups} group
-                      {suggestionNote.nGroups === 1 ? "" : "s"} for {suggestionNote.nComponents} of these components;
+                      {suggestionNote.nGroups === 1 ? "" : "s"} for {suggestionNote.nComponents} of these items;
                       they start in scope and are tagged “Suggested” in the list. Uncheck any you do not want — your
                       choice always wins.
                     </>
@@ -710,8 +736,11 @@ export function DeclaredScorePanel({
               {cards.length > 0 ? (
                 <ScoreSuggestionCards
                   cards={cards}
-                  threshold={suggestions!.threshold}
+                  threshold={cutoff ?? suggestions!.threshold}
+                  defaultThreshold={suggestions!.threshold}
+                  onThresholdChange={frozen ? undefined : onCutoffChange}
                   groupsById={groupsById}
+                  cohorts={cohorts}
                   fieldIndex={fieldIndex}
                   isGroupInScope={isGroupInScope}
                   groupScopeWhy={groupScopeWhy}
@@ -748,14 +777,14 @@ export function DeclaredScorePanel({
               data-testid="score-match-price"
               className="max-w-[80ch] text-xs font-semibold text-on-raised"
             >
-              Matching these components onto this run&rsquo;s concepts costs
+              Matching these items onto this run&rsquo;s concepts costs
               money: it is one model call over the concepts, and it is what
               turns a declaration into a verdict. Nothing is charged until you
               press it.
             </p>
             {matchRefusal ? (
               <NotAvailable
-                thing="Matching the components"
+                thing="Matching the items"
                 claim={matchRefusal.claim}
               >
                 {matchRefusal.reason}
