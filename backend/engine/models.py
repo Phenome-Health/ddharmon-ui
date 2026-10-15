@@ -18,13 +18,56 @@ from typing import Any
 #: The default when core has no registry. The only fallback entry marked validated.
 FALLBACK_DEFAULT_MODEL = "claude-sonnet-4-6"
 
-#: The UI's own list, served only when core has no registry. Kept small and provider-diverse so the picker is
-#: visibly multi-provider; the unvalidated entries are offered greyed out, never selectable.
+
+def _entry(
+    id: str,
+    label: str,
+    provider: str,
+    validated: bool,
+    *,
+    selectable: bool | None = None,
+    input_per_mtok: float | None = None,
+    output_per_mtok: float | None = None,
+    token_ratio: float = 1.0,
+) -> dict[str, Any]:
+    """One picker entry. ``selectable`` defaults to ``validated``: a model is offered only when the core the server
+    runs knows how to call it (round 11 — Sonnet 5.5 and Haiku 5.5 reject what an older core sends)."""
+    return {
+        "id": id,
+        "label": label,
+        "provider": provider,
+        "validated": validated,
+        "selectable": validated if selectable is None else selectable,
+        "inputPerMtok": input_per_mtok,
+        "outputPerMtok": output_per_mtok,
+        "tokenRatio": token_ratio,
+    }
+
+
+#: The UI's own list, served only when core has NO registry — a core that sends `temperature` and a forced tool call
+#: to every model, which Claude Sonnet 5.5 and Claude Haiku 5.5 reject. So only the default is selectable here; the
+#: newer models are listed (greyed out) and become selectable with a core whose registry carries their request rules.
 FALLBACK_MODELS: tuple[dict[str, Any], ...] = (
-    {"id": FALLBACK_DEFAULT_MODEL, "label": "Claude Sonnet 4.6", "provider": "anthropic", "validated": True},
-    {"id": "claude-opus-4-8", "label": "Claude Opus 4.8", "provider": "anthropic", "validated": False},
-    {"id": "gpt-4o", "label": "GPT-4o", "provider": "openai", "validated": False},
-    {"id": "gemini/gemini-1.5-pro", "label": "Gemini 1.5 Pro", "provider": "gemini", "validated": False},
+    _entry(FALLBACK_DEFAULT_MODEL, "Claude Sonnet 4.6", "anthropic", True, input_per_mtok=3.0, output_per_mtok=15.0),
+    _entry(
+        "claude-sonnet-5-5",
+        "Claude Sonnet 5.5",
+        "anthropic",
+        False,
+        input_per_mtok=2.0,
+        output_per_mtok=10.0,
+        token_ratio=1.3,
+    ),
+    _entry(
+        "claude-haiku-5-5",
+        "Claude Haiku 5.5",
+        "anthropic",
+        False,
+        input_per_mtok=0.10,
+        output_per_mtok=0.50,
+        token_ratio=1.3,
+    ),
+    _entry("gpt-4o", "GPT-4o", "openai", False, input_per_mtok=2.5, output_per_mtok=10.0),
 )
 
 
@@ -38,13 +81,24 @@ def _from_core() -> dict[str, Any] | None:
     try:
         registry = importlib.import_module("ddharmon.llm.models")
         default = str(registry.DEFAULT_MODEL)
+        # A registry from before the request rules (core 1.3.1) has no `selectable`/prices: `_entry` then offers only
+        # its validated models, which is all that core can call correctly.
         models = [
-            {"id": str(m.id), "label": str(m.label), "provider": str(m.provider), "validated": bool(m.validated)}
+            _entry(
+                str(m.id),
+                str(m.label),
+                str(m.provider),
+                bool(m.validated),
+                selectable=bool(m.selectable) if hasattr(m, "selectable") else None,
+                input_per_mtok=getattr(m, "input_per_mtok", None),
+                output_per_mtok=getattr(m, "output_per_mtok", None),
+                token_ratio=float(getattr(m, "token_ratio", 1.0)),
+            )
             for m in registry.MODELS
         ]
     except (ImportError, AttributeError):
         return None
-    if not any(m["id"] == default and m["validated"] for m in models):
+    if not any(m["id"] == default and m["validated"] and m["selectable"] for m in models):
         return None
     return {"models": models, "default": default, "source": "core"}
 
@@ -80,6 +134,7 @@ def proxy_catalog(ids: Iterable[str], provider_for: Callable[[str], str]) -> dic
         info = known.get(_bare(mid))
         models.append(
             {
+                **(info or _entry(mid, mid, "", False)),
                 "id": mid,
                 "label": info["label"] if info else mid,
                 "provider": provider_for(mid),
