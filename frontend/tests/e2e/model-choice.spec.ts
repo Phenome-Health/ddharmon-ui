@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { costFactor } from "@/lib/model-catalog";
-import type { ModelCatalog } from "@/types";
+import type { JobResult, ModelCatalog } from "@/types";
+import { PAUSED_JOB, asOwnedRun, serveRun } from "./gate1-fixture";
+import { FINISHED_JOB, serveFinished } from "./gate23-fixture";
 
 /**
  * Round 11 (Bhargav, 2026-10-14): "I want the user to be able to select haiku or sonnet 5.5 … ensure users have the
@@ -37,6 +39,28 @@ async function readyToStart(page: Page): Promise<void> {
 
 async function catalog(page: Page): Promise<ModelCatalog> {
   return (await (await page.request.get("/static-data/models.json")).json()) as ModelCatalog;
+}
+
+const HAIKU = "claude-haiku-5-5";
+
+/**
+ * The run as the reviewer's own (a demo quotes no price), on `model` — or, with none, on what a run without a
+ * `model_tag` uses: the catalog default the estimate is calibrated on.
+ */
+function onModel(model: () => string | undefined): (run: JobResult) => JobResult {
+  return (run) => {
+    asOwnedRun(run);
+    const tag = model();
+    if (tag) run.config = { ...run.config, model_tag: tag } as JobResult["config"];
+    return run;
+  };
+}
+
+/** The commit bar's quote once it is a positive number — the catalog arrives after the run, so wait for it. */
+async function barTotal(page: Page): Promise<number> {
+  const bar = page.getByTestId("commit-bar");
+  await expect(bar).toHaveAttribute("data-total", /[1-9]/);
+  return Number(await bar.getAttribute("data-total"));
 }
 
 test.describe("Model choice — newer models ahead of their benchmark (round 11)", () => {
@@ -94,6 +118,64 @@ test.describe("Model choice — newer models ahead of their benchmark (round 11)
     await page.getByTestId("start-run").click();
     await expect.poll(() => sent.length).toBe(1);
     expect(sent[0].modelTag).toBe("claude-haiku-5-5");
+  });
+
+  /*
+   * A run's model is fixed at Start, so every later Continue is bought on it. Gate 1 and Gate 2 quote from the same
+   * default-calibrated estimate as Setup; without the run's factor a Haiku 5.5 run would be quoted ~25x its charge.
+   */
+  test("@models Gate 1's Continue quote is priced on the run's own model", async ({ page }) => {
+    let model: string | undefined;
+    await serveRun(page, onModel(() => model));
+    const quote = async (): Promise<number> => {
+      await page.goto(`/run/${PAUSED_JOB}/gate1`);
+      await page.waitForLoadState("networkidle");
+      // Nothing is in scope by default (08-23b), so put every group in to have a price to compare.
+      const bulk = page.getByTestId("bulk-scope");
+      if ((await bulk.getAttribute("data-state")) !== "all") await page.getByTestId("bulk-scope-toggle").click();
+      await expect(bulk).toHaveAttribute("data-state", "all");
+      return barTotal(page);
+    };
+    const onDefault = await quote();
+    model = HAIKU;
+    await expect.poll(quote).toBeLessThan(onDefault);
+    expect((await quote()) / onDefault).toBeCloseTo(costFactor(await catalog(page), HAIKU), 4);
+  });
+
+  test("@models Gate 2's Continue quote is priced on the run's own model", async ({ page }) => {
+    let model: string | undefined;
+    await serveFinished(page, (run) => {
+      run.status = "awaiting_review";
+      run.gatePosition = "gate2";
+      return onModel(() => model)(run);
+    });
+    const quote = async (): Promise<number> => {
+      await page.goto(`/run/${FINISHED_JOB}/gate2`);
+      await page.waitForLoadState("networkidle");
+      return barTotal(page);
+    };
+    const onDefault = await quote();
+    model = HAIKU;
+    await expect.poll(quote).toBeLessThan(onDefault);
+    expect((await quote()) / onDefault).toBeCloseTo(costFactor(await catalog(page), HAIKU), 4);
+  });
+
+  test("@models the New Run estimate is priced on the chosen model", async ({ page }) => {
+    await page.goto("/new");
+    await page.waitForLoadState("networkidle");
+    await page.locator("input[type=file]").setInputFiles({
+      name: "cohort.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv(400)),
+    });
+    const card = page.getByTestId("cost-card");
+    await expect(card).toHaveAttribute("data-total", /[1-9]/);
+    const onDefault = Number(await card.getAttribute("data-total"));
+    await page.getByTestId("model-select").click();
+    await page.getByRole("option", { name: /Claude Haiku 5\.5/ }).click();
+    await expect.poll(async () => Number(await card.getAttribute("data-total"))).toBeLessThan(onDefault);
+    const onHaiku = Number(await card.getAttribute("data-total"));
+    expect(onHaiku / onDefault).toBeCloseTo(costFactor(await catalog(page), HAIKU), 4);
   });
 
   test("@models costFactor: the default is 1; a cheaper model is priced and tokenized relative to it", () => {

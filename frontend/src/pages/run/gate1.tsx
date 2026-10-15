@@ -62,6 +62,7 @@ import { isGatePast } from "@/lib/gate-routes";
 import { isAutoAccepted, isGateLocked } from "@/lib/review-mode";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
+import { useRunCostFactor } from "@/hooks/use-run-cost-factor";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate, rerunSetupPathFor } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
@@ -2541,11 +2542,13 @@ export default function Gate1Page() {
   // post-split group, so the row count is the call count and every row buys the same call.
   const variables = groups.reduce((n, g) => n + g.nMembers, 0);
   const mode = ((runConfig?.mode as string | undefined) ?? "batch") as RunMode;
+  // Priced on the run's own model (round 11) — the estimate is calibrated on the default.
+  const priceFactor = useRunCostFactor(runConfig);
   const gate2Forecast = useMemo(
     () =>
-      estimateRunCostBreakdown(variables, allCohorts.length, mode, true).byGate
+      estimateRunCostBreakdown(variables, allCohorts.length, mode, true, false, { priceFactor }).byGate
         .gate2.forecast,
-    [variables, allCohorts.length, mode],
+    [variables, allCohorts.length, mode, priceFactor],
   );
   const price = pricePerGroup(gate2Forecast, groups.length);
 
@@ -2962,7 +2965,7 @@ export default function Gate1Page() {
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
   // A filled New group (08-28 Wave 2), and a group whose membership the reviewer changed (Option B), buy ONE
   // ideal description beside their match — in every figure below.
-  const idealPerGroup = newGroupIdealUsd(variables, allCohorts.length, mode, clusters);
+  const idealPerGroup = newGroupIdealUsd(variables, allCohorts.length, mode, clusters, priceFactor);
   const quote = gate1QuoteUsd(inScopeGroups, price, idealPerGroup, needsIdeal);
   const nIdeals = inScopeGroups.filter((g) => needsIdeal(g.groupId)).length;
   const filledReviewerRows = reviewerRows.filter((g) => memberCount(g) > 0);

@@ -375,9 +375,18 @@ export function estimateRunCost(totalFields: number, nCohorts: number, mode: Run
  * What ONE New group's generated ideal costs (08-28 Wave 2): a single generate-ideal call, priced as the run's
  * own ideal line spread over the clusters that line pays for. A New group was never a cluster, so it has no
  * ideal of its own until Gate 1's Continue buys this one — Gate 1's quote adds it per filled New group.
+ * `priceFactor` is the run's model's (round 11), as for every other line.
  */
-export function newGroupIdealUsd(totalFields: number, nCohorts: number, mode: RunMode, nClusters: number): number {
-  const ideal = estimateRunCostBreakdown(totalFields, nCohorts, mode, false).lines.find((l) => l.id === "ideal");
+export function newGroupIdealUsd(
+  totalFields: number,
+  nCohorts: number,
+  mode: RunMode,
+  nClusters: number,
+  priceFactor = 1,
+): number {
+  const ideal = estimateRunCostBreakdown(totalFields, nCohorts, mode, false, false, { priceFactor }).lines.find(
+    (l) => l.id === "ideal",
+  );
   return (ideal?.cost ?? 0) / Math.max(1, nClusters);
 }
 

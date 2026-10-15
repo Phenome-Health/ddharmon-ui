@@ -7,7 +7,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * `GET /api/harmonize/models` as `{models: [{id, label, provider, validated}], default}` — and, in this static
  * build, by the bundled `static-data/models.json` the fixture builder snapshots from that endpoint. So a model
  * bump is a core release plus a repin: the picker's first selection is the list's `default`, a model is
- * selectable only when the list marks it `validated`, and the help text names whichever models those are.
+ * selectable only when the list marks it `selectable` (an older list without the field: `validated`), and the help
+ * text names whichever models are validated. Round 11: a selectable model ahead of its benchmark says so.
  *
  * The list is swapped with `page.route` for one where a model this UI has never heard of is the validated
  * default — if the picker still lands on (or names) Sonnet 4.6, it is reading a hardcoded name.
@@ -66,7 +67,7 @@ async function tooltipFor(page: Page, label: string): Promise<Locator> {
 }
 
 test.describe("New Run model picker", () => {
-  test("@models the bundled list: its default is selected, only validated models are selectable, the help names them", async ({
+  test("@models the bundled list: its default is selected, only selectable models can be picked, the help names the validated", async ({
     page,
   }) => {
     await openNewRun(page);
@@ -75,8 +76,11 @@ test.describe("New Run model picker", () => {
 
     const options = await modelOptions(page);
     expect(options).toContainEqual({ text: "Claude Sonnet 4.6", disabled: false });
+    // Round 11: a model core can call is offered ahead of its benchmark, and says it is not yet benchmarked.
+    expect(options).toContainEqual({ text: "Claude Sonnet 5.5 · not yet benchmarked", disabled: false });
+    expect(options).toContainEqual({ text: "Claude Haiku 5.5 · not yet benchmarked", disabled: false });
     // Every other model is offered — visible, so the picker does not misrepresent what exists — but disabled.
-    const others = options.filter((o) => o.text !== "Claude Sonnet 4.6");
+    const others = options.filter((o) => o.text !== "Claude Sonnet 4.6" && !o.text.endsWith("not yet benchmarked"));
     expect(others.length).toBeGreaterThan(0);
     for (const o of others) expect(o).toEqual({ text: expect.stringMatching(/· not yet tested$/), disabled: true });
 

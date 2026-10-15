@@ -47,6 +47,7 @@ interface SetupModel {
   label: string;
   provider: string;
   validated: boolean;
+  selectable?: boolean; // round 11: core can call it, benchmarked or not; absent = validated
 }
 
 /** Swap the bundled model list for one of the test's own. */
@@ -873,14 +874,15 @@ test.describe("Setup — the review pass: layout melded with the New Run form", 
     await expect(upload).toBeDisabled();
   });
 
-  test("@setup provider and model are choosable, and untested options are disabled", async ({ page }) => {
+  test("@setup provider and model are choosable, and options core cannot call are disabled", async ({ page }) => {
     await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");
     // Present outside preview mode...
     await expect(page.getByTestId("provider")).toBeVisible();
     await expect(page.getByTestId("model")).toBeVisible();
-    // ...and the models the picker leaves ENABLED are exactly the ones the bundled list marks validated for the
-    // provider shown — read from the list itself, so a model bump never needs this test edited.
+    // ...and the models the picker leaves ENABLED are exactly the ones the bundled list marks selectable for the
+    // provider shown (round 11: core can call it, benchmarked or not; a list without the field: validated) — read
+    // from the list itself, so a model bump never needs this test edited.
     const listPath = path.resolve(path.dirname(test.info().file), "..", "..", "public", "static-data", "models.json");
     const list = JSON.parse(readFileSync(listPath, "utf8")) as { models: SetupModel[] };
     const provider = await page.getByTestId("provider").inputValue();
@@ -889,7 +891,7 @@ test.describe("Setup — the review pass: layout melded with the New Run form", 
     expect(await modelSelectOptions(page)).toEqual(
       list.models
         .filter((m) => m.provider === provider)
-        .map((m) => ({ value: m.id, disabled: !m.validated })),
+        .map((m) => ({ value: m.id, disabled: !(m.selectable ?? m.validated) })),
     );
     // Preview calls no provider, so neither control is shown.
     await page.getByTestId("run-mode").selectOption("preview");
