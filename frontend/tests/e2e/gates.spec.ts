@@ -779,6 +779,11 @@ test.describe("the run-progress readout", () => {
     await expect(page.locator("[data-testid='run-progress-eta']")).toHaveCount(0);
     // The elapsed figure is still real and still shown — it is measured, not projected.
     await expect(page.locator("[data-testid='run-progress-elapsed']")).toBeVisible();
+    // Round 10 (Bhargav, 2026-10-14): the link lands on the batches list itself, not the Console's root.
+    await expect(page.getByTestId("run-progress-batches-link")).toHaveAttribute(
+      "href",
+      "https://platform.claude.com/workspaces/default/batches",
+    );
   });
 
   test("@gates the LOCAL leg of a batch run is real progress and is shown as such", async ({ page }) => {

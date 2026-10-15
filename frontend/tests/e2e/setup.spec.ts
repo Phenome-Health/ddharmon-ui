@@ -3241,6 +3241,25 @@ test.describe("Setup — every mapping marked complete before Start (round 10)",
     await expect(page.getByTestId("mark-all-complete")).toHaveCount(0);
     await expect(page.getByTestId("workbook-confirm")).toHaveCount(0);
     await expect(page.getByTestId("workbook-download")).toBeVisible();
+    // Round 10: no "Ready to start" paragraph once nothing blocks — the Start bar beneath already says that nothing has
+    // been charged and that Start is where spending begins; a third sentence saying it was one signal too many.
+    await expect(page.getByText(/Ready to start/)).toHaveCount(0);
+  });
+
+  test("@setup the Start bar sits flat in its card: no ground band, no card in a card, nothing covered", async ({
+    page,
+  }) => {
+    // Round 10 (Bhargav: "a weird outline here that makes this cell look broken"). The bar's sticky ground band
+    // exists to separate a PAGE-level bar from panels scrolling under it; inside Setup's Start card it painted a
+    // periwinkle frame around a second card, and its negative top margin covered "Nothing is charged yet".
+    await uploadTwo(page);
+    await page.getByTestId("mark-all-complete").click();
+    await expect(page.getByTestId("commit-bar-pin")).toHaveCount(0);
+    const bar = page.getByTestId("commit-bar");
+    expect(await bar.evaluate((el) => getComputedStyle(el).boxShadow), "a card inside the card").toBe("none");
+    const note = (await page.getByTestId("nothing-charged-yet").boundingBox())!;
+    const barBox = (await bar.boundingBox())!;
+    expect(note.y + note.height, "the bar covers the line above it").toBeLessThanOrEqual(barBox.y);
   });
 
   test("@setup re-mapping a column after Mark all re-blocks Start, naming only that file", async ({ page }) => {

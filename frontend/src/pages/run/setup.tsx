@@ -2463,31 +2463,22 @@ export default function SetupPage() {
           its rejoin link; it does not need a charge control. */}
       {stage === "compose" && (
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
-        <div className="flex min-w-0 flex-col gap-1">
-          {blockers.length > 0 ? (
-            <div data-testid="start-blocked" className="flex flex-col gap-1">
-              <p className="text-sm font-semibold text-on-raised">
-                Not ready to start — {blockers.length === 1 ? "one thing" : `${blockers.length} things`} to
-                fix:
-              </p>
-              <ul className="flex flex-col gap-0.5">
-                {blockers.map((b) => (
-                  <li key={b} data-testid="blocker" className="max-w-[68ch] text-xs text-on-raised-muted">
-                    {b}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p className="max-w-[68ch] text-sm text-on-raised-muted">
-              Ready to start. Uploading, mapping, confirming and exporting all ran on this machine and cost
-              nothing —{" "}
-              {fullAuto
-                ? "pressing Start run buys the whole run in Full auto."
-                : "pressing Start run is this run's first charge."}
+        {/* Nothing blocking says nothing here (round 10, Bhargav: "remove"). The bar beneath already states that
+            nothing has been charged and that Start is where spending begins; "Ready to start…" said it a third time. */}
+        {blockers.length > 0 && (
+          <div data-testid="start-blocked" className="flex min-w-0 flex-col gap-1">
+            <p className="text-sm font-semibold text-on-raised">
+              Not ready to start — {blockers.length === 1 ? "one thing" : `${blockers.length} things`} to fix:
             </p>
-          )}
-        </div>
+            <ul className="flex flex-col gap-0.5">
+              {blockers.map((b) => (
+                <li key={b} data-testid="blocker" className="max-w-[68ch] text-xs text-on-raised-muted">
+                  {b}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {/* ABOVE the control, and that ordering is asserted: the statement a reviewer needs before they
             press must not be discoverable only after they have. */}
         <p data-testid="nothing-charged-yet" className="text-xs text-on-raised-muted">
@@ -2528,7 +2519,8 @@ export default function SetupPage() {
           // NOT disabled for the static build any more (08-28): `startHarmonize` tries the request there and
           // answers "static preview" itself, which is the seam the e2e gate reads the Start payload through.
           disabled={blockers.length > 0}
-          className="static"
+          // Inside the Start card, which is its surface: no sticky band, no card of its own (round 10).
+          embedded
           recheckNotice={
             isPreview || estimate?.free
               ? "This run is a preview, so it calls no model and buys nothing — it groups your variables and stops."
