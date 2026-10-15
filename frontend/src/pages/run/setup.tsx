@@ -302,6 +302,14 @@ function isConfirmed(d: SetupDict): boolean {
 }
 
 /**
+ * Whether this dictionary's mapping can be marked complete right now: an upload read in this browser (a run-seeded
+ * read-back has no File and nothing left to confirm), finished parsing, and mapped well enough to run.
+ */
+function markable(d: SetupDict): boolean {
+  return d.origin === "upload" && Boolean(d.file) && d.state !== "parsing" && meetsRoleRequirement(d.roles);
+}
+
+/**
  * WHERE A DICTIONARY'S PREPOPULATED MAPPING CAME FROM, as one sentence — a function so the page can tell when every
  * card would say the same thing, and say it once above them instead (round 5 repeated-copy sweep).
  */
@@ -1069,6 +1077,23 @@ export default function SetupPage() {
     setDicts((prev) => prev.map((d) => (d.key === key ? { ...d, confirmedRoles: { ...d.roles } } : d)));
   }
 
+  /**
+   * MARK ALL (round 10, Bhargav 2026-10-14): one click marks every uploaded mapping that CAN be marked.
+   *
+   * A mapping that is not usable yet is skipped rather than marked — it has its own blocker naming the fix, and
+   * marking it would attest to a mapping that cannot run. Marking them all is also the set-level "every dictionary
+   * is mapped" gesture the workbook asks for, so it sets that too: two controls for one attestation would be two
+   * signals for one meaning. A later re-map still drops both, exactly as before (`setRoles`).
+   */
+  function confirmAllMappings() {
+    setDicts((prev) =>
+      prev.map((d) =>
+        markable(d) && !isConfirmed(d) ? { ...d, confirmedRoles: { ...d.roles } } : d,
+      ),
+    );
+    setRunConfirmed(true);
+  }
+
   async function downloadEmbeddingCsv(d: SetupDict) {
     if (!d.file) return;
     setExportBusy((prev) => ({ ...prev, [d.key]: true }));
@@ -1136,6 +1161,17 @@ export default function SetupPage() {
       }
       const reason = roleRequirementReason(d.roles);
       if (reason !== null) out.push(`${d.filename}: ${reason}`);
+    }
+    // EVERY MAPPING MARKED COMPLETE (round 10, Bhargav 2026-10-14). Start used to ignore it while the how-to
+    // listed it as a step, so a run could begin on a mapping nobody had checked. One sentence naming every file,
+    // and only files that CAN be marked: an unusable mapping already has its own blocker above.
+    const unmarked = dicts.filter((d) => markable(d) && !isConfirmed(d));
+    if (unmarked.length) {
+      out.push(
+        `Mark ${unmarked.length === 1 ? "this mapping" : "each mapping"} complete: ${unmarked
+          .map((d) => d.filename)
+          .join(", ")}. "Mark all mappings complete", below the dictionaries, does it in one click.`,
+      );
     }
     // Batch and synchronous both call a provider; preview calls nothing. A missing key is a blocker rather
     // than a failure at submit time, because the reason belongs beside the disabled control.
@@ -1694,6 +1730,8 @@ export default function SetupPage() {
           remaining={uploadedDicts.filter((d) => !isConfirmed(d)).length}
           confirmed={runConfirmed}
           onConfirm={() => setRunConfirmed(true)}
+          markable={uploadedDicts.filter((d) => markable(d) && !isConfirmed(d)).length}
+          onMarkAll={confirmAllMappings}
           onDownload={() => void downloadWorkbook()}
           downloading={workbookBusy}
           error={workbookError}

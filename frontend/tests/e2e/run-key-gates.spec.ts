@@ -136,6 +136,7 @@ test.describe("run key on the staged screens", () => {
     await page.getByTestId("dict-upload").setInputFiles([fixture]);
     await expect(page.getByTestId("dict-parse-state").filter({ hasText: "read" })).toHaveCount(1);
     await page.getByTestId("api-key").fill(KEY);
+    await page.getByTestId("mark-all-complete").click(); // round 10: every mapping marked before Start
     await press(page.getByTestId("start-run"));
     await expect.poll(() => starts.length).toBe(1);
     expect(starts[0].headers()["x-provider-key"]).toBe(KEY);
