@@ -3262,6 +3262,21 @@ test.describe("Setup — every mapping marked complete before Start (round 10)",
     expect(note.y + note.height, "the bar covers the line above it").toBeLessThanOrEqual(barBox.y);
   });
 
+  test("@setup a brand-new run asks the server about no run called \"new\"", async ({ page }) => {
+    // Round 10 rehearsal (2026-10-14): Setup for a new run opened the progress stream for its draft id, so the live app
+    // asked for `/api/harmonize/stream/new` three times, 404 each, before anything had started. "new" is the draft
+    // id every New-run link uses; there is no run behind it to watch.
+    const asked: string[] = [];
+    page.on("request", (r) => {
+      if (/(stream|result)[/-]new\b/.test(r.url())) asked.push(r.url());
+    });
+    await page.goto("/run/new/setup");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("dict-upload")).toBeAttached();
+    await page.waitForTimeout(1500); // past the stream hook's first retry
+    expect(asked, "a draft id was treated as a run").toEqual([]);
+  });
+
   test("@setup re-mapping a column after Mark all re-blocks Start, naming only that file", async ({ page }) => {
     await uploadTwo(page);
     await page.getByTestId("mark-all-complete").click();

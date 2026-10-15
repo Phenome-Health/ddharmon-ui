@@ -34,7 +34,7 @@ import {
   saveBlob,
   startHarmonize,
 } from "@/lib/api";
-import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
+import { NEW_RUN_ID, RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
 import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
@@ -486,7 +486,9 @@ const hasMeaning = (roles: Record<string, string>): boolean => meetsRoleRequirem
 export default function SetupPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const [, navigate] = useLocation();
-  const { jobState, cancel, error: streamError, reconnecting } = useHarmonizeStream(jobId, true, true);
+  // A brand-new run's draft id has no run behind it until Start: watching it only asked the server about a run that does
+  // not exist (round 10). The stream is for a STARTED run read back on this screen.
+  const { jobState, cancel, error: streamError, reconnecting } = useHarmonizeStream(jobId, jobId !== NEW_RUN_ID, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const [dicts, setDicts] = useState<SetupDict[]>([]);
