@@ -26,7 +26,7 @@ from backend.engine.adapter import (
     cost_block,
     merge_costs,
 )
-from backend.jobs import AWAITING_REVIEW, GATE_DECIDED_BY_CONFIG_KEY, JobStore, is_auto
+from backend.jobs import AWAITING_REVIEW, GATE_DECIDED_BY_CONFIG_KEY, LAST_GATE, JobStore, is_auto
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +226,15 @@ def _run_leg(
             # The payload goes to the per-run work dir, never into the jobs row (D-02): that row is
             # rewritten whole on every write, and a Gate 2 partial is megabytes.
             #
+            # A staged run never COMPLETES: its last leg parks at Gate 4, where every paid stage is done. So the
+            # opted-in ideas pass the complete branch buys is bought HERE for it — once, before the lock below, so
+            # its bill is absorbed into this checkpoint (Bhargav, 2026-10-15: Gate 4's "Explore analysis ideas"
+            # opened an empty page on every staged run).
+            ideas = (
+                _generate_ideas(payload, config, api_key, store=store, job_id=job_id)
+                if gate == LAST_GATE and getattr(store.get(job_id), "analysis_ideas", None) is None
+                else None
+            )
             # Under the run's checkpoint lock, so a paid route billing this run cannot slip a bill between the
             # queue being absorbed and the run being parked (it then lands in THIS checkpoint instead).
             with checkpoint_lock(job_id):
@@ -252,6 +261,8 @@ def _run_leg(
                     # keeps the flag down (see JobStore.checkpoint), so the run stays parked as a guided one would.
                     **({"auto_advance": True} if advance_after_park else {}),
                 )
+                if ideas is not None:
+                    store.update(job_id, analysis_ideas=ideas)
                 parked_for_advance = bool(advance_after_park and getattr(store.get(job_id), "auto_advance", False))
             logger.info("job %s paused at %s (%.4f USD realized)", job_id, gate, ckpt.realized_cost)
             return parked_for_advance

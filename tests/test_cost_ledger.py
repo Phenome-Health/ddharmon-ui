@@ -506,6 +506,52 @@ def test_a_paid_action_on_a_finished_run_lands_in_its_result_cost(monkeypatch, t
     assert job.cost_so_far == pytest.approx(0.3 + _PER_CALL)
 
 
+@pytest.mark.parametrize(("gate", "buys"), [("gate1", False), ("gate3", False), ("gate4", True)])
+def test_a_staged_run_buys_its_opted_in_analysis_ideas_at_its_last_park(tmp_path, monkeypatch, gate, buys):
+    """A staged run never COMPLETES — its last leg parks at Gate 4 — and the ideas pass ran only on completion, so a
+    run that opted in at Setup (where the pass is quoted) never got its ideas: Gate 4's "Explore analysis ideas"
+    opened an empty page (Bhargav, live Haiku 5.5 run 67cac032, 2026-10-15). The Gate 4 park is where every paid
+    stage is done, so it buys the pass there — and only there — billed into that park's checkpoint."""
+    import json
+
+    client = _ScriptedClient(json.dumps({"ideas": []}))
+    monkeypatch.setattr("backend.engine.llm.build_llm_client", lambda *a, **k: client)
+    store = JobStore(work_root=tmp_path / "work")
+    store.create("st", "ST", {})
+    records = [{"concept": "BP", "cohorts": ["A", "B"], "verdict": "adopt", "cde": None, "nMembers": 2}]
+    leg = {"actualUsd": 0.3, "tokens": {"input": 1, "output": 1}, "perStage": {"assigning": {"usd": 0.3}}}
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kwargs):
+        return {"records": records, "cost": leg, "gatePosition": gate}
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    config = {"work_dir": str(tmp_path / "work" / "st"), "gen_analysis_ideas": True, "run_mode": "sync"}
+    runner_module.run_harmonization(store, "st", [], None, config)
+    job = store.get("st")
+    assert job.status == AWAITING_REVIEW and job.gate_position == gate
+    assert (job.analysis_ideas is not None) is buys
+    assert job.cost_so_far == pytest.approx(0.3 + (_PER_CALL if buys else 0.0))
+
+
+def test_a_second_gate_4_park_does_not_buy_the_ideas_again(tmp_path, monkeypatch):
+    """A run re-parked at Gate 4 (a retried leg) keeps the ideas it already paid for."""
+    monkeypatch.setattr(
+        "backend.engine.llm.build_llm_client", lambda *a, **k: pytest.fail("bought the ideas a second time")
+    )
+    store = JobStore(work_root=tmp_path / "work")
+    store.create("st", "ST", {})
+    store.update("st", analysis_ideas=[{"title": "already here"}])
+    records = [{"concept": "BP", "cohorts": ["A", "B"], "verdict": "adopt", "cde": None, "nMembers": 2}]
+
+    def fake_pipeline(dict_specs, cde_spec, config, *, progress, **kwargs):
+        return {"records": records, "cost": {"actualUsd": 0.3}, "gatePosition": "gate4"}
+
+    monkeypatch.setattr(runner_module, "run_pipeline", fake_pipeline)
+    config = {"work_dir": str(tmp_path / "work" / "st"), "gen_analysis_ideas": True, "run_mode": "sync"}
+    runner_module.run_harmonization(store, "st", [], None, config)
+    assert store.get("st").analysis_ideas == [{"title": "already here"}]
+
+
 def test_the_runs_own_analysis_ideas_pass_is_billed(tmp_path, monkeypatch):
     """``runner._generate_ideas`` is one more paid call; it lands in the finished run's cost like the route's."""
     import json
