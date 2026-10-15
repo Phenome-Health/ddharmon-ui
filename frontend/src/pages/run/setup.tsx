@@ -35,7 +35,7 @@ import {
   startHarmonize,
 } from "@/lib/api";
 import { NEW_RUN_ID, RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
-import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
+import { costFactor, isSelectable, pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
 import {
@@ -568,7 +568,7 @@ export default function SetupPage() {
    * New Run form gives them: visible so the picker does not misrepresent what exists, unselectable so a run
    * cannot be pointed at an unvalidated model.
    */
-  const isProviderTested = (pr: string): boolean => models.some((m) => m.provider === pr && m.validated);
+  const isProviderTested = (pr: string): boolean => models.some((m) => m.provider === pr && isSelectable(m));
   // Keep `model` valid, as New Run does. The first time the list arrives nothing is picked yet: land on the list's
   // default, its provider included. After that, a provider change (or a pick that is not a validated model of the
   // provider) re-picks within the provider — the default if it is one of its models, else its first validated one.
@@ -785,8 +785,10 @@ export default function SetupPage() {
         : estimateRunCostBreakdown(totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, {
             conceptGate,
             groupSizes,
+            // Round 11: the estimate is calibrated on the default model; the chosen one's price and tokenizer scale it.
+            priceFactor: costFactor(modelCatalog, model),
           }),
-    [totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
+    [totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, conceptGate, groupSizes, modelCatalog, model],
   );
 
   /**
@@ -1981,11 +1983,13 @@ export default function SetupPage() {
               >
                 {modelsForProvider.length === 0 && <option value="">No models available</option>}
                 {modelsForProvider.map((m) => {
-                  const tested = m.validated;
+                  // Round 11: selectable = core can call it; validated = benchmarked. A selectable model ahead of its
+                  // benchmark is offered and says so; a listed-only one stays disabled.
+                  const selectable = isSelectable(m);
                   return (
-                    <option key={m.id} value={m.id} disabled={!tested}>
+                    <option key={m.id} value={m.id} disabled={!selectable}>
                       {m.label}
-                      {tested ? "" : " — not yet tested"}
+                      {!selectable ? " — not yet tested" : m.validated ? "" : " — not yet benchmarked"}
                     </option>
                   );
                 })}

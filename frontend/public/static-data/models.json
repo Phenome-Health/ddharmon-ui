@@ -4,27 +4,53 @@
       "id": "claude-sonnet-4-6",
       "label": "Claude Sonnet 4.6",
       "provider": "anthropic",
-      "validated": true
+      "validated": true,
+      "selectable": true,
+      "inputPerMtok": 3.0,
+      "outputPerMtok": 15.0,
+      "tokenRatio": 1.0
     },
     {
-      "id": "claude-opus-4-8",
-      "label": "Claude Opus 4.8",
+      "id": "claude-sonnet-5-5",
+      "label": "Claude Sonnet 5.5",
       "provider": "anthropic",
-      "validated": false
+      "validated": false,
+      "selectable": true,
+      "inputPerMtok": 2.0,
+      "outputPerMtok": 10.0,
+      "tokenRatio": 1.3
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "label": "Claude Haiku 5.5",
+      "provider": "anthropic",
+      "validated": false,
+      "selectable": true,
+      "inputPerMtok": 0.1,
+      "outputPerMtok": 0.5,
+      "tokenRatio": 1.3
+    },
+    {
+      "id": "claude-opus-5-5",
+      "label": "Claude Opus 5.5",
+      "provider": "anthropic",
+      "validated": false,
+      "selectable": false,
+      "inputPerMtok": 4.0,
+      "outputPerMtok": 20.0,
+      "tokenRatio": 1.3
     },
     {
       "id": "gpt-4o",
       "label": "GPT-4o",
       "provider": "openai",
-      "validated": false
-    },
-    {
-      "id": "gemini/gemini-1.5-pro",
-      "label": "Gemini 1.5 Pro",
-      "provider": "gemini",
-      "validated": false
+      "validated": false,
+      "selectable": false,
+      "inputPerMtok": 2.5,
+      "outputPerMtok": 10.0,
+      "tokenRatio": 1.0
     }
   ],
   "default": "claude-sonnet-4-6",
-  "source": "fallback"
+  "source": "core"
 }
