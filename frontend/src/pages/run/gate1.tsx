@@ -63,7 +63,7 @@ import { isAutoAccepted, isGateLocked } from "@/lib/review-mode";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
-import { nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { nextRailGate, pathForGate, rerunSetupPathFor } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
@@ -3250,7 +3250,9 @@ export default function Gate1Page() {
           from the last update, not live.
         </p>
       )}
-      {error && (
+      {/* A run that FAILED is said once, by the shell's failure notice at the top (round 10); this alert is left for
+          a STREAM failure, which is about the connection rather than the run. */}
+      {error && jobState?.status !== "error" && (
         <p role="alert" className="text-sm font-semibold text-status-danger">
           {error.message}
         </p>
@@ -3351,14 +3353,19 @@ export default function Gate1Page() {
               : "This run failed before it reached Gate 1"
           }
           nextStep={
+            // NOT this run's Setup, which is a read-only record once a run has started (round 10). A failed run's
+            // re-run is offered once, by the failure notice at the top; a STOPPED run has no notice, so it is here.
             <>
-              Start again from{" "}
-              <Link
-                href={`/run/${jobId}/setup`}
-                className="font-semibold text-link-on-raised underline underline-offset-2"
-              >
-                Set up
-              </Link>
+              {jobState?.status === "error" ? (
+                "Re-run it from the notice at the top"
+              ) : (
+                <Link
+                  href={rerunSetupPathFor(jobId)}
+                  className="font-semibold text-link-on-raised underline underline-offset-2"
+                >
+                  Re-run it with the same dictionaries
+                </Link>
+              )}
               , or open{" "}
               <Link
                 href="/jobs"

@@ -24,6 +24,7 @@ import {
 } from "@/lib/ledger";
 import { optionSetKey } from "@/lib/gate-decisions";
 import { SANDBOX_PREFIX } from "@/lib/sandbox";
+import { rerunSetupPathFor } from "@/lib/gate-routes";
 import {
   componentVerdictFor,
   missingReason,
@@ -1980,6 +1981,67 @@ test.describe("gate 1 waiting and error states", () => {
       ).toHaveCount(0);
       await expect(page.getByText("No groups formed"), status).toHaveCount(0);
     }
+  });
+
+  // ROUND 10 (Bhargav, a live run in Lavish, 2026-10-14): a run that failed before Gate 1 left him "no recourse".
+  // The server's sentence said "press Continue" on a screen with no Continue, the empty state's link went to this
+  // run's READ-ONLY Setup, and the error sat below the how-to panel. Now: ONE notice in the run-state slot between
+  // the rail and the how-to panel (where the progress bar was), and ONE way on — a re-run prefilled with this run's
+  // dictionaries, which is where the key is asked for again.
+  const FAILED =
+    "A required step (split) came back incomplete: 62 of 62 prompt(s) had no answer from the provider, even " +
+    "after one retry (leanb:split:c01). Nothing was built on the partial answers.";
+
+  async function failedBeforeGate1(page: Page) {
+    await serveRun(page, (run) => {
+      Object.assign(run, { status: "error", phase: "error", errorMessage: FAILED, failedPhase: "splitting" });
+      if (run.result) {
+        run.result.conceptGroups = [];
+        run.result.unassignedFields = [];
+      }
+      const config = run.config as Record<string, unknown>;
+      config.run_mode = "batch";
+      delete config.demo;
+    });
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+  }
+
+  test("@gate1 a run that failed before Gate 1 says so ONCE, at the top where the progress bar was", async ({
+    page,
+  }) => {
+    await failedBeforeGate1(page);
+    const notice = page.getByTestId("run-failed");
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText("came back incomplete");
+    await expect(notice).toContainText(/splitting/i);
+    const noticeBox = (await notice.boundingBox())!;
+    const howBox = (await page.getByTestId("how-to").boundingBox())!;
+    expect(noticeBox.y, "the failure is below the how-to panel again").toBeLessThan(howBox.y);
+    // Said once: the page's own alert further down would be a second signal for the same failure.
+    await expect(page.getByText("came back incomplete")).toHaveCount(1);
+  });
+
+  test("@gate1 a failed run offers one way on: a re-run prefilled with its dictionaries, where the key is asked", async ({
+    page,
+  }) => {
+    await failedBeforeGate1(page);
+    const rerun = page.getByTestId("run-failed").getByTestId("run-failed-rerun");
+    await expect(rerun).toBeVisible();
+    const href = rerunSetupPathFor(PAUSED_JOB).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    await expect(rerun).toHaveAttribute("href", new RegExp(`${href}$`));
+    await expect(page.getByTestId("run-failed")).toContainText(/key/i);
+    // The empty state no longer sends the reviewer to this run's read-only Setup.
+    const empty = page.getByTestId("gate-empty-state");
+    await expect(empty.locator(`a[href$="/run/${PAUSED_JOB}/setup"]`)).toHaveCount(0);
+  });
+
+  test("@gate1 a STOPPED run has no failure notice, and its way on is the prefilled re-run too", async ({ page }) => {
+    await noGroupsYet(page, "cancelled");
+    await expect(page.getByTestId("run-failed")).toHaveCount(0);
+    const empty = page.getByTestId("gate-empty-state");
+    await expect(empty.locator(`a[href$="/run/${PAUSED_JOB}/setup"]`)).toHaveCount(0);
+    await expect(empty.locator("a", { hasText: /re-run/i })).toHaveCount(1);
   });
 
   test("@gate1 once the run PARKS with no groups, the corpus finding is the honest reading again", async ({

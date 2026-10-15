@@ -17,7 +17,15 @@ from typing import Any
 from backend import billing
 from backend.checkpoint import checkpoint_lock, checkpoint_path, write_checkpoint
 from backend.engine import run_pipeline
-from backend.engine.adapter import CumulativeLedger, LegTransport, StageFn, cost_block, merge_costs
+from backend.engine.adapter import (
+    FIRST_LEG_RETRY,
+    REQUIRED_STEP_RETRY,
+    CumulativeLedger,
+    LegTransport,
+    StageFn,
+    cost_block,
+    merge_costs,
+)
 from backend.jobs import AWAITING_REVIEW, GATE_DECIDED_BY_CONFIG_KEY, JobStore, is_auto
 
 logger = logging.getLogger(__name__)
@@ -299,7 +307,13 @@ def _run_leg(
                 **_undo_auto_commit(failing.config, failing.gate_position),
             )
         else:
-            store.update(job_id, status="error", phase="error", error_message=str(exc), failed_phase=failed_phase)
+            # A FIRST leg has no gate, so no Continue (round 10, Bhargav 2026-10-14: "no recourse"): a required step's
+            # "press Continue to retry" is false here. The way on is a re-run with the same inputs, which is also
+            # where the key is asked for again — the UI's failure notice offers exactly that.
+            message = str(exc)
+            if message.endswith(REQUIRED_STEP_RETRY):
+                message = message[: -len(REQUIRED_STEP_RETRY)] + FIRST_LEG_RETRY
+            store.update(job_id, status="error", phase="error", error_message=message, failed_phase=failed_phase)
         _keep_leg_spend(store, job_id, leg_ledger, work_dir)
     finally:
         # The leg is over, however it ended: its switch and its in-flight batch end with it.

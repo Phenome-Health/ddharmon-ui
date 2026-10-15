@@ -8,6 +8,7 @@ import { StopRunAction } from "@/components/stop-run-action";
 import { GATE_LABELS, GateRail, type GateRailItem } from "@/components/gate/GateRail";
 import { HowToPanel } from "@/components/gate/HowToPanel";
 import { RunProgress } from "@/components/gate/RunProgress";
+import { RunFailedNotice } from "@/components/gate/RunFailedNotice";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
 import { ConflictNotice } from "@/components/gate/ConflictNotice";
 import { SandboxBanner } from "@/components/gate/SandboxBanner";
@@ -317,6 +318,9 @@ export function GateShell({
           ONE PLACEMENT, FIVE SCREENS. No gate page implements its own, and `gates.spec.ts` asserts that
           single call site — the same rule and the same reason as the stop control above. */}
       <RunProgress job={job} />
+      {/* A FAILED run's state, in the same slot (round 10): where the progress bar was, above the how-to panel, said
+          once for all five screens. `RunProgress` renders nothing for a terminal run, so the two never stack. */}
+      {job?.status === "error" && jobId && <RunFailedNotice job={job} jobId={jobId} />}
 
       <HowToPanel
         gate={gate}
