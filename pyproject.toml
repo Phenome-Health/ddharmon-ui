@@ -24,6 +24,12 @@ dependencies = [
     # undeclared-but-present dependency is how a feature works locally and 500s on the server.
     "openpyxl>=3.1.0",
 
+    # The Anthropic SDK, which the backend calls DIRECTLY (engine/adapter.py's sync path). Capped below 1.0: SDK 1.x
+    # dropped `temperature` from `Messages.create`, so every synchronous call raised TypeError before reaching the
+    # provider — a 62-of-62 split failure on a fresh install (round 10, 2026-10-14). Lift the cap together with
+    # the move to models that reject temperature (the Sonnet 5.5 step), not before.
+    "anthropic>=0.39.0,<1",
+
     # Clerk SSO: verify the session JWT (RS256) against Clerk's JWKS (backend/auth.py). Imported
     # lazily and inert unless CLERK_* env is set, but the deploy needs it installed for the gate to
     # work. [crypto] pulls the RSA backend PyJWKClient requires.
