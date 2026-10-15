@@ -89,6 +89,7 @@ import {
   partitionByBreadth,
   pricePerGroup,
   sortDestinations,
+  outsideEveryGroup,
   unplacedFields,
   sortGroupsByColumn,
   type Bucket,
@@ -2327,7 +2328,11 @@ export default function Gate1Page() {
     () => cohortRoster(jobState?.result?.summary?.cohorts, groups),
     [jobState?.result?.summary?.cohorts, groups],
   );
-  const unassigned = jobState?.result?.unassignedFields ?? [];
+  // In no clustered GROUP — not the result's "in no record", which is every variable before Gate 2 (2026-10-15).
+  const unassigned = useMemo(
+    () => outsideEveryGroup(jobState?.result?.unassignedFields ?? [], jobState?.result?.conceptGroupMembers),
+    [jobState?.result?.unassignedFields, jobState?.result?.conceptGroupMembers],
+  );
   const costSoFar =
     jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 

@@ -4149,6 +4149,31 @@ test.describe("gate1 pool as a group", () => {
     return memberId;
   }
 
+  /*
+   * Found on a live run (Bhargav, 2026-10-15: "1000 vars in no group? that cant be right"). The result's
+   * `unassignedFields` means "in no concept RECORD" — the right set for Gate 4's "outside the export", the wrong one
+   * here: a run parked at Gate 1 has no records yet, so it listed all 1,000 variables as never placed, and after
+   * Gate 2 every variable outside the scope (561, while the ledger said 986 were grouped). A variable a clustered
+   * group holds was placed, whatever that list says.
+   */
+  test("@gate1 a variable a clustered group holds is never counted as unplaced, whatever the run's unassigned list says", async ({
+    page,
+  }) => {
+    await serveRun(page, (run) => {
+      const grouped = Object.values(run.result!.conceptGroupMembers ?? {})
+        .flat()
+        .map((key) => {
+          const [cohort, ...rest] = key.split(":");
+          return { cohort, variable: rest.join(":"), text: "" };
+        });
+      expect(grouped.length).toBeGreaterThan(0);
+      run.result!.unassignedFields = [...grouped, ...LEFTOVERS];
+    });
+    await openGate1(page);
+    await expandPool(page);
+    await expect(page.locator("[data-testid='pool-count']")).toHaveText("2");
+  });
+
   test("@gate1 the pool opens and closes like a row, and states its counts either way", async ({
     page,
   }) => {

@@ -470,6 +470,23 @@ export function reshapedGroupIds(
 }
 
 /**
+ * The variables the clustering placed in NO group: the run's `unassignedFields` minus every variable a clustered
+ * group holds (Bhargav, 2026-10-15: "1000 vars in no group? that cant be right").
+ *
+ * That list means "in no concept RECORD" — the right set for Gate 4's "outside the export" — so a run parked at
+ * Gate 1, which has no records yet, lists every variable, and after Gate 2 every variable outside the scope. A
+ * variable in a group's (uncapped) membership was placed, whatever that list says. A run that carries no
+ * membership keeps the list as it is.
+ */
+export function outsideEveryGroup<T extends { cohort: string; variable: string }>(
+  fields: readonly T[],
+  membersByGroup: Readonly<Record<string, readonly string[]>> | undefined,
+): T[] {
+  const grouped = new Set(Object.values(membersByGroup ?? {}).flat());
+  return grouped.size === 0 ? [...fields] : fields.filter((f) => !grouped.has(`${f.cohort}:${f.variable}`));
+}
+
+/**
  * The clustering's OWN leftovers that are still unplaced — the pipeline half of the pool (08-16c review).
  *
  * A field the reviewer has since dragged into a real group is NOT unplaced any more and must stop being
