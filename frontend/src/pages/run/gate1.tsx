@@ -2455,6 +2455,18 @@ export default function Gate1Page() {
   /** The free hints this screen reads: the shipped ones on the demo, else the route's answer. */
   const suggestionData = shippedHints ?? suggestionsQuery.data;
   /**
+   * Where the free search is, for the panel to SAY (user test 2026-11-03): running with no answer yet, or failed. The
+   * demo's hints are shipped, so it never searches. A later re-ask keeps the previous answer on screen (above), so
+   * only a first search — the slow, cold one — reads as running.
+   */
+  const suggestionsStatus: "loading" | "error" | null = shippedHints
+    ? null
+    : suggestionsQuery.isError
+      ? "error"
+      : suggestionsQuery.isFetching && !suggestionsQuery.data
+        ? "loading"
+        : null;
+  /**
    * THE REVIEWER'S SUGGESTION CUT-OFF (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
    * default 0.62"). A Gate 1 decision like scope itself: persisted per run (held in the tab on the demo), frozen with
    * the gate. It replaces the payload's threshold everywhere the free search is cut — the cards, the tags and the
@@ -3287,6 +3299,9 @@ export default function Gate1Page() {
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
         suggestions={!frozen && !latestSpec ? (suggestionData ?? null) : null}
+        suggestionsStatus={!frozen && !latestSpec ? suggestionsStatus : null}
+        suggestionsError={suggestionsQuery.error instanceof Error ? suggestionsQuery.error.message : undefined}
+        onRetrySuggestions={() => void suggestionsQuery.refetch()}
         cutoff={cutoff}
         onCutoffChange={frozen ? undefined : setCutoff}
         spec={latestSpec}
