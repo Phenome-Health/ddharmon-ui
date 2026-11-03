@@ -28,6 +28,15 @@ os.environ["DDHARMON_CACHE"] = os.path.join(_TEST_ROOT, "embedding-cache")
 
 
 @pytest.fixture(autouse=True)
+def _no_gate1_search_warmup(monkeypatch):
+    """A run parking at Gate 1 warms the free Spotlight search with the dense encoder (runner); no test should load
+    it by accident. ``test_gate1_search_warmup.py`` turns it back on for the tests that are about it."""
+    from backend import runner
+
+    monkeypatch.setattr(runner, "WARM_GATE1_SEARCH", False)
+
+
+@pytest.fixture(autouse=True)
 def _clear_clerk_env(monkeypatch):
     for var in ("CLERK_ISSUER", "CLERK_JWKS_URL", "DDHARMON_ALLOWED_EMAIL_DOMAINS", "CLERK_EMAIL_CLAIM"):
         monkeypatch.delenv(var, raising=False)

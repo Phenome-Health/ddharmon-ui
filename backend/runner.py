@@ -110,6 +110,34 @@ def run_harmonization(
             logger.exception("job %s: Full auto could not continue past its gate", job_id)
 
 
+#: Warm Gate 1's free Concept Spotlight search when a run parks there (user test 2026-11-03). On by default; the test
+#: suite turns it off (conftest) so no test loads the dense encoder, and ``DDHARMON_UI_WARM_GATE1_SEARCH=0`` does here.
+WARM_GATE1_SEARCH = os.environ.get("DDHARMON_UI_WARM_GATE1_SEARCH", "1") != "0"
+
+
+def _warm_gate1_search(job_id: str, payload: dict[str, Any]) -> None:
+    """Embed the run's Gate 1 search corpus now, so the reviewer's first Spotlight search is a cache hit.
+
+    Found on dev (run 379c70ce): the first search on a run embedded every grouped variable from scratch — 93 seconds
+    for ~1,000 variables — while Gate 1 showed nothing, and the tester left before it answered. Runs AFTER the park,
+    on this leg's own worker thread (which ends right after), so the reviewer sees Gate 1 at once. A convenience:
+    with no dense encoder it does nothing, and any failure is logged, never raised.
+    """
+    if not WARM_GATE1_SEARCH:
+        return
+    try:
+        from backend import composite as composite_web
+        from backend.declared_score import warm_gate1_search
+        from backend.gate1_membership import gate1_membership
+
+        if not composite_web.encoder_available():
+            return
+        warm_gate1_search(payload.get("fieldIndex"), gate1_membership(payload, None), embed=composite_web._embedder())
+        logger.info("job %s: Gate 1 search warmed", job_id)
+    except Exception:  # noqa: BLE001 — a convenience; the park already happened and must stand
+        logger.warning("job %s: Gate 1 search warm-up failed (non-fatal)", job_id, exc_info=True)
+
+
 def _run_leg(
     store: JobStore,
     job_id: str,
@@ -265,6 +293,10 @@ def _run_leg(
                     store.update(job_id, analysis_ideas=ideas)
                 parked_for_advance = bool(advance_after_park and getattr(store.get(job_id), "auto_advance", False))
             logger.info("job %s paused at %s (%.4f USD realized)", job_id, gate, ckpt.realized_cost)
+            # The run is parked and on screen; this thread's last job is to make Gate 1's free search fast. Not on a
+            # Full-auto park the server continues at once: nobody searches there.
+            if gate == "gate1" and not parked_for_advance:
+                _warm_gate1_search(job_id, payload)
             return parked_for_advance
         if store.cancel_mode(job_id) == "keep":
             # "Keep" stop: the pipeline finished the in-flight stage and skipped the rest, returning a PARTIAL
