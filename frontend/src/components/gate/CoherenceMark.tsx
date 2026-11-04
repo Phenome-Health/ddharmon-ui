@@ -32,11 +32,11 @@ export const COHERENCE_COPY: Record<CoherenceState, { label: string; explain: st
   split: {
     label: "split",
     explain:
-      "The judge thinks this group fuses more than one concept. Its proposed division is below — accept it, edit it, or ignore it.",
+      "Likely fuses more than one concept: accept, edit or ignore the judge's proposed division below.",
   },
   qualify: {
     label: "qualify",
-    explain: "One concept with a modifier — advisory, not a defect.",
+    explain: "One measurement varied by a modifier — usually keep it as one group; the finding below names the modifier.",
   },
   single: {
     label: "checked",
