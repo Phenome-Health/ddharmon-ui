@@ -399,6 +399,9 @@ test.describe("Gate 4 declared score", () => {
     await panel.getByTestId("gate4-score-match").click();
     await expect(panel.getByTestId("gate4-score-verdict")).toBeVisible();
     const ORDER = ["gate4-score-verdict", "score-builder-info", "score-coverage", "score-match-components", "gate4-score-recipe"];
+    // Every section rendered before the order is read: the verdict appears first, and a snapshot taken then saw only
+    // it (flaked in 2 of 4 full runs, 2026-10-15 and 2026-11-04, under load).
+    for (const id of ORDER) await expect(panel.getByTestId(id)).toBeAttached();
     const order = await panel
       .locator(ORDER.map((id) => `[data-testid='${id}']`).join(", "))
       .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
