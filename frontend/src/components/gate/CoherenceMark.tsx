@@ -45,7 +45,7 @@ export const COHERENCE_COPY: Record<CoherenceState, { label: string; explain: st
   not_judged: {
     label: "not judged",
     explain:
-      "This group has fewer than 6 variables, so the coherence judge was not asked. Silence from a judge that was never asked is not a pass.",
+      "Too small to judge (under 6 variables), so the coherence judge was not asked — not a pass. Quick to check by eye.",
   },
 };
 

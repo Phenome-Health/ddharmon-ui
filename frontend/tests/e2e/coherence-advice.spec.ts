@@ -30,3 +30,23 @@ test("@gate1 a QUALIFY group says what to do, naming its axis", async ({ page })
   // Advisory: still no paid action on a qualify.
   await expect(finding.getByRole("button", { name: /accept this division/i })).toHaveCount(0);
 });
+
+/*
+ * Note 4 of the same test: "not judged" groups (too small) have no granularity flag. They are most groups on a
+ * single-dictionary run — 155 of 217 (71%) on the tester's — so the finding says why there is no reading and what
+ * to do instead: the group is small enough to check by eye. (A small-group judge is a todo, gated on a held-out
+ * check before it ships.)
+ */
+test("@gate1 a group too small to judge says why, and that it is quick to check by eye", async ({ page }) => {
+  const small = fixtureGroups().find((g) => g.coherence === "not_judged" && !g.matrixSuspect);
+  expect(small, "the fixture carries an unjudged group").toBeTruthy();
+
+  await page.goto(`/run/${PAUSED_JOB}/gate1`);
+  await page.waitForLoadState("networkidle");
+  await page.locator(`[data-testid='ledger-row'][data-row-id='${small!.groupId}']`).click();
+  const finding = page.locator("[data-testid='gate1-detail'] [data-testid='coherence-finding']");
+  await expect(finding).toContainText("Too small to judge");
+  await expect(finding).toContainText("under six variables");
+  await expect(finding).toContainText(/check (it )?by eye/i);
+  await expect(finding).toContainText(/not a pass/i);
+});

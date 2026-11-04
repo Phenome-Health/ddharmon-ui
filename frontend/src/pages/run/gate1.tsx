@@ -1476,10 +1476,14 @@ function ExpandedGroup({
             data-testid="coherence-finding"
             className="rounded-inner border-l-4 border-l-rule-on-inset bg-surface-inset px-4 py-3"
           >
-            <p className="text-sm font-semibold text-on-inset">Not judged</p>
+            {/* User test 2026-11-03, note 4: these are most groups on a single-dictionary run (71% of the
+                tester's), so say why there is no reading and what to do instead. */}
+            <p className="text-sm font-semibold text-on-inset">Too small to judge</p>
             <p className="mt-0.5 max-w-[80ch] text-sm text-on-inset-muted">
-              Groups under six variables are not sent to the coherence judge —
-              silence here is &ldquo;not asked&rdquo;, not &ldquo;passed&rdquo;.
+              Groups under six variables are not sent to the coherence judge, so
+              this one has no reading &mdash; not a pass. It is small enough to
+              check by eye: read its variables below and move any that do not
+              belong.
             </p>
           </div>
         )}
