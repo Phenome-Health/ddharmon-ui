@@ -1,0 +1,894 @@
+{
+ "_comment": "Pinned by BOTH tests/test_export_staged.py (backend/export_decisions.py) and frontend/tests/e2e/gate4.spec.ts (lib/gate4.ts decisionLogCsvRows): the Gate 4 decision-log preview must show the rows the download carries. Regenerate only by changing both implementations. 08-28 1e adds: an APPLIED re-pick (reviewerPick stamp), a pick on an absent group, an empty Gate 3 row, a per-code mapping diff, and score declarations collapsed to one row per score. 08-28 3f adds Gate 2 relations: one on the picked target, one on the model's (now not current) target, note-only rows on an applied pick and on the group's own element, and one on an absent group. Review round 2 adds Gate 3 removals (gate3_member_exclusion): one applied, one on an absent group, and one naming a variable the group does not have.",
+ "result": {
+  "records": [
+   {
+    "id": "c0#g0",
+    "clusterId": "c0",
+    "groupId": "c0#g0",
+    "concept": "Age in years",
+    "verdict": "adopt",
+    "route": "assigned",
+    "cde": {
+     "id": "AgeCDE",
+     "externalId": "tiny-age"
+    },
+    "idealCde": "ideal Age in years",
+    "gencde": null,
+    "cosines": {
+     "top1": 0.8,
+     "chosen": 0.8
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 2,
+    "cohorts": [
+     "A",
+     "B"
+    ],
+    "members": [
+     "A:age",
+     "B:age_yrs"
+    ],
+    "memberDetails": [],
+    "transforms": [],
+    "candidates": [
+     {
+      "rank": 1,
+      "cdeId": "AgeCDE",
+      "cdeExternalId": "tiny-age",
+      "definition": "AgeCDE definition",
+      "cosine": 0.8,
+      "isChosen": true,
+      "llmSuggested": true
+     },
+     {
+      "rank": 2,
+      "cdeId": "AgeAtVisitCDE",
+      "cdeExternalId": "tiny-visit",
+      "definition": "AgeAtVisitCDE definition",
+      "cosine": 0.7,
+      "isChosen": false,
+      "llmSuggested": false
+     }
+    ],
+    "rationale": "because",
+    "decidedBy": "llm"
+   },
+   {
+    "id": "c1#g0",
+    "clusterId": "c1",
+    "groupId": "c1#g0",
+    "concept": "Smoking status",
+    "verdict": "refine",
+    "route": "assigned",
+    "cde": {
+     "id": "SmokeCDE",
+     "externalId": "tiny-smoke"
+    },
+    "idealCde": "ideal Smoking status",
+    "gencde": null,
+    "cosines": {
+     "top1": 0.8,
+     "chosen": 0.8
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 2,
+    "cohorts": [
+     "A",
+     "B"
+    ],
+    "members": [
+     "A:smoke",
+     "B:smk"
+    ],
+    "memberDetails": [],
+    "transforms": [
+     {
+      "sourceVariable": "A:smoke",
+      "targetCdeId": "SmokeCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "1": "Yes",
+       "2": "No"
+      },
+      "unmappedSourceCodes": []
+     },
+     {
+      "sourceVariable": "B:smk",
+      "targetCdeId": "SmokeCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "Y": "Yes",
+       "N": "No"
+      },
+      "unmappedSourceCodes": []
+     }
+    ],
+    "candidates": [
+     {
+      "rank": 1,
+      "cdeId": "SmokeCDE",
+      "cdeExternalId": "tiny-smoke",
+      "definition": "SmokeCDE definition",
+      "cosine": 0.8,
+      "isChosen": true,
+      "llmSuggested": true
+     },
+     {
+      "rank": 2,
+      "cdeId": "TobaccoCDE",
+      "cdeExternalId": "tiny-tob",
+      "definition": "TobaccoCDE definition",
+      "cosine": 0.7,
+      "isChosen": false,
+      "llmSuggested": false
+     }
+    ],
+    "rationale": "because",
+    "decidedBy": "llm"
+   },
+   {
+    "id": "c2#g0",
+    "clusterId": "c2",
+    "groupId": "c2#g0",
+    "concept": "Hair colour",
+    "verdict": "novel",
+    "route": "gencde_residual",
+    "cde": null,
+    "idealCde": "ideal Hair colour",
+    "gencde": {
+     "isGenerated": true,
+     "gencdeId": "GEN:hair",
+     "preferredName": "Hair colour"
+    },
+    "cosines": {
+     "top1": 0.8,
+     "chosen": null
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 1,
+    "cohorts": [
+     "A"
+    ],
+    "members": [
+     "A:hair"
+    ],
+    "memberDetails": [],
+    "transforms": [],
+    "candidates": [],
+    "rationale": "because",
+    "decidedBy": "llm"
+   },
+   {
+    "id": "c3#g0",
+    "clusterId": "c3",
+    "groupId": "c3#g0",
+    "concept": "Diabetes",
+    "verdict": "adopt",
+    "route": "assigned",
+    "cde": {
+     "id": "DiabetesCDE",
+     "externalId": "tiny-dm"
+    },
+    "idealCde": "ideal Diabetes",
+    "gencde": null,
+    "cosines": {
+     "top1": 0.8,
+     "chosen": 0.8
+    },
+    "coverageGap": false,
+    "floored": false,
+    "crossCohort": true,
+    "nMembers": 2,
+    "cohorts": [
+     "A",
+     "B"
+    ],
+    "members": [
+     "A:dm",
+     "B:dm"
+    ],
+    "memberDetails": [],
+    "transforms": [
+     {
+      "sourceVariable": "A:dm",
+      "targetCdeId": "DiabetesCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "1": "Yes"
+      },
+      "unmappedSourceCodes": []
+     },
+     {
+      "sourceVariable": "B:dm",
+      "targetCdeId": "DiabetesCDE",
+      "kind": "categorical",
+      "confidence": 0.8,
+      "coverage": 1.0,
+      "needsUnits": false,
+      "needsData": false,
+      "needsReview": false,
+      "rationale": "",
+      "generatedBy": "llm",
+      "codeMap": {
+       "1": "1",
+       "0": "0",
+       "-121": "9"
+      },
+      "unmappedSourceCodes": []
+     }
+    ],
+    "candidates": [
+     {
+      "rank": 1,
+      "cdeId": "DiabetesCDE",
+      "cdeExternalId": "tiny-dm",
+      "definition": "DiabetesCDE definition",
+      "cosine": 0.8,
+      "isChosen": true,
+      "llmSuggested": false
+     }
+    ],
+    "rationale": "because",
+    "decidedBy": "reviewer",
+    "reviewerPick": {
+     "chosen": "DiabetesCDE",
+     "kind": "catalog",
+     "target": "DiabetesCDE",
+     "modelTarget": "GENCDE:c3#g0",
+     "reason": "",
+     "modelCde": null,
+     "modelVerdict": "novel",
+     "modelGencde": {
+      "gencdeId": "GENCDE:c3#g0",
+      "preferredName": "diabetes_ind",
+      "permissibleValues": [
+       {
+        "code": "1",
+        "label": "Yes"
+       },
+       {
+        "code": "0",
+        "label": "No"
+       }
+      ]
+     }
+    }
+   }
+  ],
+  "conceptGroups": [
+   {
+    "groupId": "c0#g0",
+    "concept": "Age in years"
+   }
+  ]
+ },
+ "config": {
+  "gate1_scope": [
+   "c0#g0",
+   "c1#g0",
+   "c3#g0"
+  ],
+  "gate1_overrides": {
+   "moves": {
+    "B:age_yrs": "c1#g0"
+   },
+   "newGroups": [
+    {
+     "groupId": "rev:5b1f8d6e-2c3a-4f7b-9e0d-1a2b3c4d5e6f",
+     "name": "Eye conditions"
+    }
+   ]
+  }
+ },
+ "grouped": {
+  "gate1_group_scope": [
+   {
+    "groupId": "c2#g0",
+    "chosen": "out",
+    "alternatives": [
+     "in",
+     "out"
+    ],
+    "optionSetKey": "07fe4899a4e9f9da"
+   }
+  ],
+  "gate1_new_group": [
+   {
+    "groupId": "rev:5b1f8d6e-2c3a-4f7b-9e0d-1a2b3c4d5e6f",
+    "name": "Eye conditions",
+    "chosen": "Eye conditions",
+    "alternatives": [
+     "Eye conditions"
+    ],
+    "optionSetKey": "64e1ed97d875c0ba"
+   }
+  ],
+  "gate1_rename": [
+   {
+    "groupId": "c0#g0",
+    "chosen": "Participant âge",
+    "generatedName": "Age in years",
+    "alternatives": [
+     "Participant âge"
+    ],
+    "optionSetKey": "fb714030c8aaf1fe"
+   }
+  ],
+  "gate1_regroup": [
+   {
+    "memberId": "B:age_yrs",
+    "fromGroupId": "c0#g0",
+    "chosen": "c1#g0",
+    "alternatives": [
+     "c0#g0",
+     "",
+     "c1#g0"
+    ],
+    "optionSetKey": "fdbd36e5b4032979"
+   }
+  ],
+  "gate2_candidate_pick": [
+   {
+    "groupId": "c0#g0",
+    "chosen": "AgeAtVisitCDE",
+    "gencdeEdit": {
+     "name": "Age, visit",
+     "definition": "x",
+     "units": "years",
+     "values": ""
+    },
+    "alternatives": [
+     "AgeCDE",
+     "AgeAtVisitCDE"
+    ],
+    "optionSetKey": "9104df8e9cb8bfa4"
+   },
+   {
+    "groupId": "c2#g0",
+    "chosen": "",
+    "alternatives": [],
+    "optionSetKey": "e3b0c44298fc1c14"
+   },
+   {
+    "groupId": "c1#g0",
+    "chosen": "TobaccoCDE",
+    "alternatives": [
+     "SmokeCDE",
+     "TobaccoCDE"
+    ],
+    "optionSetKey": "96b5671d9778d0ac"
+   },
+   {
+    "groupId": "c3#g0",
+    "chosen": "DiabetesCDE",
+    "alternatives": [
+     "DiabetesCDE"
+    ],
+    "optionSetKey": "k3"
+   },
+   {
+    "groupId": "zz#g9",
+    "chosen": "AgeCDE",
+    "alternatives": [
+     "AgeCDE"
+    ],
+    "optionSetKey": "k9"
+   }
+  ],
+  "gate2_relation": [
+   {
+    "groupId": "c0#g0",
+    "targetId": "AgeAtVisitCDE",
+    "chosen": "skos:broadMatch",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe",
+    "note": "visit age, broader"
+   },
+   {
+    "groupId": "c0#g0",
+    "targetId": "AgeCDE",
+    "chosen": "skos:closeMatch",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe"
+   },
+   {
+    "groupId": "c3#g0",
+    "targetId": "DiabetesCDE",
+    "chosen": "",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe",
+    "note": "checked, fine"
+   },
+   {
+    "groupId": "c2#g0",
+    "targetId": "GEN:hair",
+    "chosen": "",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe",
+    "note": "definition checked"
+   },
+   {
+    "groupId": "zz#g9",
+    "targetId": "AgeCDE",
+    "chosen": "skos:exactMatch",
+    "alternatives": [
+     "skos:exactMatch",
+     "skos:closeMatch",
+     "skos:narrowMatch",
+     "skos:broadMatch",
+     "skos:relatedMatch"
+    ],
+    "optionSetKey": "0271f036dd6f8cfe"
+   }
+  ],
+  "gate3_spec_edit": [
+   {
+    "sourceVariable": "A:smoke",
+    "chosen": "A:smoke",
+    "note": "checked, ok",
+    "mapping": {
+     "2": "Never",
+     "1": "Current"
+    },
+    "upstream": {
+     "kind": "gate2_candidate_pick",
+     "itemKey": "c1#g0",
+     "contentKey": "deadbeefdeadbeef"
+    },
+    "alternatives": [
+     "A:smoke"
+    ],
+    "optionSetKey": "aeba81f34fc8486e"
+   },
+   {
+    "sourceVariable": "B:smk",
+    "chosen": "",
+    "rejected": true,
+    "alternatives": [
+     "B:smk"
+    ],
+    "optionSetKey": "7d97f6a4e5beb7f8"
+   },
+   {
+    "sourceVariable": "A:dm",
+    "chosen": "A:dm",
+    "note": "",
+    "alternatives": [
+     "A:dm"
+    ],
+    "optionSetKey": "k4"
+   },
+   {
+    "sourceVariable": "B:dm",
+    "chosen": "B:dm",
+    "mapping": {
+     "1": "1",
+     "0": "0",
+     "-121": "__missing__",
+     "-818": "9"
+    },
+    "alternatives": [
+     "B:dm"
+    ],
+    "optionSetKey": "k5"
+   }
+  ],
+  "gate3_member_exclusion": [
+   {
+    "groupId": "c1#g0",
+    "memberId": "B:smk",
+    "chosen": "exclude",
+    "alternatives": [
+     "keep",
+     "exclude"
+    ],
+    "optionSetKey": "32526f8b1a5fa77f"
+   },
+   {
+    "groupId": "zz#g9",
+    "memberId": "B:smk",
+    "chosen": "exclude",
+    "alternatives": [
+     "keep",
+     "exclude"
+    ],
+    "optionSetKey": "32526f8b1a5fa77f"
+   },
+   {
+    "groupId": "c0#g0",
+    "memberId": "A:not_a_member",
+    "chosen": "exclude",
+    "alternatives": [
+     "keep",
+     "exclude"
+    ],
+    "optionSetKey": "32526f8b1a5fa77f"
+   }
+  ],
+  "verdict": [
+   {
+    "recordId": "c1#g0",
+    "axis": "match",
+    "decision": "approve",
+    "note": "fine"
+   }
+  ],
+  "composite_swap": [
+   {
+    "scoreName": "Frailty",
+    "componentName": "grip",
+    "chosen": "",
+    "alternatives": [
+     "grip",
+     "gait"
+    ],
+    "optionSetKey": "s1"
+   },
+   {
+    "scoreName": "Frailty",
+    "componentName": "gait",
+    "chosen": "c1#g0",
+    "alternatives": [
+     "grip",
+     "gait"
+    ],
+    "optionSetKey": "s1"
+   },
+   {
+    "scoreName": "PHQ",
+    "componentName": "mood",
+    "chosen": "",
+    "alternatives": [
+     "mood"
+    ],
+    "optionSetKey": "s2"
+   }
+  ]
+ },
+ "columns": [
+  "gate",
+  "kind",
+  "action",
+  "item",
+  "before",
+  "after",
+  "note",
+  "detail",
+  "stale"
+ ],
+ "expectedRows": [
+  [
+   "Gate 1",
+   "gate1_scope_frozen",
+   "Continued with this scope",
+   "",
+   "",
+   "3 groups in scope",
+   "",
+   "[\"c0#g0\",\"c1#g0\",\"c3#g0\"]",
+   "false"
+  ],
+  [
+   "Gate 1",
+   "gate1_group_scope",
+   "Set group scope",
+   "c2#g0",
+   "",
+   "out",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 1",
+   "gate1_new_group",
+   "Created a group",
+   "rev:5b1f8d6e-2c3a-4f7b-9e0d-1a2b3c4d5e6f",
+   "",
+   "Eye conditions",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 1",
+   "gate1_regroup",
+   "Moved a variable",
+   "B:age_yrs",
+   "c0#g0",
+   "c1#g0",
+   "",
+   "applied",
+   "false"
+  ],
+  [
+   "Gate 1",
+   "gate1_rename",
+   "Renamed a group",
+   "c0#g0",
+   "Age in years",
+   "Participant âge",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c0#g0",
+   "AgeCDE",
+   "AgeAtVisitCDE",
+   "",
+   "{\"gencdeEdit\":{\"definition\":\"x\",\"name\":\"Age, visit\",\"units\":\"years\",\"values\":\"\"}}",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c2#g0",
+   "GEN:hair",
+   "GEN:hair",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c1#g0",
+   "SmokeCDE",
+   "TobaccoCDE",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "c3#g0",
+   "GENCDE:c3#g0",
+   "DiabetesCDE",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_candidate_pick",
+   "Picked a target",
+   "zz#g9",
+   "",
+   "AgeCDE",
+   "",
+   "{\"notApplied\":\"no record for this group in the run's results\"}",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c0#g0|AgeAtVisitCDE",
+   "",
+   "skos:broadMatch",
+   "visit age, broader",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c0#g0|AgeCDE",
+   "skos:exactMatch",
+   "skos:closeMatch",
+   "",
+   "{\"notApplied\":\"not this group's current target\"}",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c3#g0|DiabetesCDE",
+   "",
+   "no relation asserted",
+   "checked, fine",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "c2#g0|GEN:hair",
+   "",
+   "no relation asserted",
+   "definition checked",
+   "",
+   "false"
+  ],
+  [
+   "Gate 2",
+   "gate2_relation",
+   "Set a relation",
+   "zz#g9|AgeCDE",
+   "",
+   "skos:exactMatch",
+   "",
+   "{\"notApplied\":\"no record for this group in the run's results\"}",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "A:smoke",
+   "categorical {\"1\":\"Yes\",\"2\":\"No\"}",
+   "edited",
+   "checked, ok",
+   "1: Yes → Current; 2: No → Never",
+   "true"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "B:smk",
+   "categorical {\"N\":\"No\",\"Y\":\"Yes\"}",
+   "rejected",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "A:dm",
+   "categorical {\"1\":\"Yes\"}",
+   "reverted to model spec",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_spec_edit",
+   "Edited a transform spec",
+   "B:dm",
+   "categorical {\"-121\":\"9\",\"0\":\"0\",\"1\":\"1\"}",
+   "edited",
+   "",
+   "-818: missing → 9; -121: 9 → missing",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_member_exclusion",
+   "Removed a variable from a concept",
+   "c1#g0|B:smk",
+   "c1#g0",
+   "removed",
+   "",
+   "",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_member_exclusion",
+   "Removed a variable from a concept",
+   "zz#g9|B:smk",
+   "zz#g9",
+   "removed",
+   "",
+   "{\"notApplied\":\"no record for this group in the run's results\"}",
+   "false"
+  ],
+  [
+   "Gate 3",
+   "gate3_member_exclusion",
+   "Removed a variable from a concept",
+   "c0#g0|A:not_a_member",
+   "c0#g0",
+   "removed",
+   "",
+   "{\"notApplied\":\"not a variable of this group in the run's results\"}",
+   "false"
+  ],
+  [
+   "Composite",
+   "composite_swap",
+   "Declared a Spotlight list",
+   "Frailty",
+   "",
+   "2 items, 1 matched",
+   "",
+   "{\"components\":[\"grip\",\"gait\"],\"matched\":{\"gait\":\"c1#g0\"}}",
+   "false"
+  ],
+  [
+   "Composite",
+   "composite_swap",
+   "Declared a Spotlight list",
+   "PHQ",
+   "",
+   "1 item",
+   "",
+   "{\"components\":[\"mood\"]}",
+   "false"
+  ],
+  [
+   "Workbench",
+   "verdict",
+   "Recorded a verdict",
+   "c1#g0|match",
+   "",
+   "approve",
+   "fine",
+   "",
+   "false"
+  ]
+ ],
+ "legacyDecisions": {
+  "c1#g0": {
+   "decision": "approve",
+   "note": "fine"
+  }
+ }
+}

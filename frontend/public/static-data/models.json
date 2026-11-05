@@ -1,0 +1,30 @@
+{
+  "models": [
+    {
+      "id": "claude-sonnet-4-6",
+      "label": "Claude Sonnet 4.6",
+      "provider": "anthropic",
+      "validated": true
+    },
+    {
+      "id": "claude-opus-4-8",
+      "label": "Claude Opus 4.8",
+      "provider": "anthropic",
+      "validated": false
+    },
+    {
+      "id": "gpt-4o",
+      "label": "GPT-4o",
+      "provider": "openai",
+      "validated": false
+    },
+    {
+      "id": "gemini/gemini-1.5-pro",
+      "label": "Gemini 1.5 Pro",
+      "provider": "gemini",
+      "validated": false
+    }
+  ],
+  "default": "claude-sonnet-4-6",
+  "source": "fallback"
+}

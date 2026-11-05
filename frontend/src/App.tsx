@@ -1,14 +1,17 @@
+import type { ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Route, Router, Switch } from "wouter";
+import { Redirect, Route, Router, Switch, useParams } from "wouter";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/auth";
 import { AppShell } from "@/components/AppShell";
+import { SignInClonePrompt } from "@/components/gate/CloneDialog";
 import LandingPage from "@/pages/landing";
 import HomePage from "@/pages/home";
 import DashboardPage from "@/pages/dashboard";
 import WorkbenchPage from "@/pages/workbench";
 import AnalysisIdeasPage from "@/pages/analysis-ideas";
+import CompositePage from "@/pages/composite";
 import JobsPage from "@/pages/jobs";
 import GuidePage from "@/pages/guide";
 import MethodsPage from "@/pages/methods";
@@ -18,6 +21,54 @@ import DemoPage from "@/pages/demo";
 import RelatedWorkPage from "@/pages/related-work";
 import PhenomeHealthPage from "@/pages/phenome-health";
 import RoadmapPage from "@/pages/roadmap";
+import DeploymentArchitecturePage from "@/pages/deployment-architecture";
+import PreviewRestructurePage from "@/pages/preview-restructure";
+import PreviewPayoffPage from "@/pages/preview-payoff";
+import PreviewCompositePage from "@/pages/preview-composite";
+import PreviewReproducibilityPage from "@/pages/preview-reproducibility";
+import PreviewKnowledgeGraphPage from "@/pages/preview-knowledge-graph";
+// The staged review flow: one page file per gate, so no later screen plan has to touch this router.
+// The file boundaries are fixed HERE, once, and each is owned by exactly one later plan.
+import SetupPage from "@/pages/run/setup";
+import Gate1Page from "@/pages/run/gate1";
+import Gate2Page from "@/pages/run/gate2";
+import Gate3Page from "@/pages/run/gate3";
+import Gate4Page from "@/pages/run/gate4";
+import type { HideablePage } from "@/lib/hidden-pages";
+import { isPageHidden } from "@/lib/page-visibility";
+
+/**
+ * The retired `gate0` path — REGISTERED, and a redirect rather than a deleted route.
+ *
+ * Gate 0 was demoted on 2026-08-26 (`08-DECISION-GATE0.md` D-2): its content is now a free pre-flight on
+ * Setup — free because the run parks before any model is called, and the first charge is the control that
+ * pre-flight carries — and the flow is five screens. The BACKEND BOUNDARY IS UNCHANGED (D-3), so the wire still parks
+ * runs at `gatePosition: "gate0"` and `next_gate("gate0") === "gate1"` still drives the resume. A live
+ * wire value whose URL 404s is a landmine for every resume link built from `gatePosition` — the guest walk
+ * and the runs list both will be. So the route stays and lands the reviewer on that run's Setup, which is
+ * where the screen's content went. This follows D-16's precedent in this phase: a retired surface
+ * redirects rather than being deleted.
+ *
+ * `replace`, not a push: the reviewer arrived here from a resume link, and leaving the dead URL in history
+ * would make Back bounce them straight through it again.
+ */
+function RetiredGate0Route() {
+  const { jobId = "" } = useParams<{ jobId: string }>();
+  return <Redirect to={`/run/${jobId}/setup`} replace />;
+}
+
+function HomeRedirect() {
+  return <Redirect to="/" replace />;
+}
+
+/**
+ * A content page this build may leave out (`lib/hidden-pages.ts` — prod hides six). Hidden, its route stays
+ * REGISTERED, so the visual gate's route-coverage guard still matches this table, but it sends the visitor home:
+ * an old link to it (a slide, a bookmark) should land somewhere useful rather than on a 404.
+ */
+function hideable(page: HideablePage, Page: ComponentType): ComponentType {
+  return isPageHidden(page) ? HomeRedirect : Page;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -37,22 +88,39 @@ export default function App() {
             <Route path="/" component={LandingPage} />
             <Route path="/new" component={HomePage} />
             <Route path="/guide" component={GuidePage} />
-            <Route path="/methods" component={MethodsPage} />
-            <Route path="/benchmarks" component={BenchmarksPage} />
-            <Route path="/design" component={DesignChoicesPage} />
+            <Route path="/methods" component={hideable("methods", MethodsPage)} />
+            <Route path="/benchmarks" component={hideable("benchmarks", BenchmarksPage)} />
+            <Route path="/design" component={hideable("design", DesignChoicesPage)} />
             <Route path="/demo" component={DemoPage} />
             <Route path="/related" component={RelatedWorkPage} />
-            <Route path="/roadmap" component={RoadmapPage} />
-            <Route path="/phenome" component={PhenomeHealthPage} />
+            <Route path="/roadmap" component={hideable("roadmap", RoadmapPage)} />
+            <Route path="/architecture" component={hideable("architecture", DeploymentArchitecturePage)} />
+            {/* The roadmap's design previews go with the roadmap: it is their only way in, and each links back to it. */}
+            <Route path="/preview/restructure" component={hideable("roadmap", PreviewRestructurePage)} />
+            <Route path="/preview/payoff" component={hideable("roadmap", PreviewPayoffPage)} />
+            <Route path="/preview/composite" component={hideable("roadmap", PreviewCompositePage)} />
+            <Route path="/preview/reproducibility" component={hideable("roadmap", PreviewReproducibilityPage)} />
+            <Route path="/preview/knowledge-graph" component={hideable("roadmap", PreviewKnowledgeGraphPage)} />
+            <Route path="/phenome" component={hideable("phenome", PhenomeHealthPage)} />
+            <Route path="/run/:jobId/setup" component={SetupPage} />
+            <Route path="/run/:jobId/gate0" component={RetiredGate0Route} />
+            <Route path="/run/:jobId/gate1" component={Gate1Page} />
+            <Route path="/run/:jobId/gate2" component={Gate2Page} />
+            <Route path="/run/:jobId/gate3" component={Gate3Page} />
+            <Route path="/run/:jobId/gate4" component={Gate4Page} />
             <Route path="/job/:jobId/workbench" component={WorkbenchPage} />
             <Route path="/job/:jobId/analysis" component={AnalysisIdeasPage} />
+            <Route path="/job/:jobId/composite" component={CompositePage} />
             <Route path="/job/:jobId" component={DashboardPage} />
             <Route path="/jobs" component={JobsPage} />
             <Route>
-              <div className="p-8 text-neutral-500">404 — page not found</div>
+              <div className="p-8 text-on-field-muted">404 — page not found</div>
             </Route>
             </Switch>
           </AppShell>
+          {/* A guest who signs in holding demo work is offered BOTH clone flavours, once (08-18). App-wide,
+              because a sign-in does not return them to the gate they were on. Renders nothing otherwise. */}
+          <SignInClonePrompt />
         </Router>
         <Toaster />
       </TooltipProvider>

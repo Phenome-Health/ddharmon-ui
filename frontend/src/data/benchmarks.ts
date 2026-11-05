@@ -24,6 +24,20 @@
 //       public-safe to dump, so no trend view is shipped here yet — it is a deliberate future add.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+import type { ContentProvenance } from "./content-provenance";
+
+/** See ./content-provenance. NOT yet baselined: nobody has re-read these figures against the
+ *  canonical `docs/methods.md §3` since this manifest was written, so the honest stamp is
+ *  "unverified" rather than today's core — a stamp asserting a check that never happened is worse
+ *  than no stamp. The first verification pass should re-read every number against §3, then set a
+ *  real coreCommit / contractVersion here. */
+export const VERIFIED_AGAINST: ContentProvenance = {
+  coreCommit: "unverified",
+  contractVersion: "unverified",
+  checkedOn: "never",
+  scope: "Baseline not established — figures unconfirmed against canonical methods.md §3.",
+};
+
 /**
  * How a benchmark is used, per the canonical benchmark-usage policy:
  *  - `development` — already tuned on; read the number as optimistic (carries a caution tag).

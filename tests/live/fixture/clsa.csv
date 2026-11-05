@@ -1,0 +1,44 @@
+table,name,valueType,unit,label:en,question:en,comment:en,value_encoding
+Tracking_Baseline_v4-1,GEN_HLTH_TRM,text,,Self-rated general health,"In general, would you say your health is excellent, very good, good, fair, or poor?",,1=Excellent|2=Very good|3=Good|4=Fair|5=Poor
+Tracking_Baseline_v4-1,GEN_MNTL_TRM,text,,Self-rated mental health,"In general, would you say your mental health is excellent, very good, good, fair, or poor?",,1=Excellent|2=Very good|3=Good|4=Fair|5=Poor
+Tracking_Baseline_v4-1,VIS_SGHT_TRM,text,,Eyesight rating,"Is your eyesight, using glasses or corrective lens if you use them…",,1=Excellent|2=Very good|3=Good|4=Fair|5=Poor or non-existent (non-existent = blind)
+Tracking_Baseline_v4-1,HRG_HRG_TRM,text,,Hearing rating,"Is your hearing, using a hearing aid if you use one…",,1=Excellent|2=Very good|3=Good|4=Fair|5=Poor
+Tracking_Baseline_v4-1,HRG_NOIS_TRM,text,,Hearing difficulty with background noise,"Do you find it difficult to follow a conversation if there is background noise, such as TV, radio or children playing, even if using a hearing aid as usual?",,1=Yes|2=No
+Tracking_Baseline_v4-1,HRG_AID_TRM,text,,Uses any type of hearing aids,"Do you use any aids, specialized equipment, or services for persons who are deaf or hard of hearing, for example, a volume control telephone or TV decoder?","Refers to the use of any aid for the hearing-impaired (hearing aid, computer to communicate...)",1=Yes|2=No
+Tracking_Baseline_v4-1,DEP_BOTR_TRM,text,,CES-D 10 scale: Frequency easily bothered,How often were you bothered by things that usually don’t bother you?,"Part of the Center for Epidemiologic Studies Short Depression Scale (CES-D 10). Andresen EM, Malmgren JA, Carter WB, Patrick DL. Screening for depression in well older adults: evaluation of a short form of the CES-D (Center for Epidemiologic Studies Depr",1=All of the time (5-7days)|2=Occasionally (3-4 days)|3=Some of the time (1-2 days)|4=Rarely or never (less than 1 day)
+Tracking_Baseline_v4-1,DEP_FLDP_TRM,text,,CES-D 10 scale: Frequency feel depressed,How often did you feel depressed?,"Part of the Center for Epidemiologic Studies Short Depression Scale (CES-D 10). Andresen EM, Malmgren JA, Carter WB, Patrick DL. Screening for depression in well older adults: evaluation of a short form of the CES-D (Center for Epidemiologic Studies Depr",1=All of the time (5-7days)|2=Occasionally (3-4 days)|3=Some of the time (1-2 days)|4=Rarely or never (less than 1 day)
+Tracking_Baseline_v4-1,DEP_LONLY_TRM,text,,CES-D 10 scale: Frequency feel lonely,How often did you feel lonely?,"Part of the Center for Epidemiologic Studies Short Depression Scale (CES-D 10). Andresen EM, Malmgren JA, Carter WB, Patrick DL. Screening for depression in well older adults: evaluation of a short form of the CES-D (Center for Epidemiologic Studies Depr",1=All of the time (5-7days)|2=Occasionally (3-4 days)|3=Some of the time (1-2 days)|4=Rarely or never (less than 1 day)
+Tracking_Baseline_v4-1,FAL_NMBR_NB_TRM,decimal,,Number of falls (past 12 months),How many times have you fallen in the past 12 months?,"Selected variable is part of a skip pattern. Please refer to the questionnaire for complete skip pattern details. Maximum allowable is 30. This question was originally only asked if injuries were >1. 
+The variable has been recoded to include those who rep",
+Tracking_Baseline_v4-1,HWT_DWT_K_TRM,decimal,,Weight (Kilograms) - self-reported,,,
+Tracking_Baseline_v4-1,HWT_DHT_M_TRM,decimal,,Height (Metres) - self-reported,,,
+Tracking_Baseline_v4-1,CCT_ASTHM_TRM,text,,Asthma,Has a doctor ever told you that you have asthma?,,1=Yes|2=No
+Tracking_Baseline_v4-1,CCT_COPD_TRM,text,,"Emphysema, chronic bronchitis, chronic obstructive pulmonary disease (COPD), or chronic changes in lungs due to smoking","Has a doctor told you that you have/had any of the following: emphysema, chronic bronchitis, chronic obstructive pulmonary disease (COPD), or chronic changes in lungs due to smoking?",,1=Yes|2=No
+Tracking_Baseline_v4-1,CCT_DIAB_TRM,text,,"Diabetes, borderline diabetes or high blood sugar","Has a doctor ever told you that you have diabetes, borderline diabetes or that your blood sugar is high?",,1=Yes|2=No
+Tracking_Baseline_v4-1,CCT_MGRN_TRM,text,,Migraine headaches,Has a doctor ever told you that you have migraine headaches?,,1=Yes|2=No
+Tracking_Baseline_v4-1,CCT_CATAR_TRM,text,,Cataracts,Has a doctor ever told you that you have cataracts?,,1=Yes|2=No
+Tracking_Baseline_v4-1,CCT_GLAUC_TRM,text,,Glaucoma,Has a doctor ever told you that you have glaucoma?,,1=Yes|2=No
+Tracking_Baseline_v4-1,CCT_MACDEG_TRM,text,,Macular degeneration,Has a doctor ever told you that you have macular degeneration?,,1=Yes|2=No
+Tracking_Baseline_v4-1,CCT_ALLRG_TRM,text,,Allergies,Has a doctor ever told you that you have allergies?,,1=Yes (please specify)|2=No
+Comprehensive_Baseline_v7-2,GEN_HLTH_COM,text,,Self-rated general health,"In general, would you say your health is excellent, very good, good, fair, or poor?",,1=Excellent|2=Very good|3=Good|4=Fair|5=Poor
+Comprehensive_Baseline_v7-2,GEN_MNTL_COM,text,,Self-rated mental health,"In general, would you say your mental health is excellent, very good, good, fair, or poor?",,1=Excellent|2=Very good|3=Good|4=Fair|5=Poor
+Comprehensive_Baseline_v7-2,FAL_NMBR_NB_COM,decimal,,Number of falls (past 12 months),How many times have you fallen in the past 12 months?,"Selected variable is part of a skip pattern. Please refer to the questionnaire for complete skip pattern details. Maximum allowable is 30. This question was originally only asked if injuries were >1. 
+The variable has been recoded to include those who rep",
+Comprehensive_Baseline_v7-2,MEDI_ID_NAME_SP2_1_COM,text,,Drug or Natural product name (Original input) - Medication 1,,,
+Comprehensive_Baseline_v7-2,MEDI_ID_NAME_SP2_2_COM,text,,Drug or Natural product name (Original input) - Medication 2,,,
+Comprehensive_Baseline_v7-2,MEDI_ID_NAME_SP2_3_COM,text,,Drug or Natural product name (Original input) - Medication 3,,,
+Comprehensive_Baseline_v7-2,MEDI_ID_NAME_SP2_4_COM,text,,Drug or Natural product name (Original input) - Medication 4,,,
+Comprehensive_Baseline_v7-2,MEDI_ID_NAME_SP2_5_COM,text,,Drug or Natural product name (Original input) - Medication 5,,,
+Comprehensive_Baseline_v7-2,SPR_INPUT_HEIGHT_COM,decimal,m,Height - spirometer input,,Height input is based on the original average of uncleaned data entered automatically into the spirometer during the interview,
+Comprehensive_Baseline_v7-2,SPR_INPUT_WEIGHT_COM,decimal,kg,Weight - spirometer input,,Weight input is based on the original average of uncleaned data entered automatically into the spirometer during the interview,
+Comprehensive_Baseline_v7-2,HGT_HEIGHT_M_COM,decimal,cm,Average height in m,,,
+Comprehensive_Baseline_v7-2,WGT_WEIGHT_KG_COM,decimal,Kg,Average weight in kg,,,
+Comprehensive_Baseline_v7-2,CCC_MGRN_COM,text,,Migraine headaches,Has a doctor ever told you that you have migraine headaches?,,1=Yes|2=No
+Comprehensive_Baseline_v7-2,CCC_MACDEG_COM,text,,Macular degeneration,Has a doctor ever told you that you have macular degeneration?,,1=Yes|2=No
+Comprehensive_Baseline_v7-2,CCC_ALLRG_COM,text,,Allergies,Has a doctor ever told you that you have allergies?,,1=Yes-Specify|2=No
+Comprehensive_Baseline_v7-2,ROS_PAIN_COM,text,,WHO Rose - Chest pain or discomfort,Have you ever had any pain or discomfort in your chest?,Selected variable is part of a skip pattern. Please refer to the questionnaire for complete skip pattern details.,1=Yes|2=No
+Comprehensive_Baseline_v7-2,DEP_BOTR_COM,text,,CES-D 10 scale: Frequency easily bothered,How often were you bothered by things that usually don’t bother you?,,1=All of the time (5-7days)|2=Occasionally (3-4 days)|3=Some of the time (1-2 days)|4=Rarely or never (less than 1 day)
+Comprehensive_Baseline_v7-2,DEP_FLDP_COM,text,,CES-D 10 scale: Frequency feel depressed,How often did you feel depressed?,,1=All of the time (5-7days)|2=Occasionally (3-4 days)|3=Some of the time (1-2 days)|4=Rarely or never (less than 1 day)
+Comprehensive_Baseline_v7-2,DIA_DIAB_COM,text,,"Diabetes, borderline diabetes or blood sugar is high","Has a doctor ever told you that you have diabetes, borderline diabetes or that your blood sugar is high?",,1=Yes|2=No
+Comprehensive_Baseline_v7-2,CCC_ASTHM_COM,text,,Asthma,Has a doctor ever told you that you have asthma?,,1=Yes|2=No
+Comprehensive_Baseline_v7-2,CCC_COPD_COM,text,,"Emphysema, chronic bronchitis, COPD, or chronic changes in lungs due to smoking","Has a doctor told you that you have/had any of the following: emphysema, chronic bronchitis, chronic obstructive pulmonary disease (COPD), or chronic changes in lungs due to smoking?",,1=Yes|2=No

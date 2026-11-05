@@ -9,7 +9,8 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "rounded border border-neutral-200 bg-neutral-0 text-neutral-900",
+      // Container radius (UI-SPEC §4): a card is brand geometry, its contents are not.
+      "rounded-card border border-rule-on-raised bg-surface-raised text-on-raised",
       className
     )}
     {...props}
@@ -23,7 +24,7 @@ const CardHeader = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("flex flex-col space-y-1.5 px-6 py-4 border-b border-neutral-200", className)}
+    className={cn("flex flex-col space-y-1.5 px-6 py-4 border-b border-rule-on-raised", className)}
     {...props}
   />
 ))
@@ -35,7 +36,7 @@ const CardTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("text-base font-semibold text-neutral-900 leading-none tracking-tight", className)}
+    className={cn("font-display text-sm font-semibold text-on-raised leading-none tracking-tight", className)}
     {...props}
   />
 ))
@@ -47,7 +48,7 @@ const CardDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("text-xs text-neutral-500", className)}
+    className={cn("text-xs text-on-raised-muted", className)}
     {...props}
   />
 ))
@@ -67,7 +68,7 @@ const CardFooter = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("flex items-center px-6 py-4 border-t border-neutral-200", className)}
+    className={cn("flex items-center px-6 py-4 border-t border-rule-on-raised", className)}
     {...props}
   />
 ))

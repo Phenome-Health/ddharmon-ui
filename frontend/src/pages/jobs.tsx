@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Trash2 } from "lucide-react";
+import { ClipboardCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,13 +26,36 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cancelJob, deleteJob, listJobs } from "@/lib/api";
+import { isInFlight, isParked, isTerminal } from "@/lib/run-state";
+import { resumeGateOf, resumePathFor, runPathFor } from "@/lib/gate-routes";
+import { GATE_LABELS } from "@/components/gate/GateRail";
 import { useAuthState } from "@/auth";
 import { RerunAction } from "@/components/rerun-action";
 import { StopRunAction } from "@/components/stop-run-action";
-import { stopCostSplit, type JobSummary } from "@/types";
+import { formatUsd, stopCostSplit, type JobSummary } from "@/types";
 
-// Terminal statuses; anything else is an in-flight phase (data-driven — we don't enumerate phases).
-const TERMINAL = new Set(["complete", "error", "cancelled"]);
+/**
+ * WHERE THE PREDICATES WENT. This file used to carry its own `TERMINAL = new Set(["complete", "error",
+ * "cancelled"])`, which made every parked run look in-flight: `awaiting_review` is non-terminal, so a
+ * paused run was linked to the progress dashboard, badged with a pipeline phase, and offered a Stop for a
+ * worker that does not exist. `@/lib/run-state` now owns the three-way answer for every surface at once.
+ */
+
+// Resume a run parked at a review gate. NOT a Stop and NOT a Re-run: the row's own name links here too,
+// but a reviewer scanning the actions column should find the one thing this run is waiting for.
+function ResumeAction({ href, gateLabel }: { href: string; gateLabel: string }) {
+  return (
+    <Link
+      href={href}
+      data-testid="resume-review"
+      aria-label="Resume review"
+      title={`Resume review at ${gateLabel}`}
+      className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+    >
+      <ClipboardCheck className="h-4 w-4 text-accent-on-raised" />
+    </Link>
+  );
+}
 
 // Delete a run behind a confirmation dialog — a run can carry real LLM cost, so guard the trash button
 // against a fat-finger click. Names the run being deleted; delete is irreversible.
@@ -55,7 +78,7 @@ function DeleteAction({ job }: { job: JobSummary }) {
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <Button variant="ghost" size="icon" aria-label="Delete" title="Delete this run" onClick={() => setOpen(true)}>
-        <Trash2 className="h-4 w-4 text-neutral-400" />
+        <Trash2 className="h-4 w-4 text-on-raised-muted" />
       </Button>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -97,13 +120,13 @@ export default function JobsPage() {
   if (isGuest) {
     return (
       <div className="mx-auto max-w-4xl space-y-4">
-        <h1 className="text-2xl font-semibold text-ph-ink">Runs</h1>
+        <h1 className="font-display text-xl font-semibold text-on-field">Runs</h1>
         <Card>
           <CardContent className="space-y-3 p-8 text-center">
-            <p className="text-sm text-neutral-600">Your runs live in your account.</p>
-            <p className="text-xs text-neutral-500">
+            <p className="text-sm text-on-raised">Your runs live in your account.</p>
+            <p className="text-xs text-on-raised-muted">
               Sign in to upload cohorts and see your harmonization runs here — or try the{" "}
-              <Link href="/demo" className="text-ph-navy underline hover:text-ph-ink">
+              <Link href="/demo" className="text-link-on-raised underline hover:text-on-raised">
                 demo
               </Link>{" "}
               without an account.
@@ -116,7 +139,7 @@ export default function JobsPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <h1 className="text-2xl font-semibold text-ph-ink">Runs</h1>
+      <h1 className="font-display text-xl font-semibold text-on-field">Runs</h1>
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -125,44 +148,68 @@ export default function JobsPage() {
                 <TableHead>Run</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Records</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {jobs.map((j) => (
-                <TableRow key={j.jobId}>
+              {jobs.map((j) => {
+                const isDemo = !!(j.config as { demo?: boolean })?.demo;
+                // The demo run is deliberately exempt from all of this: it is a shipped fixture, always
+                // complete, and "every existing behaviour unchanged" is a requirement of this plan.
+                const resume = isDemo ? null : resumePathFor(j);
+                const parkedGate = isDemo ? null : resumeGateOf(j);
+                return (
+                <TableRow key={j.jobId} data-testid={`job-row-${j.jobId}`}>
                   <TableCell>
                     <span className="flex items-center gap-2">
                       <Link
-                        href={
-                          j.status === "complete" || (j.config as { demo?: boolean })?.demo
-                            ? `/job/${j.jobId}?results=1`
-                            : `/job/${j.jobId}`
-                        }
-                        className="font-medium text-ph-navy hover:underline"
+                        // A run that is not over is a STAGED run, so it is linked into the gates: a parked
+                        // run at the gate it waits on, an in-flight one at the gate its leg is running
+                        // toward (08-28 — it used to go to the legacy dashboard, which has no gate link).
+                        // Only an ended run, and the demo, keep the legacy page. One helper decides.
+                        href={runPathFor(j)}
+                        className="font-semibold text-link-on-raised hover:underline"
                       >
                         {j.displayName}
                       </Link>
-                      {(j.config as { demo?: boolean })?.demo && (
-                        <Badge variant="outline" className="border-ph-navy/30 text-ph-navy">
+                      {isDemo && (
+                        <Badge variant="outline" className="border-rule-info text-accent-on-inset-strong">
                           Demo
                         </Badge>
                       )}
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={j.status === "complete" ? "success" : j.status === "error" ? "destructive" : "outline"}>
-                      {TERMINAL.has(j.status) ? j.status : j.phase}
+                    <Badge
+                      data-testid="job-status"
+                      variant={j.status === "complete" ? "success" : j.status === "error" ? "destructive" : "outline"}
+                    >
+                      {/* A parked run's `phase` is the literal token `awaiting_review` (measured against the
+                          live backend 2026-08-31) — honest but unreadable, and it names no gate. The label
+                          names the screen the row's link actually OPENS, so the two cannot disagree: a run
+                          parked at the retired `gate0` reads "Set up", which is where clicking it lands. */}
+                      {parkedGate
+                        ? `Awaiting review · ${GATE_LABELS[parkedGate]}`
+                        : isTerminal(j.status)
+                          ? j.status
+                          : j.phase}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{j.nRecords || "—"}</TableCell>
-                  <TableCell className="text-sm text-neutral-500">
+                  <TableCell
+                    className="text-right tabular-nums text-on-raised"
+                    title={j.costSoFar ? "Actual token cost of this run (real spend, not an estimate)" : undefined}
+                  >
+                    {j.costSoFar ? formatUsd(j.costSoFar) : "—"}
+                  </TableCell>
+                  <TableCell className="text-sm text-on-raised-muted">
                     {new Date(j.createdAt * 1000).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-right">
                     <span className="flex items-center justify-end gap-1">
-                      {!TERMINAL.has(j.status) && !(j.config as { demo?: boolean })?.demo && (
+                      {isInFlight(j.status) && !isDemo && (
                         <StopRunAction
                           displayName={j.displayName}
                           costNote={stopCostSplit(j.config, j.phase)}
@@ -176,16 +223,22 @@ export default function JobsPage() {
                           }}
                         />
                       )}
-                      {TERMINAL.has(j.status) && !(j.config as { demo?: boolean })?.demo && <RerunAction job={j} />}
+                      {/* A pause is an EXIT (08 D-01): there is no worker to cancel, so a Stop here would
+                          offer to save money that is not being spent. Offer the resume instead. */}
+                      {isParked(j.status) && !isDemo && resume && parkedGate && (
+                        <ResumeAction href={resume} gateLabel={GATE_LABELS[parkedGate]} />
+                      )}
+                      {isTerminal(j.status) && !isDemo && <RerunAction job={j} />}
                       <DeleteAction job={j} />
                     </span>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
               {!jobs.length && !isLoading && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-neutral-400">
-                    No runs yet. <Link href="/new" className="text-ph-navy hover:underline">Start one →</Link>
+                  <TableCell colSpan={6} className="py-8 text-center text-sm text-on-raised-muted">
+                    No runs yet. <Link href="/run/new/setup" className="text-link-on-raised hover:underline">Start one →</Link>
                   </TableCell>
                 </TableRow>
               )}

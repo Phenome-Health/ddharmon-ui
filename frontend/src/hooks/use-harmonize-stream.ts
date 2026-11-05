@@ -1,15 +1,45 @@
 // SSE hook for live harmonization-run progress.
 // Adapted from biomapper-ui's use-mapping-stream.ts (same EventSource + exponential-backoff
 // retry + terminal-status close), pointed at /api/harmonize/stream and typed to JobResult.
-import { useCallback, useEffect, useRef, useState } from "react";
+//
+// TWO CHANNELS, AS OF 08-08 (D-03). The SSE frame is THIN — live fields plus a `resultVersion` token —
+// and the payload (`result`, `decisions`, `analysisIdeas`, `composites`, `config`) is fetched separately
+// from /result, which is already owner- and demo-scoped. The frame used to carry the whole job twice a
+// second, which was free only while `result` stayed null until terminal; a checkpointed run has a
+// multi-megabyte partial from Gate 2 onward, so the same code would have shipped ~6.8 MB at 2 Hz.
+//
+// Consumers still read ONE object: `jobState` is the frame merged with the latest fetched payload, so
+// `jobState.result` / `.decisions` / `.config` mean what they always did.
+//
+// The refetch fires exactly once per version change BY CONSTRUCTION, not by a guard: the React Query key
+// includes the version, so a repeated version resolves from cache and a new one is a new key. That is why
+// the backend asserts the token does NOT move on a progress tick — a ticking token would make "once per
+// change" mean "twice a second".
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { JobResult } from "@/types";
-import { IS_STATIC, appendAuthToken, cancelJob, getResult } from "@/lib/api";
+import { IS_STATIC, appendAuthToken, cancelJob, getResult, streamUrl } from "@/lib/api";
+import { streamPayload } from "@/lib/stream-payload";
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 1500;
+// After the SSE gives up, poll the payload channel this often instead of dead-ending. Slow on purpose:
+// the readout only needs to stay current-ish, and /result is the same fetch a manual reload would do.
+const POLL_MS = 8000;
 
 export interface StreamError {
   message: string;
+}
+
+/**
+ * Frames at which the stream closes: terminal, plus a gate pause (which has no worker to report) — EXCEPT a Full-auto
+ * park the server is about to continue (08-30, `autoAdvancing`): that run is moving, and the server keeps the stream
+ * open into its next step, so the client must keep reading it too.
+ */
+function isClosing(frame: Pick<JobResult, "status" | "autoAdvancing">): boolean {
+  const { status } = frame;
+  if (status === "awaiting_review") return !frame.autoAdvancing;
+  return status === "complete" || status === "error" || status === "cancelled";
 }
 
 // `instant` shows the finished result immediately, skipping the demo replay animation — used by the demo
@@ -19,14 +49,35 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
   const [jobState, setJobState] = useState<JobResult | null>(null);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<StreamError | null>(null);
+  // Set when the transport drops and a retry is pending. Rendered as a notice by the run views: a frozen
+  // readout that still looks live is indistinguishable from a stalled run, which is the worse failure.
+  const [reconnecting, setReconnecting] = useState(false);
+  // The version token the newest frame announced. 0 = nothing to fetch yet.
+  const [resultVersion, setResultVersion] = useState(0);
+  // Set when the SSE has EXHAUSTED its retries: the live transport is gone, so fall back to polling /result
+  // (a separate, header-authed fetch) rather than dead-ending. Cleared when the live stream comes back.
+  const [polling, setPolling] = useState(false);
+  // Bumped to force the connect effect to re-open the SSE — used by a tab refocus to retry the live stream.
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   // Pending timers for the static (Netlify) client-side replay — held in a ref so cancel() can stop them.
   const staticTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // The payload channel. Keyed BY VERSION, so each announced version is fetched once and a repeat is a
+  // cache hit — "exactly once per change" is a property of the key, not of a hand-rolled guard.
+  // Disabled in the static build, whose branch below loads the whole fixture in one shot.
+  const payloadQuery = useQuery({
+    queryKey: ["harmonize-result", jobId, resultVersion],
+    queryFn: () => getResult(jobId),
+    enabled: enabled && !!jobId && !IS_STATIC && resultVersion > 0,
+    staleTime: Infinity,
+  });
+
   useEffect(() => {
     mountedRef.current = true;
+    setReconnecting(false);
     if (!enabled || !jobId) return;
 
     // Static preview (Netlify): no SSE. Load the bundled result; for a DEMO fixture, pace it through the
@@ -103,7 +154,7 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
       if (!mountedRef.current) return;
       // EventSource can't set an Authorization header, so the Clerk token (when the SSO gate is on) rides
       // as ?token=; appendAuthToken is a no-op when auth is disabled (static/dev). Await it before opening.
-      const url = await appendAuthToken(`/api/harmonize/stream/${jobId}`);
+      const url = await appendAuthToken(streamUrl(jobId));
       if (!mountedRef.current) return;
       const es = new EventSource(url);
       esRef.current = es;
@@ -112,17 +163,18 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
         if (!mountedRef.current) return;
         try {
           const data: JobResult = JSON.parse((e as MessageEvent).data);
+          setReconnecting(false);
           setJobState(data);
-          if (data.status === "complete") {
-            setDone(true);
-            es.close();
-          } else if (data.status === "error") {
+          // Announce the payload version. Bumping this state changes the query key, which fetches it once.
+          setResultVersion((prev) => (data.resultVersion && data.resultVersion !== prev ? data.resultVersion : prev));
+          if (data.status === "error") {
             setError({ message: data.errorMessage ?? "Harmonization failed" });
-            setDone(true);
-            es.close();
-          } else if (data.status === "cancelled") {
-            // User stopped the run — terminal, but not an error. Settle and close the stream.
-            setDone(true);
+          }
+          if (isClosing(data)) {
+            // `awaiting_review` closes too: a gate pause is an EXIT (08 D-01), so there is no worker left
+            // to report progress and holding the stream open would poll a dead run forever. It is NOT
+            // terminal, though — `done` stays false so a resumed leg reconnects normally.
+            if (data.status !== "awaiting_review") setDone(true);
             es.close();
           }
         } catch (err) {
@@ -134,11 +186,18 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
         es.close();
         if (!mountedRef.current) return;
         if (retryCount < MAX_RETRIES) {
+          setReconnecting(true);
           const delay = BASE_RETRY_MS * Math.pow(2, retryCount);
           retryTimerRef.current = setTimeout(() => connect(retryCount + 1), delay);
         } else {
-          setError({ message: "Connection to harmonization service lost after multiple retries" });
-          setDone(true);
+          // Retries exhausted, but this is NOT a dead end. The payload channel (/result) is a separate
+          // header-authed fetch whose token refreshes independently of the SSE and still loads the run's
+          // current state; the run itself keeps going server-side and is close-the-tab safe (D-03). So
+          // DEGRADE TO POLLING rather than a red terminal error: keep `done` false, keep `reconnecting`
+          // true so the soft "figures are from the last update, not live" notice shows, and let the poll
+          // effect below refetch /result. A genuine terminal/error status arrives through that poll.
+          setReconnecting(true);
+          setPolling(true);
         }
       };
     }
@@ -149,7 +208,50 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       esRef.current?.close();
     };
-  }, [jobId, enabled, instant]);
+  }, [jobId, enabled, instant, reconnectNonce]);
+
+  // The SSE give-up fallback: poll /result on a slow interval so the readout stays current and the run stays
+  // resumable, instead of the old terminal error. Stops when a resting state (terminal, or an awaiting_review
+  // gate pause) arrives, or when the live SSE is re-established. A failed poll is not fatal — it keeps trying.
+  useEffect(() => {
+    if (!polling || !enabled || !jobId || IS_STATIC) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await getResult(jobId);
+        if (cancelled || !mountedRef.current) return;
+        setJobState(data);
+        if (data.status === "error") setError({ message: data.errorMessage ?? "Harmonization failed" });
+        if (isClosing(data)) {
+          if (data.status !== "awaiting_review") setDone(true);
+          setPolling(false);
+          setReconnecting(false);
+        }
+      } catch {
+        // a failed poll is not terminal — keep polling; the soft notice already covers a stale readout
+      }
+    };
+    void tick();
+    const id = setInterval(tick, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [polling, enabled, jobId]);
+
+  // A tab refocus is the natural moment to retry the LIVE stream after a give-up: re-open the SSE (bumping
+  // the connect effect), which on success resumes live frames and clears the poll fallback.
+  useEffect(() => {
+    if (!polling) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        setPolling(false);
+        setReconnectNonce((n) => n + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [polling]);
 
   // Stop an in-progress run. `mode` is "discard" (hard abort, no results) or "keep" (finish the current stage
   // → partial results, skip the rest). Backend: ask the server to cancel — the SSE stream delivers the terminal
@@ -170,5 +272,21 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
     }
   }, [jobId]);
 
-  return { jobState, done, error, cancel };
+  // The single object every consumer reads: the thin frame with the fetched payload folded in.
+  //
+  // The payload is only ever ADDED to a frame, never allowed to overwrite a live field — a fetch that
+  // lands a tick late would otherwise rewind `status`/`phase`/`costSoFar` to the moment it was issued and
+  // make the readout visibly jump backwards. The static branch already carries its own payload, so
+  // spreading nothing over it is what keeps a checkpointed fixture from being double-applied.
+  const merged = useMemo<JobResult | null>(() => {
+    if (!jobState) return null;
+    if (IS_STATIC) return jobState;
+    // The payload keys, ALWAYS present and defaulted even before the first fetch lands (`lib/stream-payload.ts`):
+    // consumers read `jobState.config.demo` and `jobState.decisions` unguarded, so handing them an object missing
+    // those keys would turn a thinner frame into a runtime crash — the defect a purely subtractive change would
+    // have shipped.
+    return { ...streamPayload(payloadQuery.data), ...jobState };
+  }, [jobState, payloadQuery.data]);
+
+  return { jobState: merged, done, error, cancel, reconnecting };
 }

@@ -10,6 +10,7 @@ GUI; swap in SQLite later if persistence is needed).
 
 from __future__ import annotations
 
+import logging
 import shutil
 import threading
 import time
@@ -21,7 +22,72 @@ from typing import Any
 # terminal state distinct from ``error`` (a user stopped the run) and ``complete`` — a cancelled run is
 # re-runnable from its retained uploads, exactly like an errored one.
 TERMINAL_STATES = {"complete", "error", "cancelled"}
+
+logger = logging.getLogger(__name__)
+
+#: A run parked at a review gate. NON-terminal — the run is not finished and will continue when the
+#: reviewer presses Continue — but it has NO WORKER THREAD: 08 D-01 makes a gate pause an *exit*, not a
+#: block, precisely so a run can wait days for a human without holding a thread or its embeddings.
+#:
+#: That combination is what every naive predicate in this backend got wrong. "Non-terminal" does not imply
+#: a live worker (``JobDB.recover_stale``), and "terminal" is not the only reason to persist a row (see
+#: :data:`PERSISTED_STATES` and ``JobStore.update``).
+AWAITING_REVIEW = "awaiting_review"
+
+#: Non-terminal statuses that are nonetheless DURABLE. A checkpoint transition must reach SQLite: the
+#: whole point is that the reviewer can come back after a redeploy, and a state that lives only in the
+#: in-memory store is exactly the state a redeploy destroys.
+CHECKPOINT_STATES = frozenset({AWAITING_REVIEW})
+
+#: Statuses that write through to the durable store. Progress ticks still do not (they live in memory and
+#: the SSE endpoint reads them there) — only a transition whose loss would cost the user money.
+PERSISTED_STATES = frozenset(TERMINAL_STATES) | CHECKPOINT_STATES
+
+#: The first screen of the staged flow. "Resuming a run with no decisions resumes at the first gate"
+#: (UI-SPEC §8.2) means the first UNCOMMITTED gate — see :meth:`Job.resume_gate`.
+FIRST_GATE = "setup"
+
+#: Where a run that is no longer parked lands. Gate 4 is a pure read (UI-SPEC §7), so it is the one gate
+#: that cannot spend on arrival — which is the property that matters for a terminal run.
+LAST_GATE = "gate4"
+
 _TTL_SECONDS = 3600
+
+# --- review mode (08-30) -------------------------------------------------------------------------------------
+#: How a run's gates are committed. An ENUM, not a flag, so a third mode ("auto with gates": pause only when a
+#: stage flags more than N items) can join later without a second boolean beside this one.
+#:   guided — every gate waits for a reviewer's Continue. The default, and what every run before 08-30 was.
+#:   auto   — Full auto: each gate is committed with the pipeline's own proposals and the next leg starts by
+#:            itself, through the same internal path Continue takes, until the run parks at Gate 4.
+GUIDED_REVIEW = "guided"
+AUTO_REVIEW = "auto"
+REVIEW_MODES = (GUIDED_REVIEW, AUTO_REVIEW)
+#: Where a run's review mode is stored. Recorded ONLY for a non-default mode: a guided run's config stays exactly
+#: what it was before review modes existed (pinned by tests/test_guided_golden.py), and an absent key reads as
+#: guided — which is also the true answer for every run created before this field.
+REVIEW_MODE_CONFIG_KEY = "review_mode"
+#: Which gates were committed by whom, ``{gate: "auto"}``. Only Full auto writes it; a gate absent from it was
+#: continued by a reviewer (Guided records nothing new, so its config is unchanged).
+GATE_DECIDED_BY_CONFIG_KEY = "gate_decided_by"
+#: The decided-by value an auto-committed gate carries.
+DECIDED_BY_AUTO = "auto"
+
+
+def review_mode_of(config: dict[str, Any] | None) -> str:
+    """The run's review mode; an absent or unknown value reads as guided (the safe default — it never spends)."""
+    mode = (config or {}).get(REVIEW_MODE_CONFIG_KEY)
+    return mode if mode in REVIEW_MODES else GUIDED_REVIEW
+
+
+def is_auto(config: dict[str, Any] | None) -> bool:
+    return review_mode_of(config) == AUTO_REVIEW
+
+
+def auto_accepted(config: dict[str, Any] | None, gate: str) -> bool:
+    """Whether ``gate`` was committed by Full auto (and so has not been reviewed by anyone)."""
+    decided = (config or {}).get(GATE_DECIDED_BY_CONFIG_KEY)
+    return isinstance(decided, dict) and decided.get(gate) == DECIDED_BY_AUTO
+
 
 # Runs the TTL purge must never evict: the prepopulated demo (``demo``) and any pinned/sample run. These
 # are always terminal, so without this exemption they would age out after the TTL and vanish from Runs.
@@ -29,8 +95,24 @@ _PINNED_CONFIG_KEYS = ("demo", "pinned", "sample")
 
 
 def _is_pinned(job: Job) -> bool:
-    """A pinned run (demo/sample/explicitly-pinned) is exempt from TTL purging — it stays in Runs forever."""
+    """A pinned run (demo/sample/explicitly-pinned) is exempt from TTL purging — it stays in Runs forever.
+
+    It is also IMMUTABLE: the canonical demo is one shared row that every user can see, so writing user work
+    onto it would make one person's verdicts and composites visible to everyone else. Demo edits live in the
+    browser instead; cloning the demo produces a run of the user's own that does persist.
+    """
     return any(job.config.get(k) for k in _PINNED_CONFIG_KEYS)
+
+
+#: Owner key used when the auth gate is disabled (local dev, tests, the static preview). With no identity
+#: provider there is exactly one user, so their artifacts all belong to this principal. Prod always has a
+#: real Clerk subject; this never collides with one because Clerk subjects are prefixed ``user_``.
+LOCAL_PRINCIPAL = "local"
+
+
+def principal_of(subject: str | None, job: Job | None = None) -> str:
+    """The artifact owner key for a request: the verified subject, else the run's owner, else the local one."""
+    return subject or (job.owner_subject if job is not None else None) or LOCAL_PRINCIPAL
 
 
 @dataclass
@@ -60,13 +142,26 @@ class Job:
     decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Ownership + re-run support (durable per-user history). owner_subject is the verified Clerk subject
     # (None for demos / when the auth gate is disabled). dict_specs are the per-dictionary load specs
-    # (paths + column roles + cohort names) needed to re-execute the run from its retained uploads. Neither
-    # is exposed by to_dict() — owner_subject must never leak to the client.
+    # (paths + column roles + cohort names) needed to re-execute the run from its retained uploads.
+    # owner_subject and the server-side upload paths must NEVER leak to the client; to_dict() exposes only a
+    # roles-only projection (filename + cohort + column roles) under `dictionaries`, for the Setup replay.
     owner_subject: str | None = None
     dict_specs: list[dict[str, Any]] | None = None
     # Optional post-run "analysis ideas" (LLM-suggested downstream analyses). None = not generated yet;
     # a list once generated (cached so the opt-in LLM pass isn't re-billed on every view). Persisted.
     analysis_ideas: list[dict[str, Any]] | None = None
+    # Optional post-run composite/derived-variable specs (one per published score derived against this run's
+    # concepts). None = none derived yet. A list, because a run legitimately supports several scores; a
+    # LEGACY MIRROR: the durable home is the per-user artifact store (kind `composite`), whose identity
+    # function keys by the score's name — so a re-derive replaces that score rather than appending.
+    # This field only still serves DB rows written before the artifact layer. A pinned demo's are its SHIPPED match
+    # (backend/demos/score.json), served as they are — see `to_dict`.
+    composites: list[dict[str, Any]] | None = None
+    # The shared demo's shipped declared score: ``{"declaration": [composite_swap rows], "suggestions": Gate 1's
+    # free hints}``. Set only by demo seeding, never persisted (a demo is re-seeded from the shipped file at every
+    # boot) and served only for a pinned run, as `demoScore`: the gate screens read it where a real run reads the
+    # reviewer's own rows and the suggestions route, neither of which a guest's walk of the demo can reach.
+    demo_score: dict[str, Any] | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     # Record count carried on a DB-hydrated summary (result blob not loaded); used by summary_dict when
@@ -76,13 +171,53 @@ class Job:
     # only: streamed as ``phaseStartedAt`` for the run view's elapsed + ETA + per-stage timeline. NOT persisted
     # (a DB-hydrated historical run starts empty here, so the UI falls back to total elapsed for old runs).
     phase_timings: dict[str, float] = field(default_factory=dict)
+    # Realized cost-so-far in USD, streamed for the live "spent so far" counter — each LLM stage updates it as
+    # it prices its captured token usage (see the adapter's cost ledger). PERSISTED as of 08-08 (the
+    # `realized_cost` column): a run paused at a gate is resumed by a human hours later, and reporting zero
+    # spend to someone who has already been billed for ideal + split + the judge is a cost-transparency
+    # defect under R8/R14, not cosmetics (T-08-44). A pre-08-08 historical row still reads 0 and the UI
+    # falls back to result["cost"] there.
+    cost_so_far: float = 0.0
+    # --- staged review (08 D-01/D-02) ---
+    # The screen this run is parked on ("setup".."gate4"), or None for a run that never entered the staged
+    # flow. Persisted; it is what a returning reviewer is routed to.
+    gate_position: str | None = None
+    # Pointer to the checkpoint payload, RELATIVE to the JobStore's work root (e.g.
+    # "<job_id>/checkpoint_gate1.json"). Relative because an absolute path does not survive a redeploy
+    # that moves the work root, and "the file is where the new container cannot see it" is
+    # indistinguishable from "your paid output is gone". The payload itself is NEVER in this row — the row
+    # is rewritten whole on every write (see backend/checkpoint.py).
+    checkpoint_ref: str | None = None
+    # Monotonic token for "the result payload changed". The progress frame carries it and the client
+    # refetches the (already auth-scoped) result endpoint when it MOVES — which is what lets the 2 Hz frame
+    # stop carrying a multi-megabyte result (D-03 / T-08-38). Deliberately NOT derived from `updated_at`:
+    # that moves on every progress tick and would turn one refetch into a refetch storm.
+    result_version: int = 0
     # Cooperative-cancellation mode, set by ``JobStore.request_cancel`` when the user hits Stop:
     #   "discard" — abort ASAP (the runner's progress checkpoint raises), keep NO partial result.
     #   "keep"    — finish the in-flight stage (deliver work already paid for), then skip the remaining stages;
     #               the run ends ``cancelled`` WITH whatever partial result the pipeline produced.
     # Transient (live-job only): never persisted, never serialized as a raw value by to_dict (only the derived
-    # ``stopping`` bool is) — a re-hydrated run starts None.
+    # ``stopping`` bool is) — a re-hydrated run starts None. It belongs to ONE worker: a parked run refuses it
+    # (``request_cancel``), a park clears it (``checkpoint``) and a resumed leg starts with it cleared
+    # (``resume_run``), so a stop can never outlive the leg it was aimed at and kill the next one.
     cancel_mode: str | None = None
+    # --- the batch -> sync switch (08-28 0e). All three are LIVE-ONLY display/control state for the CURRENT
+    # leg: never persisted, reset at every leg boundary by the runner (``reset_transport``), so a switch is
+    # sticky for the leg it was pressed in and never carried into the next one. ---
+    # How the leg's LLM stages are being sent right now: "batch" | "sync" (None for a run with no leg running).
+    transport: str | None = None
+    # The batch a batch stage is polling, as the adapter reports it: {tag, nItems, status, switchable,
+    # syncEstimateUsd}. None when no batch stage is in flight.
+    batch: dict[str, Any] | None = None
+    # The reviewer asked this leg to stop waiting on the batch (``POST .../switch-to-sync``).
+    switch_to_sync: bool = False
+    # Full auto (08-30): this run is parked at a gate ONLY for the moment it takes the server to commit that gate
+    # and start the next leg itself. LIVE-ONLY and never persisted, on purpose: the key the next leg needs lives
+    # in this process's memory only, so a restarted process must find the run plainly parked (False) and wait for
+    # a manual Continue. Set by the park that is about to advance (``checkpoint``), cleared by the next leg's
+    # start, a halt, or a Stop that lands in between (``halt_auto_advance``).
+    auto_advance: bool = False
 
     @classmethod
     def from_db_row(cls, d: dict[str, Any]) -> Job:
@@ -102,12 +237,44 @@ class Job:
             owner_subject=d.get("owner_subject"),
             dict_specs=d.get("dict_specs"),
             analysis_ideas=d.get("analysis_ideas"),
+            composites=d.get("composites"),
             created_at=d["created_at"],
             updated_at=d["updated_at"],
             n_records=d.get("n_records", 0),
+            gate_position=d.get("gate_position"),
+            checkpoint_ref=d.get("checkpoint_ref"),
+            # The persisted realized spend rehydrates INTO the live field, so every reader (to_dict,
+            # progress_dict, the run view) sees one number and cannot disagree with itself about it.
+            cost_so_far=float(d.get("realized_cost") or 0.0),
+            result_version=int(d.get("result_version") or 0),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, artifacts: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Wire view of this run.
+
+        ``artifacts`` is the CALLER's own artifacts for this run (see ``JobStore.artifacts_for``). When
+        supplied it overrides the in-memory mirrors, so the payload is scoped to whoever asked — the reason a
+        shared run can no longer hand one user another user's verdicts. Omitted (background/live paths) it
+        falls back to the in-memory mirrors, which for an owned run are that same user's work.
+        """
+        decisions = self.decisions
+        analysis_ideas = self.analysis_ideas
+        composites = self.composites
+        if artifacts is not None:
+            from backend.artifact_kinds import ANALYSIS_IDEAS, COMPOSITE, VERDICT
+            from backend.db import _verdicts_to_legacy
+
+            decisions = _verdicts_to_legacy(artifacts.get(VERDICT, []))
+            ideas_artifact = artifacts.get(ANALYSIS_IDEAS)
+            if ideas_artifact:
+                analysis_ideas = ideas_artifact.get("ideas")
+            elif not _is_pinned(self):
+                # A pinned demo keeps its own: its ideas are pre-generated and shipped with it, not anyone's work.
+                analysis_ideas = None
+            # A list, and `None` when the user has none — the panel distinguishes "no composites yet" from
+            # "an empty list", and the pre-artifact wire contract used null for the former. A pinned demo keeps its
+            # own, like its ideas: its match is shipped with it (backend/demos/score.json), not anyone's work.
+            composites = artifacts.get(COMPOSITE) or (self.composites if _is_pinned(self) else None)
         return {
             "jobId": self.job_id,
             "displayName": self.display_name,
@@ -122,18 +289,113 @@ class Job:
             "failedPhase": self.failed_phase,
             "result": self.result,
             "config": self.config,
-            "decisions": self.decisions,
-            "analysisIdeas": self.analysis_ideas,
+            # A roles-only projection of dict_specs, so the back-to-Setup replay can render the column
+            # mapping this run actually used (dict_specs is the run's persisted home for it; run_config
+            # deliberately keeps no dictionaries). Deliberately NOT the raw dict_specs: the server upload
+            # `path` and `owner_subject` must never reach the client (see the dict_specs field note). Empty
+            # for a demo/legacy run with no specs, so the reader iterates it without a null branch.
+            "dictionaries": [
+                {
+                    "filename": Path(s.get("path", "")).name,
+                    "cohortName": s.get("cohort_name"),
+                    "columnRoles": s.get("column_roles", {}),
+                }
+                for s in (self.dict_specs or [])
+            ],
+            "decisions": decisions,
+            "analysisIdeas": analysis_ideas,
+            "composites": composites,
             "phaseStartedAt": self.phase_timings,
+            "costSoFar": self.cost_so_far,
+            "gatePosition": self.gate_position,
+            "resultVersion": self.result_version,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
+            **self._auto_fields(),
+            **self._demo_score_field(),
         }
 
-    def summary_dict(self) -> dict[str, Any]:
+    def _demo_score_field(self) -> dict[str, Any]:
+        """The shared demo's shipped declaration + Gate 1 hints — and NOTHING for any other run, whose wire shape stays
+        exactly as it was (a real run's declaration is the reviewer's own rows, read through the artifacts route)."""
+        if not self.demo_score or not _is_pinned(self):
+            return {}
+        return {"demoScore": self.demo_score}
+
+    def _auto_fields(self) -> dict[str, Any]:
+        """A Full-auto run's two live fields — and NOTHING for a guided run, whose wire shape is pinned unchanged.
+
+        ``autoAdvancing`` is what keeps a client following a park the server is about to continue: without it a
+        parked status reads as "waiting for you" and the stream (and the client) would stop there.
+        """
+        if not is_auto(self.config):
+            return {}
+        return {"reviewMode": AUTO_REVIEW, "autoAdvancing": self.auto_advance}
+
+    def progress_dict(self) -> dict[str, Any]:
+        """The 2 Hz SSE frame: live fields plus a version token, and NOTHING that could grow (D-03).
+
+        Built POSITIVELY — every key enumerated here — rather than by popping fields off :meth:`to_dict`.
+        That direction matters. The shipped stream yielded the whole job twice a second, ``result``
+        included, which was free ONLY because ``result`` stayed ``None`` until the run went terminal.
+        Checkpointing breaks that assumption: a paused Gate 2 run has a multi-megabyte partial result, and
+        a subtractive frame would have shipped it 120 times a minute to every open tab (T-08-38). A
+        subtractive frame also silently re-admits the next heavy field somebody adds to ``to_dict``; an
+        additive one cannot.
+
+        The payload itself is fetched from ``/api/harmonize/result/{job_id}`` — already owner-scoped and
+        demo-scoped — when ``resultVersion`` changes. There is deliberately no owner-scoping parameter
+        here, because there is nothing owner-specific left in the frame: no result, no decisions, no
+        analysis ideas, no composites, not even ``config``.
+        """
+        return {
+            "jobId": self.job_id,
+            "displayName": self.display_name,
+            "status": self.status,
+            "phase": self.phase,
+            "stopping": self.cancel_mode is not None and self.status not in TERMINAL_STATES,
+            "completed": self.completed,
+            "total": self.total,
+            "errorMessage": self.error_message,
+            "failedPhase": self.failed_phase,
+            "phaseStartedAt": self.phase_timings,
+            "costSoFar": self.cost_so_far,
+            "gatePosition": self.gate_position,
+            "resultVersion": self.result_version,
+            # 08-28 0e: how the leg is sending its stages, and the batch in flight (None when there is none) —
+            # what the run view's "Finish now with sync" control renders from. Small and bounded by design.
+            "transport": self.transport,
+            "batch": self.batch if self.status not in TERMINAL_STATES else None,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+            **self._auto_fields(),
+        }
+
+    def resume_gate(self) -> str:
+        """Where a returning reviewer lands.
+
+        UI-SPEC §8.2: *"resuming a run with no decisions resumes at the first gate"*. "First gate" is the
+        first **uncommitted** gate — this run's own checkpoint when it has one, and :data:`FIRST_GATE`
+        when it has reached none. Read as "always Setup" it would contradict R7 (resume where you left
+        off) and the truth that closing the browser at Gate 1 returns you to Gate 1.
+
+        A TERMINAL run has no uncommitted gate, and its ``gate_position`` is the last one it PASSED, not
+        one it is waiting on. Answering with it would put a returning reviewer on a screen whose Continue
+        buys the next stage — on Gate 0, a button labelled with the run's first charge, for a run that has
+        already finished. So a finished, errored or cancelled run lands at the end instead. (This only
+        became reachable when submitted runs started entering the flow at Gate 0: before that no terminal
+        row ever carried a gate position, and this method always answered ``setup``.)
+        """
+        if self.status in TERMINAL_STATES:
+            return LAST_GATE
+        return self.gate_position or FIRST_GATE
+
+    def summary_dict(self, artifacts: dict[str, Any] | None = None) -> dict[str, Any]:
         """Lightweight view for the jobs list (omits the heavy result + analysis-ideas payloads)."""
-        d = self.to_dict()
+        d = self.to_dict(artifacts)
         d.pop("result", None)
         d.pop("analysisIdeas", None)
+        d.pop("demoScore", None)  # a gate screen's read, not a row's
         # Prefer the live result count; fall back to the persisted n_records hint for DB-hydrated summaries.
         d["nRecords"] = len(self.result["records"]) if self.result else self.n_records
         return d
@@ -159,12 +421,63 @@ class JobStore:
         self.work_root = work_root
         # Durable per-user store (backend.db.JobDB) or None (tests / no persistence -> legacy behavior).
         self.db = db
+        # Per-user artifacts (verdicts / composites / analysis ideas). Lazily built from ``db`` on first use
+        # so tests that attach a db after construction still get one. See backend/artifacts.py.
+        self._artifacts: Any | None = None
 
-    def _teardown_work_dir(self, job_id: str) -> None:
-        """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone."""
+    @property
+    def artifacts(self) -> Any | None:
+        """The :class:`~backend.artifacts.ArtifactStore` over this store's db, or None without a db."""
+        if self.db is None:
+            return None
+        if self._artifacts is None:
+            from backend.artifacts import ArtifactStore
+
+            self._artifacts = ArtifactStore(self.db)
+        return self._artifacts
+
+    def artifacts_for(self, job: Job, subject: str | None, *, with_updated_at: bool = False) -> dict[str, Any] | None:
+        """Everything ``subject`` has stored against ``job``, grouped by kind.
+
+        Resolves the owner key through :func:`principal_of` — the SAME way the write path does. Looking up
+        the raw subject instead reads under a different key than writes used whenever the auth gate is
+        disabled (dev, tests), and silently returns nothing.
+
+        ``None`` means "not resolved, keep the in-memory mirror" and is distinct from ``{}``, which means
+        "this user genuinely has no work on this run" and so must blank the payload.
+
+        A pinned run resolves to ``{}``: the canonical demo holds nobody's work by design — demo edits live
+        in the browser for the tab's lifetime, and are kept by cloning the demo into a run of your own.
+
+        ``with_updated_at`` is the list route's opt-in to each row's version (see ``ArtifactStore.get_all``).
+        """
+        store_ = self.artifacts
+        if store_ is None:
+            return None
+        if _is_pinned(job):
+            return {}
+        return store_.get_all(owner=principal_of(subject, job), job_id=job.job_id, with_updated_at=with_updated_at)
+
+    def _teardown_work_dir(self, job_id: str) -> bool:
+        """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone.
+
+        Returns whether the directory is gone AFTERWARDS, and warns when it is not.
+        ``shutil.rmtree(..., ignore_errors=True)`` reports success for a teardown it did not achieve — a
+        permission on the host, a file another process still holds — and under the checkpoint model that
+        silence IS the unbounded-growth failure (T-08-54): the run disappears from the UI, its stage output
+        stays on the disk forever, and nothing anywhere says so. This is the only automatic teardown in the
+        backend, so if it lies there is no second chance and no signal.
+        """
         if self.work_root is None:
-            return
-        shutil.rmtree(self.work_root / job_id, ignore_errors=True)
+            return True
+        target = self.work_root / job_id
+        shutil.rmtree(target, ignore_errors=True)
+        if target.exists():
+            logger.warning(
+                "work dir for run %s could not be removed (%s still on disk) — it will not be retried", job_id, target
+            )
+            return False
+        return True
 
     def _persist(self, job: Job) -> None:
         """Write a job through to the durable store — unless it's pinned (demos/samples aren't persisted)."""
@@ -225,44 +538,277 @@ class JobStore:
         if self.db is not None:
             durable = self.db.get(job_id) is not None
             self.db.delete(job_id)
+            # Cascade: a deleted run takes every user's artifacts for it. Without this they are orphaned
+            # rows that a recycled job id would resurrect against the wrong run.
+            store_ = self.artifacts
+            if store_ is not None:
+                store_.delete_for_run(job_id)
             existed = existed or durable
         # rmtree outside the lock — filesystem I/O shouldn't block the registry. Idempotent either way.
+        #
+        # THIS is the work-dir reaper (T-08-54). It runs unconditionally, including for a run that exists
+        # only as a database row: a paused run is evicted from memory by design, so the runs whose dirs are
+        # largest are exactly the ones not in ``self._jobs``. It must stay outside any "was it live?" branch.
         self._teardown_work_dir(job_id)
         return existed
 
-    def update(self, job_id: str, **fields: Any) -> None:
-        """Set attributes on a job (status/phase/completed/total/error_message/result)."""
+    def _live_or_hydrate_locked(self, job_id: str) -> Job | None:
+        """The in-memory job, else one hydrated from the DB AND REGISTERED. Caller must hold ``_lock``.
+
+        THE FIX FOR THE RESUME NO-OP (08-16c Task 11). :meth:`get` deliberately returns a DETACHED row for a
+        run that is not in memory — it never registers it — and :meth:`update` used to give up at exactly
+        that point with a bare ``return``. Every parked run is in that state, because parking evicts by
+        design (T-08-39), so ``resume_run``'s ``store.update(status="pending")`` wrote nothing, the route
+        returned 200 anyway, and the worker it spawned then had EVERY progress and cost write silently
+        discarded too. Measured on a real run: five Continue presses, five 200s, and status, gate, cost and
+        ``updated_at`` all unmoved.
+
+        WHY REGISTERING HERE DOES NOT DEFEAT EVICTION, which is the trap this fix has to avoid. This is
+        reached only from a WRITE, and a write is evidence the run is ACTIVE — which is precisely the case
+        eviction is not aimed at. :meth:`purge_expired` evicts on ``updated_at < cutoff`` AND a status in
+        ``TERMINAL_STATES | CHECKPOINT_STATES``; a run being resumed is ``pending``/``embedding``/… so it is
+        not evictable while it runs, and it becomes evictable again the moment it re-parks and ages out.
+        Reads are left alone on purpose: :meth:`get` is called on far more paths, and letting a read
+        repopulate memory is the thing that WOULD defeat eviction — a Runs listing or a checkpoint poll
+        would re-pin every parked run in RAM for the days a human review takes.
+
+        Registering also closes the hole for everything that follows the first write: the worker's own
+        ``progress()`` ticks go through :meth:`update`, so with the job back in memory they behave exactly
+        as they do for a run that was never evicted, and ``PERSISTED_STATES`` still decides what reaches
+        SQLite. Persisting every tick instead would have traded this bug for a write storm.
+        """
+        job = self._jobs.get(job_id)
+        if job is not None:
+            return job
+        if self.db is None:
+            return None
+        row = self.db.get(job_id)
+        if row is None:
+            return None
+        job = Job.from_db_row(row)
+        self._jobs[job_id] = job
+        return job
+
+    def update(self, job_id: str, **fields: Any) -> bool:
+        """Set attributes on a job (status/phase/completed/total/error_message/result).
+
+        Returns True when the write landed, False when there is no such run ANYWHERE — in memory or in the
+        durable store. The return value matters: this method used to be ``-> None`` and to return silently
+        for any run not held in memory, so ``resume_run`` could not tell that its write had been dropped
+        and answered 200 regardless. :meth:`checkpoint` already reported the same situation with a bool,
+        so the store was inconsistent with itself rather than merely incomplete.
+        """
         with self._lock:
-            job = self._jobs.get(job_id)
+            job = self._live_or_hydrate_locked(job_id)
             if job is None:
-                return
+                return False
             for key, value in fields.items():
+                if key == "cost_so_far":
+                    # MONOTONIC (08-28 1a, F3). Money already charged cannot be un-spent, so the live counter
+                    # never goes backwards — whichever writer reports a smaller figure (a resumed leg whose
+                    # ledger could not be seeded, a progress tick racing a paid action's bill). Enforced here,
+                    # under the lock, so no writer has to read-then-write and race another.
+                    value = max(float(job.cost_so_far or 0.0), float(value or 0.0))
                 setattr(job, key, value)
             # Stamp the first entry into each phase (incl. the terminal complete/error) so the run view can
             # show a per-stage timeline + a live ETA. setdefault → the START time; later ticks don't reset it.
             new_phase = fields.get("phase")
             if new_phase:
                 job.phase_timings.setdefault(new_phase, time.time())
+            # A write that CHANGES THE PAYLOAD moves the version token, so the client refetches the result
+            # exactly then. A plain progress tick must not — a token derived from `updated_at` would move
+            # twice a second and turn one refetch into a storm (D-03).
+            if "result" in fields:
+                job.result_version += 1
             job.updated_at = time.time()
-            persist = job.status in TERMINAL_STATES  # mirror only on terminal transitions, not every tick
+            # Mirror on any PERSISTED state, not only a terminal one: a checkpoint transition is the whole
+            # reason this phase exists, and a checkpoint that lives only in memory is exactly what a
+            # redeploy destroys. Progress ticks are still memory-only.
+            persist = job.status in PERSISTED_STATES
         if persist:
             self._persist(job)
+        return True
+
+    def checkpoint(
+        self,
+        job_id: str,
+        *,
+        gate: str,
+        checkpoint_ref: str,
+        realized_cost: float | None = None,
+        auto_advance: bool = False,
+    ) -> bool:
+        """Park a run at a review gate: ``awaiting_review``, a gate position, a pointer, a bumped token.
+
+        The payload is NOT passed here and never touches the jobs row (D-02) — the caller has already
+        written it to the per-run work dir via :mod:`backend.checkpoint`, and ``checkpoint_ref`` is the
+        pointer to it, relative to :attr:`work_root`.
+
+        ``auto_advance`` (08-30) marks a Full-auto park the server is about to continue by itself. A Stop that
+        raced this park WINS: it is honoured exactly as on a guided leg — the run stays parked — so the flag is
+        not raised over it. Every other park (guided, Gate 4, a halt) leaves the flag down.
+
+        Returns False for an unknown run. Idempotent: re-checkpointing the same gate is safe and simply
+        moves the token again, which costs one refetch and no money.
+        """
+        with self._lock:
+            # Same hydrate-on-write as `update`, and for the same reason: the Gate 4 hop checkpoints a run
+            # the request only ever READ (so it was never registered), and this returned False while
+            # `resume_run` returned 200 — reproduced live before the fix.
+            job = self._live_or_hydrate_locked(job_id)
+            if job is None:
+                return False
+            job.status = AWAITING_REVIEW
+            job.phase = AWAITING_REVIEW
+            job.gate_position = gate
+            job.checkpoint_ref = checkpoint_ref
+            # Read BEFORE the stop flag is cleared below: a stop that raced the park means "do not go on".
+            job.auto_advance = bool(auto_advance) and job.cancel_mode is None
+            # A park is an EXIT (08 D-01): nothing is spent past it, so a stop that raced it has had its
+            # effect. The runner parks only when no stop is set, but it reads that before writing the
+            # checkpoint, and a Stop can land in between. Left set, that flag reads as "Stopping…" forever and
+            # is the stale "discard" that killed the next Continue's worker at its first progress tick.
+            job.cancel_mode = None
+            if realized_cost is not None:
+                # Monotonic, like `update`: a park figure below what the run has already been charged (a legacy
+                # per-leg checkpoint, say) must not rewind the counter a reviewer has watched climb.
+                job.cost_so_far = max(float(job.cost_so_far or 0.0), float(realized_cost))
+            job.result_version += 1
+            job.phase_timings.setdefault(AWAITING_REVIEW, time.time())
+            job.updated_at = time.time()
+        self._persist(job)
+        return True
+
+    def mark_reconciled(self, job_id: str) -> bool:
+        """Record that late batch work was attached to a run: one version bump, nothing else.
+
+        Called by :mod:`backend.batch_reconcile` and by nothing else. The token moves EXACTLY once per
+        reconcile that changed something and not at all for a no-op, which is what stops the versioned
+        refetch 08-08 introduced from becoming a refetch storm driven by a timer (T-08-55).
+
+        Unlike :meth:`update`, this works on a run that is NOT IN MEMORY. That is the whole point: a paused
+        run is evicted from memory precisely because a human review takes days (T-08-39), so the run whose
+        batch results arrive late is the run most likely to exist only as a database row. ``update``
+        returning silently for that case would make the guarantee hold only for runs nobody waited on.
+
+        Returns False for a run this store cannot see at all.
+        """
+        with self._lock:
+            live = self._jobs.get(job_id)
+            if live is not None:
+                live.result_version += 1
+                live.updated_at = time.time()
+        if live is not None:
+            self._persist(live)
+            return True
+        if self.db is None:
+            return False
+        row = self.db.get(job_id)
+        if row is None:
+            return False
+        hydrated = Job.from_db_row(row)
+        hydrated.result_version += 1
+        hydrated.updated_at = time.time()
+        self._persist(hydrated)
+        return True
 
     def request_cancel(self, job_id: str, mode: str = "discard") -> bool:
         """Flag a live, in-flight run to stop. ``mode`` is "keep" (finish the current stage, keep its partial
         result, skip the rest) or "discard" (abort ASAP, no result); an unknown mode falls back to "discard".
 
-        Returns True when a running job was flagged; False when it's unknown or already terminal (nothing to
-        stop). Idempotent — the LAST mode set wins, so a user can escalate a "keep" to a "discard".
+        Returns True when a running job was flagged; False when it's unknown, already terminal, or PARKED at a
+        review gate (nothing to stop). Idempotent — the LAST mode set wins, so a user can escalate a "keep" to
+        a "discard".
+
+        A PARKED run is refused, not flagged. A pause is an exit (08 D-01), so there is no worker for the flag
+        to reach — and the next thing to read it would be the NEXT leg's fresh worker, which raised on it at
+        its first progress tick and ended the reviewer's paid Continue ``cancelled``. Checked under the lock,
+        so a Stop that saw an in-flight run and lost the race to the park is refused here too.
         """
         if mode not in ("keep", "discard"):
             mode = "discard"
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.status in TERMINAL_STATES:
+            if job is None or job.status in TERMINAL_STATES or job.status == AWAITING_REVIEW:
                 return False
             job.cancel_mode = mode
             return True
+
+    def halt_auto_advance(self, job_id: str, *, reason: str | None = None) -> bool:
+        """Stop Full auto from continuing a run parked between two legs; the run stays parked where it is.
+
+        Returns True when a pending advance was withdrawn, False when there was none (not parked, or nobody was
+        about to continue it). ``reason`` (when given) is recorded as the run's note, which the gate screen shows
+        as why Full auto stopped there. Persisted like any parked-state write, so the note survives a restart.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != AWAITING_REVIEW or not job.auto_advance:
+                return False
+            job.auto_advance = False
+            if reason is not None:
+                job.error_message = reason
+            job.updated_at = time.time()
+        self._persist(job)
+        return True
+
+    # --- the batch -> sync switch (08-28 0e) -------------------------------------------------------------
+
+    def request_switch_to_sync(self, job_id: str) -> str:
+        """Ask the run's in-flight leg to stop waiting on its batch and finish the stage synchronously.
+
+        Returns ``"requested"`` when the flag was raised, ``"already"`` when this leg already has it (idempotent:
+        a second press changes nothing), ``"unavailable"`` when there is nothing to switch — no live leg, or no
+        batch stage in flight, or a batch the provider no longer reports as ``in_progress`` (only a queued or
+        running batch can be cancelled; one that is ending hands back everything anyway) — and ``"unknown"``
+        for a run not in memory. Decided under the lock against what the adapter last reported, so a press
+        cannot race the report it was offered from. The flag itself is read by the leg's batch stages.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return "unknown"
+            if job.switch_to_sync:
+                return "already"
+            live = job.status not in TERMINAL_STATES and job.status != AWAITING_REVIEW
+            batch = job.batch or {}
+            if not live or job.transport != "batch" or batch.get("status") != "in_progress":
+                return "unavailable"
+            job.switch_to_sync = True
+            job.batch = {**batch, "switchable": False}
+            return "requested"
+
+    def switch_requested(self, job_id: str) -> bool:
+        """Whether the run's current leg was asked to switch. Read by the adapter's batch stages."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return bool(job and job.switch_to_sync)
+
+    def set_transport(self, job_id: str, transport: str | None, batch: dict[str, Any] | None) -> None:
+        """Record what the adapter reports about the leg's transport. Display state: it never persists and never
+        moves ``updated_at`` (the frozen-elapsed rule reads that at the park). A switch already requested stays
+        un-offered, whatever a late report says."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.transport = transport
+            if batch is not None and job.switch_to_sync:
+                batch = {**batch, "switchable": False}
+            job.batch = batch
+
+    def reset_transport(self, job_id: str, transport: str | None = None) -> None:
+        """A leg boundary: clear the switch flag and the in-flight batch, and set the new leg's transport.
+
+        Called by the runner when a leg starts and again when it ends, so a switch pressed in one leg is never
+        read by the next (each Continue is a fresh cost decision)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.switch_to_sync = False
+            job.batch = None
+            job.transport = transport
 
     def is_cancel_requested(self, job_id: str) -> bool:
         """Whether a stop (either mode) has been requested for a live job."""
@@ -284,6 +830,7 @@ class JobStore:
         axis: str = "match",
         source_variable: str | None = None,
         edited: dict[str, Any] | None = None,
+        subject: str | None = None,
     ) -> bool:
         """Persist a human verdict on one of three independent axes.
 
@@ -301,9 +848,24 @@ class JobStore:
         Works on a past (evicted / post-restart) run too: if it's not live in memory it is hydrated from the
         durable store, the verdict applied, and the whole record re-persisted — so reviewing history later
         records verdicts durably.
+
+        The durable home is the per-user artifact store (``backend/artifacts.py``); the in-memory
+        ``job.decisions`` mirror is kept for the live workbench and the export paths that read it. A PINNED
+        run (the canonical demo) raises :class:`~backend.artifacts.ReadOnlyRunError` and writes nothing — it holds
+        nobody's work, so it cannot hold everybody's.
         """
         if axis == "transform" and not source_variable:
             return False
+        target = self.get(job_id)
+        if target is None:
+            return False
+        if _is_pinned(target):
+            from backend.artifacts import ReadOnlyRunError
+
+            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified — clone it to keep your work")
+
+        self._write_verdict_artifact(target, subject, record_id, decision, note, axis, source_variable, edited)
+
         with self._lock:
             job = self._jobs.get(job_id)
             if job is not None:
@@ -318,6 +880,35 @@ class JobStore:
             self._apply_decision(job, record_id, decision, note, axis, source_variable, edited)
         self._persist(job)  # verdicts must survive a restart
         return True
+
+    def _write_verdict_artifact(
+        self,
+        job: Job,
+        subject: str | None,
+        record_id: str,
+        decision: str,
+        note: str,
+        axis: str,
+        source_variable: str | None,
+        edited: dict[str, Any] | None,
+    ) -> None:
+        """Mirror one verdict into the per-user artifact store. "clear" deletes the row rather than storing it."""
+        from backend.artifact_kinds import VERDICT
+
+        store_ = self.artifacts
+        if store_ is None:
+            return
+        owner = principal_of(subject, job)
+        item_key = f"{record_id}|{axis}|{source_variable or ''}"
+        if decision == "clear":
+            store_.delete(owner=owner, job_id=job.job_id, kind=VERDICT, item_key=item_key)
+            return
+        payload: dict[str, Any] = {"recordId": record_id, "axis": axis, "decision": decision, "note": note}
+        if source_variable:
+            payload["sourceVariable"] = source_variable
+        if edited:
+            payload["edited"] = edited
+        store_.put(owner=owner, job_id=job.job_id, kind=VERDICT, payload=payload, pinned=_is_pinned(job))
 
     def replace_result_record(self, job_id: str, record_id: str, new_record: dict[str, Any]) -> bool:
         """Replace one record in a job's result blob (e.g. after a targeted recode regeneration) and persist.
@@ -353,9 +944,33 @@ class JobStore:
         self._persist(job)
         return True
 
-    def set_analysis_ideas(self, job_id: str, ideas: list[dict[str, Any]]) -> bool:
+    def set_analysis_ideas(self, job_id: str, ideas: list[dict[str, Any]], subject: str | None = None) -> bool:
         """Cache generated analysis ideas on a job (live or DB-hydrated) and persist them, so the opt-in
-        LLM pass runs once and survives reload/restart. Returns False if the job doesn't exist."""
+        LLM pass runs once and survives reload/restart. Returns False if the job doesn't exist.
+
+        Durable home is the per-user artifact store; the in-memory mirror serves the live view. A pinned run
+        raises :class:`~backend.artifacts.ReadOnlyRunError` — the demo ships pre-generated ideas instead.
+        """
+        target = self.get(job_id)
+        if target is None:
+            return False
+        if _is_pinned(target):
+            from backend.artifacts import ReadOnlyRunError
+
+            raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified — clone it to keep your work")
+
+        store_ = self.artifacts
+        if store_ is not None:
+            from backend.artifact_kinds import ANALYSIS_IDEAS
+
+            store_.put(
+                owner=principal_of(subject, target),
+                job_id=job_id,
+                kind=ANALYSIS_IDEAS,
+                payload={"ideas": ideas},
+                pinned=False,
+            )
+
         with self._lock:
             job = self._jobs.get(job_id)
             if job is not None:
@@ -431,19 +1046,35 @@ class JobStore:
         the user's history (served from the DB) and can be re-run until they explicitly delete it. Without a
         ``db`` (legacy single-process), eviction also tears the scratch dir down so uploads never outlive the
         run (the original WS-3 guarantee).
+
+        **RETENTION FOR A PAUSED RUN IS INDEFINITE, until the reviewer deletes it.** Not an oversight and
+        not inherited by accident: a run parked at a gate holds work the user has ALREADY BEEN CHARGED FOR,
+        which under R14 makes it MORE valuable than a completed run, not less. So no TTL reaches it — not
+        its row, not its uploads, and above all not its work dir, because under D-02 the work dir IS the
+        checkpoint and deleting it would turn "resume any time" into "your paid output is gone". That is
+        also why §8.6's copy is a resume affordance with no countdown: a timer in the UI would be a
+        retention policy the developer never chose. The bound on disk growth is
+        :meth:`delete` — the reaper is keyed on DELETION, never on age.
         """
         cutoff = time.time() - self._ttl
+        # A run parked at a gate is evicted from MEMORY too (T-08-39: otherwise it holds its embeddings in
+        # RAM for as long as the human review takes, which is days by design), but ONLY when there is a
+        # durable row to rehydrate it from — and its row and work dir are always kept, because the work
+        # dir IS the checkpoint. Without a `db` there is nothing to come back to, so a paused run stays.
+        evictable = set(TERMINAL_STATES) | (CHECKPOINT_STATES if self.db is not None else frozenset())
         with self._lock:
             stale = [
                 jid
                 for jid, j in self._jobs.items()
-                if j.updated_at < cutoff and j.status in TERMINAL_STATES and not _is_pinned(j)
+                if j.updated_at < cutoff and j.status in evictable and not _is_pinned(j)
             ]
+            paused = {jid for jid in stale if self._jobs[jid].status in CHECKPOINT_STATES}
             for jid in stale:
                 self._jobs.pop(jid, None)
         if self.db is None:  # legacy: no durable copy -> uploads must not outlive the run
             for jid in stale:
-                self._teardown_work_dir(jid)
+                if jid not in paused:  # never tear down the dir a paused run resumes FROM
+                    self._teardown_work_dir(jid)
 
 
 # Module-level singleton used by the app.

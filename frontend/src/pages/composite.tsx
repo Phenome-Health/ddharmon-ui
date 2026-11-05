@@ -1,0 +1,1184 @@
+// Composite / derived-variable builder — point at a paper (or repo, PDF, or Word supplement) that defines a score and ask
+// whether THIS run's harmonized concepts can support it, and out of which concepts.
+//
+// Three things this surface must never soften, because they are the whole point of the feature:
+//   1. A MISSING component is a result, not a failure to hide — and "we retrieved 8 candidates and the judge
+//      rejected them all" is different information from "nothing was retrieved".
+//   2. A cutoff the source didn't state is flagged for a human, never invented.
+//   3. Partial coverage is NOT the published score. The verdict and the caveats say so in those words.
+//
+// Metadata-only: the output is a recipe the analyst runs on their own rows. ddharmon never computes it.
+import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Link, useParams } from "wouter";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  ChevronDown,
+  CircleDashed,
+  Flashlight,
+  FileText,
+  Link2,
+  Loader2,
+  Upload,
+  XCircle,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
+import { resolvePinned } from "@/hooks/use-gate-decisions";
+import { deriveComposite, extractCompositeDocument } from "@/lib/api";
+import { MISSING_IS_A_RUN_RESULT, coveredCohorts, GROUP_SELECT_THRESHOLD, missingReason, offeredGroups } from "@/lib/score-scope";
+import { conceptTitle } from "@/lib/ledger";
+import { cn } from "@/lib/utils";
+import type { ComponentMatch, CompositeSpec, ScoreComponent, UIRecord } from "@/types";
+
+type Mode = "paste" | "ref" | "pdf";
+
+const VERDICT_STYLE: Record<string, { label: string; className: string; Icon: typeof CheckCircle2 }> = {
+  full: { label: "Computable", className: "text-on-ok border-rule-ok bg-surface-ok", Icon: CheckCircle2 },
+  partial: { label: "Partially computable", className: "text-on-warn border-rule-warn bg-surface-warn", Icon: AlertTriangle },
+  infeasible: { label: "Not computable", className: "text-on-danger border-rule-danger bg-surface-danger", Icon: XCircle },
+  // The fourth value: "we could not tell", which is NOT "no". Rendered by FORM — a dashed ring on the
+  // neutral surface — for the same reason the coherence cell renders `not judged` that way: a status
+  // colour would file it as an outcome, and it is the absence of one. No destructive colour, because
+  // "undeterminable" and "cannot be built" are different claims and must not look alike.
+  indeterminate: {
+    label: "Cannot be determined",
+    className: "text-on-raised-muted border-rule-on-raised",
+    Icon: CircleDashed,
+  },
+};
+
+export default function CompositePage() {
+  const { jobId = "" } = useParams();
+  const { jobState } = useHarmonizeStream(jobId, true, true);
+
+  const [mode, setMode] = useState<Mode>("paste");
+  const [text, setText] = useState("");
+  const [ref, setRef] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [hybrid, setHybrid] = useState(false);
+  const [busy, setBusy] = useState<"" | "extract" | "derive">("");
+  const [error, setError] = useState("");
+  const [spec, setSpec] = useState<CompositeSpec | null>(null);
+  const [extracted, setExtracted] = useState<{ provenance: string; nChars: number } | null>(null);
+
+  const records: UIRecord[] = jobState?.result?.records ?? [];
+  // Show a previously derived spec for this run until a new derivation replaces it.
+  const stored = jobState?.composites ?? null;
+  const shown = spec ?? (stored && stored.length > 0 ? stored[stored.length - 1] : null);
+
+  const conceptById = useMemo(() => {
+    const m: Record<string, UIRecord> = {};
+    for (const r of records) m[r.id] = r;
+    return m;
+  }, [records]);
+
+  async function onDocument(file: File) {
+    setBusy("extract");
+    setError("");
+    try {
+      const out = await extractCompositeDocument(jobId, file);
+      setText(out.text);
+      setExtracted({ provenance: out.provenance, nChars: out.nChars });
+      setMode("paste"); // the extracted text is now the source — reviewable before anything is spent
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function derive() {
+    setBusy("derive");
+    setError("");
+    try {
+      const body = mode === "ref" ? { sourceRef: ref, hybrid } : { sourceText: text, hybrid };
+      setSpec(await deriveComposite(jobId, body, apiKey || undefined));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (!jobState) {
+    return (
+      <div className="flex items-center gap-2 p-8 text-on-raised-muted">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading run…
+      </div>
+    );
+  }
+
+  // THE SHARED DEMO NEVER SPENDS. Deriving is two paid model calls, and the server refuses a pinned run before it
+  // builds a client; the button says so here instead of sending a request that can only be refused. Its shipped
+  // score (if any) still shows below, as every run's stored spec does.
+  const demo = resolvePinned(jobState.config as Record<string, unknown> | undefined) === true;
+  const canDerive = !demo && (mode === "ref" ? ref.trim() : text.trim()).length > 0 && busy === "";
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <Link href={`/job/${jobId}`} className="mb-1 flex items-center gap-1 text-xs text-on-field-muted hover:text-on-field">
+          <ArrowLeft className="h-3 w-3" /> Back to run
+        </Link>
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Flashlight className="h-5 w-5 text-on-field" /> Concept Spotlight
+        </h1>
+        <p className="mt-1.5 max-w-3xl text-sm text-on-field-muted">
+          Point at a paper, repo, PDF, or Word supplement that defines a score — a frailty index, an intrinsic-capacity score,
+          an SES index — and see whether this run's {records.length} harmonized concepts can support it, which
+          concepts compose it, and how. ddharmon reads only metadata: it produces the derivation recipe and
+          never computes the score.
+        </p>
+      </div>
+
+      {/* --- source --- */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">The score's definition</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {(
+              [
+                ["paste", "Paste text", FileText],
+                ["ref", "URL / DOI / repo", Link2],
+                ["pdf", "Upload PDF / Word", Upload],
+              ] as const
+            ).map(([m, label, Icon]) => (
+              <Button
+                key={m}
+                size="sm"
+                variant={mode === m ? "default" : "outline"}
+                onClick={() => setMode(m)}
+                className="gap-1.5"
+              >
+                <Icon className="h-3.5 w-3.5" /> {label}
+              </Button>
+            ))}
+          </div>
+
+          {mode === "paste" && (
+            <>
+              <Textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={7}
+                placeholder="Paste the methods section or the item table that defines the score…"
+                className="font-mono text-xs"
+              />
+              {extracted && (
+                <p className="text-xs text-on-raised-muted">
+                  Extracted {extracted.nChars.toLocaleString()} chars from{" "}
+                  <span className="font-semibold text-on-raised">{extracted.provenance}</span> — review it above
+                  before deriving. If the score's item table isn't here, the document didn't carry it.
+                </p>
+              )}
+            </>
+          )}
+          {mode === "ref" && (
+            <>
+              <Input
+                value={ref}
+                onChange={(e) => setRef(e.target.value)}
+                placeholder="https://… , 10.1007/s11357-017-9993-7, or https://github.com/owner/repo"
+              />
+              <p className="text-xs text-on-raised-muted">
+                Fetched server-side and bounded (http(s) only, size-capped). A publisher page may omit the
+                score's item table — if the result looks under-enumerated, upload the PDF or supplement instead.
+              </p>
+            </>
+          )}
+          {mode === "pdf" && (
+            <div>
+              <Input
+                type="file"
+                accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onDocument(f);
+                }}
+              />
+              <p className="mt-1.5 text-xs text-on-raised-muted">
+                PDF or Word (.docx) — a score's item table is often in the supplement, and tables are read too.
+                Free — the extracted text lands in the paste box for review before anything is spent.
+              </p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Anthropic API key (this call only)"
+              className="max-w-xs"
+            />
+            <label className="flex items-center gap-1.5 text-xs text-on-raised-muted">
+              <input type="checkbox" checked={hybrid} onChange={(e) => setHybrid(e.target.checked)} />
+              Hybrid retrieval (slower first call, better matching on large runs)
+            </label>
+            <Button onClick={() => void derive()} disabled={!canDerive} className="ml-auto gap-1.5">
+              {busy === "derive" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Flashlight className="h-3.5 w-3.5" />}
+              Derive
+            </Button>
+          </div>
+          <p className="text-xs text-on-raised-muted">
+            Two LLM calls: transcribe the score, then match its items to this run's concepts. Editing a
+            match afterwards re-derives for free.
+          </p>
+          {demo && (
+            <p data-testid="composite-demo-refusal" className="text-xs font-semibold text-on-raised">
+              This is the shared demo, which never spends money. Clone it into a run of your own to derive a score
+              against its concepts.
+            </p>
+          )}
+          {busy === "extract" && (
+            <p className="flex items-center gap-1.5 text-xs text-on-raised-muted">
+              <Loader2 className="h-3 w-3 animate-spin" /> Reading the document…
+            </p>
+          )}
+          {error && (
+            <p className="rounded-md border border-rule-danger bg-surface-danger px-3 py-2 text-xs text-on-danger">{error}</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {shown && <SpecView spec={shown} conceptById={conceptById} records={records} jobId={jobId} />}
+    </div>
+  );
+}
+
+// Builder-level: a concept group is auto-selected (and auto-tagged for Gate 2) when its aggregate
+// confidence is at/above `GROUP_SELECT_THRESHOLD` (0.80 — not yet tuned against the 49×UKBB FI benchmark; an
+// internal note, not reviewer copy); one value for the whole builder, never per component.
+
+export function SpecView({
+  spec,
+  conceptById,
+  records,
+  jobId,
+  hideDerivation = false,
+  onOpenGroup,
+  isGroupInScope,
+  onGroupScopeChange,
+  resolveConcept,
+  resolveGroupId,
+}: {
+  spec: CompositeSpec;
+  conceptById: Record<string, UIRecord>;
+  records: UIRecord[];
+  jobId: string;
+  hideDerivation?: boolean;
+  onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
+  isGroupInScope?: (groupId: string) => boolean;
+  onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
+  resolveConcept?: (
+    id: string,
+  ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
+  resolveGroupId?: (id: string) => string | undefined;
+}) {
+  const { definition, feasibility, derivation } = spec;
+  // An unrecognized verdict falls back to INDETERMINATE, never to the negative one. The previous
+  // `?? VERDICT_STYLE.infeasible` turned any verdict this build did not know about — a newer core's
+  // vocabulary, a truncated field on an old run — into an on-screen claim that the score cannot be
+  // built. That is the prohibited emission, arrived at by a default rather than by a judgement.
+  const style = VERDICT_STYLE[feasibility.verdict] ?? VERDICT_STYLE.indeterminate;
+
+
+  return (
+    <div className="space-y-4">
+      {/* --- verdict --- */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-start gap-2">
+            <CardTitle className="text-sm">{definition.name}</CardTitle>
+            <Badge variant="neutral" className="text-xs">{definition.kind.replace(/_/g, " ")}</Badge>
+            <span className={`ml-auto flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${style.className}`}>
+              <style.Icon className="h-3.5 w-3.5" />
+              {style.label} · {feasibility.nRequiredMatched}/{feasibility.nRequired} required items
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {definition.citation && <p className="text-xs text-on-raised-muted">{definition.citation}</p>}
+          {definition.combinationRule && (
+            <p className="text-on-raised">
+              <span className="font-semibold text-on-raised">Rule: </span>
+              {definition.combinationRule}
+            </p>
+          )}
+          <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-on-raised-muted">
+            <div>
+              <dt className="inline font-semibold">Source: </dt>
+              <dd className="inline text-on-raised">{definition.provenance || "pasted text"}</dd>
+            </div>
+            {definition.threshold && (
+              <div>
+                <dt className="inline font-semibold">Threshold: </dt>
+                <dd className="inline text-on-raised">{definition.threshold}</dd>
+              </div>
+            )}
+            {spec.units && (
+              <div>
+                <dt className="inline font-semibold">Units: </dt>
+                <dd className="inline text-on-raised">{spec.units}</dd>
+              </div>
+            )}
+            <div>
+              <dt className="inline font-semibold">Cost: </dt>
+              <dd className="inline text-on-raised">
+                {spec.callsMade ?? 0} LLM call{(spec.callsMade ?? 0) === 1 ? "" : "s"}
+                {spec.nConceptsIndexed != null && ` over ${spec.nConceptsIndexed} concepts`}
+              </dd>
+            </div>
+          </dl>
+
+          {definition.underEnumerated > 0 && (
+            <p className="flex items-start gap-1.5 rounded-md border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                The source describes a {definition.statedNItems}-item score but only{" "}
+                {definition.components.length} item{definition.components.length === 1 ? "" : "s"} could be read
+                out of it. The document is incomplete — supply the publisher PDF or supplement. The missing
+                items were <span className="font-semibold">not</span> filled in from prior knowledge.
+              </span>
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* --- components --- */}
+      <ScoreComponentsCard
+        spec={spec}
+        conceptById={conceptById}
+        records={records}
+        jobId={jobId}
+        onOpenGroup={onOpenGroup}
+        isGroupInScope={isGroupInScope}
+        onGroupScopeChange={onGroupScopeChange}
+        resolveConcept={resolveConcept}
+        resolveGroupId={resolveGroupId}
+      />
+
+      {/* --- per-cohort coverage --- */}
+      <ScoreCoverageCard spec={spec} />
+
+      {/* --- derivation --- */}
+      {!hideDerivation && (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Derivation</CardTitle>
+        </CardHeader>
+        {/* `data-authored="core"`: the recipe's words are core's (derive_composite), not this screen's copy. */}
+        <CardContent data-authored="core" className="space-y-2">
+          {derivation.map((s) => (
+            <div key={s.order} className="rounded-md border border-border bg-muted/40 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-on-raised-muted">{s.order}.</span>
+                <Badge variant="neutral" className="text-xs">{s.kind.replace(/_/g, " ")}</Badge>
+                {s.needsReview && (
+                  <Badge className="border-rule-warn bg-surface-warn text-xs text-on-warn">needs review</Badge>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-on-raised">{s.description}</p>
+              {s.expression && (
+                <pre className="mt-1.5 overflow-x-auto rounded bg-surface-raised px-2 py-1.5 font-mono text-xs text-on-raised">
+                  {s.expression}
+                </pre>
+              )}
+            </div>
+          ))}
+          {spec.validationRules.length > 0 && (
+            <ul className="mt-3 space-y-1 border-t border-border pt-3 text-xs text-on-raised-muted">
+              {spec.validationRules.map((r) => (
+                <li key={r} className="flex gap-1.5">
+                  <span className="text-on-raised-muted">•</span>
+                  {r}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+      )}
+
+      {feasibility.caveats.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Caveats</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul data-authored="core" className="space-y-1.5 text-xs text-on-raised">
+              {feasibility.caveats.map((c) => (
+                <li key={c} className="flex gap-1.5">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-on-raised-muted" />
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The full per-cohort coverage table — a row per component, a column per cohort, read off a MATCH's union coverage
+ * (`coveredCohorts`), with the Present and Computable rows under it. Shared by this page's `SpecView` and Gate 4's
+ * declared-score panel (review round 6 note L7, "no cohort coverage table?" — option (b), 2026-10-13), so the two
+ * screens cannot draw it differently. Gate 1 has no match and so never draws this one: its table is the free
+ * search's "reached by search" (`ScoreSuggestionCards`).
+ */
+export function ScoreCoverageCard({
+  spec,
+  presenceStated = false,
+  foldLabel,
+}: {
+  spec: CompositeSpec;
+  /** The surrounding screen already says presence is per data dictionary (Gate 4's panel) — said once, not twice. */
+  presenceStated?: boolean;
+  /** Draw as an outlined fold with this label, closed by default (Gate 4), instead of a card (this page). */
+  foldLabel?: string;
+}) {
+  const { definition, feasibility } = spec;
+  // Domain grouping for the coverage view (a score's "type of deficit" sub-scales). GENERIC: the table
+  // groups only when components actually carry a `domain`; with none, the flat table below renders
+  // unchanged — never a code-side, score-specific grouping. Domains appear in the order their first
+  // component appears in the definition.
+  const hasDomains = definition.components.some((c) => c.domain);
+  const coverageDomains = useMemo(() => {
+    if (!hasDomains) return [] as { domain: string; matches: ComponentMatch[] }[];
+    const domainByComponent = new Map(
+      definition.components.map((c) => [c.name, c.domain || "Other"] as const),
+    );
+    const order: string[] = [];
+    const byDomain = new Map<string, ComponentMatch[]>();
+    for (const m of spec.matches) {
+      const d = domainByComponent.get(m.component) ?? "Other";
+      if (!byDomain.has(d)) {
+        byDomain.set(d, []);
+        order.push(d);
+      }
+      byDomain.get(d)!.push(m);
+    }
+    return order.map((d) => ({ domain: d, matches: byDomain.get(d)! }));
+  }, [spec.matches, definition.components, hasDomains]);
+  // A cohort "covers" a domain when at least one of its components is COVERED in that cohort — union
+  // coverage (`coveredCohorts`), not raw group membership.
+  const cohortCoversDomain = (matches: ComponentMatch[], cohort: string) =>
+    matches.some((m) => coveredCohorts(m).includes(cohort));
+  // One component's per-cohort presence row — shared by the flat and domain-grouped coverage tables. Reads
+  // the SAME union coverage as the found-component detail and the group list, so the table cannot disagree.
+  const coverageComponentRow = (m: ComponentMatch) => (
+    <tr
+      key={m.component}
+      data-testid="coverage-row"
+      data-component={m.component}
+      className="border-b border-border/60 last:border-0"
+    >
+      <td className="py-1.5 pr-3 text-on-raised">{m.component}</td>
+      {feasibility.perCohort.map((c) => {
+        const present = coveredCohorts(m).includes(c.cohort);
+        return (
+          <td
+            key={c.cohort}
+            data-testid="coverage-cell"
+            data-cohort={c.cohort}
+            data-present={present ? "true" : "false"}
+            className="px-2 py-1.5 text-center"
+          >
+            {present ? (
+              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-status-ok" />
+            ) : (
+              <XCircle className="mx-auto h-3.5 w-3.5 text-on-raised-muted/40" />
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+
+  const body = (
+    <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-on-raised-muted">
+                    <th className="py-1.5 pr-3 font-semibold">Item</th>
+                    {feasibility.perCohort.map((c) => (
+                      <th key={c.cohort} className="px-2 py-1.5 text-center font-semibold">
+                        {c.cohort}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {hasDomains
+                    ? coverageDomains.map(({ domain, matches }) => (
+                        <Fragment key={domain}>
+                          <tr className="border-b border-border bg-muted/40">
+                            <td
+                              colSpan={feasibility.perCohort.length + 1}
+                              className="px-1 py-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+                            >
+                              {domain}
+                            </td>
+                          </tr>
+                          {matches.map(coverageComponentRow)}
+                          {/* The domain-level readout the reviewer asked for: a cohort need only supply
+                              ONE item in a sub-scale for that domain to be represented in it. */}
+                          <tr
+                            data-testid="coverage-domain-covers"
+                            data-domain={domain}
+                            className="border-b border-border/60 text-on-raised-muted"
+                          >
+                            <td className="py-1 pl-3 pr-3 italic">covers ≥1</td>
+                            {feasibility.perCohort.map((c) => (
+                              <td key={c.cohort} className="px-2 py-1 text-center">
+                                {cohortCoversDomain(matches, c.cohort) ? (
+                                  <CheckCircle2 className="mx-auto h-3 w-3 text-status-ok" />
+                                ) : (
+                                  <XCircle className="mx-auto h-3 w-3 text-on-raised-muted/40" />
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        </Fragment>
+                      ))
+                    : spec.matches.map(coverageComponentRow)}
+                  <tr className="border-t border-border font-semibold">
+                    <td className="py-1.5 pr-3 text-on-raised">Present</td>
+                    {feasibility.perCohort.map((c) => (
+                      <td key={c.cohort} className="px-2 py-1.5 text-center text-on-raised">
+                        {
+                          spec.matches.filter((m) =>
+                            coveredCohorts(m).includes(c.cohort),
+                          ).length
+                        }
+                      </td>
+                    ))}
+                  </tr>
+                  <tr className="font-semibold">
+                    <td className="py-1.5 pr-3 text-on-raised">Computable</td>
+                    {feasibility.perCohort.map((c) => (
+                      <td
+                        key={c.cohort}
+                        data-testid="coverage-computable"
+                        data-cohort={c.cohort}
+                        className="px-2 py-1.5 text-center"
+                      >
+                        {c.computable ? (
+                          <span className="text-status-ok">yes</span>
+                        ) : (
+                          <span className="text-on-raised-muted">no</span>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-on-raised-muted">
+              A cohort is computable only when every required item is present in it.
+              {hasDomains &&
+                " “covers ≥1” is looser — it asks only whether a cohort supplies any item in a domain."}
+              {!presenceStated &&
+                " Presence is per data dictionary — participant-level missingness, and therefore effective N, cannot be derived from metadata."}
+            </p>
+    </>
+  );
+
+  // GATE 4 (review round 9, note 5): an outlined fold among the panel's other folds, CLOSED until opened — the same
+  // shape and default as Gate 1's "reached by search" table, so the two gates read alike.
+  if (foldLabel) {
+    return (
+      <Collapsible data-testid="score-coverage" className={FOLD_BOX}>
+        <CollapsibleTrigger data-testid="score-coverage-toggle" className={disclosureRow("raised", "group")}>
+          <DisclosureLabel ground="raised">
+            {foldLabel}
+            {hasDomains && ` · by ${coverageDomains.length} domains`}
+          </DisclosureLabel>
+          <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">{body}</CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  return (
+    <Card data-testid="score-coverage">
+      <Collapsible defaultOpen>
+        <CardHeader className="pb-2">
+          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 text-left">
+            <CardTitle className="text-sm">
+              Per-cohort coverage
+              {hasDomains && (
+                <span className="ml-2 font-normal text-xs text-on-raised-muted">
+                  by {coverageDomains.length} domains
+                </span>
+              )}
+            </CardTitle>
+            <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent>{body}</CardContent>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
+/**
+ * The builder's "Components → this run's concepts" card — the per-component rows, the builder-level how-to and the
+ * found tally. Extracted from `SpecView` (08-28, option A) so Gate 4 can show the SAME card after its match.
+ *
+ * `variant`:
+ *   - `builder` (default): the composite page and a Gate 1 that carries a match — groups are SELECTED at the builder's
+ *     auto-select threshold (or by Gate 1 scope when wired), and checked groups continue to Gate 2.
+ *   - `record` (Gate 4): scope was settled on Gate 1, so nothing selects — no checkbox, no Gate 2 tag, no threshold.
+ *     Every group the match reached counts toward the figure, as it does toward the coverage the verdict comes from,
+ *     and each row states its outcome without being opened (a missing component is a result, not a thing to hide).
+ */
+export function ScoreComponentsCard({
+  spec,
+  conceptById,
+  records,
+  jobId,
+  variant = "builder",
+  onOpenGroup,
+  isGroupInScope,
+  onGroupScopeChange,
+  resolveConcept,
+  resolveGroupId,
+  coverage,
+}: {
+  spec: CompositeSpec;
+  conceptById: Record<string, UIRecord>;
+  records: UIRecord[];
+  jobId: string;
+  variant?: "builder" | "record";
+  onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
+  isGroupInScope?: (groupId: string) => boolean;
+  onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
+  resolveConcept?: (
+    id: string,
+  ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
+  resolveGroupId?: (id: string) => string | undefined;
+  /** A fold drawn between how-it-works and the items (Gate 4's coverage table) — Gate 1's section order. */
+  coverage?: ReactNode;
+}) {
+  const { definition } = spec;
+  const record = variant === "record";
+  // A DECLARED score is a list of names: no component can have a coding rule from a source, so "no coding rule in
+  // source" would be the same badge on every card (×49 on the live run, Bhargav 2026-10-05). Said ONCE above the
+  // cards instead. A score read from a document keeps the per-card badge — there it marks the items the source left
+  // uncoded. Rule 2 holds either way: an unstated coding is flagged for a human, never filled in.
+  const declaredUncoded =
+    spec.sourceKind === "declaration" && definition.components.some((c) => c.coding?.kind === "unstated");
+  const codingFor = (name: string): ScoreComponent | undefined =>
+    definition.components.find((c) => c.name === name);
+  // The component list renders in SOURCE-DOCUMENT order — `spec.matches` preserves the definition's order,
+  // which the builder keeps from the source doc — never reordered by match state or confidence, so the
+  // reviewer reads the score exactly as the paper presents it. Found vs missing is shown per row (the icon)
+  // and summarised in the header count, not by regrouping the list.
+  const nFound = spec.matches.filter((m) => m.conceptId != null).length;
+  // Resolve a concept id to a name + cohorts for the group list. Callers may pass a resolver (the gate
+  // strip resolves against the run's concept groups); otherwise fall back to this run's records.
+  const recordById = useMemo(
+    () => Object.fromEntries(records.map((r) => [r.id, r])),
+    [records],
+  );
+  const resolve =
+    resolveConcept ??
+    ((id: string) => {
+      const r = conceptById[id] ?? recordById[id];
+      // The one naming rule (`conceptTitle`), as Gate 1 and Gate 4 title a group (round 8, note 3).
+      return r ? { concept: conceptTitle(r, undefined), cohorts: r.cohorts ?? [] } : undefined;
+    });
+  const renderRow = (m: typeof spec.matches[number]) => (
+    <MatchRow
+      key={m.component}
+      match={m}
+      component={codingFor(m.component)}
+      concept={m.conceptId ? conceptById[m.conceptId] : undefined}
+      jobId={jobId}
+      variant={variant}
+      hideUnstatedBadge={declaredUncoded}
+      onOpenGroup={onOpenGroup}
+      isGroupInScope={isGroupInScope}
+      onGroupScopeChange={onGroupScopeChange}
+      resolveConcept={resolve}
+      resolveGroupId={resolveGroupId}
+    />
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Items → this run's concepts</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Builder-level: how matching works + the auto-select threshold, shown ONCE above all components. A FOLD, open
+            until closed — the same shape as Gate 1's "how suggestions work" (review round 9, note 5). */}
+        <Collapsible defaultOpen data-testid="score-builder-info" className={FOLD_BOX}>
+          <CollapsibleTrigger data-testid="score-builder-info-toggle" className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">Concept Spotlight · how matching works</DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-1.5">
+          <ul className="flex flex-col gap-1 text-on-raised-muted">
+            <li>
+              <span className="font-semibold text-on-raised">Source-only.</span> Each item shows the
+              paper&rsquo;s own fields (name · categories · coding); generated prose is dropped unless it is
+              verbatim in the document.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Scoring.</span> The judge rates each variable /
+              answer-option individually (0–1); a group&rsquo;s score is the mean of its rated members.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Item number.</span> The figure on each
+              item is the mean of the best match per cohort, over the cohorts found.
+            </li>
+          </ul>
+          <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-on-raised-muted">
+            {record ? (
+              // A RECORD (Gate 4): scope was settled on Gate 1, so there is no threshold to state and nothing selects.
+              <>
+                Scope was settled on Gate 1, so nothing here selects: every group the match reached counts toward an
+                item&rsquo;s figure, as it does toward the coverage the verdict comes from.
+              </>
+            ) : (
+              <>
+                {/* The threshold is NOT TUNED yet — an INTERNAL note (see `GROUP_SELECT_THRESHOLD`), deliberately not
+                    printed here (final review round 1, item 3). */}
+                Auto-select &amp; tag every group scoring{" "}
+                <span className="font-mono text-on-raised">{GROUP_SELECT_THRESHOLD.toFixed(2)}</span> or higher —
+                one threshold for the whole builder, applied to every item.
+              </>
+            )}
+          </p>
+          </CollapsibleContent>
+        </Collapsible>
+        {declaredUncoded && (
+          <p
+            data-testid="score-coding-unstated-note"
+            className="flex items-start gap-1.5 rounded-md border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              This Spotlight list was declared as names only, so no item has a coding rule from a source — set each
+              item&rsquo;s categories, coding or cutoff yourself. None is filled in for you.
+            </span>
+          </p>
+        )}
+        {/* Gate 4's coverage fold, between how-it-works and the items — Gate 1's order (round 9, note 5). */}
+        {coverage}
+        {/* ONE list, in source-document order (never regrouped found-vs-missing or sorted by confidence).
+            The header carries the found/total tally; each row shows its own found/missing icon. An outlined fold,
+            open until closed, as Gate 1's items fold is. */}
+        <Collapsible defaultOpen data-testid="score-match-components" className={FOLD_BOX}>
+          <CollapsibleTrigger data-testid="score-match-components-toggle" className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">
+              Items · {nFound}/{spec.matches.length} found
+            </DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2 space-y-2">
+            {spec.matches.map(renderRow)}
+            {/* Said once for the list (round 5 sweep), when a component has no match. */}
+            {nFound < spec.matches.length && (
+              <p data-testid="missing-is-a-run-result" className="text-xs text-on-raised-muted">
+                  {MISSING_IS_A_RUN_RESULT}
+                </p>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * One component row: the concept GROUPS its rated variables reached. Every group at/above the builder's
+ * auto-select threshold renders as selected (and auto-tagged for Gate 2), with its covered members + cohorts;
+ * the header figure is the mean best match per cohort. Source coding is shown structurally, never as
+ * synthesised prose. A missing component lists the retrieved-but-below-threshold candidates instead.
+ *
+ * As a `record` (Gate 4) every group is counted and nothing selects — no checkbox, no Gate 2 tag, no threshold
+ * divider — and the row states its outcome ("Matched: …" or why not) without being opened.
+ */
+function MatchRow({
+  match,
+  component,
+  variant = "builder",
+  hideUnstatedBadge = false,
+  onOpenGroup,
+  isGroupInScope,
+  onGroupScopeChange,
+  resolveConcept,
+}: {
+  match: ComponentMatch;
+  component?: ScoreComponent;
+  concept?: UIRecord;
+  jobId: string;
+  variant?: "builder" | "record";
+  /** The card says "no coding rule in source" once for the whole score (a declared one), so the row does not. */
+  hideUnstatedBadge?: boolean;
+  onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
+  isGroupInScope?: (groupId: string) => boolean;
+  onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
+  resolveConcept?: (
+    id: string,
+  ) => { concept: string; generatedName?: string; cohorts: string[]; nMembers?: number } | undefined;
+  resolveGroupId?: (id: string) => string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const record = variant === "record";
+  const coding = component?.coding;
+
+  // Build the reached concept GROUPS from `groupCandidates`, each carrying its covered members (from
+  // `coverageMembers`, grouped by the member's source groupId). Union coverage already spans groups, so this
+  // shows WHICH group each cohort's support came from — no single "winner" group (the cataracts/glaucoma
+  // case where AoU's match lived in a different group than the surfaced one).
+  const membersByGroup = new Map<
+    string,
+    { cohort: string; variableId: string; confidence: number; optionLabel?: string }[]
+  >();
+  for (const [cohort, mems] of Object.entries(match.coverageMembers ?? {})) {
+    for (const mm of mems) {
+      const gid = mm.groupId ?? match.conceptId ?? "";
+      const list = membersByGroup.get(gid) ?? [];
+      list.push({ cohort, variableId: mm.variableId, confidence: mm.confidence, optionLabel: mm.optionLabel });
+      membersByGroup.set(gid, list);
+    }
+  }
+  const candidates = offeredGroups(match);
+  const groups = candidates.map((g) => ({
+    groupId: g.groupId,
+    label: resolveConcept?.(g.groupId)?.concept?.trim() || "Unnamed group",
+    // The name ddharmon gave a group the reviewer RENAMED, kept beside theirs as Gate 1's row keeps it.
+    generatedName: resolveConcept?.(g.groupId)?.generatedName,
+    confidence: g.confidence,
+    nMatched: g.nMatched,
+    nTotal: g.nTotal,
+    members: (membersByGroup.get(g.groupId) ?? []).slice().sort((a, b) => b.confidence - a.confidence),
+    // A record counts every group the match reached: scope was settled upstream, so no threshold selects here.
+    selected: record || g.confidence >= GROUP_SELECT_THRESHOLD,
+  }));
+  type GroupRow = (typeof groups)[number];
+  const orderedGroups = [...groups].sort((a, b) => b.confidence - a.confidence);
+
+  // Selection is interactive. Inside Gate 1 it IS the group's Gate 1 scope (`isGroupInScope` /
+  // `onGroupScopeChange`, a persisted gate decision whose default is the same auto-select rule), so a check
+  // here admits the group to Gate 2 and survives a reload, and the ledger checkbox and this one cannot
+  // disagree. Outside Gate 1 (no scope wiring) it falls back to local state seeded from the threshold.
+  // The spread, the header figure and the Gate-2 tags all derive from the CHECKED set.
+  const [localIds, setLocalIds] = useState<Set<string>>(
+    () => new Set(groups.filter((g) => g.selected).map((g) => g.groupId)),
+  );
+  const scoped = isGroupInScope != null;
+  const readOnly = scoped && onGroupScopeChange == null;
+  const isSel = (gid: string) => (record ? true : scoped ? isGroupInScope(gid) : localIds.has(gid));
+  const toggleGroup = (gid: string) => {
+    if (scoped) {
+      onGroupScopeChange?.(gid, !isGroupInScope(gid));
+      return;
+    }
+    setLocalIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(gid)) next.delete(gid);
+      else next.add(gid);
+      return next;
+    });
+  };
+  const selected = orderedGroups.filter((g) => isSel(g.groupId));
+
+  // Header figure = mean of the best match per cohort, averaged over the cohorts FOUND across the SELECTED
+  // groups (not one group's aggregate). Breadth is the spread line's job, so this number means "how good are
+  // the matches we found", not a coverage count.
+  const bestByCohort = new Map<string, number>();
+  for (const g of selected)
+    for (const m of g.members) {
+      const cur = bestByCohort.get(m.cohort);
+      if (cur == null || m.confidence > cur) bestByCohort.set(m.cohort, m.confidence);
+    }
+  const meanBest = bestByCohort.size
+    ? [...bestByCohort.values()].reduce((s, v) => s + v, 0) / bestByCohort.size
+    : null;
+
+  const spreadVars = selected.reduce((s, g) => s + g.members.length, 0);
+  const spreadCohorts = [...new Set(selected.flatMap((g) => g.members.map((m) => m.cohort)))];
+  const isFound = selected.length > 0 || match.conceptId != null;
+
+  const renderGroup = (g: GroupRow) => {
+    const sel = isSel(g.groupId);
+    return (
+      <div
+        data-testid="score-group"
+        data-group={g.groupId}
+        data-selected={sel ? "true" : "false"}
+        className={cn(
+          "rounded-md border",
+          sel ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised opacity-80",
+        )}
+      >
+        <div className="flex items-start gap-2 px-2.5 py-2">
+          {!record && (
+            <input
+              type="checkbox"
+              data-testid="score-group-toggle"
+              checked={sel}
+              disabled={readOnly}
+              onChange={() => toggleGroup(g.groupId)}
+              aria-label={`Include the group ${g.label} for this item`}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            {onOpenGroup ? (
+              <button
+                type="button"
+                data-testid="score-open-group"
+                data-group={g.groupId}
+                onClick={() => onOpenGroup(g.groupId, g.members.map((m) => m.variableId))}
+                className="text-left text-xs font-semibold text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
+                title="Open this concept group on Gate 1"
+              >
+                {g.label} ↗
+              </button>
+            ) : (
+              <span className="text-xs font-semibold text-on-raised">{g.label}</span>
+            )}
+            {g.generatedName && (
+              <span data-testid="score-group-generated" className="block text-[11px] text-on-raised-muted">
+                ddharmon called it {g.generatedName}
+              </span>
+            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-on-raised-muted">
+              <span className="font-mono tabular-nums text-on-raised">{g.confidence.toFixed(2)}</span>
+              {g.nMatched != null && g.nTotal != null && (
+                <span className="text-status-warn">
+                  {g.nMatched} of {g.nTotal} matched
+                </span>
+              )}
+            </div>
+            {g.members.length > 0 && (
+              <ul className="mt-1.5 flex flex-col gap-0.5 border-l border-border/60 pl-2.5">
+                {g.members.map((m) => {
+                  // The raw variable id (e.g. "CLSA:GEN_HLTH_TRM") is not informative — surface the field's
+                  // question text (or its description, then its name) via the run's field index. Drop the
+                  // "cohort:" prefix on any fallback: the cohort chip beside it already carries the cohort.
+                  // Field text can carry raw HTML + help blocks (some cohorts bury the question in notes), so
+                  // strip tags and collapse whitespace; the span line-clamps so a messy field stays one row.
+                  const raw = resolveConcept?.(m.variableId)?.concept?.trim();
+                  const q = raw ? raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : "";
+                  const ci = m.variableId.indexOf(":");
+                  const label = q || (ci >= 0 ? m.variableId.slice(ci + 1) : m.variableId);
+                  return (
+                    <li
+                      key={`${m.cohort}:${m.variableId}`}
+                      data-testid="score-group-member"
+                      data-cohort={m.cohort}
+                      className="flex items-baseline gap-2 text-[11px]"
+                    >
+                      <span className="mt-px shrink-0 rounded border border-rule-on-raised px-1 py-0.5 font-mono text-[10px] font-semibold text-on-raised-muted">
+                        {m.cohort}
+                      </span>
+                      <span className="line-clamp-2 min-w-0 flex-1 text-on-raised-muted" title={label}>
+                        {label}
+                        {m.optionLabel && <span className="italic"> · “{m.optionLabel}”</span>}
+                      </span>
+                      <span className="shrink-0 font-mono tabular-nums text-on-raised-muted">
+                        {m.confidence.toFixed(2)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {/* Keep-all transparency: a group can be judge-affirmed yet have no member at/above the 0.50
+                coverage floor — show WHY it has a count but no evidence row, rather than an empty group. */}
+            {g.members.length === 0 && g.nMatched != null && g.nMatched > 0 && (
+              <p className="mt-1 pl-2.5 text-[11px] italic text-on-raised-muted">
+                {g.nMatched} affirmed {g.nMatched === 1 ? "member" : "members"} below the 0.50 coverage floor —
+                open on Gate 1 to inspect.
+              </p>
+            )}
+          </div>
+          {sel && !record && (
+            <span
+              data-testid="score-group-gate2"
+              className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised"
+            >
+              Gate 2 ✓
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Source coding shown STRUCTURALLY (categories / coding map or the stated cutoff) — never the freeform
+  // `component.definition` prose, which the extract step can synthesise past the "from doc" guardrail.
+  const codeEntries = coding?.codeMap ? Object.entries(coding.codeMap) : [];
+
+  return (
+    <div
+      className="rounded-md border border-border"
+      data-testid="score-match"
+      data-component={match.component}
+      data-matched={isFound ? "true" : "false"}
+      // A record names its outcome as the other gate panels do (`componentVerdictFor`: the match ran, so a miss is a
+      // finding about this run's retrieval, never "not looked for").
+      data-verdict={record ? (isFound ? "full" : "infeasible") : undefined}
+    >
+      <button
+        type="button"
+        data-testid="score-component-expand"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
+        {isFound ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-status-ok" />
+        ) : (
+          <XCircle className="h-4 w-4 shrink-0 text-on-raised-muted" />
+        )}
+        <span className="min-w-0 flex-1 text-sm font-semibold text-on-raised">{match.component}</span>
+        {meanBest != null && (
+          <span className="flex shrink-0 items-baseline gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted/70">
+              mean best / cohort
+            </span>
+            <span data-testid="score-confidence" className="font-mono text-xs tabular-nums text-on-raised">
+              {meanBest.toFixed(2)}
+            </span>
+          </span>
+        )}
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("h-4 w-4 shrink-0 text-on-raised-muted transition-transform", open && "rotate-180")}
+        />
+      </button>
+
+      {/* ALWAYS-VISIBLE summary (moved out of the dropdown per review): review flag, source coding, spread. */}
+      <div className="flex flex-col gap-1.5 px-3 pb-2.5 pl-9 text-xs">
+        {/* A RECORD states its outcome unopened — the matched concept under the reviewer's name, or why there is none
+            (rule 1: a missing component is a result, and "retrieved and rejected" differs from "nothing retrieved"). */}
+        {record && (
+          <span data-testid="score-match-summary" className="line-clamp-2 max-w-[80ch] text-on-raised-muted">
+            {isFound
+              ? `Matched: ${match.concept?.trim() || (match.conceptId && resolveConcept?.(match.conceptId)?.concept) || "—"}`
+              : missingReason({
+                  name: match.component,
+                  searched: true,
+                  matched: false,
+                  shortlistSize: match.shortlist.length,
+                })}
+          </span>
+        )}
+        {coding?.needsReview && !(hideUnstatedBadge && coding.kind === "unstated") && (
+          <Badge data-testid="score-coding-review" className="w-fit border-rule-warn bg-surface-warn text-xs text-on-warn">
+            {coding.kind === "unstated" ? "no coding rule in source" : `${coding.kind.replace(/_/g, " ")} — review`}
+          </Badge>
+        )}
+        <div
+          data-testid="score-source-coding"
+          className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-on-raised-muted"
+        >
+          {coding?.kind && coding.kind !== "unstated" && <span>{coding.kind.replace(/_/g, " ")}</span>}
+          {codeEntries.map(([k, v]) => (
+            <span key={k} className="font-mono">
+              · {k} → {v}
+            </span>
+          ))}
+          {(coding?.cutoff || coding?.referenceRange) && (
+            <span className="font-mono">· {coding.cutoff || coding.referenceRange}</span>
+          )}
+        </div>
+        {orderedGroups.length > 0 && (
+          <div
+            data-testid="score-spread"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-rule-info bg-surface-info px-3 py-2 text-on-raised"
+          >
+            <span>
+              <span className="font-semibold">{spreadVars}</span> variable{spreadVars === 1 ? "" : "s"}
+            </span>
+            <span className="text-on-raised-muted">·</span>
+            <span>
+              <span className="font-semibold">{spreadCohorts.length}</span> cohort
+              {spreadCohorts.length === 1 ? "" : "s"}
+              {spreadCohorts.length > 0 && (
+                <span className="text-on-raised-muted"> ({spreadCohorts.join(", ")})</span>
+              )}
+            </span>
+            <span className="text-on-raised-muted">·</span>
+            <span>
+              <span className="font-semibold">{selected.length}</span> group{selected.length === 1 ? "" : "s"}
+              {record ? "" : " selected"}
+            </span>
+            {selected.length > 0 && !record && (
+              <span className="ml-auto text-[11px] font-semibold text-link-on-raised">
+                → auto-queued for Gate 2
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {open && (
+        <div className="border-t border-border/60 px-3 py-2.5 pl-9 text-xs">
+          {orderedGroups.length > 0 ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                {orderedGroups.map((g, i) => {
+                  const showDivider =
+                    !record &&
+                    i > 0 &&
+                    orderedGroups[i - 1].confidence >= GROUP_SELECT_THRESHOLD &&
+                    g.confidence < GROUP_SELECT_THRESHOLD;
+                  return (
+                    <Fragment key={g.groupId}>
+                      {showDivider && (
+                        <div className="flex items-center gap-2 py-0.5 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+                          <span className="h-px flex-1 bg-border" />
+                          below auto-select threshold {GROUP_SELECT_THRESHOLD.toFixed(2)}
+                          <span className="h-px flex-1 bg-border" />
+                        </div>
+                      )}
+                      {renderGroup(g)}
+                    </Fragment>
+                  );
+                })}
+              </div>
+              {!record && (
+                <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
+                  Checked groups auto-tag and continue to Gate 2. Refine any group&rsquo;s membership on Gate 1
+                  via its <span className="font-semibold">↗</span> link (normal drag/drop); the panel re-reads it.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-on-raised-muted">
+              <span className="font-semibold text-on-raised">Missing.</span>{" "}
+              {match.shortlist.length > 0
+                ? `${match.shortlist.length} ${match.shortlist.length === 1 ? "candidate was" : "candidates were"} retrieved and none measures this item.`
+                : "Nothing in this run retrieved for it."}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

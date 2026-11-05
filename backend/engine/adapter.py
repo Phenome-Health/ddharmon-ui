@@ -27,36 +27,61 @@ The pipeline **requires a CDE backbone** (assignment to the given CDE catalog is
 
 from __future__ import annotations
 
+import contextlib
+import csv
+import dataclasses
 import inspect
 import json
 import logging
+import os
 import threading
-from collections.abc import Callable
+import time
+import uuid
+from collections import Counter
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast, get_args
 
 from backend.engine.contract import (
     CONTRACT_VERSION,
     PHASES_PREVIEW,
     PHASES_RUN,
     AtlasPoint,
+    CoherenceState,
     FieldDetail,
+    GatePosition,
+    NotComputedEntry,
+    PreviewCluster,
     ResponseOptionUI,
     UICandidate,
+    UIConceptGroup,
+    UICost,
     UIGenCDE,
     UIMember,
+    UIPreprocessDiff,
+    UIPreprocessReport,
+    UIPreprocessRule,
     UIRecord,
     UIResult,
+    UIStageGap,
     UISummary,
     UITransform,
     UnassignedField,
+    coherence_state,
+    empty_cost,
     empty_summary,
+    not_computed_register,
 )
 
 logger = logging.getLogger(__name__)
 
-# (phase, completed, total) -> None. Reported between stages and within sync stages.
-ProgressFn = Callable[[str, int, int], None]
+# (phase, completed, total, cost=None) -> None. Reported between stages and within sync stages. The optional
+# 4th arg is the run's realized cost-so-far in USD (only the LLM stages pass it, after pricing their usage);
+# the runner folds it into Job.costSoFar for the live "spent so far" counter. Callable[...] so the pre-LLM
+# phases can keep calling with 3 args without a type error.
+ProgressFn = Callable[..., None]
 # list[PromptRecord] -> {id: response}. The execution strategy injected per stage.
 StageFn = Callable[[list[Any]], dict[str, Any]]
 # () -> "keep" | "discard" | None. A stage consults this on entry: a "keep" stop means the user wants to stop
@@ -66,13 +91,27 @@ StoppingFn = Callable[[], str | None]
 
 # Same instruction the Batch API appends server-side, so inline (sync) output matches the schema.
 _SCHEMA_PREAMBLE = "\n\nRespond with ONLY valid JSON matching this schema (no markdown fences):\n"
-_SYNC_MAX_TOKENS = 1024
+# SYNC <-> BATCH PARITY (08-28 0b). A sync prompt is sent exactly as core ``submit_batch`` would send it, so a
+# sync run verifies the SAME pipeline as a batch run: the prompt's own output budget (else batch's 2048 — the
+# enforced split has come back EMPTY at the old fixed 1024), temperature 0, the prompt's own model, and a forced
+# tool call where the prompt carries one. See :func:`_complete_like_batch`.
+_BATCH_DEFAULT_MAX_TOKENS = 2048
+_BATCH_TEMPERATURE = 0.0
+# Synchronous stages fan their per-prompt LLM calls across a bounded thread pool so a full sync run finishes
+# in minutes, not the hours a serial loop would take (each call is a network round-trip). The Anthropic SDK
+# client is thread-safe for concurrent requests; the cap keeps us well under per-tier rate limits. Override
+# with DDHARMON_SYNC_WORKERS.
+_SYNC_MAX_WORKERS = max(1, int(os.environ.get("DDHARMON_SYNC_WORKERS", "8") or "8"))
 # How often a batch stage re-checks for a Stop while the Batch API poll blocks (see _batch_stage). Small
 # enough that a user's Stop takes effect in seconds, not after the whole batch returns.
 _BATCH_POLL_SECS = 3.0
+# How often a batch stage asks the provider for its in-flight batch's ``processing_status`` (a free read), so
+# the run view can offer the batch -> sync switch while — and only while — the batch is still ``in_progress``
+# (08-28 0e). A pending switch request is acted on at the next heartbeat regardless of this interval.
+_BATCH_STATUS_SECS = 15.0
 
 
-def _noop_progress(phase: str, completed: int = 0, total: int = 0) -> None:
+def _noop_progress(phase: str, completed: int = 0, total: int = 0, cost: float | None = None) -> None:
     pass
 
 
@@ -116,8 +155,89 @@ def _transform_to_ui(t: Any) -> UITransform:
     return ui
 
 
-def _candidate_to_ui(c: Any) -> UICandidate:
-    return {
+#: A very long value list is capped on the wire; the catalog link carries the full one. Same cap as the dev
+#: script (``scripts/enrich_candidates.py``) that prototyped this join for the demo fixture.
+_CANDIDATE_PV_CAP = 60
+
+#: The catalog metadata one candidate can carry — the ``NotRequired`` tail of :class:`UICandidate`.
+CandidateMeta = dict[str, Any]
+
+
+def _catalog_values(fld: Any) -> list[str]:
+    """A CDE's permissible values as labels, catalog order: the parsed response options, else the raw list."""
+    opts = getattr(fld, "response_options", None) or []
+    vals = [str(getattr(o, "label", "") or getattr(o, "code", "") or "").strip() for o in opts]
+    vals = [v for v in vals if v]
+    if not vals:
+        raw = str(getattr(fld, "value_encoding_raw", "") or "")
+        vals = [v.strip() for v in raw.split("|") if v.strip()]
+    return vals[:_CANDIDATE_PV_CAP]
+
+
+def _catalog_designation(var: str, fld: Any) -> str:
+    """The catalog's own designation for CDE dictionary key ``var``.
+
+    Core's loader keeps a repeated name's FIRST row as-is and mints ``<name>__<n>`` for each later one, saving the
+    source name on ``short_label`` — so a minted key maps back to that name, and every other key is the name.
+    """
+    source = str(getattr(fld, "short_label", "") or "")
+    minted = source and var.startswith(source + "__") and var[len(source) + 2 :].isdigit()
+    return source if minted else var
+
+
+def build_cde_catalog_index(embedded: list[Any], cde_cohort: str) -> dict[str, CandidateMeta]:
+    """``{cde_id -> catalog metadata}`` read off the run's CDE dictionary (08-26, live-test-2 #7).
+
+    WHY HERE. Core's ``CandidateCDE`` carries rank/id/definition/cosine only, but the catalog it retrieved
+    from is one of the run's embedded dictionaries — so the type and value list every candidate needs are
+    already in memory. Without this join the wire was bare on every real run, and Gate 3 read "no type, no
+    values" as a number: a coded Yes/No target rendered the numeric code->number editor.
+
+    Keyed by the CDE dictionary's variable name — that IS the candidate's ``cde_id`` (disambiguated exactly as
+    core saw it) — and also by the catalog id (tinyId), which is the candidate's ``cde_external_id``. Only
+    non-empty values are kept, so an absent key always means "the catalog does not say".
+
+    ``sharedName`` (08-28 F13) marks a designation more than one catalog element carries — the endorsed catalog
+    repeats "Age", "Age Units" and "Employment Status". Core keeps every row by minting ``Age__2`` for the later
+    ones, which is unique but says nothing to a reviewer, so Gate 2 shows such a name beside its tinyId instead.
+    """
+    index: dict[str, CandidateMeta] = {}
+    for ed in embedded:
+        dd = getattr(ed, "dictionary", None)
+        if dd is None:
+            continue
+        cohort = getattr(dd, "cohort_name", None) or getattr(dd, "name", None) or "?"
+        if cohort != cde_cohort:
+            continue
+        fields = getattr(dd, "fields", {})
+        names = {var: _catalog_designation(var, fld) for var, fld in fields.items()}
+        repeated = {n for n, count in Counter(names.values()).items() if count > 1}
+        for var, fld in fields.items():
+            meta: CandidateMeta = {}
+            if names[var] in repeated:
+                meta["sharedName"] = names[var]
+            for key, val in (
+                ("questionText", getattr(fld, "question_text", None)),
+                ("dataType", getattr(fld, "data_type", None)),
+                ("units", getattr(fld, "units", None)),
+            ):
+                text = str(val or "").strip()
+                if text:
+                    meta[key] = text
+            pv = _catalog_values(fld)
+            if pv:
+                meta["permissibleValues"] = pv
+            if not meta:
+                continue
+            index[var] = meta
+            ext = str(getattr(fld, "field_id", "") or "").strip()
+            if ext:
+                index.setdefault(ext, meta)
+    return index
+
+
+def _candidate_to_ui(c: Any, cde_index: dict[str, CandidateMeta] | None = None) -> UICandidate:
+    ui: UICandidate = {
         "rank": c.rank,
         "cdeId": c.cde_id,
         "cdeExternalId": c.cde_external_id or "",
@@ -126,6 +246,13 @@ def _candidate_to_ui(c: Any) -> UICandidate:
         "isChosen": c.is_chosen,
         "llmSuggested": c.llm_suggested,
     }
+    if cde_index:
+        # The dictionary key first (unique, what core ranked); the catalog id only as a fallback.
+        meta = cde_index.get(c.cde_id) or (cde_index.get(c.cde_external_id) if c.cde_external_id else None)
+        if meta:
+            for key, val in meta.items():
+                cast(dict[str, Any], ui)[key] = list(val) if isinstance(val, list) else val
+    return ui
 
 
 def _member_ui(member_id: str, index: dict[str, UIMember]) -> UIMember:
@@ -308,9 +435,21 @@ def _gencde_to_ui(g: Any) -> UIGenCDE | None:
     return ui
 
 
-def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
-    """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names."""
-    return {
+def _record_to_ui(
+    r: Any,
+    member_index: dict[str, UIMember],
+    *,
+    concept_gate: bool = False,
+    cde_index: dict[str, CandidateMeta] | None = None,
+) -> UIRecord:
+    """Map one ``LeanBRecord`` to a ``UIRecord``. The single function that knows the record's field names.
+
+    ``concept_gate`` says whether the opt-in M7 stage RAN on this run. When it did not, the
+    ``conceptMismatch`` key is omitted entirely rather than emitted as ``False``: a false-valued flag on a
+    check nobody performed is the "empty reads as a clean pass" failure, and the not-computed register
+    carries the honest statement instead.
+    """
+    ui: UIRecord = {
         "id": r.group_id or r.cluster_id,
         "clusterId": r.cluster_id,
         "groupId": r.group_id,
@@ -329,10 +468,41 @@ def _record_to_ui(r: Any, member_index: dict[str, UIMember]) -> UIRecord:
         "members": list(r.member_variable_names),
         "memberDetails": [_member_ui(m, member_index) for m in r.member_variable_names],
         "transforms": [_transform_to_ui(t) for t in r.transforms],
-        "candidates": [_candidate_to_ui(c) for c in r.candidates],
+        "candidates": [_candidate_to_ui(c, cde_index) for c in r.candidates],
         "rationale": r.rationale,
         "decidedBy": r.decided_by,
+        # ── the triage signals (v5) ──
+        # Every one of these was computed by a stage that ran, and none of them reached the wire before
+        # v5. `getattr` throughout: prod pins core to a PyPI version and dev to a git ref, so a record
+        # from an older core must yield the field's zero value rather than an AttributeError mid-run.
+        #
+        # The coherence cell is DERIVED from the verdict, never from core's `coherent` boolean — that
+        # boolean defaults True and cannot express "not judged", so reading it is the defect (T-08-46).
+        "coherence": _coherence_cell(r),
+        "coherenceSummary": str(getattr(r, "coherence_summary", "") or ""),
+        "coherenceAxis": str(getattr(r, "coherence_axis", "") or ""),
+        "coherenceDistinctValues": list(getattr(r, "coherence_distinct_values", []) or []),
+        "coherenceOutliers": list(getattr(r, "coherence_outliers", []) or []),
+        "coherenceKind": str(getattr(r, "coherence_kind", "") or ""),
+        "incoherent": bool(getattr(r, "incoherent", False)),
+        # The three RESEARCH.md called free wins: computed on every run today, mapped nowhere until now.
+        "matrixSuspect": bool(getattr(r, "matrix_suspect", False)),
+        "coherenceGap": bool(getattr(r, "coherence_gap", False)),
+        "adoptDemoted": bool(getattr(r, "adopt_demoted", False)),
     }
+    if concept_gate:
+        ui["conceptMismatch"] = bool(getattr(r, "concept_mismatch", False))
+    raw = getattr(r, "raw", None)
+    reviewer_pick = raw.get("reviewer_pick") if isinstance(raw, dict) else None
+    if reviewer_pick:
+        # 08-27b: the Gate 2 pick re-targeted this record and its specs were regenerated for that target.
+        ui["reviewerPick"] = cast(Any, dict(reviewer_pick))
+    readjudicated_from = str(getattr(r, "readjudicated_from", "") or "")
+    if readjudicated_from:
+        # Only ever set on a re-adjudication CHILD. Absent means this row is an original grouping, which
+        # the register states positively rather than leaving to inference.
+        ui["readjudicatedFrom"] = readjudicated_from
+    return ui
 
 
 def _summarize(records: list[UIRecord]) -> UISummary:
@@ -354,6 +524,167 @@ def _summarize(records: list[UIRecord]) -> UISummary:
     }
 
 
+_PREVIEW_MEMBER_CAP = 25  # members surfaced per preview cluster (nMembers keeps the true size)
+
+
+def _preview_clusters(leanb_result: Any, cap: int = _PREVIEW_MEMBER_CAP) -> list[PreviewCluster]:
+    """Extract the preview's clusters + retrieved CDE candidates from the generate-ideal prompts — each
+    ``ideal_prompts`` PromptRecord carries its cluster's members + top-k retrieval candidates in ``context``
+    (see ``prepare_leanb``). NO LLM ran, so these candidates are RETRIEVAL hits, not assignments. Members are
+    capped to ``cap`` per cluster (``nMembers`` is the true size); biggest clusters first (most likely to be
+    restructured by a full run's split stage → most worth eyeballing)."""
+    out: list[PreviewCluster] = []
+    for pr in getattr(leanb_result, "ideal_prompts", []):
+        ctx = pr.context or {}
+        members = ctx.get("members", [])
+        cands = ctx.get("candidates", [])
+        top1 = ctx.get("top1_cos")
+        cluster: PreviewCluster = {
+            "clusterId": ctx.get("cluster_id", ""),
+            "nMembers": int(ctx.get("n_members", len(members))),
+            "cohorts": list(ctx.get("cohorts", [])),
+            "crossCohort": bool(ctx.get("cross_cohort", False)),
+            "top1Cos": float(top1) if top1 is not None else None,
+            "members": [
+                {
+                    "cohort": m.get("dictionary_name", ""),
+                    "variable": m.get("variable_name", ""),
+                    "text": m.get("text", ""),
+                }
+                for m in members[:cap]
+            ],
+            "candidates": [
+                {
+                    "rank": i + 1,
+                    "cdeId": c.get("designation", ""),
+                    "cdeExternalId": c.get("external_id", "") or "",
+                    "definition": c.get("text", ""),
+                    "cosine": round(float(c.get("cos", 0.0)), 4),
+                }
+                for i, c in enumerate(cands)
+            ],
+        }
+        out.append(cluster)
+    # Size first (the biggest clusters are the ones a full run is most likely to restructure, so they are
+    # the ones worth eyeballing), then cluster id. The id term is what makes the order STABLE: a pure
+    # descending size sort leaves equal-sized clusters in whatever order the prompts came back in, and a
+    # list that reorders itself between two looks at the same frozen substrate is indistinguishable from
+    # the run having changed underneath the reviewer.
+    out.sort(key=lambda pc: (-pc["nMembers"], pc["clusterId"]))
+    return out
+
+
+#: Members carried on a COLLAPSED Gate 1 group row. The true count travels beside it (``nMembers``) and
+#: the uncapped membership travels in ``UIResult.conceptGroupMembers``, so nothing has to guess.
+_GROUP_MEMBER_CAP = 25
+
+
+def _coherence_cell(obj: Any) -> CoherenceState:
+    """The four-state coherence cell for one group or record.
+
+    Derived from core's ``coherence_verdict`` ONLY. Core's ``coherent`` boolean is deliberately not read:
+    it defaults to ``True`` and the judge skips groups under its member floor, so a group nobody asked
+    about is indistinguishable from a group the judge blessed — and the boolean is the attribute that
+    makes them indistinguishable. Everything that is not one of the judge's three verdicts (never asked,
+    no usable response, a runner that raised) becomes ``not_judged``.
+    """
+    return coherence_state(getattr(obj, "coherence_verdict", ""))
+
+
+def _concept_groups_to_ui(leanb_result: Any, cap: int = _GROUP_MEMBER_CAP) -> list[UIConceptGroup]:
+    """Map core's post-split ``ConceptGroup``s onto the contract — the rows Gate 1 renders (UI-SPEC §0.1).
+
+    Read off ``LeanBResult.concept_groups``, which 08-04 added and which the ``classify=None`` early
+    return carries. ``getattr`` with a default rather than an attribute access: the dev channel swaps core
+    versions, and a core pinned before that change must yield an empty list here, not an AttributeError
+    that unwinds a run whose paid stages have already completed.
+
+    Deterministic order: ``(-nMembers, clusterId, groupId)``. The size term is what a reviewer wants
+    first; the two id terms are what make it STABLE, because a pure size sort leaves equal-sized groups in
+    whatever order the prompts happened to come back in, and "the list reordered itself between two looks
+    at the same paused run" is indistinguishable from the run having changed.
+
+    Members are capped to ``cap`` for the collapsed row; ``nMembers`` stays the TRUE count and
+    ``membersTruncated`` says which it is. Nothing assign produced is copied: no verdict, no route, no
+    CDE, no candidates. This is the shape BEFORE any of those exist, and filling them with defaults is how
+    "not computed" starts reading as "computed and empty".
+    """
+    out: list[UIConceptGroup] = []
+    for g in getattr(leanb_result, "concept_groups", []) or []:
+        top1 = getattr(g, "top1_cos", None)
+        members = list(getattr(g, "member_variable_names", []) or [])
+        n_members = int(getattr(g, "n_members", 0) or 0) or len(members)
+        entry: UIConceptGroup = {
+            "groupId": getattr(g, "group_id", "") or "",
+            "clusterId": getattr(g, "cluster_id", "") or "",
+            "concept": getattr(g, "concept", "") or "",
+            # A ConceptGroup's name is what generate(ideal) authored. Stated positively on every row.
+            "conceptIsGenerated": True,
+            "idealCde": getattr(g, "ideal_cde", "") or "",
+            "nMembers": n_members,
+            "cohorts": list(getattr(g, "cohorts", []) or []),
+            "crossCohort": bool(getattr(g, "cross_cohort", False)),
+            "top1Cos": float(top1) if top1 is not None else None,
+            "memberVariableNames": members[:cap],
+            "membersTruncated": len(members) > cap,
+            # The judge's verdicts, stamped pre-assign by 08-04's verdict pass. A group the judge was
+            # never asked about lands on `not_judged` — never on the clean state.
+            "coherence": _coherence_cell(g),
+            "coherenceSummary": str(getattr(g, "coherence_summary", "") or ""),
+            "coherenceAxis": str(getattr(g, "coherence_axis", "") or ""),
+            "coherenceDistinctValues": list(getattr(g, "coherence_distinct_values", []) or []),
+            "coherenceOutliers": list(getattr(g, "coherence_outliers", []) or []),
+            "incoherent": bool(getattr(g, "incoherent", False)),
+            "matrixSuspect": bool(getattr(g, "matrix_suspect", False)),
+        }
+        # Provenance, set only on a re-split child (Gate-1 "accept the division"). Absent on an original
+        # grouping — the same set-only-when-present discipline as the record-level readjudicatedFrom.
+        readjudicated_from = str(getattr(g, "readjudicated_from", "") or "")
+        if readjudicated_from:
+            entry["readjudicatedFrom"] = readjudicated_from
+        out.append(entry)
+    out.sort(key=lambda g: (-g["nMembers"], g["clusterId"], g["groupId"]))
+    return out
+
+
+def _concept_group_members(leanb_result: Any) -> dict[str, list[str]]:
+    """The UNCAPPED membership per group id — what an expanded Gate 1 row reads.
+
+    A sibling lookup rather than a second endpoint, and for a concrete reason: a paused run's state is
+    persisted as this contract, not as core objects, so an expansion path that needed a ``LeanBResult``
+    would be unimplementable the moment the reviewer closed the browser. ``fieldIndex`` is uncapped in
+    this contract for the same reason.
+    """
+    out: dict[str, list[str]] = {}
+    for g in getattr(leanb_result, "concept_groups", []) or []:
+        gid = (getattr(g, "group_id", "") or "") or (getattr(g, "cluster_id", "") or "")
+        if gid:
+            out[gid] = list(getattr(g, "member_variable_names", []) or [])
+    return out
+
+
+def expand_concept_group(result: UIResult, group_id: str) -> list[str]:
+    """The expanded row's members for one group — the FULL membership, never the collapsed sample.
+
+    A regroup verb (drag a variable out of one group into another) writes back the membership it was
+    shown. Given a 25-of-40 sample it would silently drop 15 members, so the expanded read is a backend
+    shape requirement rather than a UI nicety.
+    """
+    full = (result.get("conceptGroupMembers") or {}).get(group_id)
+    if full is not None:
+        return list(full)
+    for g in result.get("conceptGroups") or []:
+        if g["groupId"] == group_id:
+            # No uncapped map (a pre-v5 payload): return what there is, and only when it IS everything.
+            return [] if g["membersTruncated"] else list(g["memberVariableNames"])
+    return []
+
+
+def _not_computed(*, concept_gate: bool, readjudicated: bool) -> list[NotComputedEntry]:
+    """This run's not-computed register — see :func:`backend.engine.contract.not_computed_register`."""
+    return not_computed_register(concept_gate=concept_gate, readjudicated=readjudicated)
+
+
 def build_ui_result(
     leanb_result: Any,
     *,
@@ -362,8 +693,19 @@ def build_ui_result(
     atlas: list[AtlasPoint] | None = None,
     member_index: dict[str, UIMember] | None = None,
     field_index: dict[str, FieldDetail] | None = None,
+    cost: UICost | None = None,
+    preview_clusters: list[PreviewCluster] | None = None,
+    gate_position: str | None = None,
+    result_version: int | None = None,
+    concept_gate: bool = False,
+    preprocessing: list[UIPreprocessReport] | None = None,
+    cde_index: dict[str, CandidateMeta] | None = None,
+    unanswered: list[UIStageGap] | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
+
+    ``unanswered`` (from :func:`_unanswered_register`) is emitted whenever given — an empty list included,
+    because "every asked prompt was answered" is a checked statement, not an absence. Omitted, the key is too.
 
     ``member_index`` (from :func:`build_member_index`) enriches each record's ``memberDetails`` with the
     source field text; when omitted, member details fall back to the ``cohort:var`` id parts.
@@ -371,12 +713,31 @@ def build_ui_result(
     ``field_index`` (from :func:`build_field_index`) is the uncapped per-field detail map surfaced as
     ``fieldIndex``; it also drives ``unassignedFields`` (its keys MINUS the union of record member keys). When
     omitted, both are empty (e.g. canned-record tests with no dictionaries).
+
+    ``cde_index`` (from :func:`build_cde_catalog_index`) joins each candidate's catalog type / value list /
+    question onto the wire; when omitted, candidates keep the bare core shape.
     """
     idx = member_index or {}
     fidx = field_index or {}
     atlas_pts = atlas or []
-    records = [_record_to_ui(r, idx) for r in leanb_result.records]
-    return {
+    records = [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in leanb_result.records]
+    # Option B (2026-09-18): a group whose membership the reviewer changed at Gate 1 was assigned against an ideal
+    # REGENERATED for its final members — marked, so Gate 2 can say so without claiming it for a run that did not.
+    regenerated = {
+        str(p.context.get("group_id", ""))
+        for p in getattr(leanb_result, "group_assign_prompts", None) or []
+        if isinstance(getattr(p, "context", None), dict) and p.context.get("ideal_regenerated")
+    }
+    for rec in records:
+        if rec.get("groupId") in regenerated:
+            rec["idealRegenerated"] = True
+    groups = _concept_groups_to_ui(leanb_result)
+    # Derived, not declared: a run has re-adjudication provenance iff some row actually carries it. Asking
+    # the caller to tell us would let the register disagree with the payload it describes. Checked on BOTH
+    # shapes — a Gate-1 "accept the division" is split-only, so its provenance lands on a GROUP, never a
+    # record; a records-only check would miss it and the register would wrongly report "not readjudicated".
+    readjudicated = any(r.get("readjudicatedFrom") for r in records) or any(g.get("readjudicatedFrom") for g in groups)
+    result: UIResult = {
         "contractVersion": CONTRACT_VERSION,
         "mode": mode,
         "phases": phases,
@@ -392,6 +753,400 @@ def build_ui_result(
         "atlas": atlas_pts,
         "fieldIndex": fidx,
         "unassignedFields": _unassigned_fields(fidx, records, atlas_pts),
+        "cost": cost if cost is not None else empty_cost(),
+        "previewClusters": preview_clusters or [],
+        # v5 additive. Read off the LeanBResult unconditionally rather than only on a staged run: a
+        # one-shot run passed THROUGH the Gate 1 boundary, so its groups are a real artifact of it and
+        # withholding them would make the same run answer differently depending on how it was launched.
+        "conceptGroups": groups,
+        # The uncapped membership behind the collapsed rows above (the expanded row's source).
+        "conceptGroupMembers": _concept_group_members(leanb_result),
+        # Signals with no value on THIS run, each with a reason and an entry kind. Computed per result
+        # rather than hard-coded, so an enabled opt-in drops out of it instead of contradicting the wire.
+        "notComputed": _not_computed(concept_gate=concept_gate, readjudicated=readjudicated),
+        # One entry per source dictionary. An EMPTY list means preprocessing did not run at all (gated
+        # off, or a payload that predates it) — which is a different statement from an entry reporting
+        # that it ran and changed nothing, and the two must not render alike.
+        "preprocessing": preprocessing or [],
+    }
+    if unanswered is not None:
+        result["unanswered"] = unanswered
+    if gate_position is not None:
+        result["gatePosition"] = cast(Any, gate_position)
+    if result_version is not None:
+        result["resultVersion"] = result_version
+    return result
+
+
+#: The columns the prepared export APPENDS. Namespaced so they cannot collide with the reviewer's own
+#: header, and ordered so the answer reads left to right: what the variable is called now, what it says
+#: now, what the model will actually read, what moved, and whether this row could be attributed at all.
+PREPARED_EXPORT_COLUMNS = [
+    "ddharmon_variable_name",
+    "ddharmon_description",
+    "ddharmon_embedding_text",
+    "ddharmon_changed",
+    "ddharmon_note",
+]
+
+
+def _delimiter_of(path: Path | str) -> str:
+    """Tab or comma, decided from the header line — the same rule ``_count_data_rows`` uses."""
+    try:
+        with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+            return "\t" if "\t" in fh.readline() else ","
+    except OSError:
+        return ","
+
+
+def build_prepared_export(
+    source_path: Path | str,
+    *,
+    cohort_name: str,
+    column_roles: dict[str, str],
+    prepare: bool = True,
+) -> tuple[list[str], list[list[str]]]:
+    """The reviewer's own dictionary with the preparation step's output appended, row for row.
+
+    ``prepare`` is whether THIS run prepared its dictionaries (``run_prepares``). The job-scoped route passes the
+    run's own record: since 08-14e a run does not prepare, and reporting preparation's output for it would put
+    text in ``ddharmon_embedding_text`` the run never embedded — contradicting the run's embedding workbook on
+    the same Setup card. ``True`` keeps the original Gate 0 meaning for a caller that asks for preparation.
+
+    Returns ``(header, rows)``. The header is the FILE's own columns in the file's own order, followed by
+    :data:`PREPARED_EXPORT_COLUMNS`. Nothing is renamed, reordered or dropped: the export exists so the
+    reviewer can read their file and our version of it side by side, and a re-shaped file makes that a
+    reconciliation exercise instead of an answer.
+
+    Everything here is LOCAL and free — the file is re-read, core's rule-based preparation is re-run over
+    it, and the embedding text is composed. No model is called and nothing is embedded, which is what lets
+    Gate 0 offer this without qualifying its "nothing has been charged" claim.
+
+    THE JOIN IS THE HARD PART, and it is allowed to fail loudly. ``load_dictionary`` keys fields on the
+    variable name, so a repeated name silently overwrites the earlier row and that variable vanishes. This
+    joins on the RAW name each field remembers, counts the file's own occurrences of it first, and leaves
+    the prepared columns EMPTY with a note on any name that occurs more than once. A wrong join here would
+    print one variable's cleaned text against a different variable's original — the export's whole value
+    is that the two halves of a row describe the same thing.
+    """
+    from ddharmon.ingestion import load_dictionary
+
+    source_path = Path(source_path)
+    delimiter = _delimiter_of(source_path)
+    with open(source_path, newline="", encoding="utf-8", errors="replace") as fh:
+        reader = csv.reader(fh, delimiter=delimiter)
+        file_rows = [r for r in reader if any((c or "").strip() for c in r)]
+    if not file_rows:
+        return list(PREPARED_EXPORT_COLUMNS), []
+    header, data_rows = file_rows[0], file_rows[1:]
+
+    dd = load_dictionary(source_path, cohort_name=cohort_name, **column_roles)
+    prepared = False
+    if prepare:
+        try:
+            _prepare(dd)
+            prepared = True
+        except Exception as exc:  # noqa: BLE001 - an export must not fail on the step it is reporting
+            logger.warning(
+                "prepared export for %s could not preprocess (%s) — exporting the raw load", cohort_name, exc
+            )
+
+    by_raw_name: dict[str, Any] = {}
+    for f in dd.fields.values():
+        by_raw_name[str(f.raw_variable_name or f.variable_name or "")] = f
+
+    name_col = column_roles.get("variable_name")
+    name_at = header.index(name_col) if name_col and name_col in header else None
+    # The file's OWN occurrence count, not the loaded dictionary's — the loaded one has already collapsed
+    # the duplicates, which is the very thing being detected.
+    occurrences: dict[str, int] = {}
+    if name_at is not None:
+        for row in data_rows:
+            key = (row[name_at] if name_at < len(row) else "").strip()
+            occurrences[key] = occurrences.get(key, 0) + 1
+
+    out: list[list[str]] = []
+    for row in data_rows:
+        padded = list(row) + [""] * (len(header) - len(row))
+        appended = ["", "", "", "", ""]
+        if name_at is None:
+            appended[4] = (
+                "This run mapped no variable-name column, so a prepared row cannot be matched to this one "
+                "by name. Re-run with a variable-name column mapped to see per-variable detail here."
+            )
+        else:
+            raw = (padded[name_at] or "").strip()
+            field = by_raw_name.get(raw)
+            if occurrences.get(raw, 0) > 1:
+                appended[4] = (
+                    f"{raw!r} appears on {occurrences[raw]} rows of this file. Variables are keyed by name, "
+                    "so only one of them survived loading and none of these rows can be attributed to it."
+                )
+            elif field is None:
+                appended[4] = "No prepared variable corresponds to this row — it did not survive loading."
+            else:
+                changed = []
+                if str(field.raw_variable_name or "") != str(field.variable_name or ""):
+                    changed.append("name")
+                if str(field.raw_description or "") != str(field.description or ""):
+                    changed.append("description")
+                try:
+                    embed_text = field.to_embedding_text() or ""
+                except Exception:  # noqa: BLE001 - a composition failure is a fact to report, not a 500
+                    embed_text = ""
+                    appended[4] = "This variable's embedding text could not be composed."
+                appended[0] = str(field.variable_name or "")
+                appended[1] = str(field.description or "")
+                appended[2] = embed_text
+                appended[3] = "+".join(changed) if prepared else ""
+                if not embed_text and not appended[4]:
+                    appended[4] = (
+                        "Composes no text to embed — this variable reaches no concept group. It is a silent "
+                        "loss, not a failure, which is why it is stated rather than omitted."
+                    )
+        out.append(padded + appended)
+    return list(header) + list(PREPARED_EXPORT_COLUMNS), out
+
+
+# ── the PRE-START embedding export: what will be clustered, before a run exists ───────────────
+#
+# THE ONE COLUMN. `build_prepared_export` above appends five, because it was answering "what did
+# PREPARATION do to my file?" — a question that only exists while preparation is a visible step. With
+# preparation going opt-in and off (08-14e) the question that survives is narrower and more useful: *what
+# text will actually be fed to clustering for this variable?* One string, one column. Adding the other
+# four back would re-import the verbosity that got the Gate 0 report deleted.
+#
+# THE JOIN IS THE SAME HARD PART, and it is solved the same way plus one improvement. `load_dictionary`
+# keys fields on the variable name and is LAST-WINS on a repeat, so a repeated name means the EARLIER rows
+# reached nothing. `build_prepared_export` blanks every row of a repeated name; this one blanks all but the
+# LAST, which is the row that actually survived. Same honesty, one more true fact.
+
+#: The single appended column. `ddharmon_`-prefixed like `PREPARED_EXPORT_COLUMNS`, so it cannot be
+#: mistaken for one of the reviewer's own columns in a file where every other column is theirs.
+EMBEDDING_EXPORT_COLUMN = "ddharmon_embedding_text"
+
+#: Whether the product prepares an uploaded dictionary before embedding it.
+#:
+#: ONE CONSTANT, TWO READERS, and that is the point of it existing rather than being written twice. The
+#: run path reads it (`config.get("preprocess", ...)` in `run_harmonization`) and so does this export. The
+#: export's entire claim is "this is the string your run will embed" — so if the two could be set
+#: independently, the first divergence would turn the export from an answer into a confident lie, and
+#: nothing on the screen would look any different. Flipping preparation off is then one edit here.
+#:
+#: OFF since 08-14e (core `preprocess_dictionary(enabled=False)` by default; `08-DECISION-GATE0.md` D-1
+#: reversed on product grounds): ddharmon no longer rewrites an uploaded dictionary's text unasked. A new
+#: run RECORDS this value as `config["preprocess"]` at creation (`start_batch`), so the constant only ever
+#: decides new runs and the job-less export — see :func:`run_prepares` for a run that predates the record.
+PREPARE_BEFORE_EMBED_DEFAULT = False
+
+#: What a run with no recorded `preprocess` did: every run created before 08-14e was prepared, because that
+#: was core's default. Such a run replays its frozen partition on resume, so it must embed the same text again.
+_PREPARED_BEFORE_THE_CHOICE_WAS_RECORDED = True
+
+
+def run_prepares(config: dict[str, Any]) -> bool:
+    """Whether THIS run prepares its dictionaries before embedding — its own recorded choice, else legacy (on)."""
+    return bool(config.get("preprocess", _PREPARED_BEFORE_THE_CHOICE_WAS_RECORDED))
+
+
+def _prepare(dd: Any) -> None:
+    """Run core's rule-based preparation over ``dd`` in place — explicitly ON.
+
+    Every caller here has already decided preparation should happen, so the core master switch (08-14e,
+    default off) is passed as ``enabled=True``; a core older than the switch prepares unconditionally, which
+    is the same answer.
+    """
+    import inspect
+
+    from ddharmon.ingestion.preprocessor import preprocess_dictionary
+
+    if "enabled" in inspect.signature(preprocess_dictionary).parameters:
+        preprocess_dictionary(dd, enabled=True)
+    else:
+        preprocess_dictionary(dd)
+
+
+#: A row index core synthesises when no variable-name column is mapped: one per DATA row, in file order,
+#: so the join stays exact instead of degrading to "we cannot attribute this file at all".
+_SYNTHETIC_NAME = "_ROW_%05d"
+
+
+@dataclass
+class EmbeddingExport:
+    """The reviewer's own rows with the clustering input appended, plus what the load cost them."""
+
+    #: The file's own header, in the file's own order, then :data:`EMBEDDING_EXPORT_COLUMN`.
+    header: list[str]
+    rows: list[list[str]]
+    #: Data rows in the FILE. Counted from the file, never from the loaded dictionary.
+    n_rows: int = 0
+    #: Variables the loader produced. Equals ``n_rows`` now that repeated names are DISAMBIGUATED rather than
+    #: collapsed — a lower value means only rows core dropped for being empty.
+    n_variables: int = 0
+    #: Rows that share a repeated variable name. They are KEPT AS DISTINCT variables now (the loader
+    #: disambiguates rather than last-wins collapsing), so this is how many the reviewer should CHECK are
+    #: really different — NOT a count of dropped rows.
+    n_repeated_kept: int = 0
+    #: Variables whose composed text is empty. They embed nothing and reach no concept group — a silent
+    #: loss everywhere else in the product, which is why this export states it rather than omitting it.
+    n_nothing_to_embed: int = 0
+    #: The names that repeat, capped: "some name repeats" is not actionable, and 6,000 of them is not a
+    #: message. The COUNT is exact regardless.
+    repeated_names: list[str] = dataclass_field(default_factory=list)
+
+
+#: How many repeated names travel with the export. A response header is not a place for a 6,000-item list.
+_REPEATED_NAME_CAP = 20
+
+#: The suffix csv_parser appends when it disambiguates a repeated variable_name (first keeps the name, the
+#: k-th repeat becomes ``name__k``). MUST match ``GenericCSVParser._disambiguate_variable_names``; the
+#: repeated-name backend test carries each row's own text and catches any drift.
+_DISAMBIG_SEP = "__"
+
+
+def build_embedding_export(
+    source_path: Path | str,
+    *,
+    cohort_name: str,
+    column_roles: dict[str, str],
+    prepare: bool | None = None,
+) -> EmbeddingExport:
+    """One dictionary's rows, verbatim, with the exact string clustering will consume appended.
+
+    LOCAL AND FREE. The file is read, core loads it, core composes the text. No model is called, nothing
+    is embedded, and no run is created — which is what lets Setup offer this before the first charge
+    without qualifying its "nothing has been charged" claim.
+
+    ``prepare`` defaults to :data:`PREPARE_BEFORE_EMBED_DEFAULT` deliberately rather than to ``True``: the
+    export must mirror whatever the run does, and a literal default here is a second place for that answer
+    to be written down.
+
+    Raises ``ValueError`` when the file cannot become a dictionary at all. A stated error is better than a
+    partial file, because an empty-looking CSV reads as *"my dictionary is empty"* rather than as a failure.
+    """
+    from ddharmon.ingestion import load_dictionary
+
+    source_path = Path(source_path)
+    delimiter = _delimiter_of(source_path)
+    with open(source_path, newline="", encoding="utf-8", errors="replace") as fh:
+        # THE INDEXING RULE, MEASURED AGAINST CORE RATHER THAN ASSUMED, because getting it wrong
+        # mis-attributes every row after the first oddity and does so silently. Core reads with pandas'
+        # `skip_blank_lines`, so a TRULY blank line is gone before anything is numbered — but a row of
+        # `,,,` is numbered and only then discarded for being empty. Measured: `alpha / ,, / beta /
+        # <blank> / gamma` yields `_ROW_00000, _ROW_00002, _ROW_00003`. So blank lines are skipped here
+        # and all-empty rows are KEPT, which is what keeps the synthesised indices aligned. An all-empty
+        # row then finds no field and gets an empty cell — true, since core dropped it.
+        file_rows = [
+            r for r in csv.reader(fh, delimiter=delimiter) if r and not (len(r) == 1 and (r[0] or "").strip() == "")
+        ]
+    if len(file_rows) < 2:
+        raise ValueError("This file has a header but no variables — a data dictionary needs one row per variable.")
+    header, data_rows = file_rows[0], file_rows[1:]
+
+    dd = load_dictionary(source_path, cohort_name=cohort_name, **column_roles)
+    if prepare is None:
+        prepare = PREPARE_BEFORE_EMBED_DEFAULT
+    if prepare:
+        try:
+            _prepare(dd)
+        except Exception as exc:  # noqa: BLE001 - an export must not fail on a step it only reports
+            logger.warning("embedding export for %s could not prepare (%s) — exporting the raw load", cohort_name, exc)
+
+    # Keyed on the RAW name, because preparation may rewrite `variable_name` (prefix stripping, stopwords)
+    # and the file still holds the original. `raw_*` is only populated once preparation has run, hence the
+    # fallback — the same join `build_prepared_export` uses.
+    by_raw_name = {str(f.raw_variable_name or f.variable_name or ""): f for f in dd.fields.values()}
+
+    name_col = column_roles.get("variable_name")
+    name_at = header.index(name_col) if name_col and name_col in header else None
+
+    occurrences: dict[str, int] = {}
+    if name_at is not None:
+        for row in data_rows:
+            key = (row[name_at] if name_at < len(row) else "").strip()
+            if key:
+                occurrences[key] = occurrences.get(key, 0) + 1
+
+    # EACH ROW CARRIES ITS OWN TEXT. The loader no longer collapses a repeated name onto one survivor — it
+    # DISAMBIGUATES in file order (first keeps the name, the k-th repeat becomes `name__k`), so every row is
+    # a distinct field with its own composed text. Reconstruct the k-th occurrence's disambiguated key to
+    # look up its field (`by_raw_name` is keyed on `raw_variable_name or variable_name`, which is that key).
+    out: list[list[str]] = []
+    n_empty = 0
+    seen: dict[str, int] = {}
+    for i, row in enumerate(data_rows):
+        padded = list(row) + [""] * (len(header) - len(row))
+        raw = (padded[name_at] or "").strip() if name_at is not None else ""
+        if raw:
+            seen[raw] = seen.get(raw, 0) + 1
+            occ = seen[raw]
+            lookup = raw if occ == 1 else f"{raw}{_DISAMBIG_SEP}{occ}"
+        else:
+            # An unnamed row is not nameless to core: it synthesises `_ROW_NNNNN` from the DATA-row index.
+            lookup = _SYNTHETIC_NAME % i
+        field = by_raw_name.get(lookup)
+        try:
+            text = str(field.to_embedding_text() or "") if field is not None else ""
+        except Exception:  # noqa: BLE001 - a composition failure is a fact to report, not a 500
+            text = ""
+        if not text:
+            n_empty += 1
+        out.append(padded + [text])
+
+    repeated = sorted(name for name, n in occurrences.items() if n > 1)
+    # COUNTED FROM THE REPEATS, not as `rows - variables` (which would also fold in rows core dropped for
+    # being empty — a different problem). These rows are KEPT AS DISTINCT now, so the count is what to CHECK,
+    # not what was lost.
+    n_repeated_kept = sum(n - 1 for n in occurrences.values() if n > 1)
+    return EmbeddingExport(
+        header=list(header) + [EMBEDDING_EXPORT_COLUMN],
+        rows=out,
+        n_rows=len(data_rows),
+        n_variables=len(dd.fields),
+        n_repeated_kept=n_repeated_kept,
+        n_nothing_to_embed=n_empty,
+        repeated_names=repeated[:_REPEATED_NAME_CAP],
+    )
+
+
+def build_gate0_result(
+    *,
+    mode: str,
+    cohorts: list[str],
+    atlas: list[AtlasPoint],
+    field_index: dict[str, FieldDetail],
+    preprocessing: list[UIPreprocessReport],
+) -> UIResult:
+    """The PARTIAL a run parked at Gate 0 carries — everything prepared, nothing computed.
+
+    Built directly rather than through :func:`build_ui_result`, which needs a ``LeanBResult`` this leg does
+    not have and must not manufacture: a stand-in with empty prompt lists would put ``prompts: {ideal: 0}``
+    on the wire, and "zero ideal prompts" is a claim about a stage that has not been reached. Absent and
+    zero are different statements, and the whole screen exists to keep that distinction.
+
+    ``cohorts`` is DECLARED, not derived. Everywhere else ``summary.cohorts`` falls out of the records; here
+    there are none, so it is taken from the run's own dictionary list — which is what lets Gate 0 show a
+    cohort still being prepared as a pending tab instead of leaving it invisible.
+    """
+    return {
+        "contractVersion": CONTRACT_VERSION,
+        "mode": mode,
+        "phases": PHASES_PREVIEW if mode == "preview" else PHASES_RUN,
+        "records": [],
+        "summary": {**empty_summary(), "cohorts": list(cohorts)},
+        "prompts": {"ideal": 0, "split": 0, "groupAssign": 0, "gencde": 0, "specgen": 0},
+        "atlas": atlas,
+        "fieldIndex": field_index,
+        # Every field is unassigned at Gate 0 — but saying so would read as a FINDING, and the finding it
+        # imitates ("these fields reached no concept") is one this leg has not tested. Left empty.
+        "unassignedFields": [],
+        "cost": empty_cost(),
+        "previewClusters": [],
+        "conceptGroups": [],
+        "conceptGroupMembers": {},
+        "notComputed": _not_computed(concept_gate=False, readjudicated=False),
+        "preprocessing": preprocessing,
+        "gatePosition": cast(Any, "gate0"),
     }
 
 
@@ -438,24 +1193,455 @@ def _atlas_points(embedded: list[Any], cde_cohort: str, cap: int = 2500) -> list
     ]
 
 
+# ── preparation: rule-based preprocessing, IN THE PRODUCT PATH ───────────────────────────────
+#
+# `preprocess_dictionary` shipped in core a long time ago and the product NEVER CALLED IT, so Gate 0 was
+# not merely missing a report — the behaviour it reports on had never run. This is where it runs, between
+# `load_dictionary` and `embed_dictionary`, because the whole point of the step is to fix the text BEFORE
+# it becomes a vector.
+#
+# ⚠ THIS CHANGES EVERY DOWNSTREAM RESULT. Cleaned text embeds differently, so the clustering differs, so
+# the splits, assignments, specs and costs differ. Runs produced before and after this change are NOT
+# comparable, and the pinned demo artifact must be regenerated (08-21) rather than reasoned about.
+#
+# THE CDE BACKBONE IS DELIBERATELY NOT PREPROCESSED. These rules are written for a cohort's own
+# dictionary: placeholder-description replacement fires on any description repeated >= 10 times (a CDE
+# catalog has thousands of legitimately repeated definitions) and common-prefix stripping would rewrite
+# catalog designations. Core already owns CDE text hygiene through its own `clean_cde_text` knob, applied
+# at retrieval time where it can be ablated. Mutating the retrieval backbone from the UI adapter would
+# silently move every benchmark this project gates on.
+
+#: One preprocessing rule: (stable id, plain-words label, the report attribute holding its count).
+#: Mirrors the step order in ``preprocess_dictionary``'s docstring, so the screen reads in the order the
+#: work happened.
+_PREPROCESS_RULES: tuple[tuple[str, str, str], ...] = (
+    ("unicode_normalization", "Fixed mojibake and encoding artifacts", "unicode_fixed"),
+    ("administrative_text_stripping", "Stripped instrument-administration wrappers and markup", "admin_text_stripped"),
+    ("option_echo_clearing", "Cleared descriptions that only echoed a response option", "option_echo_cleared"),
+    ("placeholder_description_replacement", "Replaced boilerplate descriptions", "placeholders_replaced"),
+    ("common_prefix_stripping", "Stripped a shared variable-name prefix", "prefix_stripped"),
+    ("stopword_removal", "Removed configured stopwords from variable names", "stopwords_applied"),
+    ("name_in_description_dedup", "Suppressed a variable name that echoed its description", "name_deduped"),
+    ("whitespace_normalization", "Collapsed whitespace runs", "whitespace_fixed"),
+)
+#: Per-variable before/after rows carried on the wire. The TRUE changed count travels beside it
+#: (``nChangedVariables``), so a cap never understates what happened.
+_PREPROCESS_DIFF_CAP = 50
+
+
+def _count_data_rows(path: Path | str) -> int:
+    """Data rows in a source dictionary file — the reviewer's own row count.
+
+    Read from the FILE rather than from the loaded dictionary on purpose: ``load_dictionary`` keys fields
+    on the variable name, so a repeated name overwrites the earlier row and the variable VANISHES with no
+    error. Comparing the file's row count against the loaded unique-name count is the only way that drop
+    becomes visible instead of being swallowed (it is a named, expensive debugging cost in this project).
+    Returns ``-1`` when the file cannot be counted, so the caller can fall back rather than invent a number.
+    """
+    try:
+        with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+            sample = fh.readline()
+            delimiter = "\t" if "\t" in sample else ","
+            reader = csv.reader(fh, delimiter=delimiter)
+            return sum(1 for row in reader if any((cell or "").strip() for cell in row))
+    except OSError as exc:
+        logger.warning("could not count rows in %s (%s)", path, exc)
+        return -1
+
+
+def _stopwords_configured() -> bool:
+    """Whether core's stopword resolution yields anything for this run.
+
+    Needed to tell ``not_run`` from ``no_change``: core applies the rule only when the merged stopword
+    list is non-empty, and its report cannot distinguish "applied to 0 variables" from "never applied".
+    Reads core's own resolver so the answer matches what actually happened; on a core that does not
+    expose it, the honest answer is "we cannot claim it ran".
+    """
+    try:
+        from ddharmon.ingestion.preprocessor import _load_stopwords
+
+        return bool(_load_stopwords(None, None))
+    except (ImportError, AttributeError, OSError, ValueError):
+        return False
+
+
+def _embed_text(dd: Any, variable: str) -> str:
+    """The exact text the grouping stage consumes for one variable — core's own composition.
+
+    Asked of core rather than re-derived, because the precedence is easy to get backwards and getting it
+    backwards is invisible: ``to_embedding_text`` reads ``question_text or description`` while the UI's
+    display derivation (``_field_detail``) reads ``description or question_text``. A re-derivation would
+    put a plausible wrong string on the only screen that explains why two variables grouped.
+
+    A field that cannot compose text yields ``""`` — the same honest empty ``_nothing_to_embed`` counts.
+    """
+    field = getattr(dd, "fields", {}).get(variable)
+    if field is None:
+        return ""
+    try:
+        return str(field.to_embedding_text() or "")
+    except Exception:  # noqa: BLE001 - a text-composition failure must not fail the report
+        return ""
+
+
+def _preprocess_diff(dd: Any) -> tuple[list[UIPreprocessDiff], int]:
+    """Per-variable before/after for the variables preprocessing changed (capped sample + true count)."""
+    try:
+        from ddharmon.ingestion.preprocessor import preprocessing_diff
+    except ImportError:
+        return [], 0
+    rows = preprocessing_diff(dd)
+    out: list[UIPreprocessDiff] = [
+        {
+            "variableName": str(r.get("variable_name", "")),
+            "rawVariableName": str(r.get("raw_variable_name", "")),
+            "rawDescription": str(r.get("raw_description", "")),
+            "cleanedDescription": str(r.get("cleaned_description", "")),
+            "embedText": _embed_text(dd, str(r.get("variable_name", ""))),
+            # From core's own diff — the raw-value composition. Not re-derived here for the same reason
+            # `embedText` is not: a plausible-looking wrong string on the screen that explains grouping is
+            # worse than showing nothing.
+            "rawEmbedText": str(r.get("raw_embed_text", "")),
+            "nameChanged": bool(r.get("name_changed")),
+            "descChanged": bool(r.get("desc_changed")),
+            "embedNameSuppressed": bool(r.get("embed_name_suppressed")),
+        }
+        for r in rows[:_PREPROCESS_DIFF_CAP]
+    ]
+    return out, len(rows)
+
+
+def _nothing_to_embed(dd: Any) -> int:
+    """Variables whose embedding text came out EMPTY — they embed nothing and cluster nowhere.
+
+    Counted because it is otherwise a silent loss: the field is present in every listing and contributes
+    to no concept.
+    """
+    n = 0
+    for f in dd.fields.values():
+        try:
+            if not (f.to_embedding_text() or "").strip():
+                n += 1
+        except Exception:  # noqa: BLE001 - a text-composition failure must not fail the report
+            n += 1
+    return n
+
+
+def _unique_source_names(dd: Any) -> int:
+    """Distinct SOURCE variable names in the loaded dictionary. A disambiguation CHILD (the loader minted it
+    a ``name__N`` identity so a repeated name would not drop) is credited to its SOURCE name — which it
+    carries on ``short_label`` — so a repeated name is still surfaced even though the ROW was kept, not
+    dropped. ``_DISAMBIG_SEP`` matches csv_parser; the preprocessing-report test guards the arithmetic."""
+    names: set[str] = set()
+    for f in dd.fields.values():
+        v = str(getattr(f, "variable_name", "") or "")
+        sl = str(getattr(f, "short_label", "") or "")
+        prefix = f"{sl}{_DISAMBIG_SEP}"
+        suffix = v[len(prefix) :] if sl and v.startswith(prefix) else ""
+        names.add(sl if suffix and suffix.isdigit() else v)
+    return len(names)
+
+
+def _failed_report(dd: Any, n_rows: int, n_applied: int, error: str) -> UIPreprocessReport:
+    """A report for a dictionary whose preprocessing RAISED.
+
+    Every rule is reported ``failed``, not ``0``. Core preprocesses a dictionary atomically — one call,
+    all rules — so the honest granularity of a failure is the dictionary, and each rule carries the same
+    message rather than a zero that would read as "checked, nothing to fix".
+    """
+    return {
+        "cohort": getattr(dd, "cohort_name", None) or dd.name,
+        "nVariables": n_rows,
+        "nUniqueVariableNames": _unique_source_names(dd),
+        "nDuplicateVariableNames": max(0, n_rows - _unique_source_names(dd)),
+        "nNothingToEmbed": _nothing_to_embed(dd),
+        "namesChanged": 0,
+        "descriptionsChanged": 0,
+        "ran": True,
+        "failed": True,
+        "error": error,
+        "rules": [
+            {
+                "rule": rule,
+                "label": label,
+                "outcome": "failed",
+                "nChanged": 0,
+                "nVariables": n_applied,
+                "detail": "",
+                "error": error,
+            }
+            for rule, label, _attr in _PREPROCESS_RULES
+        ],
+        "diff": [],
+        "nChangedVariables": 0,
+        "diffTruncated": False,
+    }
+
+
+def preprocess_for_run(dd: Any, *, source_path: Path | str | None = None) -> UIPreprocessReport:
+    """Preprocess ONE dictionary in place and return the contract-shaped report of what it did.
+
+    Guarded on the core signature: an older pinned core that cannot preprocess yields a ``ran: False``
+    report rather than raising, because a run must not die on a preparation step.
+
+    The arithmetic is ASSERTED, not assumed: a report whose counts do not close against the dictionary's
+    row count is worse than no report, because it is a number a reviewer would act on. A mismatch logs
+    loudly and the offending rule is reported ``failed`` instead of shipping a figure nobody can trust.
+    """
+    n_applied_before = len(dd.fields)
+    n_rows = _count_data_rows(source_path) if source_path else -1
+    if n_rows < n_applied_before:
+        # Either we could not read the file, or the loader created MORE fields than there are rows
+        # (hierarchy detection synthesises parents). Neither is a drop, so fall back to what the rules
+        # were actually applied to rather than reporting a negative duplicate count.
+        n_rows = n_applied_before
+    try:
+        from ddharmon.ingestion.preprocessor import preprocess_dictionary  # noqa: F401 - availability probe
+    except ImportError as exc:
+        logger.warning("this core cannot preprocess (%s) — reporting the step as not run", exc)
+        return {
+            "cohort": getattr(dd, "cohort_name", None) or dd.name,
+            "nVariables": n_rows,
+            "nUniqueVariableNames": _unique_source_names(dd),
+            "nDuplicateVariableNames": max(0, n_rows - _unique_source_names(dd)),
+            "nNothingToEmbed": _nothing_to_embed(dd),
+            "namesChanged": 0,
+            "descriptionsChanged": 0,
+            "ran": False,
+            "failed": False,
+            "error": "",
+            "rules": [
+                {
+                    "rule": rule,
+                    "label": label,
+                    "outcome": "not_run",
+                    "nChanged": 0,
+                    "nVariables": n_applied_before,
+                    "detail": "",
+                    "error": "",
+                }
+                for rule, label, _attr in _PREPROCESS_RULES
+            ],
+            "diff": [],
+            "nChangedVariables": 0,
+            "diffTruncated": False,
+        }
+    try:
+        _prepare(dd)
+    except Exception as exc:  # noqa: BLE001 - a preparation step must not be able to fail a paid run
+        logger.warning("preprocessing %s failed: %s", getattr(dd, "cohort_name", None) or dd.name, exc)
+        return _failed_report(dd, n_rows, n_applied_before, f"{type(exc).__name__}: {exc}")
+
+    core_report = getattr(dd, "preprocessing_report", None)
+    n_applied = int(getattr(core_report, "total_fields", 0) or n_applied_before)
+    stopwords_ran = _stopwords_configured()
+    rules: list[UIPreprocessRule] = []
+    for rule, label, attr in _PREPROCESS_RULES:
+        n_changed = int(getattr(core_report, attr, 0) or 0)
+        ran = stopwords_ran if rule == "stopword_removal" else True
+        detail = ""
+        if rule == "common_prefix_stripping":
+            detail = str(getattr(core_report, "prefix_value", "") or "")
+        elif rule == "placeholder_description_replacement":
+            detail = "; ".join(str(v) for v in (getattr(core_report, "placeholder_values", None) or []))
+        error = ""
+        if n_changed > n_applied:
+            # The arithmetic does not close. Say so rather than shipping the number.
+            error = f"reported {n_changed} changed variables out of {n_applied} — counts do not reconcile"
+            logger.error("preprocessing report for rule %s does not reconcile: %s", rule, error)
+        outcome = "failed" if error else ("changed" if n_changed else "no_change") if ran else "not_run"
+        rules.append(
+            {
+                "rule": rule,
+                "label": label,
+                "outcome": cast(Any, outcome),
+                "nChanged": 0 if error or not ran else n_changed,
+                "nVariables": n_applied,
+                "detail": detail,
+                "error": error,
+            }
+        )
+    diff, n_changed_vars = _preprocess_diff(dd)
+    n_unique = _unique_source_names(dd)
+    return {
+        "cohort": getattr(dd, "cohort_name", None) or dd.name,
+        "nVariables": n_rows,
+        "nUniqueVariableNames": n_unique,
+        "nDuplicateVariableNames": max(0, n_rows - n_unique),
+        "nNothingToEmbed": _nothing_to_embed(dd),
+        "namesChanged": int(getattr(core_report, "names_changed", 0) or 0),
+        "descriptionsChanged": int(getattr(core_report, "descriptions_changed", 0) or 0),
+        "ran": True,
+        "failed": False,
+        "error": "",
+        "rules": rules,
+        "diff": diff,
+        "nChangedVariables": n_changed_vars,
+        "diffTruncated": n_changed_vars > len(diff),
+    }
+
+
+# ── realized cost: ONE figure per run, cumulative across its legs (08-28 1a) ─────────────────
+#
+# A staged run is several worker legs, and each leg used to build a fresh `CostLedger`. The checkpoint a leg
+# writes therefore carried that leg's spend only, so Gate 3 told a reviewer they had spent $0.05 on a run that
+# had cost $0.82 (live verify 3, F14), and a stage a leg merely REPLAYED — $0, so no ledger line — vanished from
+# the next checkpoint altogether (F10). The fix is a ledger SEEDED with the earlier legs' breakdown: replayed
+# answers still add nothing, keys this leg never touches carry forward unchanged, and keys it does touch add
+# only the new spend. The helpers below are the cost-block arithmetic every writer of a run's cost shares.
+
+
+def cost_block(raw: Any) -> UICost:
+    """A well-formed :class:`UICost` from whatever a checkpoint or payload carries (tolerant of old shapes).
+
+    ``None``, a non-dict, or a block missing fields reads as zeros rather than raising: a legacy checkpoint
+    written before the cost block existed must still seed a leg, and "no recorded cost" is exactly zero.
+    """
+    if not isinstance(raw, dict):
+        return empty_cost()
+    per: dict[str, Any] = {}
+    for key, line in (raw.get("perStage") or {}).items():
+        if not isinstance(line, dict):
+            continue
+        per[str(key)] = {
+            "usd": float(line.get("usd") or 0.0),
+            "inputTokens": int(line.get("inputTokens") or 0),
+            "outputTokens": int(line.get("outputTokens") or 0),
+            "calls": int(line.get("calls") or 0),
+        }
+    raw_tokens = raw.get("tokens")
+    tokens: dict[str, Any] = raw_tokens if isinstance(raw_tokens, dict) else {}
+    return cast(
+        UICost,
+        {
+            "actualUsd": float(raw.get("actualUsd") or 0.0),
+            "tokens": {"input": int(tokens.get("input") or 0), "output": int(tokens.get("output") or 0)},
+            "perStage": per,
+        },
+    )
+
+
+def merge_costs(*blocks: Any) -> UICost:
+    """Sum cost blocks: per-stage lines add key by key, and the totals add. Pure; never mutates its inputs.
+
+    The total is the sum of the blocks' own ``actualUsd`` — not a re-sum of the lines — so a legacy block
+    whose total covers spend no line names is carried rather than silently dropped.
+    """
+    out = empty_cost()
+    per: dict[str, Any] = {}
+    total = 0.0
+    tin = tout = 0
+    for raw in blocks:
+        block = cost_block(raw)
+        total += block["actualUsd"]
+        tin += block["tokens"]["input"]
+        tout += block["tokens"]["output"]
+        for key, line in block["perStage"].items():
+            acc = per.setdefault(key, {"usd": 0.0, "inputTokens": 0, "outputTokens": 0, "calls": 0})
+            acc["usd"] = round(acc["usd"] + line["usd"], 6)
+            acc["inputTokens"] += line["inputTokens"]
+            acc["outputTokens"] += line["outputTokens"]
+            acc["calls"] += line["calls"]
+    out["actualUsd"] = round(total, 6)
+    out["tokens"] = {"input": tin, "output": tout}
+    out["perStage"] = per
+    return out
+
+
+def usage_cost(key: str, usages: Sequence[Any], *, batch: bool = False) -> UICost:
+    """Price one paid action's captured usage into a one-line cost block, keyed ``key``.
+
+    Priced by core's ``CostLedger`` (LiteLLM's price map; Batch at 50%) — the same arithmetic as a stage, so a
+    paid action outside a leg can never be priced by a second, drifting formula.
+    """
+    from ddharmon.llm.cost import CostLedger
+
+    ledger = CostLedger()
+    ledger.add(key, list(usages), batch=batch)
+    return cast(UICost, ledger.to_dict())
+
+
+class CumulativeLedger:
+    """The leg's ``CostLedger``, SEEDED with every earlier leg's breakdown so its figures are the run's.
+
+    Duck-types the three members the stages use (``add``, ``total_usd``, ``to_dict``). Composes a core ledger
+    rather than reaching into its private state, so a core that reshapes ``CostLedger`` internals cannot break
+    the seed. ``add`` returns only what it newly priced; ``total_usd`` and ``to_dict`` are cumulative.
+    """
+
+    def __init__(self, prior: Any = None) -> None:
+        from ddharmon.llm.cost import CostLedger
+
+        self._prior = cost_block(prior)
+        self._leg = CostLedger()
+
+    def add(self, stage: str, usages: list[Any], *, batch: bool = False) -> float:
+        return self._leg.add(stage, usages, batch=batch)
+
+    @property
+    def total_usd(self) -> float:
+        return self._prior["actualUsd"] + self._leg.total_usd
+
+    def leg_cost(self) -> UICost:
+        """What THIS leg has priced so far — the part of the total not carried from an earlier leg."""
+        return merge_costs(self._leg.to_dict())
+
+    def to_dict(self) -> UICost:
+        return merge_costs(self._prior, self._leg.to_dict())
+
+
 # ── stage execution strategies (sync inline / Batch API) ──────────────────────────────────
 
 
-def _sync_stage(phase: str, progress: ProgressFn, client: Any, stopping: StoppingFn | None = None) -> StageFn:
-    """A stage callback that runs each prompt inline via the Anthropic client, reporting per-item progress."""
+def _sync_stage(
+    phase: str,
+    progress: ProgressFn,
+    client: Any,
+    ledger: Any,
+    stopping: StoppingFn | None = None,
+    ledger_key: str | None = None,
+) -> StageFn:
+    """A stage callback that runs its prompts inline via the LLM client — concurrently, across a bounded
+    thread pool — reporting per-item progress. After the stage finishes it drains the client's realized token
+    usage into ``ledger`` (sync = full price) and reports the run's cost-so-far for the live counter.
+
+    Concurrency makes a full sync run finish in minutes rather than the hours a serial per-prompt loop would
+    take. A "discard" stop surfaces as ``progress`` raising mid-loop; we then cancel the not-yet-started calls
+    so we stop paying immediately (in-flight calls can't be un-sent, mirroring the Batch stage's semantics).
+    """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
             return {}
         if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (no new cost)
             return {}
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         n = len(prompts)
         progress(phase, 0, n)
+
+        def _run_one(rec: Any) -> tuple[str, Any]:
+            return rec.id, _complete_like_batch(client, rec)
+
         out: dict[str, Any] = {}
-        for i, rec in enumerate(prompts):
-            system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
-            out[rec.id] = client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
-            progress(phase, i + 1, n)
+        done = 0
+        with ThreadPoolExecutor(max_workers=min(_SYNC_MAX_WORKERS, n)) as ex:
+            futures = [ex.submit(_run_one, rec) for rec in prompts]
+            try:
+                for fut in as_completed(futures):
+                    rid, resp = fut.result()
+                    out[rid] = resp
+                    done += 1
+                    progress(phase, done, n)  # raises on a "discard" stop -> abort the stage promptly
+            except BaseException:
+                for f in futures:  # cancel not-yet-started calls so a discard-stop stops paying immediately
+                    f.cancel()
+                raise
+        # Attribute this stage's realized spend (sync = full price) + surface the running total for the live UI.
+        # Cost is keyed on `ledger_key` (defaulting to the phase) so an advisory stage that REPORTS under an
+        # existing progress phase still gets its own line in the cost breakdown — see _JUDGE_STAGES.
+        ledger.add(ledger_key or phase, client.drain_usage(), batch=False)
+        progress(phase, n, n, ledger.total_usd)
         return out
 
     return stage
@@ -470,13 +1656,541 @@ def specgen_stage_fn(client: Any) -> StageFn:
     """
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        for rec in prompts:
-            system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
-            out[rec.id] = client.complete(rec.user_prompt, system=system, max_tokens=_SYNC_MAX_TOKENS)
-        return out
+        return {rec.id: _complete_like_batch(client, rec) for rec in prompts}
 
     return stage
+
+
+def _complete_like_batch(client: Any, rec: Any) -> Any:
+    """Run ONE prompt synchronously, sent and returned the way the Batch API path sends and returns it.
+
+    Sent like core ``submit_batch``: the prompt's ``max_tokens`` (else :data:`_BATCH_DEFAULT_MAX_TOKENS`),
+    temperature 0, the prompt's ``model_tag``, and — for a prompt with a ``tool_schema`` — a forced tool call
+    with the bare system prompt (the tool enforces the shape, so no soft schema is appended). Returned like
+    ``retrieve_batch`` writes it: a tool call's input as-is, text parsed to its JSON object, unparsable text raw.
+
+    A client with only ``complete`` (a non-Anthropic LiteLLM client, or a core older than 0b) cannot take a
+    temperature or a tool, so it keeps the text call — but with the batch budget, which is the difference that
+    stopped the split returning empty.
+    """
+    max_tokens = int(getattr(rec, "max_tokens", None) or _BATCH_DEFAULT_MAX_TOKENS)
+    tool_schema = getattr(rec, "tool_schema", None)
+    complete_request = getattr(client, "complete_request", None)
+    if complete_request is None:
+        system = rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema
+        return client.complete(rec.user_prompt, system=system, max_tokens=max_tokens)
+    model = getattr(rec, "model_tag", None) or None
+    if isinstance(model, str) and model.lower().startswith("anthropic/"):
+        model = model.split("/", 1)[1]  # the anthropic SDK wants the bare id (same rule as build_llm_client)
+    if tool_schema:
+        return complete_request(
+            rec.user_prompt,
+            system=rec.system_prompt,
+            max_tokens=max_tokens,
+            temperature=_BATCH_TEMPERATURE,
+            model=model,
+            tool_schema=tool_schema,
+            tool_name=getattr(rec, "tool_name", None),
+        )
+    text = complete_request(
+        rec.user_prompt,
+        system=rec.system_prompt + _SCHEMA_PREAMBLE + rec.schema,
+        max_tokens=max_tokens,
+        temperature=_BATCH_TEMPERATURE,
+        model=model,
+    )
+    return _parse_like_batch(text)
+
+
+def _parse_like_batch(text: Any) -> Any:
+    """Parse a sync response with the SAME tolerant parser ``retrieve_batch`` applies, else keep the raw text."""
+    if not isinstance(text, str):
+        return text
+    try:
+        from ddharmon.llm.batch import _parse_response_text
+    except ImportError:  # a core without the parser: hand back the text, which every stage already tolerates
+        return text
+    try:
+        return _parse_response_text(text)
+    except Exception:  # noqa: BLE001 - retrieve_batch keeps the raw text on any parse failure; so do we
+        return text
+
+
+#: Suffix of the file a batch stage submits from once ``prompts_<tag>.jsonl`` already exists (08-28 1a). A later
+#: call for the same tag — a resumed leg's gap, a recursive split level — used to OVERWRITE that file with its
+#: own few prompts, erasing the earlier leg's record of what it asked. The submission now goes through this
+#: sidecar and the main file only ever grows. ``backend.batch_reconcile`` strips the same suffix when it maps a
+#: manifest back to its tag (pinned together by test), so a gap killed mid-poll is still reconciled.
+BATCH_GAP_SUFFIX = ".gap"
+
+
+def _jsonl_ids(path: Path) -> set[str]:
+    """Record ids in a jsonl file; an absent file or an unreadable line is simply not present."""
+    ids: set[str] = set()
+    if not path.exists():
+        return ids
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ids.add(str(json.loads(line)["id"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+    return ids
+
+
+def _record_asked(submitted: Path, record: Path) -> None:
+    """Append to ``record`` every prompt line in ``submitted`` whose id it does not hold yet. Append-only."""
+    if not submitted.exists():
+        return
+    have = _jsonl_ids(record)
+    fresh = []
+    for line in submitted.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            pid = str(json.loads(line)["id"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if pid not in have:
+            have.add(pid)
+            fresh.append(line)
+    if fresh:
+        with open(record, "a") as f:
+            f.write("\n".join(fresh) + "\n")
+
+
+# ── the batch -> sync switch (08-28 0e) ─────────────────────────────────────────────────────
+#
+# A batch run spends most of its wall clock in the provider's queue. The switch lets a reviewer — or the
+# operator's ``batch_patience_seconds`` — stop waiting: the in-flight batch is CANCELLED, whatever it still hands
+# back is kept (priced at the batch rate, like any returned item), and only the ids still missing are run
+# synchronously (full rate) under the SAME ledger key. The leg then stays sync for its remaining stages. The
+# next leg starts in batch again: each Continue is a fresh cost decision (08-28 "defaults taken").
+#
+# v1 triggers on ``processing_status == "in_progress"`` (todo 2026-09-15, amendment 2026-09-30): the Batches
+# API reports its per-item counts as 0 until the whole batch ENDS, so "nothing has returned yet" cannot be
+# observed mid-batch and is not the guard.
+
+#: A manifest written up to this long BEFORE a call started still counts as that call's own. A filesystem with
+#: whole-second timestamps can stamp a manifest written a moment after the call began with an mtime just below
+#: the call's start; a stale manifest from an earlier call is minutes-to-hours old, so a second is no ambiguity.
+_MANIFEST_MTIME_SLACK_SECS = 1.0
+_MANIFEST_SUFFIX = ".batch_manifest.json"
+
+#: The sync-remainder estimate's token model. Deliberately HIGH (R8: never quote below what will be charged):
+#: three characters per input token where English prose runs nearer four, and a reply half the prompt's size,
+#: floored — against the ~0.26 output/input ratio the observed full run measured (``lib/estimate.ts``).
+_EST_CHARS_PER_TOKEN = 3
+_EST_OUTPUT_FRACTION = 0.5
+_EST_MIN_OUTPUT_TOKENS = 128
+
+
+def _bare_model(model: Any) -> Any:
+    """``anthropic/<id>`` -> ``<id>``, the form the Anthropic SDK and its usage records carry."""
+    if isinstance(model, str) and model.lower().startswith("anthropic/"):
+        return model.split("/", 1)[1]
+    return model or None
+
+
+class LegTransport:
+    """ONE leg's batch -> sync switch, shared by every batch stage that leg builds (08-28 0e).
+
+    Built per leg by the runner (like the leg's ledger), so the switch is STICKY for the rest of the leg — once
+    a stage switched, every later batch stage of the leg runs sync from the start — and is NOT carried into the
+    next leg, which builds a new one. Nothing here is persisted.
+
+    ``requested`` reads the run's switch flag (set by the reviewer's ``POST .../switch-to-sync``); ``report``
+    tells the run view what is in flight (``(transport, batch_info | None)``); ``patience_seconds`` is the
+    operator-only auto-switch (off when ``None``); ``client_factory`` builds the sync client, lazily — a leg that
+    never switches never builds one.
+    """
+
+    def __init__(
+        self,
+        *,
+        requested: Callable[[], bool] | None = None,
+        report: Callable[[str, dict[str, Any] | None], None] | None = None,
+        patience_seconds: float | None = None,
+        client_factory: Callable[[], Any] | None = None,
+    ) -> None:
+        self._requested = requested
+        self._report = report
+        self.patience_seconds = float(patience_seconds) if patience_seconds and float(patience_seconds) > 0 else None
+        self.client_factory = client_factory
+        self._client: Any = None
+        self._auto = False
+        self._lock = threading.Lock()
+        #: The leg is sync for good. Set by :meth:`commit`, never cleared.
+        self.switched = False
+
+    def requested(self) -> bool:
+        """Whether a switch has been asked for — by the reviewer, by patience, or by an earlier stage."""
+        if self.switched or self._auto:
+            return True
+        if self._requested is None:
+            return False
+        try:
+            return bool(self._requested())
+        except Exception:  # noqa: BLE001 — a flag read that fails is "not requested", never a crashed stage
+            logger.warning("reading the batch->sync switch flag failed", exc_info=True)
+            return False
+
+    def request(self) -> None:
+        """Raise the switch from inside the leg — ``batch_patience_seconds`` sets the same flag a press does."""
+        self._auto = True
+
+    def commit(self) -> None:
+        """The leg is sync from here on."""
+        self.switched = True
+
+    @property
+    def mode(self) -> str:
+        return "sync" if self.switched else "batch"
+
+    def report(self, batch: dict[str, Any] | None) -> None:
+        """Tell the run view what is in flight. Never raises: it is display state."""
+        if self._report is None:
+            return
+        try:
+            self._report(self.mode, batch)
+        except Exception:  # noqa: BLE001
+            logger.debug("reporting the in-flight batch failed", exc_info=True)
+
+    def client(self) -> Any:
+        """The leg's sync client, built on first use and shared by every stage that runs sync after the switch."""
+        with self._lock:
+            if self._client is None:
+                if self.client_factory is None:
+                    raise RuntimeError("this leg switched to sync but has no sync client to run the rest with")
+                self._client = self.client_factory()
+            return self._client
+
+
+def _batches_api(api_key: str | None = None) -> Any:
+    """The Message Batches resource, for the two FREE calls the switch makes: ``retrieve`` and ``cancel``.
+
+    Built like core's ``submit_batch`` builds its client (``api_key=None`` -> the SDK's env default), so the
+    switch talks to the same account the batch was submitted from. Never submits anything.
+    """
+    import anthropic
+
+    return anthropic.Anthropic(api_key=api_key).messages.batches
+
+
+def _sync_estimate_usd(prompts: Sequence[Any]) -> float | None:
+    """What running ``prompts`` synchronously would cost, estimated high (R8). ``None`` when it cannot be priced.
+
+    Input tokens from the prompt's own text (system + schema preamble + schema + user, and a tool schema where
+    one is sent); output from :data:`_EST_OUTPUT_FRACTION` of that, floored, capped at the prompt's own budget;
+    priced at the full (non-batch) rate by core's ``price_usage``. A prompt whose model has no known rate makes
+    the whole figure unknown rather than quietly $0 — a "+$0.00" on a paid action is an under-quote.
+    """
+    if not prompts:
+        return None
+    from ddharmon.llm.cost import price_usage
+
+    total = 0.0
+    for rec in prompts:
+        text = (
+            str(getattr(rec, "system_prompt", "") or "")
+            + _SCHEMA_PREAMBLE
+            + str(getattr(rec, "schema", "") or "")
+            + str(getattr(rec, "user_prompt", "") or "")
+        )
+        tool_schema = getattr(rec, "tool_schema", None)
+        if tool_schema:
+            text += json.dumps(tool_schema)
+        tokens_in = -(-len(text) // _EST_CHARS_PER_TOKEN)
+        budget = int(getattr(rec, "max_tokens", None) or _BATCH_DEFAULT_MAX_TOKENS)
+        tokens_out = min(budget, max(_EST_MIN_OUTPUT_TOKENS, int(tokens_in * _EST_OUTPUT_FRACTION) + 1))
+        usd = price_usage(_bare_model(getattr(rec, "model_tag", None)), tokens_in, tokens_out, batch=False)
+        if usd <= 0:
+            return None
+        total += usd
+    return round(total, 6)
+
+
+class _BatchWatch:
+    """What one batch-stage CALL knows about the batch it submitted: which one, its status, the switch.
+
+    Finds its manifest by name — core writes ``<submitted file>.batch_manifest.json`` on a first submit and
+    ``<submitted file>.resume.batch_manifest.json`` for a gap — and only one stamped at or after THIS call's
+    start (less :data:`_MANIFEST_MTIME_SLACK_SECS`): the adapter's gap sidecar is reused by every later call for
+    the tag and core deletes only the ``.resume`` manifests, so an earlier call's manifest, naming a batch that
+    has long ended, can be sitting under the same name.
+    """
+
+    def __init__(
+        self,
+        *,
+        work_dir: Path,
+        submit_path: Path,
+        started: float,
+        tag: str,
+        prompts: Sequence[Any],
+        already: set[str],
+        api_key: str | None,
+    ) -> None:
+        self.work_dir = work_dir
+        self.candidates = [
+            work_dir / f"{submit_path.name}{_MANIFEST_SUFFIX}",
+            work_dir / f"{submit_path.name}.resume{_MANIFEST_SUFFIX}",
+        ]
+        self.started = started
+        self.tag = tag
+        self.prompts = list(prompts)
+        self.already = already
+        self.api_key = api_key
+        self.watch_started = time.monotonic()
+        self.last_probe = float("-inf")
+        self.batch_id: str | None = None
+        self.submitted: set[str] = set()
+        self.estimate: float | None = None
+        self.status: str | None = None
+        #: The switch has been acted on for this call (cancelled, or found already ending).
+        self.acted = False
+        self._api: Any = None
+
+    def _locate(self) -> bool:
+        if self.batch_id is not None:
+            return True
+        found: tuple[float, Path] | None = None
+        for path in self.candidates:
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < self.started - _MANIFEST_MTIME_SLACK_SECS:
+                continue  # an earlier call's manifest — never this call's batch
+            if found is None or mtime > found[0]:
+                found = (mtime, path)
+        if found is None:
+            return False
+        try:
+            manifest = json.loads(found[1].read_text())
+        except (OSError, ValueError):
+            return False  # being written right now; the next heartbeat reads it whole
+        batch_id = str(manifest.get("batch_id") or "")
+        if not batch_id:
+            return False
+        id_map = manifest.get("id_map") or {}
+        asked = {str(p.id) for p in self.prompts}
+        submitted = {str(v) for v in id_map.values()} if isinstance(id_map, dict) and id_map else asked - self.already
+        self.batch_id = batch_id
+        self.submitted = submitted
+        # The remainder a switch would buy is everything this batch was sent: nothing is observable as returned
+        # until the batch ends (see the section header), so this is the honest upper bound.
+        self.estimate = _sync_estimate_usd([p for p in self.prompts if str(p.id) in submitted])
+        return True
+
+    def _batches(self) -> Any:
+        if self._api is None:
+            self._api = _batches_api(self.api_key)
+        return self._api
+
+    def _probe_status(self) -> str | None:
+        try:
+            return str(self._batches().retrieve(self.batch_id).processing_status)
+        except Exception as exc:  # noqa: BLE001 — a free status read that fails is retried next heartbeat
+            logger.warning("batch %s: status read failed (%s: %s)", self.batch_id, type(exc).__name__, exc)
+            return None
+
+    def info(self, transport: LegTransport) -> dict[str, Any]:
+        """The ``batch`` block the run view renders the switch from."""
+        return {
+            "tag": self.tag,
+            "nItems": len(self.submitted),
+            "status": self.status,
+            "switchable": self.status == "in_progress" and not transport.requested(),
+            "syncEstimateUsd": self.estimate,
+        }
+
+    def tick(self, transport: LegTransport) -> None:
+        """One heartbeat: apply patience, read the status when due, act on a switch request, report."""
+        now = time.monotonic()
+        if (
+            transport.patience_seconds is not None
+            and not transport.requested()
+            and now - self.watch_started >= transport.patience_seconds
+        ):
+            logger.info(
+                "batch %s: patience (%.0fs) elapsed — switching this leg to sync", self.tag, transport.patience_seconds
+            )
+            transport.request()
+        want = transport.requested() and not self.acted
+        if not want and now - self.last_probe < _BATCH_STATUS_SECS:
+            return
+        self.last_probe = now
+        if not self._locate():
+            return  # not submitted yet — a pending request is retried at the next heartbeat
+        status = self._probe_status()
+        if status is None:
+            return
+        self.status = status
+        if want:
+            if status == "in_progress":
+                try:
+                    self._batches().cancel(self.batch_id)
+                except Exception as exc:  # noqa: BLE001 — retried at the next heartbeat
+                    logger.warning("batch %s: cancel failed (%s: %s)", self.batch_id, type(exc).__name__, exc)
+                    return
+                self.status = "canceling"
+                logger.info("batch %s (%s): cancelled — the rest of this leg runs sync", self.batch_id, self.tag)
+            # Not in_progress means it is already ending on its own: nothing to cancel, and whatever it still
+            # hands back is kept. The switch holds for the rest of the leg either way.
+            self.acted = True
+            transport.commit()
+        transport.report(self.info(transport))
+
+
+def _answers_on_disk(responses_path: Path, asked: set[str]) -> dict[str, Any]:
+    """The asked ids' answers already in ``responses_<tag>.jsonl`` — free, whoever paid for them."""
+    out: dict[str, Any] = {}
+    if not responses_path.exists():
+        return out
+    with open(responses_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if str(rec.get("id")) in asked:
+                out[str(rec["id"])] = rec.get("response")
+    return out
+
+
+def _sync_remainder(
+    phase: str,
+    progress: ProgressFn,
+    transport: LegTransport,
+    prompts: Sequence[Any],
+    out: dict[str, Any],
+    responses_path: Path,
+    ledger: Any,
+    key: str,
+) -> None:
+    """Run synchronously ONLY the prompts ``out`` has no answer for, and append each answer to the stage's file.
+
+    Sent exactly as a batch request would be (:func:`_complete_like_batch`, the 0b parity path). Every answer is
+    APPENDED to ``responses_<tag>.jsonl`` with ``"transport": "sync"`` as it lands — that file is what the
+    reconciler derives its gap from, so an answer kept anywhere else would read as a stage the cancelled batch
+    still owes, and the reviewer would be told a required step failed. Callers guarantee the batch worker has
+    EXITED first: core's ``retrieve_batch`` opens this file with ``"w"``.
+
+    Priced at the full rate under ``key`` — the stage's own ledger key — in a ``finally``, so calls that were
+    answered before a Stop are billed too (they were charged).
+
+    A call that FAILS (08-28) is one missing answer, exactly like a batch item that errored: it is logged and
+    left out of ``out``, and the rest keep going. It used to raise out of the whole stage, which threw away a
+    switched leg over one transient error. What a missing answer means is decided by the caller's gap check
+    (:func:`_batch_stage`): a deciding stage re-asks it once and then fails naming it; an advisory one records
+    it as not judged. A failed call is not billed, so nothing is priced for it. A Stop still aborts at once —
+    that arrives from ``progress``, not from a call, and is re-raised.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    missing = [p for p in prompts if str(p.id) not in out]
+    if not missing:
+        return
+    n = len(prompts)
+    done = n - len(missing)
+    client = transport.client()
+    progress(phase, done, n)
+    failed: list[str] = []
+    try:
+        with ThreadPoolExecutor(max_workers=min(_SYNC_MAX_WORKERS, len(missing))) as ex:
+            futures = {ex.submit(_complete_like_batch, client, rec): rec for rec in missing}
+            try:
+                for fut in as_completed(futures):
+                    rec = futures[fut]
+                    try:
+                        resp = fut.result()
+                    except Exception as exc:  # noqa: BLE001 — one failed call is one missing answer (see docstring)
+                        if not failed:
+                            logger.warning("sync %s: a call failed (%s: %s)", phase, type(exc).__name__, exc)
+                        failed.append(str(rec.id))
+                        continue
+                    out[str(rec.id)] = resp
+                    with open(responses_path, "a") as f:
+                        f.write(json.dumps({"id": rec.id, "response": resp, "transport": "sync"}, default=str) + "\n")
+                    done += 1
+                    progress(phase, done, n)  # raises on a "discard" stop -> abort promptly
+            except BaseException:
+                for f in futures:  # a discard-stop stops paying for calls not yet sent
+                    f.cancel()
+                raise
+    finally:
+        ledger.add(key, client.drain_usage(), batch=False)
+        if failed:
+            logger.warning("sync %s: %d of %d call(s) failed and stay unanswered", phase, len(failed), len(missing))
+
+
+# ── a partial batch is never silently accepted (08-28) ─────────────────────────────────────────
+#
+# Core's ``retrieve_batch`` logs and SKIPS every errored / expired / canceled result, so a batch stage can come
+# back holding answers for only some of what it asked, and nothing downstream noticed: a split with 6 of 336
+# clusters errored became a Gate 1 missing ~90 variables, parked as complete; a demo shipped without 80 answers
+# across five stages. So every batch stage now compares the ids it ASKED with the ids that came BACK, and what a
+# gap means depends on the stage's class:
+#
+# * DECIDING (every stage not in ``_JUDGE_STAGES``: generate + split, which ARE the partition, then assign,
+#   gencde, specgen, refine and the re-pick, which are the verdicts and artifacts a reviewer signs off). A gap
+#   is re-asked ONCE; still short, the stage raises :class:`StageIncompleteError`. Passing it on is not an
+#   option: core has no way to tell "no answer" from "an answer that said nothing" — a split with no answer drops
+#   its whole cluster, an assign with no answer leaves a group unassigned — so the result would be wrong in a way
+#   no screen shows. Failing the leg is the runner's existing path: a resumed leg stays PARKED at its last good
+#   gate with the error on the run, and the next Continue re-asks only what is still missing (answers already on
+#   disk are free).
+# * ADVISORY (``_JUDGE_STAGES``: coherence, distinct_kinds, concept_gate). No retry, no raise. These FLAG and
+#   never decide, and their failure is designed to cost the run the flag and nothing else (``_resilient_stage``);
+#   an unanswered prompt leaves its item NOT JUDGED, which is honest — as long as it is recorded. It is: the leg's
+#   recording marks it asked-but-unanswered, and :func:`_unanswered_register` puts it on the result, so the UI and
+#   the export can say "not judged" rather than "clean". Re-buying a flag is spend the run can do without.
+#
+# The retry runs on the leg's own transport, never on a costlier one. On a batch leg it is a batch of just the gap
+# (core's cache-aware resume submits only the ids the responses file lacks), at the batch rate the run was quoted
+# — so the reviewer's "Finish now with sync" and the operator's patience still apply to it. On a leg that has
+# switched to sync it is sync, the rate the reviewer already chose. Silently re-buying a gap at twice the quoted
+# price is the unconsented spend path T-08-56 rules out for timers; a retry is no different. An errored item is
+# not billed, so the ledger's rules are unchanged: every answer that came back is priced once, at the rate it was
+# bought at, and nothing is priced for one that did not.
+
+#: The retry advice every "a required step failed" message ends with — the reconcile path's vocabulary
+#: (``backend.app._note_reconcile_failures``), shared so the two can never tell a reviewer different things.
+REQUIRED_STEP_RETRY = "re-enter your key if needed and press Continue to retry."
+
+
+class StageIncompleteError(RuntimeError):
+    """A DECIDING batch stage still holds no answer for some of the prompts it was asked, after one retry.
+
+    Raised instead of handing core a partial answer set (see the section header). Carries the stage's batch
+    ``tag``, every unanswered prompt id (``missing``, sorted) and how many it was ``asked``; the message names the
+    first few, like :class:`PartitionDriftError`, so a run's error line stays readable.
+    """
+
+    def __init__(self, tag: str, missing: Sequence[str], asked: int) -> None:
+        self.tag = tag
+        self.missing = sorted(str(m) for m in missing)
+        self.asked = asked
+        shown = ", ".join(self.missing[:10]) + (
+            f", ... (+{len(self.missing) - 10} more)" if len(self.missing) > 10 else ""
+        )
+        super().__init__(
+            f"A required step ({tag}) came back incomplete: {len(self.missing)} of {asked} prompt(s) had no answer "
+            f"from the provider, even after one retry ({shown}). Nothing was built on the partial answers — "
+            + REQUIRED_STEP_RETRY
+        )
+
+
+def _is_advisory_tag(tag: str) -> bool:
+    """Whether a batch cache tag belongs to one of the judge's ADVISORY stages — read off ``_JUDGE_STAGES``."""
+    return any(spec["tag"] == tag for spec in _JUDGE_STAGES.values())
 
 
 def _batch_stage(
@@ -484,8 +2198,11 @@ def _batch_stage(
     progress: ProgressFn,
     work_dir: Path,
     tag: str,
+    ledger: Any,
     api_key: str | None = None,
     stopping: StoppingFn | None = None,
+    ledger_key: str | None = None,
+    transport: LegTransport | None = None,
 ) -> StageFn:
     """A stage callback that runs all prompts through the Anthropic Batch API (blocking poll).
 
@@ -493,19 +2210,81 @@ def _batch_stage(
     missing ids are (re)submitted — so a re-run over a frozen work_dir is a byte-identical, $0 replay, and an
     interrupted batch resumes instead of re-paying. ``api_key`` (optional) is the per-request BYOK key.
 
+    PRICES ONLY WHAT THIS CALL BOUGHT (08-28 1a). The responses file is shared by every call for the tag — every
+    leg, every recursive split level — so pricing each id in it re-billed an earlier leg's answers on every
+    later call. Only ids that were NOT in the file before this call, and that this call asked for, are priced;
+    an answer already on disk costs this call nothing, which is also what keeps a cache replay at $0. The
+    mapping returned is restricted to the prompts asked, for the same reason.
+
+    NEVER ERASES AN EARLIER CALL'S PROMPT RECORD. The first call for a tag writes ``prompts_<tag>.jsonl`` as
+    before; a later one submits from the ``prompts_<tag>.jsonl.gap`` sidecar (:data:`BATCH_GAP_SUFFIX`) and
+    appends its unrecorded prompts to the main file, which therefore holds every prompt the run ever asked.
+
     Cancellation: ``resume_and_wait`` blocks polling the Batch API until the batch ends, so a naive call would
     make a user's Stop wait out the whole batch. Instead we run it on a daemon thread and call ``progress`` on
     a short interval — ``progress`` raises (the runner's cancellation signal) when Stop was pressed, aborting
     within ``_BATCH_POLL_SECS`` instead of minutes. The abandoned thread finishes its poll and exits on its
     own; the already-submitted batch still completes server-side (it can't be un-submitted), but we stop
     consuming it and NO downstream stage is submitted after the Stop — which is where the cost is.
+
+    THE BATCH -> SYNC SWITCH (08-28 0e), when ``transport`` is given. Each heartbeat reads this call's batch
+    status (every :data:`_BATCH_STATUS_SECS`) and reports it for the run view. On a switch request — the
+    reviewer's, or ``batch_patience_seconds`` elapsing — a batch still ``in_progress`` is cancelled; the worker is
+    then JOINED like any other wait (it sees the batch end, retrieves what finished and exits), the returned
+    items are priced at the batch rate as usual, and only the ids still missing are run sync
+    (:func:`_sync_remainder`, full rate, same ledger key). Nothing is written to the responses file while the
+    worker lives, because core's retrieve opens it with ``"w"``. A leg that has switched runs every later batch
+    stage sync from the start (answers already on disk are still free).
+
+    NEVER PASSES A PARTIAL ANSWER SET SILENTLY (08-28). After the batch — and after a switch's sync remainder —
+    the ids asked are compared with the ids answered. A DECIDING stage re-asks its gap once, on the leg's own
+    transport, and raises :class:`StageIncompleteError` if it is still short; an ADVISORY stage (the judge's tags)
+    proceeds with the gap, which the leg's recording then carries onto the result as "not judged". A keep-stop
+    pressed during the stage buys no retry and raises nothing: a partial result is what the reviewer asked for.
+    The why of each choice is in the section header above :data:`REQUIRED_STEP_RETRY`.
     """
+    advisory = _is_advisory_tag(tag)
+    key = ledger_key or phase
+
+    def keep_stopped() -> bool:
+        return bool(stopping and stopping() == "keep")
 
     def stage(prompts: list[Any]) -> dict[str, Any]:
         if not prompts:
             return {}
-        if stopping and stopping() == "keep":  # keep-stop before this stage started -> skip it (never submit)
+        if keep_stopped():  # keep-stop before this stage started -> skip it (never submit)
             return {}
+        n = len(prompts)
+        out = _attempt(prompts)
+        unanswered = [p for p in prompts if str(p.id) not in out]
+        if unanswered and not advisory and not keep_stopped():
+            # One retry of just the gap. `_attempt` over the gap submits only these ids (core's resume is
+            # cache-aware and the gap goes through the sidecar), prices only what comes back, and on a switched
+            # leg runs them sync — see the section header for why the retry never changes the transport.
+            logger.warning(
+                "batch %s: %d of %d prompt(s) came back unanswered — asking them once more",
+                tag,
+                len(unanswered),
+                n,
+            )
+            out.update(_attempt(unanswered))
+            unanswered = [p for p in prompts if str(p.id) not in out]
+        if unanswered:
+            ids = [str(p.id) for p in unanswered]
+            if not advisory and not keep_stopped():
+                raise StageIncompleteError(tag, ids, n)
+            logger.warning(
+                "batch %s: %d of %d prompt(s) have no answer — %s",
+                tag,
+                len(ids),
+                n,
+                "left NOT JUDGED (advisory stage)" if advisory else "kept partial (keep-stop)",
+            )
+        progress(phase, n, n, ledger.total_usd)
+        return out
+
+    def _attempt(prompts: list[Any]) -> dict[str, Any]:
+        """One pass over ``prompts``: a batch (or, on a switched leg, sync), priced; returns what came back."""
         from ddharmon.harmonization import write_prompts_jsonl
         from ddharmon.llm.batch import resume_and_wait
 
@@ -514,31 +2293,98 @@ def _batch_stage(
         work_dir.mkdir(parents=True, exist_ok=True)
         prompts_path = work_dir / f"prompts_{tag}.jsonl"
         responses_path = work_dir / f"responses_{tag}.jsonl"
-        write_prompts_jsonl(prompts, prompts_path)
+        asked = {str(p.id) for p in prompts}
+        # Answers already on disk BEFORE this call were paid for by whoever wrote them — never by this call.
+        already = _jsonl_ids(responses_path)
+        call_started = time.time()
+        if prompts_path.exists():
+            submit_path = work_dir / f"prompts_{tag}.jsonl{BATCH_GAP_SUFFIX}"
+            write_prompts_jsonl(prompts, submit_path)
+            _record_asked(submit_path, prompts_path)
+        else:
+            submit_path = prompts_path
+            write_prompts_jsonl(prompts, prompts_path)
+        if transport is not None and transport.switched:
+            # This leg already switched (08-28 0e): no batch for the rest of it. Answers on disk stay free.
+            transport.report(None)
+            cached = _answers_on_disk(responses_path, asked)
+            _sync_remainder(phase, progress, transport, prompts, cached, responses_path, ledger, key)
+            return cached
         # Run the blocking Batch API wait off-thread so we can honor a mid-poll Stop (see docstring).
         holder: dict[str, BaseException] = {}
 
         def _wait() -> None:
             try:
-                resume_and_wait(prompts_path, responses_path, api_key=api_key)
+                resume_and_wait(submit_path, responses_path, api_key=api_key)
             except BaseException as exc:  # noqa: BLE001 — captured and re-raised on the calling thread
                 holder["exc"] = exc
 
+        watch = (
+            _BatchWatch(
+                work_dir=work_dir,
+                submit_path=submit_path,
+                started=call_started,
+                tag=tag,
+                prompts=prompts,
+                already=already,
+                api_key=api_key,
+            )
+            if transport is not None
+            else None
+        )
         worker = threading.Thread(target=_wait, name=f"ddharmon-batch-{tag}", daemon=True)
         worker.start()
         while worker.is_alive():
             worker.join(timeout=_BATCH_POLL_SECS)
             progress(phase, 0, n)  # heartbeat + cancellation checkpoint (raises on Stop -> abort the poll)
+            if watch is not None and transport is not None and worker.is_alive():
+                watch.tick(transport)
+        # The worker has EXITED past this point — the only point a sync answer may be written (see docstring).
+        switching = transport is not None and transport.requested()
+        if transport is not None:
+            if switching:
+                transport.commit()  # asked for while the batch ended on its own: still sync for the rest of the leg
+            transport.report(None)
         if "exc" in holder:
-            raise holder["exc"]
+            if not switching:
+                raise holder["exc"]
+            # A switched leg does not need the cancelled batch's retrieve to have worked: what is missing is
+            # bought sync below, which is exactly what the reviewer asked for.
+            logger.warning("batch %s: the cancelled batch's wait failed (%s) — finishing sync", tag, holder["exc"])
+        from ddharmon.llm.cost import TokenUsage
+
         out: dict[str, Any] = {}
-        with open(responses_path) as f:
+        usages: list[Any] = []
+        priced: set[str] = set()
+        with open(responses_path) if responses_path.exists() else contextlib.nullcontext([]) as f:
             for line in f:
                 line = line.strip()
-                if line:
-                    rec = json.loads(line)
-                    out[rec["id"]] = rec["response"]
-        progress(phase, n, n)
+                if not line:
+                    continue
+                rec = json.loads(line)
+                rid = str(rec["id"])
+                if rid not in asked:
+                    continue
+                out[rid] = rec["response"]
+                if rid in already or rid in priced:
+                    continue  # an answer this call did not buy (or a duplicate line) is not priced again
+                priced.add(rid)
+                # Realized usage the retrieve preserved (older cached response files predate it -> just skip;
+                # that stage prices to $0, which is honest for a cache replay that re-paid nothing).
+                u = rec.get("usage")
+                if u:
+                    usages.append(
+                        TokenUsage(
+                            model=rec.get("model"),
+                            input_tokens=int(u.get("input_tokens", 0) or 0),
+                            output_tokens=int(u.get("output_tokens", 0) or 0),
+                        )
+                    )
+        # Keyed on `ledger_key` (default: the phase) — see _sync_stage.
+        ledger.add(key, usages, batch=True)  # Batch bills at 50% (applied in price_usage).
+        if switching and transport is not None:
+            # Only the ids the cancelled batch did NOT hand back, at the full rate, under the same key.
+            _sync_remainder(phase, progress, transport, prompts, out, responses_path, ledger, key)
         return out
 
     return stage
@@ -571,6 +2417,349 @@ def _save_substrate_if_new(substrate_path: Path | None, result: Any) -> None:
         save_substrate(result.substrate, substrate_path)
 
 
+def _use_frozen_substrate(kwargs: dict[str, Any], substrate_path: Path, harmonize_leanb: Callable[..., Any]) -> None:
+    """Load the frozen partition into ``kwargs`` and tell core to replay it AS-IS (08-28 F2).
+
+    What :func:`_save_substrate_if_new` saved is the substrate core returned AFTER M10 outlier recovery: the
+    recovered clusters are already in it and its outlier list is the leftover noise. Letting core recover
+    again on load re-clusters those leftovers (``recluster_residual`` lumps a residual of <= 15 rows into one
+    group), which is how a live Gate 1 -> Gate 2 leg formed, and paid for, a cluster Gate 1 never showed.
+    Current core applies recovery to a partition at most once on its own; this ALSO says so explicitly,
+    because the dev channel pins other core refs and one that predates that rule would drift again.
+    Signature-guarded like the other flags: a core with no M10 has nothing to switch off.
+    """
+    from ddharmon.harmonization.substrate import load_substrate
+
+    kwargs["substrate"] = load_substrate(substrate_path)
+    if "recover_outliers" in inspect.signature(harmonize_leanb).parameters:
+        kwargs["recover_outliers"] = False
+
+
+# ── the reviewer's Gate-1 regrouping (08-28 Wave 2): moves + New groups, APPLIED by core before assign ──────
+#
+# Gate 1's Continue freezes the regrouping on the run's config (``backend/app.py::_gate1_overrides``) and every
+# later leg — and the $0 replay — hands it to core as ``group_overrides``. The only paid work it adds is ONE
+# generate-ideal call per New group AND per existing group whose membership changed (Option B, 2026-09-18: the
+# ideal anchors the novel decision, so it must describe the members the group is assigned with) — in scope only.
+# Those calls are NOT routed through the ``generate`` stage: past Gate 1 that
+# stage is frozen (a prompt the checkpoint never recorded is partition drift, and the leg fails before buying
+# it — 08-28 F2). It runs on a stage of its own, ``group_generate``, which core addresses under its own id
+# namespace (``leanb:groupideal:<group id>@<member content id>``). So the drift guard keeps exactly the strictness
+# it had: the cluster ideals must still all be replayed, and the regrouped groups' ideals can only ever reach the one
+# stage built for them. Recorded and replayed like any post-Gate-1 stage: bought once on the Gate 1 -> Gate 2
+# leg, answered from the checkpoint for $0 on every leg after.
+
+#: Where Gate 1's Continue freezes the regrouping on the run's config (``backend/app.py`` writes the same key).
+GATE1_OVERRIDES_CONFIG_KEY = "gate1_overrides"
+
+#: The cost-ledger key a New or edited group's ideal bills under (the name predates Option B and is kept: ledgers
+#: already carry it). Gate 1's Continue buys it, in the same leg as the assign, so it is in Gate 2's figure
+#: (``GATE_LEDGER_KEYS`` in the frontend's estimate.ts).
+GROUP_IDEAL_COST_KEY = "new_group_ideal"
+
+#: Its batch cache tag (and replay stage name — ``backend/batch_reconcile.py::TAG_TO_STAGE``).
+GROUP_IDEAL_TAG = "group_generate"
+
+
+def core_group_overrides(raw: Any, known_fields: Collection[str]) -> Any | None:
+    """The frozen regrouping as core's ``GroupOverrides``, or None when there is nothing to apply.
+
+    A move of a variable this run does not have is dropped rather than handed to core, which would refuse the
+    whole leg for it: the decision named something the run cannot honour, and failing a paid leg over it would
+    punish every other decision the reviewer made. Destinations were already checked when the regrouping was
+    frozen, against the groups Gate 1 displayed; core re-checks them against the partition it replays.
+    """
+    if not isinstance(raw, dict):
+        return None
+    from ddharmon.harmonization.overrides import GroupOverrides, ReviewerGroup
+
+    known = set(known_fields)
+    # A part of an accepted division carries the group it was divided from — provenance only (the record says
+    # "re-split from"). Passed only to a core whose ReviewerGroup has the field; an older one simply omits it.
+    carries_split = "split_from" in {f.name for f in dataclasses.fields(ReviewerGroup)}
+    new_groups = tuple(
+        ReviewerGroup(
+            group_id=str(g["groupId"]),
+            name=str(g.get("name") or ""),
+            **({"split_from": str(g["splitFrom"])} if carries_split and g.get("splitFrom") else {}),
+        )
+        for g in raw.get("newGroups") or []
+        if isinstance(g, dict) and g.get("groupId")
+    )
+    moves: dict[str, str | None] = {}
+    for member, dest in (raw.get("moves") or {}).items():
+        if str(member) not in known:
+            logger.warning("regrouping: dropped a move of %r, which is not a variable of this run", member)
+            continue
+        moves[str(member)] = str(dest) if dest else None
+    if not moves and not new_groups:
+        return None
+    return GroupOverrides(moves=moves, new_groups=new_groups)
+
+
+def _override_kwargs(overrides: Any, group_generate: StageFn | None, harmonize_leanb: Callable[..., Any]) -> dict:
+    """``harmonize_leanb`` kwargs for a frozen regrouping — refusing, never skipping, on a core without them.
+
+    NOT signature-guarded into a silent skip, like ``stop_after`` and unlike the optional enhancements: the
+    reviewer's moves ARE the grouping this leg must assign, and the screens say they are applied. A core that
+    cannot apply them would run, and charge for, the grouping the reviewer changed.
+    """
+    if overrides is None:
+        return {}
+    if "group_overrides" not in inspect.signature(harmonize_leanb).parameters:
+        raise ValueError(
+            "the pinned ddharmon core has no `group_overrides` parameter, so the reviewer's Gate 1 moves and New "
+            "groups cannot be applied; upgrade core rather than matching the grouping they changed"
+        )
+    return {"group_overrides": overrides, "group_generate": group_generate}
+
+
+# ── staged review: the resumable boundary, and how a resumed leg avoids paying twice ─────────
+#
+# The gate a run stops at is expressed in core's OWN vocabulary; this adapter invents no new stop
+# mechanism (UI-SPEC §0.1's boundary table is authoritative):
+#
+#   gate1  — withhold the ``classify`` callable. That is the ALREADY-SHIPPED early return, and after
+#            08-04's reorder it fires after ``generate(ideal)``, ``split`` and the judge, which is exactly
+#            where Gate 1 sits. 08-04's one new named boundary is for Gate 1 → Gate 2, not for entering
+#            Gate 1, and using it here would stop the run a whole paid stage too late.
+#   gate2  — ``stop_after="gencde"``, the one named boundary 08-04 shipped.
+#
+#   gate0  — ADAPTER-SIDE, and the one entry that is not core vocabulary because there is nothing in core
+#            to name: the leg returns after ``load_dictionary`` → *preprocess* → ``embed_dictionary`` and
+#            ``harmonize_leanb`` is never called. It is nonetheless a real stop target and belongs in this
+#            table, because it is the boundary a run ENTERS the staged flow at. Leaving it out is what
+#            made the flow unreachable: ``stop_at_gate`` was set only by the resume endpoint, resume
+#            refuses a run that is not already parked, and so nothing could ever park.
+#
+# Gates 3 and 4 need no boundary at all (Gate 3 is the finished pipeline held by the UI backend; Gate 4 is
+# a pure read), so they are not stop targets here.
+_GATE_STOP_MECHANISM = {
+    "gate0": "before_harmonize",
+    "gate1": "withhold_classify",
+    "gate2": "stop_after_gencde",
+}
+
+
+#: The three ADVISORY stages: they FLAG, they never decide. Two consequences follow, and both are
+#: deliberate.
+#:
+#: 1. They are wrapped in :func:`_resilient_stage`, so a runner that raises or times out costs the run its
+#:    flag and nothing else. The alternative — let it propagate — throws away `generate` and `split`
+#:    output the caller already PAID for, because an advisory second opinion was unavailable. A judge
+#:    failure then arrives on the wire as ``not_judged``, which is the honest reading of "we could not
+#:    tell" and is structurally distinct from "it is fine" (T-08-46).
+#: 2. They report progress under an EXISTING phase and carry their own COST key. Adding a phase to
+#:    ``PHASES_RUN`` would invalidate the shipped demo artifact (``test_content_drift`` asserts the demo's
+#:    phase list equals the contract's) and the Methods-page stage manifest — a paid re-run, to rename a
+#:    progress label. The cost breakdown is a free-form map, so spend attribution loses nothing.
+#:
+#: Decision stages are NOT in here on purpose: swallowing a `classify` failure would silently produce a
+#: run with no assignments and call it a success.
+#: The cost-ledger key the Gate 2 -> Gate 3 re-pick spec regeneration bills under (a Gate 3 key; see
+#: ``GATE_LEDGER_KEYS`` in the frontend's estimate.ts).
+_REPICK_COST_KEY = "specs_repick"
+
+_JUDGE_STAGES: dict[str, dict[str, str]] = {
+    # stage kwarg -> {progress phase it reports under, batch cache tag, cost-ledger key}
+    "coherence": {"phase": "splitting", "tag": "coherence", "cost": "judging"},
+    "distinct_kinds": {"phase": "specs", "tag": "kinds", "cost": "kinds"},
+    "concept_gate": {"phase": "specs", "tag": "concept_gate", "cost": "concept_gate"},
+}
+
+
+def _resilient_stage(name: str, fn: StageFn) -> StageFn:
+    """Wrap an ADVISORY stage so a failure degrades the flag instead of unwinding the run.
+
+    Returns ``{}`` on any exception, which leaves core's verdict fields untouched — so the group stays
+    explicitly unjudged rather than defaulting to the clean state.
+
+    A cancellation is re-raised: the runner signals a "discard" Stop by making ``progress`` raise from
+    inside the stage, and swallowing that would keep the run spending after the user asked it to stop.
+    Matched on the exception's TYPE NAME rather than by importing it, because ``backend.runner`` imports
+    this module and the dependency only runs one way.
+    """
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        try:
+            return fn(prompts) or {}
+        except Exception as exc:  # noqa: BLE001 - an advisory stage must not be able to fail a paid run
+            if type(exc).__name__ == "RunCancelledError":
+                raise
+            logger.warning("advisory stage %s failed (%s: %s) — leaving it NOT JUDGED", name, type(exc).__name__, exc)
+            return {}
+
+    return stage
+
+
+#: Recorded against a prompt id the stage was ASKED about but returned nothing for. JSON-serialisable
+#: because it lands in the checkpoint file.
+#:
+#: Recording *asked* rather than *answered* is the load-bearing choice. A stage that a leg invoked and
+#: which came back empty (a malformed LLM response, core's single-group split fallback) was still PAID
+#: FOR. Keying replay on answers alone would re-issue exactly those calls on every resume — the runs that
+#: already cost money and produced nothing — which is the most expensive possible reading of
+#: "no re-charge for work already done".
+_NO_ANSWER = {"__no_answer__": True}
+
+
+def _unanswered_register(recorded: dict[str, dict[str, Any]]) -> list[UIStageGap]:
+    """Every stage the run ASKED prompts it holds no answer for — the result's ``unanswered`` (08-28).
+
+    Read off the leg's recording, which marks each asked-but-unanswered prompt :data:`_NO_ANSWER` whatever the
+    reason — a batch item that errored, an advisory stage that failed outright (``_resilient_stage`` hands core
+    ``{}``), a keep-stop that skipped the stage — and which a resumed leg carries forward for the stages it
+    replays. So the register covers the whole run's checkpointed state, not just this leg's calls. Classed by
+    ``_JUDGE_STAGES`` like everything else: an ``advisory`` entry's items are NOT JUDGED.
+    """
+    out: list[UIStageGap] = []
+    for name in sorted(recorded):
+        answers = recorded[name] or {}
+        ids = sorted(str(pid) for pid, v in answers.items() if isinstance(v, dict) and v == _NO_ANSWER)
+        if not ids:
+            continue
+        out.append(
+            {
+                "stage": name,
+                "kind": "advisory" if name in _JUDGE_STAGES else "deciding",
+                "asked": len(answers),
+                "unanswered": len(ids),
+                "promptIds": ids,
+            }
+        )
+    return out
+
+
+def _recording_stage(name: str, fn: StageFn, sink: dict[str, dict[str, Any]]) -> StageFn:
+    """Wrap a stage so what it was asked, and what it answered, is captured for the checkpoint."""
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        out = fn(prompts) or {}
+        answers = {str(k): v for k, v in out.items()}
+        recorded = sink.setdefault(name, {})
+        for p in prompts:
+            pid = str(p.id)
+            recorded[pid] = answers.get(pid, _NO_ANSWER)
+        return out
+
+    return stage
+
+
+#: The stages that have FINISHED by the time a run reaches Gate 1: the ideal description and the split
+#: (per cluster) and the judge's verdict pass (per concept group) all run before the ``classify=None``
+#: boundary Gate 1 pauses at. Assign and everything after it (gencde, specgen, refine, distinct_kinds,
+#: concept_gate, the re-pick) is NOT in here: that is new work on the leg that first reaches it, and a later
+#: leg may legitimately buy a prompt of those stages that it lacks. ``distinct_kinds`` is absent although
+#: it belongs to the judge, because core runs it after assign (it reads the assigned records).
+_PRE_GATE1_STAGES = frozenset({"generate", "split", "coherence"})
+
+
+class PartitionDriftError(RuntimeError):
+    """A resumed leg asked a pre-Gate-1 stage a question the Gate-1 leg never asked (08-28 F2).
+
+    Every prompt id of those stages is content-addressed on the frozen partition, so a new one can only
+    mean this leg's clusters or concept groups differ from the ones Gate 1 displayed and the reviewer
+    decided against. Buying the answer would pay for work nobody reviewed, and would apply the reviewer's
+    decisions to a different set of groups. So the leg fails, before the call, and names the prompts.
+    """
+
+
+def _replaying_stage(
+    name: str,
+    fn: StageFn,
+    replay: dict[str, dict[str, Any]],
+    sink: dict[str, dict[str, Any]],
+    *,
+    frozen: bool = False,
+) -> StageFn:
+    """Answer a stage's prompts from the checkpoint where possible, and call ``fn`` only for the rest.
+
+    This is what makes *"resume issues no new paid call for work already done"* a property of the code
+    rather than of a cache. The batch stages already replay ``responses_<tag>.jsonl`` for free, but that
+    guarantee (a) is invisible to a test, (b) does not hold for ``sync`` mode, and (c) evaporates if the
+    work dir is ever relocated. Replaying from the checkpoint holds in all three cases, and composes with
+    the batch cache rather than replacing it.
+
+    A prompt id absent from the checkpoint is genuinely NEW work — a group the previous leg never asked
+    about — and is passed through to the real stage. Partial replay is the normal case, not an error.
+    EXCEPT when ``frozen``: the stage finished before a gate the checkpoint is past, so a missing id is
+    partition drift, not new work, and :class:`PartitionDriftError` is raised before ``fn`` is called.
+
+    An id recorded as :data:`_NO_ANSWER` counts as ASKED and is not re-issued; it is simply omitted from
+    the returned mapping, which reproduces exactly what the first leg's stage handed core.
+    """
+    cached = replay.get(name) or {}
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        answers = {
+            str(p.id): cached[str(p.id)] for p in prompts if str(p.id) in cached and cached[str(p.id)] != _NO_ANSWER
+        }
+        replayed = sum(1 for p in prompts if str(p.id) in cached)
+        missing = [p for p in prompts if str(p.id) not in cached]
+        if missing and frozen:
+            ids = sorted(str(p.id) for p in missing)
+            shown = ", ".join(ids[:10]) + (f", ... (+{len(ids) - 10} more)" if len(ids) > 10 else "")
+            raise PartitionDriftError(
+                f"partition drift: this resumed leg asked the {name!r} stage about {len(ids)} prompt(s) the "
+                f"Gate 1 leg never asked ({shown}). That stage finished before Gate 1, so its prompts are fixed "
+                "by the frozen clustering; a new one means this leg's clusters differ from the ones Gate 1 "
+                "showed. Refusing to buy them - nothing was charged for these prompts."
+            )
+        if missing:
+            logger.info("stage %s: replaying %d, running %d", name, replayed, len(missing))
+            answers.update({str(k): v for k, v in (fn(missing) or {}).items()})
+        else:
+            logger.info("stage %s: fully replayed from the checkpoint (%d prompts, $0)", name, replayed)
+        recorded = sink.setdefault(name, {})
+        for p in prompts:
+            pid = str(p.id)
+            recorded[pid] = answers.get(pid, cached.get(pid, _NO_ANSWER))
+        return answers
+
+    return stage
+
+
+# ── the load → embed front half, shared with the CDE-cache warm ──────────────────────────────
+#
+# Every run embeds the CDE catalog next to the cohorts, through core's content-addressed embedding cache (key =
+# model + sha of the composed text + vector type). The catalog is never preprocessed, so its text is the same
+# for every run on a server, and `scripts/warm_cde_cache.py` fills that cache ahead of the first run. A warm only
+# helps if it writes the keys a run reads, so the two do not each spell out the loader call, the default provider
+# and the embed call: `run_pipeline`, `replay_leanb_result` and the warm all go through these helpers.
+
+
+def load_spec(spec: Any) -> Any:
+    """Load one ``{path, cohort_name, column_roles}`` spec into a core ``DataDictionary``, as a run does."""
+    from ddharmon.ingestion import load_dictionary
+
+    return load_dictionary(spec["path"], cohort_name=spec["cohort_name"], **spec["column_roles"])
+
+
+def default_embedding_provider() -> Any:
+    """The provider a run embeds with when none is injected (core's default encoder; loads the model)."""
+    from ddharmon.embedding.provider import SentenceTransformerProvider
+
+    return SentenceTransformerProvider()
+
+
+def default_embedding_model_name() -> str:
+    """The model :func:`default_embedding_provider` embeds with, WITHOUT loading it (a ~440 MB load).
+
+    Read off the provider's own signature default — the value the no-argument construction above uses — so the
+    name a cache lookup keys on can never disagree with the model a run actually loads.
+    """
+    from ddharmon.embedding.provider import SentenceTransformerProvider
+
+    return str(inspect.signature(SentenceTransformerProvider).parameters["model_name"].default)
+
+
+def embed_for_run(dd: Any, provider: Any) -> Any:
+    """Embed one loaded dictionary the way a run does: core's ``embed_dictionary`` with its default cache."""
+    from ddharmon.embedding.service import embed_dictionary
+
+    return embed_dictionary(dd, provider=provider)
+
+
 def run_pipeline(
     dict_specs: list[dict[str, Any]],
     cde_spec: dict[str, Any] | None,
@@ -582,6 +2771,11 @@ def run_pipeline(
     api_key: str | None = None,
     stopping: StoppingFn | None = None,
     substrate_path: str | Path | None = None,
+    stage_responses: dict[str, dict[str, Any]] | None = None,
+    replay_responses: dict[str, dict[str, Any]] | None = None,
+    prior_cost: Any = None,
+    ledger: CumulativeLedger | None = None,
+    transport: LegTransport | None = None,
 ) -> UIResult:
     """Run the pipeline end-to-end and return a contract :class:`UIResult`. Safe to run in a thread.
 
@@ -600,48 +2794,123 @@ def run_pipeline(
         substrate_path: optional path to a frozen clustering substrate for reproducibility. When the file
                     exists it is reloaded (UMAP skipped, the exact partition reproduced); after a fresh run the
                     built partition is saved there. Combined with the cache-aware batch stages, a re-run over
-                    the same ``work_dir`` + ``substrate_path`` is byte-identical. Unused by normal per-job runs.
+                    the same ``work_dir`` + ``substrate_path`` is byte-identical. A STAGED run
+                    (``config["stop_at_gate"]``) defaults it to ``<work_dir>/substrate.joblib`` — the next
+                    leg must reproduce the exact partition its Gate 1 decisions were made against, or the
+                    reviewer's scoping is applied to a different set of groups than the one they saw.
+        stage_responses: an OUT parameter — a dict this call fills with ``{stage: {prompt_id: response}}``
+                    for every stage it ran, so the caller can persist it in the checkpoint. Passed in rather
+                    than returned because the return value is the frozen ``UIResult`` contract, which must
+                    not grow a raw-LLM-response field.
+        replay_responses: the same structure read back OUT of a checkpoint. Any prompt id present here is
+                    answered from it and never sent to a provider — the "no re-charge on resume" mechanism.
+        prior_cost: the previous checkpoint's ``cost`` block. The leg's ledger is SEEDED with it, so the
+                    result's ``cost`` (and every live cost the stages report) is the RUN's cumulative spend,
+                    not this leg's: replayed answers add $0, untouched lines carry forward, touched lines add
+                    only the new spend (08-28 1a — F14/F10/F3).
+        ledger:     a caller-owned leg ledger (already seeded) to price into instead of building one from
+                    ``prior_cost``. The runner passes its own so that what a leg bought before it FAILED is
+                    still readable afterwards and can be kept on the parked run's bill.
+        transport:  the leg's batch -> sync switch (08-28 0e), built by the runner per leg. Handed to every
+                    batch stage, so a switch in one stage holds for the rest of the leg; given a sync client
+                    factory here (the same client a sync run would build) when it has none. Batch mode only;
+                    ``None`` keeps every batch stage exactly as it was.
+
+    A staged run (``config["stop_at_gate"]`` set to ``"gate1"`` or ``"gate2"``) returns a PARTIAL result
+    carrying ``gatePosition`` plus whatever the stages before that boundary produced.
     """
-    from ddharmon.embedding.service import embed_dictionary
     from ddharmon.harmonization import harmonize_leanb
-    from ddharmon.ingestion import load_dictionary
 
     progress = progress or _noop_progress
     overrides = stage_overrides or {}
     mode: str = config.get("run_mode", "batch")
     cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
     work_dir = Path(config.get("work_dir", "."))
+    # --- staged review: which gate boundary (if any) this leg stops at ---
+    stop_at_gate: str | None = config.get("stop_at_gate")
+    if stop_at_gate is not None and stop_at_gate not in _GATE_STOP_MECHANISM:
+        # Validated BEFORE any work, and by raising rather than ignoring. A silently-dropped typo would
+        # run the whole paid pipeline past the boundary the caller asked for — the same failure core's
+        # own `stop_after` validation exists to prevent (T-08-20).
+        raise ValueError(
+            f"stop_at_gate={stop_at_gate!r} is not a resumable boundary; "
+            f"expected one of {sorted(_GATE_STOP_MECHANISM)}"
+        )
+    # --- staged review: which gate this leg PARKS the run at, which is a different question ---
+    #
+    # `stop_at_gate` above is where the ENGINE stops, and only a gate with a core boundary has one.
+    # `park_at_gate` is where the RUN parks for review. For gate0/gate1/gate2 the two coincide, so this
+    # defaults to `stop_at_gate` and every existing caller is unaffected. Gate 3 is the case that needs
+    # them apart: it has NO core boundary (see `_GATE_STOP_MECHANISM`) because it reviews the FINISHED
+    # pipeline, so its leg runs to completion — `stop_at_gate is None` — and still parks. Conflating the
+    # two is what made Gate 3 unreachable: `gate_position` was stamped from `stop_at_gate`, so the leg
+    # took the runner's `complete` branch and no gate3 checkpoint was ever written.
+    park_at_gate: str | None = config.get("park_at_gate") or stop_at_gate
+    if park_at_gate is not None and park_at_gate not in get_args(GatePosition):
+        # Same whitelist discipline as the boundary above, for the same reason: a typo'd park position
+        # would silently mark the run complete and strand the reviewer on the results page. Validated
+        # against the WIRE contract's closed vocabulary rather than a second copy of the list.
+        raise ValueError(
+            f"park_at_gate={park_at_gate!r} is not a known gate; expected one of {list(get_args(GatePosition))}"
+        )
+    recorded: dict[str, dict[str, Any]] = stage_responses if stage_responses is not None else {}
+    replay: dict[str, dict[str, Any]] = replay_responses or {}
+    # Realized-cost accumulator: each LLM stage folds its captured token usage in (sync = full price, batch =
+    # 50%), so build_ui_result can emit real spend (UIResult.cost) and the stages can stream a live total.
+    # SEEDED with the earlier legs' spend, so both are the run's figures rather than this leg's (08-28 1a).
+    ledger = ledger if ledger is not None else CumulativeLedger(prior_cost)
 
     # --- load ---
     progress("loading", 0, 0)
     specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
-    dictionaries = [load_dictionary(s["path"], cohort_name=s["cohort_name"], **s["column_roles"]) for s in specs]
+    dictionaries = [load_spec(s) for s in specs]
+
+    # --- prepare: rule-based preprocessing, between loading and embedding ---
+    # See the section header above `preprocess_for_run`: this had never run in the product, and turning it
+    # on changes the embedded text and therefore every downstream result. Source dictionaries only — the
+    # CDE backbone is excluded on purpose, with the reasoning recorded there.
+    preprocess_reports: list[UIPreprocessReport] = []
+    if run_prepares(config):
+        for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
+            preprocess_reports.append(preprocess_for_run(dd, source_path=spec["path"]))
 
     # --- embed ---
     total = len(dictionaries)
     progress("embedding", 0, total)
     if provider is None:
-        from ddharmon.embedding.provider import SentenceTransformerProvider
-
-        provider = SentenceTransformerProvider()
+        provider = default_embedding_provider()
     embedded = []
     for i, dd in enumerate(dictionaries):
-        embedded.append(embed_dictionary(dd, provider=provider))
+        # The CDE catalog's rows are cache hits on a server whose cache was warmed (scripts/warm_cde_cache.py).
+        embedded.append(embed_for_run(dd, provider))
         progress("embedding", i + 1, total)
 
     # Guard: an uploaded file with only a header row (or columns that didn't map to a variable/description/
     # question) embeds to ZERO fields. Downstream `get_all_vectors()`/`collect_inputs()` would then `np.stack([])`
-    # -> "need at least one array to stack". Drop such empty dictionaries, and if nothing usable remains, fail
-    # with a clear, actionable message instead of a cryptic numpy error.
+    # -> "need at least one array to stack".
+    #
+    # A SOURCE dictionary that loads nothing FAILS THE RUN, here, before any paid stage. It used to be dropped
+    # with a log line while the other cohorts carried on — so a run the reviewer started for three cohorts
+    # billed for two and said nothing (a question_text-only mapping did exactly this). `/batch` now refuses
+    # such a file at the door (`backend/role_requirement.py`); this is the same refusal for every other way
+    # into the pipeline (a rerun, a resumed leg, a driver). Only the CDE backbone is still dropped when empty
+    # — it is not a cohort, and `_find_cde_dict` reports its absence on its own terms.
     def _n_fields(ed: Any) -> int:
         return len(list(ed.get_variable_names()))
 
+    def _name(ed: Any) -> str:
+        return getattr(ed.dictionary, "cohort_name", None) or getattr(ed.dictionary, "name", "?")
+
     empty = [ed for ed in embedded if _n_fields(ed) == 0]
-    if empty:
-        dropped = sorted(
-            getattr(ed.dictionary, "cohort_name", None) or getattr(ed.dictionary, "name", "?") for ed in empty
+    empty_sources = sorted(_name(ed) for ed in empty if getattr(ed.dictionary, "cohort_name", None) != cde_cohort)
+    if empty_sources:
+        raise ValueError(
+            f"No usable fields in {', '.join(empty_sources)}: the dictionary loaded zero variables, and a run never "
+            "continues without a cohort it was given. Check that the file has data rows and that a column with "
+            "text in it is mapped to variable_name or description (question_text alone names no row)."
         )
-        logger.warning("dropping %d dictionary(ies) with no usable fields: %s", len(empty), ", ".join(dropped))
+    if empty:
+        logger.warning("dropping the empty CDE catalogue: %s", ", ".join(sorted(_name(ed) for ed in empty)))
         embedded = [ed for ed in embedded if _n_fields(ed) > 0]
     if not any(_n_fields(ed) > 0 for ed in embedded if getattr(ed.dictionary, "cohort_name", None) != cde_cohort):
         raise ValueError(
@@ -659,6 +2928,28 @@ def run_pipeline(
     # the basis for unassignedFields (source fields that land in no concept). CDE cohort excluded (backbone).
     field_index = build_field_index(embedded, cde_cohort)
 
+    # {cde_id -> catalog type / values / question} so each candidate carries what Gate 3's recode surface keys
+    # off. Core's candidate does not; the catalog is already embedded above (08-26, live-test-2 #7).
+    cde_index = build_cde_catalog_index(embedded, cde_cohort)
+
+    # --- Gate 0: the boundary a run ENTERS the staged flow at (UI-SPEC §7) ---
+    #
+    # Everything above this line is local and free — reading the files, running the rule-based preparation,
+    # and embedding. Everything below it costs money on the first LLM stage. So the pause goes HERE, and it
+    # is expressed as a return rather than as a flag threaded into `harmonize_leanb`: the honest way to
+    # promise "Gate 0 is free" is for the paid call not to happen. Clustering sits below the line too — it
+    # takes no model, but it is the UMAP+HDBSCAN pass, and a gate quoted as `local` should not silently buy
+    # it either.
+    if stop_at_gate == "gate0":
+        progress("prepared" if mode == "preview" else "embedding", total, total)
+        return build_gate0_result(
+            mode=mode,
+            cohorts=[str(s["cohort_name"]) for s in dict_specs],
+            atlas=atlas,
+            field_index=field_index,
+            preprocessing=preprocess_reports,
+        )
+
     # --- knobs: passthrough only (absent -> harmonize_leanb's own defaults). New knobs need no GUI change. ---
     kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}
     for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
@@ -675,10 +2966,14 @@ def run_pipeline(
     # --- reproducibility: reload a frozen clustering substrate if one exists (skip UMAP, reproduce the exact
     #     partition). After a fresh run the built partition is saved (see _save_substrate_if_new). ---
     substrate_path = Path(substrate_path) if substrate_path else None
+    if substrate_path is None and (stop_at_gate is not None or replay):
+        # A staged run is resumed later, and the resume leg MUST see the same partition: the reviewer's
+        # Gate 1 scoping is expressed as group ids, and UMAP+HDBSCAN is not bit-reproducible, so a
+        # re-clustered second leg would apply their decisions to a different set of groups. Freezing it is
+        # local and costs a file. Legacy one-shot runs are unchanged (no path -> no freeze).
+        substrate_path = work_dir / "substrate.joblib"
     if substrate_path and substrate_path.exists():
-        from ddharmon.harmonization.substrate import load_substrate
-
-        kwargs["substrate"] = load_substrate(substrate_path)
+        _use_frozen_substrate(kwargs, substrate_path, harmonize_leanb)  # as saved: no second outlier recovery
 
     # --- preview: no LLM. generate=None makes harmonize_leanb stop after building the generate prompts. ---
     if mode == "preview" and not overrides:
@@ -693,11 +2988,40 @@ def run_pipeline(
             atlas=atlas,
             member_index=member_index,
             field_index=field_index,
+            cde_index=cde_index,
+            cost=cast(UICost, ledger.to_dict()),
+            preview_clusters=_preview_clusters(result),
+            preprocessing=preprocess_reports,
         )
 
+    # --- which ADVISORY stages this run wants, decided BEFORE any stage is constructed ---
+    # "Off" has to mean nothing is built, not "built and then not passed". A constructed batch stage is
+    # only a closure, but the guarantee T-08-54 needs is that a declined stage has no path to a provider
+    # at all — and the cheapest way to guarantee that is for the callable not to exist (see also the
+    # cost-transparency screen: a stage nobody asked for must not be able to appear in the breakdown).
+    run_coherence = bool(config.get("coherence", True))  # the judge: ON by default — Gate 1 renders it
+    want_concept_gate = bool(config.get("concept_gate", False))  # M7: OPT-IN, so a run pays only if it asks
+    judge_specs = {
+        name: w for name, w in _JUDGE_STAGES.items() if (want_concept_gate if name == "concept_gate" else run_coherence)
+    }
+
     # --- pick the per-stage execution strategy (the only place mode branches into behavior) ---
+    # 08-27b: the Gate 2 -> Gate 3 leg re-generates specs for re-picked groups (see apply_reviewer_picks). Its
+    # own stage + cost key, so the spend is visible as its own line; built ONLY when there are picks to apply.
+    gate2_picks: dict[str, Any] = config.get("gate2_picks") or {}
+    want_repick = bool(gate2_picks) and stop_at_gate is None
+    # 08-28 Wave 2: the frozen Gate-1 regrouping. The one paid call it adds is an ideal per New OR edited group
+    # (Option B: a group whose members changed is assigned against a description of its final members), on its own
+    # stage (see GROUP_IDEAL_COST_KEY). Built for ANY regrouping — a moves-only one included: without it core falls
+    # back to the frozen `generate`, and the leg fails as partition drift over the reviewer's own edit.
+    regrouping = core_group_overrides(config.get(GATE1_OVERRIDES_CONFIG_KEY), field_index)
+    want_group_ideal = regrouping is not None
     if overrides:
-        stages: dict[str, StageFn] = overrides
+        stages: dict[str, StageFn] = dict(overrides)
+        if want_repick and "specgen_repick" not in stages and "specgen" in stages:
+            stages["specgen_repick"] = stages["specgen"]
+        if want_group_ideal and GROUP_IDEAL_TAG not in stages and "generate" in stages:
+            stages[GROUP_IDEAL_TAG] = stages["generate"]  # same runner, its OWN recorded stage (never frozen)
     elif mode == "sync":
         # Client selection keys off the chosen model tag via the shared builder: Anthropic is pinned to the
         # PICKED Claude model (the SDK client's own default is a stale snapshot that 404s and ignored the
@@ -707,20 +3031,137 @@ def run_pipeline(
 
         client = build_llm_client(kwargs.get("model_tag"), api_key)
         stages = {
-            "generate": _sync_stage("generating", progress, client, stopping),
-            "split": _sync_stage("splitting", progress, client, stopping),
-            "classify": _sync_stage("assigning", progress, client, stopping),
-            "gencde": _sync_stage("gencde", progress, client, stopping),
-            "specgen": _sync_stage("specs", progress, client, stopping),
+            "generate": _sync_stage("generating", progress, client, ledger, stopping),
+            "split": _sync_stage("splitting", progress, client, ledger, stopping),
+            "classify": _sync_stage("assigning", progress, client, ledger, stopping),
+            "gencde": _sync_stage("gencde", progress, client, ledger, stopping),
+            "specgen": _sync_stage("specs", progress, client, ledger, stopping),
+            "refine": _sync_stage("refine", progress, client, ledger, stopping),
+            **(
+                {
+                    "specgen_repick": _sync_stage(
+                        "specs", progress, client, ledger, stopping, ledger_key=_REPICK_COST_KEY
+                    )
+                }
+                if want_repick
+                else {}
+            ),
+            **(
+                {
+                    GROUP_IDEAL_TAG: _sync_stage(
+                        "generating", progress, client, ledger, stopping, ledger_key=GROUP_IDEAL_COST_KEY
+                    )
+                }
+                if want_group_ideal
+                else {}
+            ),
+            # The judge and its R2 second read. One line each, same shape as every stage above (see
+            # _JUDGE_STAGES for why they borrow an existing progress phase and carry their own cost key).
+            **{
+                name: _sync_stage(w["phase"], progress, client, ledger, stopping, ledger_key=w["cost"])
+                for name, w in judge_specs.items()
+            },
         }
     else:  # batch (default)
+        # 08-28 0e: ONE transport for the leg, shared by every batch stage below, so a switch holds for the rest
+        # of the leg. Passed only when the runner built one, so a caller without it gets the stages unchanged.
+        leg: dict[str, Any] = {}
+        if transport is not None:
+            if transport.client_factory is None:
+                from backend.engine.llm import build_llm_client
+
+                model_tag = kwargs.get("model_tag")
+                transport.client_factory = lambda: build_llm_client(model_tag, api_key)
+            leg["transport"] = transport
         stages = {
-            "generate": _batch_stage("generating", progress, work_dir, "generate", api_key=api_key, stopping=stopping),
-            "split": _batch_stage("splitting", progress, work_dir, "split", api_key=api_key, stopping=stopping),
-            "classify": _batch_stage("assigning", progress, work_dir, "assign", api_key=api_key, stopping=stopping),
-            "gencde": _batch_stage("gencde", progress, work_dir, "gencde", api_key=api_key, stopping=stopping),
-            "specgen": _batch_stage("specs", progress, work_dir, "specgen", api_key=api_key, stopping=stopping),
+            "generate": _batch_stage(
+                "generating", progress, work_dir, "generate", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "split": _batch_stage(
+                "splitting", progress, work_dir, "split", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "classify": _batch_stage(
+                "assigning", progress, work_dir, "assign", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "gencde": _batch_stage(
+                "gencde", progress, work_dir, "gencde", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "specgen": _batch_stage(
+                "specs", progress, work_dir, "specgen", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            "refine": _batch_stage(
+                "refine", progress, work_dir, "refine", ledger, api_key=api_key, stopping=stopping, **leg
+            ),
+            **(
+                {
+                    "specgen_repick": _batch_stage(
+                        "specs",
+                        progress,
+                        work_dir,
+                        "specgen_repick",
+                        ledger,
+                        api_key=api_key,
+                        stopping=stopping,
+                        ledger_key=_REPICK_COST_KEY,
+                        **leg,
+                    )
+                }
+                if want_repick
+                else {}
+            ),
+            **(
+                {
+                    GROUP_IDEAL_TAG: _batch_stage(
+                        "generating",
+                        progress,
+                        work_dir,
+                        "group_generate",
+                        ledger,
+                        api_key=api_key,
+                        stopping=stopping,
+                        ledger_key=GROUP_IDEAL_COST_KEY,
+                        **leg,  # the leg's one transport, so a batch->sync switch holds for these calls too
+                    )
+                }
+                if want_group_ideal
+                else {}
+            ),
+            **{
+                name: _batch_stage(
+                    w["phase"],
+                    progress,
+                    work_dir,
+                    w["tag"],
+                    ledger,
+                    api_key=api_key,
+                    stopping=stopping,
+                    ledger_key=w["cost"],
+                    **leg,
+                )
+                for name, w in judge_specs.items()
+            },
         }
+
+    # --- wrap every stage so its answers are captured, and replayed when the checkpoint has them ---
+    # Applied to whichever strategy was chosen above (overrides included, so the guarantee is testable).
+    # An advisory stage is made failure-tolerant BEFORE it is made recordable, so what the checkpoint
+    # captures is what core actually received (``{}`` on a failure), not an exception that never got there.
+    stages = {name: (_resilient_stage(name, fn) if name in _JUDGE_STAGES else fn) for name, fn in stages.items()}
+    # 08-28 F2: on a leg resumed from a checkpoint at Gate 1 or later, the pre-Gate-1 stages are FROZEN — a
+    # prompt of theirs the checkpoint does not hold is partition drift and fails the leg (PartitionDriftError)
+    # instead of being bought. "At Gate 1 or later" is read off the recording itself: core calls `generate`
+    # unconditionally once a run gets that far (even with no prompts) and the recorder keys every stage it is
+    # handed, while a Gate 0 checkpoint records no stage at all. A frozen stage the checkpoint has no entry
+    # for (the judge had no group to judge) is still frozen: being asked anything now is the same drift.
+    past_gate1 = "generate" in replay
+    stages = {
+        name: (
+            _replaying_stage(name, fn, replay, recorded, frozen=past_gate1 and name in _PRE_GATE1_STAGES)
+            if name in replay or (past_gate1 and name in _PRE_GATE1_STAGES)
+            else _recording_stage(name, fn, recorded)
+        )
+        for name, fn in stages.items()
+    }
 
     gen_specs = config.get("gen_transform_specs", True)
     # GenCDE synthesis for novel concepts — ON by default (a value-add verifying pass like transform specs);
@@ -734,20 +3175,433 @@ def run_pipeline(
     gen_gencde_specs = config.get("gen_gencde_specs", True) and gen_gencde and gen_specs
     if gen_gencde_specs and "gencde_specgen" in inspect.signature(harmonize_leanb).parameters:
         kwargs["gencde_specgen"] = True
+    # Refinement authoring — ON by default for the same reason gencde is: without it the `refine` bucket names a
+    # CDE but produces nothing to harmonize ONTO, so those concepts have no target and the Refined CDE panel has
+    # nothing to show. Gate off with refine_cdes=false. Core defaults this OFF (it costs an LLM call per
+    # refine-bucket group that no deterministic rule could settle), so enabling it is the UI's choice, not core's.
+    # Signature-guarded like gencde_specgen: the dev channel swaps core versions, and a core pinned before the
+    # refine port must skip the flag rather than error on an unexpected kwarg.
+    refine_cdes = config.get("refine_cdes", True) and "refine_cdes" in inspect.signature(harmonize_leanb).parameters
+    if refine_cdes:
+        kwargs["refine_cdes"] = True
+    # Gate-1 scope (08 resume): the reviewer kept a subset of groups at Gate 1, and the per-group assign is
+    # 77% of the run — so only the in-scope groups reach the PAID assign, and the Gate-2 cost matches the
+    # quote Gate 1 showed. `resume_run` computes the in-scope group ids off the `gate1_group_scope`
+    # decisions and threads them here as `assign_group_ids`. Signature-guarded like the flags above so a
+    # core pinned before the scope port ignores it (assign every group — the pre-scope behaviour) rather
+    # than erroring on an unexpected kwarg; the dev channel swaps core versions, so the adapter must not
+    # assume it. An explicit empty scope is honoured (assign nothing); absent (None) is assign-all.
+    scope_ids = config.get("assign_group_ids")
+    if scope_ids is not None and "assign_group_ids" in inspect.signature(harmonize_leanb).parameters:
+        kwargs["assign_group_ids"] = set(scope_ids)
+    # ── the coherence judge, IN THE PRODUCT (STGD-02's adapter half) ──
+    # Until this landed, `harmonize_leanb` here was passed neither `coherence=` nor `distinct_kinds=`, so
+    # the judge never executed and every shipped artifact carried an incoherent count of zero — while the
+    # core half had shipped in 08-04. Gate 1 renders coherence, so this is the phase's load-bearing wire.
+    #
+    # R2 (`distinct_kinds`) is nested inside the judge on purpose: core only runs the discriminator when a
+    # `coherence` runner is set, and the calibrated flag rule is R2 = split OR (qualify AND distinct_kinds).
+    # ON by default (gate off with coherence=false), because a Gate 1 with no coherence column is the
+    # screen this phase exists to replace.
+    #
+    # The opt-in M7 concept gate is the mirror image: OFF unless the run asks (STGD-16). Off means NO
+    # runner is constructed, so nothing is charged for a stage the caller declined (T-08-54).
+    core_params = inspect.signature(harmonize_leanb).parameters
+    judge_kwargs: dict[str, Any] = {}
+    if run_coherence and stages.get("coherence") is not None and "coherence" in core_params:
+        judge_kwargs["coherence"] = stages["coherence"]
+        if stages.get("distinct_kinds") is not None and "distinct_kinds" in core_params:
+            judge_kwargs["distinct_kinds"] = stages["distinct_kinds"]
+    concept_gate_on = want_concept_gate
+    if concept_gate_on and stages.get("concept_gate") is not None and "concept_gate" in core_params:
+        judge_kwargs["concept_gate"] = stages["concept_gate"]
+    else:
+        # An older pinned core, or a declined opt-in: either way the signal has no value this run, and
+        # the not-computed register says which — never a silent False.
+        concept_gate_on = False
+    # --- the staged boundary, expressed in CORE's vocabulary (see _GATE_STOP_MECHANISM) ---
+    classify_stage = stages.get("classify")
+    if stop_at_gate == "gate1":
+        # Withhold `classify`: the shipped early return, which after 08-04's reorder fires once
+        # generate(ideal), split and the judge have run. This is where Gate 1 sits.
+        classify_stage = None
+    elif stop_at_gate == "gate2":
+        if "stop_after" not in inspect.signature(harmonize_leanb).parameters:
+            # NOT signature-guarded into a silent skip, unlike gencde_specgen / refine_cdes below. Those
+            # are optional enhancements a run can do without; a BOUNDARY is not. Degrading here would run
+            # the whole pipeline — and charge for it — past the point the reviewer asked to stop at.
+            raise ValueError(
+                "the pinned ddharmon core has no `stop_after` parameter, so the Gate 2 boundary cannot be "
+                "honoured; upgrade core rather than running past the boundary"
+            )
+        kwargs["stop_after"] = "gencde"
+
     progress("clustering", 0, 0)  # clustering + retrieval happen inside harmonize_leanb before the first callback
     result = harmonize_leanb(
         embedded,
         generate=stages.get("generate"),
         split=stages.get("split"),
-        classify=stages.get("classify"),
+        classify=classify_stage,
         gencde=stages.get("gencde") if gen_gencde else None,
         specgen=stages.get("specgen") if gen_specs else None,
+        **({"refine": stages.get("refine")} if refine_cdes else {}),
+        **judge_kwargs,
+        **_override_kwargs(regrouping, stages.get(GROUP_IDEAL_TAG), harmonize_leanb),
         **kwargs,
     )
     _save_substrate_if_new(substrate_path, result)
+    # 08-27b: the reviewer's Gate 2 picks, applied AFTER the leg's specgen and BEFORE the result is built, so the
+    # Gate 3 checkpoint's records are self-consistent (chosen target == the target their specs were built for).
+    repick_stage = stages.get("specgen_repick")
+    if want_repick and gen_specs and repick_stage is not None:
+        cde_ed = next((ed for ed in embedded if getattr(ed.dictionary, "cohort_name", None) == cde_cohort), None)
+        apply_reviewer_picks(
+            result.records,
+            gate2_picks,
+            embedded,
+            dict(cde_ed.dictionary.fields) if cde_ed is not None else {},
+            model_tag=kwargs.get("model_tag"),
+            stage_fn=repick_stage,
+        )
     return build_ui_result(
-        result, mode=mode, phases=PHASES_RUN, atlas=atlas, member_index=member_index, field_index=field_index
+        result,
+        mode=mode,
+        phases=PHASES_RUN,
+        atlas=atlas,
+        member_index=member_index,
+        field_index=field_index,
+        cde_index=cde_index,
+        cost=cast(UICost, ledger.to_dict()),
+        gate_position=park_at_gate,
+        concept_gate=concept_gate_on,
+        preprocessing=preprocess_reports,
+        # 08-28: what the run asked and never heard back on. A deciding stage that came back short already
+        # failed the leg (StageIncompleteError), so this is chiefly the judge's "not judged" — see UIStageGap.
+        unanswered=_unanswered_register(recorded),
     )
+
+
+# ── re-adjudication: caller-invoked, explicit group ids, NEVER automatic ─────────────────────
+#
+# The coherence flag is a SUGGESTION. Core's own docstring is the contract — "The pipeline never
+# re-splits automatically ... this pass runs only when a caller invokes it" — and the product simply
+# never called it, which is why `readjudicated_from` was a dead field.
+#
+# The dangerous default is one keystroke away and lives in core: `readjudicate(group_ids=None)` selects
+# EVERY record carrying `incoherent` and re-splits all of them. That is a paid, unreviewed re-partition
+# of the reviewer's data triggered by a flag rather than by a decision, which is exactly the prohibited
+# auto-resolution of an over-merge (T-08-53). So this entry point never forwards `None`: an empty or
+# absent id list is REFUSED before any stage runs.
+
+
+def _core_readjudicate() -> Callable[..., Any]:
+    """Fetch core's ``readjudicate``. A seam, so a test can stand in for it without an LLM anywhere."""
+    from ddharmon.harmonization import readjudicate
+
+    return readjudicate
+
+
+def _collect_inputs(embedded: list[Any]) -> tuple[list[str], Any, list[Any]]:
+    """``(docs, embeddings, field_refs)`` for the run's embedded dictionaries.
+
+    ``readjudicate`` needs the frozen embedding matrix and the field-reference list that
+    ``harmonize_leanb`` builds internally, and ``LeanBResult`` does not carry either. Re-deriving them is
+    free (a stack of vectors already in memory) and deterministic — no model call, no re-embedding.
+    """
+    from ddharmon.clustering.topic_engine import collect_inputs
+
+    docs, embeddings, field_refs, _cohorts = collect_inputs(embedded)
+    return docs, embeddings, field_refs
+
+
+def readjudicate_groups(
+    leanb_result: Any,
+    embedded: list[Any],
+    *,
+    group_ids: Sequence[str] | None,
+    split: StageFn,
+    classify: StageFn,
+    cde_cohort: str = "NIH_CDE",
+    member_index: dict[str, UIMember] | None = None,
+    concept_gate: bool = False,
+    **knobs: Any,
+) -> list[UIRecord]:
+    """Re-split and re-assign EXACTLY the groups a human named, and return the updated record set.
+
+    ``group_ids`` is required and must be non-empty. Nothing here scans the ``incoherent`` flag to build
+    that list — a re-split without a named human decision is the prohibited behaviour, and defaulting to
+    "every flagged group" would spend money on a re-partition nobody asked for.
+
+    The flow itself is core's: this calls ``readjudicate()``, which reuses ``prepare_readjudicate`` →
+    ``prepare_group_assign`` → ``assemble_leanb``. The adapter supplies the two stage callables and maps
+    the result. It does not re-implement a single step of the pipeline.
+
+    Degrades on an older pinned core: if this core has no ``readjudicate``, the caller's records come back
+    unchanged and nothing raises — and because no child then carries the provenance signal, the
+    not-computed register keeps reporting it as a per-run absence rather than claiming a re-adjudication
+    happened.
+    """
+    if not group_ids:
+        raise ValueError(
+            "readjudicate_groups requires an explicit non-empty group_ids list. Re-adjudication is a human "
+            "decision: the coherence flag is a suggestion, and re-splitting every flagged group because it "
+            "was flagged is an auto-resolution of an over-merge, which is prohibited."
+        )
+    idx = member_index or {}
+    cde_index = build_cde_catalog_index(embedded, cde_cohort)
+    try:
+        core_readjudicate = _core_readjudicate()
+    except (ImportError, AttributeError) as exc:
+        logger.warning("this core has no readjudicate (%s) — returning the records unchanged", exc)
+        return [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in leanb_result.records]
+    _docs, embeddings, field_refs = _collect_inputs(embedded)
+    updated = core_readjudicate(
+        leanb_result,
+        embedded,
+        embeddings,
+        field_refs,
+        split=split,
+        classify=classify,
+        group_ids=list(group_ids),
+        cde_cohort=cde_cohort,
+        **knobs,
+    )
+    return [_record_to_ui(r, idx, concept_gate=concept_gate, cde_index=cde_index) for r in updated.records]
+
+
+class DivisionUnavailableError(RuntimeError):
+    """This core cannot divide a group the way Gate 1 needs it divided. Raised BEFORE anything is bought.
+
+    Deliberately NOT a silent degrade: this used to hand the run's groups back unchanged when the import failed
+    (and it did fail — core never exported the function), so the paid "Accept the division" answered 200 and did
+    nothing (08-28, the silent no-op). A paid button must fail where the reviewer can see it, not look done.
+    """
+
+
+def _core_division() -> tuple[Callable[..., Any], Callable[..., Any]]:
+    """Core's split-only re-adjudication and its division -> regrouping translation. A seam, so a test can stand
+    in for a core that lacks them; the real ones run everywhere else."""
+    from ddharmon.harmonization import division_overrides, readjudicate_split_only
+
+    return readjudicate_split_only, division_overrides
+
+
+def divide_groups(
+    leanb_result: Any,
+    embedded: list[Any],
+    *,
+    group_ids: Sequence[str] | None,
+    split: StageFn,
+    group_overrides: Any | None = None,
+    cde_cohort: str = "NIH_CDE",
+    mint_id: Callable[[], str] | None = None,
+    **knobs: Any,
+) -> list[dict[str, Any]]:
+    """Gate-1 "accept the division": re-split EXACTLY the groups a human named, as the reviewer decisions that
+    carry the division to every later leg.
+
+    Core's ``readjudicate_split_only`` re-splits each named group — as the reviewer currently sees it, when
+    ``group_overrides`` (their regrouping so far) is given — and ``division_overrides`` turns its parts into the
+    one shape a replay reproduces: a New group per part, with the part's members moved in. The children core
+    returns exist on this result only (the next leg re-runs the split, which keeps the group whole), so they are
+    NOT returned as concept groups; each part comes back as ``{parentGroupId, groupId, name, members}`` for the
+    caller to persist as ``gate1_new_group`` + ``gate1_regroup`` decisions.
+
+    A group the re-split kept whole (one part) produces nothing: there is no division to record. Part ids are
+    minted here (``rev:<uuid>``, ``mint_id`` for a test); a part the re-split gave no concept is named for the
+    group it came from. ``group_ids`` is required and non-empty — a re-split with no named human decision is the
+    prohibited auto-resolution of an over-merge. Raises :class:`DivisionUnavailableError` on a core without the
+    seams, before any stage runs.
+    """
+    if not group_ids:
+        raise ValueError(
+            "divide_groups requires an explicit non-empty group_ids list. Accepting a division is a human "
+            "decision; re-splitting every flagged group because it was flagged is the prohibited auto-resolution "
+            "of an over-merge."
+        )
+    try:
+        split_only, to_overrides = _core_division()
+    except (ImportError, AttributeError) as exc:
+        raise DivisionUnavailableError(
+            f"the pinned ddharmon core cannot divide a group at Gate 1 ({exc}); upgrade core — nothing was charged"
+        ) from exc
+    if group_overrides is not None and "group_overrides" not in inspect.signature(split_only).parameters:
+        raise DivisionUnavailableError(
+            "the pinned ddharmon core cannot divide a group you have already regrouped (no `group_overrides` on "
+            "readjudicate_split_only); upgrade core — nothing was charged"
+        )
+    parent_name = {g.group_id: g.concept for g in leanb_result.concept_groups}
+    _docs, embeddings, field_refs = _collect_inputs(embedded)
+    updated = split_only(
+        leanb_result,
+        embedded,
+        embeddings,
+        field_refs,
+        split=split,
+        group_ids=list(group_ids),
+        cde_cohort=cde_cohort,
+        **({"group_overrides": group_overrides} if group_overrides is not None else {}),
+        **knobs,
+    )
+    mint = mint_id or (lambda: f"rev:{uuid.uuid4()}")
+    out: list[dict[str, Any]] = []
+    for parent in dict.fromkeys(group_ids):
+        parts = [g for g in updated.concept_groups if g.readjudicated_from == parent]
+        if len(parts) < 2:
+            continue  # kept whole: the re-split found one concept, so there is nothing to divide
+        division = to_overrides(parts, [mint() for _ in parts])
+        for i, (part, group) in enumerate(zip(parts, division.new_groups, strict=True)):
+            members = [m for m, dest in division.moves.items() if dest == group.group_id]
+            name = part.concept or f"{parent_name.get(parent) or parent} — part {i + 1}"
+            out.append({"parentGroupId": parent, "groupId": group.group_id, "name": name, "members": members})
+    logger.info("divide_groups: %d group(s) named -> %d part(s)", len(group_ids), len(out))
+    return out
+
+
+# -- the $0 front-half replay: rebuilding core's inputs without buying anything ----------------
+#
+# 08-09 built `readjudicate_groups`, which needs a core `LeanBResult` PLUS the embedded dictionaries. The
+# backend persists neither: a checkpoint holds the CONTRACT shape, deliberately, because a paused run has to
+# survive a process restart and core objects do not. So an HTTP request against a paused or finished run has
+# to rebuild both before it can call that seam - which is WINDOWS id22, and this is its answer.
+#
+# The rebuild is free because the front half is deterministic and every expensive part of it is already on
+# disk:
+#
+#   load + preprocess  rule-based, no model
+#   embed              local encoder; no provider, no network, no charge
+#   cluster            NOT reproducible on its own, so the FROZEN SUBSTRATE is mandatory here rather than
+#                      optional: re-clustering would hand core a different partition than the one the
+#                      reviewer's group ids name, and their decision would land on other people's groups
+#   LLM stages         answered from the recorded stage responses
+#
+# It is $0 by CONSTRUCTION, not by intention: the only stage callables installed are lookups over the
+# recorded answers. There is no client to build and no branch that could reach a provider, which is why the
+# test asserts "no stage bought anything" rather than asserting a cost of zero - a cost of zero is also what
+# a stub that called out and was billed asynchronously would report.
+
+
+class ReplayUnavailableError(RuntimeError):
+    """The inputs for a $0 replay are not on disk, so re-deriving core's objects would cost money.
+
+    Raised rather than silently re-running: a re-run of the front half re-buys every LLM stage in it, and a
+    caller asking to re-adjudicate two groups has not agreed to pay for the whole pipeline again.
+    """
+
+
+def _lookup_stage(
+    name: str, replay: dict[str, dict[str, Any]], on_missing: Callable[[str, list[str]], None]
+) -> StageFn:
+    """A stage that can ONLY look an answer up. No client, no network, no path to a provider.
+
+    A prompt id ABSENT from the recording is genuinely new work and is reported through ``on_missing``.
+    An id recorded as :data:`_NO_ANSWER` is not: the original leg ASKED about it and got nothing back, so
+    replaying it as nothing reproduces exactly what core received the first time. Conflating the two would
+    report the replay as incomplete every time a stage legitimately answered for only some of its prompts -
+    which is the normal case for ``split``, whose empty answer means "this cluster is one concept".
+    """
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        cached = replay.get(name) or {}
+        answers = {}
+        missing = []
+        for prompt in prompts:
+            pid = str(prompt.id)
+            if pid not in cached:
+                missing.append(pid)
+                continue
+            value = cached[pid]
+            if value != _NO_ANSWER:
+                answers[pid] = value
+        if missing:
+            on_missing(name, missing)
+        return answers
+
+    return stage
+
+
+def replay_leanb_result(
+    dict_specs: list[dict[str, Any]],
+    cde_spec: dict[str, Any] | None,
+    config: dict[str, Any],
+    *,
+    replay_responses: dict[str, dict[str, Any]],
+    provider: Any | None = None,
+    substrate_path: str | Path | None = None,
+    on_missing: Callable[[str, list[str]], None] | None = None,
+) -> tuple[Any, list[Any]]:
+    """Rebuild ``(LeanBResult, embedded_dicts)`` for a run, at zero LLM cost. See the section header.
+
+    ``replay_responses`` is a checkpoint's recorded stage answers. It must be non-empty: a run that was never
+    staged recorded none, and there is no honest way to rebuild its objects without paying for the front half
+    a second time.
+
+    The frozen substrate is REQUIRED. Its absence is not a degraded replay, it is a different partition -
+    and a group id from the reviewer's screen means nothing against a partition they never saw.
+    """
+    from ddharmon.harmonization import harmonize_leanb
+
+    if not replay_responses:
+        raise ReplayUnavailableError(
+            "this run has no recorded stage answers to replay, so its pipeline objects cannot be rebuilt for "
+            "free; only a staged run records them"
+        )
+    work_dir = Path(config.get("work_dir", "."))
+    path = Path(substrate_path) if substrate_path else work_dir / "substrate.joblib"
+    if not path.exists():
+        raise ReplayUnavailableError(
+            f"the frozen clustering substrate is missing ({path}), so the exact partition this run's group "
+            "ids refer to cannot be reproduced"
+        )
+
+    cde_cohort: str = config.get("cde_cohort", "NIH_CDE")
+    specs = list(dict_specs) + ([cde_spec] if cde_spec else [])
+    dictionaries = [load_spec(s) for s in specs]
+    # Preprocessing is part of the deterministic front half and it CHANGES the embedded text, so replaying
+    # with it configured differently than the original leg would embed different text and cluster differently.
+    # The run's own config is the record of what it did.
+    if run_prepares(config):
+        for spec, dd in zip(specs[: len(dict_specs)], dictionaries[: len(dict_specs)], strict=False):
+            preprocess_for_run(dd, source_path=spec["path"])
+    if provider is None:
+        provider = default_embedding_provider()
+    embedded = [embed_for_run(dd, provider) for dd in dictionaries]
+    embedded = [ed for ed in embedded if len(list(ed.get_variable_names())) > 0]
+
+    kwargs: dict[str, Any] = {"cde_cohort": cde_cohort}
+    _use_frozen_substrate(kwargs, path, harmonize_leanb)  # the partition the reviewer's group ids name, as saved
+    for key in ("min_cluster_size", "top_k", "retrieval_floor", "model_tag"):
+        if config.get(key) is not None:
+            kwargs[key] = config[key]
+    if "min_cluster_size" not in kwargs:
+        n_fields = sum(len(dd.fields) for dd in dictionaries if getattr(dd, "cohort_name", None) != cde_cohort)
+        kwargs["min_cluster_size"] = _auto_min_cluster_size(n_fields)
+
+    report = on_missing or (
+        lambda stage, ids: logger.warning("replay: %s has no recorded answer for %d prompt(s)", stage, len(ids))
+    )
+    core_params = inspect.signature(harmonize_leanb).parameters
+    stages = {name: _lookup_stage(name, replay_responses, report) for name in replay_responses}
+    optional = {
+        name: stages[name]
+        for name in ("gencde", "refine", "coherence", "distinct_kinds", "concept_gate")
+        if name in stages and name in core_params
+    }
+    # The frozen Gate-1 regrouping, so a replay past Gate 1 rebuilds the groups every later leg assigned (their
+    # prompt ids are content-addressed on the regrouped membership) and answers the New groups' ideals too.
+    regrouping = core_group_overrides(config.get(GATE1_OVERRIDES_CONFIG_KEY), build_field_index(embedded, cde_cohort))
+    group_ideal = stages.get(GROUP_IDEAL_TAG) or _lookup_stage(GROUP_IDEAL_TAG, replay_responses, report)
+    result = harmonize_leanb(
+        embedded,
+        generate=stages.get("generate"),
+        split=stages.get("split"),
+        classify=stages.get("classify"),
+        specgen=stages.get("specgen"),
+        **optional,
+        **_override_kwargs(regrouping, group_ideal, harmonize_leanb),
+        **kwargs,
+    )
+    return result, embedded
 
 
 # ── targeted GenCDE recode regeneration (refine → regen, Part 3) ─────────────────────────────
@@ -841,6 +3695,39 @@ def _rebuild_regen_record(rec_ui: UIRecord) -> Any:
     )
 
 
+def _regen_gencde_transforms(rec: Any, embedded: list[Any], *, model_tag: str | None, stage_fn: StageFn) -> None:
+    """Append fresh member->GenCDE recodes to the core ``rec`` for its (possibly edited) ``rec.gencde``.
+
+    The SAME core seams a full run uses, on a single-record list — shared by the per-record regenerate
+    endpoint and the Gate 2 -> Gate 3 pick application (:func:`apply_reviewer_picks`). Categorical GenCDE:
+    C1 LLM member-code -> GenCDE-code recodes. Numeric GenCDE: deterministic unit specs (N1) + the LLM
+    arithmetic residual upgrade (N2). The guarded import makes a core build predating N1/N2 raise a clean
+    ``RuntimeError`` instead of silently dropping the numeric recodes with nothing to replace them.
+    """
+    from ddharmon.harmonization import assemble_gencde_specgen, prepare_gencde_specgen
+
+    kwargs = {"model_tag": model_tag} if model_tag else {}
+    if rec.gencde is not None and rec.gencde.permissible_values:
+        prompts = prepare_gencde_specgen([rec], embedded, **kwargs)
+        if prompts:
+            assemble_gencde_specgen(prompts, stage_fn(prompts), [rec])
+        return
+    try:
+        from ddharmon.harmonization import (
+            assemble_gencde_arith_specgen,
+            generate_gencde_unit_specs,
+            prepare_gencde_arith_specgen,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "this core build cannot regenerate numeric GenCDE recodes (needs the N1/N2 spec-gen seams)"
+        ) from exc
+    generate_gencde_unit_specs([rec], embedded)  # N1 (deterministic) — leaves needs_units residuals
+    prompts = prepare_gencde_arith_specgen([rec], embedded, **kwargs)  # N2 residual -> arith prompts
+    if prompts:
+        assemble_gencde_arith_specgen(prompts, stage_fn(prompts), [rec])
+
+
 def regenerate_gencde_specs(
     rec_ui: UIRecord,
     dict_specs: list[dict[str, Any]],
@@ -858,36 +3745,13 @@ def regenerate_gencde_specs(
     auto-approved here. The stale categorical member->GenCDE recodes are replaced; any non-GenCDE-target
     transforms on the record are preserved untouched.
     """
-    from ddharmon.harmonization import assemble_gencde_specgen, prepare_gencde_specgen
     from ddharmon.harmonization.models import TransformKind
 
     embedded = _reload_source_dicts(dict_specs)
     member_index = build_member_index(embedded)
     rec = _rebuild_regen_record(rec_ui)
-
-    kwargs = {"model_tag": model_tag} if model_tag else {}
     g = rec_ui.get("gencde") or {}
-    if g.get("permissibleValues"):
-        # CATEGORICAL GenCDE: LLM member-code -> GenCDE-code recodes (C1), same as a full run.
-        prompts = prepare_gencde_specgen([rec], embedded, **kwargs)
-        assemble_gencde_specgen(prompts, stage_fn(prompts), [rec])
-    else:
-        # NUMERIC GenCDE: deterministic unit specs (N1) + LLM arithmetic residual upgrade (N2), mirroring
-        # harmonize_leanb's gencde stage. Guarded import so a core build predating N1/N2 returns a clean 409
-        # (RuntimeError) instead of dropping the record's numeric recodes with nothing to replace them.
-        try:
-            from ddharmon.harmonization import (
-                assemble_gencde_arith_specgen,
-                generate_gencde_unit_specs,
-                prepare_gencde_arith_specgen,
-            )
-        except ImportError as exc:
-            raise RuntimeError(
-                "this core build cannot regenerate numeric GenCDE recodes (needs the N1/N2 spec-gen seams)"
-            ) from exc
-        generate_gencde_unit_specs([rec], embedded)  # N1 (deterministic) — leaves needs_units residuals
-        prompts = prepare_gencde_arith_specgen([rec], embedded, **kwargs)  # N2 residual -> arith prompts
-        assemble_gencde_arith_specgen(prompts, stage_fn(prompts), [rec])
+    _regen_gencde_transforms(rec, embedded, model_tag=model_tag, stage_fn=stage_fn)
 
     # Fresh recodes = everything assemble appended (the record started with only the wide->long guard).
     fresh_ui = [_transform_to_ui(t) for t in rec.transforms if t.kind != TransformKind.WIDE_TO_LONG]
@@ -903,3 +3767,308 @@ def regenerate_gencde_specs(
     updated["transforms"] = preserved + fresh_ui
     updated["memberDetails"] = [_member_ui(m, member_index) for m in updated.get("members", [])]
     return updated
+
+
+# ── Gate 2 picks drive Gate 3's specs (08-27b) ─────────────────────────────────────────────────
+#
+# Gate 2 persists a ``gate2_candidate_pick`` per group (``chosen`` = a catalog CDE id, the generated element's
+# id, or "" for "none of these", plus an optional ``gencdeEdit``). Core's ``harmonize_leanb`` takes no pick
+# override, so the Gate 2 -> Gate 3 leg's specgen builds every recode for the MODEL's target. Rather than
+# change core, the adapter re-targets each re-picked record AFTER that specgen and regenerates its specs
+# against the reviewer's target through the SAME core seams the run uses (prepare/assemble_specgen for a
+# catalog CDE; :func:`_regen_gencde_transforms` — the per-record regenerate endpoint's call — for a GenCDE).
+# It runs before ``build_ui_result``, so the Gate 3 checkpoint holds a self-consistent record: its chosen
+# target IS the target its transforms were generated for.
+#
+# Pick semantics (the frontend's own reading, so Gate 3's header and the specs agree):
+#   * ``chosen`` = a catalog id other than the generated element's  -> that catalog CDE (no-op if it IS the
+#     model's CDE). ``gencdeEdit`` is ignored: an edit describes the generated element, not a catalog one.
+#   * ``chosen`` = "" or the generated element's id                 -> the reviewer's OWN target: the record's
+#     GenCDE with ``gencdeEdit`` applied, or a GenCDE built from the edit when the record has none.
+#   * ``chosen`` = "" with no edit and no generated element         -> "none of these": no target, so no
+#     specs, and a stated reason on ``reviewerPick`` rather than an empty list that reads as "nothing to map".
+
+#: Separators a reviewer's permissible-value list may use. Gate 2 pre-fills ``code=label / code=label``; the
+#: catalog form is ``code=label|code=label``. A slash only separates when spaced, so "mg/dL" survives.
+_PV_SEPARATORS = r"\s*(?:\||\n|;|\s/\s)\s*"
+
+
+def parse_permissible_values(text: Any) -> list[Any]:
+    """Parse a reviewer-typed value list (``"1=Yes / 0=No"``) into core ``ResponseOption``s, in order.
+
+    ``code=label`` items keep both halves; a bare item is its own code and label. Blank items are dropped.
+    """
+    import re
+
+    from ddharmon.models.data_dictionary import ResponseOption
+
+    out: list[Any] = []
+    for item in re.split(_PV_SEPARATORS, str(text or "")):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" in item:
+            code, _, label = item.partition("=")
+            code, label = code.strip(), label.strip()
+            if not code:
+                continue
+            out.append(ResponseOption(code=code, label=label or code))
+        else:
+            out.append(ResponseOption(code=item, label=item))
+    return out
+
+
+def _clean_edit(raw: Any) -> dict[str, str] | None:
+    """The ``gencdeEdit`` fields as strings, or None when there is no edit (absent, not a dict, all blank)."""
+    if not isinstance(raw, dict):
+        return None
+    edit = {k: str(raw.get(k) or "") for k in ("name", "definition", "units", "values") if k in raw}
+    return edit if any(v.strip() for v in edit.values()) else None
+
+
+def _edit_changes(g: Any, edit: dict[str, str]) -> bool:
+    """Whether applying ``edit`` to GenCDE ``g`` changes anything (Gate 2 saves ALL anchor fields, edited or not)."""
+    if "name" in edit and edit["name"].strip() != (g.preferred_name or g.title or ""):
+        return True
+    if "definition" in edit and edit["definition"].strip() != (g.definition or ""):
+        return True
+    if "units" in edit and edit["units"].strip() != (g.units or ""):
+        return True
+    if "values" in edit:
+        now = [(o.code, o.label) for o in g.permissible_values]
+        if [(o.code, o.label) for o in parse_permissible_values(edit["values"])] != now:
+            return True
+    return False
+
+
+def _apply_gencde_edit(base: Any, edit: dict[str, str] | None, rec: Any) -> Any:
+    """A NEW GenCDE: ``base`` (or a fresh reviewer-authored one) with the edited fields applied. ``base`` untouched."""
+    import dataclasses
+
+    from ddharmon.harmonization.models import GenCDE
+
+    key = rec.group_id or rec.cluster_id
+    if base is None:
+        g = GenCDE(
+            gencde_id=f"GENCDE:{key}",
+            source_variables=list(rec.member_variable_names),
+            source_cohorts=list(rec.cohorts),
+            generated_by="reviewer",
+            needs_review=True,
+        )
+    else:
+        g = dataclasses.replace(base, permissible_values=list(base.permissible_values))
+    if not edit:
+        return g
+    if "name" in edit and edit["name"].strip():
+        g.preferred_name = edit["name"].strip()
+        g.title = g.title or g.preferred_name
+    if "definition" in edit:
+        g.definition = edit["definition"].strip()
+    if "units" in edit:
+        g.units = edit["units"].strip() or None
+    if "values" in edit:
+        g.permissible_values = parse_permissible_values(edit["values"])
+        if g.permissible_values and not g.data_type:
+            g.data_type = "categorical"
+    return g
+
+
+def _repick_ids(stage_fn: StageFn) -> StageFn:
+    """Give a regeneration's prompts ids of their OWN, and map the answers back to the ids core assembles by.
+
+    Core's spec-gen ids are content-addressed on (target id, SOURCE value set) — or on the record — never on
+    the target's value set. An edited GenCDE keeps its id, so its recode prompt would share an id with the
+    stale one the leg already answered; replay would hand back the old recode. Keying on the full prompt text
+    makes an identical prompt dedupe and a changed target always a new question.
+    """
+    import dataclasses
+
+    from ddharmon.harmonization.substrate import content_token
+
+    def stage(prompts: list[Any]) -> dict[str, Any]:
+        renamed = [
+            dataclasses.replace(p, id=f"leanb:repick:{content_token(p.id, p.system_prompt, p.user_prompt)}")
+            for p in prompts
+        ]
+        back = {r.id: p.id for r, p in zip(renamed, prompts, strict=True)}
+        out = stage_fn(renamed) or {}
+        return {back.get(str(k), str(k)): v for k, v in out.items()}
+
+    return stage
+
+
+def _resolve_pick(rec: Any, pick: dict[str, Any], cde_fields: dict[str, Any]) -> dict[str, Any]:
+    """The pick with ``chosen`` resolved through its ``externalId`` (the catalog's tinyId) when it carries one.
+
+    08-28 F13: ``chosen`` is the CDE's NAME, and catalog names repeat (the endorsed catalog has two "Age"s), so a
+    name alone can point at the wrong element. The tinyId is the catalog's identity, so when the pick carries one
+    that matches a candidate — or, failing that, a row of this run's catalog — it names the target. A pick with no
+    ``externalId`` (written before 08-28, or "none of these" / the generated element) is read by name as before.
+    """
+    ext = str(pick.get("externalId") or "").strip()
+    chosen = str(pick.get("chosen") or "")
+    if not ext or not chosen or (rec.gencde is not None and chosen == rec.gencde.gencde_id):
+        return pick
+    hit = next((c.cde_id for c in rec.candidates if (c.cde_external_id or "") == ext), None)
+    if hit is None:
+        hit = next((var for var, fld in cde_fields.items() if (getattr(fld, "field_id", "") or "") == ext), None)
+    return {**pick, "chosen": hit} if hit and hit != chosen else pick
+
+
+def _plan_pick(rec: Any, pick: dict[str, Any]) -> tuple[str, str, dict[str, str] | None] | None:
+    """``(kind, chosen, edit)`` for a pick that CHANGES the record's target, or None for a no-op pick."""
+    chosen = str(pick.get("chosen") or "")
+    edit = _clean_edit(pick.get("gencdeEdit"))
+    gid = rec.gencde.gencde_id if rec.gencde is not None else ""
+    if chosen and chosen != gid:
+        return None if chosen == rec.cde_id else ("catalog", chosen, None)
+    # The reviewer's OWN target (the generated element, possibly edited).
+    if edit is not None:
+        if rec.cde_id is None and rec.gencde is not None and not _edit_changes(rec.gencde, edit):
+            return None  # the model's target already, unedited
+        return ("gencde", chosen, edit)
+    if rec.gencde is not None:
+        return None if rec.cde_id is None else ("gencde", chosen, None)
+    if rec.cde_id is None:
+        return None  # nothing targeted before, nothing targeted now
+    return ("none", chosen, None)
+
+
+def _retarget_catalog(
+    rec: Any, cde_id: str, embedded: list[Any], cde_fields: dict[str, Any], *, model_tag: str | None, stage_fn: StageFn
+) -> str:
+    """Point ``rec`` at catalog CDE ``cde_id`` and regenerate its specs for it. Returns a reason when it can't."""
+    from ddharmon.harmonization import (
+        assemble_arith_specgen,
+        assemble_specgen,
+        generate_unit_specs,
+        generate_wide_to_long_specs,
+        prepare_arith_specgen,
+        prepare_specgen,
+    )
+
+    cand = next((c for c in rec.candidates if c.cde_id == cde_id), None)
+    rec.cde_id = cde_id
+    rec.cde_external_id = (cand.cde_external_id if cand else None) or None
+    rec.chosen_cos = cand.cosine if cand else None
+    for c in rec.candidates:
+        c.is_chosen = c.cde_id == cde_id
+    if rec.verdict not in ("adopt", "refine"):
+        rec.verdict = "adopt"
+    rec.route = "assigned"
+    # A GenCDE on the record is either a from-scratch proposal the reviewer declined in favour of a catalog
+    # CDE, or a refinement DERIVED from the model's CDE — neither describes the reviewer's target.
+    rec.gencde = None
+    rec.transforms = []
+    if cde_id not in cde_fields:
+        return f"{cde_id} is not in this run's CDE catalog, so no transform specs could be generated for it."
+    kwargs = {"model_tag": model_tag} if model_tag else {}
+    generate_wide_to_long_specs([rec], embedded, cde_fields)
+    generate_unit_specs([rec], embedded, cde_fields)  # N1, deterministic
+    cat = prepare_specgen([rec], embedded, cde_fields, **kwargs)  # C1
+    arith = prepare_arith_specgen([rec], embedded, cde_fields, **kwargs)  # N2
+    if cat or arith:
+        responses = _repick_ids(stage_fn)(cat + arith)
+        assemble_specgen(cat, responses, [rec])
+        assemble_arith_specgen(arith, responses, [rec])
+    return ""
+
+
+def _retarget_gencde(
+    rec: Any, edit: dict[str, str] | None, embedded: list[Any], *, model_tag: str | None, stage_fn: StageFn
+) -> None:
+    """Point ``rec`` at its own (edited) GenCDE and regenerate its specs for it."""
+    from ddharmon.harmonization.models import TransformKind, TransformSpec
+
+    g = _apply_gencde_edit(rec.gencde, edit, rec)
+    reshape = next((t for t in rec.transforms if t.kind == TransformKind.WIDE_TO_LONG), None)
+    rec.gencde = g
+    rec.cde_id = None
+    rec.cde_external_id = None
+    rec.chosen_cos = None
+    for c in rec.candidates:
+        c.is_chosen = False
+    rec.verdict = "novel"
+    rec.route = "gencde_residual"
+    # A repeating measure stays ONE structural reshape whatever it lands on; only its target changes.
+    rec.transforms = (
+        [TransformSpec(source_variable=reshape.source_variable, target_cde_id=g.gencde_id, kind=reshape.kind)]
+        if reshape is not None
+        else []
+    )
+    _regen_gencde_transforms(rec, embedded, model_tag=model_tag, stage_fn=_repick_ids(stage_fn))
+
+
+def apply_reviewer_picks(
+    records: list[Any],
+    picks: dict[str, Any],
+    embedded: list[Any],
+    cde_fields: dict[str, Any],
+    *,
+    model_tag: str | None,
+    stage_fn: StageFn,
+) -> list[str]:
+    """Re-target every record whose Gate 2 pick differs from the model's and regenerate its specs.
+
+    ``picks`` is ``{groupId: {"chosen": str, "gencdeEdit": dict | None, "externalId"?: str}}``. Mutates the core
+    records in place and stamps ``rec.raw["reviewer_pick"]`` (the wire's ``reviewerPick``). Returns the group ids
+    it changed. A pick carrying ``externalId`` is resolved by it first (:func:`_resolve_pick`). Each changed group
+    costs at most one spec-gen call per unique coded source encoding (+ one arithmetic call per numeric
+    residual), paid through ``stage_fn`` — the caller's ledgered stage.
+    """
+    changed: list[str] = []
+    for rec in records:
+        key = rec.group_id or rec.cluster_id
+        pick = picks.get(key)
+        if not isinstance(pick, dict):
+            continue
+        plan = _plan_pick(rec, _resolve_pick(rec, pick, cde_fields))
+        if plan is None:
+            continue
+        kind, chosen, edit = plan
+        model_target = rec.cde_id or (rec.gencde.gencde_id if rec.gencde is not None else "")
+        # 08-28 1e (F17): the MODEL's pick, captured BEFORE the re-target overwrites the record's cde / verdict
+        # / gencde. From here on those fields describe the reviewer's target, so an export reading them for
+        # "what the model chose" would report the pick as the model's own.
+        model_cde = {"id": rec.cde_id, "externalId": str(rec.cde_external_id or "")} if rec.cde_id else None
+        model_verdict = str(rec.verdict or "")
+        model_gencde = _gencde_to_ui(rec.gencde)
+        reason = ""
+        if kind == "catalog":
+            reason = _retarget_catalog(rec, chosen, embedded, cde_fields, model_tag=model_tag, stage_fn=stage_fn)
+            target = chosen
+        elif kind == "gencde":
+            _retarget_gencde(rec, edit, embedded, model_tag=model_tag, stage_fn=stage_fn)
+            target = rec.gencde.gencde_id
+        else:
+            rec.cde_id = None
+            rec.cde_external_id = None
+            rec.chosen_cos = None
+            for c in rec.candidates:
+                c.is_chosen = False
+            rec.verdict = "novel"
+            rec.route = "gencde_residual"
+            rec.transforms = []
+            target = ""
+            reason = (
+                "You picked “none of these” at Gate 2 and this group has no generated CDE to fall back on, so it "
+                "has no target and no transform specs were generated."
+            )
+        rec.decided_by = "reviewer"
+        raw = rec.raw if isinstance(getattr(rec, "raw", None), dict) else {}
+        raw["reviewer_pick"] = {
+            "chosen": chosen,
+            "kind": kind,
+            "target": target,
+            "modelTarget": model_target,
+            "reason": reason,
+            "modelCde": model_cde,
+            "modelVerdict": model_verdict,
+            "modelGencde": model_gencde,
+        }
+        rec.raw = raw
+        changed.append(key)
+    if changed:
+        logger.info("applied %d Gate 2 re-pick(s); specs regenerated for the reviewer's targets", len(changed))
+    return changed

@@ -20,6 +20,18 @@
 import type { LucideIcon } from "lucide-react";
 import { Boxes, Combine, Crosshair, Gauge, Layers, Ruler, ScanSearch, Split, Tag } from "lucide-react";
 
+import type { ContentProvenance } from "./content-provenance";
+
+/** See ./content-provenance. NOT yet baselined — the rationale here has not been re-read against the
+ *  current pipeline, and stamping a check that never happened would launder it. First pass should
+ *  confirm each choice still reflects what the code does, then set a real coreCommit. */
+export const VERIFIED_AGAINST: ContentProvenance = {
+  coreCommit: "unverified",
+  contractVersion: "unverified",
+  checkedOn: "never",
+  scope: "Baseline not established — design rationale unconfirmed against the current pipeline.",
+};
+
 /** A published delta on a named external benchmark — the only kind of number allowed on this page. */
 export interface DesignEvidence {
   /** What improved, e.g. "retrieval recall@5". */

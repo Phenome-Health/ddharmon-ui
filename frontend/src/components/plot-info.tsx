@@ -10,7 +10,7 @@ export function PlotInfo({ children }: { children: ReactNode }) {
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="text-neutral-400 transition-colors hover:text-ph-navy"
+          className="text-on-raised-muted transition-colors hover:text-accent-on-raised"
           aria-label="What this shows"
         >
           <Info className="h-4 w-4" />

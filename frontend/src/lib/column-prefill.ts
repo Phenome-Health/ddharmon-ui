@@ -26,6 +26,21 @@ export type PrefillSource = "demo" | "history";
 export interface Prefill {
   roles: Record<string, string>;
   source: PrefillSource;
+  /** For a "history" hit: when this mapping was last remembered (unix ms). Absent for demo or legacy entries. */
+  at?: number;
+}
+
+/**
+ * A remembered history entry. Two shapes on purpose: the ORIGINAL was a bare role map keyed by signature,
+ * and the store is per-browser localStorage that must keep prefilling files a reviewer mapped before this
+ * change. So new writes wrap the roles with a timestamp and reads tolerate both — a bare map is legacy (no
+ * date), an object carrying a `roles` map is the dated shape. Role values are column-name STRINGS, so a
+ * `roles` key whose value is an object is unambiguously the new shape.
+ */
+type HistoryEntry = Record<string, string> | { roles: Record<string, string>; ts: number };
+
+function isDated(e: HistoryEntry): e is { roles: Record<string, string>; ts: number } {
+  return typeof (e as { roles?: unknown }).roles === "object" && (e as { roles?: unknown }).roles !== null;
 }
 
 /** Order-independent key from a CSV's column names. MUST match build_demo_bundle.py::_header_signature. */
@@ -37,10 +52,10 @@ export function headerSignature(headers: string[]): string {
     .join("|");
 }
 
-function readHistory(): Record<string, Record<string, string>> {
+function readHistory(): Record<string, HistoryEntry> {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, Record<string, string>>) : {};
+    return raw ? (JSON.parse(raw) as Record<string, HistoryEntry>) : {};
   } catch {
     return {};
   }
@@ -56,8 +71,10 @@ export function lookupPrefill(headers: string[]): Prefill | null {
   const demo = DEMO_BY_SIG.get(sig);
   if (demo) return { roles: { ...demo.roles }, source: "demo" };
   const hist = readHistory()[sig];
-  if (hist && Object.keys(hist).length) return { roles: { ...hist }, source: "history" };
-  return null;
+  if (!hist) return null;
+  const roles = isDated(hist) ? hist.roles : hist;
+  if (!roles || !Object.keys(roles).length) return null;
+  return { roles: { ...roles }, source: "history", at: isDated(hist) ? hist.ts : undefined };
 }
 
 /**
@@ -72,7 +89,7 @@ export function rememberAssignment(headers: string[], roles: Record<string, stri
   if (DEMO_BY_SIG.has(sig)) return; // demo files use the shipped manifest; don't shadow it with history
   try {
     const hist = readHistory();
-    hist[sig] = cleaned;
+    hist[sig] = { roles: cleaned, ts: Date.now() };
     localStorage.setItem(HISTORY_KEY, JSON.stringify(hist));
   } catch {
     /* localStorage unavailable/full — silent no-op */

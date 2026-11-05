@@ -3,15 +3,18 @@
 // generates them first (LLM pass) and then lands here. Each idea's concept chips deep-link into the review
 // workbench, preselected to that concept.
 import { useMemo } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import { ArrowLeft, Lightbulb, Loader2 } from "lucide-react";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { IdeaCard } from "@/components/analysis-ideas";
+import { FROM_PARAM, analysisBackPathFor } from "@/lib/gate-routes";
 
 export default function AnalysisIdeasPage() {
   const { jobId = "" } = useParams();
   // Load the finished run immediately (no replay animation) — same as the workbench.
   const { jobState } = useHarmonizeStream(jobId, true, true);
+  // "Back to run" returns where the reviewer came from — Gate 4 for a staged run, not the legacy run page (review 2).
+  const from = new URLSearchParams(useSearch()).get(FROM_PARAM);
 
   // Concept LABEL → record id, so an idea's concept chip can deep-link into the workbench (which preselects
   // a concept by ?c=<recordId>). First match wins. Computed before the early return to keep hook order stable.
@@ -24,12 +27,13 @@ export default function AnalysisIdeasPage() {
 
   if (!jobState) {
     return (
-      <div className="flex items-center gap-2 p-8 text-neutral-500">
+      <div className="flex items-center gap-2 p-8 text-on-field-muted">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading run…
       </div>
     );
   }
 
+  const backHref = analysisBackPathFor({ jobId, gatePosition: jobState.gatePosition }, from);
   const ideas = jobState.analysisIdeas ?? [];
   const isDemo = !!(jobState.config as { demo?: boolean }).demo;
   const linkForConcept = (concept: string) => {
@@ -41,21 +45,22 @@ export default function AnalysisIdeasPage() {
     <div className="space-y-6">
       <div>
         <Link
-          href={`/job/${jobId}`}
-          className="mb-1 flex items-center gap-1 text-xs text-neutral-500 hover:text-ph-navy"
+          href={backHref}
+          data-testid="analysis-back"
+          className="mb-1 flex items-center gap-1 text-xs text-on-field-muted hover:text-on-field"
         >
           <ArrowLeft className="h-3 w-3" /> Back to run
         </Link>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold text-ph-ink">
-          <Lightbulb className="h-5 w-5 text-ph-navy" /> Analysis ideas
+        <h1 className="flex items-center gap-2 font-display text-xl font-semibold text-on-field">
+          <Lightbulb className="h-5 w-5 text-on-field" /> Analysis ideas
         </h1>
-        <p className="mt-1.5 max-w-3xl text-sm text-neutral-500">
+        <p className="mt-1.5 max-w-3xl text-sm text-on-field-muted">
           What this cross-cohort harmonization unlocks — analyses grounded in this run's own concepts.
           Hypotheses to explore, not validated findings; ddharmon reads only metadata and never runs them.
           Click any concept to open it in the review workbench.
         </p>
         {isDemo && (
-          <p className="mt-2 inline-block rounded-md border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs text-neutral-500">
+          <p className="mt-2 inline-block rounded-md border border-rule-on-inset bg-surface-inset px-3 py-1.5 text-xs text-on-inset-muted">
             Pre-generated for this demo. Run your own cohorts to get ideas grounded in your data.
           </p>
         )}
@@ -68,9 +73,9 @@ export default function AnalysisIdeasPage() {
           ))}
         </div>
       ) : (
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-on-field-muted">
           No analysis ideas for this run.{" "}
-          <Link href={`/job/${jobId}`} className="text-ph-navy underline hover:text-ph-ink">
+          <Link href={backHref} data-testid="analysis-back" className="text-link-on-field underline hover:text-on-field">
             Back to the run
           </Link>
           .

@@ -4,12 +4,24 @@
 // sync with contract.py (CONTRACT_VERSION).
 
 export type RunMode = "batch" | "sync" | "preview";
+/** How a run's gates are committed (08-30) — see `lib/review-mode.ts`. An enum so a third mode can join later. */
+export type ReviewMode = "guided" | "auto";
 export type CdeSet = "endorsed" | "full";
+/**
+ * The catalog a NEW run matches against unless the reviewer picks another (08-28 Decision 7; the backend's
+ * `DEFAULT_CDE_SET` is the same value). The NIH-endorsed set has no body weight, PHQ or PROMIS, so those common
+ * measures came out "novel" although the full repository has a good element for each — and every benchmark and
+ * the validation run used `full`. NIH-endorsed stays selectable, and a re-run's Setup opens on the catalog its
+ * source recorded.
+ */
+export const DEFAULT_CDE_SET: CdeSet = "full";
 
 // Job lifecycle phases are REPORTED by the engine (data-driven) — this union is for hints only; the UI
 // renders whatever phase string a run reports and reads result.phases for the sequence.
 export type JobStatus =
   | "pending"
+  // A run parked at a review gate: non-terminal, but with no worker (08 D-01 makes a pause an exit).
+  | "awaiting_review"
   | "loading"
   | "embedding"
   | "clustering"
@@ -65,6 +77,18 @@ export interface UICandidate {
   cosine: number;
   isChosen: boolean;
   llmSuggested: boolean;
+  // Catalog metadata (08-16g) — OPTIONAL because older runs / the current core contract do not emit it.
+  // Populated by the candidate-enrichment join (tinyId -> CDE catalog). Absent fields render as "view on
+  // the repo", present ones render inline so richness + harmonizability are judgeable without leaving the app.
+  questionText?: string;
+  dataType?: string;
+  units?: string;
+  permissibleValues?: string[]; // value labels, catalog order
+  stewardOrg?: string;
+  endorsed?: boolean;
+  // 08-28 F13: the catalog designation, present ONLY when more than one catalog element carries it ("Age" x2).
+  // `cdeId` is then core's minted key (`Age__2`); Gate 2 shows this name beside `cdeExternalId`. Mirrors contract.py.
+  sharedName?: string;
 }
 
 export interface AtlasPoint {
@@ -184,6 +208,48 @@ export interface UIRecord {
   candidates: UICandidate[]; // ranked CDE candidates the assign stage saw (best-first)
   rationale: string;
   decidedBy: string;
+  // ── v5 triage signals. Additive/optional so a pre-v5 payload still types; the backend emits every one
+  //    of them on every record, so an ABSENT key means "older payload", never "clean".
+  /** The closed four-state coherence cell. `not_judged` is a value, not an absence. */
+  coherence?: CoherenceState;
+  coherenceSummary?: string;
+  coherenceAxis?: string;
+  coherenceDistinctValues?: string[];
+  coherenceOutliers?: string[];
+  coherenceKind?: string;
+  /** A FLAG: the group is surfaced for a human, never auto-split. */
+  incoherent?: boolean;
+  matrixSuspect?: boolean;
+  /** M3's unmappable-values diagnostic — NOT `coverageGap`, which is the novel-below-tau one. */
+  coherenceGap?: boolean;
+  adoptDemoted?: boolean;
+  /** Present ONLY when the opt-in concept gate ran. Absent means not asked, not "no mismatch". */
+  conceptMismatch?: boolean;
+  /** Present only on a re-adjudication child: the parent group id it was carved from. */
+  readjudicatedFrom?: string;
+  /** Option B: present only when a Gate 1 edit changed this group and its ideal was regenerated for it. */
+  idealRegenerated?: boolean;
+  /** 08-27b: present only when the Gate 2 pick CHANGED this record's target (specs regenerated for it). */
+  reviewerPick?: ReviewerPick;
+}
+
+/** How a Gate 2 pick re-targeted a record. `target` is what the record's transforms were generated for. */
+export interface ReviewerPick {
+  chosen: string;
+  kind: "catalog" | "gencde" | "none";
+  target: string;
+  modelTarget: string;
+  /** Non-empty when no specs could be generated (e.g. "none of these" with nothing to fall back on). */
+  reason: string;
+  /**
+   * 08-28 1e: the MODEL's pick, stamped before the re-target overwrote the record (F17). The record's own
+   * cde / candidates / verdict / gencde describe the REVIEWER's target, so these are where the model's choice
+   * survives. Absent on a checkpoint written before 08-28 — readers fall back to `modelTarget`.
+   */
+  modelCde?: CdeRef | null;
+  modelVerdict?: string;
+  /** The model's generated element, UNEDITED; null when it had none. */
+  modelGencde?: GenCDE | null;
 }
 
 export interface PromptCounts {
@@ -204,6 +270,193 @@ export interface ResultSummary {
   cohorts: string[];
 }
 
+/** Realized cost + token totals for one pipeline stage (from the backend's cost ledger). */
+export interface StageCost {
+  usd: number;
+  inputTokens: number;
+  outputTokens: number;
+  calls: number;
+}
+/** Realized run cost — REAL spend: tokens captured per LLM call and priced against LiteLLM's model→price map
+ *  (Batch billed at 50%). For a BYOK run this is the user's own provider bill, not an estimate. */
+export interface RunCost {
+  actualUsd: number;
+  tokens: { input: number; output: number };
+  perStage: Record<string, StageCost>;
+}
+
+/** One source field in a preview cluster (a capped sample of the cluster's members). */
+export interface PreviewMember {
+  cohort: string;
+  variable: string;
+  text: string;
+}
+/** One retrieved CDE candidate for a preview cluster — a RETRIEVAL hit, NOT an assignment (preview skips the
+ *  LLM assign stage). */
+export interface PreviewCandidate {
+  rank: number;
+  cdeId: string;
+  cdeExternalId: string;
+  definition: string;
+  cosine: number;
+}
+/** A preview-mode cluster: the deterministic front half (embed → cluster → retrieve), no LLM. `members` is a
+ *  capped sample (`nMembers` is the true size); `candidates` are the top-k retrieved CDEs. A full run's LLM
+ *  stages can substantially restructure these. */
+export interface PreviewCluster {
+  clusterId: string;
+  nMembers: number;
+  cohorts: string[];
+  crossCohort: boolean;
+  top1Cos: number | null;
+  members: PreviewMember[];
+  candidates: PreviewCandidate[];
+}
+
+/**
+ * The six staged-review screens, in order. Mirrors `GatePosition` in contract.py.
+ *
+ * A gate is a REVIEW STOP, not a pipeline stage: six gates span eleven stage boundaries, and only Gate 1
+ * and Gate 2 correspond to a boundary inside the pipeline at all.
+ */
+export type GatePosition = "setup" | "gate0" | "gate1" | "gate2" | "gate3" | "gate4";
+
+/**
+ * One POST-SPLIT concept group — the row Gate 1 renders (UI-SPEC §0.1).
+ *
+ * It exists between `split` and `classify`, so it deliberately carries no verdict, no route and no CDE:
+ * nothing has assigned it one yet. `concept` is the name `generate(ideal)` produced, so it is GENERATED
+ * and is always marked as such — no catalog badge, no identifier link, no endorsement. It is not a GenCDE
+ * either; a GenCDE is minted later and only for `novel` records.
+ *
+ * Not to be confused with `PreviewCluster`, which is preview run mode's shape and is NOT Gate 1's row
+ * source. `clusterId` is where a group's provenance comes from.
+ */
+/** The coherence judge's CLOSED four-state cell. `not_judged` is a value, not an absence: core defaults
+ *  its `coherent` boolean to true and skips groups under the judge's member floor, so a boolean here would
+ *  render every unjudged group as a pass. A judge error or timeout arrives as `not_judged` too. */
+export type CoherenceState = "single" | "qualify" | "split" | "not_judged";
+
+export interface ConceptGroup {
+  groupId: string;
+  clusterId: string;
+  concept: string;
+  /** Always true — the name was generated by ddharmon, and the row says so rather than implying it. */
+  conceptIsGenerated: boolean;
+  idealCde: string;
+  /** The TRUE member count, even when `memberVariableNames` is a capped sample. */
+  nMembers: number;
+  cohorts: string[];
+  crossCohort: boolean;
+  top1Cos: number | null;
+  /** The collapsed row's member SAMPLE when `membersTruncated`; read the full list from
+   *  `HarmonizationResult.conceptGroupMembers` before writing membership back. */
+  memberVariableNames: string[];
+  membersTruncated: boolean;
+  coherence: CoherenceState;
+  coherenceSummary: string;
+  coherenceAxis: string;
+  coherenceDistinctValues: string[];
+  coherenceOutliers: string[];
+  /** A FLAG, never a gate: an over-merged group is surfaced for a human, never auto-split. */
+  incoherent: boolean;
+  matrixSuspect: boolean;
+  /**
+   * Present only on a re-split CHILD: the parent group id it was carved from when a reviewer accepted its
+   * division at Gate 1. Absent on an original grouping. Gate 1 renders its "re-split from <parent>" marker
+   * from this. A re-split is a GROUPING change (split-only) — the child is not yet assigned to a CDE; that
+   * happens later, at Gate 2.
+   */
+  readjudicatedFrom?: string;
+}
+
+export interface NotComputedEntry {
+  signal: string;
+  kind: "permanent" | "per_run";
+  reason: string;
+}
+
+/** One LLM stage that was ASKED prompts it holds no answer for on this run (08-28). The provider's batch
+ *  retrieve skips errored / expired / canceled items, so a stage can come back short. A `deciding` stage that
+ *  does fails its leg instead (the run stays parked, the error names it), so on a result this is almost always
+ *  `advisory` — and an advisory prompt with no answer means NOT JUDGED, never "judged clean". */
+export interface StageGap {
+  stage: string;
+  kind: "deciding" | "advisory";
+  /** Prompts the stage was asked, across every leg of the run. */
+  asked: number;
+  /** Of those, how many hold no answer. */
+  unanswered: number;
+  /** The unanswered prompt ids, sorted and uncapped. */
+  promptIds: string[];
+}
+
+/** One preprocessing rule's outcome. Four values: a rule that RAN and changed nothing is a different
+ *  claim from a rule that never ran, and both differ from one that threw. */
+export type RuleOutcome = "changed" | "no_change" | "not_run" | "failed";
+
+export interface PreprocessRule {
+  rule: string;
+  label: string;
+  outcome: RuleOutcome;
+  nChanged: number;
+  /** The denominator, and it is a ROW count (variables), never a count of metadata attributes. */
+  nVariables: number;
+  detail: string;
+  error: string;
+}
+
+/** One variable's before/after. Plain data — never rendered as HTML. Carries no rule name: the pipeline
+ *  does not stamp which rule changed a variable, and a `rule` key here would assert that it does. */
+export interface PreprocessDiff {
+  variableName: string;
+  rawVariableName: string;
+  rawDescription: string;
+  cleanedDescription: string;
+  /**
+   * The EXACT text the grouping stage consumes for this variable — core's own composition, carried on the
+   * wire because it cannot be reconstructed from the fields beside it.
+   *
+   * Its precedence is `question_text or description`, falling back to the cleaned variable name only when
+   * there is no primary text and the name still reaches the vector. That is the OPPOSITE of
+   * `FieldDetail.text` (`description or question_text`), which is a DISPLAY derivation — so the two are
+   * not interchangeable and neither may stand in for the other.
+   *
+   * `""` means this variable embeds nothing and reaches no concept group. An honest empty, not a gap.
+   */
+  embedText: string;
+  /**
+   * The embedding text this variable WOULD have produced before preprocessing touched it.
+   *
+   * Composed by core on the raw strings and carried on the wire — never re-derived here. Paired with
+   * `embedText` this is the only honest before/after for the rules whose whole effect is on the embedding
+   * text: the description pair is byte-identical for name suppression, so showing it reports a change
+   * while displaying none. Equal values are a TRUE finding about the rule, not a rendering bug.
+   */
+  rawEmbedText: string;
+  nameChanged: boolean;
+  descChanged: boolean;
+  embedNameSuppressed: boolean;
+}
+
+export interface PreprocessReport {
+  cohort: string;
+  nVariables: number;
+  /** Lower than `nVariables` means variable names collided and rows were dropped SILENTLY, last-wins. */
+  nUniqueVariableNames: number;
+  nDuplicateVariableNames: number;
+  nNothingToEmbed: number;
+  namesChanged: number;
+  descriptionsChanged: number;
+  ran: boolean;
+  failed: boolean;
+  error: string;
+  rules: PreprocessRule[];
+  diff: PreprocessDiff[];
+  nChangedVariables: number;
+  diffTruncated: boolean;
+}
+
 export interface HarmonizationResult {
   contractVersion: string;
   mode: string;
@@ -218,6 +471,93 @@ export interface HarmonizationResult {
   // Source fields that landed in no concept record (unclustered / dropped outliers) — the "everything else"
   // the run didn't harmonize. Uncapped; x/y only when the field is in the atlas.
   unassignedFields: UnassignedField[];
+  // Realized run cost — real spend, not an estimate (contract v3+). Optional so pre-v3 demo fixtures still parse.
+  cost?: RunCost;
+  // PREVIEW ONLY (contract v4+): clusters + retrieved CDE candidates from the deterministic front half, so a
+  // preview shows viz + candidate matches instead of a bare status string. Absent/empty on a full run.
+  previewClusters?: PreviewCluster[];
+  // STAGED REVIEW (contract v5+): the post-split concept groups Gate 1 renders. Optional so pre-v5
+  // fixtures and preview runs (which never reach the Gate 1 boundary) still parse.
+  conceptGroups?: ConceptGroup[];
+  /** The UNCAPPED membership per group id — the expanded row's source. Read this, not the collapsed
+   *  row's `memberVariableNames`, before writing membership back: a regroup over a capped sample would
+   *  silently drop the members it never showed. */
+  conceptGroupMembers?: Record<string, string[]>;
+  /** Signals that carry no value on this run, each with a reason and an entry KIND. `per_run` means an
+   *  opt-in stage exists and this run did not enable it (actionable); `permanent` means no stage
+   *  produces it at all. Rendering them alike either understates the product or misleads about it. */
+  notComputed?: NotComputedEntry[];
+  /** Every stage that was asked prompts it never heard back on (08-28). EMPTY means every asked prompt was
+   *  answered; absent on a preview / Gate 0 result and on payloads that predate the register. */
+  unanswered?: StageGap[];
+  /** What preprocessing did to each source dictionary, between loading and embedding. */
+  preprocessing?: PreprocessReport[];
+  // Present when this result is a PAUSED run's state rather than a finished one.
+  gatePosition?: GatePosition;
+  // Mirrors the progress frame's token, so a client that refetched because the token moved can tell it got
+  // the version it asked for rather than a racing older payload.
+  resultVersion?: number;
+}
+
+/**
+ * One stale decision, as `GET /jobs/{id}/artifacts` derives it — a COMPARISON on read, never a stored flag.
+ *
+ * A downstream decision records the content key of the upstream option space it was decided against;
+ * staleness is that key differing from the upstream's key now. An absent upstream row is never reported:
+ * the reviewer may simply have cleared it, and absence is not evidence of change.
+ */
+export interface ArtifactStaleRef {
+  kind: string;
+  itemKey: string;
+  upstreamKind: string;
+  upstreamItemKey: string;
+  reason: string;
+}
+
+/** What `GET /jobs/{id}/artifacts` returns: the registered kinds, this caller's rows, and what is stale. */
+export interface ArtifactListResponse {
+  kinds: string[];
+  artifacts: Record<string, unknown> | null;
+  stale: ArtifactStaleRef[];
+}
+
+/**
+ * What one artifact upsert returns. `conflict` is the two-tab notice (UI-SPEC 8.4) and is non-null only
+ * when the write REPLACED a value this client had not seen — last-write-wins is the resolution, the notice
+ * is the requirement, and a silent overwrite of another session's decision is prohibited.
+ */
+export interface ArtifactWriteResponse {
+  kind: string;
+  itemKey: string;
+  updatedAt: number;
+  conflict: { replacedUpdatedAt: number; message: string } | null;
+}
+
+/**
+ * The caller's OWN verdicts on a run, nested by record — the wire shape the backend rebuilds from the
+ * per-axis artifact rows (`_verdicts_to_legacy`). Three axes share one entry: the concept→CDE match verdict
+ * sits at the top level, per-source-variable transform verdicts hang off `transforms`, and the GenCDE
+ * verdict off `gencde`. `lib/verdicts.ts` flattens this into the maps the review surfaces hold.
+ */
+export type ServerDecisions = Record<
+  string,
+  {
+    decision?: string;
+    note?: string;
+    transforms?: Record<string, { decision?: string; note?: string }>;
+    gencde?: { decision?: string; note?: string; edited?: Record<string, unknown> };
+  }
+>;
+
+/**
+ * One dictionary a run was set up with, projected from the backend's persisted dict_specs — roles only,
+ * never the server upload path. Powers the back-to-Setup replay so it can render the run's OWN column
+ * mapping (which source column played each role) instead of nothing.
+ */
+export interface RunDictionary {
+  filename: string;
+  cohortName: string;
+  columnRoles: Record<string, string>;
 }
 
 export interface JobResult {
@@ -233,9 +573,18 @@ export interface JobResult {
   failedPhase?: string | null;
   result: HarmonizationResult | null;
   config: Record<string, unknown>;
-  decisions: Record<string, { decision: string; note: string }>;
+  // The dictionaries this run was set up with — a roles-only projection of the backend's persisted
+  // dict_specs (filename + cohort + column roles; never the server path). Empty/absent for a demo or
+  // legacy run with no specs. Read by the back-to-Setup replay to render the run's own column mapping.
+  dictionaries?: RunDictionary[];
+  decisions: ServerDecisions;
   // Opt-in, LLM-suggested downstream analyses (null until generated; see POST /jobs/{id}/analysis-ideas).
   analysisIdeas?: AnalysisIdea[] | null;
+  // Derived composite specs, one per score (null until the first derivation). See CompositeSpec.
+  composites?: CompositeSpec[] | null;
+  // THE SHARED DEMO ONLY: its shipped declared score — the declaration Gate 1 and Gate 4 start from and Gate 1's
+  // free hints for it (`lib/demo-score.ts`). Its Gate 4 match rides `composites`. Absent on every other run.
+  demoScore?: DemoScore;
   createdAt: number;
   updatedAt: number;
   // Present on the bundled demo fixture: per-phase wall-clock from the real build run, used to pace the
@@ -249,6 +598,60 @@ export interface JobResult {
   // cancel_mode set and status not terminal). Lets the run view show a "Stopping…" state. The raw keep/discard
   // mode is never exposed.
   stopping?: boolean;
+  // LIVE runs: realized cost-so-far in USD, streamed as each LLM stage prices its captured token usage — the
+  // "spent so far" counter. Absent on DB-hydrated historical runs (not persisted); the final total is in
+  // result.cost.actualUsd. A demo fixture may carry it so the Runs list shows the demo's build cost.
+  costSoFar?: number;
+  // STAGED REVIEW: the screen this run is parked on, or absent for a run that never entered the flow.
+  gatePosition?: GatePosition | null;
+  // The token the 2 Hz progress frame carries. The client refetches /result when it MOVES — which is what
+  // lets the frame stop carrying the (multi-megabyte) payload. Bumped only on a payload change, never on a
+  // progress tick, so it cannot provoke a refetch storm.
+  resultVersion?: number;
+  // The ddharmon core release this run was produced by, stamped on the /result payload. Gate 4's
+  // reproducibility disclosure and its E3 revision-rate anti-drift stamp read it; absent on runs that
+  // predate the stamp.
+  coreVersion?: string;
+  // LIVE runs (08-28 0e): how the current leg is sending its LLM stages — "batch" until a switch, then "sync"
+  // for the rest of the leg. Absent/null when no leg is running. Streamed on the progress frame.
+  transport?: "batch" | "sync" | null;
+  // LIVE runs (08-28 0e): the batch a batch stage is polling right now, or null when none is in flight. What
+  // the "Finish now with sync" control renders from.
+  batch?: BatchInFlight | null;
+  // FULL AUTO (08-30) — present ONLY on a run started in Full auto (a guided run's wire shape is unchanged).
+  // `reviewMode` says so on the thin frame (which carries no config); `autoAdvancing` is true for the moment the
+  // run is parked while the server commits that gate and starts the next step itself — the client keeps following.
+  reviewMode?: ReviewMode;
+  autoAdvancing?: boolean;
+}
+
+/** The in-flight batch, as the progress frame reports it (08-28 0e). */
+export interface BatchInFlight {
+  /** The stage's batch cache tag (`generate`, `split`, `assign`, …). */
+  tag: string;
+  /** Requests this batch was sent — everything a switch would re-run if the batch returns nothing. */
+  nItems: number;
+  /** The provider's `processing_status` (`in_progress`, `canceling`, `ended`), or null before the first read. */
+  status: string | null;
+  /** The switch is on offer: the batch is `in_progress` and nobody has pressed it this leg. */
+  switchable: boolean;
+  /** A deliberately HIGH estimate of those requests at the full (sync) rate; null when it cannot be priced. */
+  syncEstimateUsd: number | null;
+}
+
+/** Where a run is parked and what reaching it cost — GET /api/harmonize/checkpoint/{jobId}. */
+export interface CheckpointState {
+  jobId: string;
+  status: JobStatus;
+  gatePosition: GatePosition | null;
+  resumeGate: GatePosition;
+  nextGate: GatePosition | null;
+  resultVersion: number;
+  costSoFar: number;
+  /** How many prompts this gate's state was asked and never heard back on — the result's `unanswered`
+   *  register, summed (08-28). 0 on a complete gate; optional so an older backend still parses. */
+  unansweredPrompts?: number;
+  result: HarmonizationResult | null;
 }
 
 export interface JobSummary extends Omit<JobResult, "result" | "analysisIdeas"> {
@@ -266,18 +669,216 @@ export interface AnalysisIdea {
   category: string;
 }
 
+// --- composite / derived variables -----------------------------------------------------------
+// Mirrors ddharmon.harmonization.composite.spec_to_dict(). A composite is a published score (frailty
+// index, PHQ-9 sum, intrinsic capacity) derived FROM several harmonized concepts. Metadata-only: the
+// spec is a RECIPE the user applies to their own rows — ddharmon never computes it.
+
+/** How ONE component is scored. `unstated` = the source document named the item but not how to code it. */
+export type CodingKind =
+  | "threshold"
+  | "categorical"
+  | "identity"
+  | "unit"
+  | "arithmetic"
+  | "data_dependent"
+  | "unstated";
+
+/** How the components combine. criteria_count = Fried (k of n); deficit_proportion = a frailty index. */
+export type CompositeKind =
+  | "criteria_count"
+  | "deficit_proportion"
+  | "sum"
+  | "weighted_sum"
+  | "z_composite"
+  | "custom";
+
+export interface ComponentCoding {
+  kind: CodingKind;
+  cutoff: string; // VERBATIM from the source (strata, units and inequality direction preserved)
+  referenceRange: string;
+  codeMap: Record<string, string>;
+  formula: string;
+  units: string;
+  statedInSource: boolean;
+  needsReview: boolean; // unstated / arithmetic / sample-relative -> a human must supply the rule
+}
+
+export interface ScoreComponent {
+  name: string;
+  definition: string;
+  required: boolean;
+  weight: number | null;
+  coding: ComponentCoding;
+  /**
+   * The component's domain / sub-scale, when the source groups its items (e.g. a frailty index's
+   * "type of deficit"). GENERIC and OPTIONAL: extraction populates it when the source states it,
+   * and the coverage view groups by it only when present — never a code-side, score-specific grouping.
+   */
+  domain?: string;
+}
+
+export interface ScoreDefinition {
+  name: string;
+  kind: CompositeKind;
+  citation: string;
+  combinationRule: string;
+  threshold: string;
+  notes: string;
+  // The item count the DOCUMENT claims, vs how many were actually readable out of it. A positive
+  // `underEnumerated` means the source was incomplete (a table that didn't survive extraction) — the gap
+  // is reported, never filled in from prior knowledge.
+  statedNItems: number | null;
+  underEnumerated: number;
+  provenance: string; // URL / filename / "pasted text"
+  sourceSha256: string;
+  components: ScoreComponent[];
+}
+
+/** One component's verdict: the run concept that measures it, or an honest gap. */
+export interface ComponentMatch {
+  component: string;
+  conceptId: string | null; // a record id in THIS run; null = missing
+  concept: string;
+  column: string; // the harmonized column name the derivation references
+  cohorts: string[];
+  sourceVariables: string[];
+  confidence: number;
+  rationale: string;
+  required: boolean;
+  pinned: boolean; // set by a reviewer override rather than the judge
+  shortlist: string[]; // the ids retrieval offered — distinguishes "nothing found" from "all rejected"
+  isVariable?: boolean; // the match/candidate is a single source variable, not a harmonized concept group
+  // Variable-only matching: `conceptId` is a concept GROUP reached by rolling up the source variables the
+  // judge rated; `confidence` above is then the group AGGREGATE. `matchedMembers` are those variables
+  // (id + confidence), shown indented under the group; `groupCandidates` is the deduped Swap list — every
+  // group the component's rated variables reached, best-first. Absent on the legacy group-concept path.
+  // `optionLabel` names the answer OPTION when a checklist/multi-select value supplies the member.
+  matchedMembers?: { variableId: string; confidence: number; optionLabel?: string }[];
+  // `nMatched` / `nTotal` = "N of M group members matched" for THAT candidate group, so every Swap
+  // candidate carries its own coverage readout (not just the currently-selected group).
+  groupCandidates?: { groupId: string; confidence: number; nMatched?: number; nTotal?: number }[];
+  // Member-level per-cohort UNION coverage across every matched group — the SINGLE SOURCE for "which
+  // cohorts actually have a supporting variable/option". A cohort key with a non-empty array is covered;
+  // a cohort that sits in the group's raw membership (`cohorts`) but is absent here is NOT covered — a
+  // member sits in the over-merged group yet did not match. This is what reconciles the coverage table,
+  // the found-component detail and the Swap list so they cannot disagree (the "cataracts" bug). Absent on
+  // runs predating union coverage — callers fall back to `cohorts` (see `coveredCohorts`).
+  // Each coverage member also names the SOURCE group it came from (`groupId`) — union coverage may span
+  // several groups, so the detail can attribute each cohort's support to its real group (not the surfaced one).
+  coverageMembers?: Record<
+    string,
+    { variableId: string; confidence: number; optionLabel?: string; groupId?: string }[]
+  >;
+}
+
+export interface CohortCoverage {
+  cohort: string;
+  present: string[];
+  missing: string[]; // REQUIRED components this cohort lacks
+  computable: boolean;
+}
+
+export interface CompositeFeasibility {
+  /**
+   * The verdict to SHOW. `indeterminate` is the web layer's fourth value (see
+   * `backend/composite.py::presentation_verdict`): core returns `infeasible` both when required components
+   * were looked for and not found AND when there was nothing to check at all, and only the first of those
+   * is a finding. Anything unrecognized resolves here too — never to the negative claim.
+   */
+  verdict: "full" | "partial" | "infeasible" | "indeterminate";
+  /** Core's own verdict, kept so the normalization above is inspectable rather than silent. */
+  coreVerdict?: string;
+  nRequired: number;
+  nRequiredMatched: number;
+  matched: string[];
+  missing: string[];
+  needsReview: string[]; // matched, but the coding needs a human decision
+  computableCohorts: string[];
+  perCohort: CohortCoverage[];
+  caveats: string[];
+}
+
+export interface DerivationStep {
+  order: number;
+  kind: "code_component" | "combine" | "threshold";
+  description: string;
+  expression: string;
+  component: string;
+  conceptId: string | null;
+  needsReview: boolean;
+}
+
+export interface CompositeSpec {
+  definition: ScoreDefinition;
+  matches: ComponentMatch[];
+  feasibility: CompositeFeasibility;
+  derivation: DerivationStep[];
+  units: string;
+  validationRules: string[];
+  // Telemetry the panel shows so a derivation's cost is visible: 2 calls for a first derivation,
+  // 0 for a fully-pinned re-derive.
+  nConceptsIndexed?: number;
+  callsMade?: number;
+  sourceKind?: "paste" | "url" | "repo" | "pdf" | "definition" | "declaration";
+  /** What the call that produced this spec was billed, in USD (08-28 1f) — the actual, beside the estimate. */
+  billedUsd?: number;
+}
+
+/**
+ * Gate 1's score SUGGESTIONS (08-28 Decision 6) — `GET /jobs/{id}/score/suggestions`, the free half of the match.
+ *
+ * Retrieval only, no judge, $0: per declared component, the Gate 1 groups its search reached, each scored by the
+ * DENSE COSINE of its best-matching member (`scoreKind`), with core's calibrated cut-off (`threshold`). NOT a
+ * verdict and not the judge's confidence — the verdict is the Gate 4 match. `scored: false` (no dense encoder)
+ * means nothing is suggested, and `reason` says why.
+ */
+/**
+ * The shared demo's shipped declared score (`backend/demos/score.json`): the `composite_swap` rows the score panel
+ * would have written (a BASELINE the guest starts from, never counted as their edit) and Gate 1's free hints for them.
+ */
+export interface DemoScore {
+  declaration: Record<string, unknown>[];
+  suggestions: ScoreSuggestions | null;
+}
+
+export interface ScoreSuggestions {
+  scored: boolean;
+  scoreKind: "dense_cosine";
+  threshold: number;
+  reason: string;
+  billedUsd: number;
+  scores: {
+    scoreName: string;
+    nVariablesIndexed: number;
+    components: {
+      component: string;
+      groups: { groupId: string; score: number; bestMember: string; bestOption?: string }[];
+    }[];
+  }[];
+}
+
 export interface DictSpec {
   filename: string;
   cohortName: string;
   columnRoles: Record<string, string>;
 }
 
-// One selectable model in the "New Run" picker. The catalog comes from the LiteLLM proxy's
-// GET /model/info when a proxy is configured, else a built-in fallback list (see api.listModels).
+// One model in the "New Run" picker, from GET /api/harmonize/models (see api.listModels). The list is core's
+// registry (`ddharmon.llm.models`) when the server's core has one, else the UI's fallback list; with a LiteLLM
+// proxy configured the ids are the proxy's, each marked validated from that same list.
 export interface ModelInfo {
   id: string; // the model tag the engine routes on (e.g. "claude-sonnet-4-6", "gemini/gemini-1.5-pro")
   provider: string; // "anthropic" | "openai" | "gemini" | "local" | "other"
   label: string; // human-facing label for the dropdown
+  validated: boolean; // ddharmon's prompts and benchmarks were validated against it — only these are selectable
+}
+
+// The picker's whole list: the models, which one a new run starts on, and where the list came from.
+export interface ModelCatalog {
+  models: ModelInfo[];
+  default: string; // the id a new run is pre-set to (validated, and one of `models`)
+  source: string; // "core" | "fallback" | "proxy"
 }
 
 export interface RunConfig {
@@ -287,6 +888,29 @@ export interface RunConfig {
   genTransformSpecs: boolean;
   // Generate "analysis ideas" during the run (one extra LLM pass, same model/provider/key). No-op in preview.
   suggestAnalysisIdeas: boolean;
+  /**
+   * The opt-in concept-match gate (STGD-16), default off.
+   *
+   * The backend has read this since 08-11 (`backend/app.py`: `"concept_gate": bool(cfg.get("conceptGate",
+   * False))`) — the field was simply missing from this type, so a caller setting it had to cast. Declared
+   * here so Setup's opt-in reaches the run as a typed field rather than through an `as RunConfig`.
+   */
+  conceptGate?: boolean;
+  /**
+   * SERVED config key: permission for `/readjudicate` to spend on a re-split the reviewer names at Gate 1.
+   *
+   * The server records it TRUE for every new run (final review round 1) — the create payload has no field for it
+   * any more (the old `allowReadjudication` opt-in and Setup's checkbox are gone). Only a run created before then
+   * can carry `false`, and Gate 1 then shows the honest "not enabled for this run" state. Read this on
+   * `JobResult.config`.
+   */
+  readjudication?: boolean;
+  /**
+   * How the run's gates are committed (08-30): `guided` (the default — every gate waits for Continue) or `auto`
+   * (Full auto — the server commits each gate with the pipeline's own proposals and goes on to Gate 4). Sent only
+   * for Full auto, so a guided Start's payload is exactly what it was. Persisted as `review_mode`.
+   */
+  reviewMode?: ReviewMode;
   displayName?: string;
   // advanced passthrough knobs (optional; the engine auto-scales min_cluster_size from corpus size when
   // omitted, and falls back to harmonize_leanb's own defaults for the rest)
@@ -301,7 +925,14 @@ export interface RunConfig {
   estCohorts?: number;
 }
 
-export type ExportFormat = "eitl_tsv" | "records_json" | "decisions_csv" | "notebook_py" | "notebook_r";
+export type ExportFormat =
+  | "eitl_tsv"
+  | "records_json"
+  | "decisions_csv"
+  | "notebook_py"
+  | "notebook_r"
+  // The declared score's verdict + recipe (08-28 1f) — offered only on a run that carries a score.
+  | "score_json";
 
 // Precomputed demo runs (loaded without spending API credits).
 export interface DemoDataset {
@@ -317,10 +948,16 @@ export interface DemoCombo {
   label: string;
   description?: string;
   available: boolean;
+  /** A STAGED demo (08-30): a pinned Full-auto run parked at Gate 4 that a guest walks from Gate 1. */
+  staged?: boolean;
 }
 export interface DemosResponse {
   datasets: DemoDataset[];
   combos: DemoCombo[];
+  // ddharmon core version the demo snapshots were built with (stamped by scripts/build_demos.py). Shown on the
+  // demo page so users know which release the frozen demo reflects — prod lags dev, so its demo may predate
+  // features already live on dev.ddharmon.io.
+  coreVersion?: string;
 }
 
 // load_dictionary column roles the UI lets you map (value = source column).
@@ -351,20 +988,32 @@ export const ROLE_FORMAT: Partial<Record<ColumnRole, string>> = {
 };
 
 // Per-role requirement tier — derived from the pipeline's REAL contract, not a hardcoded star:
-//  - "meaning": at least one meaning-bearing field is required. The loader tries description →
-//    short_label → variable_name and skips the row if none carries usable text, so the semantic group
-//    (not any single field) is the hard requirement. These carry the primary group required marker.
+//  - "meaning": the one role that satisfies the mapping minimum ON ITS OWN. The minimum itself is NOT
+//    decided here: it is `REQUIRED_ROLE_GROUPS` in `lib/dictionary.ts` (mirrored from the backend and pinned
+//    to core's loader), and every gate reads that. question_text is deliberately NOT marked (08-28): core's
+//    loader describes a row from description → short_label → the row's name and skips a row with none, so
+//    question_text alone loads zero variables — it counts only beside a name or a description. variable_name
+//    alone does load (the name becomes the description) but carries the least meaning, so it is unmarked too.
 //  - "conditional": required only for a specific downstream output — value_encoding is the HARD input
 //    for CATEGORICAL transform specs (an empty value_set ⇒ no recode spec).
 //  - "recommended": improves output but never blocks — units let numeric unit specs resolve; when it's
 //    absent the specs are still generated, just flagged needs_units.
-// variable_name is intentionally UNMARKED: the pipeline auto-synthesizes a synthetic row id (_ROW_nnnn)
-// when it's unmapped, so it's optional. data_type and the advanced roles are optional too.
+// data_type and the advanced roles are optional.
 export const ROLE_REQUIREMENT: Partial<Record<ColumnRole, "meaning" | "conditional" | "recommended">> = {
-  question_text: "meaning",
   description: "meaning",
   value_encoding: "conditional",
   units: "recommended",
+};
+
+// Display names for the providers the model catalogue can return. Shared because two screens now render a
+// provider picker (the New Run form and Setup), and a provider spelled "anthropic" in one place and
+// "Anthropic" in the other reads as two different things.
+export const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  gemini: "Google Gemini",
+  local: "Local / on-prem",
+  other: "Other",
 };
 
 // Hover-help for each mappable role — what to point this column at, and why it matters.
@@ -389,114 +1038,32 @@ export const ROLE_HELP: Record<ColumnRole, string> = {
     "An existing ontology/standard code for the variable, if already annotated (e.g. LOINC, SNOMED, a CDE tinyId).",
 };
 
-// Rough LLM-cost estimate for a run. Anchored on an observed run: ~$1.45 (batch, Sonnet) over ~7,451
-// fields ⇒ ~$0.0002/field. Cost is ~linear in total fields; split+assign (≈77% of it) grow with cohort
-// count, so a small cross-cohort multiplier is applied. Batch ≈ 50% of sync; preview uses no LLM.
-const PER_FIELD_BATCH_USD = 0.0002;
-export interface CostEstimate {
-  low: number;
-  mid: number;
-  high: number;
-  free: boolean;
-}
-export function estimateRunCost(totalFields: number, nCohorts: number, mode: RunMode): CostEstimate {
-  if (mode === "preview" || totalFields <= 0) return { low: 0, mid: 0, high: 0, free: true };
-  const modeFactor = mode === "sync" ? 2 : 1; // batch is ~half of sync
-  const cohortFactor = 1 + 0.08 * Math.max(0, nCohorts - 1); // cross-cohort assign work grows with cohorts
-  const mid = totalFields * PER_FIELD_BATCH_USD * modeFactor * cohortFactor;
-  return { low: mid * 0.6, mid, high: mid * 1.6, free: false };
-}
-export function formatUsd(x: number): string {
-  if (x === 0) return "$0";
-  if (x < 0.01) return "<$0.01";
-  if (x < 1) return `$${x.toFixed(2)}`;
-  return `$${x.toFixed(x < 10 ? 2 : 0)}`;
-}
-
-// Per-stage cost shares of the LLM total, from an observed run: split+assign ≈77%, gen-ideal ≈7%,
-// spec-gen ≈15% (embedding/clustering are local → $0). Used for the itemized estimate.
-const STAGE_SHARES = { ideal: 0.07, splitAssign: 0.77, specgen: 0.15 };
-// "Analysis ideas" is ONE LLM pass over the concept digest (not per-field), so it's a small flat add on top
-// of the run — independent of corpus size and of batch/sync (it always runs synchronously).
-const ANALYSIS_IDEAS_USD = 0.05;
-export interface CostLine {
-  label: string;
-  cost: number;
-  note?: string;
-}
-export interface CostBreakdown {
-  free: boolean;
-  lines: CostLine[];
-  total: CostEstimate;
-  batchSavings: number; // vs running the same in sync mode (0 unless mode is batch)
-}
-export function estimateRunCostBreakdown(
-  totalFields: number,
-  nCohorts: number,
-  mode: RunMode,
-  genSpecs: boolean,
-  suggestIdeas = false,
-): CostBreakdown {
-  if (mode === "preview" || totalFields <= 0) {
-    return { free: true, lines: [], total: { low: 0, mid: 0, high: 0, free: true }, batchSavings: 0 };
-  }
-  const cohortFactor = 1 + 0.08 * Math.max(0, nCohorts - 1);
-  const baseBatch = totalFields * PER_FIELD_BATCH_USD * cohortFactor; // full batch run, all stages
-  const modeFactor = mode === "sync" ? 2 : 1; // batch ≈ ½ sync
-  const line = (share: number) => baseBatch * share * modeFactor;
-  const lines: CostLine[] = [
-    { label: "Embedding & clustering", cost: 0, note: "local — no API" },
-    { label: "Generate ideal CDEs", cost: line(STAGE_SHARES.ideal) },
-    { label: "Split + assign to CDEs", cost: line(STAGE_SHARES.splitAssign) },
-  ];
-  if (genSpecs) lines.push({ label: "Transform spec-gen", cost: line(STAGE_SHARES.specgen) });
-  if (suggestIdeas) lines.push({ label: "Analysis ideas", cost: ANALYSIS_IDEAS_USD, note: "one LLM pass" });
-  const mid = lines.reduce((s, l) => s + l.cost, 0);
-  return {
-    free: false,
-    lines,
-    total: { low: mid * 0.6, mid, high: mid * 1.6, free: false },
-    batchSavings: mode === "batch" ? mid : 0, // sync would cost ~2×, so batch saves ≈ mid
-  };
-}
-
-// Fraction of a run's total LLM cost already committed by the time it is IN a given phase — i.e. what a
-// "keep" stop (finish the current stage, skip the rest) would still be billed. Local stages (loading/
-// embedding/clustering) are free; the LLM stages accrue in order (from STAGE_SHARES: gen-ideal ≈7%, then
-// split+assign ≈77% split across splitting→assigning, spec-gen ≈15%). Anything past the current stage is
-// avoided. Keys mirror the backend phase labels.
-const STOP_COMMITTED_BY_PHASE: Record<string, number> = {
-  loading: 0,
-  embedding: 0,
-  clustering: 0,
-  generating: 0.07, // gen-ideal done
-  splitting: 0.3, // partway through split+assign
-  assigning: 0.84, // split+assign essentially done
-  gencde: 0.85, // GenCDE synthesis (novels) — most cost committed
-  specs: 1, // transform spec-gen is the last paid stage
-  complete: 1,
-};
-
-export interface StopCostSplit {
-  committed: number; // ≈ USD already committed this run (billed even on a "keep" stop)
-  avoided: number; // ≈ USD a stop-now avoids (the skipped downstream stages)
-  total: number; // ≈ USD the full run would cost
-  hasEstimate: boolean; // false when the run carries no corpus size (older run / API caller) → show qualitative copy
-}
-
-// Price a mid-run stop for the Stop dialog: how much is already committed vs. avoided by stopping in `phase`.
-// Reads the corpus size the New-Run form persisted onto the run's config (est_fields/est_cohorts, snake_case)
-// and the run_mode. A preview run (or a run with no stored counts) yields total 0 / hasEstimate=false, so the
-// dialog falls back to qualitative wording rather than a bogus "$0".
-export function stopCostSplit(config: Record<string, unknown>, phase: string): StopCostSplit {
-  const estFields = typeof config.est_fields === "number" ? config.est_fields : 0;
-  const estCohorts = typeof config.est_cohorts === "number" ? config.est_cohorts : 0;
-  const runMode = (typeof config.run_mode === "string" ? config.run_mode : "batch") as RunMode;
-  const total = estFields > 0 ? estimateRunCost(estFields, estCohorts, runMode).mid : 0;
-  const frac = STOP_COMMITTED_BY_PHASE[phase] ?? 0.5; // unknown mid-run phase: assume ~half committed
-  const committed = total * frac;
-  return { committed, avoided: Math.max(0, total - committed), total, hasEstimate: estFields > 0 && total > 0 };
-}
+// The run COST estimator lives in `lib/estimate.ts` and is re-exported here so every existing import
+// keeps working. It moved out for one reason: R8 — "never quote a cost lower than what will be charged" —
+// is arithmetic, and arithmetic should be assertable without rendering a page. See that module for the
+// price basis, the per-gate spans (UI-SPEC 0.1) and why the coherence line is added rather than carved out
+// of the existing shares. The POST-run `result.cost` supersedes every number it produces.
+export {
+  ANALYSIS_IDEAS_USD,
+  COHERENCE_MIN_MEMBERS,
+  GATE_LEDGER_KEYS,
+  PER_FIELD_BATCH_USD,
+  STAGE_SHARES,
+  estimateRunCost,
+  estimateRunCostBreakdown,
+  formatUsd,
+  judgeEligibleGroups,
+  realizedSpendByGate,
+  stopCostSplit,
+} from "@/lib/estimate";
+export type {
+  CostBreakdown,
+  CostEstimate,
+  CostLine,
+  GateForecast,
+  RealizedSpend,
+  StopCostSplit,
+} from "@/lib/estimate";
 
 // Rough WALL-CLOCK estimate for a run — the time analog of estimateRunCost, and the SAME model used for
 // both the pre-run estimate (New Run form) and the live ETA (run view). Much rougher than cost: embedding
@@ -507,13 +1074,39 @@ export function stopCostSplit(config: Record<string, unknown>, phase: string): S
 const LOCAL_BASE_SECS = 15; // fixed model-load + setup before any per-field work
 const LOCAL_PER_FIELD_SECS = 0.03; // embedding + UMAP/HDBSCAN, per field
 const SYNC_PER_FIELD_SECS = 0.5; // sequential LLM calls (ideal + split + assign + specs), per field
-const BATCH_QUEUE_SECS = 300; // typical Batch API turnaround floor — highly variable (see `note`)
+// BATCH QUEUE, modelled on the provider's DOCUMENTED behaviour rather than on a guessed floor.
+// Most batches complete within an hour; the provider permits up to 24. Recalibrated 2026-08-26 — the
+// previous model was a single 300s floor with high = mid x 3, which capped a batch estimate at ~17 min
+// at 1,000 variables and needed ~40,000 variables (more than 3x our largest bundled cohort) to reach
+// even two hours. Two things were wrong with that. It contradicted the run-mode label's own "can take
+// hours", and above roughly 500 variables it quoted batch as FASTER than sync — inverting the real
+// tradeoff, which is that batch buys cost with latency. Under-quoting a duration is the same class of
+// error as under-quoting a cost, and this phase already forbids the latter.
+const BATCH_QUEUE_LOW_SECS = 300; // a quiet queue
+const BATCH_QUEUE_MID_SECS = 3600; // "most batches complete within an hour"
+const BATCH_QUEUE_HIGH_SECS = 86400; // the documented ceiling — a real bound, not a pessimistic guess
+
+/** One estimated span, in seconds. */
+export interface TimeSpan {
+  low: number;
+  mid: number;
+  high: number;
+}
 
 export interface TimeEstimate {
   low: number; // seconds
   mid: number;
   high: number;
   note?: string; // caveat to show alongside (e.g. batch queue variance)
+  /**
+   * Present only when a provider queue sits in front of the work — i.e. batch.
+   *
+   * The two terms have wildly different uncertainties: the work is minutes and predictable from the
+   * corpus, the queue is hours and not ours to predict at all. Blending them into one span hides which
+   * half is uncertain, so a surface that has room should render these two rather than `low`-`high`.
+   * `low`/`mid`/`high` remain the sum, for callers with no room to itemise.
+   */
+  parts?: { processing: TimeSpan; queue: TimeSpan };
 }
 export function estimateRunTime(totalFields: number, nCohorts: number, mode: RunMode): TimeEstimate {
   if (totalFields <= 0) return { low: 0, mid: 0, high: 0 };
@@ -524,9 +1117,26 @@ export function estimateRunTime(totalFields: number, nCohorts: number, mode: Run
     const mid = local + totalFields * SYNC_PER_FIELD_SECS * cohortFactor;
     return { low: mid * 0.6, mid, high: mid * 1.8 };
   }
-  // batch: local work + Batch API queue turnaround (the queue dominates and varies widely).
-  const mid = local + BATCH_QUEUE_SECS + totalFields * 0.05 * cohortFactor;
-  return { low: mid * 0.5, mid, high: mid * 3, note: "Batch API queue time varies widely" };
+  // batch: local work + Batch API queue turnaround. The queue dominates and varies widely, so it is
+  // returned as its OWN span rather than folded into one blended figure.
+  const processingMid = local + totalFields * 0.05 * cohortFactor;
+  const processing: TimeSpan = {
+    low: processingMid * 0.6,
+    mid: processingMid,
+    high: processingMid * 1.8,
+  };
+  const queue: TimeSpan = {
+    low: BATCH_QUEUE_LOW_SECS,
+    mid: BATCH_QUEUE_MID_SECS,
+    high: BATCH_QUEUE_HIGH_SECS,
+  };
+  return {
+    low: processing.low + queue.low,
+    mid: processing.mid + queue.mid,
+    high: processing.high + queue.high,
+    note: "the queue, not the work, is what makes a batch run long",
+    parts: { processing, queue },
+  };
 }
 
 /** Compact human duration: "45s", "6 min", "1h 20m". */
@@ -552,8 +1162,8 @@ export function formatDurationRange(t: TimeEstimate): string {
 export const VERDICT_STYLES: Record<string, string> = {
   adopt: "bg-success-bg text-success border-success/30",
   refine: "bg-warning-bg text-warning border-warning/30",
-  novel: "bg-ph-navy/10 text-ph-navy border-ph-navy/30",
-  unclassified: "bg-neutral-100 text-neutral-600 border-neutral-300",
+  novel: "bg-surface-info text-accent-on-raised border-rule-info",
+  unclassified: "bg-surface-inset-strong text-on-raised border-rule-control-on-raised",
 };
 
 // ── concept display label ────────────────────────────────────────────────────────────────────
@@ -574,16 +1184,50 @@ export function isRawConceptId(
   return /^[0-9a-f]{6,}#g\d+$/i.test(c) || /^[0-9a-f]{12,}$/i.test(c);
 }
 
+// ── the split's leftover group ───────────────────────────────────────────────────────────────
+// Core's split names the groups the model returned and SWEEPS every member it did not place into one more
+// group with `concept: ""`, appended AFTER the model's groups (core `leanb.prepare_group_assign`, the residual-
+// completion block). Group ids are `<clusterId>#g<index>` in that order, so the sweep always sits at index >= 1.
+// A cluster with NO usable split falls back to ONE group over every member — always `#g0`, alone. The model
+// cannot return an unnamed group of its own: `concept` is a required field of the forced split tool. So an
+// unnamed group past index 0 is the leftover, and an unnamed `#g0` is the whole cluster.
+//
+// Why the difference matters: every group of a cluster carries the CLUSTER's ideal description (`idealCde`).
+// For the whole-cluster group that is an accurate title; for the leftover it describes concepts that sit in
+// its sibling groups, not in it.
+
+/** The split's own index for a group — the `<n>` of core's `<clusterId>#g<n>` id — or null when the id is not
+ *  in that shape (a reviewer's own `rev:` group). A re-split child is `<parent group id>#g<n>`: the LAST index
+ *  is the split that produced it, so that is the one read. */
+export function splitGroupIndex(groupId: string | null | undefined): number | null {
+  const m = /#g(\d+)$/.exec(groupId ?? "");
+  return m ? Number(m[1]) : null;
+}
+
+/** True when an unnamed group is the split's LEFTOVER rather than a cluster the split never divided. The
+ *  caller decides "unnamed" by its own rule; this reads only where the group sits in its split. */
+export function isSplitLeftover(groupId: string | null | undefined): boolean {
+  return (splitGroupIndex(groupId) ?? 0) >= 1;
+}
+
+/** An unnamed split leftover's title: what it is, never its cluster's ideal. `nMembers` = the group's size. */
+export function leftoverLabel(nMembers: number): string {
+  return `Not named by the split — ${nMembers} ${nMembers === 1 ? "variable" : "variables"} the model left over`;
+}
+
 /** The human-readable label for a concept card. When `concept` is a leaked raw id (or empty), fall back to
- *  the GenCDE title, then the concept-summary's first phrase, then a variable-count placeholder — so the UI
- *  never prints a hash. Otherwise returns `concept` untouched. */
+ *  the GenCDE title, then — for a split leftover — the leftover label, else the concept-summary's first phrase,
+ *  then a variable-count placeholder — so the UI never prints a hash. Otherwise returns `concept` untouched. */
 export function conceptLabel(
   r: Pick<UIRecord, "concept" | "clusterId" | "groupId" | "gencde" | "idealCde" | "nMembers">,
 ): string {
   const c = (r.concept ?? "").trim();
   if (!isRawConceptId(c, { clusterId: r.clusterId, groupId: r.groupId })) return c;
+  // The group's OWN generated element, minted from its own members — accurate for a leftover too.
   const gTitle = (r.gencde?.title || r.gencde?.preferredName || "").trim();
   if (gTitle) return gTitle;
+  // The concept summary below is the CLUSTER's; a leftover is only part of that cluster.
+  if (isSplitLeftover(r.groupId)) return leftoverLabel(r.nMembers ?? 0);
   const ideal = (r.idealCde ?? "").trim();
   if (ideal) {
     const phrase = ideal.split(/[.;\n]/)[0].trim();

@@ -1,0 +1,265 @@
+/**
+ * The decisions Setup makes about a FILE, as plain functions (08-13 Task 1).
+ *
+ * Extracted from the screen for the same reason the estimator was: these are the two claims Setup makes
+ * that are worth checking without a browser — "this file would silently lose variables" and "this file is
+ * not a data dictionary at all". Both are the kind of rule that gets weakened by accident, and a rule that
+ * can only be exercised by driving a page is a rule that stops being exercised.
+ *
+ * Nothing here touches React, and nothing here uploads: every function is a pure read of already-parsed
+ * rows. That is what makes the participant-level refusal a REFUSAL rather than a server round trip.
+ */
+
+/** One parsed dictionary row: source column name -> cell value, as Papa hands it back. */
+export type DictRow = Record<string, string>;
+
+// --- the duplicate-variable-name hazard ---------------------------------------------------------------
+
+export interface NameCheck {
+  /** False when no column is mapped to the variable name — then the unique count is UNKNOWN, not equal. */
+  checkable: boolean;
+  rowCount: number;
+  /** Distinct non-empty names, or null when the check cannot be run at all. */
+  uniqueNameCount: number | null;
+  /** Rows whose name cell is empty. Counted separately: they are unkeyable, not "one repeated name". */
+  unnamed: number;
+  /** How many rows a repeated name would cost, i.e. rows − distinct names − unnamed. */
+  dropped: number;
+  fired: boolean;
+  /** The names that repeat, so the message can point at them rather than at a number. */
+  repeated: string[];
+}
+
+/**
+ * Rows against distinct variable names — the project's longest-standing silent data loss.
+ *
+ * `load_dictionary` keys on the variable-name column and LAST-WINS on a repeat, so a dictionary with a
+ * duplicated name loses rows with no warning anywhere: the run completes, the counts look plausible, and
+ * the missing variables are only discovered by someone counting by hand. That has cost real debugging time
+ * (see CLAUDE.md §Cohorts), which is why this is surfaced BEFORE the run rather than reported after it.
+ *
+ * THREE OUTCOMES, kept distinct on purpose:
+ *  - not checkable — no variable-name column is mapped, so the unique count is `null`. Reporting it as
+ *    equal to the row count would be inventing the very number we do not have.
+ *  - clean — both figures render anyway. A check that only appears when it fires is indistinguishable
+ *    from a check that was never run.
+ *  - fired — the names that repeat are named, because "some name repeats" is not actionable.
+ *
+ * An EMPTY name is not a repeat. Two blank cells are two rows the loader cannot key at all; folding them
+ * into a single repeated `""` would report one lost row where there are two.
+ */
+export function nameCheck(rows: DictRow[], variableNameColumn: string | undefined): NameCheck {
+  const rowCount = rows.length;
+  if (!variableNameColumn) {
+    return {
+      checkable: false,
+      rowCount,
+      uniqueNameCount: null,
+      unnamed: 0,
+      dropped: 0,
+      fired: false,
+      repeated: [],
+    };
+  }
+  const seen = new Map<string, number>();
+  let unnamed = 0;
+  for (const row of rows) {
+    const name = (row[variableNameColumn] ?? "").trim();
+    if (!name) {
+      unnamed += 1;
+      continue;
+    }
+    seen.set(name, (seen.get(name) ?? 0) + 1);
+  }
+  const repeated = [...seen.entries()].filter(([, n]) => n > 1).map(([name]) => name);
+  const uniqueNameCount = seen.size;
+  const dropped = rowCount - uniqueNameCount - unnamed;
+  return {
+    checkable: true,
+    rowCount,
+    uniqueNameCount,
+    unnamed,
+    dropped: Math.max(0, dropped),
+    fired: repeated.length > 0,
+    repeated,
+  };
+}
+
+// --- the participant-level refusal --------------------------------------------------------------------
+
+/**
+ * Headers that name a participant identifier.
+ *
+ * MIRRORS `backend/app.py::_PARTICIPANT_ID_HEADERS`, deliberately and exactly — the client refusal exists
+ * so the user does not wait on a round trip to be told their file is the wrong kind, not to enforce a
+ * DIFFERENT rule than the server. `tests/test_content_drift.py::test_participant_id_headers_agree` fails
+ * if the two lists diverge, because a client list that has quietly grown weaker than the server's is worse
+ * than no client check: it looks like coverage.
+ *
+ * Bare `id` is ABSENT on purpose. It is the one name a dictionary plausibly uses for its own key, so
+ * including it would refuse real dictionaries.
+ */
+export const PARTICIPANT_ID_HEADERS: ReadonlySet<string> = new Set([
+  "eid",
+  "usubjid",
+  "subjid",
+  "person_id",
+  "patient_id",
+  "sample_id",
+  "subject_id",
+  "record_id",
+  "participant_id",
+  "respondent_id",
+]);
+
+/** Fold a header for lookup: non-alphanumerics to `_`, lowercased, trimmed of edge separators. */
+export function normalizeHeader(name: string): string {
+  return String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+/**
+ * The column that makes this file look like participant records, or null.
+ *
+ * TWO conditions must BOTH hold, and the reason is that either one alone has a real false positive:
+ *
+ *  1. a header naming a participant identifier, and
+ *  2. that column's values unique across the sampled rows.
+ *
+ * Condition 1 alone refuses a dictionary that DESCRIBES a participant id — a row whose variable name is
+ * `participant_id`, which is most real dictionaries. Condition 2 alone refuses every dictionary, since a
+ * variable-name column is unique by construction.
+ *
+ * The user's own column mapping is deliberately NOT an exemption. Someone uploading participant rows by
+ * mistake maps the identifier column as the variable name, because that is what the naive mapping does —
+ * so exempting declared columns would open the hole exactly where the mistake lives.
+ *
+ * Fewer than two rows proves nothing about uniqueness, so nothing is refused.
+ */
+export function participantLevelColumn(headers: string[], rows: DictRow[], sample = 40): string | null {
+  const suspects = headers.filter((h) => PARTICIPANT_ID_HEADERS.has(normalizeHeader(h)));
+  if (!suspects.length) return null;
+  const window = rows.slice(0, sample);
+  if (window.length < 2) return null;
+  for (const column of suspects) {
+    const values = window.map((r) => (r[column] ?? "").trim());
+    if (values.some((v) => !v)) continue; // a blank is not a per-row-unique identifier
+    if (new Set(values).size === values.length) return column;
+  }
+  return null;
+}
+
+// --- the column -> role mapping -----------------------------------------------------------------------
+
+/**
+ * Assign `role` to `column` in a column-major mapping, keeping every role SINGLE-VALUED per file.
+ *
+ * The mapping is stored role -> column (which is what the run config wants), but Setup edits it
+ * column-major: one table row per source column, choosing what that column IS. So assigning a role has to
+ * take it off whichever column held it — two columns cannot both be `description`, and a mapping that
+ * cannot be expressed should not be reachable by clicking.
+ *
+ * An empty role CLEARS the column: the entry is removed rather than set to a sentinel, so the config that
+ * goes to the server has no placeholder values in it.
+ */
+export function assignRole(
+  roles: Record<string, string>,
+  column: string,
+  role: string,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [existingRole, existingColumn] of Object.entries(roles)) {
+    if (existingColumn === column) continue; // this column is being re-described
+    if (existingRole === role) continue; // the role is moving to `column`
+    next[existingRole] = existingColumn;
+  }
+  if (role) next[role] = column;
+  return next;
+}
+
+/** The role a given source column currently plays, or "" when it plays none. */
+export function roleOf(roles: Record<string, string>, column: string): string {
+  return Object.entries(roles).find(([, c]) => c === column)?.[0] ?? "";
+}
+
+/**
+ * The same mapping, narrowed to what the column-major table can SHOW — so what is shown is what is sent.
+ *
+ * The table renders one row per source column with ONE role each (`roleOf` takes the first). A remembered
+ * mapping can hold more than that: the header-signature cache folds case, so it can name `Unit` for a file
+ * whose column is `unit`; and the role-major New Run form lets two roles point at one column. Either way the
+ * table showed part of the mapping and Start POSTed all of it (08-28, reproduced in `setup.spec.ts`), and core
+ * cannot honour two roles on one column anyway — its column map keeps only the later one.
+ *
+ * So: a role whose column is not a header is re-pointed at the header it case-folds to, or dropped when there is
+ * none; and a column keeps only its FIRST role, the one the table displays. A mapping that already fits is
+ * returned unchanged.
+ */
+export function representableRoles(roles: Record<string, string>, headers: string[]): Record<string, string> {
+  const exact = new Set(headers);
+  const byFolded = new Map<string, string>();
+  for (const h of headers) {
+    const k = h.trim().toLowerCase();
+    if (!byFolded.has(k)) byFolded.set(k, h);
+  }
+  const out: Record<string, string> = {};
+  const taken = new Set<string>();
+  for (const [role, column] of Object.entries(roles)) {
+    if (!column) continue;
+    const header = exact.has(column) ? column : byFolded.get(column.trim().toLowerCase());
+    if (header === undefined || taken.has(header)) continue;
+    taken.add(header);
+    out[role] = header;
+  }
+  return out;
+}
+
+// --- the column-role requirement ----------------------------------------------------------------------
+
+/**
+ * What a mapping must include for core to load ANY variable from the file (08-28). Every group needs at least
+ * one of its roles mapped.
+ *
+ * MIRRORED, NOT RE-DERIVED: this is `REQUIRED_ROLE_GROUPS` in `backend/role_requirement.py`, and
+ * `tests/test_role_requirement.py` pins the two to one list and the backend's to core's real loader over every
+ * combination of the text roles. Setup's blocker, the mapping table's flag and the New Run form all read it,
+ * where they used to carry three hand copies that each accepted `question_text` alone.
+ *
+ *  1. core's `load_dictionary` refuses a mapping with none of the first group;
+ *  2. its parser describes each row from description → short_label → the row's name (variable_name → field_id
+ *     → a synthetic `_ROW_nnnnn` it refuses) and SKIPS a row it cannot describe. `question_text` is not in that
+ *     chain — a question-text-only mapping loads zero variables.
+ */
+export const REQUIRED_ROLE_GROUPS = [
+  ["variable_name", "description", "question_text"],
+  ["variable_name", "description", "short_label", "field_id"],
+] as const;
+
+/** The first requirement group with no role mapped, or null when the mapping is one core can load. */
+export function unmetRoleGroup(roles: Record<string, string>): readonly string[] | null {
+  for (const group of REQUIRED_ROLE_GROUPS) {
+    if (!group.some((r) => Boolean(roles[r]))) return group;
+  }
+  return null;
+}
+
+export const meetsRoleRequirement = (roles: Record<string, string>): boolean => unmetRoleGroup(roles) === null;
+
+/**
+ * The reviewer-facing reason a mapping is not enough, or null. One sentence per group, because the fix differs:
+ * nothing mapped wants any text at all; question_text alone wants something to describe each row with.
+ */
+export function roleRequirementReason(roles: Record<string, string>): string | null {
+  const group = unmetRoleGroup(roles);
+  if (group === null) return null;
+  if (group === REQUIRED_ROLE_GROUPS[0]) {
+    return "map at least one of variable_name, description or question_text, so the pipeline has text to match against common data elements.";
+  }
+  return (
+    "question_text alone loads no variables — the loader describes each row from description, variable_name, " +
+    "field_id or short_label and skips a row with none of them. Map description (or a variable name) as well."
+  );
+}

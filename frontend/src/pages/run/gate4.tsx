@@ -1,0 +1,416 @@
+import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link, useParams } from "wouter";
+import { AUTH_ENABLED, useAuthState } from "@/auth";
+import { GateShell } from "@/components/gate/GateShell";
+import { GuestAuthNotice } from "@/components/gate/SandboxBanner";
+import { useSandboxCount } from "@/hooks/use-sandbox-count";
+import { demoExportNote } from "@/lib/sandbox";
+import { ArtifactTile } from "@/components/gate/ArtifactTile";
+import { CommitBar } from "@/components/gate/CommitBar";
+import { DecisionLog } from "@/components/gate/DecisionLog";
+import { ExportFlows } from "@/components/gate/ExportFlows";
+import { Gate4ScorePanel } from "@/components/gate/Gate4ScorePanel";
+import { GateEmptyState } from "@/components/gate/GateEmptyState";
+import { NotAvailable } from "@/components/gate/NotAvailable";
+import { ReproducibilityInfo } from "@/components/gate/ReproducibilityInfo";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ArtifactPreviewBody } from "@/components/gate/ArtifactPreviewBody";
+import { NotebookPreview } from "@/components/gate/NotebookPreview";
+import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
+import { resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
+import { fetchExport, saveBlob } from "@/lib/api";
+import { analysisPathFor } from "@/lib/gate-routes";
+import { isParkedAt } from "@/lib/run-state";
+import { cn } from "@/lib/utils";
+import { zipStore } from "@/lib/zip";
+import {
+  NOT_AVAILABLE_GAPS,
+  REAL_ARTIFACTS,
+  type ArtifactState,
+  type NotebookLang,
+  type RealArtifact,
+  artifactPreview,
+  downloadLabel,
+  exportedRecords,
+  resolveFormat,
+  unassignedBreakdown,
+  verdictBreakdown,
+} from "@/lib/gate4";
+import { SCORE_ARTIFACT, declaredScores, scoreExport, specForScore } from "@/lib/score-match";
+import { shippedDeclaration } from "@/lib/demo-score";
+import type { CompositeSpec } from "@/types";
+
+/**
+ * Gate 4 — Export — the staged review flow's sixth and terminal screen (08-17, STGD-15 / R15).
+ *
+ * The reviewer chooses what leaves the tool, checks it before it leaves, and — for the first time — reads
+ * the decision trail that justifies it. It is the terminal half of the phase goal's "so that I can defend
+ * the mappings I export", and it is where the honest-absence rules bite hardest: FIVE export formats ship,
+ * the design draws more, and the difference is rendered as three "not available" tiles rather than quietly
+ * dropped (UI-SPEC §0.2, §9). It costs nothing — pure read and serialization.
+ *
+ * SCOPE (frontend-only, per the 2026-09-17 amendment): the export set with real previews, the three honest
+ * gaps and two limitations, the in-app decision log with the E3 revision-rate, the lifted reproducibility
+ * disclosure, and the terminal next-actions (analysis ideas, run again). No backend change.
+ */
+export default function Gate4Page() {
+  const { jobId = "" } = useParams<{ jobId: string }>();
+  const { jobState, cancel } = useHarmonizeStream(jobId, true, true);
+  const result = jobState?.result ?? null;
+  const records = result?.records ?? [];
+  const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
+  const coreVersion = jobState?.coreVersion;
+
+  // The decision log reads EVERY kind's decisions (`all`); the requested kind only names which sandbox key
+  // this hook writes, and Gate 4 writes none of them (artifact selection is ephemeral UI state, not a
+  // persisted gate decision — the `gate4_export_selection` kind is per-record inclusion, a different thing).
+  // On the shared demo the shipped declared score is the baseline (`lib/demo-score.ts`): Gate 4 shows that declaration
+  // and its shipped match, and a guest's own re-declaration on Gate 1 (held in the tab) wins over it.
+  const demoScore = jobState?.demoScore;
+  const pinnedRun = resolvePinned(jobState?.config);
+  const shippedRows = useMemo(() => shippedDeclaration(demoScore, pinnedRun), [demoScore, pinnedRun]);
+  const gate = useGateDecisions(jobId, "gate4_export_selection", {
+    pinned: pinnedRun,
+    baseline: shippedRows,
+  });
+
+  const [lang, setLang] = useState<NotebookLang>("py");
+  // Every ready artifact is selected by default: the terminal, free action is "take my work away", so the
+  // deliberate act is opting one OUT, not opting each one in.
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
+  const [preview, setPreview] = useState<RealArtifact | null>(null);
+
+  // THE DECLARED SCORE (08-28 1f, decision Q5): declared on Gate 1, matched HERE against the final records.
+  // The declaration is read from the decision index (every kind, `gate.all`) — a record on this screen, never
+  // written. A match is held locally the moment it returns and the run's stored composites are refetched.
+  const queryClient = useQueryClient();
+  const pinned = resolvePinned(jobState?.config);
+  const scores = useMemo(() => declaredScores(gate.all), [gate.all]);
+  const [matched, setMatched] = useState<Record<string, CompositeSpec>>({});
+  const composites = useMemo(
+    () => [...(jobState?.composites ?? []), ...Object.values(matched)],
+    [jobState?.composites, matched],
+  );
+  // The score file rides the export set only on a run that carries a score — declared (even unmatched: the
+  // file then says so) or derived. Otherwise the set is exactly the shipping four.
+  const artifacts = useMemo(
+    () => (scores.length > 0 || composites.length > 0 ? [...REAL_ARTIFACTS, SCORE_ARTIFACT] : REAL_ARTIFACTS),
+    [scores.length, composites.length],
+  );
+
+  // A finished run has produced every serialization; a run still streaming has not. There is no per-format
+  // build-failure signal for these five formats (they are serialization, not builds), so the page derives
+  // ready/generating from run state — the `failed` claim exists in `ArtifactTile` for when a signal appears.
+  const artifactState: ArtifactState = records.length > 0 ? "ready" : "generating";
+
+  const isSelected = (id: string) => artifactState === "ready" && !deselected.has(id);
+  const selectedArtifacts = useMemo(
+    () => artifacts.filter((a) => artifactState === "ready" && !deselected.has(a.id)),
+    [artifacts, deselected, artifactState],
+  );
+  const selectedCount = selectedArtifacts.length;
+
+  const toggle = (id: string) =>
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // ONE ZIP of the selected files (review round 8, Bhargav: "gate 4 exports should download as a zip not
+  // individual"). Each file is fetched from the export route — the same bytes a single download carried — and named
+  // inside the zip by the filename its tile shows, so what the reviewer read before clicking is what they unpack.
+  const [zipping, setZipping] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const download = async () => {
+    setZipping(true);
+    setDownloadError(null);
+    try {
+      const files = await Promise.all(
+        selectedArtifacts.map(async (a) => ({
+          name: filenameFor(a),
+          data: new Uint8Array(await (await fetchExport(jobId, resolveFormat(a.id, lang))).arrayBuffer()),
+        })),
+      );
+      const stem = jobId.slice(0, 8).replace(/[^A-Za-z0-9_-]/g, "") || "run";
+      saveBlob(new Blob([zipStore(files)], { type: "application/zip" }), `ddharmon-${stem}.zip`);
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setZipping(false);
+    }
+  };
+
+  // THE SHARED DEMO (08-18). A guest cannot download at all — the export route is not on the guest surface, so
+  // the bar says so specifically instead of handing them a 401 as a file. Anyone on the demo who holds edits is
+  // told the files leave them out: the previews below read this tab, the download reads the demo's own row.
+  const { isGuest } = useAuthState();
+  const guestLocked = AUTH_ENABLED && isGuest;
+  const held = useSandboxCount(jobId);
+  const exportNote = pinned === true ? demoExportNote(held) : null;
+
+  const breakdown = verdictBreakdown(result);
+  // F21: the variables no artifact carries, split by WHY — scoped out at Gate 1 is the reviewer's choice, not a
+  // concept the pipeline failed to form (live 6c66731c: "506 reached no concept", 497 of them scoped out).
+  const unassigned = unassignedBreakdown(
+    result,
+    jobState?.config as Record<string, unknown> | undefined,
+    gate.all.gate1_group_scope,
+  );
+  const unassignedCount = unassigned.scopedOut + unassigned.noConcept;
+  // The records every file carries — scope, export selection and names applied (`effective_records` on the server).
+  const exported = useMemo(
+    () => exportedRecords(result, jobState?.config as Record<string, unknown> | undefined, gate.all),
+    [result, jobState?.config, gate.all],
+  );
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const filenameFor = (a: RealArtifact) => (a.id === "notebook" ? `harmonization.${lang}.ipynb` : a.filename);
+  // What the drawer shows for the open preview: the score file is built here, the notebook is FETCHED by its own
+  // component (review round 8), and every other file is derived from the run (`artifactPreview`).
+  const previewBody = !preview
+    ? null
+    : preview.id === "score_json"
+      ? ({ kind: "code", text: JSON.stringify(scoreExport(scores, composites), null, 2) } as const)
+      : artifactPreview(preview.id, lang, result, jobState?.decisions, {
+          index: gate.all,
+          config: jobState?.config as Record<string, unknown> | undefined,
+          gatePosition: jobState?.gatePosition,
+        });
+
+  return (
+    <GateShell
+      gate="gate4"
+      jobId={jobId}
+      subhead="Downloading is free."
+      runName={jobState?.displayName}
+      costSoFar={costSoFar}
+      job={jobState}
+      onStop={cancel}
+      resumed={isParkedAt(jobState, "gate4")}
+    >
+      <div className="flex flex-col gap-6">
+        {/* Surface 1 — the lifted reproducibility disclosure. (The notebook language moved onto the notebook's tile.) */}
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <ReproducibilityInfo coreVersion={coreVersion} />
+        </div>
+
+        {/* The declared score, matched here (Q5) — before the export set, because the match is what fills the
+            score file's verdict and recipe. Absent when no score was declared. */}
+        {scores.map((score) => (
+          <Gate4ScorePanel
+            key={score.scoreName}
+            jobId={jobId}
+            score={score}
+            spec={specForScore(composites, score.scoreName)}
+            pinned={pinned === true}
+            records={records}
+            fieldIndex={result?.fieldIndex}
+            onMatched={(spec) => {
+              setMatched((prev) => ({ ...prev, [score.scoreName]: spec }));
+              void queryClient.invalidateQueries({ queryKey: ["harmonize-result", jobId] });
+            }}
+          />
+        ))}
+
+        {/* Where the exported variables go (review 2) — the run view's Sankey, drawn from the records the files
+            carry, above the files themselves: the summary of what is about to leave. */}
+        <ExportFlows records={exported} runHasRecords={records.length > 0} outsideCount={unassignedCount} />
+
+        {/* Surface 2 — what ships: the real artifacts, then the honest gaps. */}
+        <section className="flex flex-col gap-3" data-testid="export-set">
+          <h2 className="text-sm font-semibold text-on-field">What leaves the tool</h2>
+          {/* Said once for the set (round 5 sweep): every tile shares the run's state, so every tile used to say it. */}
+          {artifactState === "generating" && (
+            <p data-testid="artifacts-generating" className="text-xs text-on-field-muted">
+              The run is still producing these files — each becomes selectable once the run finishes producing it.
+            </p>
+          )}
+          {/* Two to a row (review round 3: "so much whitespace, i think we can half the width and have 2 columns"). */}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {artifacts.map((a) => (
+            <ArtifactTile
+              key={a.id}
+              slug={a.id}
+              name={a.name}
+              description={a.description}
+              filename={filenameFor(a)}
+              state={artifactState}
+              selected={isSelected(a.id)}
+              onToggle={() => toggle(a.id)}
+              onPreview={() => setPreview(a)}
+              assurance={
+                a.id === "notebook"
+                  ? "The notebook runs where your data already lives. Your data never enters ddharmon."
+                  : undefined
+              }
+              beside={
+                a.id === "notebook" ? (
+                  // Beside the filename it changes, so the effect of the toggle is right next to it.
+                  <div
+                    role="group"
+                    aria-label="Notebook language"
+                    data-testid="notebook-language"
+                    className="inline-flex rounded-inner border border-rule-on-raised p-0.5"
+                  >
+                    {(["py", "r"] as const).map((l) => (
+                      <button
+                        key={l}
+                        type="button"
+                        data-testid={`notebook-lang-${l}`}
+                        data-active={String(lang === l)}
+                        aria-pressed={lang === l}
+                        onClick={() => setLang(l)}
+                        className={cn(
+                          "rounded-inner px-2.5 py-0.5 text-xs font-semibold",
+                          lang === l ? "bg-surface-inset-strong text-on-raised" : "text-on-raised-muted hover:text-on-raised",
+                        )}
+                      >
+                        {l === "py" ? "Python" : "R"}
+                      </button>
+                    ))}
+                  </div>
+                ) : undefined
+              }
+            >
+              {a.id === "eitl_tsv" && (
+                // Surface 3 — the review campaign the EITL file produces, only when it is selected.
+                <div
+                  data-testid="review-campaigns"
+                  className="flex flex-col gap-1 border-t border-rule-on-raised pt-2 text-xs text-on-raised-muted"
+                >
+                  <p className="font-semibold text-on-raised">The review campaign this produces</p>
+                  <p>
+                    <span className="font-mono">{a.filename}</span> — {breakdown.total}{" "}
+                    {breakdown.total === 1 ? "concept" : "concepts"} for expert sign-off ({breakdown.adopt} adopt,{" "}
+                    {breakdown.refine} refine, {breakdown.novel} novel).
+                  </p>
+                </div>
+              )}
+            </ArtifactTile>
+          ))}
+
+          {NOT_AVAILABLE_GAPS.map((g) => (
+            <NotAvailable key={g.slug} slug={g.slug} thing={g.thing} claim="deferred">
+              {g.body}
+            </NotAvailable>
+          ))}
+          </div>
+        </section>
+
+        {/* The two stated limitations — notes, not hidden (UI-SPEC §0.2 "Explicitly OUT"). */}
+        <ul data-testid="export-limitations" className="flex flex-col gap-1 text-xs text-on-field-muted">
+          <li>Export is per format — there is no subsetting of records within a single format.</li>
+          <li>Review campaigns download as files and are uploaded to the expert-review app by hand.</li>
+        </ul>
+
+        {/* Adapt UnassignedRow — the no-concept population, made visible rather than silently omitted. */}
+        {unassignedCount > 0 && (
+          <p
+            data-testid="unassigned-summary"
+            data-no-concept={unassigned.noConcept}
+            data-scoped-out={unassigned.scopedOut}
+            className="text-xs text-on-field-muted"
+          >
+            {unassigned.noConcept > 0 && (
+              <>
+                <span className="font-semibold text-on-field">
+                  {plural(unassigned.noConcept, "variable", "variables")}
+                </span>{" "}
+                reached no concept.{" "}
+              </>
+            )}
+            {unassigned.scopedOut > 0 && (
+              <>
+                <span className="font-semibold text-on-field">
+                  {plural(unassigned.scopedOut, "variable was", "variables were")}
+                </span>{" "}
+                in groups you scoped out at Gate 1.{" "}
+              </>
+            )}
+            They are not represented in these artifacts and are not part of the mapping — they are listed on the
+            results view so the export never silently omits them.
+          </p>
+        )}
+
+        {/* Surface 4 — the in-app decision log, with the E3 revision rate. */}
+        <DecisionLog
+          index={gate.all}
+          result={result}
+          coreVersion={coreVersion}
+          config={jobState?.config as Record<string, unknown> | undefined}
+          verdicts={jobState?.decisions}
+        />
+
+        {/* Terminal next-actions: analysis ideas (Task 4, existing route) and run again (Task 5). */}
+        <div data-testid="gate4-next-actions" className="flex flex-wrap items-center gap-4 text-sm">
+          <Link
+            href={analysisPathFor(jobId, "gate4")}
+            data-testid="analysis-ideas-link"
+            className="font-semibold text-link-on-field underline underline-offset-2"
+          >
+            Explore analysis ideas for this run →
+          </Link>
+          <Link
+            href="/run/new/setup"
+            data-testid="rerun-action"
+            className="font-semibold text-link-on-field underline underline-offset-2"
+          >
+            Run again with new dictionaries →
+          </Link>
+        </div>
+
+        {selectedCount === 0 && (
+          <GateEmptyState heading="No artifacts selected" nextStep="Tick at least one artifact above to download.">
+            Nothing is currently selected, so there is nothing to download.
+          </GateEmptyState>
+        )}
+      </div>
+
+      {/* Surface 5 — commit bar: free download of the selected artifacts, with the participant-data assurance. */}
+      <CommitBar
+        action={downloadLabel(selectedCount)}
+        actionTestId="download-artifacts"
+        onCommit={() => void download()}
+        busy={zipping}
+        disabled={selectedCount === 0 || guestLocked}
+        recheckNotice={
+          guestLocked || exportNote || downloadError ? (
+            <span className="flex flex-col gap-1">
+              {guestLocked && <GuestAuthNotice action="downloading the export" />}
+              {exportNote && <span data-testid="demo-export-note">{exportNote}</span>}
+              {downloadError && (
+                <span data-testid="download-error" role="alert">
+                  The zip was not made: {downloadError}
+                </span>
+              )}
+            </span>
+          ) : undefined
+        }
+        assurance="Nothing here contains participant data. Every file is metadata, a decision, or code."
+        className="mt-6"
+      />
+
+      {/* The preview drawer — real generated content at the wider width, not a description of it. A delimited
+          file is drawn as a table (review 2); the drawer is a column so the table scrolls in its own box. */}
+      <Sheet open={preview !== null} onOpenChange={(o) => !o && setPreview(null)}>
+        <SheetContent side="right" className="flex w-full flex-col sm:max-w-4xl">
+          <SheetHeader className="pr-10">
+            <SheetTitle>{preview?.name ?? "Preview"}</SheetTitle>
+            {preview && (
+              <SheetDescription data-testid="artifact-preview-filename" className="font-mono text-xs text-on-raised-muted">
+                {filenameFor(preview)}
+              </SheetDescription>
+            )}
+          </SheetHeader>
+          {previewBody?.kind === "notebook" ? (
+            <NotebookPreview jobId={jobId} format={previewBody.format} guestLocked={guestLocked} />
+          ) : (
+            previewBody && <ArtifactPreviewBody preview={previewBody} />
+          )}
+        </SheetContent>
+      </Sheet>
+    </GateShell>
+  );
+}

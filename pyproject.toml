@@ -9,15 +9,21 @@ dependencies = [
     # (sentence-transformers, BERTopic/UMAP/HDBSCAN, anthropic, …) — the pipeline
     # runner imports these directly, so the bare library is not enough.
     #
-    # ddharmon is PUBLIC on PyPI — a plain version pin, no auth or git ref needed. Pinned >=1.1.0:
-    # the UI's GenCDE surface (synthesis + transform-spec generation) needs the M12 core stages.
+    # ddharmon is PUBLIC on PyPI — a plain version pin, no auth or git ref needed. Pinned >=1.4.0:
+    # the staged review flow (gates 1-4) needs the core's reviewer group overrides, scoped assignment and
+    # split-only re-adjudication (contract 5), first released in 1.4.0.
     # For local dev against a checkout instead, see README.md ("Develop against a local core").
-    "ddharmon[all]>=1.1.0",
+    "ddharmon[all]>=1.4.0",
 
     # Web layer (the only thing this repo adds on top of ddharmon).
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.9",
+
+    # The Setup workbook export (one sheet per uploaded dictionary). Importable today only because
+    # something upstream happens to pull it; declared here because that is not a guarantee, and an
+    # undeclared-but-present dependency is how a feature works locally and 500s on the server.
+    "openpyxl>=3.1.0",
 
     # Clerk SSO: verify the session JWT (RS256) against Clerk's JWKS (backend/auth.py). Imported
     # lazily and inert unless CLERK_* env is set, but the deploy needs it installed for the gate to

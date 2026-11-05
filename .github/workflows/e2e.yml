@@ -1,0 +1,41 @@
+name: e2e-smoke
+
+# End-to-end smoke gate for the UI. Runs against a STATIC build (VITE_STATIC=1)
+# that reads bundled demo fixtures — no backend, no Clerk keys, no paid run — so
+# it's cheap enough to gate every frontend change. See frontend/playwright.config.ts.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Smoke tests only. The @visual screenshot gate is EXCLUDED because its baselines are
+      # platform-specific (macOS font rasterisation != Linux) and only `-darwin` baselines are
+      # committed; running it here would fail on a missing `-linux` snapshot, not on a regression.
+      # To enforce it in CI, generate and commit `-linux` baselines from the official Playwright
+      # container and drop this flag. See frontend/README.md § Visual regression.
+      - run: npm run test:e2e -- --grep-invert "@visual"
+        env:
+          CI: "1"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

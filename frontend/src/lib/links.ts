@@ -72,3 +72,34 @@ export const REF = {
   bertopic: "https://maartengr.github.io/BERTopic/",
   hitl: "https://en.wikipedia.org/wiki/Human-in-the-loop",
 } as const;
+
+/**
+ * The NIH CDE Repository's detail page for one element, by its tinyId.
+ *
+ * THE ONLY OUTBOUND CLAIM GATE 2 MAKES ABOUT A CATALOG ELEMENT, and it is deliberately the fallback for a
+ * capability we do not have: with no query path into the knowledge graph, the honest substitute for
+ * "here is this element's context" is "here is the catalog's own page for it" (UI-SPEC §9 row 1).
+ *
+ * NEVER CALLED FOR A GENERATED ELEMENT. A GenCDE has no catalog page, so a link would resolve to nothing
+ * or — worse — to some unrelated element that happens to share an id shape.
+ */
+export function cdeDetailUrl(tinyId: string): string {
+  return `${REF.cde}deView?tinyId=${encodeURIComponent(tinyId)}`;
+}
+
+/**
+ * Whether a target a gate NAMES becomes a link to its repository page — and to which (review round 2, Gate 3
+ * note 1: "adopt CDEs should have hyperlink to repo").
+ *
+ * The one rule every gate's target name goes through, so Gate 2 and Gate 3 cannot disagree about it: a catalog
+ * element with a tinyId links to `cdeDetailUrl`; a GENERATED element (a GenCDE, a refine's derived element, or
+ * the reviewer's own) never does — it has no catalog page — and neither does an element whose tinyId never
+ * reached the wire. `null` means "render the name as plain text".
+ */
+export function catalogPageFor(
+  target: { externalId?: string | null; generated?: boolean } | null | undefined,
+): string | null {
+  if (!target || target.generated) return null;
+  const tinyId = (target.externalId ?? "").trim();
+  return tinyId ? cdeDetailUrl(tinyId) : null;
+}

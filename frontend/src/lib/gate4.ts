@@ -1,0 +1,1207 @@
+import Papa from "papaparse";
+import type { CdeRef, ExportFormat, HarmonizationResult, UIRecord, UITransform } from "@/types";
+import {
+  GATE_DECISION_KINDS,
+  type DecisionIndex,
+  type GateDecision,
+  type GateDecisionKind,
+  deriveStaleness,
+  inheritedGate1Scope,
+} from "@/lib/gate-decisions";
+import { OWN_TARGET, SKOS_RELATIONS } from "@/lib/gate23";
+import { AUTO_ACCEPTED_LABEL, AUTO_DECIDED_AFTER, autoAcceptedGates, gateLabel } from "@/lib/review-mode";
+
+/**
+ * Gate 4's pure logic — the export catalog, the download-label rule, the decision-log rows, and the E3
+ * revision-rate. Kept here, out of the React tree, for the reason `lib/gate-decisions.ts` gives: `frontend/`
+ * has no component test runner, so logic reachable only through a component ships unasserted. Everything in
+ * this file is pure and is pinned by `tests/e2e/gate4.spec.ts`.
+ */
+
+// --- the export catalog (UI-SPEC §0.2) ----------------------------------------------------------------
+
+/**
+ * A run's artifact is `ready` once the result exists; `generating` while the pipeline is still producing it;
+ * `failed` when it was attempted and produced nothing. The last two are DIFFERENT claims from the
+ * not-available tiles below — a defect versus a boundary — and must never look alike (UI-SPEC §9, T-08-103).
+ */
+export type ArtifactState = "ready" | "generating" | "failed";
+
+/** A shipping export. `notebook` collapses `notebook_py`/`notebook_r` behind the language toggle (Surface 1). */
+export interface RealArtifact {
+  /** The tile's id. `notebook` is resolved to a concrete `ExportFormat` by the chosen language. */
+  id: ExportFormat | "notebook";
+  name: string;
+  /** One sentence, per Surface 2. */
+  description: string;
+  /** The download filename, so the reviewer sees what lands in Downloads before they click. */
+  filename: string;
+}
+
+/**
+ * The FOUR tiles that cover the FIVE shipping formats (`backend/app.py` export route): the two notebook
+ * formats collapse into one tile whose language is the segmented control. Descriptions are the one-sentence
+ * form of the tooltips the retired `dashboard.tsx` ExportButton carried, so no capability description is lost
+ * in the supersession.
+ */
+export const REAL_ARTIFACTS: readonly RealArtifact[] = [
+  {
+    id: "eitl_tsv",
+    name: "Expert-review queue (TSV)",
+    description:
+      "One row per concept — its verdict, confidence, ranked CDE candidates and transform — for expert-in-the-loop sign-off.",
+    filename: "eitl_tsv.tsv",
+  },
+  {
+    id: "decisions_csv",
+    name: "Decision log (CSV)",
+    description:
+      "Every decision you made at Gates 1–4, with what it changed from and to — the audit trail that defends the export.",
+    filename: "decisions_csv.csv",
+  },
+  {
+    id: "records_json",
+    name: "Records (JSON)",
+    description: "The full machine-readable result — every concept with members, verdict, candidates and specs.",
+    filename: "records_json.json",
+  },
+  {
+    id: "notebook",
+    name: "Transform notebook",
+    description: "A ready-to-run notebook that applies the harmonization transforms to your data in your own environment.",
+    filename: "harmonization.ipynb",
+  },
+] as const;
+
+/** The concrete export format a notebook tile resolves to for the chosen language. */
+export type NotebookLang = "py" | "r";
+export function notebookFormat(lang: NotebookLang): ExportFormat {
+  return lang === "r" ? "notebook_r" : "notebook_py";
+}
+
+/** Resolve a tile id + chosen language to the concrete backend export format for a download. */
+export function resolveFormat(id: RealArtifact["id"], lang: NotebookLang): ExportFormat {
+  return id === "notebook" ? notebookFormat(lang) : id;
+}
+
+/** An honest "not available" gap (UI-SPEC §9 rows 4/5/6): deferred by design, never quietly omitted. */
+export interface NotAvailableGap {
+  slug: string;
+  thing: string;
+  /** Why, one sentence, and what to do instead. */
+  body: string;
+}
+
+export const NOT_AVAILABLE_GAPS: readonly NotAvailableGap[] = [
+  {
+    slug: "mapping-table",
+    thing: "Mapping table",
+    body: "This run exports records and decisions; a flat mapping table is not one of the formats yet.",
+  },
+  {
+    slug: "run-report",
+    thing: "Run report (HTML)",
+    body: "The plots on this run are viewable in the app; a self-contained report file is not generated yet.",
+  },
+  {
+    slug: "composite-notebook",
+    thing: "Composite recipes in the notebook",
+    body: "The notebook applies approved recodes; it has no notion of a derived variable, so a composite score you built is not computed by it. Export the Concept Spotlight file to carry it.",
+  },
+] as const;
+
+// --- the download action label (UI-SPEC §8.1) ---------------------------------------------------------
+
+/**
+ * `Download 1 artifact` for one, `Download N artifacts` for several. Driven exactly off the count so the
+ * label can never disagree with what will be downloaded; the caller disables the action at zero and names
+ * the reason separately (UI-SPEC §8.2, "No artifacts selected").
+ */
+export function downloadLabel(count: number): string {
+  return count === 1 ? "Download 1 artifact" : `Download ${count} artifacts`;
+}
+
+// --- the decision log (UI-SPEC §0.2 Surface 4) --------------------------------------------------------
+
+const GATE_OF: Record<GateDecisionKind, string> = {
+  gate1_group_scope: "Gate 1",
+  gate1_new_group: "Gate 1",
+  gate1_regroup: "Gate 1",
+  gate1_rename: "Gate 1",
+  gate1_score_cutoff: "Gate 1",
+  gate2_candidate_pick: "Gate 2",
+  gate2_relation: "Gate 2",
+  gate3_spec_edit: "Gate 3",
+  gate3_combine_rule: "Gate 3",
+  gate3_member_exclusion: "Gate 3",
+  gate4_export_selection: "Gate 4",
+  composite_swap: "Composite",
+};
+
+/** The gate whose screen OWNS each kind — `backend/artifact_kinds.py::DECISION_GATE` (the score panel sits on Gate 1). */
+const DECISION_GATE: Record<GateDecisionKind, string> = {
+  gate1_group_scope: "gate1",
+  gate1_new_group: "gate1",
+  gate1_regroup: "gate1",
+  gate1_rename: "gate1",
+  gate1_score_cutoff: "gate1",
+  gate2_candidate_pick: "gate2",
+  gate2_relation: "gate2",
+  gate3_spec_edit: "gate3",
+  gate3_combine_rule: "gate3",
+  gate3_member_exclusion: "gate3",
+  gate4_export_selection: "gate4",
+  composite_swap: "gate1",
+};
+
+/** The decision log's row for one gate Full auto committed — the server's `_auto_row`. */
+function autoRow(gate: string): string[] {
+  return [gateLabel(gate), "gate_auto_accepted", AUTO_ACCEPTED_LABEL, gate, "", AUTO_DECIDED_AFTER, "", "", "false"];
+}
+
+const ACTION_OF: Record<GateDecisionKind, string> = {
+  gate1_group_scope: "Set group scope",
+  gate1_new_group: "Created a group",
+  gate1_regroup: "Moved a variable",
+  gate1_rename: "Renamed a group",
+  gate1_score_cutoff: "Set the score suggestion cut-off",
+  gate2_candidate_pick: "Picked a target",
+  gate2_relation: "Set a relation",
+  gate3_spec_edit: "Edited a transform spec",
+  gate3_combine_rule: "Chose how variables combine",
+  gate3_member_exclusion: "Removed a variable from a concept",
+  gate4_export_selection: "Chose export inclusion",
+  // The only composite write is the DECLARATION (08-27 audit), logged as ONE row per score (08-28 1e, H9).
+  composite_swap: "Declared a Spotlight list",
+};
+
+export interface DecisionLogRow {
+  kind: GateDecisionKind;
+  gate: string;
+  action: string;
+  /** The thing decided (the decision's item key), e.g. a group id or a variable name. */
+  thing: string;
+  /** The identifier currently taken. `""` (rendered as "none of these") when the reviewer cleared it. */
+  chosen: string;
+  /** The concept's name for a group-keyed decision (the reviewer's rename, else the generated one). */
+  label?: string;
+  /** What the decision DID, in words — before → after where it is known. Replaces "→ chosen" when present. */
+  detail?: string;
+  /** DERIVED: the upstream this decision depended on has since changed, so it may be out of date. */
+  stale: boolean;
+}
+
+/**
+ * Flatten the full decision index into an ordered, human-readable log over all EIGHT registered kinds.
+ *
+ * Sourced from `GATE_DECISION_KINDS` (the live registry), so a kind added later — as `gate1_rename` was —
+ * appears in the log without a second edit here. The index already holds only the CURRENT decision per
+ * thing (last write wins per item key), so a superseded choice is not shown as a separate row; instead a
+ * decision whose upstream changed is marked `stale`, which is how the log "shows superseded honestly"
+ * without claiming an earlier choice never happened.
+ */
+export function decisionLogRows(
+  index: DecisionIndex,
+  result?: HarmonizationResult | null,
+): DecisionLogRow[] {
+  const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}${s.itemKey}`));
+  const records = new Map((result?.records ?? []).map((r) => [r.groupId, r]));
+  const renames = index.gate1_rename ?? {};
+  const newGroups = index.gate1_new_group ?? {};
+  const nameOf = (gid: unknown): string | undefined => {
+    if (typeof gid !== "string" || !gid || gid === "__unassigned__") return undefined;
+    const renamed = renames[gid]?.chosen;
+    if (typeof renamed === "string" && renamed.trim()) return renamed.trim();
+    // A New group has no record until Gate 2 — its own decision carries its name.
+    const made = newGroups[gid];
+    const madeName = made && (typeof made.name === "string" && made.name.trim() ? made.name : made.chosen);
+    if (typeof madeName === "string" && madeName.trim()) return madeName.trim();
+    return records.get(gid)?.concept || gid;
+  };
+  const specBySource = new Map<string, UITransform>();
+  for (const r of result?.records ?? []) for (const t of r.transforms ?? []) specBySource.set(String(t.sourceVariable ?? ""), t);
+  const rows: DecisionLogRow[] = [];
+  for (const kind of GATE_DECISION_KINDS) {
+    // Scope is summarised, not listed: one row per group buried ~20 real edits under 1,234 scope rows on the
+    // live run (08-27 audit). See `scopeSummary`.
+    if (kind === "gate1_group_scope") continue;
+    const byItem = index[kind];
+    if (!byItem) continue;
+    if (kind === "composite_swap") {
+      // ONE row per declared score (H9): 48 "Declared a score component → none of these" rows read like 48
+      // rejections and buried the real decisions.
+      for (const score of scoreGroups(byItem)) {
+        const names = score.components.map(([, d]) => String(d.componentName ?? ""));
+        const shown = names.slice(0, 6).join(", ");
+        rows.push({
+          kind,
+          gate: GATE_OF[kind],
+          action: ACTION_OF[kind],
+          thing: score.name,
+          chosen: "",
+          label: score.name || undefined,
+          detail: `${componentCount(names.length)}: ${shown}${names.length > 6 ? `, … +${names.length - 6} more` : ""}`,
+          stale: score.components.some(([item]) => stale.has(`${kind}${item}`)),
+        });
+      }
+      continue;
+    }
+    for (const [itemKey, decision] of Object.entries(byItem)) {
+      const d = decision as GateDecision;
+      const gid = typeof d.groupId === "string" ? d.groupId : undefined;
+      rows.push({
+        kind,
+        gate: GATE_OF[kind],
+        action: ACTION_OF[kind],
+        thing: itemKey,
+        chosen: String(d.chosen ?? ""),
+        label: gid ? nameOf(gid) : undefined,
+        detail: detailOf(
+          kind,
+          d,
+          nameOf,
+          gid ? records.get(gid) : undefined,
+          specBySource.get(itemKey),
+          gid ? index.gate2_candidate_pick?.[gid] : undefined,
+        ),
+        stale: stale.has(`${kind}${itemKey}`),
+      });
+    }
+  }
+  return rows;
+}
+
+/** Gate 1 scope, as counts — the log shows this line instead of one row per group. */
+export function scopeSummary(index: DecisionIndex): { in: number; out: number } {
+  const all = Object.values(index.gate1_group_scope ?? {});
+  return {
+    in: all.filter((d) => String(d.chosen) === "in").length,
+    out: all.filter((d) => String(d.chosen) === "out").length,
+  };
+}
+
+function detailOf(
+  kind: GateDecisionKind,
+  d: GateDecision,
+  nameOf: (gid: unknown) => string | undefined,
+  record: UIRecord | undefined,
+  spec: UITransform | undefined,
+  pick: GateDecision | undefined,
+): string | undefined {
+  const q = (t: unknown) => `“${String(t)}”`;
+  switch (kind) {
+    case "gate1_regroup":
+      return `from ${nameOf(d.fromGroupId) ?? "no group"} to ${nameOf(d.chosen) ?? "no group"}`;
+    case "gate1_rename":
+      return typeof d.generatedName === "string" ? `${q(d.generatedName)} → ${q(d.chosen)}` : `→ ${q(d.chosen)}`;
+    case "gate1_score_cutoff": {
+      const def = Array.isArray(d.alternatives) ? d.alternatives[0] : undefined;
+      return def ? `${String(d.chosen)} (default ${String(def)})` : String(d.chosen);
+    }
+    case "gate2_candidate_pick": {
+      if (d.chosen === "") return d.gencdeEdit ? "your own CDE, edited" : "none of these";
+      // The MODEL's pick — from the stamp once the Gate 2 -> 3 leg re-targeted the record (F17).
+      const model = record ? modelTarget(record) : "";
+      const edited = d.gencdeEdit ? ", anchor edited" : "";
+      return model && model !== d.chosen ? `${String(d.chosen)} (model picked ${model})${edited}` : `${String(d.chosen)}${edited}`;
+    }
+    case "gate2_relation": {
+      // 3f: the reviewer's predicate against the model's for the same edge, the note, and whether it applied.
+      const chosen = String(d.chosen ?? "");
+      const target = String(d.targetId ?? "");
+      const model = record ? modelRelation(record, target) : "";
+      const parts = [chosen ? (model && model !== chosen ? `${chosen} (model: ${model})` : chosen) : NO_RELATION];
+      if (typeof d.note === "string" && d.note.trim()) parts.push(`note: ${q(d.note.trim())}`);
+      const notApplied = !record
+        ? NOT_APPLIED
+        : !sameTarget(record, target, effectiveTarget(record, pick))
+          ? NOT_APPLIED_TARGET
+          : "";
+      if (notApplied) parts.push(`not applied: ${notApplied}`);
+      return parts.join(" · ");
+    }
+    case "gate3_spec_edit": {
+      const parts: string[] = [];
+      if (d.rejected === true) parts.push("rejected");
+      if (isPlainObject(d.mapping)) parts.push(`value map: ${codeDiff(isPlainObject(spec?.codeMap) ? spec.codeMap : {}, d.mapping)}`);
+      else if (d.mapping != null) parts.push("value map edited");
+      if (d.numberMap != null) parts.push("number map edited");
+      if (d.bins != null) parts.push("binning edited");
+      if (typeof d.note === "string" && d.note.trim()) parts.push(`note: ${q(d.note.trim())}`);
+      // F7: a save with neither an edit nor a note leaves the model's spec standing.
+      return parts.length ? parts.join(" · ") : REVERTED_TO_MODEL;
+    }
+    case "gate3_member_exclusion":
+      // Review round 2: the concept is the row's label; what the decision did is the variable it took out.
+      return `removed ${String(d.memberId ?? "")}`;
+    default:
+      return undefined;
+  }
+}
+
+export function decisionCount(index: DecisionIndex): number {
+  return GATE_DECISION_KINDS.reduce((n, kind) => n + Object.keys(index[kind] ?? {}).length, 0);
+}
+
+/**
+ * How many ENTRIES the downloaded decision log carries (its rows, header excluded) — the number Gate 4 shows
+ * beside the log (F21). `decisionCount` is not it: it counts every declared score component (one log row per
+ * score) and misses the frozen-scope row, so the screen read "61 decisions" beside a 62-row file.
+ */
+export function decisionLogEntryCount(
+  index: DecisionIndex,
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  verdicts: Record<string, LegacyVerdicts> | undefined,
+): number {
+  return decisionLogCsvRows(index, result, config, verdicts).length - 1;
+}
+
+/**
+ * The variables no export carries, split by WHY (F21): `scopedOut` were members of a group the reviewer left
+ * out of scope at Gate 1 (the frozen scope, else the legacy "not out" rule); `noConcept` truly reached no
+ * concept. `unassignedFields` lumps both — live 6c66731c read "506 variables reached no concept" when 497 of
+ * them were scoped out. Membership is the uncapped `conceptGroupMembers`, else the group's collapsed sample.
+ */
+export function unassignedBreakdown(
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  scopeDecisions: Record<string, { chosen?: unknown }> | undefined,
+): { scopedOut: number; noConcept: number } {
+  const inScope = inheritedGate1Scope(config, scopeDecisions ?? {});
+  const full = result?.conceptGroupMembers ?? {};
+  const sample = new Map((result?.conceptGroups ?? []).map((g) => [g.groupId, g.memberVariableNames ?? []]));
+  const scopedOutMembers = new Set<string>();
+  for (const gid of new Set([...Object.keys(full), ...sample.keys()])) {
+    if (inScope(gid)) continue;
+    for (const m of full[gid] ?? sample.get(gid) ?? []) scopedOutMembers.add(m);
+  }
+  const fields = result?.unassignedFields ?? [];
+  const scopedOut = fields.filter((f) => scopedOutMembers.has(`${f.cohort}:${f.variable}`)).length;
+  return { scopedOut, noConcept: fields.length - scopedOut };
+}
+
+// --- the decision-log CSV (08-27) -------------------------------------------------------------------------
+
+/**
+ * The columns of the downloaded decision log on a staged run — `backend/export_decisions.py::DECISION_LOG_COLS`.
+ */
+export const DECISION_LOG_CSV_COLS = ["gate", "kind", "action", "item", "before", "after", "note", "detail", "stale"];
+
+/** The label a cleared choice (`chosen === ""`) reads as — `NONE_OF_THESE` in the backend. */
+const NONE_OF_THESE = "none of these";
+const SPEC_EDIT_FIELDS = ["mapping", "numberMap", "bins"] as const;
+/** A Gate 3 row with neither an edit nor a note — `REVERTED_TO_MODEL` in the backend (08-28 1e, F7). */
+const REVERTED_TO_MODEL = "reverted to model spec";
+/** A pick on a group the results do not have — the backend's `notApplied` detail (F7). */
+const NOT_APPLIED = "no record for this group in the run's results";
+/** A relation on a target the group no longer takes — `NOT_APPLIED_TARGET` in the backend (3f). */
+const NOT_APPLIED_TARGET = "not this group's current target";
+/** Why a Gate 3 removal reached no record (`backend/export_decisions.py::NOT_APPLIED_MEMBER`). */
+const NOT_APPLIED_MEMBER = "not a variable of this group in the run's results";
+/** A Gate 2 relation row that asserts no relation (a note only) — `NO_RELATION` in the backend (3f). */
+const NO_RELATION = "no relation asserted";
+/** What a per-code diff calls a code that yields no value — `MISSING` in the backend. */
+const MISSING = "missing";
+const MISSING_VALUES = new Set(["", "__missing__", MISSING]);
+
+/**
+ * Compact, key-sorted JSON — byte-identical to the backend's `_j` (`sort_keys`, no spaces, unescaped), so a
+ * `detail` cell previews exactly as it downloads.
+ */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson((value as Record<string, unknown>)[k])}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+const clean = (s: unknown) => String(s ?? "").replace(/[\t\n\r]/g, " ");
+const chosenLabel = (v: unknown) => String(v ?? "") || NONE_OF_THESE;
+
+// --- the model's own pick vs what the record targets now (08-28 1e, F17) ---------------------------------
+//
+// Mirrors `backend/export_decisions.py` (`_stamp`, `_catalog_target`, `_current_target`, `model_target`,
+// `_pick_label`). A record the Gate 2 -> 3 leg RE-TARGETED names the reviewer's pick on its candidates / cde /
+// gencde; the model's survives only on the `reviewerPick` stamp.
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function stampOf(record: UIRecord | undefined): Record<string, unknown> | undefined {
+  const stamp = (record as { reviewerPick?: unknown } | undefined)?.reviewerPick;
+  return isPlainObject(stamp) ? stamp : undefined;
+}
+
+function gencdeIdOf(g: unknown): string {
+  return isPlainObject(g) ? String(g.gencdeId || "") : "";
+}
+
+function catalogTarget(record: UIRecord | undefined): string {
+  const chosen = record?.candidates?.find((c) => c.isChosen);
+  if (chosen?.cdeId) return String(chosen.cdeId);
+  return String(record?.cde?.id || "");
+}
+
+function currentTarget(record: UIRecord | undefined): string {
+  return catalogTarget(record) || gencdeIdOf(record?.gencde);
+}
+
+/** The id the MODEL chose — a catalog CDE, else its generated element, else "". */
+export function modelTarget(record: UIRecord | undefined): string {
+  const stamp = stampOf(record);
+  if (stamp) return String(stamp.modelTarget || "");
+  return currentTarget(record);
+}
+
+/** The ids that mean "the group's OWN generated element" for a pick: "", its GenCDE id (now, or the model's). */
+function ownIds(record: UIRecord | undefined): Set<string> {
+  const stamp = stampOf(record) ?? {};
+  const own = new Set(["", gencdeIdOf(record?.gencde), gencdeIdOf(stamp.modelGencde)]);
+  if (stamp.kind === "gencde") own.add(String(stamp.target || ""));
+  return own;
+}
+
+/** Whether a pick names what the model chose (the group's own element counts as one target, however named). */
+function sameAsModel(record: UIRecord | undefined, chosen: string): boolean {
+  const model = modelTarget(record);
+  const own = ownIds(record);
+  return chosen === model || (own.has(chosen) && own.has(model));
+}
+
+function pickLabel(record: UIRecord, d: GateDecision): string {
+  const chosen = String(d.chosen || "");
+  if (!ownIds(record).has(chosen)) return chosen;
+  const own = gencdeIdOf(record.gencde) || gencdeIdOf(stampOf(record)?.modelGencde);
+  const edited = isPlainObject(d.gencdeEdit);
+  if (own) return edited ? `${own} (edited)` : own;
+  return edited ? "your own CDE (edited)" : NONE_OF_THESE;
+}
+
+// --- the Gate 2 relation: the model's, and which target a group takes (08-28 3f) ---------------------------------
+//
+// Mirrors `backend/export_decisions.py` (`own_ids`, `same_target`, `effective_target`, `model_relation`).
+
+/** The model's verdict — from the stamp once the leg re-targeted the record (`model_verdict` in the backend). */
+function modelVerdictOf(record: UIRecord): string {
+  const stamp = stampOf(record);
+  return stamp ? String(stamp.modelVerdict || "") : String(record.verdict || "");
+}
+
+/** Whether two target ids name one target — the group's own element counts as one, however it is named. */
+function sameTarget(record: UIRecord, a: string, b: string): boolean {
+  const own = new Set([...ownIds(record), OWN_TARGET]);
+  return a === b || (own.has(a) && own.has(b));
+}
+
+/** The id a pick names, resolved by its tinyId when it carries one (`_catalog_ref` in the backend). */
+function resolvedPick(record: UIRecord, chosen: string, externalId: string): string {
+  if (!chosen || chosen === gencdeIdOf(record.gencde)) return chosen;
+  if (!externalId) return chosen;
+  const model = record.cde as { id?: string; externalId?: string } | null | undefined;
+  if (model?.id && model.externalId === externalId) return String(model.id);
+  const hit = record.candidates?.find((c) => c.cdeExternalId === externalId);
+  return String(hit?.cdeId || chosen);
+}
+
+/** The id the group targets as the reviewer left it: the pick, else the record's own current target. */
+function effectiveTarget(record: UIRecord, pick: GateDecision | undefined): string {
+  if (!pick || typeof pick.chosen !== "string") return currentTarget(record);
+  return resolvedPick(record, pick.chosen, String(pick.externalId ?? "").trim());
+}
+
+/**
+ * The SKOS relation the PIPELINE implies between a group and `targetId` — "" when it implies none. Only the
+ * model's own CATALOG target carries one: an adopt is `skos:exactMatch` (the element taken as-is), a refine the
+ * predicate core stamped on its derived element. A target the reviewer picked instead was never judged by the
+ * model, and the group's own generated element has nothing to assert.
+ */
+export function modelRelation(record: UIRecord, targetId: string): string {
+  const model = modelTarget(record);
+  if (!model || ownIds(record).has(model) || targetId !== model) return "";
+  if (modelVerdictOf(record) === "adopt") return SKOS_RELATIONS[0];
+  const stamp = stampOf(record);
+  const gencde = stamp ? stamp.modelGencde : record.gencde;
+  const stamped = isPlainObject(gencde) ? String(gencde.relation || "") : "";
+  return (SKOS_RELATIONS as readonly string[]).includes(stamped) ? stamped : "";
+}
+
+// --- a Gate 3 value-map edit as a per-code diff, in TARGET codes (08-28 Q3) ---------------------------------
+
+const NUMERIC_CODE = /^-?[0-9]+(?:\.[0-9]+)?$/;
+
+/** Numeric codes first, by value (`-818, -121, 0, 1, 10`), then the rest by text — `_code_order` in the backend. */
+function compareCodes(a: string, b: string): number {
+  const na = NUMERIC_CODE.test(a);
+  const nb = NUMERIC_CODE.test(b);
+  if (na !== nb) return na ? -1 : 1;
+  if (na) {
+    const x = Number(a);
+    const y = Number(b);
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function codeValue(map: Record<string, unknown>, code: string): string {
+  const v = Object.prototype.hasOwnProperty.call(map, code) ? map[code] : undefined;
+  if (v === null || v === undefined) return MISSING;
+  const s = typeof v === "string" ? v : stableJson(v);
+  return MISSING_VALUES.has(s) ? MISSING : s;
+}
+
+/**
+ * `-121: 9 → missing; 10: 1 → 0` — each code whose output the reviewer's map changes, against the model's
+ * (`code_diff` in the backend). Replace semantics: a code the reviewer's map does not place yields no value.
+ */
+export function codeDiff(modelMap: Record<string, unknown>, reviewerMap: Record<string, unknown>): string {
+  const codes = [...new Set([...Object.keys(modelMap), ...Object.keys(reviewerMap)])].sort(compareCodes);
+  const changes: string[] = [];
+  for (const code of codes) {
+    const before = codeValue(modelMap, code);
+    const after = codeValue(reviewerMap, code);
+    if (before !== after) changes.push(`${code}: ${before} → ${after}`);
+  }
+  return changes.length ? changes.join("; ") : "no code changed";
+}
+
+function editDetail(spec: UITransform | undefined, edit: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if ("mapping" in edit) {
+    const modelMap = spec?.codeMap;
+    if (isPlainObject(edit.mapping)) parts.push(codeDiff(isPlainObject(modelMap) ? modelMap : {}, edit.mapping));
+    else parts.push(stableJson({ mapping: edit.mapping }));
+  }
+  for (const k of ["numberMap", "bins"] as const) if (k in edit) parts.push(stableJson({ [k]: edit[k] }));
+  return parts.join(" | ");
+}
+
+// --- score declarations, one entry per score (08-28 H9) ------------------------------------------------------
+
+function scoreGroups(byItem: Record<string, GateDecision>): { name: string; components: [string, GateDecision][] }[] {
+  const scores = new Map<string, [string, GateDecision][]>();
+  for (const [item, d] of Object.entries(byItem)) {
+    const name = String(d.scoreName || "");
+    if (!scores.has(name)) scores.set(name, []);
+    scores.get(name)!.push([item, d]);
+  }
+  return [...scores].map(([name, components]) => ({ name, components }));
+}
+
+const componentCount = (n: number) => `${n} item${n === 1 ? "" : "s"}`;
+
+/** `_score_rows` in the backend: one CSV row per declared score, its components (and any matches) in `detail`. */
+function scoreCsvRows(byItem: Record<string, GateDecision>, stale: Set<string>): string[][] {
+  return scoreGroups(byItem).map(({ name, components }) => {
+    const names = components.map(([, d]) => String(d.componentName || ""));
+    const matched: Record<string, string> = {};
+    for (const [, d] of components) if (d.chosen) matched[String(d.componentName || "")] = String(d.chosen);
+    const nMatched = Object.keys(matched).length;
+    const body: Record<string, unknown> = { components: names };
+    if (nMatched) body.matched = matched;
+    const isStale = components.some(([item]) => stale.has(`composite_swap\u001f${item}`));
+    return [
+      GATE_OF.composite_swap, "composite_swap", ACTION_OF.composite_swap, name, "",
+      `${componentCount(names.length)}${nMatched ? `, ${nMatched} matched` : ""}`, "", stableJson(body), String(isStale),
+    ];
+  });
+}
+
+function specSummary(t: UITransform | undefined): string {
+  if (!t) return "";
+  const kind = String(t.kind ?? "");
+  if (kind === "categorical" && t.codeMap && Object.keys(t.codeMap).length) return `categorical ${stableJson(t.codeMap)}`;
+  if (kind === "unit") return `unit ${t.sourceUnit || "?"} -> ${t.targetUnit || "?"}`;
+  if (kind === "arithmetic") return `arithmetic ${t.formula ?? ""}`;
+  return kind;
+}
+
+/**
+ * The decision log the `decisions_csv` download carries on a staged run, header first — the client mirror of
+ * `backend/export_decisions.py::decision_log_rows`, pinned to it by the shared parity fixture
+ * (`tests/e2e/fixtures/decision-log-parity.json`). One row per gate decision in gate order, preceded by the
+ * scope Gate 1's Continue froze and followed by any workbench verdicts; `before` is filled where the run
+ * knows it (the generated name, the variable's origin group, the model's pick, the model's recode).
+ */
+export function decisionLogCsvRows(
+  index: DecisionIndex,
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  verdicts: Record<string, LegacyVerdicts> | undefined,
+): string[][] {
+  const records = result?.records ?? [];
+  const byGroup = new Map(records.map((r) => [String(r.groupId || r.id || ""), r]));
+  const specBySource = new Map<string, UITransform>();
+  for (const r of records) for (const t of r.transforms ?? []) specBySource.set(String(t.sourceVariable ?? ""), t);
+  const groups = new Map((result?.conceptGroups ?? []).map((g) => [String(g.groupId ?? ""), g]));
+  const stale = new Set(deriveStaleness(index).map((s) => `${s.kind}\u001f${s.itemKey}`));
+  const picks = index.gate2_candidate_pick ?? {};
+
+  const rows: string[][] = [DECISION_LOG_CSV_COLS];
+  // Past Gate 1 the regrouping is frozen (`config.gate1_overrides`): a move in it was APPLIED by the pipeline, one
+  // outside it was not (the run passed Gate 1 before moves were applied). At Gate 1 nothing is claimed either way.
+  const regrouping = config?.gate1_overrides as { moves?: Record<string, unknown> } | undefined;
+  const appliedMoves = new Set(Object.keys((regrouping && typeof regrouping === "object" && regrouping.moves) || {}));
+  const passedGate1 =
+    Array.isArray(config?.gate1_scope) || (!!regrouping && typeof regrouping === "object" && !Array.isArray(regrouping));
+  // 08-30: each gate Full auto committed leads ITS gate's rows (the server's `_auto_row`, in the same order), so the
+  // log says before anything else about that gate that nobody reviewed it. A guided run has none.
+  const pending: string[] = autoAcceptedGates(config);
+  if (pending[0] === "gate1") rows.push(autoRow(pending.shift()!));
+  const frozen = config?.gate1_scope;
+  if (Array.isArray(frozen)) {
+    rows.push(["Gate 1", "gate1_scope_frozen", "Continued with this scope", "", "", `${frozen.length} groups in scope`, "", stableJson(frozen), "false"]);
+  }
+  for (const kind of GATE_DECISION_KINDS) {
+    const owner = DECISION_GATE[kind];
+    while (pending.length > 0 && kind !== "composite_swap" && owner >= pending[0]) rows.push(autoRow(pending.shift()!));
+    if (kind === "composite_swap") {
+      rows.push(...pending.splice(0).map(autoRow));
+      rows.push(...scoreCsvRows(index[kind] ?? {}, stale));
+      continue;
+    }
+    for (const [item, d] of Object.entries(index[kind] ?? {})) {
+      let before = "";
+      let after = chosenLabel(d.chosen);
+      let detail = "";
+      const note = typeof d.note === "string" ? d.note : "";
+      if (kind === "gate1_rename") {
+        const gid = String(d.groupId || item);
+        before = String(d.generatedName || byGroup.get(gid)?.concept || groups.get(gid)?.concept || "");
+      } else if (kind === "gate1_score_cutoff") {
+        // The default it replaced (the one alternative) -> the reviewer's (the server's decision_log_rows).
+        const def = Array.isArray(d.alternatives) ? String(d.alternatives[0] ?? "") : "";
+        before = def ? `${def} (default)` : "";
+      } else if (kind === "gate1_regroup") {
+        before = String(d.fromGroupId || "");
+        if (passedGate1) detail = appliedMoves.has(item) ? "applied" : "not applied";
+      } else if (kind === "gate2_candidate_pick") {
+        const extra: Record<string, unknown> = {};
+        if (isPlainObject(d.gencdeEdit)) extra.gencdeEdit = d.gencdeEdit;
+        const rec = byGroup.get(item);
+        if (rec === undefined) {
+          extra.notApplied = NOT_APPLIED; // F7: took effect nowhere, and says so
+        } else {
+          before = chosenLabel(modelTarget(rec)); // F17: the model's pick, from the stamp once re-targeted
+          after = pickLabel(rec, d);
+        }
+        detail = Object.keys(extra).length ? stableJson(extra) : "";
+      } else if (kind === "gate2_relation") {
+        // 3f: the model's relation for this edge ("" where it implied none) -> the reviewer's; "" is a note.
+        const gid = String(d.groupId || "");
+        const target = String(d.targetId || "");
+        after = String(d.chosen || "") || NO_RELATION;
+        const rec = byGroup.get(gid);
+        if (rec === undefined) {
+          detail = stableJson({ notApplied: NOT_APPLIED });
+        } else {
+          before = modelRelation(rec, target);
+          if (!sameTarget(rec, target, effectiveTarget(rec, picks[gid]))) detail = stableJson({ notApplied: NOT_APPLIED_TARGET });
+        }
+      } else if (kind === "gate3_spec_edit") {
+        const spec = specBySource.get(item);
+        before = specSummary(spec);
+        const edit: Record<string, unknown> = {};
+        for (const f of SPEC_EDIT_FIELDS) if (isPresent(d[f])) edit[f] = d[f];
+        const edited = Object.keys(edit).length > 0;
+        // F7: "annotated" only with a note; neither an edit nor a note is the model's spec standing.
+        after = d.rejected ? "rejected" : edited ? "edited" : note.trim() ? "annotated" : REVERTED_TO_MODEL;
+        if (edited) detail = editDetail(spec, edit);
+      } else if (kind === "gate3_member_exclusion") {
+        // The concept the variable was removed from -> "removed"; one that reached no record says so.
+        const gid = String(d.groupId || "");
+        before = gid;
+        after = "removed";
+        const rec = byGroup.get(gid);
+        if (rec === undefined) detail = stableJson({ notApplied: NOT_APPLIED });
+        else if (!(rec.members ?? []).includes(String(d.memberId || ""))) detail = stableJson({ notApplied: NOT_APPLIED_MEMBER });
+      }
+      rows.push([GATE_OF[kind], kind, ACTION_OF[kind], item, before, after, note, detail, String(stale.has(`${kind}\u001f${item}`))]);
+    }
+  }
+  for (const [recordId, v] of Object.entries(verdicts ?? {})) {
+    if (v.decision) rows.push(["Workbench", "verdict", "Recorded a verdict", `${recordId}|match`, "", v.decision, v.note ?? "", "", "false"]);
+    for (const [sv, t] of Object.entries(v.transforms ?? {}))
+      rows.push(["Workbench", "verdict", "Recorded a verdict", `${recordId}|transform|${sv}`, "", t.decision ?? "", t.note ?? "", "", "false"]);
+    if (v.gencde?.decision)
+      rows.push(["Workbench", "verdict", "Recorded a verdict", `${recordId}|gencde`, "", v.gencde.decision, v.gencde.note ?? "", "", "false"]);
+  }
+  return rows.map((row) => row.map(clean));
+}
+
+/** Python's `if d.get(k)` truthiness for a JSON value: empty string / object / array are absent. */
+function isPresent(v: unknown): boolean {
+  if (v === null || v === undefined || v === false || v === 0 || v === "") return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v as object).length > 0;
+  return true;
+}
+
+/** One CSV line quoted the way Python's `csv.writer` quotes (minimal: only a field that needs it). */
+export function csvLine(row: string[]): string {
+  return row.map((c) => (/[",\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",");
+}
+
+/** The legacy per-record verdict mirror (`jobState.decisions`) — what a workbench verdict is served as. */
+export interface LegacyVerdicts {
+  decision?: string;
+  note?: string;
+  transforms?: Record<string, { decision?: string; note?: string }>;
+  gencde?: { decision?: string; note?: string };
+}
+
+/**
+ * Whether a run downloads the staged decision log rather than the legacy per-record verdict CSV — the
+ * backend's `is_staged`: the run is parked at a gate, or it carries any gate decision.
+ */
+export function isStagedExport(gatePosition: string | null | undefined, index: DecisionIndex): boolean {
+  return !!gatePosition || decisionCount(index) > 0;
+}
+
+// --- E3 revision rate (external-methods audit E3, P5 exclusion, P2 denominator) ------------------------
+
+/**
+ * The gate-decision kinds that COUNT as a substantive edit of the pipeline's output (E3 numerator).
+ *
+ * Per the P5 exclusion rule written in `08-EXTERNAL-METHODS-AUDIT.md` §P5: a changed verdict/target
+ * (`gate2_candidate_pick`), a relation choice (`gate2_relation`), a regrouping that moves a variable
+ * (`gate1_regroup`), an edited transform spec (`gate3_spec_edit`) and a composite component swap
+ * (`composite_swap`) are corrections and COUNT. Explicitly EXCLUDED as cosmetic / non-corrections:
+ * `gate1_rename` (a display-label change, the named P5 example), `gate1_group_scope` (an inclusion/scope
+ * choice, not a text correction) and `gate4_export_selection` (export inclusion). Encoding this as a set —
+ * rather than inferring from a text diff — is what lets the rule be written down and asserted before the
+ * metric ships, which is what P5 requires.
+ */
+export const SUBSTANTIVE_EDIT_KINDS: readonly GateDecisionKind[] = [
+  "gate1_regroup",
+  "gate2_candidate_pick",
+  "gate2_relation",
+  "gate3_spec_edit",
+  "composite_swap",
+];
+
+/** P2: this metric's denominator, stamped on every rendered number so it is never read as a row count. */
+export const REVISION_RATE_DENOMINATOR = "concept records reviewed";
+
+export interface RevisionRate {
+  /** Numerator: concept records the reviewer substantively edited (per SUBSTANTIVE_EDIT_KINDS). */
+  edited: number;
+  /** Denominator: concept records the reviewer was shown (in-scope), per P2 stamped as REVISION_RATE_DENOMINATOR. */
+  shown: number;
+  /** edited / shown in [0, 1]; 0 when nothing was shown. */
+  rate: number;
+  /** P2 denominator label, carried with the number so it is never mixed with a variable/row count. */
+  denominator: string;
+  /** Cosmetic decisions excluded from the numerator under the P5 rule — surfaced so the exclusion is visible. */
+  excludedCosmetic: number;
+  /**
+   * Anti-drift stamp (P5): the pipeline release the rule was computed against. A dedicated `text_hygiene`
+   * ruleset version is not on the wire, so `coreVersion` is the proxy — a hygiene change ships in a core
+   * release, so a core bump makes the change visible rather than letting the number drift silently.
+   */
+  hygieneVersion: string;
+}
+
+/**
+ * The E3 revision rate for a run, derived on the FRONTEND from persisted decisions plus the run result.
+ *
+ * DENOMINATOR LIMITATION, stated rather than hidden: the prior art (Long et al. 2026) denominates in
+ * *metadata attributes* and needs a per-attribute record of what was shown and accepted unchanged. That
+ * capture does not exist, and adding it is out of this frontend-only plan's scope. So this denominates in
+ * *concept records reviewed* — the records in scope at the gates — and stamps that denominator (P2). The
+ * numerator counts DISTINCT records touched by a substantive edit, under the P5 exclusion rule.
+ */
+export function revisionRate(
+  index: DecisionIndex,
+  result: HarmonizationResult | null | undefined,
+  coreVersion: string,
+  config?: Record<string, unknown> | null,
+): RevisionRate {
+  const records = result?.records ?? [];
+  // Denominator: the records Gate 1 sent on — the FROZEN scope when the run has one (08-27 #3), else the legacy
+  // "not scoped out" rule.
+  const inScope = inheritedGate1Scope(config, index.gate1_group_scope ?? {});
+  const shownRecords = records.filter((r) => inScope(r.groupId));
+  const shownIds = new Set(shownRecords.map((r) => r.groupId));
+  const shown = shownRecords.length || records.length;
+
+  // Numerator: distinct CONCEPT RECORDS a substantive edit touched (08-27 audit). Identity keys are not record
+  // ids for every kind — a regroup keys on the variable, a spec edit on the source variable, a composite on the
+  // score — so each decision is resolved to the record it edited, and no-op decisions are skipped.
+  const groupOfVariable = new Map<string, string>();
+  for (const r of records) for (const m of r.members ?? []) if (!groupOfVariable.has(m)) groupOfVariable.set(m, r.groupId);
+  const recordOf = new Map(records.map((r) => [r.groupId, r]));
+  const editedRecords = new Set<string>();
+  const touch = (groupId: unknown) => {
+    if (typeof groupId === "string" && shownIds.has(groupId)) editedRecords.add(groupId);
+  };
+  let excludedCosmetic = 0;
+  for (const kind of GATE_DECISION_KINDS) {
+    for (const d of Object.values(index[kind] ?? {}) as GateDecision[]) {
+      if (kind === "gate1_rename") {
+        excludedCosmetic += 1; // the named P5 cosmetic example
+      } else if (kind === "gate2_candidate_pick" || kind === "gate2_relation") {
+        const gid = String(d.groupId ?? "");
+        const rec = recordOf.get(gid);
+        // Against the MODEL's pick (the stamp, once the leg re-targeted the record — F17), never the record's
+        // own isChosen, which after a re-target IS the pick: live 6c66731c read "1 of 8" when it was 2 of 8.
+        // A relation restating the model's for the same edge, with no note, is an acceptance too (3f) — a note is
+        // substantive, as on Gate 3.
+        const noop =
+          kind === "gate2_candidate_pick"
+            ? !d.gencdeEdit && sameAsModel(rec, String(d.chosen ?? ""))
+            : !(typeof d.note === "string" && d.note.trim()) &&
+              (!d.chosen || (!!rec && d.chosen === modelRelation(rec, String(d.targetId ?? ""))));
+        if (!noop) touch(gid);
+      } else if (kind === "gate1_regroup") {
+        if (d.fromGroupId !== d.chosen) {
+          touch(d.fromGroupId);
+          touch(d.chosen);
+        }
+      } else if (kind === "gate3_spec_edit") {
+        const substantive =
+          d.rejected === true ||
+          d.mapping != null ||
+          d.numberMap != null ||
+          d.bins != null ||
+          (typeof d.note === "string" && d.note.trim() !== "");
+        if (substantive) touch(groupOfVariable.get(String(d.sourceVariable ?? "")));
+      }
+      // composite_swap edits a SCORE, not a concept record — it is not part of this record-denominated rate.
+    }
+  }
+  const edited = editedRecords.size;
+  const rate = shown > 0 ? edited / shown : 0;
+  return {
+    edited,
+    shown,
+    rate,
+    denominator: REVISION_RATE_DENOMINATOR,
+    excludedCosmetic,
+    hygieneVersion: coreVersion || "unknown",
+  };
+}
+
+/** `12%` — the revision rate as a whole-number percentage, for display. */
+export function formatRevisionPct(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
+
+// --- review campaigns (UI-SPEC §0.2 Surface 3) --------------------------------------------------------
+
+export interface VerdictBreakdown {
+  adopt: number;
+  refine: number;
+  novel: number;
+  total: number;
+}
+
+/** The verdict split of the concept records — what the EITL review queue contains. */
+export function verdictBreakdown(result: HarmonizationResult | null | undefined): VerdictBreakdown {
+  const records = result?.records ?? [];
+  const b: VerdictBreakdown = { adopt: 0, refine: 0, novel: 0, total: records.length };
+  for (const r of records) {
+    if (r.verdict === "adopt") b.adopt += 1;
+    else if (r.verdict === "refine") b.refine += 1;
+    else if (r.verdict === "novel") b.novel += 1;
+  }
+  return b;
+}
+
+// --- artifact previews (UI-SPEC §0.2 Surface 2) -------------------------------------------------------
+
+/**
+ * What the preview drawer renders for one artifact (final review round 2): a TABLE for the two delimited files,
+ * CODE for the JSON, the NOTEBOOK file itself (review round 8), and a sentence when the run has nothing to put in
+ * the file.
+ *
+ * `text` is always the file's own text, exactly as excerpted — the table is PARSED from it, so the drawer shows
+ * what the file says rather than a second rendering that could disagree. `note` is the drawer's own line under
+ * the excerpt (the row cap, stated); it is never part of the file.
+ *
+ * A notebook carries no text here: it names the export `format` the drawer FETCHES and draws cell by cell
+ * (`NotebookPreview`). Its cells are written by the backend (`backend/notebook.py`) from the run plus the caller's
+ * gate decisions, and a summary assembled on this side could not match what opens in Jupyter.
+ */
+export type ArtifactPreview =
+  | { kind: "table"; delimiter: "," | "\t"; text: string; note?: string }
+  | { kind: "code"; text: string }
+  | { kind: "notebook"; format: ExportFormat }
+  | { kind: "empty"; text: string };
+
+/** The concepts a legacy preview excerpts — the cap the CSV / TSV / JSON previews have always had. */
+const PREVIEW_RECORDS = 3;
+/** The decision-log preview's row cap: the header plus twelve decisions. */
+const PREVIEW_LOG_ROWS = 13;
+
+/** One TSV line quoted the way Python's `csv.writer(delimiter="\t")` quotes it — what the EITL download is. */
+export function tsvLine(row: string[]): string {
+  return row.map((c) => (/["\t\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join("\t");
+}
+
+/**
+ * Parse a delimited preview into its header and rows with a REAL CSV parser (Papa Parse, RFC 4180 quoting): a
+ * quoted cell carrying the delimiter, a doubled quote or a newline stays ONE cell. `split(",")` would cut the
+ * decision log's quoted notes — and the demo's own concept names, which carry commas — into extra columns.
+ */
+export function previewTable(text: string, delimiter: "," | "\t"): { columns: string[]; rows: string[][] } {
+  const parsed = Papa.parse<string[]>(text, { delimiter, skipEmptyLines: true });
+  const [columns = [], ...rows] = parsed.data;
+  return { columns, rows };
+}
+
+/**
+ * A faithful preview of what an artifact CONTAINS.
+ *
+ * The tables and the JSON are DERIVED on the client, and that is deliberate. The preview must show real
+ * generated content, never a description of it (T-08-104) — a described preview looks like verification without
+ * being it. Deriving it from the same `result`/`decisions` the download serializes means the preview is real
+ * content that is also available in the backend-less build the e2e suite runs against, where fetching the file
+ * would 404. The DOWNLOAD still pulls the byte-exact file from the export route; this is an excerpt of the same data.
+ *
+ * The NOTEBOOK is the exception (review round 8): its cells are code and prose the backend writes, which no
+ * client-side excerpt reproduces, so its preview names the file to fetch rather than describing it.
+ */
+export function artifactPreview(
+  id: RealArtifact["id"],
+  lang: NotebookLang,
+  result: HarmonizationResult | null | undefined,
+  decisions: Record<string, LegacyVerdicts> | undefined,
+  gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
+): ArtifactPreview {
+  if ((result?.records ?? []).length === 0) {
+    return { kind: "empty", text: "This run produced no concept records, so this artifact would be empty." };
+  }
+  const dec = decisions ?? {};
+  // A STAGED run's files carry the records as the REVIEWER left them (`_export_staged` reads `effective_records`),
+  // so its previews read the same (review round 2): no scoped-out group, no removed variable, the reviewer's names
+  // and targets, rejected recodes marked. A legacy one-shot run's files are its raw records, and so are its previews.
+  const staged = !!gateLog && isStagedExport(gateLog.gatePosition, gateLog.index);
+  const all: (UIRecord | ExportedRecord)[] =
+    staged && gateLog ? exportedRecords(result, gateLog.config, gateLog.index) : (result?.records ?? []);
+  const records = all.slice(0, PREVIEW_RECORDS);
+  // The excerpts are the first few concepts; the file carries every one, and the drawer says so.
+  const recordsNote =
+    all.length > records.length
+      ? `The first ${records.length} of ${all.length} concepts — the file carries every one.`
+      : undefined;
+
+  // 08-27: on a staged run the download is the gate decision LOG, so the preview reads the same decisions
+  // (never the legacy verdict mirror, which no gate writes) through the backend's own row rule — over the RAW
+  // run, as the backend's `decision_log_rows` does: the log says what each decision did to what the model made.
+  if (id === "decisions_csv" && gateLog && staged) {
+    const rows = decisionLogCsvRows(gateLog.index, result, gateLog.config, decisions);
+    const text = rows.slice(0, PREVIEW_LOG_ROWS).map(csvLine).join("\n");
+    const note =
+      rows.length === 1
+        ? "(no decisions recorded yet — the file will carry only this header)"
+        : rows.length > PREVIEW_LOG_ROWS
+          ? `… ${rows.length - PREVIEW_LOG_ROWS} more decision(s) in the file`
+          : undefined;
+    return { kind: "table", delimiter: ",", text, note };
+  }
+
+  if (records.length === 0) {
+    return {
+      kind: "empty",
+      text: "Nothing is in this export — every concept was scoped out or excluded — so this file carries no concepts.",
+    };
+  }
+
+  if (id === "records_json") {
+    const autoGates = staged ? autoAcceptedGates(gateLog?.config) : [];
+    const autoDecided = autoGates.length ? Object.fromEntries(autoGates.map((g) => [g, "auto"])) : null;
+    return {
+      kind: "code",
+      text: JSON.stringify(
+        records.map((r) => ({
+          id: r.id,
+          concept: r.concept,
+          verdict: r.verdict,
+          cde: r.cde?.id ?? null,
+          nMembers: r.nMembers,
+          cohorts: r.cohorts,
+          transforms: r.transforms?.length ?? 0,
+          // Every staged record names what Gate 3 removed from it (`[]` for nothing), as the file does.
+          ...("removedMembers" in r ? { removedMembers: r.removedMembers } : {}),
+          // 08-30: the gates nobody reviewed, on a Full-auto run only — as the file does.
+          ...(autoDecided ? { gateDecidedBy: autoDecided } : {}),
+        })),
+        null,
+        2,
+      ),
+    };
+  }
+
+  if (id === "decisions_csv") {
+    const header = ["record_id", "concept", "verdict", "chosen_cde", "your_decision", "note"];
+    const rows = records.map((r) => [
+      r.id,
+      r.concept,
+      r.verdict,
+      r.cde?.id ?? "",
+      dec[r.id]?.decision ?? "",
+      dec[r.id]?.note ?? "",
+    ]);
+    // QUOTED, as the download is: a bare `join(",")` cut every concept name carrying a comma into extra columns.
+    return { kind: "table", delimiter: ",", text: [header, ...rows].map(csvLine).join("\n"), note: recordsNote };
+  }
+
+  if (id === "eitl_tsv") {
+    const header = ["record_id", "concept", "verdict", "top_candidate", "n_members", "cohorts"];
+    const rows = records.map((r) => [
+      r.id,
+      r.concept,
+      r.verdict,
+      r.candidates?.[0]?.cdeId ?? r.cde?.id ?? "",
+      String(r.nMembers),
+      r.cohorts.join(";"),
+    ]);
+    return { kind: "table", delimiter: "\t", text: [header, ...rows].map(tsvLine).join("\n"), note: recordsNote };
+  }
+
+  // notebook: the file itself, in the chosen language, fetched and drawn by the drawer (review round 8).
+  return { kind: "notebook", format: notebookFormat(lang) };
+}
+
+/**
+ * {@link artifactPreview} flattened to one string: the file's excerpt, then the drawer's note under it. A notebook
+ * has no client-side text — its preview is the fetched file — so it flattens to the empty string.
+ */
+export function previewFor(
+  id: RealArtifact["id"],
+  lang: NotebookLang,
+  result: HarmonizationResult | null | undefined,
+  decisions: Record<string, LegacyVerdicts> | undefined,
+  gateLog?: { index: DecisionIndex; config?: Record<string, unknown> | null; gatePosition?: string | null },
+): string {
+  const preview = artifactPreview(id, lang, result, decisions, gateLog);
+  if (preview.kind === "notebook") return "";
+  return preview.kind === "table" && preview.note ? `${preview.text}\n${preview.note}` : preview.text;
+}
+
+// --- the records the export carries (final review round 2: Gate 4's Sankey and previews) ------------------------
+
+/** The Gate 4 export-selection values that leave a record OUT — `EXCLUDE_VALUES` in the backend. */
+const EXPORT_EXCLUDE = new Set(["exclude", "out"]);
+
+/** A transform as the export carries it: `rejected` when the reviewer rejected that recode at Gate 3. */
+export type ExportedTransform = UITransform & { rejected?: boolean };
+
+/** A record as the export carries it — `removedMembers` names the variables Gate 3 took out (`[]` for none). */
+export type ExportedRecord = UIRecord & { transforms: ExportedTransform[]; removedMembers: string[] };
+
+/** The CdeRef a Gate 2 pick names, or null for "no catalog target" — `_catalog_ref` in the backend. */
+function catalogRef(record: UIRecord, cdeId: string, externalId: string): CdeRef | null {
+  if (!cdeId || cdeId === gencdeIdOf(record.gencde)) return null;
+  const model = record.cde;
+  const cands = record.candidates ?? [];
+  if (externalId) {
+    if (model?.id && model.externalId === externalId) return { id: String(model.id), externalId };
+    const hit = cands.find((c) => c.cdeExternalId === externalId);
+    return { id: String(hit?.cdeId || cdeId), externalId };
+  }
+  if (model?.id === cdeId) return { id: cdeId, externalId: String(model.externalId || "") };
+  const cand = cands.find((c) => c.cdeId === cdeId);
+  return { id: cdeId, externalId: String(cand?.cdeExternalId || "") };
+}
+
+/** `groupId -> [memberId, …]` removed at Gate 3, in row order — `removed_members` in the backend (every row counts). */
+function removedMembersByGroup(index: DecisionIndex): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const d of Object.values(index.gate3_member_exclusion ?? {})) {
+    const gid = String(d.groupId || "");
+    const list = out.get(gid) ?? [];
+    const member = String(d.memberId || "");
+    if (!list.includes(member)) list.push(member);
+    out.set(gid, list);
+  }
+  return out;
+}
+
+const cohortOfMember = (m: string) => m.split(":")[0];
+
+/**
+ * The concept records as the EXPORT carries them — the client half of `backend/export_decisions.py::
+ * effective_records`, for every field Gate 4 draws from them: the Gate 1 scope (the frozen list first, else the
+ * legacy "not scoped out" rule), the Gate 4 export selection, the reviewer's name for the group, a Gate 2 pick the
+ * Gate 2 -> 3 leg did not apply (the record's `cde` becomes the pick, or null for "none of these"), a Gate 3 removal
+ * (the variable leaves `members`, `memberDetails`, the transform specs and the generated element's sources;
+ * `nMembers` / `cohorts` / `crossCohort` follow what remains; `removedMembers` names it), and a rejected recode
+ * (`rejected: true` on its spec, as every file marks it). What it does NOT mirror, because nothing on Gate 4 reads
+ * it: a recode edit's `reviewerEdit`, the relation and model-provenance stamps, and the combine rules.
+ *
+ * WHY IT EXISTS (Bhargav, review round 2). A chart or a preview drawn from the raw pipeline output shows what the
+ * files do not carry — a scoped-out group, a removed variable, a rejected recode — on the very screen that says
+ * "this is what leaves the tool". Pinned against the backend by `fixtures/exported-records-parity.json`, from both
+ * sides. Copies only what it changes; the run result is never mutated.
+ */
+export function exportedRecords(
+  result: HarmonizationResult | null | undefined,
+  config: Record<string, unknown> | null | undefined,
+  index: DecisionIndex,
+): ExportedRecord[] {
+  const keep = inheritedGate1Scope(config, index.gate1_group_scope ?? {});
+  const selection = index.gate4_export_selection ?? {};
+  const renames = index.gate1_rename ?? {};
+  const picks = index.gate2_candidate_pick ?? {};
+  const specs = index.gate3_spec_edit ?? {};
+  const removals = removedMembersByGroup(index);
+  const out: ExportedRecord[] = [];
+  for (const raw of result?.records ?? []) {
+    const gid = String(raw.groupId || raw.id || "");
+    if (!keep(gid)) continue;
+    if (EXPORT_EXCLUDE.has(String(selection[String(raw.id || "")]?.chosen ?? ""))) continue;
+    const r: ExportedRecord = { ...raw, transforms: raw.transforms ?? [], removedMembers: [] };
+
+    // FIRST, as the backend does, so nothing below sees a removed variable as one of the concept's.
+    const members = raw.members ?? [];
+    const gone = (removals.get(gid) ?? []).filter((m) => members.includes(m));
+    r.removedMembers = gone;
+    if (gone.length > 0) {
+      const removed = new Set(gone);
+      r.members = members.filter((m) => !removed.has(m));
+      r.memberDetails = (raw.memberDetails ?? []).filter((d) => !removed.has(String(d?.id ?? "")));
+      r.transforms = r.transforms.filter((t) => !removed.has(String(t.sourceVariable ?? "")));
+      r.nMembers = r.members.length;
+      const left = new Set(r.members.map(cohortOfMember));
+      r.cohorts = (raw.cohorts ?? []).filter((c) => left.has(c));
+      r.crossCohort = r.cohorts.length > 1;
+      const g = raw.gencde;
+      if (g && Array.isArray(g.sourceVariables)) {
+        const sourceVariables = g.sourceVariables.filter((v) => !removed.has(v));
+        const sources = new Set(sourceVariables.map(cohortOfMember));
+        r.gencde = {
+          ...g,
+          sourceVariables,
+          ...(Array.isArray(g.sourceCohorts) ? { sourceCohorts: g.sourceCohorts.filter((c) => sources.has(c)) } : {}),
+        };
+      }
+    }
+
+    const name = String(renames[gid]?.chosen ?? "").trim();
+    if (name) r.concept = name;
+
+    // A pick the leg did NOT apply (a Gate 2-parked export, or one made after it), against what the record targets now.
+    const pick = picks[gid];
+    if (pick && typeof pick.chosen === "string") {
+      const ref = catalogRef(raw, pick.chosen, String(pick.externalId ?? "").trim());
+      const chosen = ref ? ref.id : pick.chosen;
+      const current = currentTarget(raw);
+      const own = new Set(["", gencdeIdOf(raw.gencde)]);
+      if (!(chosen === current || (own.has(chosen) && own.has(current)))) r.cde = ref;
+    }
+
+    // A rejected recode stays in the record, marked — every file says it was rejected rather than dropping it.
+    if (r.transforms.some((t) => specs[String(t.sourceVariable ?? "")]?.rejected)) {
+      r.transforms = r.transforms.map((t) => (specs[String(t.sourceVariable ?? "")]?.rejected ? { ...t, rejected: true } : t));
+    }
+    out.push(r);
+  }
+  return out;
+}

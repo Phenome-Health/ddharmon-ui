@@ -1,177 +1,195 @@
 {
   "aireadi_aou_clsa_mesa_ukbb.json": [
     {
-      "title": "Cross-Cohort Meta-Analysis of Cardiometabolic Risk Factor Clustering and Hypertension Prevalence Across Race/Ethnicity Groups",
-      "hypothesis": "The co-occurrence of elevated BMI, central adiposity, smoking, and self-reported hypertension differs systematically across racial/ethnic groups, and harmonized data across multiple diverse cohorts enables detection of these patterns with greater statistical power and broader generalizability than any single cohort allows.",
+      "title": "Cross-Cohort Meta-Analysis of Socioeconomic and Lifestyle Determinants of Hypertension",
+      "hypothesis": "Educational attainment, marital status, BMI, cigarette smoking, alcohol consumption, and diet quality (fruit/vegetable intake, fat use) are independently associated with self-reported hypertension, and effect sizes are replicable across diverse cohorts differing in geography, race/ethnicity, and recruitment strategy.",
       "concepts": [
-        "Body Mass Index numeric value (kg/m²)",
-        "Waist circumference measurement",
-        "Waist-to-Hip Ratio (WHR) calculated value",
-        "Average number of cigarettes smoked per day (current or historical)",
-        "Lifetime cigarette smoking status: whether smoked ≥100 cigarettes in lifetime",
-        "Self-reported hypertension diagnosis history (ever told by doctor)",
-        "Systolic blood pressure measurement (numeric, mmHg)",
-        "Diastolic blood pressure measurement (numeric, mmHg)",
-        "Self-reported race and/or ethnicity or ancestry/ethnic origin (select all that apply, with free-text option)"
+        "Hypertension (high blood pressure) lifetime occurrence — self-reported binary Yes/No",
+        "Respondent's highest grade or level of school completed / highest degree received (self-reported educational attainment)",
+        "Body Mass Index (BMI) numeric value (kg/m²)",
+        "Number of cigarettes smoked per day (average or current)",
+        "Alcohol consumption frequency by beverage type (beer, wine, liquor, other) per typical week, in standard servings",
+        "Frequency/servings of fruit consumption",
+        "Frequency/servings of vegetable consumption",
+        "Frequency/amount of butter, margarine, or fat used on vegetables, bread, or potatoes",
+        "Current marital/partner status of participant (categorical)",
+        "Participant's age in completed years (numeric value)",
+        "Sex of subject/participant (general, binary)"
       ],
       "cohorts": [
         "AI-READI",
         "CLSA",
         "MESA"
       ],
-      "method": "Random-effects meta-analysis of hypertension prevalence and a latent class analysis of cardiometabolic risk factor clustering, stratified by self-reported race/ethnicity, pooling individual-level data across cohorts with cohort as a random effect; heterogeneity assessed via I² and Cochran Q.",
-      "whyNewlyPossible": "Harmonized blood pressure (systolic and diastolic), BMI, waist circumference, WHR, smoking, and hypertension diagnosis variables across AI-READI, CLSA, and MESA — combined with a shared race/ethnicity variable — now permit a powered, replicable cross-cohort latent class and meta-analytic approach that was previously blocked by inconsistent variable coding.",
-      "category": "Cross-cohort association / meta-analysis"
+      "method": "Logistic regression within each cohort adjusting for age and sex, followed by random-effects meta-analysis across cohorts to pool odds ratios and assess heterogeneity (I²); sensitivity analyses stratifying by sex and education tertile.",
+      "whyNewlyPossible": "Harmonization of hypertension, BMI, smoking, alcohol, diet, educational attainment, and marital status across AI-READI, CLSA, and MESA with consistent CDE definitions enables a properly pooled multi-cohort regression and meta-analysis that was previously impossible due to non-uniform variable coding.",
+      "category": "Cross-cohort meta-analysis / replication"
     },
     {
-      "title": "Pooled Prevalence Estimation and Educational Gradient of Type 2 Diabetes Across Four Diverse Cohorts",
-      "hypothesis": "The prevalence of physician-diagnosed diabetes and the inverse association between educational attainment and diabetes diagnosis vary across cohorts representing different national and racial/ethnic populations, and pooled estimation will yield more precise and generalizable prevalence estimates.",
+      "title": "Pooled Prevalence and Cross-Cohort Comparison of Depressive Symptom Burden by Sociodemographic Subgroups",
+      "hypothesis": "The prevalence and severity of CES-D-measured depressive symptoms vary systematically by age, sex, educational attainment, marital status, and BMI, and these gradients are consistent (or heterogeneous) across cohorts with different population compositions.",
       "concepts": [
-        "Diabetes or pre-diabetes diagnosis status (ever told by doctor / current diagnosis, Yes/No/Unknown)",
-        "Respondent's highest educational attainment (level/degree completed)",
-        "Body Mass Index numeric value (kg/m²)",
-        "Self-reported race and/or ethnicity or ancestry/ethnic origin (select all that apply, with free-text option)",
-        "Family history of diabetes (by relative and diabetes type)",
-        "Currently taking medication for diabetes (generic yes/no)",
-        "Waist circumference measurement"
+        "CES-D individual item — self-reported frequency of specific depressive symptom in past week",
+        "Participant's age in completed years (numeric value)",
+        "Respondent's highest grade or level of school completed / highest degree received (self-reported educational attainment)",
+        "Current marital/partner status of participant (categorical)",
+        "Body Mass Index (BMI) numeric value (kg/m²)",
+        "Sex of subject/participant (general, binary)",
+        "Alcohol consumption frequency by beverage type (beer, wine, liquor, other) per typical week, in standard servings",
+        "Hypertension (high blood pressure) lifetime occurrence — self-reported binary Yes/No"
       ],
       "cohorts": [
         "AI-READI",
         "CLSA",
         "MESA"
       ],
-      "method": "Two-stage individual patient data meta-analysis: (1) logistic regression of diabetes diagnosis on education level with adjustment for BMI, waist circumference, age, sex, and race/ethnicity within each cohort; (2) pooling of cohort-specific log-odds ratios via random-effects meta-analysis; prevalence pooled using a DerSimonian-Laird estimator stratified by education quintile.",
-      "whyNewlyPossible": "Harmonization of diabetes diagnosis status, educational attainment, BMI, waist circumference, family history of diabetes, and diabetes medication use across AI-READI, CLSA, and MESA makes it feasible for the first time to conduct a replication-grade analysis of socioeconomic gradients in diabetes that simultaneously accounts for adiposity and family risk.",
+      "method": "Compute item-level and summed CES-D scores within each cohort; estimate age- and sex-standardized prevalence of clinically meaningful depressive symptoms; apply Poisson or negative-binomial regression within cohorts and pool estimates via fixed- and random-effects meta-analysis; conduct subgroup analyses by marital status and education.",
+      "whyNewlyPossible": "Harmonization of the CES-D item CDE alongside sociodemographic and health variables across three cohorts now allows a properly standardized pooled prevalence estimate and subgroup meta-analysis of depression burden at a scale not achievable within any single cohort.",
       "category": "Pooled prevalence / subgroup analysis"
     },
     {
-      "title": "Mediation Analysis of BMI and Central Adiposity on the Smoking–Hypertension Relationship Across Cohorts",
-      "hypothesis": "The association between cumulative cigarette smoking exposure and measured blood pressure is partially mediated through adiposity (BMI and waist circumference), and this mediation pathway differs by sex and educational attainment across cohorts.",
+      "title": "Mediation Analysis of Neighborhood Recreation Access on BMI and Cardiometabolic Outcomes via Physical Activity Proxies",
+      "hypothesis": "Access to free or low-cost neighborhood recreation facilities is associated with lower BMI and reduced hypertension prevalence, and this association is partially mediated through behavioral pathways (fruit/vegetable intake, fat consumption) and moderated by educational attainment and marital status.",
       "concepts": [
-        "Systolic blood pressure measurement (numeric, mmHg)",
-        "Diastolic blood pressure measurement (numeric, mmHg)",
-        "Lifetime cigarette smoking status: whether smoked ≥100 cigarettes in lifetime",
-        "Average number of cigarettes smoked per day (current or historical)",
-        "Total number of years smoked cigarettes",
-        "Body Mass Index numeric value (kg/m²)",
-        "Waist circumference measurement",
-        "Sex of participant (general/self-reported, not explicitly at birth)",
-        "Respondent's highest educational attainment (level/degree completed)"
+        "Neighborhood built environment and recreation facilities",
+        "Body Mass Index (BMI) numeric value (kg/m²)",
+        "Waist circumference measurement in cm",
+        "Hypertension (high blood pressure) lifetime occurrence — self-reported binary Yes/No",
+        "Frequency/servings of fruit consumption",
+        "Frequency/servings of vegetable consumption",
+        "Frequency/amount of butter, margarine, or fat used on vegetables, bread, or potatoes",
+        "Respondent's highest grade or level of school completed / highest degree received (self-reported educational attainment)",
+        "Current marital/partner status of participant (categorical)",
+        "Participant's age in completed years (numeric value)"
       ],
       "cohorts": [
         "AI-READI",
-        "CLSA",
         "MESA"
       ],
-      "method": "Causal mediation analysis (using the 'mediation' package or structural equation modeling) within each cohort, treating pack-year-equivalent smoking exposure (daily cigarettes × years smoked) as the exposure, systolic/diastolic blood pressure as the outcome, and BMI/waist circumference as mediators; cohort-specific natural direct and indirect effects pooled via meta-analysis; sex and education tested as moderators.",
-      "whyNewlyPossible": "Simultaneous harmonization of cumulative smoking variables (lifetime status, daily quantity, years smoked), adiposity measures (BMI and waist circumference), and blood pressure across three cohorts enables a properly powered mediation analysis with replication; no single cohort previously had sufficient diversity for generalizable estimates.",
-      "category": "Mediation analysis"
+      "method": "Causal mediation analysis (Baron-Kenny framework with bootstrapped confidence intervals or counterfactual g-computation) within each cohort, with neighborhood recreation as exposure, BMI/waist circumference as outcome, and dietary variables as candidate mediators; moderation by education and marital status tested via interaction terms; results compared across cohorts for replication.",
+      "whyNewlyPossible": "The simultaneous harmonization of neighborhood built environment, dietary intake variables, anthropometric measures, and hypertension across AI-READI and MESA with matching CDEs enables a formal mediation framework linking environmental exposures to cardiometabolic outcomes that required consistent operationalization of all mediator and moderator variables.",
+      "category": "Mediation / moderation analysis"
     },
     {
-      "title": "Cross-Cohort Replication of the Association Between Neighborhood Walkability and Cardiometabolic Outcomes",
-      "hypothesis": "Higher perceived neighborhood walkability is associated with lower BMI, lower blood pressure, and lower odds of diabetes diagnosis, and these associations can be replicated across AI-READI and AoU, which share the harmonized walkability perception scale.",
+      "title": "Cross-Cohort Replication of Cumulative Tobacco Exposure Metrics in Relation to Stroke and Cancer",
+      "hypothesis": "Cumulative tobacco exposure (lifetime smoking indicator, years smoked, daily cigarette count, and non-cigarette tobacco use) is positively associated with stroke and cancer history, and these associations replicate across cohorts with distinct demographic compositions.",
       "concepts": [
-        "Body Mass Index numeric value (kg/m²)",
-        "Systolic blood pressure measurement (numeric, mmHg)",
-        "Diastolic blood pressure measurement (numeric, mmHg)",
-        "Diabetes or pre-diabetes diagnosis status (ever told by doctor / current diagnosis, Yes/No/Unknown)",
-        "Self-reported overall/general health status (5-point Excellent–Poor scale)",
-        "Respondent's highest educational attainment (level/degree completed)"
+        "Lifetime ≥100 cigarettes smoked indicator (Yes/No)",
+        "Total years smoked cigarettes",
+        "Number of cigarettes smoked per day (average or current)",
+        "Self-reported clinician-diagnosed stroke (Yes/No)",
+        "Cancer diagnosis history (any type) – binary Yes/No indicator",
+        "Participant's age in completed years (numeric value)",
+        "Respondent's highest grade or level of school completed / highest degree received (self-reported educational attainment)",
+        "Alcohol consumption frequency by beverage type (beer, wine, liquor, other) per typical week, in standard servings",
+        "Body Mass Index (BMI) numeric value (kg/m²)"
       ],
       "cohorts": [
         "AI-READI",
-        "AoU"
+        "CLSA"
       ],
-      "method": "Multivariable linear regression (BMI, blood pressure outcomes) and logistic regression (diabetes diagnosis) with walkability composite score as the primary predictor, adjusting for education, age, and self-reported health; results compared across cohorts for directional and magnitude replication; sensitivity analysis uses confirmatory factor analysis to validate scale structure before pooling.",
-      "whyNewlyPossible": "The multi-item Likert walkability perception scale is harmonized across exactly AI-READI and AoU, and pairing it with shared cardiometabolic outcomes (BMI, blood pressure, diabetes) for the first time allows formal cross-cohort replication of built-environment–health associations that previously could not be replicated due to incompatible instruments.",
-      "category": "Cross-cohort replication"
+      "method": "Logistic regression of stroke and cancer outcomes on a composite pack-year proxy (daily cigarettes × years smoked) and lifetime smoking indicator within each cohort, adjusting for age, BMI, education, and alcohol; random-effects meta-analysis across cohorts; dose-response modeled with restricted cubic splines.",
+      "whyNewlyPossible": "Harmonization of three complementary tobacco exposure CDEs (lifetime indicator, years smoked, daily amount) alongside stroke and cancer outcomes across AI-READI and CLSA allows construction of a cumulative exposure variable and its replication across cohorts for the first time under a unified coding scheme.",
+      "category": "Cross-cohort replication / dose-response analysis"
     },
     {
-      "title": "Cross-Cohort Comparison of Cumulative Tobacco Exposure Metrics and Their Differential Association with Cardiovascular and Cancer Outcomes",
-      "hypothesis": "Cumulative cigarette smoking (pack-year proxy from daily cigarettes and years smoked), combined with lifetime use of other tobacco products, has stronger associations with cardiovascular disease and cancer history than any single smoking metric, and this holds across multiple cohorts.",
+      "title": "Pooled Cross-Cohort Prevalence of Asthma and Association with Tobacco and Adiposity across Three Cohorts",
+      "hypothesis": "Doctor-confirmed asthma prevalence differs across cohorts and is positively associated with BMI, cigarette smoking burden, and alcohol consumption, after adjusting for age, sex, and education.",
       "concepts": [
-        "Lifetime cigarette smoking status: whether smoked ≥100 cigarettes in lifetime",
-        "Average number of cigarettes smoked per day (current or historical)",
-        "Total number of years smoked cigarettes",
-        "Lifetime regular use of other tobacco products (≥6 months): ever-use indicator and specific product types (cigars, chewing tobacco, pipe, pipe tobacco, smokeless)",
-        "Physician-diagnosed cardiovascular disease history: heart attack/MI, angina, or heart disease including CHF (binary yes/no per condition, self-reported)",
-        "Cancer diagnosis history: binary indicator of ever receiving a physician diagnosis of cancer (any type)",
-        "Specific cancer type(s) diagnosed (per site: bladder, breast, colorectal, lung, etc.) as binary indicators or coded type"
+        "Doctor-confirmed asthma diagnosis — subject, binary Yes/No",
+        "Body Mass Index (BMI) numeric value (kg/m²)",
+        "Waist circumference measurement in cm",
+        "Number of cigarettes smoked per day (average or current)",
+        "Lifetime ≥100 cigarettes smoked indicator (Yes/No)",
+        "Alcohol consumption frequency by beverage type (beer, wine, liquor, other) per typical week, in standard servings",
+        "Respondent's highest grade or level of school completed / highest degree received (self-reported educational attainment)",
+        "Sex of subject/participant (general, binary)",
+        "Participant's age in completed years (numeric value)"
       ],
       "cohorts": [
-        "CLSA",
-        "MESA"
-      ],
-      "method": "Logistic regression models predicting CVD history and cancer history (any; lung-specific) from a constructed cumulative tobacco exposure index (cigarettes/day × years smoked plus indicator for other tobacco product use), with and without the other tobacco product term; within-cohort results compared and pooled via fixed-effects meta-analysis; AUC compared between simple and composite exposure models using DeLong test.",
-      "whyNewlyPossible": "CLSA and MESA now share harmonized lifetime cigarette status, daily quantity, years smoked, other tobacco product use, CVD history, and cancer type indicators, enabling construction of a composite tobacco exposure index and comparison of its predictive utility for disease outcomes — an analysis requiring all five variable types simultaneously, newly possible with this harmonization.",
-      "category": "Cross-cohort association / replication"
-    },
-    {
-      "title": "Pooled Cross-Cohort Analysis of Sex Differences in the BMI–Blood Pressure Relationship Across the Lifespan",
-      "hypothesis": "The slope of the association between BMI and systolic/diastolic blood pressure differs by sex and varies with age, with harmonized data across four large cohorts providing the statistical power to detect interaction terms that are underpowered in any single cohort.",
-      "concepts": [
-        "Body Mass Index numeric value (kg/m²)",
-        "Systolic blood pressure measurement (numeric, mmHg)",
-        "Diastolic blood pressure measurement (numeric, mmHg)",
-        "Sex of participant (general/self-reported, not explicitly at birth)",
-        "Subject's current age in years",
-        "Body weight numeric value",
-        "Waist circumference measurement",
-        "Heart rate (pulse rate) in beats per minute at clinical encounter"
-      ],
-      "cohorts": [
-        "AI-READI",
         "CLSA",
         "MESA",
         "UKBB"
       ],
-      "method": "Individual patient data meta-analysis using a one-stage mixed-effects linear regression with BMI, sex, age, and BMI×sex and BMI×age interaction terms as fixed effects, cohort as a random intercept, and waist circumference, body weight, and heart rate as covariates; age-stratified subgroup analyses (e.g., <50, 50–65, >65 years); cohort-specific effect estimates also reported for heterogeneity assessment.",
-      "whyNewlyPossible": "All four cohorts (AI-READI, CLSA, MESA, UKBB) now share harmonized BMI, systolic BP, diastolic BP, sex, waist circumference, and body weight, while AI-READI and CLSA additionally share age; pooling across all four yields an unprecedentedly large and diverse sample enabling detection of second-order interactions (sex × BMI × age) that require tens of thousands of participants.",
-      "category": "Subgroup / interaction analysis"
+      "method": "Age- and sex-standardized asthma prevalence estimated in each cohort; logistic regression of asthma on BMI, smoking, and alcohol within each cohort; random-effects meta-analysis to pool associations; Cochran Q and I² to quantify heterogeneity; BMI modeled as continuous and as category (CLSA/MESA overlap).",
+      "whyNewlyPossible": "Asthma diagnosis, BMI, smoking, and alcohol use have now been harmonized with consistent CDEs across CLSA, MESA, and UKBB, enabling a three-cohort pooled analysis with adequate statistical power to detect modest associations that individual cohorts might be underpowered to resolve.",
+      "category": "Pooled prevalence / cross-cohort association"
     },
     {
-      "title": "Socioeconomic and Behavioral Determinants of Self-Reported Health Status: A Multi-Cohort Structural Analysis",
-      "hypothesis": "Educational attainment, smoking history, BMI, alcohol use, diabetes, hypertension, and physical difficulty (walking/stair climbing) jointly predict self-reported general health, and the relative contributions of behavioral versus clinical versus socioeconomic predictors differ across cohorts representing different health systems and populations.",
+      "title": "Cross-Cohort Analysis of Educational Attainment as a Moderator of Diet Quality on Adiposity Outcomes",
+      "hypothesis": "The magnitude of the inverse association between diet quality (fruit/vegetable intake, dietary fat use) and adiposity (BMI, waist circumference) is moderated by educational attainment, such that lower education attenuates or reverses the protective effect of diet; this moderation pattern replicates across cohorts.",
       "concepts": [
-        "Self-reported overall/general health status (5-point Excellent–Poor scale)",
-        "Respondent's highest educational attainment (level/degree completed)",
-        "Lifetime cigarette smoking status: whether smoked ≥100 cigarettes in lifetime",
-        "Body Mass Index numeric value (kg/m²)",
-        "Lifetime alcohol use ever (yes/no)",
-        "Diabetes or pre-diabetes diagnosis status (ever told by doctor / current diagnosis, Yes/No/Unknown)",
-        "Self-reported hypertension diagnosis history (ever told by doctor)",
-        "Walking and stair-climbing difficulty or inability (including walking blocks and flight of stairs)",
-        "Current employment status (categorical, multi- or single-select)"
-      ],
-      "cohorts": [
-        "AoU",
-        "CLSA"
-      ],
-      "method": "Ordinal logistic regression (proportional odds model) predicting five-level self-reported health from the listed predictors within each cohort; standardized coefficients compared across cohorts to assess relative predictor importance; path analysis or structural equation modeling used to test whether behavioral factors (smoking, alcohol, BMI) mediate the education–self-rated health association; cohort-level heterogeneity assessed by interaction testing.",
-      "whyNewlyPossible": "AoU and CLSA now share harmonized self-reported health status, education level, smoking status, BMI, alcohol use, diabetes diagnosis, hypertension history, walking difficulty, and employment status — a sufficiently rich and aligned variable set to conduct a multi-domain determinants analysis with formal mediation testing, which required all variables to be coded comparably across cohorts.",
-      "category": "Mediation / structural analysis"
-    },
-    {
-      "title": "Cross-Cohort Estimation of Stroke and Cardiovascular Disease Prevalence and Their Shared Risk Factor Profiles",
-      "hypothesis": "Stroke and cardiovascular disease share overlapping but distinct risk factor profiles (blood pressure, BMI, smoking, diabetes) across cohorts, and individual patient data meta-analysis will yield well-powered estimates of unique versus shared risk contributions for each outcome.",
-      "concepts": [
-        "Ever told by a doctor you had a stroke (binary yes/no)",
-        "Physician-diagnosed cardiovascular disease history: heart attack/MI, angina, or heart disease including CHF (binary yes/no per condition, self-reported)",
-        "Systolic blood pressure measurement (numeric, mmHg)",
-        "Diastolic blood pressure measurement (numeric, mmHg)",
-        "Body Mass Index numeric value (kg/m²)",
-        "Lifetime cigarette smoking status: whether smoked ≥100 cigarettes in lifetime",
-        "Average number of cigarettes smoked per day (current or historical)",
-        "Diabetes or pre-diabetes diagnosis status (ever told by doctor / current diagnosis, Yes/No/Unknown)",
-        "Self-reported hypertension diagnosis history (ever told by doctor)"
+        "Respondent's highest grade or level of school completed / highest degree received (self-reported educational attainment)",
+        "Frequency/servings of fruit consumption",
+        "Frequency/servings of vegetable consumption",
+        "Frequency/amount of butter, margarine, or fat used on vegetables, bread, or potatoes",
+        "Body Mass Index (BMI) numeric value (kg/m²)",
+        "Waist circumference measurement in cm",
+        "Body weight numeric value",
+        "Participant's age in completed years (numeric value)",
+        "Current marital/partner status of participant (categorical)",
+        "Alcohol consumption frequency by beverage type (beer, wine, liquor, other) per typical week, in standard servings"
       ],
       "cohorts": [
         "AI-READI",
-        "CLSA"
+        "CLSA",
+        "MESA"
       ],
-      "method": "Bivariate probit regression (to account for correlation between stroke and CVD outcomes) and separate logistic regressions for each outcome, using shared risk factors as predictors; prevalence of each outcome estimated with 95% CIs pooled across cohorts; risk factor profiles for stroke-only, CVD-only, and comorbid stroke+CVD compared using multinomial logistic regression; sensitivity analyses exclude participants on antihypertensive medications using the diabetes medication proxy.",
-      "whyNewlyPossible": "AI-READI and CLSA are the only two cohorts sharing both stroke history and CVD history alongside harmonized blood pressure measurements, BMI, smoking, diabetes, and hypertension diagnosis — enabling for the first time a joint modeling approach that distinguishes shared from unique risk pathways for these two cerebrovascular/cardiovascular outcomes.",
-      "category": "Cross-cohort association / meta-analysis"
+      "method": "Multiple linear regression of BMI and waist circumference on diet quality scores (summed from fruit, vegetable, and fat frequency variables) with education × diet interaction terms, estimated within each cohort; meta-analysis of interaction coefficients across cohorts; stratified analyses by marital status.",
+      "whyNewlyPossible": "Harmonized dietary intake variables (fruit, vegetable, fat frequency), adiposity measures, and educational attainment across AI-READI, CLSA, and MESA now permit a formal test and replication of education-as-moderator of diet–adiposity relationships at population scale.",
+      "category": "Moderation / interaction analysis"
+    },
+    {
+      "title": "Peripheral Arterial Disease Screening Metric (Claudication) in Relation to Cardiometabolic and Smoking Burden: Cross-Cohort Association Study",
+      "hypothesis": "Exertional leg pain consistent with claudication is positively associated with cumulative cigarette exposure, hypertension, elevated BMI, and stroke history; these associations are detectable and consistent across two large independent cohorts.",
+      "concepts": [
+        "Exertional leg/buttock pain claudication screening (Rose/Edinburgh Questionnaire items)",
+        "Hypertension (high blood pressure) lifetime occurrence — self-reported binary Yes/No",
+        "Self-reported clinician-diagnosed stroke (Yes/No)",
+        "Number of cigarettes smoked per day (average or current)",
+        "Total years smoked cigarettes",
+        "Lifetime ≥100 cigarettes smoked indicator (Yes/No)",
+        "Body Mass Index (BMI) numeric value (kg/m²)",
+        "Waist circumference measurement in cm",
+        "Seated systolic blood pressure reading (mmHg), by reading sequence (1st/2nd/3rd)",
+        "Seated diastolic blood pressure reading (mmHg), by reading sequence (1st/2nd/3rd)",
+        "Heart rate in beats per minute",
+        "Sex of subject/participant (general, binary)"
+      ],
+      "cohorts": [
+        "MESA",
+        "UKBB"
+      ],
+      "method": "Logistic regression of claudication symptom (positive screen) on cardiometabolic risk factors and cumulative tobacco exposure within each cohort, adjusting for age and sex; random-effects meta-analysis across MESA and UKBB; receiver-operating characteristic analysis of a combined risk score.",
+      "whyNewlyPossible": "Harmonization of the Rose/Edinburgh claudication questionnaire item alongside blood pressure readings, smoking burden, hypertension, stroke, and BMI across MESA and UKBB enables a replication study of peripheral arterial disease risk factors in two geographically and racially distinct populations under unified variable definitions.",
+      "category": "Cross-cohort association / replication"
+    },
+    {
+      "title": "Sociodemographic and Behavioral Predictors of Self-Rated Health: Pooled Cross-Cohort Analysis with Mediation by Chronic Conditions",
+      "hypothesis": "Educational attainment, marital status, BMI, smoking behavior, and alcohol use predict poor self-rated health, and a portion of this effect is mediated by diagnosed chronic conditions (hypertension, asthma, stroke, cancer), with effect sizes replicable across cohorts.",
+      "concepts": [
+        "General overall health self-rating (excellent–poor scale)",
+        "Respondent's highest grade or level of school completed / highest degree received (self-reported educational attainment)",
+        "Current marital/partner status of participant (categorical)",
+        "Body Mass Index (BMI) numeric value (kg/m²)",
+        "Number of cigarettes smoked per day (average or current)",
+        "Lifetime ≥100 cigarettes smoked indicator (Yes/No)",
+        "Alcohol consumption frequency by beverage type (beer, wine, liquor, other) per typical week, in standard servings",
+        "Hypertension (high blood pressure) lifetime occurrence — self-reported binary Yes/No",
+        "Doctor-confirmed asthma diagnosis — subject, binary Yes/No",
+        "Self-reported clinician-diagnosed stroke (Yes/No)",
+        "Cancer diagnosis history (any type) – binary Yes/No indicator",
+        "Participant's age in completed years (numeric value)",
+        "Physical functional mobility — walking and ambulatory activity ability"
+      ],
+      "cohorts": [
+        "AoU",
+        "CLSA",
+        "UKBB"
+      ],
+      "method": "Ordinal logistic regression of self-rated health (excellent to poor) on sociodemographic, behavioral, and chronic disease predictors within each cohort; causal mediation analysis decomposing total socioeconomic effect into direct and indirect (via chronic conditions) components; fixed- and random-effects meta-analysis of regression coefficients across cohorts.",
+      "whyNewlyPossible": "Self-rated health has been harmonized with the PhenX CDE across AoU, CLSA, and UKBB simultaneously with CDEs for chronic conditions, behavioral risk factors, educational attainment, and physical functional mobility, enabling a multi-cohort mediation analysis of socioeconomic pathways to subjective health that was not previously feasible with inconsistent coding.",
+      "category": "Mediation / cross-cohort pooled analysis"
     }
   ]
 }

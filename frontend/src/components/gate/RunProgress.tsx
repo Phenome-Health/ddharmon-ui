@@ -1,0 +1,340 @@
+import { useEffect, useState } from "react";
+import { Check, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { switchToSync } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { formatDuration, formatUsd, type JobResult } from "@/types";
+import { isInFlight } from "@/lib/run-state";
+import { AUTO_ACCEPTED_LABEL, autoGateStates, gateLabel, isAutoRun, type AutoGateState } from "@/lib/review-mode";
+import {
+  elapsedSeconds,
+  etaSeconds,
+  isAwaitingProviderQueue,
+  legStartedAt,
+  phasePercent,
+  syncSwitchState,
+  timelineSegments,
+  type SyncSwitchState,
+} from "@/lib/run-progress";
+
+/**
+ * The run's progress, as components. The arithmetic lives in `lib/run-progress.ts`; this file only
+ * renders it.
+ *
+ * WHY THE SPLIT. A percentage that cannot be imported by a Playwright spec is a percentage that drifts —
+ * the rule `lib/run-state.ts` and `lib/gate-routes.ts` already follow, and the reason `run-progress.ts`
+ * has no environment reads and no JSX. What is left here is markup, which is asserted by rendering it.
+ *
+ * `RunTimeline` ARRIVED HERE BY EXTRACTION, NOT BY REWRITING (08-14h Task 1). It was module-local to
+ * `pages/dashboard.tsx:130`, on a screen `08-14f` stopped routing anyone through, and its markup is
+ * unchanged down to the class strings — the dashboard's visual baseline holding still is the proof. Only
+ * the sequence-and-durations computation moved out, into `timelineSegments`, so it could be asserted.
+ *
+ * `dashboard.tsx` IS 1,246 LINES AND 08-17 OWNS ITS FUTURE. Nothing else was tidied on the way past.
+ */
+
+/**
+ * Verbose per-stage timeline for a live run: each reached stage with how long it ran.
+ *
+ * Hidden gracefully when no timings are streamed (e.g. a DB-hydrated historical run) — an empty timeline
+ * would claim the run had no stages, which is a different thing from this run not having reported them.
+ */
+export function RunTimeline({
+  phaseStartedAt,
+  currentPhase,
+  now,
+}: {
+  phaseStartedAt?: Record<string, number>;
+  currentPhase: string;
+  now: number;
+}) {
+  const segments = timelineSegments({ phaseStartedAt, currentPhase, now });
+  if (!segments.length) return null;
+  return (
+    <div data-testid="run-timeline" className="space-y-1 border-t border-rule-on-raised pt-2 text-xs">
+      {segments.map((s) => (
+        <div key={s.phase} className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 capitalize text-on-raised">
+            {s.active ? (
+              <Loader2 className="h-3 w-3 animate-spin text-accent-on-raised" />
+            ) : (
+              <Check className="h-3 w-3 text-success" />
+            )}
+            {s.phase}
+          </span>
+          <span className="tabular-nums text-on-raised-muted">{formatDuration(s.seconds)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The run's live state, rendered in the gate chrome while — and only while — a worker is running.
+ *
+ * WHAT IT SAYS, AND WHAT IT REFUSES TO SAY. A reviewer who lands on a gate mid-run needs three facts: the
+ * stage the run has reached, roughly how far it has got, and how long it has been going. It gives those.
+ * It does NOT give a finish time it cannot support, and it does not animate a bar over a run that is
+ * standing still in a provider's queue — the two ways a progress readout lies.
+ *
+ * THE BATCH QUEUE IS THE CASE THIS EXISTS TO GET RIGHT. The queue is the majority of a batch run's wall
+ * clock (modelled at a mid of an hour against a documented 24-hour ceiling) and the stage percentage does
+ * not move while it runs, so a bar that has not moved in twenty minutes reads as a hung product. Instead
+ * the readout names what is being waited on and drops the bar entirely — the same honesty 08-13b settled
+ * on for the Setup estimate, where itemising work and queue as two labelled lines was what stopped the
+ * uncertain half hiding inside a blended figure.
+ *
+ * IT RENDERS NOTHING FOR A RUN THAT IS NOT IN FLIGHT, and that includes a PARKED run. A parked run's
+ * screen is about the review, not about the run; the rail already carries where it got to and what it
+ * spent, and a progress strip there would be chrome competing with the thing the reviewer came for. The
+ * frozen-elapsed rule 08-14c established is enforced in `elapsedSeconds` regardless, so no surface — this
+ * one or a later one — can show a climbing clock over a run that has stopped.
+ *
+ * IT OWNS ITS OWN TICK. `GateShell` does not subscribe to the stream and must not grow a timer for a
+ * readout that is usually absent; the interval here starts only while the run is in flight and is torn
+ * down the moment it is not, so a parked or finished gate screen runs no timer at all.
+ */
+export function RunProgress({ job, className }: { job?: JobResult | null; className?: string }) {
+  // Seconds, matching the wire: `createdAt`/`updatedAt` are unix seconds.
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  // Full auto (08-30): a run parked ONLY while the server commits that gate and starts the next step is still moving,
+  // so the readout stays — it is the moment the reviewer most needs to see the run did not stop there.
+  const advancing = job?.status === "awaiting_review" && !!job?.autoAdvancing;
+  const inFlight = isInFlight(job?.status) || advancing;
+  useEffect(() => {
+    if (!inFlight) return;
+    const tick = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(tick);
+  }, [inFlight]);
+
+  if (!job || !inFlight) return null;
+
+  const config = job.config as Record<string, unknown> | undefined;
+  // The CURRENT leg's clock (#5): a resumed run's createdAt is the first leg's start, days ago.
+  const elapsed = elapsedSeconds(job, now, legStartedAt(job.phaseStartedAt));
+  const pct = phasePercent(job.phase, job.completed, job.total);
+  // 08-28 0e: the leg's LIVE transport, so a leg switched to sync stops reading as a queue wait.
+  const transport = job.transport ?? null;
+  const queued = isAwaitingProviderQueue(config, job.phase, transport);
+  const eta = etaSeconds({ status: job.status, phase: job.phase, config, transport, elapsed, pct });
+  const sw = syncSwitchState(job);
+
+  return (
+    <section
+      data-testid="run-progress"
+      // A live region: a reviewer who arrives mid-run and does not look away should still be told when
+      // the stage changes. `polite`, because nothing here is urgent enough to interrupt.
+      aria-live="polite"
+      aria-label="How far this run has got"
+      className={cn(
+        "flex flex-col gap-2 rounded-card bg-surface-raised px-6 py-4 shadow-card",
+        className,
+      )}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        {/* The stage LABEL comes verbatim from the stream, so a pipeline stage this client has never
+            heard of still displays. Only the percentage uses the known ordering. */}
+        <p data-testid="run-progress-stage" className="flex items-center gap-2 text-sm text-on-raised">
+          <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-accent-on-raised" />
+          <span className="font-semibold capitalize">
+            {advancing
+              ? `Accepting ${job.gatePosition ? gateLabel(job.gatePosition) : "this gate"} and starting the next step`
+              : job.phase}
+          </span>
+          {!advancing && job.total > 0 && (
+            <span className="font-mono text-xs tabular-nums text-on-raised-muted">
+              {job.completed} / {job.total}
+            </span>
+          )}
+        </p>
+        <p className="flex items-center gap-3 text-xs text-on-raised-muted">
+          <span data-testid="run-progress-elapsed" className="tabular-nums">
+            Running for {formatDuration(elapsed)}
+          </span>
+          {/* ABSENT, not zeroed, when no honest projection exists. See `etaSeconds` for the four refusals. */}
+          {eta !== null && (
+            <span data-testid="run-progress-eta" className="tabular-nums">
+              ~{formatDuration(eta)} left
+            </span>
+          )}
+        </p>
+      </div>
+
+      {sw?.kind === "switching" ? (
+        /* 08-28 0e. The batch was cancelled and is handing back what it had already finished; the rest runs
+           sync the moment it has. Still no bar: nothing is being counted until then. */
+        <p data-testid="run-progress-switching" className="max-w-[80ch] text-sm text-on-raised-muted">
+          <span className="font-semibold text-on-raised">Switching to sync.</span> The queued batch is cancelled
+          and is handing back anything it had already finished (kept at the batch rate); the rest runs right after,
+          at the full rate.
+        </p>
+      ) : queued ? (
+        /* NO BAR HERE, DELIBERATELY. The percentage is standing still because the work is with the
+           provider, and rendering it would present a stalled number as progress. */
+<>
+          <p data-testid="run-progress-queue" className="max-w-[80ch] text-sm text-on-raised-muted">
+            <span className="font-semibold text-on-raised">Waiting in the provider&rsquo;s batch queue.</span>{" "}
+            The work itself is minutes; the queue is what makes a batch run long — most clear within an hour,
+            and the provider allows up to 24. Nothing is stuck, and you can close this tab: the run keeps
+            going and will be waiting at its gate when you come back.
+          </p>
+          {/* A link so the reviewer can watch the batch live instead of only our stalled queue line. It is the
+              console ROOT on purpose, NOT a workspaces/<id>/batches deep link: the batch carries no workspace
+              id here, and a BYOK key can belong to a non-default workspace, so a hardcoded one would land the
+              wrong (or empty) page. The console resolves the viewer's own workspace; Batches is one click in. */}
+          <a
+            href="https://console.anthropic.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="run-progress-batches-link"
+            className="inline-flex w-fit items-center gap-1 text-sm font-medium text-accent-on-raised underline underline-offset-2"
+          >
+            Watch it in the Anthropic Console →
+          </a>
+          {/* 08-28 0e — the escape hatch, BESIDE the reassurance rather than instead of it: waiting is still
+              the cheap default, and this is a paid choice that says what it costs. */}
+          {sw && <SyncSwitch jobId={job.jobId} state={sw} />}
+        </>
+      ) : (
+        <div
+          data-testid="run-progress-bar"
+          data-pct={pct}
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${job.phase} — ${pct}% of the run`}
+          className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-inset"
+        >
+          <div className="h-full rounded-pill bg-accent-action" style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {/* The per-phase checklist — each completed phase with a ✓ and how long it ran, the active one
+          spinning. The SAME component the legacy dashboard renders; wired in here so the staged flow gets
+          the verbose progress too. It hides itself when the run carries no timings, so a hydrated
+          historical run stays clean, and it reuses the tick this section already owns. */}
+      <RunTimeline phaseStartedAt={job.phaseStartedAt} currentPhase={job.phase} now={now} />
+
+      <AutoProgress job={job} />
+    </section>
+  );
+}
+
+const AUTO_STATE_LABEL: Record<AutoGateState, string> = {
+  accepted: AUTO_ACCEPTED_LABEL,
+  running: "running now",
+  reached: "waiting here",
+  waiting: "next",
+  stopped: "not reached",
+};
+
+/**
+ * Where a FULL-AUTO run is on its walk (08-30): each gate, committed by the server, running, or still ahead — so the
+ * run is seen moving through the gates rather than stopping at them. Renders nothing for a guided run.
+ */
+export function AutoProgress({ job }: { job: JobResult }) {
+  const config = job.config as Record<string, unknown> | undefined;
+  if (!isAutoRun(config) && job.reviewMode !== "auto") return null;
+  const states = autoGateStates({ ...job, config: { review_mode: "auto", ...config } });
+  return (
+    <div data-testid="auto-progress" className="flex flex-col gap-2 border-t border-rule-on-raised pt-2">
+      <p className="max-w-[80ch] text-xs text-on-raised-muted">
+        <span className="font-semibold text-on-raised">Full auto.</span> Each gate is committed with the pipeline&rsquo;s
+        own proposals and the next step starts by itself, through to the export screen. Nobody reviews a gate before
+        it is committed; you can review each one afterwards.
+      </p>
+      <ol className="flex flex-wrap gap-2">
+        {(["gate1", "gate2", "gate3", "gate4"] as const).map((g) => (
+          <li
+            key={g}
+            data-auto-gate={g}
+            data-state={states[g]}
+            className={cn(
+              "flex items-center gap-1.5 rounded-pill border px-3 py-1 text-xs",
+              states[g] === "running"
+                ? "border-accent-on-raised text-on-raised"
+                : "border-rule-on-raised text-on-raised-muted",
+            )}
+          >
+            {states[g] === "running" ? (
+              <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin text-accent-on-raised" />
+            ) : states[g] === "accepted" ? (
+              <Check aria-hidden="true" className="h-3 w-3 text-success" />
+            ) : null}
+            <span className="font-semibold text-on-raised">{gateLabel(g)}</span>
+            <span>· {AUTO_STATE_LABEL[states[g]]}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * "Finish now with sync" (08-28 0e): cancel the queued batch, keep what it already finished, run the rest now.
+ *
+ * THE PRICE IS PART OF THE CONTROL, because this re-buys queued work at twice the batch rate. The label carries
+ * the server's estimate for everything the batch was sent — deliberately high, and absent (never "+$0") when it
+ * could not be priced — and the caption says the two things a reviewer needs to agree to it: finished items
+ * keep the batch rate, and only THIS leg switches (the next Continue is a fresh choice, back in batch).
+ *
+ * ONE PRESS. The server is idempotent anyway, but a second live button beside an acknowledgement reads as
+ * "it did not work". Once pressed — here, or in another tab, which the stream reports as an un-switchable
+ * batch still in progress — the offer is replaced by the acknowledgement. A refusal (409: the batch stopped
+ * being queued in the meantime) is said out loud and the offer stays usable.
+ */
+function SyncSwitch({ jobId, state }: { jobId: string; state: NonNullable<SyncSwitchState> }) {
+  const [phase, setPhase] = useState<"idle" | "sending" | "sent">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  if (state.kind === "switching") return null; // the readout's own line covers it
+  if (state.kind === "requested" || phase === "sent") {
+    return (
+      <p data-testid="run-progress-switch-requested" className="max-w-[80ch] text-sm text-on-raised">
+        <span className="font-semibold">Switch requested.</span> The batch is being cancelled; what it has already
+        finished is kept, and the rest runs now at the full rate.
+      </p>
+    );
+  }
+
+  async function press() {
+    setPhase("sending");
+    setError(null);
+    try {
+      await switchToSync(jobId);
+      setPhase("sent");
+    } catch (e) {
+      setPhase("idle");
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const price = state.estimateUsd === null ? null : formatUsd(state.estimateUsd);
+  return (
+    <div data-testid="run-progress-switch" className="flex max-w-[80ch] flex-col items-start gap-1.5">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="run-progress-switch-sync"
+        onClick={() => void press()}
+        disabled={phase === "sending"}
+      >
+        {phase === "sending" && <Loader2 aria-hidden="true" className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+        {state.label}
+      </Button>
+      <p data-testid="run-progress-switch-caption" className="text-xs text-on-raised-muted">
+        Cancels the queued batch. Anything it has already finished is kept at the batch rate; the rest of its{" "}
+        {state.nItems} requests run now at the full rate
+        {price ? ` — at most about ${price}` : " (the price could not be estimated)"}. Only this leg switches: your
+        next Continue starts in batch again.
+      </p>
+      {error && (
+        <p data-testid="run-progress-switch-error" role="alert" className="text-xs font-semibold text-status-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
