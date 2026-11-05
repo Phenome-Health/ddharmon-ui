@@ -5,22 +5,32 @@ import {
   CheckCircle2,
   Download,
   ExternalLink,
-  FileSpreadsheet,
+  Flashlight,
   Gauge,
   GitCompareArrows,
   Layers,
-  ListChecks,
   Pencil,
+  Settings2,
   Sparkles,
   UserCheck,
-  Upload,
+  Wand2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { REF } from "@/lib/links";
+import { REVIEW_MODE_COPY } from "@/lib/review-mode";
 import { VERDICT_STYLES } from "@/types";
 import { isPageHidden } from "@/lib/page-visibility";
+import { AUTH_ENABLED, useAuthState } from "@/auth";
+import { GATE_LABELS } from "@/components/gate/GateRail";
+
+/**
+ * The Guide — rewritten 2026-11-05 for the STAGED flow (Set up → Gates 1–4, paid gate by gate). The old page described
+ * the v1 flow (one run, then a review queue / workbench). Where a screen already states a fact in its own words (the
+ * review modes, the run modes, the export tiles), this page says the same thing, so the guide and the screen cannot
+ * drift into two different promises.
+ */
 
 /** Inline external link, styled + with an icon. */
 function A({ href, children }: { href: string; children: React.ReactNode }) {
@@ -38,17 +48,19 @@ function A({ href, children }: { href: string; children: React.ReactNode }) {
 }
 
 export default function GuidePage() {
+  const { isGuest } = useAuthState();
+  const guest = AUTH_ENABLED && isGuest;
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="font-display text-xl font-semibold text-on-field">What this platform does</h1>
+        <h1 className="font-display text-xl font-semibold text-on-field">How ddharmon works</h1>
         <p className="mt-1 text-sm text-on-field-muted">
-          A guide to harmonizing cohort data dictionaries onto a Common Data Element backbone — what you
-          provide, how a run works, and what you get back.
+          Harmonizing cohort data dictionaries onto Common Data Elements: what you provide, what happens at each step
+          of a run, and what you take away.
         </p>
       </div>
 
-      {/* 1 · The problem it solves (incl. meaning-not-wording) --------------------------------- */}
+      {/* 1 · The problem it solves ------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -57,23 +69,22 @@ export default function GuidePage() {
         </CardHeader>
         <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
           <p>
-            Different studies describe the same measurement in different words — <code>bmi</code> in one
-            cohort, <code>body_mass_index</code> in another, <code>Q47_weight_kg</code> in a third — and the same
-            survey question gets reworded from study to study. One study asks{" "}
-            <span className="italic text-on-raised">“In general, would you say your health is…”</span>; another
-            records the same thing as <span className="italic text-on-raised">“Overall health rating”</span> under
-            a variable named <code>2178</code>. String matching misses these. Before you can pool cohorts for an analysis, those
+            Different studies describe the same measurement in different words — <code>bmi</code> in one cohort,{" "}
+            <code>body_mass_index</code> in another, <code>Q47_weight_kg</code> in a third — and the same survey
+            question gets reworded from study to study. One study asks{" "}
+            <span className="italic text-on-raised">“In general, would you say your health is…”</span>; another records
+            the same thing as <span className="italic text-on-raised">“Overall health rating”</span> under a variable
+            named <code>2178</code>. String matching misses these. Before you can pool cohorts for an analysis, those
             variables have to be mapped to a shared standard.
           </p>
           <p>
-            <span className="font-semibold text-on-raised">ddharmon</span> reads the <em>data dictionaries</em>{" "}
-            (the metadata that describes each variable) from two or more cohorts, groups variables that mean the
-            same thing, and assigns each concept to a{" "}
-            <A href={REF.cde}>Common Data Element (CDE)</A> — a curated, reusable standard definition (e.g. from
-            the NIH CDE Repository, often coded with <A href={REF.loinc}>LOINC</A> or{" "}
-            <A href={REF.snomed}>SNOMED CT</A>). For every assignment it also generates a{" "}
-            <span className="font-semibold text-on-raised">transform spec</span>: the recipe for converting your
-            raw values into the CDE's expected form.
+            <span className="font-semibold text-on-raised">ddharmon</span> reads the <em>data dictionaries</em> (the
+            metadata that describes each variable) from two or more cohorts, groups the variables that mean the same
+            thing, and maps each concept to a <A href={REF.cde}>Common Data Element (CDE)</A> — a curated, reusable
+            standard definition from the NIH CDE Repository, often coded with <A href={REF.loinc}>LOINC</A> or{" "}
+            <A href={REF.snomed}>SNOMED CT</A>. For every mapping it also drafts a{" "}
+            <span className="font-semibold text-on-raised">transform spec</span>: the recipe for converting each
+            cohort's values into the CDE's form. The AI proposes at every step; you review and decide.
           </p>
         </CardContent>
       </Card>
@@ -85,17 +96,20 @@ export default function GuidePage() {
             <CardTitle className="text-sm">What you provide</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-on-raised">
-            <p>A data dictionary per cohort (CSV/TSV). Map at least one of:</p>
+            <p>One data dictionary per cohort (CSV or TSV), one row per variable. Map at least one of:</p>
             <ul className="space-y-1">
               <FieldItem name="variable_name">
-                the variable's identifier/code — optional; auto-generated if you omit it
+                the variable's identifier or code — optional; generated if you leave it out
               </FieldItem>
               <FieldItem name="description">a human-readable definition</FieldItem>
-              <FieldItem name="question_text">the survey question, if any</FieldItem>
+              <FieldItem name="question_text">the survey question, if there is one</FieldItem>
             </ul>
             <p className="pt-1">
-              Optional columns sharpen the result — <code>value_encoding</code> (response options),{" "}
-              <code>units</code>, <code>data_type</code> — especially for generating transform specs.
+              Optional fields sharpen the result — <code>value_encoding</code> (response options), <code>units</code>,{" "}
+              <code>data_type</code> — above all for the transform specs.
+            </p>
+            <p className="text-xs text-on-raised-muted">
+              Dictionaries only: metadata about your variables, never participant-level data.
             </p>
           </CardContent>
         </Card>
@@ -105,136 +119,155 @@ export default function GuidePage() {
             <CardTitle className="text-sm">What you get back</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-on-raised">
+            <p>Gate 4 downloads the files you pick as one zip:</p>
             <ul className="space-y-1.5">
-              <OutputItem>A reviewable queue of concepts with verdicts, confidence, and CDE candidates</OutputItem>
-              <OutputItem>Transform specs — value recodes, unit conversions, formulas</OutputItem>
               <OutputItem>
-                <span className="font-semibold text-on-raised">Python / R notebooks</span> that apply the transforms
-                in your own environment
+                <span className="font-semibold text-on-raised">Transform notebook</span> (Python or R) that applies the
+                harmonization to your data in your own environment — your data never enters ddharmon
               </OutputItem>
-              <OutputItem>Exports: expert-review TSV, records JSON, decisions CSV</OutputItem>
-              <OutputItem>Visual maps: match-journey Sankey &amp; a cohort-colored embedding atlas</OutputItem>
+              <OutputItem>
+                <span className="font-semibold text-on-raised">Expert-review queue</span> (TSV) — one row per concept,
+                with its verdict, confidence, ranked CDE candidates and transform
+              </OutputItem>
+              <OutputItem>
+                <span className="font-semibold text-on-raised">Decision log</span> (CSV) — every decision made at Gates
+                1–4, with what it changed from and to
+              </OutputItem>
+              <OutputItem>
+                <span className="font-semibold text-on-raised">Records</span> (JSON) — the full machine-readable result
+              </OutputItem>
+              <OutputItem>
+                <span className="font-semibold text-on-raised">Concept Spotlight</span> (JSON), when you declared one —
+                its items, per-cohort coverage and the derivation recipe
+              </OutputItem>
             </ul>
           </CardContent>
         </Card>
       </div>
 
-      {/* 3 · The workflow ---------------------------------------------------------------------- */}
+      {/* 3 · A run, step by step --------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Layers className="h-4 w-4 text-accent-on-raised" /> The workflow
+            <Layers className="h-4 w-4 text-accent-on-raised" /> A run, step by step
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-sm text-on-raised">
-          <Step
-            n={1}
-            icon={<Upload className="h-4 w-4" />}
-            title="Upload data dictionaries"
-            body="One CSV/TSV per cohort, describing your variables. This is metadata about your variables — not the participant-level data itself."
-          />
-          <Step
-            n={2}
-            icon={<FileSpreadsheet className="h-4 w-4" />}
-            title="Map columns to roles"
-            body="Tell ddharmon which of your columns is the variable name, the description, the response options, and so on. Every role starts blank — hover the ⓘ next to each for what it means and how to format it."
-          />
-          <Step
-            n={3}
-            icon={<GitCompareArrows className="h-4 w-4" />}
-            title="Run the harmonization"
-            body="ddharmon embeds and clusters your variables, retrieves candidate CDEs from the catalog, and decides adopt / refine / novel — generating transform specs along the way."
-          />
-          <Step
-            n={4}
-            icon={<ListChecks className="h-4 w-4" />}
-            title="Review & decide"
-            body="Every concept comes with a verdict, a confidence score, ranked CDE candidates, and its transform spec. Approve, refine, or reject each in the review queue or the workbench."
-          />
-          <Step
-            n={5}
-            icon={<Download className="h-4 w-4" />}
-            title="Export"
-            body="Take the results into your pipeline: an expert-review queue, machine-readable records, decision logs, and ready-to-run Python / R notebooks that apply the transforms."
-          />
-        </CardContent>
-      </Card>
-
-      {/* 4 · Where AI is used ------------------------------------------------------------------ */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <Bot className="h-4 w-4 text-accent-on-raised" /> Where AI is used
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
-          <p>ddharmon is AI-assisted end to end — concretely:</p>
-          <ul className="space-y-1.5">
-            <li>
-              <span className="font-semibold text-on-raised">Grouping</span> — sentence-embedding models place
-              semantically similar variables near each other, then cluster them into concepts.
-            </li>
-            <li>
-              <span className="font-semibold text-on-raised">Assignment</span> — a large language model weighs the
-              retrieved CDE candidates for each concept and decides adopt / refine / novel, with a written rationale.
-            </li>
-            <li>
-              <span className="font-semibold text-on-raised">Transform specs</span> — the LLM drafts the value recodes
-              and unit / arithmetic conversions.
-            </li>
-          </ul>
-          <p>
-            Embeddings run locally; the LLM steps are the only ones that call an external model — and the only paid
-            part (you'll see a cost estimate before each run). <span className="font-semibold">Preview</span> mode runs
-            the grouping with no LLM at all.{" "}
-            <span className="font-semibold text-on-raised">Every AI output is a suggestion, never a silent commit</span> —
-            every concept is yours to approve, refine, or reject.
+          <p className="leading-relaxed">
+            A run moves through Set up and four review gates. Each gate shows what the pipeline proposed and waits for
+            you; every paid step shows its price on the button before you press it.
           </p>
+          <Step
+            label={GATE_LABELS.setup}
+            icon={<Settings2 className="h-4 w-4" />}
+            title="Add your dictionaries and choose how to run"
+            charge="Start run is the first charge: grouping, naming and checking the concepts."
+          >
+            Add one dictionary per cohort and map each file's columns to roles. Check the row count against the
+            unique-name count (a repeated variable name is dropped), and download the prepared text to read exactly what
+            will be grouped. Then pick a run mode, a review mode and a model, and paste your Anthropic key. Everything
+            before Start run is free.
+          </Step>
+          <Step
+            label="Gate 1"
+            icon={<Layers className="h-4 w-4" />}
+            title={GATE_LABELS.gate1}
+            charge="Continue buys the CDE assignment for the groups you ticked."
+          >
+            Each row is a group of variables, across your cohorts, that mean the same thing. Search and filter, open a
+            group to see every variable in it and any proposed division, and drag a variable onto another group (or out
+            to <span className="italic">In no group</span>) to fix it. Tick the groups you want to take forward.
+          </Step>
+          <Step
+            label="Gate 2"
+            icon={<GitCompareArrows className="h-4 w-4" />}
+            title={GATE_LABELS.gate2}
+            charge="Continue buys the transform specs."
+          >
+            For each concept, compare the ranked candidate CDEs against a generated description of the ideal element,
+            and choose the target — an existing CDE, or a proposed GenCDE when none fits.
+          </Step>
+          <Step
+            label="Gate 3"
+            icon={<Wand2 className="h-4 w-4" />}
+            title={GATE_LABELS.gate3}
+            charge="Continuing to Gate 4 costs nothing."
+          >
+            Work through the recodes and unit or arithmetic conversions, concept by concept. Settle any source value
+            that maps to nothing — add it, map it, or record the loss — and recheck anything marked stale because its
+            target changed at Gate 2.
+          </Step>
+          <Step label="Gate 4" icon={<Download className="h-4 w-4" />} title={GATE_LABELS.gate4}>
+            Choose Python or R for the notebook, tick the files you want, preview each, and download them. The decision
+            log records every call made along the way, so you can defend a mapping later.
+          </Step>
         </CardContent>
       </Card>
 
-      {/* 5 · Choosing run options -------------------------------------------------------------- */}
+      {/* 4 · Choosing run options -------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">Choosing run options</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-sm text-on-raised">
           <div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Review</div>
+            <ul className="space-y-1">
+              <li>
+                <Badge variant="secondary" className="mr-2">{REVIEW_MODE_COPY.guided.label}</Badge>
+                {REVIEW_MODE_COPY.guided.sentence} The default.
+              </li>
+              <li>
+                <Badge variant="secondary" className="mr-2">{REVIEW_MODE_COPY.auto.label}</Badge>
+                {REVIEW_MODE_COPY.auto.sentence} Every gate stays open to review afterwards, marked{" "}
+                <span className="italic">not reviewed</span>.
+              </li>
+            </ul>
+          </div>
+          <div>
             <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">Run mode</div>
             <ul className="space-y-1">
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">batch</Badge>
-                Asynchronous, cost-bounded (default). Uses the Anthropic Batch API.
+                About half the cost; can take hours. The default.
               </li>
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">sync</Badge>
-                Inline results — needs an API key; best for small runs.
+                Minutes, at about twice the cost.
               </li>
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">preview</Badge>
-                No LLM — clustering + retrieval only, to inspect groupings before spending credits.
+                No model call, free — grouping and CDE retrieval only, to inspect a run before you spend.
               </li>
             </ul>
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">
+              Model and key
+            </div>
+            <p>
+              ddharmon is bring-your-own-key: paste your Anthropic key on Set up. It is held in this browser tab only —
+              never stored, and gone when you reload — and each paid step uses it.
+            </p>
           </div>
           <div>
             <div className="mb-1 text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted">CDE catalog</div>
             <ul className="space-y-1">
               <li>
-                <span className="font-semibold text-on-raised">Full repo</span> (the default) — the complete catalog
-                (~22.7k). Broader coverage, including common measures such as body weight, PHQ and PROMIS; more
+                <span className="font-semibold text-on-raised">Full repository</span> (the default) — the complete
+                catalog (~22.7k). Broader coverage, including common measures such as body weight, PHQ and PROMIS; more
                 candidates to weigh.
               </li>
               <li>
                 <span className="font-semibold text-on-raised">NIH-endorsed</span> — a focused, curated set. Fewer,
-                higher-signal candidates, but without those common measures, which then come out as generated
-                elements.
+                higher-signal candidates, but without those common measures, which then come out as GenCDEs.
               </li>
             </ul>
           </div>
         </CardContent>
       </Card>
 
-      {/* 6 · How each concept is classified ---------------------------------------------------- */}
+      {/* 5 · How each concept is classified ---------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -246,24 +279,86 @@ export default function GuidePage() {
             verdict="adopt"
             icon={<CheckCircle2 className="h-4 w-4" />}
             title="Adopt"
-            body="A CDE fits as-is. Use the standard directly; values already align."
+            body="A CDE fits as-is. Use the standard directly; the values already align."
           />
           <VerdictCard
             verdict="refine"
             icon={<Pencil className="h-4 w-4" />}
             title="Refine"
-            body="A CDE fits, but values need a transform — a recode, a unit conversion, or a formula."
+            body="A CDE fits, but the values need a transform — a recode, a unit conversion, or a formula."
           />
           <VerdictCard
             verdict="novel"
             icon={<Sparkles className="h-4 w-4" />}
             title="Novel"
-            body="No existing CDE fits well. A candidate GenCDE is proposed for a new standard."
+            body="No existing CDE fits well. ddharmon proposes a GenCDE — a generated element in the CDE format — as the target."
           />
         </CardContent>
       </Card>
 
-      {/* 7 · You're in the loop ---------------------------------------------------------------- */}
+      {/* 6 · Concept Spotlight ------------------------------------------------------------------ */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Flashlight className="h-4 w-4 text-accent-on-raised" /> Concept Spotlight
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
+          <p>
+            Have a published index or instrument the harmonization needs to support — a 49-item frailty index, say?
+            Declare it as a Spotlight list at Gate 1 — read from the paper (PDF or Word), or typed or pasted in.
+            ddharmon suggests the concept groups that
+            cover each item, and Gate 4 shows which items the run covers, cohort by cohort, with the recipe for deriving
+            the score on your own rows. ddharmon never computes the score itself.
+          </p>
+          <p className="text-xs text-on-raised-muted">
+            Reading a paper is free; extracting its items and matching them against the run each cost one model call.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* 7 · Where AI is used ------------------------------------------------------------------ */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Bot className="h-4 w-4 text-accent-on-raised" /> Where AI is used
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
+          <ul className="space-y-1.5">
+            <li>
+              <span className="font-semibold text-on-raised">Grouping</span> — a biomedical sentence-embedding model
+              places variables with similar meaning near each other, and clustering turns them into candidate concepts.
+              No model call; it runs on ddharmon's server.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Naming, splitting and checking</span> — a large language
+              model names each group, splits groups that mix distinct concepts, and judges whether each group holds
+              together. Doubtful groups are flagged for you, never silently dropped.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Finding candidates</span> — each concept is matched against
+              the CDE catalog by meaning and by keywords, giving a ranked shortlist.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Assignment</span> — the model weighs that shortlist and
+              decides adopt, refine or novel, with a written rationale, drafting a GenCDE when nothing fits.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Transform specs</span> — the model drafts the value recodes
+              and unit or arithmetic conversions. Arithmetic conversions always come to you for review.
+            </li>
+          </ul>
+          <p>
+            The model steps are the only paid part: they send your dictionaries' text — never participant data — to the
+            model with your key. <span className="font-semibold">Preview</span> mode runs grouping and retrieval with no
+            model at all.{" "}
+            <span className="font-semibold text-on-raised">Every AI output is a proposal, never a silent commit.</span>
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* 8 · You're in the loop ---------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -272,27 +367,23 @@ export default function GuidePage() {
         </CardHeader>
         <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
           <p>
-            ddharmon is built for <span className="font-semibold text-on-raised">expert-in-the-loop (EITL)</span> review —
-            the AI drafts, a human decides. Every concept arrives with a verdict, a{" "}
-            <span className="font-semibold">confidence score</span>, its ranked CDE candidates, and the exact transform,
-            so you can <span className="font-semibold text-success">approve</span>,{" "}
-            <span className="font-semibold text-warning">refine</span>, or{" "}
-            <span className="font-semibold text-danger">reject</span> each — in the review queue or the candidate
-            workbench. Export the whole queue as a TSV to split review across your team.
+            ddharmon is built for <span className="font-semibold text-on-raised">expert-in-the-loop (EITL)</span> review
+            — the AI drafts, a person decides. You regroup variables at Gate 1, pick each target at Gate 2 and settle the
+            recodes at Gate 3; every change lands in the decision log. To split sign-off across a team, export the
+            expert-review queue and review it together.
           </p>
           <div className="flex items-start gap-2 rounded-md border border-rule-on-raised p-3">
             <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-accent-on-raised" />
             <p className="text-xs leading-relaxed">
-              <span className="font-semibold text-on-raised">Confidence score</span> = the semantic similarity (0–1,
-              cosine) between your variable and the chosen CDE; higher means stronger support for the match. Use it to
-              triage — skim the high-confidence adopts, and spend your time on low-confidence, “floored”, and novel
-              items, which the queue flags for exactly that reason.
+              <span className="font-semibold text-on-raised">Confidence score</span> = the semantic similarity (0–1)
+              between a concept and its chosen CDE; higher means stronger support. Use it to triage: skim the
+              high-confidence adopts, and spend your time on low-confidence and novel concepts.
             </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* 8 · Learn more ------------------------------------------------------------------------ */}
+      {/* 9 · Learn more ------------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">Learn more</CardTitle>
@@ -312,7 +403,7 @@ export default function GuidePage() {
               <A href={REF.fair}>FAIR principles</A> — why harmonization matters
             </li>
             <li>
-              <A href={REF.bertopic}>BERTopic</A> — the topic-clustering method behind grouping
+              <A href={REF.bertopic}>BERTopic</A> — the embed-then-cluster approach grouping builds on
             </li>
             <li>
               <A href={REF.hitl}>Expert-in-the-loop (EITL)</A> — the human review step
@@ -340,15 +431,24 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rule-on-raised bg-surface-inset px-4 py-3">
         <p className="text-sm text-on-raised">
-          Ready to try it? Start a run, or load a precomputed demo — no API credits needed.
+          {guest
+            ? "Walk the demo: a finished run you can open gate by gate, with every control live and nothing charged. Sign in to run your own cohorts."
+            : "Walk the demo — a finished run, gate by gate, nothing charged — or start a run of your own."}
         </p>
-        <Button asChild size="sm">
-          <Link href="/run/new/setup">
-            New run <ArrowRight className="ml-1.5 h-4 w-4" />
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link href="/demo">Open the demo</Link>
+          </Button>
+          {!guest && (
+            <Button asChild size="sm">
+              <Link href="/run/new/setup">
+                New run <ArrowRight className="ml-1.5 h-4 w-4" />
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -376,18 +476,35 @@ function VerdictCard({
   );
 }
 
-function Step({ n, icon, title, body }: { n: number; icon: React.ReactNode; title: string; body: string }) {
+/**
+ * One screen of the run: where it is (Set up / Gate N), what you do there, and — when it has one — its charge. The
+ * screen names come from `GATE_LABELS`, the rail's own, so renaming a gate renames it here too (`guide.spec.ts`).
+ */
+function Step({
+  label,
+  icon,
+  title,
+  charge,
+  children,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  title: string;
+  charge?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex gap-3">
+    <div data-testid="guide-step" className="flex gap-3">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-info text-accent-on-raised">
         {icon}
       </div>
-      <div>
+      <div className="min-w-0">
         <div className="font-semibold text-on-raised">
-          <span className="mr-1.5 text-on-raised-muted">{n}.</span>
+          <span className="mr-1.5 font-mono text-xs uppercase tracking-eyebrow text-on-raised-muted">{label}</span>
           {title}
         </div>
-        <p className="text-on-raised">{body}</p>
+        <p className="leading-relaxed text-on-raised">{children}</p>
+        {charge && <p className="mt-1 text-xs text-on-raised-muted">{charge}</p>}
       </div>
     </div>
   );
