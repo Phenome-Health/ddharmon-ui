@@ -62,6 +62,7 @@ import {
   type RunDictionary,
   type RunMode,
 } from "@/types";
+import { isPageHidden } from "@/lib/page-visibility";
 
 /**
  * PER-LINE DETAIL FOR THE CONSOLIDATED BILL (review 2026-08-26).
@@ -1804,8 +1805,13 @@ export default function SetupPage() {
             <p className="text-xs leading-relaxed text-on-raised-muted">
               Both draw from the{" "}
               <a href="https://cde.nlm.nih.gov/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-accent-on-raised">NIH CDE Repository</a>
-              . <Link href="/methods" className="underline underline-offset-2 hover:text-accent-on-raised">How matching works</Link>
-              {" · "}
+              .{" "}
+              {!isPageHidden("methods") && (
+                <>
+                  <Link href="/methods" className="underline underline-offset-2 hover:text-accent-on-raised">How matching works</Link>
+                  {" · "}
+                </>
+              )}
               <Link href="/related" className="underline underline-offset-2 hover:text-accent-on-raised">Other catalogues</Link>
             </p>
           </div>

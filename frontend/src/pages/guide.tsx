@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { REF } from "@/lib/links";
 import { VERDICT_STYLES } from "@/types";
+import { isPageHidden } from "@/lib/page-visibility";
 
 /** Inline external link, styled + with an icon. */
 function A({ href, children }: { href: string; children: React.ReactNode }) {
@@ -321,11 +322,16 @@ export default function GuidePage() {
             </li>
           </ul>
           <p className="pt-1 text-xs text-on-raised-muted">
-            Want the under-the-hood detail? See{" "}
-            <Link href="/methods" className="text-link-on-raised underline hover:text-on-raised">
-              Methods
-            </Link>{" "}
-            for a stage-by-stage walk of the pipeline. The{" "}
+            {!isPageHidden("methods") && (
+              <>
+                Want the under-the-hood detail? See{" "}
+                <Link href="/methods" className="text-link-on-raised underline hover:text-on-raised">
+                  Methods
+                </Link>{" "}
+                for a stage-by-stage walk of the pipeline.{" "}
+              </>
+            )}
+            The{" "}
             <Link href="/related" className="text-link-on-raised underline hover:text-on-raised">
               Related work
             </Link>{" "}

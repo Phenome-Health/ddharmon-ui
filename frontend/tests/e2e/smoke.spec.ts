@@ -48,3 +48,28 @@ test("a completed demo run renders its result from static fixtures", async ({ pa
   await page.goto(`/job/${job.jobId}?results=1`);
   await expect(page.getByRole("heading", { level: 1, name: job.displayName })).toBeVisible();
 });
+
+/**
+ * The ARPA-H funding acknowledgement, VERBATIM (Bhargav, 2026-11-05: "exact language"). It is the funder's
+ * required wording, so this pins the whole sentence pair rather than a fragment — a paraphrase must fail.
+ * It belongs to every deployment, not just prod, so it is asserted on the default build.
+ */
+const ARPA_H_ACKNOWLEDGEMENT =
+  "This research was, in part, funded by the Advanced Research Projects Agency for Health (ARPA-H). " +
+  "The views and conclusions contained in this document are those of the authors and should not be " +
+  "interpreted as representing the official policies, either expressed or implied, of the United States Government.";
+
+test("landing page carries the ARPA-H funding acknowledgement, verbatim", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("funding-acknowledgement")).toHaveText(ARPA_H_ACKNOWLEDGEMENT);
+});
+
+test("a default build keeps every content page in the nav (hiding pages is opt-in, per deployment)", async ({ page }) => {
+  // VITE_HIDDEN_PAGES is unset here, so nothing may disappear: dev and every local build show the full site.
+  // The lean (prod) build is exercised by playwright.lean.config.ts.
+  await page.goto("/");
+  const nav = page.getByTestId("app-nav");
+  for (const label of ["Methods", "Benchmarks", "Design", "Roadmap", "Architecture", "Phenome Health"]) {
+    await expect(nav.getByRole("link", { name: label, exact: true }), label).toHaveCount(1);
+  }
+});
