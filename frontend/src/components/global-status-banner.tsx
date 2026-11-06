@@ -9,6 +9,9 @@ import { AlertTriangle } from "lucide-react";
  * every page, not just a first visit: coherence gating is still being fine-tuned, so some pipeline
  * outputs (e.g. value mappings for borderline concepts) are provisional. Soften/retire once
  * coherence gating lands and spec generation is gated on it.
+ *
+ * ONE LINE on a laptop (Bhargav, 2026-11-06): the two-line version pushed every screen down. It keeps the two things
+ * it is for — results are provisional, and where feedback goes — and `status-banner.spec.ts` measures it at 1280px.
  */
 export function GlobalStatusBanner() {
   return (
@@ -23,10 +26,8 @@ export function GlobalStatusBanner() {
     >
       <AlertTriangle className="hidden h-4 w-4 shrink-0 sm:block" aria-hidden />
       <p>
-        <span className="font-semibold">ddharmon is under active development.</span> Variable-cluster
-        coherence is still being fine-tuned, and the UI is undergoing regular cosmetic &amp;
-        functional updates — treat results as provisional. We welcome your feedback: use{" "}
-        <span className="font-semibold">&ldquo;Report an issue&rdquo;</span> at the bottom left.
+        <span className="font-semibold">ddharmon is under active development</span> — treat results as provisional.
+        Feedback welcome: <span className="font-semibold">&ldquo;Report an issue&rdquo;</span>, bottom left.
       </p>
     </div>
   );

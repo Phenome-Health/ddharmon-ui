@@ -152,3 +152,42 @@ def test_demo_job_result_public_but_real_run_gated(clerk_open):
     finally:
         store.delete("demo-guest-test")
         store.delete("real-guest-test")
+
+
+# ── a PH-only deployment (dev.ddharmon.io, 2026-11-05): the demo stops being public ──
+
+
+@pytest.fixture
+def ph_only(clerk_locked, monkeypatch):
+    """Locked to PH domains AND the public demo switched off — nothing under /api/harmonize/ is anonymous."""
+    monkeypatch.setenv("DDHARMON_PUBLIC_DEMO", "false")
+
+
+def test_public_demo_is_on_by_default(clerk_locked):
+    # Prod relies on this: a guest walks the demo with no account, even on a domain-locked deployment.
+    assert auth.public_demo_enabled()
+    assert client.get("/api/harmonize/demos").status_code == 200
+
+
+def test_ph_only_deployment_gates_the_demo_too(ph_only):
+    store = app_module.store
+    store.create("demo-ph-only-test", "Demo", {"demo": True})
+    try:
+        # No token: every demo path is refused, like any other.
+        assert client.get("/api/harmonize/demos").status_code == 401
+        assert client.get("/api/harmonize/result/demo-ph-only-test").status_code == 401
+        assert client.get("/api/harmonize/checkpoint/demo-ph-only-test").status_code == 401
+        # A signed-in non-PH user is refused by the domain lock, not served the demo.
+        assert client.get("/api/harmonize/demos", headers={"Authorization": "Bearer guest@gmail.com"}).status_code == 403
+        assert (
+            client.get(
+                "/api/harmonize/result/demo-ph-only-test", headers={"Authorization": "Bearer guest@gmail.com"}
+            ).status_code
+            == 403
+        )
+        # A PH account still gets it.
+        ok = {"Authorization": "Bearer alice@phenomehealth.org"}
+        assert client.get("/api/harmonize/demos", headers=ok).status_code == 200
+        assert client.get("/api/harmonize/result/demo-ph-only-test", headers=ok).status_code == 200
+    finally:
+        store.delete("demo-ph-only-test")

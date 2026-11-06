@@ -405,6 +405,19 @@ export function guestAuthCopy(action: string): { title: string; body: string } {
 }
 
 /**
+ * The action a guest signs in for on Setup. The backend gates column detection and Start (`/detect`, `/batch`)
+ * behind sign-in, so a guest cannot run their own cohorts at all — Setup says so up front (2026-11-05), as old
+ * prod's New run form did, instead of letting a guest fill in a whole run and meet a 401 at Start.
+ */
+export const GUEST_RUN_ACTION = "running your own cohorts";
+
+/** Start run's blocker for a guest — the ONLY one, since every other blocker asks for a fix that cannot help. */
+export function guestRunBlocker(guest: boolean): string | null {
+  if (!guest) return null;
+  return `Sign in to start a run — ${GUEST_RUN_ACTION} needs an account. The demo runs without one.`;
+}
+
+/**
  * What Gate 4's bar says on the demo when the tab holds edits (08-18), or null when it holds none.
  *
  * The screen and the files disagree there, and only this sentence reconciles them: Gate 4's previews and decision
