@@ -1066,7 +1066,10 @@ test.describe("controls review round 6 (live Lavish build, 2026-10-09)", () => {
       // Bhargav: "sidebar bottom isnt aligned, should have same space from continue rail as the main panel". The pinned
       // bar sat 24px lower mid-page than at the page's end (the content's bottom padding), while the queue was sized
       // to the end — so mid-page the queue stopped 40px short of the bar, not the 16px rhythm.
-      await page.setViewportSize({ width: 1440, height: 900 });
+      // 800 tall, not 900: "mid-page" needs a page that scrolls, and once the status banner went to one line
+      // (2026-11-06) the Gate 3 fixture fit a 900px window whole — so the precondition below failed, not the check.
+      // (It already did on Linux CI, where the banner fit one line before.) The 16px expectations are unchanged.
+      await page.setViewportSize({ width: 1440, height: 800 });
       await open(page, `/run/${run}/${gate}`);
       // "Mid-page" = both pinned: the queue under the rail, the bar at the bottom, the page's end still below.
       const at = (to: "pinned" | "end") =>
