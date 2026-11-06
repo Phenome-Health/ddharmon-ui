@@ -373,9 +373,7 @@ export default function GuidePage() {
             </li>
           </ul>
           <p>
-            The model steps are the only paid part: they send your dictionaries' text — never participant data — to the
-            model with your key. <span className="font-semibold">Preview</span> mode runs grouping and retrieval with no
-            model at all.{" "}
+            The model steps send your dictionaries' text — never participant data — to the model, with your key.{" "}
             <span className="font-semibold text-on-raised">Every AI output is a proposal, never a silent commit.</span>
           </p>
         </CardContent>
