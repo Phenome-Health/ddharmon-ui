@@ -24,13 +24,18 @@ test("@guide walks Set up and the four gates, in order, under the rail's own nam
   }
 });
 
-test("@guide says where the money moves: Start run first, then Gate 1 and Gate 2's Continue, Gate 3 free", async ({ page }) => {
+test("@guide puts every cost fact in ONE section, not under the steps (Lavish note 6-7, 2026-11-06)", async ({ page }) => {
   await page.goto("/guide");
-  const steps = page.getByTestId("guide-step");
-  await expect(steps.nth(0)).toContainText("Start run is the first charge");
-  await expect(steps.nth(1)).toContainText("Continue buys the CDE assignment");
-  await expect(steps.nth(2)).toContainText("Continue buys the transform specs");
-  await expect(steps.nth(3)).toContainText("costs nothing");
+  const cost = page.getByTestId("guide-cost");
+  await expect(cost).toBeVisible();
+  // Where the money moves, in run order.
+  await expect(cost).toContainText("Start run");
+  await expect(cost).toContainText("Gate 1's Continue");
+  await expect(cost).toContainText("Gate 2's Continue");
+  await expect(cost).toContainText(/free/i);
+  // The steps describe the work; the cost lives only in the cost section.
+  await expect(page.getByTestId("guide-step").filter({ hasText: "Start run is the first charge" })).toHaveCount(0);
+  await expect(page.getByTestId("guide-step").filter({ hasText: "Continue buys" })).toHaveCount(0);
 });
 
 test("@guide no longer describes the retired one-shot flow", async ({ page }) => {
@@ -38,4 +43,13 @@ test("@guide no longer describes the retired one-shot flow", async ({ page }) =>
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expect(page.locator("main")).not.toContainText("review queue or the workbench");
   await expect(page.locator("main")).not.toContainText("Run the harmonization");
+});
+
+test("@guide introduces the gates before naming one, and drops the sections Bhargav cut (2026-11-06)", async ({ page }) => {
+  await page.goto("/guide");
+  const main = page.locator("main");
+  // "What you get back" sits ABOVE the step-by-step, so it must not lean on gate names a first-time reader has not met.
+  await expect(page.getByTestId("guide-get-back")).not.toContainText(/Gate \d/);
+  await expect(main).not.toContainText("You're in the loop");
+  await expect(main).not.toContainText("Learn more");
 });

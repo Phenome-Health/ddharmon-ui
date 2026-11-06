@@ -2,17 +2,16 @@ import { Link } from "wouter";
 import {
   ArrowRight,
   Bot,
+  Coins,
   CheckCircle2,
   Download,
   ExternalLink,
   Flashlight,
-  Gauge,
   GitCompareArrows,
   Layers,
   Pencil,
   Settings2,
   Sparkles,
-  UserCheck,
   Wand2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { REF } from "@/lib/links";
 import { REVIEW_MODE_COPY } from "@/lib/review-mode";
 import { VERDICT_STYLES } from "@/types";
-import { isPageHidden } from "@/lib/page-visibility";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { GATE_LABELS } from "@/components/gate/GateRail";
 
@@ -118,8 +116,8 @@ export default function GuidePage() {
           <CardHeader>
             <CardTitle className="text-sm">What you get back</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm text-on-raised">
-            <p>Gate 4 downloads the files you pick as one zip:</p>
+          <CardContent data-testid="guide-get-back" className="space-y-2 text-sm text-on-raised">
+            <p>At the end of a run you download the files you pick, as one zip:</p>
             <ul className="space-y-1.5">
               <OutputItem>
                 <span className="font-semibold text-on-raised">Transform notebook</span> (Python or R) that applies the
@@ -130,14 +128,15 @@ export default function GuidePage() {
                 with its verdict, confidence, ranked CDE candidates and transform
               </OutputItem>
               <OutputItem>
-                <span className="font-semibold text-on-raised">Decision log</span> (CSV) — every decision made at Gates
-                1–4, with what it changed from and to
+                <span className="font-semibold text-on-raised">Decision log</span> (CSV) — every decision made during
+                review, with what it changed from and to
               </OutputItem>
               <OutputItem>
                 <span className="font-semibold text-on-raised">Records</span> (JSON) — the full machine-readable result
               </OutputItem>
               <OutputItem>
-                <span className="font-semibold text-on-raised">Concept Spotlight</span> (JSON), when you declared one —
+                <span className="font-semibold text-on-raised">Concept Spotlight</span> (JSON), when you declared one (see
+                below) —
                 its items, per-cohort coverage and the derivation recipe
               </OutputItem>
             </ul>
@@ -154,14 +153,13 @@ export default function GuidePage() {
         </CardHeader>
         <CardContent className="space-y-4 text-sm text-on-raised">
           <p className="leading-relaxed">
-            A run moves through Set up and four review gates. Each gate shows what the pipeline proposed and waits for
-            you; every paid step shows its price on the button before you press it.
+            A run moves through Set up and four review gates. Each gate shows what the pipeline proposed and, in Guided
+            mode, waits for you before the next step runs.
           </p>
           <Step
             label={GATE_LABELS.setup}
             icon={<Settings2 className="h-4 w-4" />}
             title="Add your dictionaries and choose how to run"
-            charge="Start run is the first charge: grouping, naming and checking the concepts."
           >
             Add one dictionary per cohort and map each file's columns to roles. Check the row count against the
             unique-name count (a repeated variable name is dropped), and download the prepared text to read exactly what
@@ -172,7 +170,6 @@ export default function GuidePage() {
             label="Gate 1"
             icon={<Layers className="h-4 w-4" />}
             title={GATE_LABELS.gate1}
-            charge="Continue buys the CDE assignment for the groups you ticked."
           >
             Each row is a group of variables, across your cohorts, that mean the same thing. Search and filter, open a
             group to see every variable in it and any proposed division, and drag a variable onto another group (or out
@@ -182,7 +179,6 @@ export default function GuidePage() {
             label="Gate 2"
             icon={<GitCompareArrows className="h-4 w-4" />}
             title={GATE_LABELS.gate2}
-            charge="Continue buys the transform specs."
           >
             For each concept, compare the ranked candidate CDEs against a generated description of the ideal element,
             and choose the target — an existing CDE, or a proposed GenCDE when none fits.
@@ -191,7 +187,6 @@ export default function GuidePage() {
             label="Gate 3"
             icon={<Wand2 className="h-4 w-4" />}
             title={GATE_LABELS.gate3}
-            charge="Continuing to Gate 4 costs nothing."
           >
             Work through the recodes and unit or arithmetic conversions, concept by concept. Settle any source value
             that maps to nothing — add it, map it, or record the loss — and recheck anything marked stale because its
@@ -204,7 +199,35 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      {/* 4 · Choosing run options -------------------------------------------------------------- */}
+      {/* 4 · What it costs (Lavish note 7, 2026-11-06: every cost fact in ONE place) ---------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Coins className="h-4 w-4 text-accent-on-raised" /> What it costs
+          </CardTitle>
+        </CardHeader>
+        <CardContent data-testid="guide-cost" className="space-y-3 text-sm leading-relaxed text-on-raised">
+          <p>
+            Only the model calls cost money, and Anthropic bills them to the key you paste on Set up. Uploading,
+            mapping, reviewing and exporting are free. Every paid button shows its amount before you press it.
+          </p>
+          <ul className="space-y-1.5">
+            <CostItem when="Start run">naming the concept groups, splitting mixed ones and checking each group.</CostItem>
+            <CostItem when="Gate 1's Continue">
+              matching the groups you ticked to CDEs, and drafting a GenCDE where none fits.
+            </CostItem>
+            <CostItem when="Gate 2's Continue">drafting the transform specs.</CostItem>
+            <CostItem when="Gate 3 → Gate 4 and the export">free.</CostItem>
+          </ul>
+          <p>
+            In Full auto, Start run quotes and pays for the whole run at once. Batch mode costs about half as much as
+            synchronous; Preview calls no model and is free. For scale, the demo — 5 cohorts, 1,000 variables, batch
+            mode — cost $5.47 from start to export.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* 5 · Choosing run options -------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">Choosing run options</CardTitle>
@@ -229,15 +252,15 @@ export default function GuidePage() {
             <ul className="space-y-1">
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">batch</Badge>
-                About half the cost; can take hours. The default.
+                Can take hours. The default, and the cheaper one.
               </li>
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">sync</Badge>
-                Minutes, at about twice the cost.
+                Minutes.
               </li>
               <li>
                 <Badge variant="secondary" className="mr-2 font-mono">preview</Badge>
-                No model call, free — grouping and CDE retrieval only, to inspect a run before you spend.
+                No model call — grouping and CDE retrieval only, to inspect a run before you spend.
               </li>
             </ul>
           </div>
@@ -246,8 +269,8 @@ export default function GuidePage() {
               Model and key
             </div>
             <p>
-              ddharmon is bring-your-own-key: paste your Anthropic key on Set up. It is held in this browser tab only —
-              never stored, and gone when you reload — and each paid step uses it.
+              Pick a model and paste your Anthropic key on Set up. The key is held in this browser tab only — never
+              stored, and gone when you reload.
             </p>
           </div>
           <div>
@@ -267,7 +290,7 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      {/* 5 · How each concept is classified ---------------------------------------------------- */}
+      {/* 6 · How each concept is classified ---------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -296,7 +319,7 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      {/* 6 · Concept Spotlight ------------------------------------------------------------------ */}
+      {/* 7 · Concept Spotlight ------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -317,7 +340,7 @@ export default function GuidePage() {
         </CardContent>
       </Card>
 
-      {/* 7 · Where AI is used ------------------------------------------------------------------ */}
+      {/* 8 · Where AI is used ------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -354,79 +377,6 @@ export default function GuidePage() {
             model with your key. <span className="font-semibold">Preview</span> mode runs grouping and retrieval with no
             model at all.{" "}
             <span className="font-semibold text-on-raised">Every AI output is a proposal, never a silent commit.</span>
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* 8 · You're in the loop ---------------------------------------------------------------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <UserCheck className="h-4 w-4 text-accent-on-raised" /> You're in the loop
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed text-on-raised">
-          <p>
-            ddharmon is built for <span className="font-semibold text-on-raised">expert-in-the-loop (EITL)</span> review
-            — the AI drafts, a person decides. You regroup variables at Gate 1, pick each target at Gate 2 and settle the
-            recodes at Gate 3; every change lands in the decision log. To split sign-off across a team, export the
-            expert-review queue and review it together.
-          </p>
-          <div className="flex items-start gap-2 rounded-md border border-rule-on-raised p-3">
-            <Gauge className="mt-0.5 h-4 w-4 shrink-0 text-accent-on-raised" />
-            <p className="text-xs leading-relaxed">
-              <span className="font-semibold text-on-raised">Confidence score</span> = the semantic similarity (0–1)
-              between a concept and its chosen CDE; higher means stronger support. Use it to triage: skim the
-              high-confidence adopts, and spend your time on low-confidence and novel concepts.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 9 · Learn more ------------------------------------------------------------------------ */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Learn more</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-on-raised">
-          <ul className="grid gap-1.5 sm:grid-cols-2">
-            <li>
-              <A href={REF.cde}>NIH CDE Repository</A> — the Common Data Element catalog
-            </li>
-            <li>
-              <A href={REF.loinc}>LOINC</A> · <A href={REF.snomed}>SNOMED CT</A> — coding standards
-            </li>
-            <li>
-              <A href={REF.sssom}>SSSOM</A> — a portable format for sharing mappings
-            </li>
-            <li>
-              <A href={REF.fair}>FAIR principles</A> — why harmonization matters
-            </li>
-            <li>
-              <A href={REF.bertopic}>BERTopic</A> — the embed-then-cluster approach grouping builds on
-            </li>
-            <li>
-              <A href={REF.hitl}>Expert-in-the-loop (EITL)</A> — the human review step
-            </li>
-            <li>
-              <A href="https://harmonydata.ac.uk">Harmony</A> — related semantic questionnaire-item matching
-            </li>
-          </ul>
-          <p className="pt-1 text-xs text-on-raised-muted">
-            {!isPageHidden("methods") && (
-              <>
-                Want the under-the-hood detail? See{" "}
-                <Link href="/methods" className="text-link-on-raised underline hover:text-on-raised">
-                  Methods
-                </Link>{" "}
-                for a stage-by-stage walk of the pipeline.{" "}
-              </>
-            )}
-            The{" "}
-            <Link href="/related" className="text-link-on-raised underline hover:text-on-raised">
-              Related work
-            </Link>{" "}
-            tab covers the fuller ecosystem of tools and groups.
           </p>
         </CardContent>
       </Card>
@@ -477,20 +427,18 @@ function VerdictCard({
 }
 
 /**
- * One screen of the run: where it is (Set up / Gate N), what you do there, and — when it has one — its charge. The
+ * One screen of the run: where it is (Set up / Gate N) and what you do there (its cost is in "What it costs"). The
  * screen names come from `GATE_LABELS`, the rail's own, so renaming a gate renames it here too (`guide.spec.ts`).
  */
 function Step({
   label,
   icon,
   title,
-  charge,
   children,
 }: {
   label: string;
   icon: React.ReactNode;
   title: string;
-  charge?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -504,9 +452,18 @@ function Step({
           {title}
         </div>
         <p className="leading-relaxed text-on-raised">{children}</p>
-        {charge && <p className="mt-1 text-xs text-on-raised-muted">{charge}</p>}
       </div>
     </div>
+  );
+}
+
+/** One place money moves: the control that spends it, then what it buys. */
+function CostItem({ when, children }: { when: string; children: React.ReactNode }) {
+  return (
+    <li className="flex items-baseline gap-2">
+      <span className="shrink-0 font-semibold text-on-raised">{when}</span>
+      <span>— {children}</span>
+    </li>
   );
 }
 
