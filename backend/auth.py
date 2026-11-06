@@ -72,6 +72,16 @@ def domain_restriction() -> set[str] | None:
     return {d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()}
 
 
+def public_demo_enabled() -> bool:
+    """Whether the demo is readable WITHOUT signing in (the guest "try the demo" path). On by default.
+
+    ``DDHARMON_PUBLIC_DEMO=false`` turns it off: every ``/api/harmonize/`` path then needs a token, so the domain
+    allowlist covers the demo too. The PH-only dev channel sets it (2026-11-05); prod, where guests walk the demo with
+    no account, leaves it on.
+    """
+    return os.environ.get("DDHARMON_PUBLIC_DEMO", "").strip().lower() not in {"0", "false", "no", "off"}
+
+
 def _decode_claims(token: str) -> dict[str, Any]:
     """Verify a Clerk RS256 session JWT against the JWKS and return its validated claims.
 
