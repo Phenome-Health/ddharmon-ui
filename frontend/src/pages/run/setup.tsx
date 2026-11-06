@@ -38,6 +38,9 @@ import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/ga
 import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
+import { GUEST_RUN_ACTION, guestRunBlocker } from "@/lib/sandbox";
+import { AUTH_ENABLED, useAuthState } from "@/auth";
+import { GuestAuthNotice } from "@/components/gate/SandboxBanner";
 import {
   meetsRoleRequirement,
   participantLevelColumn,
@@ -479,6 +482,11 @@ const hasMeaning = (roles: Record<string, string>): boolean => meetsRoleRequirem
 export default function SetupPage() {
   const { jobId = "" } = useParams<{ jobId: string }>();
   const [, navigate] = useLocation();
+  // A GUEST CANNOT RUN THEIR OWN COHORTS (2026-11-05): the backend gates column detection and Start behind sign-in.
+  // So for a guest the screen says it up front — the upload area becomes the sign-in notice — and Start carries that
+  // as its only blocker, instead of a guest filling in a whole run and meeting a 401 at the end.
+  const { isGuest } = useAuthState();
+  const guest = AUTH_ENABLED && isGuest;
   const { jobState, cancel, error: streamError, reconnecting } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
@@ -1122,6 +1130,9 @@ export default function SetupPage() {
    */
   const blockers = useMemo(() => {
     const out: string[] = [];
+    // A guest's one true blocker: every other one asks for a fix (a file, a mapping, a key) that cannot help.
+    const guestBlock = guestRunBlocker(guest);
+    if (guestBlock) return [guestBlock];
     if (runStarted) {
       // The ONLY blocker in this case. Every other one asks for a change that cannot be made, and a list
       // of things to fix that cannot be fixed is worse than the single true sentence.
@@ -1144,7 +1155,7 @@ export default function SetupPage() {
       out.push("Enter your Anthropic API key, or switch the run mode to Preview, which calls no model.");
     }
     return out;
-  }, [dicts, runStarted, runMode, apiKey]);
+  }, [dicts, runStarted, runMode, apiKey, guest]);
 
   /**
    * Start the run and hand off to the free boundary — which is THIS screen, in its second state.
@@ -1260,7 +1271,19 @@ export default function SetupPage() {
           </p>
         )}
 
-        {!runStarted && (
+        {!runStarted && guest && (
+          <div
+            data-testid="guest-run-notice"
+            className="flex flex-col items-center justify-center gap-2 rounded-card border border-dashed border-rule-on-field px-4 py-8 text-center text-sm text-on-field"
+          >
+            <GuestAuthNotice action={GUEST_RUN_ACTION} />
+            <Link href="/demo" className="text-link-on-field underline underline-offset-2 hover:text-on-field">
+              Open the demo
+            </Link>
+          </div>
+        )}
+
+        {!runStarted && !guest && (
           <div
             {...getRootProps()}
             className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-card border border-dashed py-8 ${
@@ -1331,6 +1354,9 @@ export default function SetupPage() {
             </GateEmptyState>
           </div>
         ) : dicts.length === 0 ? (
+          // A guest has nothing to drop (the notice above says why), so "drop one file per cohort above" would
+          // contradict it: the guest sees the notice alone.
+          guest ? null : (
           <div className="rounded-card bg-surface-raised shadow-card">
             <GateEmptyState
               heading="No dictionaries yet"
@@ -1340,6 +1366,7 @@ export default function SetupPage() {
               not an error: a run starts empty.
             </GateEmptyState>
           </div>
+          )
         ) : (
           <>
           {/* SAID ONCE, ABOVE THE CARDS (round 5 repeated-copy sweep): a fact true of every card used to be said
