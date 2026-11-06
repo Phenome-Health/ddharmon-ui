@@ -53,3 +53,20 @@ test("@guide introduces the gates before naming one, and drops the sections Bhar
   await expect(main).not.toContainText("You're in the loop");
   await expect(main).not.toContainText("Learn more");
 });
+
+test("@guide motivates the AI before using it: the research lines ddharmon comes from (Lavish note, 2026-11-06)", async ({ page }) => {
+  await page.goto("/guide");
+  const lineage = page.getByTestId("guide-lineage");
+  await expect(lineage).toBeVisible();
+  for (const line of ["Topic modeling", "LLM refinement", "Prompt optimization"]) {
+    await expect(lineage).toContainText(line);
+  }
+  // It comes right after the problem and before any step, so the AI the steps rely on has been introduced.
+  const lineageTop = (await lineage.boundingBox())!.y;
+  const firstStepTop = (await page.getByTestId("guide-step").first().boundingBox())!.y;
+  expect(lineageTop).toBeLessThan(firstStepTop);
+  // Every work it names is linked to its paper.
+  for (const name of ["BERTopic", "BioLORD-2023", "TopicGPT", "DSPy", "GEPA"]) {
+    await expect(lineage.getByRole("link", { name })).toHaveAttribute("href", /^https:\/\//);
+  }
+});

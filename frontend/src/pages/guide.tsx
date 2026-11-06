@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import {
   ArrowRight,
+  BookOpen,
   Bot,
   Coins,
   CheckCircle2,
@@ -82,7 +83,49 @@ export default function GuidePage() {
             standard definition from the NIH CDE Repository, often coded with <A href={REF.loinc}>LOINC</A> or{" "}
             <A href={REF.snomed}>SNOMED CT</A>. For every mapping it also drafts a{" "}
             <span className="font-semibold text-on-raised">transform spec</span>: the recipe for converting each
-            cohort's values into the CDE's form. The AI proposes at every step; you review and decide.
+            cohort's values into the CDE's form.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* 1b · Where the approach comes from (Lavish note, 2026-11-06: "AI is sudden here — there is no motivation") */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <BookOpen className="h-4 w-4 text-accent-on-raised" /> Where the approach comes from
+          </CardTitle>
+        </CardHeader>
+        <CardContent data-testid="guide-lineage" className="space-y-3 text-sm leading-relaxed text-on-raised">
+          <p>
+            Grouping variables across dictionaries is a topic-finding problem: many short texts, and the job is to find
+            the concepts they share and name each one precisely enough to match a standard. ddharmon combines three
+            lines of research to do it.
+          </p>
+          <ul className="space-y-1.5">
+            <li>
+              <span className="font-semibold text-on-raised">Topic modeling.</span> <A href={REF.bertopicPaper}>BERTopic</A>{" "}
+              (Grootendorst, 2022) showed that embedding short texts with a language model and clustering them finds
+              shared topics without anyone listing them first. ddharmon treats each variable's metadata as such a text,
+              embedded with <A href={REF.biolord}>BioLORD-2023</A> (Remy et al., 2024), a model trained on biomedical
+              concepts.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">LLM refinement.</span> Clusters are a good first cut, but
+              they merge distinct concepts that share vocabulary. Work such as <A href={REF.topicgpt}>TopicGPT</A> (Pham
+              et al., 2024) uses a large language model to label and refine topics in plain language; ddharmon uses one
+              to name each group, split mixed ones, judge whether each holds together, and choose its CDE.
+            </li>
+            <li>
+              <span className="font-semibold text-on-raised">Prompt optimization.</span> How well a model does those
+              jobs depends on its instructions. <A href={REF.dspy}>DSPy</A> (Khattab et al., 2023) and{" "}
+              <A href={REF.gepa}>GEPA</A> (Agrawal et al., 2026) tune instructions against labelled examples rather than
+              by hand; ddharmon's prompts are likewise measured against curated benchmarks, with held-out sets kept for
+              the final check.
+            </li>
+          </ul>
+          <p>
+            Every one of those steps can still be wrong, and a wrong merge or mapping carries into every analysis that
+            pools the data — so the models propose, and a person reviews each step.
           </p>
         </CardContent>
       </Card>
