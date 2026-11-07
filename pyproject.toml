@@ -9,10 +9,11 @@ dependencies = [
     # (sentence-transformers, BERTopic/UMAP/HDBSCAN, anthropic, …) — the pipeline
     # runner imports these directly, so the bare library is not enough.
     #
-    # ddharmon is PUBLIC on PyPI — a plain version pin, no auth or git ref needed. Pinned >=1.1.0:
-    # the UI's GenCDE surface (synthesis + transform-spec generation) needs the M12 core stages.
+    # ddharmon is PUBLIC on PyPI — a plain version pin, no auth or git ref needed. Pinned >=1.4.0:
+    # the staged review flow (gates 1-4) needs the core's reviewer group overrides, scoped assignment and
+    # split-only re-adjudication (contract 5), first released in 1.4.0.
     # For local dev against a checkout instead, see README.md ("Develop against a local core").
-    "ddharmon[all]>=1.1.0",
+    "ddharmon[all]>=1.4.0",
 
     # Web layer (the only thing this repo adds on top of ddharmon).
     "fastapi>=0.115.0",

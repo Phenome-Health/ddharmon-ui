@@ -61,7 +61,7 @@ from backend.artifact_kinds import (
     reviewer_group_name,
 )
 from backend.artifacts import UPDATED_AT, ArtifactError, ReadOnlyRunError, UnknownArtifactKindError, registry
-from backend.auth import AuthError, authenticate
+from backend.auth import AuthError, authenticate, public_demo_enabled
 from backend.checkpoint import (
     GATE_ORDER,
     Checkpoint,
@@ -356,6 +356,9 @@ def _is_demo_job(job_id: str) -> bool:
 
 
 def _is_public_path(path: str, method: str = "GET") -> bool:
+    # A deployment can make the demo sign-in-only too (`DDHARMON_PUBLIC_DEMO=false`, the PH-only dev channel).
+    if not public_demo_enabled():
+        return False
     if path in _PUBLIC_EXACT:
         return True
     for prefix in _DEMO_SCOPED_PREFIXES:

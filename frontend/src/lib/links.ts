@@ -71,6 +71,12 @@ export const REF = {
   biolink: "https://biolink.github.io/biolink-model/",
   bertopic: "https://maartengr.github.io/BERTopic/",
   hitl: "https://en.wikipedia.org/wiki/Human-in-the-loop",
+  // The research lines the Guide's "Where the approach comes from" names (each verified 2026-11-06).
+  bertopicPaper: "https://arxiv.org/abs/2203.05794", // Grootendorst 2022
+  biolord: "https://doi.org/10.1093/jamia/ocae029", // Remy et al., JAMIA 2024 — ddharmon's embedding model
+  topicgpt: "https://aclanthology.org/2024.naacl-long.164", // Pham et al., NAACL 2024
+  dspy: "https://arxiv.org/abs/2310.03714", // Khattab et al. 2023
+  gepa: "https://arxiv.org/abs/2507.19457", // Agrawal et al., ICLR 2026
 } as const;
 
 /**

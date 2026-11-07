@@ -15,11 +15,17 @@
 // demo needs an authenticated identity — Clerk's passwordless email-code lets a collaborator sign in with
 // just their email and land read-only, while only @phenomehealth.org sees full. The backend's
 // DDHARMON_ALLOWED_EMAIL_DOMAINS guard is the real run-gate; the frontend tier is UX only.
+//
+// PH-ONLY DEV (2026-11-05). With prod public again, dev turns the read-only tier OFF (VITE_READ_ONLY_TIER=false):
+// any non-full-access account is REFUSED — a "Phenome Health accounts only" screen with sign-out — instead of
+// landing on the demo. The backend matches it with DDHARMON_PUBLIC_DEMO=false, so even the demo needs a PH token.
+// The tiers themselves are `lib/access-tier.ts`.
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { ClerkProvider, SignIn, useAuth, useUser } from "@clerk/react";
 import { AUTH_ENABLED, setLastToken, setTokenGetter } from "@/lib/api";
 import { forgetRunKey } from "@/lib/run-key";
 import { markGuestSession } from "@/lib/sandbox";
+import { accessTier } from "@/lib/access-tier";
 
 const PUB_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 // Guest "try the demo" bypass is allowed by default; only the explicit string "false" disables it (so an
@@ -31,6 +37,9 @@ const FULL_ACCESS_DOMAINS = ((import.meta.env.VITE_FULL_ACCESS_DOMAINS as string
   .split(",")
   .map((d) => d.trim().toLowerCase())
   .filter(Boolean);
+// The read-only demo tier for signed-in accounts outside FULL_ACCESS_DOMAINS. On unless "false" (dev, 2026-11-05),
+// where such an account is refused instead. Build-time.
+const READ_ONLY_TIER = import.meta.env.VITE_READ_ONLY_TIER !== "false";
 // Optional caption under the sign-in box (dev channel tells collaborators to use their email for a code).
 const SIGNIN_NOTE = import.meta.env.VITE_SIGNIN_NOTE as string | undefined;
 
@@ -82,6 +91,42 @@ function GuestSessionMarker() {
   return null;
 }
 
+/**
+ * A signed-in account this deployment does not serve (the PH-only dev channel): say whose session it is, where the
+ * public site is, and how to switch accounts. Nothing of the app renders behind it.
+ */
+function RefusedScreen({ email, onSignOut }: { email?: string; onSignOut: () => void }) {
+  return (
+    <div
+      data-testid="access-refused"
+      className="flex min-h-screen flex-col items-center justify-center gap-4 bg-surface-inset p-6 text-center"
+    >
+      <h1 className="font-display text-lg font-semibold text-on-inset">This site is for Phenome Health accounts</h1>
+      <p className="max-w-md text-sm text-on-inset">
+        {email ? (
+          <>
+            You're signed in as <span className="font-semibold">{email}</span>, which isn't a Phenome Health account.
+          </>
+        ) : (
+          "This session has no email address, so it can't be checked against the Phenome Health domain."
+        )}{" "}
+        The public ddharmon site is{" "}
+        <a href="https://ddharmon.io" className="font-semibold text-link-on-inset underline underline-offset-4">
+          ddharmon.io
+        </a>
+        .
+      </p>
+      <button
+        type="button"
+        onClick={onSignOut}
+        className="text-sm font-semibold text-link-on-inset underline underline-offset-4 transition-colors hover:text-on-inset"
+      >
+        Sign out and use another account
+      </button>
+    </div>
+  );
+}
+
 function SignInWall({ onGuest }: { onGuest?: () => void }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-surface-inset p-6">
@@ -113,9 +158,9 @@ function Gate({ children }: { children: ReactNode }) {
   }
   if (isSignedIn) {
     const email = user?.primaryEmailAddress?.emailAddress ?? undefined;
-    const domain = email?.split("@")[1]?.toLowerCase();
-    const fullAccess = FULL_ACCESS_DOMAINS.length === 0 || (!!domain && FULL_ACCESS_DOMAINS.includes(domain));
-    if (fullAccess) {
+    const tier = accessTier(email, FULL_ACCESS_DOMAINS, READ_ONLY_TIER);
+    if (tier === "refused") return <RefusedScreen email={email} onSignOut={() => void signOut()} />;
+    if (tier === "full") {
       return (
         <AuthContext.Provider value={{ isAuthed: true, isGuest: false, email, exitGuest: () => {} }}>
           <TokenBridge />

@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { ArrowRight, GitCompareArrows, Layers, UserCheck, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PhLogo } from "@/components/ph-logo";
+import { FundingAcknowledgement } from "@/components/funding-acknowledgement";
 
 // ── The signature visual: the SAME concept, asked differently and coded differently
 // across cohorts — question text + response options carry the meaning; the variable
@@ -245,6 +246,8 @@ export default function LandingPage() {
           ))}
         </div>
       </section>
+
+      <FundingAcknowledgement />
     </div>
   );
 }

@@ -8,7 +8,8 @@
     "build": "vite build",
     "serve": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:lean": "playwright test -c playwright.lean.config.ts"
   },
   "dependencies": {
     "@clerk/react": "^6.12.2",

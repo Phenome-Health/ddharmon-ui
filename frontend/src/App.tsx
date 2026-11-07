@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Redirect, Route, Router, Switch, useParams } from "wouter";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -33,6 +34,8 @@ import Gate1Page from "@/pages/run/gate1";
 import Gate2Page from "@/pages/run/gate2";
 import Gate3Page from "@/pages/run/gate3";
 import Gate4Page from "@/pages/run/gate4";
+import type { HideablePage } from "@/lib/hidden-pages";
+import { isPageHidden } from "@/lib/page-visibility";
 
 /**
  * The retired `gate0` path — REGISTERED, and a redirect rather than a deleted route.
@@ -54,6 +57,19 @@ function RetiredGate0Route() {
   return <Redirect to={`/run/${jobId}/setup`} replace />;
 }
 
+function HomeRedirect() {
+  return <Redirect to="/" replace />;
+}
+
+/**
+ * A content page this build may leave out (`lib/hidden-pages.ts` — prod hides six). Hidden, its route stays
+ * REGISTERED, so the visual gate's route-coverage guard still matches this table, but it sends the visitor home:
+ * an old link to it (a slide, a bookmark) should land somewhere useful rather than on a 404.
+ */
+function hideable(page: HideablePage, Page: ComponentType): ComponentType {
+  return isPageHidden(page) ? HomeRedirect : Page;
+}
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
 });
@@ -72,19 +88,20 @@ export default function App() {
             <Route path="/" component={LandingPage} />
             <Route path="/new" component={HomePage} />
             <Route path="/guide" component={GuidePage} />
-            <Route path="/methods" component={MethodsPage} />
-            <Route path="/benchmarks" component={BenchmarksPage} />
-            <Route path="/design" component={DesignChoicesPage} />
+            <Route path="/methods" component={hideable("methods", MethodsPage)} />
+            <Route path="/benchmarks" component={hideable("benchmarks", BenchmarksPage)} />
+            <Route path="/design" component={hideable("design", DesignChoicesPage)} />
             <Route path="/demo" component={DemoPage} />
             <Route path="/related" component={RelatedWorkPage} />
-            <Route path="/roadmap" component={RoadmapPage} />
-            <Route path="/architecture" component={DeploymentArchitecturePage} />
-            <Route path="/preview/restructure" component={PreviewRestructurePage} />
-            <Route path="/preview/payoff" component={PreviewPayoffPage} />
-            <Route path="/preview/composite" component={PreviewCompositePage} />
-            <Route path="/preview/reproducibility" component={PreviewReproducibilityPage} />
-            <Route path="/preview/knowledge-graph" component={PreviewKnowledgeGraphPage} />
-            <Route path="/phenome" component={PhenomeHealthPage} />
+            <Route path="/roadmap" component={hideable("roadmap", RoadmapPage)} />
+            <Route path="/architecture" component={hideable("architecture", DeploymentArchitecturePage)} />
+            {/* The roadmap's design previews go with the roadmap: it is their only way in, and each links back to it. */}
+            <Route path="/preview/restructure" component={hideable("roadmap", PreviewRestructurePage)} />
+            <Route path="/preview/payoff" component={hideable("roadmap", PreviewPayoffPage)} />
+            <Route path="/preview/composite" component={hideable("roadmap", PreviewCompositePage)} />
+            <Route path="/preview/reproducibility" component={hideable("roadmap", PreviewReproducibilityPage)} />
+            <Route path="/preview/knowledge-graph" component={hideable("roadmap", PreviewKnowledgeGraphPage)} />
+            <Route path="/phenome" component={hideable("phenome", PhenomeHealthPage)} />
             <Route path="/run/:jobId/setup" component={SetupPage} />
             <Route path="/run/:jobId/gate0" component={RetiredGate0Route} />
             <Route path="/run/:jobId/gate1" component={Gate1Page} />

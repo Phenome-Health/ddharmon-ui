@@ -13,6 +13,7 @@ import { PhMark } from "@/components/ph-logo";
 import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
 import { GlobalStatusBanner } from "@/components/global-status-banner";
 import { BuildStamp } from "@/components/build-stamp";
+import { isPageHidden } from "@/lib/page-visibility";
 
 // Dev channel: a build pinned to an UNRELEASED core (git ref), deployed to dev.ddharmon.io for
 // pre-PyPI validation. Baked in at build time (VITE_APP_CHANNEL=dev); defaults to prod. Its prominent badge went
@@ -128,18 +129,19 @@ export function AppShell({ children }: { children: ReactNode }) {
               </span>
             )}
             <ActiveRunsIndicator compact={collapsed} />
+            {/* A deployment may leave content pages out (VITE_HIDDEN_PAGES — prod does; `lib/hidden-pages.ts`). */}
             <nav id="app-nav-list" className="space-y-1">
               <NavLink href="/guide" icon={<BookOpen className="h-4 w-4 shrink-0" />} label="Guide" collapsed={collapsed} />
-              <NavLink href="/methods" icon={<Workflow className="h-4 w-4 shrink-0" />} label="Methods" collapsed={collapsed} />
-              <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4 shrink-0" />} label="Benchmarks" collapsed={collapsed} />
-              <NavLink href="/design" icon={<Lightbulb className="h-4 w-4 shrink-0" />} label="Design" collapsed={collapsed} />
+              {!isPageHidden("methods") && <NavLink href="/methods" icon={<Workflow className="h-4 w-4 shrink-0" />} label="Methods" collapsed={collapsed} />}
+              {!isPageHidden("benchmarks") && <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4 shrink-0" />} label="Benchmarks" collapsed={collapsed} />}
+              {!isPageHidden("design") && <NavLink href="/design" icon={<Lightbulb className="h-4 w-4 shrink-0" />} label="Design" collapsed={collapsed} />}
               <NavLink href="/demo" icon={<Sparkles className="h-4 w-4 shrink-0" />} label="Demo" collapsed={collapsed} />
               <NavLink href="/run/new/setup" icon={<Plus className="h-4 w-4 shrink-0" />} label="New run" collapsed={collapsed} />
               <NavLink href="/jobs" icon={<ListChecks className="h-4 w-4 shrink-0" />} label="Runs" collapsed={collapsed} />
               <NavLink href="/related" icon={<Boxes className="h-4 w-4 shrink-0" />} label="Related work" collapsed={collapsed} />
-              <NavLink href="/roadmap" icon={<Milestone className="h-4 w-4 shrink-0" />} label="Roadmap" collapsed={collapsed} />
-              <NavLink href="/architecture" icon={<Network className="h-4 w-4 shrink-0" />} label="Architecture" collapsed={collapsed} />
-              <NavLink href="/phenome" icon={<Building2 className="h-4 w-4 shrink-0" />} label="Phenome Health" collapsed={collapsed} />
+              {!isPageHidden("roadmap") && <NavLink href="/roadmap" icon={<Milestone className="h-4 w-4 shrink-0" />} label="Roadmap" collapsed={collapsed} />}
+              {!isPageHidden("architecture") && <NavLink href="/architecture" icon={<Network className="h-4 w-4 shrink-0" />} label="Architecture" collapsed={collapsed} />}
+              {!isPageHidden("phenome") && <NavLink href="/phenome" icon={<Building2 className="h-4 w-4 shrink-0" />} label="Phenome Health" collapsed={collapsed} />}
             </nav>
             <div className="mt-auto space-y-1 border-t border-rule-on-chrome pt-3 text-xs">
               {/* THE ACCOUNT, moved from the top bar (round 7). Only when the SSO gate is active. Guests get a sign-in
