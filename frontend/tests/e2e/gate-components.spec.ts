@@ -150,8 +150,9 @@ test.describe("gate component vocabulary", () => {
     // dimmer reads as "less important, therefore fine", which is the prohibited misread.
     expect(src).toContain('text: "text-on-inset-muted"');
     expect(src).not.toMatch(/not_judged:\s*\{[^}]*(?:faint|opacity-)/);
-    // The copy that makes the state unmistakable must travel with it.
-    expect(src).toContain("Silence from a judge that was never asked is not a pass.");
+    // The copy that makes the state unmistakable must travel with it (reworded 2026-11-03 to say why and what to
+    // do — "Too small to judge … Quick to check by eye" — keeping "not a pass").
+    expect(src).toContain("the coherence judge was not asked — not a pass");
   });
 
   test("@gate-components the two-pane detail track cannot widen the page", () => {

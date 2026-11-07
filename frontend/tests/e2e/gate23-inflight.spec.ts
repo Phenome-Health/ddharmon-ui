@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { JobResult } from "@/types";
-import { PAUSED_JOB, servePaused } from "./gate23-fixture";
+import { FINISHED_JOB, PAUSED_JOB, serveFinished, servePaused } from "./gate23-fixture";
 
 /**
  * 08-28 F4 — while a paid leg is still running, Gates 2 and 3 say so; they never claim nothing was passed to them.
@@ -67,5 +67,36 @@ test("@gate3 a FINISHED leg that produced nothing keeps the true empty state", a
   await servePaused(page, finished);
   await open(page, "gate3");
   await expect(page.getByTestId("gate-empty-state")).toContainText("No transform specs to review");
+  await expect(page.getByTestId("gate3-running")).toHaveCount(0);
+});
+
+/*
+ * Bhargav, live Haiku run 67cac032 (2026-10-15): "gate 3 seems to show as populated while the specs step is still in
+ * progress?" The running state keyed on an EMPTY list, but mid-leg the screen holds Gate 2's checkpoint, whose records
+ * already carry value-mapping rows, so the gate rendered as if its specs were written. What decides it is whether the
+ * run has REACHED Gate 3, not whether the earlier result happens to have rows.
+ */
+test("@gate3 a leg still running toward Gate 3 reads as running even when the earlier result carries rows", async ({
+  page,
+}) => {
+  await serveFinished(page, (run) => {
+    run.status = "specs" as JobResult["status"];
+    run.phase = "specs";
+    run.gatePosition = "gate2";
+  });
+  await page.goto(`/run/${FINISHED_JOB}/gate3`);
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByTestId("gate3-running")).toContainText("specs");
+});
+
+test("@gate3 a leg running PAST Gate 3 keeps showing what Gate 3 holds", async ({ page }) => {
+  await serveFinished(page, (run) => {
+    run.status = "refine" as JobResult["status"];
+    run.phase = "refine";
+    run.gatePosition = "gate3";
+  });
+  await page.goto(`/run/${FINISHED_JOB}/gate3`);
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByTestId("gate-empty-state")).toHaveCount(0);
   await expect(page.getByTestId("gate3-running")).toHaveCount(0);
 });

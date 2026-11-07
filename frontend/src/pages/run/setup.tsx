@@ -34,8 +34,8 @@ import {
   saveBlob,
   startHarmonize,
 } from "@/lib/api";
-import { RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
-import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
+import { NEW_RUN_ID, RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
+import { costFactor, isSelectable, pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
 import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
 import { GUEST_RUN_ACTION, guestRunBlocker } from "@/lib/sandbox";
@@ -306,6 +306,14 @@ function isConfirmed(d: SetupDict): boolean {
 }
 
 /**
+ * Whether this dictionary's mapping can be marked complete right now: an upload read in this browser (a run-seeded
+ * read-back has no File and nothing left to confirm), finished parsing, and mapped well enough to run.
+ */
+function markable(d: SetupDict): boolean {
+  return d.origin === "upload" && Boolean(d.file) && d.state !== "parsing" && meetsRoleRequirement(d.roles);
+}
+
+/**
  * WHERE A DICTIONARY'S PREPOPULATED MAPPING CAME FROM, as one sentence — a function so the page can tell when every
  * card would say the same thing, and say it once above them instead (round 5 repeated-copy sweep).
  */
@@ -487,7 +495,9 @@ export default function SetupPage() {
   // as its only blocker, instead of a guest filling in a whole run and meeting a 401 at the end.
   const { isGuest } = useAuthState();
   const guest = AUTH_ENABLED && isGuest;
-  const { jobState, cancel, error: streamError, reconnecting } = useHarmonizeStream(jobId, true, true);
+  // A brand-new run's draft id has no run behind it until Start: watching it only asked the server about a run that does
+  // not exist (round 10). The stream is for a STARTED run read back on this screen.
+  const { jobState, cancel, error: streamError, reconnecting } = useHarmonizeStream(jobId, jobId !== NEW_RUN_ID, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const [dicts, setDicts] = useState<SetupDict[]>([]);
@@ -567,7 +577,7 @@ export default function SetupPage() {
    * New Run form gives them: visible so the picker does not misrepresent what exists, unselectable so a run
    * cannot be pointed at an unvalidated model.
    */
-  const isProviderTested = (pr: string): boolean => models.some((m) => m.provider === pr && m.validated);
+  const isProviderTested = (pr: string): boolean => models.some((m) => m.provider === pr && isSelectable(m));
   // Keep `model` valid, as New Run does. The first time the list arrives nothing is picked yet: land on the list's
   // default, its provider included. After that, a provider change (or a pick that is not a validated model of the
   // provider) re-picks within the provider — the default if it is one of its models, else its first validated one.
@@ -784,8 +794,10 @@ export default function SetupPage() {
         : estimateRunCostBreakdown(totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, {
             conceptGate,
             groupSizes,
+            // Round 11: the estimate is calibrated on the default model; the chosen one's price and tokenizer scale it.
+            priceFactor: costFactor(modelCatalog, model),
           }),
-    [totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, conceptGate, groupSizes],
+    [totalFields, corpusCohorts, effectiveRunMode, genSpecs, suggestIdeas, conceptGate, groupSizes, modelCatalog, model],
   );
 
   /**
@@ -1078,6 +1090,23 @@ export default function SetupPage() {
     setDicts((prev) => prev.map((d) => (d.key === key ? { ...d, confirmedRoles: { ...d.roles } } : d)));
   }
 
+  /**
+   * MARK ALL (round 10, Bhargav 2026-10-14): one click marks every uploaded mapping that CAN be marked.
+   *
+   * A mapping that is not usable yet is skipped rather than marked — it has its own blocker naming the fix, and
+   * marking it would attest to a mapping that cannot run. Marking them all is also the set-level "every dictionary
+   * is mapped" gesture the workbook asks for, so it sets that too: two controls for one attestation would be two
+   * signals for one meaning. A later re-map still drops both, exactly as before (`setRoles`).
+   */
+  function confirmAllMappings() {
+    setDicts((prev) =>
+      prev.map((d) =>
+        markable(d) && !isConfirmed(d) ? { ...d, confirmedRoles: { ...d.roles } } : d,
+      ),
+    );
+    setRunConfirmed(true);
+  }
+
   async function downloadEmbeddingCsv(d: SetupDict) {
     if (!d.file) return;
     setExportBusy((prev) => ({ ...prev, [d.key]: true }));
@@ -1148,6 +1177,17 @@ export default function SetupPage() {
       }
       const reason = roleRequirementReason(d.roles);
       if (reason !== null) out.push(`${d.filename}: ${reason}`);
+    }
+    // EVERY MAPPING MARKED COMPLETE (round 10, Bhargav 2026-10-14). Start used to ignore it while the how-to
+    // listed it as a step, so a run could begin on a mapping nobody had checked. One sentence naming every file,
+    // and only files that CAN be marked: an unusable mapping already has its own blocker above.
+    const unmarked = dicts.filter((d) => markable(d) && !isConfirmed(d));
+    if (unmarked.length) {
+      out.push(
+        `Mark ${unmarked.length === 1 ? "this mapping" : "each mapping"} complete: ${unmarked
+          .map((d) => d.filename)
+          .join(", ")}. "Mark all mappings complete", below the dictionaries, does it in one click.`,
+      );
     }
     // Batch and synchronous both call a provider; preview calls nothing. A missing key is a blocker rather
     // than a failure at submit time, because the reason belongs beside the disabled control.
@@ -1722,6 +1762,8 @@ export default function SetupPage() {
           remaining={uploadedDicts.filter((d) => !isConfirmed(d)).length}
           confirmed={runConfirmed}
           onConfirm={() => setRunConfirmed(true)}
+          markable={uploadedDicts.filter((d) => markable(d) && !isConfirmed(d)).length}
+          onMarkAll={confirmAllMappings}
           onDownload={() => void downloadWorkbook()}
           downloading={workbookBusy}
           error={workbookError}
@@ -1974,11 +2016,13 @@ export default function SetupPage() {
               >
                 {modelsForProvider.length === 0 && <option value="">No models available</option>}
                 {modelsForProvider.map((m) => {
-                  const tested = m.validated;
+                  // Round 11: selectable = core can call it; validated = benchmarked. A selectable model ahead of its
+                  // benchmark is offered and says so; a listed-only one stays disabled.
+                  const selectable = isSelectable(m);
                   return (
-                    <option key={m.id} value={m.id} disabled={!tested}>
+                    <option key={m.id} value={m.id} disabled={!selectable}>
                       {m.label}
-                      {tested ? "" : " — not yet tested"}
+                      {!selectable ? " — not yet tested" : m.validated ? "" : " — not yet benchmarked"}
                     </option>
                   );
                 })}
@@ -2458,31 +2502,22 @@ export default function SetupPage() {
           its rejoin link; it does not need a charge control. */}
       {stage === "compose" && (
       <div className="flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card">
-        <div className="flex min-w-0 flex-col gap-1">
-          {blockers.length > 0 ? (
-            <div data-testid="start-blocked" className="flex flex-col gap-1">
-              <p className="text-sm font-semibold text-on-raised">
-                Not ready to start — {blockers.length === 1 ? "one thing" : `${blockers.length} things`} to
-                fix:
-              </p>
-              <ul className="flex flex-col gap-0.5">
-                {blockers.map((b) => (
-                  <li key={b} data-testid="blocker" className="max-w-[68ch] text-xs text-on-raised-muted">
-                    {b}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p className="max-w-[68ch] text-sm text-on-raised-muted">
-              Ready to start. Uploading, mapping, confirming and exporting all ran on this machine and cost
-              nothing —{" "}
-              {fullAuto
-                ? "pressing Start run buys the whole run in Full auto."
-                : "pressing Start run is this run's first charge."}
+        {/* Nothing blocking says nothing here (round 10, Bhargav: "remove"). The bar beneath already states that
+            nothing has been charged and that Start is where spending begins; "Ready to start…" said it a third time. */}
+        {blockers.length > 0 && (
+          <div data-testid="start-blocked" className="flex min-w-0 flex-col gap-1">
+            <p className="text-sm font-semibold text-on-raised">
+              Not ready to start — {blockers.length === 1 ? "one thing" : `${blockers.length} things`} to fix:
             </p>
-          )}
-        </div>
+            <ul className="flex flex-col gap-0.5">
+              {blockers.map((b) => (
+                <li key={b} data-testid="blocker" className="max-w-[68ch] text-xs text-on-raised-muted">
+                  {b}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {/* ABOVE the control, and that ordering is asserted: the statement a reviewer needs before they
             press must not be discoverable only after they have. */}
         <p data-testid="nothing-charged-yet" className="text-xs text-on-raised-muted">
@@ -2523,7 +2558,8 @@ export default function SetupPage() {
           // NOT disabled for the static build any more (08-28): `startHarmonize` tries the request there and
           // answers "static preview" itself, which is the seam the e2e gate reads the Start payload through.
           disabled={blockers.length > 0}
-          className="static"
+          // Inside the Start card, which is its surface: no sticky band, no card of its own (round 10).
+          embedded
           recheckNotice={
             isPreview || estimate?.free
               ? "This run is a preview, so it calls no model and buys nothing — it groups your variables and stops."

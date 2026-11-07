@@ -17,14 +17,16 @@ import type { JobSummary } from "@/types";
 export function RerunAction({
   job,
   labeled = false,
+  testId,
 }: {
   job: Pick<JobSummary, "jobId" | "displayName">;
   labeled?: boolean;
+  testId?: string;
 }) {
   const href = rerunSetupPathFor(job.jobId);
   const title = `Set up a new run with the same inputs as “${job.displayName}” — nothing starts until you press Start`;
   return labeled ? (
-    <Link href={href} title={title} className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>
+    <Link href={href} title={title} data-testid={testId} className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>
       <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Re-run with same inputs
     </Link>
   ) : (
@@ -32,6 +34,7 @@ export function RerunAction({
       href={href}
       aria-label="Re-run"
       title={title}
+      data-testid={testId}
       className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
     >
       <RotateCcw className="h-4 w-4 text-on-raised-muted" />

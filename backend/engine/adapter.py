@@ -2164,6 +2164,8 @@ def _sync_remainder(
 #: The retry advice every "a required step failed" message ends with — the reconcile path's vocabulary
 #: (``backend.app._note_reconcile_failures``), shared so the two can never tell a reviewer different things.
 REQUIRED_STEP_RETRY = "re-enter your key if needed and press Continue to retry."
+#: The same advice for a run whose FIRST leg failed (round 10): it has no gate, so no Continue — the runner swaps this in.
+FIRST_LEG_RETRY = "re-run it with the same inputs; Set up asks for your key again."
 
 
 class StageIncompleteError(RuntimeError):

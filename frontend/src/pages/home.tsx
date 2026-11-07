@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { InfoTip, RoleInfo } from "@/components/ui/info-tip";
 import { IS_STATIC, listModels, startHarmonize } from "@/lib/api";
 import { lookupPrefill, rememberAssignment, type PrefillSource } from "@/lib/column-prefill";
-import { pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
+import { costFactor, pickModel, validatedByProvider, validatedModelNames, isSelectable } from "@/lib/model-catalog";
 import { roleRequirementReason } from "@/lib/dictionary";
 import { PROVIDER_KEY_INFO } from "@/lib/provider-keys";
 import { useAuthState } from "@/auth";
@@ -135,10 +135,17 @@ export default function HomePage() {
     setDicts((prev) => prev.map((d, i) => (i === idx ? { ...d, prefillDismissed: true } : d)));
   }
 
+  // The picker's model list, its validated flags and its default — from the backend (core's registry, its own
+  // fallback list, or a LiteLLM proxy), or the bundled snapshot of that endpoint in the static build.
+  const { data: catalog } = useQuery({ queryKey: ["models"], queryFn: listModels });
   const totalFields = useMemo(() => dicts.reduce((s, d) => s + d.nFields, 0), [dicts]);
   const cost = useMemo(
-    () => estimateRunCostBreakdown(totalFields, dicts.length, runMode, genTransformSpecs, suggestAnalysisIdeas),
-    [totalFields, dicts.length, runMode, genTransformSpecs, suggestAnalysisIdeas],
+    () =>
+      estimateRunCostBreakdown(totalFields, dicts.length, runMode, genTransformSpecs, suggestAnalysisIdeas, {
+        // Round 11: calibrated on the default model; the chosen one's price and tokenizer scale it, as on Setup.
+        priceFactor: costFactor(catalog, model),
+      }),
+    [totalFields, dicts.length, runMode, genTransformSpecs, suggestAnalysisIdeas, catalog, model],
   );
   const time = useMemo(
     () => estimateRunTime(totalFields, dicts.length, runMode),
@@ -148,9 +155,6 @@ export default function HomePage() {
     ? `${totalFields.toLocaleString()} variables · ${dicts.length} cohort${dicts.length > 1 ? "s" : ""} · ${runMode}`
     : "";
 
-  // The picker's model list, its validated flags and its default — from the backend (core's registry, its own
-  // fallback list, or a LiteLLM proxy), or the bundled snapshot of that endpoint in the static build.
-  const { data: catalog } = useQuery({ queryKey: ["models"], queryFn: listModels });
   const models = useMemo(() => catalog?.models ?? [], [catalog]);
   const providers = useMemo(() => {
     const seen = new Set<string>();
@@ -174,7 +178,7 @@ export default function HomePage() {
     if (next && next !== model) setModel(next);
   }, [catalog, provider, model]);
   const providerLabel = PROVIDER_LABELS[provider] ?? provider;
-  const isProviderTested = (p: string): boolean => models.some((m) => m.provider === p && m.validated);
+  const isProviderTested = (p: string): boolean => models.some((m) => m.provider === p && isSelectable(m));
   const keyInfo = PROVIDER_KEY_INFO[provider];
 
   async function run() {
@@ -434,10 +438,10 @@ export default function HomePage() {
                   </SelectTrigger>
                   <SelectContent>
                     {modelsForProvider.map((m) => {
-                      const tested = m.validated;
+                      const selectable = isSelectable(m);
                       return (
-                        <SelectItem key={m.id} value={m.id} disabled={!tested}>
-                          {m.label + (tested ? "" : " · not yet tested")}
+                        <SelectItem key={m.id} value={m.id} disabled={!selectable}>
+                          {m.label + (!selectable ? " · not yet tested" : m.validated ? "" : " · not yet benchmarked")}
                         </SelectItem>
                       );
                     })}
@@ -591,7 +595,11 @@ export default function HomePage() {
 
 function CostCard({ breakdown, time, meta }: { breakdown: CostBreakdown; time: TimeEstimate; meta: string }) {
   return (
-    <Card className="border-rule-info bg-surface-info">
+    <Card
+      data-testid="cost-card"
+      data-total={breakdown.free ? "" : String(breakdown.total.mid)}
+      className="border-rule-info bg-surface-info"
+    >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm">Estimated cost</CardTitle>
         {breakdown.free ? (

@@ -162,6 +162,21 @@ def gate1_suggestions(
     return payload
 
 
+def warm_gate1_search(
+    field_index: Mapping[str, Any] | None, membership: Mapping[str, Sequence[str]], *, embed: Any
+) -> None:
+    """Embed Gate 1's free-search corpus before anyone searches it (user test 2026-11-03).
+
+    Runs core's own :func:`suggest_groups` once with a placeholder item, so the vectors land in the embedder's cache
+    under exactly the texts the reviewer's first real search will ask for — the grouped variables, as core indexes
+    them — and that search then embeds only its own item queries. Without it, a run's first search embedded every
+    variable from scratch (93 seconds on dev for ~1,000 variables) while Gate 1 showed nothing. Free: no model call.
+    """
+    from ddharmon.harmonization.composite import ScoreComponent, suggest_groups
+
+    suggest_groups([ScoreComponent(name="warm-up")], field_index or {}, membership, embed=embed)
+
+
 def _spec_for(composites: Iterable[Mapping[str, Any]], score_name: str) -> dict[str, Any] | None:
     """The newest derived spec named ``score_name`` (case-insensitive — the ``composite`` kind's identity)."""
     wanted = score_name.strip().lower()

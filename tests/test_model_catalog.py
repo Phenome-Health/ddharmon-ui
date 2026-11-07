@@ -22,7 +22,7 @@ from backend.engine import llm
 from backend.engine.models import FALLBACK_DEFAULT_MODEL, default_model, model_catalog
 
 _REGISTRY = "ddharmon.llm.models"
-_KEYS = {"id", "label", "provider", "validated"}
+_KEYS = {"id", "label", "provider", "validated", "selectable", "inputPerMtok", "outputPerMtok", "tokenRatio"}
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,8 @@ def _assert_default_is_validated_member(catalog: dict[str, Any]) -> None:
     assert by_id[catalog["default"]]["validated"] is True, "the default must be a validated model"
     for m in catalog["models"]:
         assert set(m) == _KEYS
-        assert isinstance(m["validated"], bool)
+        assert isinstance(m["validated"], bool) and isinstance(m["selectable"], bool)
+    assert by_id[catalog["default"]]["selectable"] is True, "the default must be selectable"
 
 
 def test_without_the_core_registry_the_ui_fallback_list_is_served(no_registry):
@@ -167,7 +168,69 @@ def test_proxy_models_are_marked_validated_from_the_catalog(no_registry, monkeyp
         "label": "Claude Sonnet 4.6",
         "provider": "anthropic",
         "validated": True,
+        "selectable": True,
+        "inputPerMtok": 3.0,
+        "outputPerMtok": 15.0,
+        "tokenRatio": 1.0,
     }
+    assert by_id["gpt-4o"]["selectable"] is False
     assert by_id["gpt-4o"]["validated"] is False
     assert body["default"] == "anthropic/claude-sonnet-4-6"
     _assert_default_is_validated_member(body)
+
+
+# ── round 11 (2026-10-14): newer models selectable ahead of their benchmark — only on a core that can call them ──
+
+
+@dataclass(frozen=True)
+class _RulesModelInfo:
+    """Core's registry entry once it carries request rules and prices (ddharmon feature/models-5x)."""
+
+    id: str
+    label: str
+    provider: str
+    validated: bool
+    selectable: bool = False
+    input_per_mtok: float | None = None
+    output_per_mtok: float | None = None
+    token_ratio: float = 1.0
+
+
+def test_a_core_with_request_rules_offers_its_selectable_models_with_prices(monkeypatch):
+    reg = _fake_registry(
+        "claude-sonnet-4-6",
+        (
+            _RulesModelInfo("claude-sonnet-4-6", "Claude Sonnet 4.6", "anthropic", True, True, 3.0, 15.0, 1.0),
+            _RulesModelInfo("claude-haiku-5-5", "Claude Haiku 5.5", "anthropic", False, True, 0.10, 0.50, 1.3),
+            _RulesModelInfo("claude-opus-5-5", "Claude Opus 5.5", "anthropic", False, False, 4.0, 20.0, 1.3),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, _REGISTRY, reg)
+    by_id = {m["id"]: m for m in model_catalog()["models"]}
+    assert by_id["claude-haiku-5-5"] == {
+        "id": "claude-haiku-5-5",
+        "label": "Claude Haiku 5.5",
+        "provider": "anthropic",
+        "validated": False,
+        "selectable": True,
+        "inputPerMtok": 0.10,
+        "outputPerMtok": 0.50,
+        "tokenRatio": 1.3,
+    }
+    assert by_id["claude-opus-5-5"]["selectable"] is False
+
+
+def test_a_core_registry_without_request_rules_offers_only_validated_models(core_registry):
+    # A registry from before the request rules (core 1.3.1) cannot call a newer model correctly: selectable = validated.
+    cat = model_catalog()
+    assert [m["id"] for m in cat["models"] if m["selectable"]] == ["claude-next-5"]
+    assert all(m["tokenRatio"] == 1.0 and m["inputPerMtok"] is None for m in cat["models"])
+
+
+def test_the_fallback_offers_only_the_default_and_lists_no_retired_model(no_registry):
+    # The fallback is served when core has NO registry — a core that sends temperature and a forced tool call to every
+    # model, which Sonnet 5.5 and Haiku 5.5 reject. So nothing newer is selectable here.
+    cat = model_catalog()
+    assert [m["id"] for m in cat["models"] if m["selectable"]] == ["claude-sonnet-4-6"]
+    ids = {m["id"] for m in cat["models"]}
+    assert not ids & {"gemini/gemini-1.5-pro", "claude-opus-4-8"}, "a retired or superseded model is still listed"

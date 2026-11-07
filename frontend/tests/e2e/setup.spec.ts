@@ -47,6 +47,7 @@ interface SetupModel {
   label: string;
   provider: string;
   validated: boolean;
+  selectable?: boolean; // round 11: core can call it, benchmarked or not; absent = validated
 }
 
 /** Swap the bundled model list for one of the test's own. */
@@ -384,6 +385,10 @@ test.describe("Setup — the screen", () => {
     // tracks a real precondition rather than a hardcoded gate.
     await page.getByTestId("run-mode").selectOption("preview");
     await expect(blockers.filter({ hasText: /API key/i })).toHaveCount(0);
+    // Round 10: the one precondition left is marking the mapping complete, and it is named too.
+    await expect(blockers).toHaveCount(1);
+    await expect(blockers.first()).toContainText("ready.csv");
+    await page.getByTestId("mark-all-complete").click();
     await expect(page.getByTestId("start-blocked")).toHaveCount(0);
   });
 
@@ -401,7 +406,11 @@ test.describe("Setup — the screen", () => {
     // The blocker that named this file is gone; the mapping is what cleared it. Asserted against the
     // blocker ITEMS rather than the container, which disappears entirely once nothing is blocking —
     // `not.toContainText` on an absent element proves nothing.
-    await expect(page.getByTestId("blocker").filter({ hasText: "mapme.csv" })).toHaveCount(0);
+    // Round 10: the file's ONLY blocker is now the next step, marking the mapping complete — the role one is gone.
+    const forFile = page.getByTestId("blocker").filter({ hasText: "mapme.csv" });
+    await expect(forFile).toHaveCount(1);
+    await expect(forFile).toContainText("Mark this mapping complete");
+    await expect(forFile).not.toContainText("question_text");
   });
 
   test("@setup the mapping table scrolls inside its card and the page never scrolls sideways", async ({
@@ -865,14 +874,15 @@ test.describe("Setup — the review pass: layout melded with the New Run form", 
     await expect(upload).toBeDisabled();
   });
 
-  test("@setup provider and model are choosable, and untested options are disabled", async ({ page }) => {
+  test("@setup provider and model are choosable, and options core cannot call are disabled", async ({ page }) => {
     await page.goto(DRAFT);
     await page.waitForLoadState("networkidle");
     // Present outside preview mode...
     await expect(page.getByTestId("provider")).toBeVisible();
     await expect(page.getByTestId("model")).toBeVisible();
-    // ...and the models the picker leaves ENABLED are exactly the ones the bundled list marks validated for the
-    // provider shown — read from the list itself, so a model bump never needs this test edited.
+    // ...and the models the picker leaves ENABLED are exactly the ones the bundled list marks selectable for the
+    // provider shown (round 11: core can call it, benchmarked or not; a list without the field: validated) — read
+    // from the list itself, so a model bump never needs this test edited.
     const listPath = path.resolve(path.dirname(test.info().file), "..", "..", "public", "static-data", "models.json");
     const list = JSON.parse(readFileSync(listPath, "utf8")) as { models: SetupModel[] };
     const provider = await page.getByTestId("provider").inputValue();
@@ -881,7 +891,7 @@ test.describe("Setup — the review pass: layout melded with the New Run form", 
     expect(await modelSelectOptions(page)).toEqual(
       list.models
         .filter((m) => m.provider === provider)
-        .map((m) => ({ value: m.id, disabled: !m.validated })),
+        .map((m) => ({ value: m.id, disabled: !(m.selectable ?? m.validated) })),
     );
     // Preview calls no provider, so neither control is shown.
     await page.getByTestId("run-mode").selectOption("preview");
@@ -2266,7 +2276,9 @@ test.describe("Setup — per-dictionary confirmation and the embedding export", 
     await expect(workbook).toBeVisible();
     await expect(workbook).toHaveAttribute("data-remaining", "1");
     await expect(workbook.getByTestId("workbook-remaining")).toContainText("1 of 1");
-    await expect(workbook.getByTestId("workbook-confirm")).toBeDisabled();
+    // Round 10: not a disabled button waiting on per-file clicks — the control that marks them all.
+    await expect(workbook.getByTestId("mark-all-complete")).toBeEnabled();
+    await expect(workbook.getByTestId("workbook-confirm")).toHaveCount(0);
 
     await panel.getByTestId("dict-mapping-confirm").click();
 
@@ -2885,7 +2897,10 @@ test.describe("Setup — the column-role requirement is core's (08-28)", () => {
     // Giving the rows a name is enough (core then describes each row by it), and both warnings clear.
     await select("kind").selectOption("variable_name");
     await expect(page.getByTestId("meaning-requirement")).toHaveCount(0);
-    await expect(page.getByTestId("blocker").filter({ hasText: "questions-only.csv" })).toHaveCount(0);
+    // Round 10: the role blocker is gone; what is left for this file is marking its now-usable mapping complete.
+    const forFile = page.getByTestId("blocker").filter({ hasText: "questions-only.csv" });
+    await expect(forFile).toHaveCount(1);
+    await expect(forFile).toContainText("Mark this mapping complete");
   });
 
   test("@setup the requirement is core's two groups, and question_text satisfies only the first", () => {
@@ -2989,6 +3004,7 @@ test.describe("Setup — the roles the run is sent are the roles on screen (08-2
 
   async function startPreview(page: Page): Promise<void> {
     await page.getByTestId("run-mode").selectOption("preview");
+    await page.getByTestId("mark-all-complete").click(); // round 10: every mapping marked before Start
     await expect(page.getByTestId("start-blocked")).toHaveCount(0);
     await page.getByTestId("start-run").click();
   }
@@ -3163,6 +3179,7 @@ test.describe("Setup — a new run matches against the full CDE catalogue (08-28
     await expect(page.getByTestId("dict-card")).toHaveCount(1);
     // Preview buys nothing and needs no key; the catalogue is sent the same way in every mode.
     await page.getByTestId("run-mode").selectOption("preview");
+    await page.getByTestId("mark-all-complete").click(); // round 10: every mapping marked before Start
     await expect(page.getByTestId("start-blocked")).toHaveCount(0);
 
     await page.getByTestId("start-run").click();
@@ -3185,5 +3202,108 @@ test.describe("Setup — a new run matches against the full CDE catalogue (08-28
     await catalogue.click();
     await page.getByRole("option", { name: /NIH-endorsed/ }).click();
     await expect(catalogue).toContainText("NIH-endorsed");
+  });
+});
+
+// --- Round 10 (Bhargav, a live run in Lavish, 2026-10-14) ------------------------------------------------------
+//
+// MARKING A MAPPING COMPLETE IS REQUIRED TO START, and one control marks them all. Before, "Mapping complete"
+// only unlocked the free export while the how-to listed it as step 3 — so a run could start on a mapping nobody
+// had looked at, and a five-dictionary run cost five separate clicks to do it properly.
+test.describe("Setup — every mapping marked complete before Start (round 10)", () => {
+  async function uploadTwo(page: Page, second = dictionaryCsv(6)): Promise<void> {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => localStorage.clear());
+    await page.getByTestId("dict-upload").setInputFiles([
+      { name: "alpha.csv", mimeType: "text/csv", buffer: Buffer.from(dictionaryCsv(6)) },
+      { name: "beta.csv", mimeType: "text/csv", buffer: Buffer.from(second) },
+    ]);
+    await expect(page.getByTestId("dict-card")).toHaveCount(2);
+    // Preview needs no key, so the only blockers left are the ones this block is about.
+    await page.getByTestId("run-mode").selectOption("preview");
+  }
+
+  test("@setup Start names the unmarked dictionaries and stays disabled until they are marked", async ({ page }) => {
+    await uploadTwo(page);
+    const blocker = page.getByTestId("blocker").filter({ hasText: "mark" });
+    await expect(blocker).toHaveCount(1);
+    await expect(blocker).toContainText("alpha.csv");
+    await expect(blocker).toContainText("beta.csv");
+    await expect(page.getByTestId("start-run")).toBeDisabled();
+  });
+
+  test("@setup Mark all marks every dictionary in one click and unblocks Start", async ({ page }) => {
+    await uploadTwo(page);
+    await page.getByTestId("workbook-export").getByTestId("mark-all-complete").click();
+    await expect(page.locator('[data-testid="dict-embedding-export"][data-confirmed="true"]')).toHaveCount(2);
+    await expect(page.getByTestId("start-blocked")).toHaveCount(0);
+    await expect(page.getByTestId("start-run")).toBeEnabled();
+    // One attestation, not two: marking them all is also "every dictionary is mapped" for the workbook.
+    await expect(page.getByTestId("mark-all-complete")).toHaveCount(0);
+    await expect(page.getByTestId("workbook-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("workbook-download")).toBeVisible();
+    // Round 10: no "Ready to start" paragraph once nothing blocks — the Start bar beneath already says that nothing has
+    // been charged and that Start is where spending begins; a third sentence saying it was one signal too many.
+    await expect(page.getByText(/Ready to start/)).toHaveCount(0);
+  });
+
+  test("@setup the Start bar sits flat in its card: no ground band, no card in a card, nothing covered", async ({
+    page,
+  }) => {
+    // Round 10 (Bhargav: "a weird outline here that makes this cell look broken"). The bar's sticky ground band
+    // exists to separate a PAGE-level bar from panels scrolling under it; inside Setup's Start card it painted a
+    // periwinkle frame around a second card, and its negative top margin covered "Nothing is charged yet".
+    await uploadTwo(page);
+    await page.getByTestId("mark-all-complete").click();
+    await expect(page.getByTestId("commit-bar-pin")).toHaveCount(0);
+    const bar = page.getByTestId("commit-bar");
+    expect(await bar.evaluate((el) => getComputedStyle(el).boxShadow), "a card inside the card").toBe("none");
+    const note = (await page.getByTestId("nothing-charged-yet").boundingBox())!;
+    const barBox = (await bar.boundingBox())!;
+    expect(note.y + note.height, "the bar covers the line above it").toBeLessThanOrEqual(barBox.y);
+  });
+
+  test("@setup a brand-new run asks the server about no run called \"new\"", async ({ page }) => {
+    // Round 10 rehearsal (2026-10-14): Setup for a new run opened the progress stream for its draft id, so the live app
+    // asked for `/api/harmonize/stream/new` three times, 404 each, before anything had started. "new" is the draft
+    // id every New-run link uses; there is no run behind it to watch.
+    const asked: string[] = [];
+    page.on("request", (r) => {
+      if (/(stream|result)[/-]new\b/.test(r.url())) asked.push(r.url());
+    });
+    await page.goto("/run/new/setup");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("dict-upload")).toBeAttached();
+    await page.waitForTimeout(1500); // past the stream hook's first retry
+    expect(asked, "a draft id was treated as a run").toEqual([]);
+  });
+
+  test("@setup re-mapping a column after Mark all re-blocks Start, naming only that file", async ({ page }) => {
+    await uploadTwo(page);
+    await page.getByTestId("mark-all-complete").click();
+    await expect(page.getByTestId("start-blocked")).toHaveCount(0);
+    const beta = page.getByTestId("dict-card").filter({ hasText: "beta.csv" });
+    const row = beta.getByTestId("mapping-row").filter({ has: page.locator('[data-column="units"]') });
+    await row.getByTestId("role-select").selectOption("data_type");
+    const blocker = page.getByTestId("blocker").filter({ hasText: "mark" });
+    await expect(blocker).toHaveCount(1);
+    await expect(blocker).toContainText("beta.csv");
+    await expect(blocker).not.toContainText("alpha.csv");
+    await expect(page.getByTestId("start-run")).toBeDisabled();
+  });
+
+  test("@setup Mark all skips a mapping that is not usable yet, and Start gives that file one reason, not two", async ({
+    page,
+  }) => {
+    await uploadTwo(page, csv([["col_a", "col_b"], ["1", "2"], ["3", "4"]]));
+    await page.getByTestId("mark-all-complete").click();
+    const alpha = page.getByTestId("dict-card").filter({ hasText: "alpha.csv" });
+    await expect(alpha.getByTestId("dict-embedding-export")).toHaveAttribute("data-confirmed", "true");
+    // beta.csv still needs a text column. That is its one blocker; "mark it complete" would be a second signal for
+    // the same file, and it cannot be marked until the first is fixed anyway.
+    await expect(page.getByTestId("blocker").filter({ hasText: "beta.csv" })).toHaveCount(1);
+    await expect(page.getByTestId("blocker").filter({ hasText: "mark" })).toHaveCount(0);
+    await expect(page.getByTestId("start-run")).toBeDisabled();
   });
 });

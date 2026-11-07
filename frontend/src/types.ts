@@ -871,7 +871,12 @@ export interface ModelInfo {
   id: string; // the model tag the engine routes on (e.g. "claude-sonnet-4-6", "gemini/gemini-1.5-pro")
   provider: string; // "anthropic" | "openai" | "gemini" | "local" | "other"
   label: string; // human-facing label for the dropdown
-  validated: boolean; // ddharmon's prompts and benchmarks were validated against it — only these are selectable
+  validated: boolean; // ddharmon's prompts and benchmarks were validated against it
+  // Offered in the picker (round 11): core can call it, benchmarked or not. Absent from an older server = validated.
+  selectable?: boolean;
+  inputPerMtok?: number | null; // standard USD per million input tokens, from core's registry
+  outputPerMtok?: number | null;
+  tokenRatio?: number; // tokens the same text counts as, relative to the default model's tokenizer
 }
 
 // The picker's whole list: the models, which one a new run starts on, and where the list came from.

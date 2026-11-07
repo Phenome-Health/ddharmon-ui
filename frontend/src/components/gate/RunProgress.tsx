@@ -178,12 +178,12 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
             and the provider allows up to 24. Nothing is stuck, and you can close this tab: the run keeps
             going and will be waiting at its gate when you come back.
           </p>
-          {/* A link so the reviewer can watch the batch live instead of only our stalled queue line. It is the
-              console ROOT on purpose, NOT a workspaces/<id>/batches deep link: the batch carries no workspace
-              id here, and a BYOK key can belong to a non-default workspace, so a hardcoded one would land the
-              wrong (or empty) page. The console resolves the viewer's own workspace; Batches is one click in. */}
+          {/* A link so the reviewer can watch the batch live instead of only our stalled queue line. Straight to the
+              batches list (round 10, Bhargav 2026-10-14) rather than the Console's root. The known cost: the batch
+              carries no workspace id here, so a BYOK key in a NON-default workspace lands on the default one's list,
+              where this batch is not shown — the workspace switcher on that page is one click away. */}
           <a
-            href="https://console.anthropic.com/"
+            href="https://platform.claude.com/workspaces/default/batches"
             target="_blank"
             rel="noopener noreferrer"
             data-testid="run-progress-batches-link"

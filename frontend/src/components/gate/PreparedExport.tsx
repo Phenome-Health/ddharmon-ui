@@ -213,6 +213,8 @@ export function WorkbookExport({
   remaining,
   confirmed,
   onConfirm,
+  markable = 0,
+  onMarkAll,
   onDownload,
   downloading = false,
   error,
@@ -222,6 +224,10 @@ export function WorkbookExport({
   remaining: number;
   confirmed: boolean;
   onConfirm: () => void;
+  /** How many of the unmarked dictionaries could be marked right now (round 10). */
+  markable?: number;
+  /** Marks every markable dictionary at once, and with it the whole set (round 10). */
+  onMarkAll?: () => void;
   onDownload: () => void;
   downloading?: boolean;
   error?: string;
@@ -245,6 +251,19 @@ export function WorkbookExport({
           className="self-start text-sm font-semibold text-link-on-raised underline underline-offset-2 disabled:no-underline disabled:text-on-raised-muted"
         >
           {downloading ? "Building the workbook…" : "Download all dictionaries as one workbook (.xlsx)"}
+        </button>
+      ) : !ready && total > 0 && onMarkAll ? (
+        // ROUND 10 (Bhargav, 2026-10-14): Start now needs every mapping marked, so the set-level control is the one
+        // that marks them — not a disabled button that only lights up after five separate clicks. Disabled only
+        // when nothing left CAN be marked; the remaining-count line and Start's blockers say what to fix.
+        <button
+          type="button"
+          data-testid="mark-all-complete"
+          onClick={onMarkAll}
+          disabled={markable === 0}
+          className="self-start rounded-inner border border-rule-on-raised px-3 py-1.5 text-sm font-semibold text-on-raised disabled:text-on-raised-muted"
+        >
+          Mark all mappings complete
         </button>
       ) : (
         <button

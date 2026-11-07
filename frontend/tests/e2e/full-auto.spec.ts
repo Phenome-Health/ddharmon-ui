@@ -176,6 +176,7 @@ async function setupWithOneDictionary(page: Page): Promise<void> {
   });
   await expect(page.getByTestId("dict-card")).toHaveCount(1);
   await page.getByTestId("api-key").fill("sk-ant-e2e-not-a-real-key");
+  await page.getByTestId("mark-all-complete").click(); // round 10: every mapping marked before Start
   await expect(page.getByTestId("start-blocked")).toHaveCount(0);
   await expect(page.getByTestId("estimate-total")).toBeVisible();
 }

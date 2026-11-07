@@ -175,6 +175,16 @@ export interface DeclaredScorePanelProps {
    * per-component cards are drawn from. `null` (or no dense score in it) keeps the plain declared list.
    */
   suggestions?: ScoreSuggestions | null;
+  /**
+   * Where the free search is (user test 2026-11-03): `loading` while it runs — its first call on a run embeds every
+   * variable, 93 seconds on dev, and a silent panel read as "nothing happened" — `error` when it failed (a failure used
+   * to be dropped silently). Absent/`null` once there is an answer, or when none was asked for.
+   */
+  suggestionsStatus?: "loading" | "error" | null;
+  /** The failed search's message, shown with `suggestionsStatus === "error"`. */
+  suggestionsError?: string;
+  /** Ask the free search again after a failure. */
+  onRetrySuggestions?: () => void;
   /** The cut-off the free search is split at — the reviewer's `gate1_score_cutoff`, else the payload's own. */
   cutoff?: number;
   /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent on a frozen gate → the control is read-only. */
@@ -231,6 +241,9 @@ export function DeclaredScorePanel({
   swaps: sharedSwaps,
   suggestionNote = null,
   suggestions = null,
+  suggestionsStatus = null,
+  suggestionsError,
+  onRetrySuggestions,
   cutoff,
   onCutoffChange,
   spec,
@@ -702,6 +715,40 @@ export function DeclaredScorePanel({
                 put groups in scope, that it cost nothing, and that it is NOT the verdict. Never phrased as a match —
                 a suggestion is a search result, and only Gate 4's match says a group measures a component.
               */}
+              {/* THE SEARCH SAYS WHERE IT IS (user test 2026-11-03). Running: it can take a minute or two on a run's
+                  first search, and a panel showing only the Gate 4 note while it ran sent the tester to the demo.
+                  Failed: said, with a way to ask again, rather than dropped. */}
+              {suggestionsStatus === "loading" && (
+                <p
+                  data-testid="score-suggestions-loading"
+                  role="status"
+                  className="flex max-w-[80ch] items-center gap-2 rounded-inner border border-dashed border-rule-on-raised px-4 py-3 text-xs text-on-raised"
+                >
+                  <Loader2 aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin" />
+                  <span>
+                    Searching this run&rsquo;s variables for your items — free, no model call. The first search on a run
+                    can take a minute or two; the rest of this screen stays usable meanwhile.
+                  </span>
+                </p>
+              )}
+              {suggestionsStatus === "error" && (
+                <div
+                  data-testid="score-suggestions-error"
+                  role="alert"
+                  className="flex max-w-[80ch] flex-wrap items-center gap-3 rounded-inner border border-rule-on-raised px-4 py-3 text-xs text-on-raised"
+                >
+                  <span>
+                    The free search did not come back{suggestionsError ? ` (${suggestionsError})` : ""}. Nothing was
+                    charged, and your items are saved.
+                  </span>
+                  {onRetrySuggestions && (
+                    <Button type="button" size="sm" variant="outline" data-testid="score-suggestions-retry" onClick={onRetrySuggestions}>
+                      Search again
+                    </Button>
+                  )}
+                </div>
+              )}
+
               {/* Only WITHOUT the cards (round 6 repeated-copy): with them, the strip says it is a free search and the
                   verdict is Gate 4's, and the cards' header carries the counts — this note said all three again. */}
               {suggestionNote && cards.length === 0 && (

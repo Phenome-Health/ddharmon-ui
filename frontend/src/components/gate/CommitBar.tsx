@@ -66,6 +66,13 @@ export interface CommitBarProps {
   busy?: boolean;
   disabled?: boolean;
   className?: string;
+  /**
+   * The bar sits INSIDE a card that already provides its surface — Setup's Start card (round 10, Bhargav: "a weird
+   * outline here that makes this cell look broken"). No sticky ground band and no card chrome of its own: the band
+   * exists to separate a PAGE-level bar from panels scrolling under it, and inside a card it painted a periwinkle
+   * frame around a second card while its `-mt-3` covered the line above.
+   */
+  embedded?: boolean;
 }
 
 export function CommitBar({
@@ -83,16 +90,9 @@ export function CommitBar({
   busy = false,
   disabled = false,
   className,
+  embedded = false,
 }: CommitBarProps) {
-  return (
-    // THE GROUND BAND (review round 3, Bhargav: "i dont like how this box overlaps onto the main panels when i'm mid
-    // page. it should keep its separation like the gate rail up top"). The pin is sticky and painted the page's ground
-    // colour, so mid-page the panels scroll away under 12px of ground above the bar and 12px below it, as they do
-    // under the rail's pin. `-mt-3` gives back the band's top, so at the end of the page the gap above is unchanged.
-    // `-mb-6` gives back the page's own bottom padding (AppShell's `py-6`), so the bar RESTS where it PINS: without it
-    // the pinned bar sat 24px lower mid-page than at the end, and the pinned queue — sized to the end of the page —
-    // stopped 40px short of the bar instead of the 16px every other panel keeps (review round 6).
-    <div data-testid="commit-bar-pin" className="sticky bottom-0 z-10 -mb-6 -mt-3 bg-surface-field pb-3 pt-3">
+  const bar = (
     <div
       data-testid="commit-bar"
       // The amount as DATA as well as words. A gate asserting "this press carries a non-zero charge" has
@@ -101,7 +101,7 @@ export function CommitBar({
       data-total={total === undefined || done ? "" : String(total)}
       data-first-charge={String(firstCharge)}
       className={cn(
-        "flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
+        embedded ? "flex flex-col gap-3" : "flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
         className,
       )}
     >
@@ -159,8 +159,19 @@ export function CommitBar({
           )}
         </Button>
       </div>
-
     </div>
+  );
+  if (embedded) return bar;
+  return (
+    // THE GROUND BAND (review round 3, Bhargav: "i dont like how this box overlaps onto the main panels when i'm mid
+    // page. it should keep its separation like the gate rail up top"). The pin is sticky and painted the page's ground
+    // colour, so mid-page the panels scroll away under 12px of ground above the bar and 12px below it, as they do
+    // under the rail's pin. `-mt-3` gives back the band's top, so at the end of the page the gap above is unchanged.
+    // `-mb-6` gives back the page's own bottom padding (AppShell's `py-6`), so the bar RESTS where it PINS: without it
+    // the pinned bar sat 24px lower mid-page than at the end, and the pinned queue — sized to the end of the page —
+    // stopped 40px short of the bar instead of the 16px every other panel keeps (review round 6).
+    <div data-testid="commit-bar-pin" className="sticky bottom-0 z-10 -mb-6 -mt-3 bg-surface-field pb-3 pt-3">
+      {bar}
     </div>
   );
 }

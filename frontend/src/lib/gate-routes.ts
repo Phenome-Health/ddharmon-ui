@@ -205,13 +205,19 @@ export function nextRailGate(gate: GatePosition): GatePosition | null {
 export const RERUN_PARAM = "rerun";
 
 /**
+ * The draft id a brand-new run's Setup lives at (`/run/new/setup`) — every New-run link uses it. There is no run behind
+ * it until Start, so nothing may ask the server about it (round 10: the stream hook asked `/stream/new` three times).
+ */
+export const NEW_RUN_ID = "new";
+
+/**
  * Where a Re-run control goes: Setup for a NEW run, prefilled from the named one.
  *
  * `new` is the draft id every other "New run" link in the app already uses. The source id rides as a
  * query value, encoded, so no run id can turn this URL into a different route.
  */
 export function rerunSetupPathFor(sourceJobId: string): string {
-  return `${setupPathFor("new")}?${RERUN_PARAM}=${encodeURIComponent(sourceJobId)}`;
+  return `${setupPathFor(NEW_RUN_ID)}?${RERUN_PARAM}=${encodeURIComponent(sourceJobId)}`;
 }
 
 /**

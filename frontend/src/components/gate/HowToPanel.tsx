@@ -51,7 +51,7 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
     { text: "Add one data dictionary per cohort, then map each file's columns." },
     { text: "Check the row count against the unique-name count — a repeated variable name is dropped silently." },
     {
-      text: "Mark each dictionary complete, then download it and read the exact text that will be clustered — before you spend anything.",
+      text: "Mark each mapping complete — Start needs them all, and \"Mark all\" does it at once. Download any to read the exact text that will be clustered.",
     },
     { text: "Pick a run mode and a model, and paste a provider key if you are using your own." },
     {

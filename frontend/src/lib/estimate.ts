@@ -97,6 +97,15 @@ export const STAGE_SHARES = { ideal: 0.06, splitAssign: 0.44, gencde: 0.28, spec
 export const SPLIT_ASSIGN_DIVISION = { split: 0.43, assign: 0.57 };
 
 /**
+ * The INPUT share of a run's model cost, for scaling the estimate to another model (round 11). Measured on the same
+ * full-5 artifacts as above: split + assign read 6,159,210 input tokens ($18.48 at the calibration's $3/M) and wrote
+ * 485,934 output tokens ($7.29 at $15/M), so input is 72% of the money. A model's quote is the default's, with each
+ * share re-priced at that model's rate and both scaled by its tokenizer ratio (`costFactor` in lib/model-catalog).
+ * Thinking tokens a newer model may spend are not modelled; the registry keeps its thinking minimal.
+ */
+export const INPUT_COST_SHARE = 0.72;
+
+/**
  * "Analysis ideas" is ONE LLM pass over the concept digest (not per-variable), so it is a small flat add
  * on top of the run — independent of corpus size and of batch/sync (it always runs synchronously).
  */
@@ -366,9 +375,18 @@ export function estimateRunCost(totalFields: number, nCohorts: number, mode: Run
  * What ONE New group's generated ideal costs (08-28 Wave 2): a single generate-ideal call, priced as the run's
  * own ideal line spread over the clusters that line pays for. A New group was never a cluster, so it has no
  * ideal of its own until Gate 1's Continue buys this one — Gate 1's quote adds it per filled New group.
+ * `priceFactor` is the run's model's (round 11), as for every other line.
  */
-export function newGroupIdealUsd(totalFields: number, nCohorts: number, mode: RunMode, nClusters: number): number {
-  const ideal = estimateRunCostBreakdown(totalFields, nCohorts, mode, false).lines.find((l) => l.id === "ideal");
+export function newGroupIdealUsd(
+  totalFields: number,
+  nCohorts: number,
+  mode: RunMode,
+  nClusters: number,
+  priceFactor = 1,
+): number {
+  const ideal = estimateRunCostBreakdown(totalFields, nCohorts, mode, false, false, { priceFactor }).lines.find(
+    (l) => l.id === "ideal",
+  );
   return (ideal?.cost ?? 0) / Math.max(1, nClusters);
 }
 
@@ -392,7 +410,11 @@ export function estimateRunCostBreakdown(
   mode: RunMode,
   genSpecs: boolean,
   suggestIdeas = false,
-  { conceptGate = false, groupSizes }: { conceptGate?: boolean; groupSizes?: number[] } = {},
+  {
+    conceptGate = false,
+    groupSizes,
+    priceFactor = 1,
+  }: { conceptGate?: boolean; groupSizes?: number[]; priceFactor?: number } = {},
 ): CostBreakdown {
   const noGates: Record<GatePosition, GateForecast> = {
     setup: { gate: "setup", forecast: 0, divisionUnmeasured: false },
@@ -516,7 +538,7 @@ export function estimateRunCostBreakdown(
     gate4: { gate: "gate4", forecast: 0, divisionUnmeasured: false },
   };
 
-  return {
+  const breakdown: CostBreakdown = {
     free: false,
     lines,
     total: { low: mid * 0.6, mid, high: mid * 1.6, free: false },
@@ -526,6 +548,27 @@ export function estimateRunCostBreakdown(
     onUse: [{ id: "resplit", label: "Re-splitting a group", perUse: RESPLIT_PER_USE_USD, gate: "gate1" }],
     judgeCalls,
     judgeCallsEstimated: !groupSizes,
+  };
+  return priceFactor === 1 ? breakdown : scaleBreakdown(breakdown, priceFactor);
+}
+
+/**
+ * Every amount in `b` re-priced for another model (round 11): the calibration is the validated default's, and the
+ * chosen model's `costFactor` carries its price and tokenizer. One multiplier, so no line, gate or total can drift
+ * from the others.
+ */
+function scaleBreakdown(b: CostBreakdown, f: number): CostBreakdown {
+  const byGate = Object.fromEntries(
+    Object.entries(b.byGate).map(([g, v]) => [g, { ...v, forecast: v.forecast * f }]),
+  ) as Record<GatePosition, GateForecast>;
+  return {
+    ...b,
+    lines: b.lines.map((l) => ({ ...l, cost: l.cost * f })),
+    total: { ...b.total, low: b.total.low * f, mid: b.total.mid * f, high: b.total.high * f },
+    batchSavings: b.batchSavings * f,
+    byGate,
+    firstCharge: b.firstCharge * f,
+    onUse: b.onUse.map((u) => ({ ...u, perUse: u.perUse * f })),
   };
 }
 

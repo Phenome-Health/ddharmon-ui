@@ -62,8 +62,9 @@ import { isGatePast } from "@/lib/gate-routes";
 import { isAutoAccepted, isGateLocked } from "@/lib/review-mode";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
+import { useRunCostFactor } from "@/hooks/use-run-cost-factor";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
-import { nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { nextRailGate, pathForGate, rerunSetupPathFor } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
@@ -88,6 +89,7 @@ import {
   partitionByBreadth,
   pricePerGroup,
   sortDestinations,
+  outsideEveryGroup,
   unplacedFields,
   sortGroupsByColumn,
   type Bucket,
@@ -1474,10 +1476,14 @@ function ExpandedGroup({
             data-testid="coherence-finding"
             className="rounded-inner border-l-4 border-l-rule-on-inset bg-surface-inset px-4 py-3"
           >
-            <p className="text-sm font-semibold text-on-inset">Not judged</p>
+            {/* User test 2026-11-03, note 4: these are most groups on a single-dictionary run (71% of the
+                tester's), so say why there is no reading and what to do instead. */}
+            <p className="text-sm font-semibold text-on-inset">Too small to judge</p>
             <p className="mt-0.5 max-w-[80ch] text-sm text-on-inset-muted">
-              Groups under six variables are not sent to the coherence judge —
-              silence here is &ldquo;not asked&rdquo;, not &ldquo;passed&rdquo;.
+              Groups under six variables are not sent to the coherence judge, so
+              this one has no reading &mdash; not a pass. It is small enough to
+              check by eye: read its variables below and move any that do not
+              belong.
             </p>
           </div>
         )}
@@ -2326,7 +2332,11 @@ export default function Gate1Page() {
     () => cohortRoster(jobState?.result?.summary?.cohorts, groups),
     [jobState?.result?.summary?.cohorts, groups],
   );
-  const unassigned = jobState?.result?.unassignedFields ?? [];
+  // In no clustered GROUP — not the result's "in no record", which is every variable before Gate 2 (2026-10-15).
+  const unassigned = useMemo(
+    () => outsideEveryGroup(jobState?.result?.unassignedFields ?? [], jobState?.result?.conceptGroupMembers),
+    [jobState?.result?.unassignedFields, jobState?.result?.conceptGroupMembers],
+  );
   const costSoFar =
     jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
@@ -2449,6 +2459,18 @@ export default function Gate1Page() {
   /** The free hints this screen reads: the shipped ones on the demo, else the route's answer. */
   const suggestionData = shippedHints ?? suggestionsQuery.data;
   /**
+   * Where the free search is, for the panel to SAY (user test 2026-11-03): running with no answer yet, or failed. The
+   * demo's hints are shipped, so it never searches. A later re-ask keeps the previous answer on screen (above), so
+   * only a first search — the slow, cold one — reads as running.
+   */
+  const suggestionsStatus: "loading" | "error" | null = shippedHints
+    ? null
+    : suggestionsQuery.isError
+      ? "error"
+      : suggestionsQuery.isFetching && !suggestionsQuery.data
+        ? "loading"
+        : null;
+  /**
    * THE REVIEWER'S SUGGESTION CUT-OFF (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
    * default 0.62"). A Gate 1 decision like scope itself: persisted per run (held in the tab on the demo), frozen with
    * the gate. It replaces the payload's threshold everywhere the free search is cut — the cards, the tags and the
@@ -2541,11 +2563,13 @@ export default function Gate1Page() {
   // post-split group, so the row count is the call count and every row buys the same call.
   const variables = groups.reduce((n, g) => n + g.nMembers, 0);
   const mode = ((runConfig?.mode as string | undefined) ?? "batch") as RunMode;
+  // Priced on the run's own model (round 11) — the estimate is calibrated on the default.
+  const priceFactor = useRunCostFactor(runConfig);
   const gate2Forecast = useMemo(
     () =>
-      estimateRunCostBreakdown(variables, allCohorts.length, mode, true).byGate
+      estimateRunCostBreakdown(variables, allCohorts.length, mode, true, false, { priceFactor }).byGate
         .gate2.forecast,
-    [variables, allCohorts.length, mode],
+    [variables, allCohorts.length, mode, priceFactor],
   );
   const price = pricePerGroup(gate2Forecast, groups.length);
 
@@ -2962,7 +2986,7 @@ export default function Gate1Page() {
   const clusters = new Set(groups.map((g) => g.clusterId)).size;
   // A filled New group (08-28 Wave 2), and a group whose membership the reviewer changed (Option B), buy ONE
   // ideal description beside their match — in every figure below.
-  const idealPerGroup = newGroupIdealUsd(variables, allCohorts.length, mode, clusters);
+  const idealPerGroup = newGroupIdealUsd(variables, allCohorts.length, mode, clusters, priceFactor);
   const quote = gate1QuoteUsd(inScopeGroups, price, idealPerGroup, needsIdeal);
   const nIdeals = inScopeGroups.filter((g) => needsIdeal(g.groupId)).length;
   const filledReviewerRows = reviewerRows.filter((g) => memberCount(g) > 0);
@@ -3250,7 +3274,9 @@ export default function Gate1Page() {
           from the last update, not live.
         </p>
       )}
-      {error && (
+      {/* A run that FAILED is said once, by the shell's failure notice at the top (round 10); this alert is left for
+          a STREAM failure, which is about the connection rather than the run. */}
+      {error && jobState?.status !== "error" && (
         <p role="alert" className="text-sm font-semibold text-status-danger">
           {error.message}
         </p>
@@ -3277,6 +3303,9 @@ export default function Gate1Page() {
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
         suggestions={!frozen && !latestSpec ? (suggestionData ?? null) : null}
+        suggestionsStatus={!frozen && !latestSpec ? suggestionsStatus : null}
+        suggestionsError={suggestionsQuery.error instanceof Error ? suggestionsQuery.error.message : undefined}
+        onRetrySuggestions={() => void suggestionsQuery.refetch()}
         cutoff={cutoff}
         onCutoffChange={frozen ? undefined : setCutoff}
         spec={latestSpec}
@@ -3351,14 +3380,19 @@ export default function Gate1Page() {
               : "This run failed before it reached Gate 1"
           }
           nextStep={
+            // NOT this run's Setup, which is a read-only record once a run has started (round 10). A failed run's
+            // re-run is offered once, by the failure notice at the top; a STOPPED run has no notice, so it is here.
             <>
-              Start again from{" "}
-              <Link
-                href={`/run/${jobId}/setup`}
-                className="font-semibold text-link-on-raised underline underline-offset-2"
-              >
-                Set up
-              </Link>
+              {jobState?.status === "error" ? (
+                "Re-run it from the notice at the top"
+              ) : (
+                <Link
+                  href={rerunSetupPathFor(jobId)}
+                  className="font-semibold text-link-on-raised underline underline-offset-2"
+                >
+                  Re-run it with the same dictionaries
+                </Link>
+              )}
               , or open{" "}
               <Link
                 href="/jobs"

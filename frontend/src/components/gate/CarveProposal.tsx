@@ -164,6 +164,18 @@ export function CarveProposal({
         </p>
       )}
 
+      {/* WHAT TO DO WITH A QUALIFY (user test 2026-11-03, note 6: "what does a user DO with that information"). It
+          is one measurement varied by a modifier, so the default is to keep it whole — and the way out, when the
+          analysis needs each value apart, is the free regrouping this screen already has. Advice only: no paid
+          path is offered for a qualify (Bhargav, 2026-11-04). */}
+      {advisory && (
+        <p data-testid="qualify-advice" className={cn("max-w-[68ch] text-xs", style.ink)}>
+          <span className="font-semibold">Usually keep this as one group</span> — it maps to one common data element,
+          with {axis ? <span className="font-semibold">{axis}</span> : "the modifier"} carried as a value or a second
+          column. If your analysis needs each of these apart, drag those variables into their own groups.
+        </p>
+      )}
+
       {/* THE TRUTH CLAIM (split only): the pipeline FLAGS and never re-groups, so the panel says, in its
           own words, that it has not already done what it proposes. A qualify is advisory — nothing is
           proposed, so there is nothing to un-apply. */}

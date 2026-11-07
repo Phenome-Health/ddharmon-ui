@@ -31,6 +31,7 @@ import { GATE_LABELS } from "@/components/gate/GateRail";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { SourceRows } from "@/components/source-rows";
 import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
+import { useRunCostFactor } from "@/hooks/use-run-cost-factor";
 import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { estimateRunCostBreakdown } from "@/lib/estimate";
@@ -143,16 +144,17 @@ export default function Gate2Page() {
 
   // What pressing Continue BUYS: continuing from Gate 2 runs the work whose results Gate 3 shows (spec-gen,
   // plus the concept-match check if the run opted in), so the forecast is Gate 3's — priced on THIS run's
-  // own corpus and config, never a lower quote than will be charged (R8).
+  // own corpus and config, never a lower quote than will be charged (R8) — its model's price included (round 11).
+  const priceFactor = useRunCostFactor(runConfig);
   const continueCost = useMemo(() => {
     const variables = allRecords.reduce((n, r) => n + (r.nMembers ?? 0), 0);
     const nCohorts = new Set(allRecords.flatMap((r) => r.cohorts ?? [])).size || 1;
     const mode = (runConfig?.runMode ?? runConfig?.run_mode ?? runConfig?.mode ?? "batch") as RunMode;
     const genSpecs = runConfig?.genTransformSpecs !== false && runConfig?.gen_transform_specs !== false;
     const conceptGate = Boolean(runConfig?.conceptGate ?? runConfig?.concept_gate);
-    return estimateRunCostBreakdown(variables, nCohorts, mode, genSpecs, false, { conceptGate }).byGate.gate3
-      .forecast;
-  }, [allRecords, runConfig]);
+    return estimateRunCostBreakdown(variables, nCohorts, mode, genSpecs, false, { conceptGate, priceFactor }).byGate
+      .gate3.forecast;
+  }, [allRecords, runConfig, priceFactor]);
 
   async function onContinue() {
     // The shared demo is walked, not resumed (08-18) — see Gate 1's `onContinue`.

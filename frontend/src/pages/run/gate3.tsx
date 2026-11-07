@@ -38,7 +38,7 @@ import { useHarmonizeStream } from "@/hooks/use-harmonize-stream";
 import { inheritedGate1Scope, resolvePinned, useGateDecisions } from "@/hooks/use-gate-decisions";
 import { getCheckpoint, resumeRun } from "@/lib/api";
 import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
-import { isGatePast, nextRailGate, pathForGate } from "@/lib/gate-routes";
+import { isGatePast, isGateReachable, nextRailGate, pathForGate } from "@/lib/gate-routes";
 import { isGateLocked } from "@/lib/review-mode";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
 import { cohortRoster, conceptTitle } from "@/lib/ledger";
@@ -336,8 +336,10 @@ export default function Gate3Page() {
     visible.find((g) => g.record.groupId === selectedId) ?? visible[0];
 
   // A leg STILL RUNNING is not "no specs" (08-28 F4): mid-leg the screen holds an EARLIER checkpoint, whose
-  // records carry no transform specs yet, so an empty list is no evidence that every concept was an adopt.
-  if (!anyRow && isInFlight(jobState?.status)) {
+  // records carry no transform specs yet, so an empty list is no evidence that every concept was an adopt. Nor is
+  // a non-empty one evidence they were written (2026-10-15): Gate 2's records already carry value-mapping rows, so
+  // until the run REACHES this gate the screen says it is running, whatever the earlier result holds.
+  if (isInFlight(jobState?.status) && (!anyRow || !isGateReachable("gate3", position))) {
     return (
       <Shell
         jobId={jobId}

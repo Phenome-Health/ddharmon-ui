@@ -77,6 +77,15 @@ export function ScoreSuggestionCards({
     (gid) => groupsById?.get(gid)?.group.cohorts,
     (gid) => isGroupInScope?.(gid) ?? false,
   );
+  // Every item under the cut-off (user test 2026-11-03): nothing is ticked, and counts alone read as "nothing
+  // happened" — so the cards lead with it and name the closest items, best first.
+  const closest =
+    nWith === 0
+      ? cards
+          .map((c) => ({ item: c.component, best: Math.max(...c.groups.map((g) => g.score)) }))
+          .filter((c) => Number.isFinite(c.best))
+          .sort((a, b) => b.best - a.best)
+      : [];
   // THE LIST IS CONTROLLED so the table's component links can open it (review round 7): a link into a folded list
   // opens the list, then the card, then brings the card into view.
   const [listOpen, setListOpen] = useState(true);
@@ -91,6 +100,19 @@ export function ScoreSuggestionCards({
         <CardTitle className="text-sm">Items → this run&rsquo;s groups</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {nWith === 0 && cards.length > 0 && (
+          <p data-testid="score-suggestions-none-cleared" className="max-w-[80ch] text-sm text-on-raised">
+            <span className="font-semibold">
+              None of your {cards.length} item{cards.length === 1 ? "" : "s"} reached the {threshold.toFixed(2)}{" "}
+              cut-off
+            </span>
+            , so nothing was ticked for you.
+            {closest.length > 0 && (
+              <> Closest: {closest.map((c) => `${c.item} ${c.best.toFixed(2)}`).join(", ")}.</>
+            )}{" "}
+            Lower the cut-off below, or open an item to see its closest groups and tick them yourself.
+          </p>
+        )}
         {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
         <Collapsible defaultOpen data-testid="score-suggestion-info" className={FOLD_BOX}>
           <CollapsibleTrigger

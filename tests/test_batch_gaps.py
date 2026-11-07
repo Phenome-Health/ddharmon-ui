@@ -263,6 +263,22 @@ def test_a_first_leg_whose_split_stays_short_errors_instead_of_parking_a_partial
 
 
 @pytest.mark.usefixtures("_one_cluster")
+def test_a_failed_first_leg_says_re_run_not_press_continue(tmp_path, monkeypatch, no_provider):
+    """Round 10 (Bhargav, a live run in Lavish, 2026-10-14): "user has no recourse here". A FIRST leg that fails has no
+    gate to fall back to — the run errors and resume refuses it — so the stage's "press Continue to retry" sent him
+    looking for a button that does not exist. The way on is a re-run with the same inputs, where the key is asked."""
+    store, wd, base, dict_specs, cde_spec = _batch_run(
+        tmp_path, monkeypatch, lambda pid, nth: pid.startswith("leanb:split:"), []
+    )
+    _leg(store, base, dict_specs, cde_spec, gate="gate1")
+
+    message = store.get("j").error_message or ""
+    assert "A required step (split)" in message, "the failure no longer names the step"
+    assert "press Continue" not in message, "a first-leg failure still points at a Continue that does not exist"
+    assert "re-run" in message.lower()
+
+
+@pytest.mark.usefixtures("_one_cluster")
 def test_a_split_the_retry_recovers_parks_a_complete_gate1(tmp_path, monkeypatch, no_provider):
     log: list = []
     store, wd, base, dict_specs, cde_spec = _batch_run(
