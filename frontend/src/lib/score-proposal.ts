@@ -85,6 +85,14 @@ export function extractPrice(nChars: number): string {
 export const STRIP_SUMMARY =
   "Reading a paper is free; extracting its items and matching them against this run each cost one model call.";
 
+/**
+ * The same strip on a PREVIEW run (08-31). A Preview cannot match — it stops at Gate 1, and the panel's one refusal
+ * says so — so the strip prices no match. What it has instead is the free search over its own groups, and the one
+ * paid step still open to it: a model extracting a paper's items.
+ */
+export const STRIP_SUMMARY_PREVIEW =
+  "Reading a paper and searching this run’s groups for its items are free; extracting its items costs one model call.";
+
 // --- refusals BEFORE the press ---------------------------------------------------------------------------
 
 export interface ExtractionRefusal {

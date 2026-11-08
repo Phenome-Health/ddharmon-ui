@@ -31,7 +31,22 @@ export interface RailCostArgs {
    * whichever screen is open. Omit it and the screen's own position is the only frontier — a rail with no run.
    */
   runPosition?: GatePosition | null;
+  /**
+   * A PREVIEW run (08-31), or Setup composing one: it calls no model and ends at Gate 1, so its rail is
+   * `PREVIEW_RAIL_SEQUENCE` — Set up and Gate 1, nothing after. Absent → the five columns, exactly as before.
+   */
+  preview?: boolean;
 }
+
+/**
+ * The columns a PREVIEW run's rail draws (08-31): Set up and Gate 1, and no more.
+ *
+ * A Preview stops at Gate 1 — it ends in the export there, and never buys the work behind Gates 2–4 — so a rail
+ * listing those gates as "est. pending" told the reviewer the run had paid gates still to come. It is not a rail that
+ * shortens as gates complete (the rule `GateRail` keeps): it is this run's whole shape, the same on every screen of
+ * it, so the reviewer's position still means one thing throughout.
+ */
+export const PREVIEW_RAIL_SEQUENCE: GatePosition[] = ["setup", "gate1"];
 
 /**
  * Every rail column's cost, in rail order.
@@ -53,8 +68,22 @@ export interface RailCostArgs {
  */
 export function railCosts(
   current: GatePosition,
-  { realizedByGate = {}, forecastByGate = {}, totalRealized = 0, runPosition = null }: RailCostArgs = {},
+  { realizedByGate = {}, forecastByGate = {}, totalRealized = 0, runPosition = null, preview = false }: RailCostArgs = {},
 ): { gate: GatePosition; cost: RailCost }[] {
+  if (preview) {
+    // A PREVIEW (08-31). Setup is `local` as on any run. Gate 1 is the run's last column, so whatever the run has
+    // spent lands there — a Preview's one paid action is Concept Spotlight extracting a score's items — and with
+    // nothing spent it is a state, "no charge", like an unbilled Gate 4: a `$0.00` figure there would read as
+    // money a Preview could have spent on its own.
+    const realized = realizedByGate.gate1 ?? totalRealized;
+    return PREVIEW_RAIL_SEQUENCE.map((gate) =>
+      gate === "setup"
+        ? { gate, cost: { kind: "state" as const, text: "local" } }
+        : realized > 0
+          ? { gate, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } }
+          : { gate, cost: { kind: "state" as const, text: "no charge" } },
+    );
+  }
   // A retired or off-rail position indexes -1, which the max simply ignores: the screen's own position stands.
   const frontier = Math.max(RAIL_SEQUENCE.indexOf(current), runPosition ? RAIL_SEQUENCE.indexOf(runPosition) : -1);
   return RAIL_SEQUENCE.map((gate, i) => {

@@ -69,7 +69,7 @@ import { useRunCostFactor } from "@/hooks/use-run-cost-factor";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate, rerunSetupPathFor } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
-import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
+import { heldRunKey, isPreviewJob, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
 import {
   DEFAULT_BUCKET,
@@ -1878,9 +1878,10 @@ function QueueRow({
           at the same place on every row. */}
       <div
         data-testid="queue-row-control"
-        // On a Preview the column keeps the box's width without the box, so every name still starts at the same place
-        // whether or not the row carries Concept Spotlight's mark.
-        className={cn("mt-px flex flex-col items-center gap-1.5", preview && "w-4")}
+        // On a Preview there is no box, so the column is sized to Concept Spotlight's mark instead (`w-5`, the mark's own
+        // width — a box-wide `w-4` let it spill 2px either side): every name still starts at the same place whether or
+        // not the row carries the mark.
+        className={cn("mt-px flex flex-col items-center gap-1.5", preview && "w-5")}
         onClick={(e) => e.stopPropagation()}
       >
         {!preview && (
@@ -1893,7 +1894,7 @@ function QueueRow({
           />
         )}
         {scoreTag && scoreTag.length > 0 && (
-          <SpotlightMarker components={scoreTag} source={scoreTagSource} cutoff={scoreCutoff} />
+          <SpotlightMarker components={scoreTag} source={scoreTagSource} cutoff={scoreCutoff} preview={preview} />
         )}
       </div>
       {/* THE NAME HAS THE LEFT COLUMN TO ITSELF (08-30b, lab round 5): up to three lines, and a short name makes
@@ -2444,7 +2445,7 @@ export default function Gate1Page() {
    * control and sentence below that asserts something a Preview never did — a coherence reading, a split, a scope sent
    * on to Gate 2, a price — is withheld on it; moves, New groups, renames and Concept Spotlight work as on a paid run.
    */
-  const preview = isPreviewRun(runConfig) || jobState?.result?.mode === "preview";
+  const preview = isPreviewJob(jobState);
   const position = (jobState?.gatePosition ?? null) as GatePosition | null;
   /** The run has moved PAST this gate. */
   const past = isGatePast("gate1", position);
@@ -3394,6 +3395,8 @@ export default function Gate1Page() {
       <DeclaredScorePanel
         jobId={jobId}
         pinned={pinned}
+        // A Preview's panel is the free search alone: no scope, no verdict, no price — and one refusal (08-31).
+        preview={preview}
         swaps={swaps}
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.

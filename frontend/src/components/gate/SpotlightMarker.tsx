@@ -13,22 +13,27 @@ import { cn } from "@/lib/utils";
  *
  * The tooltip's plain-text reading is passed as its `aria-label`, so a screen reader hears one sentence instead of the
  * list markup, and the visible list is not duplicated in the accessibility copy Radix renders.
+ *
+ * ON A PREVIEW (08-31) the tooltip names the free search and stops: a Preview never reaches Gate 4, so "the verdict is
+ * Gate 4's" would promise a match the run will never make. That it cannot match is said once, in the panel.
  */
 export function SpotlightMarker({
   components,
   source,
   cutoff,
+  preview = false,
 }: {
   components: string[];
   source: "match" | "suggestion";
   /** The suggestion cut-off in force (the reviewer's, else core's), when the run was scored. */
   cutoff?: number;
+  /** A Preview run's row: there is no Gate 4 to defer the verdict to. */
+  preview?: boolean;
 }) {
   const suggestion = source === "suggestion";
   const lead = suggestion ? "Concept Spotlight reached this group for" : "Concept Spotlight matched this group at Gate 4 for";
-  const how = suggestion
-    ? `${cutoff != null ? `A free search at the ${cutoff.toFixed(2)} cut-off.` : "A free search suggested it."} The verdict is Gate 4's.`
-    : "";
+  const search = cutoff != null ? `A free search at the ${cutoff.toFixed(2)} cut-off.` : "A free search suggested it.";
+  const how = suggestion ? (preview ? search : `${search} The verdict is Gate 4's.`) : "";
   const reading = `${lead}: ${components.join(", ")}.${how ? ` ${how}` : ""}`;
   return (
     <Tooltip>

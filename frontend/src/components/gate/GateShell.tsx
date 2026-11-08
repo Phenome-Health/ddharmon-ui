@@ -22,6 +22,7 @@ import {
   isGateLocked,
 } from "@/lib/review-mode";
 import { isInFlight } from "@/lib/run-state";
+import { isPreviewJob } from "@/lib/run-key";
 
 /**
  * The universal chrome every gate screen renders inside (UI-SPEC §7.1). One file, so no later screen plan
@@ -83,7 +84,7 @@ export interface GateShellProps {
    */
   howTo?: HowToStep[];
   /**
-   * The five rail columns, for a shell with NO run behind it. With a `job` the shell derives the rail itself
+   * The rail columns (five, or a Preview's two), for a shell with NO run behind it. With a `job` the shell derives the rail itself
    * (`runRailFor`), because the rail is the RUN's state — what it has spent and how far it has got — and a page
    * computing it from its own screen is how a finished run's past gates came to read "est. pending" (O1).
    */
@@ -472,9 +473,16 @@ export function railFor(current: GatePosition, args: RailCostArgs = {}): GateRai
   return railCosts(current, args).map(({ gate, cost }) => ({ gate, label: GATE_LABELS[gate], cost }));
 }
 
-/** The rail for a screen with a run behind it: the run's own ledger, and how far the run has got. */
+/**
+ * The rail for a screen with a run behind it: the run's own ledger, how far the run has got — and, for a Preview
+ * (08-31), its own short shape: Set up and Gate 1, because a Preview ends there.
+ */
 export function runRailFor(current: GatePosition, job: JobResult, costSoFar?: number): GateRailItem[] {
-  return railFor(current, { ...realizedRailArgs(job.result?.cost, costSoFar), runPosition: railReachOf(job) });
+  return railFor(current, {
+    ...realizedRailArgs(job.result?.cost, costSoFar),
+    runPosition: railReachOf(job),
+    preview: isPreviewJob(job),
+  });
 }
 
 // Re-exported so the five pages that imported it from here keep resolving; the rule itself lives in lib.

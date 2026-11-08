@@ -16,6 +16,14 @@ import type { GatePosition } from "@/types";
  * free pre-flight whose own Continue is the run's first charge. THE RULE ABOVE DID NOT CHANGE; only the length did. This rail is still fixed-length,
  * and the reason is still that a variable-length rail relocates the reviewer on every screen.
  *
+ * A PREVIEW RUN DRAWS TWO (08-31): Set up and Gate 1 (`PREVIEW_RAIL_SEQUENCE`). A Preview ends at Gate 1, so Gates
+ * 2–4 listed as "est. pending" told the reviewer paid gates were still to come. This does not break the rule above:
+ * the length is the RUN's, fixed for its whole life and the same on every screen of it — it never shortens as gates
+ * complete. The two cells sit on the SAME five tracks (`grid-cols-5` is kept on purpose), so Set up and Gate 1 are
+ * exactly as wide, and exactly where, they are on every paid run, and the rest of the bar stays empty up to the
+ * total. Stretching two columns across the bar was tried and rejected: it made Gate 1 a ~590px pill and moved it to
+ * mid-bar. Greying Gates 2–4 out was rejected too: it still lists them.
+ *
  * REALIZED vs FORECAST is the load-bearing distinction here. After UI-SPEC §0.1's reversal the reviewer
  * standing at Gate 1 is DOWNSTREAM of real spend — reaching Gate 1 already paid for concept generation,
  * splitting and the coherence judge — so a rail that renders "$2.14 spent" and "$3.99 to come" in the same
@@ -135,7 +143,10 @@ export function GateRail({
   compact = false,
 }: {
   current: GatePosition;
-  /** One entry per gate, in order. Exactly five; a short list is a bug, not a collapsed rail. */
+  /**
+   * One entry per gate, in order. Exactly five — or a Preview's two (Set up, Gate 1), which is that run's whole shape.
+   * Any other short list is a bug, not a collapsed rail.
+   */
   items: GateRailItem[];
   className?: string;
   /**
@@ -171,6 +182,7 @@ export function GateRail({
         className,
       )}
     >
+    {/* Five tracks for every run — a Preview's two cells too, so they keep the paid rail's widths (08-31). */}
     <ol aria-label="Review gates" data-testid="gate-rail" className="grid min-w-0 flex-1 grid-cols-5 gap-1">
       {items.map((item, i) => {
         const isCurrent = item.gate === current;

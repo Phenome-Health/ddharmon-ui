@@ -95,6 +95,17 @@ export function isPreviewRun(config: Record<string, unknown> | null | undefined)
 }
 
 /**
+ * Whether a RUN is a Preview (08-31): its config says so — so a Preview still clustering already does — or its result's
+ * own mode does. The one predicate Gate 1 and the gate strip both read, so the screen and the strip above it cannot
+ * disagree about what kind of run this is.
+ */
+export function isPreviewJob(
+  job: { config?: Record<string, unknown> | null; result?: { mode?: string } | null } | null | undefined,
+): boolean {
+  return isPreviewRun(job?.config) || job?.result?.mode === "preview";
+}
+
+/**
  * The field's sentence: what happened, that nothing was lost or charged, and which press to repeat.
  *
  * `action` is the control's own words ("Continue to Gate 3", "Accept this division"), so the sentence names the

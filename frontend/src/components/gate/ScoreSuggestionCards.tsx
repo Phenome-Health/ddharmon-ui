@@ -36,8 +36,14 @@ import type { FieldDetail } from "@/types";
  * this component's suggestion: such a row stays checked but is drawn neutral, says why ("In scope for Migraine",
  * "In scope — your choice"), and is not counted in this card's spread (`countsForCard`). A group BELOW the cut-off is listed under a divider so the reviewer can catch a miss
  * (the paid judge picked 8 groups the 0.62 cut-off did not); checking it puts it in scope like any other.
+ *
+ * ON A PREVIEW (08-31) THERE IS NO SCOPE AND NO MATCH. A Preview sends nothing on to Gate 2 and never reaches Gate 4,
+ * so the cards are the free search alone: no checkbox, no "Gate 2 ✓", no "in scope" count or reason, no word of a
+ * verdict to come. A card counts what the search SUGGESTED (above the cut-off) — which groups hold the items listed.
+ * That a Preview cannot match is said once, by the panel's refusal, not here.
  */
 export function ScoreSuggestionCards({
+  preview = false,
   cards,
   threshold,
   defaultThreshold,
@@ -50,6 +56,8 @@ export function ScoreSuggestionCards({
   onGroupScopeChange,
   onOpenGroup,
 }: {
+  /** A Preview run: the free search alone — no scope, and no later gate named. */
+  preview?: boolean;
   cards: SuggestionCard[];
   /** The cut-off the cards are split at: the reviewer's (`gate1_score_cutoff`), else the payload's own. */
   threshold: number;
@@ -75,7 +83,8 @@ export function ScoreSuggestionCards({
     cards,
     cohorts ?? cohortRoster(null, [...(groupsById?.values() ?? [])].map((n) => n.group)),
     (gid) => groupsById?.get(gid)?.group.cohorts,
-    (gid) => isGroupInScope?.(gid) ?? false,
+    // No scope on a Preview: every suggested group counts, which is what the table then shows.
+    preview ? () => true : (gid) => isGroupInScope?.(gid) ?? false,
   );
   // Every item under the cut-off (user test 2026-11-03): nothing is ticked, and counts alone read as "nothing
   // happened" — so the cards lead with it and name the closest items, best first.
@@ -106,11 +115,14 @@ export function ScoreSuggestionCards({
               None of your {cards.length} item{cards.length === 1 ? "" : "s"} reached the {threshold.toFixed(2)}{" "}
               cut-off
             </span>
-            , so nothing was ticked for you.
+            {/* A Preview ticks nothing, so it says only that nothing was suggested (08-31). */}
+            {preview ? ", so nothing was suggested." : ", so nothing was ticked for you."}
             {closest.length > 0 && (
               <> Closest: {closest.map((c) => `${c.item} ${c.best.toFixed(2)}`).join(", ")}.</>
             )}{" "}
-            Lower the cut-off below, or open an item to see its closest groups and tick them yourself.
+            {preview
+              ? "Lower the cut-off below, or open an item to see its closest groups."
+              : "Lower the cut-off below, or open an item to see its closest groups and tick them yourself."}
           </p>
         )}
         {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
@@ -129,27 +141,42 @@ export function ScoreSuggestionCards({
               this run&rsquo;s variables by meaning — retrieval only, no model call, $0.
             </li>
             {/* Named as the column names it (review round 7: "The figure." was ambiguous). */}
+            {/* ON A PREVIEW (08-31) each line keeps what the search is and drops what a later gate does with it: there
+                is no Gate 2 to send a scope to and no Gate 4 match — the panel's refusal says that, once. */}
             <li>
               <span className="font-semibold text-on-raised">Best similarity.</span> How close a group&rsquo;s
-              best-matching variable is to the item (0–1). A search score, not a judgement — the verdict is Gate
-              4&rsquo;s match.
+              best-matching variable is to the item (0–1).{" "}
+              {preview ? (
+                "A search score, not a judgement."
+              ) : (
+                <>A search score, not a judgement — the verdict is Gate 4&rsquo;s match.</>
+              )}
             </li>
             <li>
-              <span className="font-semibold text-on-raised">Variables · cohorts.</span> Everything in this
-              item&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
-              of them measure it. Other in-scope groups the search reached say why they are in scope.
+              <span className="font-semibold text-on-raised">Variables · cohorts.</span>{" "}
+              {preview ? (
+                <>Everything in this item&rsquo;s suggested groups — group membership, not a match.</>
+              ) : (
+                <>
+                  Everything in this item&rsquo;s suggested groups that are in scope — group membership, not a match.
+                  Gate 4 says which of them measure it. Other in-scope groups the search reached say why they are in
+                  scope.
+                </>
+              )}
             </li>
             {/* SAID ONCE, HERE (round 5 sweep): "→ continues to Gate 2" sat on every card with a group in scope. */}
-            <li>
-              <span className="font-semibold text-on-raised">In scope.</span> A card&rsquo;s ticked groups continue to
-              Gate 2 with the rest of your scope.
-            </li>
+            {!preview && (
+              <li>
+                <span className="font-semibold text-on-raised">In scope.</span> A card&rsquo;s ticked groups continue
+                to Gate 2 with the rest of your scope.
+              </li>
+            )}
             {/* SAID ONCE, HERE (Bhargav 2026-10-05, again round 6): the per-card sentence repeated on every unsuggested
                 card, so a card says it with its dashed marker alone. */}
             <li>
               <span className="font-semibold text-on-raised">Nothing suggested</span> (a dashed circle). This search
-              reached no group at the cut-off — not a finding about your cohorts. Gate 4&rsquo;s match decides. Open the
-              item to check the groups under the cut-off.
+              reached no group at the cut-off — not a finding about your cohorts.
+              {preview ? "" : <> Gate 4&rsquo;s match decides.</>} Open the item to check the groups under the cut-off.
             </li>
           </ul>
           </CollapsibleContent>
@@ -163,8 +190,10 @@ export function ScoreSuggestionCards({
           ) : (
             <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span>
           )}{" "}
-          or higher starts in scope, marked as a suggestion in the queue — one cut-off for every item. Your checks
-          always win.
+          {/* A Preview has no scope for a suggestion to start in, and no checks to win (08-31). */}
+          {preview
+            ? "or higher is suggested and marked in the queue — one cut-off for every item."
+            : "or higher starts in scope, marked as a suggestion in the queue — one cut-off for every item. Your checks always win."}
           {onThresholdChange && defaultThreshold != null && Math.abs(threshold - defaultThreshold) > 1e-9 && (
             <>
               {" "}
@@ -272,10 +301,21 @@ export function ScoreSuggestionCards({
               </table>
             </div>
             <p data-testid="search-coverage-note" className="mt-2 text-[11px] text-on-raised-muted">
-              A dot: one of the item&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
-              scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
-              search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match says
-              which variables measure each item, in its own table.
+              {/* A Preview keeps no scope and has no Gate 4 table to point to (08-31). */}
+              {preview ? (
+                <>
+                  A dot: one of the item&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher) holds a
+                  variable from that cohort &mdash; group membership, not a match. A blank is what this search reached,
+                  not a finding about the cohort; lowering the cut-off widens it.
+                </>
+              ) : (
+                <>
+                  A dot: one of the item&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
+                  scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
+                  search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match
+                  says which variables measure each item, in its own table.
+                </>
+              )}
             </p>
           </CollapsibleContent>
         </Collapsible>
@@ -308,6 +348,7 @@ export function ScoreSuggestionCards({
             {cards.map((card) => (
               <SuggestionRow
                 key={card.component}
+                preview={preview}
                 card={card}
                 openRequest={openRequest?.component === card.component ? openRequest.n : 0}
                 threshold={threshold}
@@ -398,6 +439,7 @@ function variableLabel(id: string, fieldIndex?: Record<string, FieldDetail>): st
 }
 
 function SuggestionRow({
+  preview = false,
   card,
   openRequest = 0,
   threshold,
@@ -408,6 +450,8 @@ function SuggestionRow({
   onGroupScopeChange,
   onOpenGroup,
 }: {
+  /** A Preview run (08-31): no checkbox, no scope count or reason, no Gate 2 — the card counts what was suggested. */
+  preview?: boolean;
   card: SuggestionCard;
   /** A link into this card from the coverage table (review round 7): each new number opens it and brings it into view. */
   openRequest?: number;
@@ -428,7 +472,8 @@ function SuggestionRow({
     // After the list (and this card) have laid out, so the scroll lands on the card's real position.
     requestAnimationFrame(() => rootRef.current?.scrollIntoView({ block: "center" }));
   }, [openRequest]);
-  const inScope = (gid: string) => isGroupInScope?.(gid) ?? false;
+  // No scope on a Preview (08-31): every group is taken as kept, so a card counts exactly what the search suggested.
+  const inScope = (gid: string) => (preview ? true : (isGroupInScope?.(gid) ?? false));
   const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId));
   const scoped = card.groups.filter(counts);
   // What is IN the groups in scope — membership, counted from Gate 1's own groups (never inferred as a match). The
@@ -465,10 +510,11 @@ function SuggestionRow({
     const label = named?.name?.trim() || "Unnamed group";
     const sel = inScope(g.groupId);
     const counted = counts(g);
-    // In scope, but not as THIS component's suggestion: checked, neutral, and saying why.
+    // In scope, but not as THIS component's suggestion: checked, neutral, and saying why. Never on a Preview, which
+    // has no scope for a group to be in (08-31).
     const why = groupScopeWhy?.(g.groupId);
     const scopeReason =
-      sel && !counted
+      !preview && sel && !counted
         ? why?.by === "score"
           ? `In scope for ${why.components.join(", ")}`
           : why?.by === "made"
@@ -484,24 +530,28 @@ function SuggestionRow({
         data-testid="score-suggestion-group"
         data-group={g.groupId}
         data-suggested={g.suggested ? "true" : "false"}
-        data-in-scope={sel ? "true" : "false"}
+        data-in-scope={preview ? undefined : sel ? "true" : "false"}
         data-counted={counted ? "true" : "false"}
         className={cn(
           "rounded-md border",
           counted ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised",
-          !sel && "opacity-80",
+          // A Preview dims what the search left below the cut-off, as a paid card dims what is out of scope.
+          (preview ? !counted : !sel) && "opacity-80",
         )}
       >
         <div className="flex items-start gap-2 px-2.5 py-2">
-          <input
-            type="checkbox"
-            data-testid="score-suggestion-group-toggle"
-            checked={sel}
-            disabled={!onGroupScopeChange}
-            onChange={() => onGroupScopeChange?.(g.groupId, !sel)}
-            aria-label={`Include the group ${label} in Gate 1's scope`}
-            className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
-          />
+          {/* The box is Gate 1 scope; a Preview has none, so the row is the search's answer and its link (08-31). */}
+          {!preview && (
+            <input
+              type="checkbox"
+              data-testid="score-suggestion-group-toggle"
+              checked={sel}
+              disabled={!onGroupScopeChange}
+              onChange={() => onGroupScopeChange?.(g.groupId, !sel)}
+              aria-label={`Include the group ${label} in Gate 1's scope`}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
+            />
+          )}
           <div className="min-w-0 flex-1">
             {onOpenGroup ? (
               <button
@@ -559,6 +609,8 @@ function SuggestionRow({
               {scopeReason}
             </span>
           ) : (
+            // Nothing goes on to Gate 2 from a Preview (08-31).
+            !preview &&
             sel && (
               <span className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised">
                 Gate 2 ✓
@@ -604,12 +656,18 @@ function SuggestionRow({
             <span>
               <span className="font-semibold">{card.nSuggested}</span> group{card.nSuggested === 1 ? "" : "s"}{" "}
               suggested
+              {/* A Preview counts what was suggested, so the figures follow straight on (08-31). */}
+              {preview && scoped.length > 0 && ":"}
             </span>
-            <span className="text-on-raised-muted">·</span>
-            <span>
-              <span className="font-semibold">{scoped.length}</span> in scope
-              {scoped.length > 0 && ":"}
-            </span>
+            {!preview && (
+              <>
+                <span className="text-on-raised-muted">·</span>
+                <span>
+                  <span className="font-semibold">{scoped.length}</span> in scope
+                  {scoped.length > 0 && ":"}
+                </span>
+              </>
+            )}
             {scoped.length > 0 && (
               <>
                 <span>
@@ -658,7 +716,10 @@ function SuggestionRow({
               card.groups.filter((g) => !g.suggested).map((g) => <Fragment key={g.groupId}>{renderGroup(g)}</Fragment>)}
           </div>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
-            Checked groups are in Gate 1&rsquo;s scope and continue to Gate 2 — the same checkbox as the list below.
+            {/* No checkbox on a Preview, so only the way into a group is left to say (08-31). */}
+            {!preview && (
+              <>Checked groups are in Gate 1&rsquo;s scope and continue to Gate 2 — the same checkbox as the list below. </>
+            )}
             Refine a group&rsquo;s membership via its <span className="font-semibold">↗</span> link.
           </p>
         </div>

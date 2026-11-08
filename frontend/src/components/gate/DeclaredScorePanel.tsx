@@ -23,7 +23,7 @@ import { ScoreSuggestionCards } from "@/components/gate/ScoreSuggestionCards";
 import { useGateDecisions, type UseGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
-import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
+import { READ_IS_FREE, STRIP_SUMMARY, STRIP_SUMMARY_PREVIEW, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
 import {
   declarationSource,
   isLongRecord,
@@ -232,12 +232,20 @@ export interface DeclaredScorePanelProps {
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   /** Gate 1 has been passed: the panel is a record — nothing here may write (08-27 audit B4). */
   frozen?: boolean;
+  /**
+   * A PREVIEW run (08-31): the panel is the free search over this run's groups and nothing more. A Preview has no
+   * scope (nothing goes on to Gate 2) and no match (it stops at Gate 1), so no scope control, no "in scope" count, no
+   * verdict waiting on a match and no price for one. That it cannot match is said ONCE, by `matchRefusal` — the
+   * Preview's own refusal, which the screen passes in — and nowhere else.
+   */
+  preview?: boolean;
   className?: string;
 }
 
 export function DeclaredScorePanel({
   jobId,
   pinned,
+  preview = false,
   swaps: sharedSwaps,
   suggestionNote = null,
   suggestions = null,
@@ -364,7 +372,7 @@ export function DeclaredScorePanel({
    * The CLOSED strip's status when a score is declared (H4), else `null` and the invitation stands. Read from the
    * persisted rows (`swaps.all`) and the derived spec — never from the draft — so it is what a reload shows too.
    */
-  const status = stripStatus(swaps.all, spec);
+  const status = stripStatus(swaps.all, spec, { preview });
   /** What was entered, for each declared score whose newest declaration was PASTED — from the persisted rows. */
   const pasted = useMemo(() => pastedRecords(swaps.all), [swaps.all]);
 
@@ -486,7 +494,8 @@ export function DeclaredScorePanel({
               copy inside is unchanged and still sits immediately above the control it prices.
             */
             <span className="min-w-0 text-xs text-on-field-muted">
-              {STRIP_SUMMARY}
+              {/* A Preview cannot match, so its strip prices no match: it names the free search instead (08-31). */}
+              {preview ? STRIP_SUMMARY_PREVIEW : STRIP_SUMMARY}
             </span>
           )}
         </span>
@@ -522,8 +531,11 @@ export function DeclaredScorePanel({
             rules this panel exists to keep saying. */}
             <p className="max-w-[80ch] text-sm text-on-raised-muted">
               List the items to look for — a published score (a frailty index, an
-              intrinsic-capacity score, an SES index) or a list of your own — and this
-              run will say which of them its concepts can supply, and out of which.{" "}
+              intrinsic-capacity score, an SES index) or a list of your own — and{" "}
+              {/* A Preview's answer is the free search's, never a match (08-31). */}
+              {preview
+                ? "a free search shows which of this run’s groups hold them."
+                : "this run will say which of them its concepts can supply, and out of which."}{" "}
               {PRESENCE_IS_PER_DICTIONARY}
             </p>
           </div>
@@ -684,6 +696,10 @@ export function DeclaredScorePanel({
             />
           ) : declared.length > 0 ? (
             <>
+              {/* No verdict on a Preview (08-31): a verdict is what a match produces, and a Preview cannot match, so the
+                  box could only ever read "cannot be determined yet" — a wait for a match that never comes. The
+                  refusal below says it once instead. */}
+              {!preview && (
               <div
                 data-testid="score-verdict"
                 data-verdict={verdict}
@@ -709,6 +725,7 @@ export function DeclaredScorePanel({
                   </span>
                 )}
               </div>
+              )}
 
               {/*
                 GATE 1'S FREE SUGGESTIONS (08-28 Decision 6). Said here, beside the declaration they come from: what
@@ -758,6 +775,16 @@ export function DeclaredScorePanel({
                 >
                   {suggestionNote.unavailable ? (
                     suggestionNote.unavailable
+                  ) : preview ? (
+                    // A Preview has no scope to start anything in, and no Gate 4 to hand a verdict to (08-31).
+                    suggestionNote.nGroups > 0 ? (
+                      <>
+                        A free search reached {suggestionNote.nGroups} group{suggestionNote.nGroups === 1 ? "" : "s"}{" "}
+                        for {suggestionNote.nComponents} of these items; they are marked in the list.
+                      </>
+                    ) : (
+                      "A free search reached no group closely enough to suggest one."
+                    )
                   ) : suggestionNote.nGroups > 0 ? (
                     <>
                       {SUGGESTION_TAG_COPY}. It reached {suggestionNote.nGroups} group
@@ -782,6 +809,7 @@ export function DeclaredScorePanel({
               */}
               {cards.length > 0 ? (
                 <ScoreSuggestionCards
+                  preview={preview}
                   cards={cards}
                   threshold={cutoff ?? suggestions!.threshold}
                   defaultThreshold={suggestions!.threshold}
@@ -817,9 +845,11 @@ export function DeclaredScorePanel({
             </>
           ) : null}
 
-          {/* THE PAID BOUNDARY, priced inline and never behind a modal. */}
+          {/* THE PAID BOUNDARY, priced inline and never behind a modal. On a Preview there is nothing to price — it
+              cannot match — so only the refusal stands, and it is the one place the panel says so (08-31). */}
           {!spec && (
           <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
+            {!preview && (
             <p
               data-testid="score-match-price"
               className="max-w-[80ch] text-xs font-semibold text-on-raised"
@@ -829,6 +859,7 @@ export function DeclaredScorePanel({
               turns a declaration into a verdict. Nothing is charged until you
               press it.
             </p>
+            )}
             {matchRefusal ? (
               <NotAvailable
                 thing="Matching the items"
