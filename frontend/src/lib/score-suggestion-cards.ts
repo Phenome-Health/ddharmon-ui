@@ -7,8 +7,9 @@
  *
  * ONE CARD PER DECLARED COMPONENT, IN DECLARED ORDER — the order the reviewer (or the paper) gave, never re-sorted by
  * how well a component was found. Its groups are EVERY group the search reached, best-first, each flagged against
- * the payload's OWN cut-off: the ones at or above it are what seeds scope (`suggestionMatches`); the ones below are
- * listed so the reviewer can catch a miss, and are never tagged or seeded.
+ * its list's cut-off (the reviewer's for that list, else the payload's own): the ones at or above it are what seeds
+ * scope (`suggestionMatches`); the ones below are listed so the reviewer can catch a miss, and this list never tags or
+ * seeds them (another list's concept may, at its own cut-off).
  *
  * `best` is the top group's similarity — a dense cosine, NOT the judge's confidence. The card labels it so and never
  * puts it in the judge's "mean best / cohort" slot: the two are different scales.
@@ -120,7 +121,10 @@ export function searchCoverage(
 export function suggestionCards(
   declared: readonly string[],
   s: ScoreSuggestions | null | undefined,
-  /** The reviewer's cut-off (`gate1_score_cutoff`) when they chose one, else the payload's own threshold. */
+  /**
+   * The cut-off these concepts are split at — their Spotlight LIST's own (`gate1_score_cutoff`, one per list since
+   * 2026-11-08), so a panel asks once per list. Absent → the payload's own threshold.
+   */
   cutoff?: number,
 ): SuggestionCard[] {
   if (!s?.scored || !(s.scores?.length)) return [];

@@ -291,9 +291,15 @@ test.describe("the score panel — review round 7", () => {
     await expect(list.getByTestId("spotlight-list-toggle")).toContainText("3 concepts · 2/3 with a suggestion · 3 groups suggested");
     // No second fold inside the list (a dropdown in a dropdown).
     await expect(list.getByTestId("score-suggestion-components")).toHaveCount(0);
-    // The guide is the panel's, above the list — not inside the fold.
+    // The guide is the panel's, above the list — not inside the fold. The cut-off is the LIST's own (2026-11-08, "implement
+    // per list cutoff"): one line inside its fold, ahead of the table and the concepts it splits — and none in the guide.
     await expect(fold.getByTestId("score-suggestion-info")).toHaveCount(0);
-    await expect(fold.getByTestId("score-cutoff-line")).toHaveCount(0);
+    await expect(fold.getByTestId("score-cutoff-line")).toHaveCount(1);
+    await expect(panel.getByTestId("score-suggestion-guide").getByTestId("score-cutoff-line")).toHaveCount(0);
+    const lineFirst = await fold
+      .locator("[data-testid='score-cutoff-line'], [data-testid='search-coverage'], [data-testid='score-suggestion']")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+    expect(lineFirst[0]).toBe("score-cutoff-line");
     const guideFirst = await panel.evaluate((root) => {
       const guide = root.querySelector("[data-testid='score-suggestion-guide']");
       const l = root.querySelector("[data-testid='spotlight-list']");
@@ -363,7 +369,8 @@ test.describe("the score panel — review round 7", () => {
 /**
  * SEVERAL LISTS (Bhargav, 2026-11-08): each declared Spotlight list is headed by its own name, and its concepts → this
  * run's groups "should appear under the relevant list if there are multiple, and self contained into a dropdown". How
- * suggestions work and the one cut-off govern every list, so they are said ONCE, above the lists.
+ * suggestions work governs every list, so it is said ONCE, above the lists; each list carries its OWN cut-off, in its
+ * own fold (the same day's "implement per list cutoff" — `score-cutoff.spec.ts` pins what each one splits).
  */
 test.describe("several Spotlight lists", () => {
   const SES = "SES index";
@@ -415,11 +422,14 @@ test.describe("several Spotlight lists", () => {
       await expect(table.getByTestId("search-coverage-row")).toHaveText(own.map((c) => new RegExp(c)));
     }
     await expect(ses.getByTestId("spotlight-list-toggle")).toContainText("1 concept · 1/1 with a suggestion · 1 group suggested");
-    // Said once for the panel, above the first list — never once per list.
+    // How suggestions work: said once for the panel, above the first list — never once per list.
     await expect(panel.getByTestId("score-suggestion-guide")).toHaveCount(1);
     await expect(panel.getByTestId("score-suggestion-info")).toHaveCount(1);
-    await expect(panel.getByTestId("score-cutoff-line")).toHaveCount(1);
     for (const list of [frailty, ses]) await expect(list.getByTestId("score-suggestion-info")).toHaveCount(0);
+    // The cut-off: exactly one per list, inside that list's fold — and the guide carries none.
+    await expect(panel.getByTestId("score-cutoff-line")).toHaveCount(2);
+    for (const list of [frailty, ses]) await expect(list.getByTestId("score-cutoff-line")).toHaveCount(1);
+    await expect(panel.getByTestId("score-suggestion-guide").getByTestId("score-cutoff-line")).toHaveCount(0);
     const guideFirst = await panel.evaluate((root) => {
       const guide = root.querySelector("[data-testid='score-suggestion-guide']");
       const first = root.querySelector("[data-testid='spotlight-list']");

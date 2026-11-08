@@ -10,6 +10,7 @@ import {
 } from "@/lib/gate-decisions";
 import { OWN_TARGET, SKOS_RELATIONS } from "@/lib/gate23";
 import { AUTO_ACCEPTED_LABEL, AUTO_DECIDED_AFTER, autoAcceptedGates, gateLabel } from "@/lib/review-mode";
+import { cutoffSettingList } from "@/lib/score-cutoff";
 
 /**
  * Gate 4's pure logic — the export catalog, the download-label rule, the decision-log rows, and the E3
@@ -154,6 +155,19 @@ const DECISION_GATE: Record<GateDecisionKind, string> = {
   composite_swap: "gate1",
 };
 
+/**
+ * A decision's action, in words. A Spotlight list's own cut-off says which list it is ("Set the score suggestion
+ * cut-off — Frailty index"); the run-wide cut-off, and every other kind, reads as it always has. The server's
+ * `decision_log_rows` says the same.
+ */
+function actionOf(kind: GateDecisionKind, d: GateDecision, itemKey: string): string {
+  if (kind === "gate1_score_cutoff") {
+    const list = cutoffSettingList(String(d.setting ?? itemKey));
+    if (list) return `${ACTION_OF[kind]} — ${list}`;
+  }
+  return ACTION_OF[kind];
+}
+
 /** The decision log's row for one gate Full auto committed — the server's `_auto_row`. */
 function autoRow(gate: string): string[] {
   return [gateLabel(gate), "gate_auto_accepted", AUTO_ACCEPTED_LABEL, gate, "", AUTO_DECIDED_AFTER, "", "", "false"];
@@ -252,7 +266,7 @@ export function decisionLogRows(
       rows.push({
         kind,
         gate: GATE_OF[kind],
-        action: ACTION_OF[kind],
+        action: actionOf(kind, d, itemKey),
         thing: itemKey,
         chosen: String(d.chosen ?? ""),
         label: gid ? nameOf(gid) : undefined,
@@ -721,7 +735,7 @@ export function decisionLogCsvRows(
         if (rec === undefined) detail = stableJson({ notApplied: NOT_APPLIED });
         else if (!(rec.members ?? []).includes(String(d.memberId || ""))) detail = stableJson({ notApplied: NOT_APPLIED_MEMBER });
       }
-      rows.push([GATE_OF[kind], kind, ACTION_OF[kind], item, before, after, note, detail, String(stale.has(`${kind}\u001f${item}`))]);
+      rows.push([GATE_OF[kind], kind, actionOf(kind, d, item), item, before, after, note, detail, String(stale.has(`${kind}\u001f${item}`))]);
     }
   }
   for (const [recordId, v] of Object.entries(verdicts ?? {})) {

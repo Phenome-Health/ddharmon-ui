@@ -25,14 +25,23 @@ export function SpotlightMarker({
 }: {
   components: string[];
   source: "match" | "suggestion";
-  /** The suggestion cut-off in force (the reviewer's, else core's), when the run was scored. */
-  cutoff?: number;
+  /**
+   * The cut-off(s) the suggestion was made at — each reaching list's own (the reviewer's for it, else core's) — when the
+   * run was scored. Several when concepts from lists with different cut-offs reached the group.
+   */
+  cutoff?: number | readonly number[];
   /** A Preview run's row: there is no Gate 4 to defer the verdict to. */
   preview?: boolean;
 }) {
   const suggestion = source === "suggestion";
   const lead = suggestion ? "Concept Spotlight reached this group for" : "Concept Spotlight matched this group at Gate 4 for";
-  const search = cutoff != null ? `A free search at the ${cutoff.toFixed(2)} cut-off.` : "A free search suggested it.";
+  const cutoffs = [...new Set(cutoff == null ? [] : typeof cutoff === "number" ? [cutoff] : cutoff)].sort((a, b) => a - b);
+  const search =
+    cutoffs.length === 1
+      ? `A free search at the ${cutoffs[0]!.toFixed(2)} cut-off.`
+      : cutoffs.length > 1
+        ? `A free search, each list at its own cut-off (${cutoffs.map((c) => c.toFixed(2)).join(", ")}).`
+        : "A free search suggested it.";
   const how = suggestion ? (preview ? search : `${search} The verdict is Gate 4's.`) : "";
   const reading = `${lead}: ${components.join(", ")}.${how ? ` ${how}` : ""}`;
   return (

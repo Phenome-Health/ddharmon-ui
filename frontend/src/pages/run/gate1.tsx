@@ -106,8 +106,8 @@ import {
   resumeTookEffect,
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
-import { scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
-import { SCORE_CUTOFF_KIND, SCORE_CUTOFF_SETTING, effectiveCutoff } from "@/lib/score-cutoff";
+import { scoreScopeInput, scoreSeededGroups, scoreTaggedGroups, suggestionCutoffsByGroup } from "@/lib/score-scope";
+import { SCORE_CUTOFF_KIND, listCutoff, listCutoffSetting, type ListCutoff } from "@/lib/score-cutoff";
 import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
 import { shippedDeclaration, shippedSuggestions } from "@/lib/demo-score";
@@ -1798,8 +1798,8 @@ function QueueRow({
   /** Where `scoreTag` came from: the Gate 4 MATCH (a verdict), or Gate 1's free SUGGESTION (08-28 Decision 6) —
    *  drawn differently, and saying so, because a suggestion is not a finding that the group measures it. */
   scoreTagSource?: "match" | "suggestion";
-  /** The suggestion cut-off in force, which the marker's tooltip states (a suggestion only). */
-  scoreCutoff?: number;
+  /** The cut-off(s) this group's suggestion was made at — its lists' own — which the marker's tooltip states. */
+  scoreCutoff?: readonly number[];
   /** A New group the reviewer made (08-28 Wave 2): marked as theirs, never with a coherence cell. */
   reviewer?: boolean;
   /** Every cohort in the run, in its fixed order — the strip's columns, under the queue's one legend. */
@@ -2557,17 +2557,25 @@ export default function Gate1Page() {
         ? "loading"
         : null;
   /**
-   * THE REVIEWER'S SUGGESTION CUT-OFF (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
-   * default 0.62"). A Gate 1 decision like scope itself: persisted per run (held in the tab on the demo), frozen with
-   * the gate. It replaces the payload's threshold everywhere the free search is cut — the cards, the tags and the
-   * seeded scope — and only there: Gate 4's judge works on its own scale. Undefined until there is a dense answer.
+   * THE REVIEWER'S SUGGESTION CUT-OFFS (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
+   * default 0.62" — and ONE PER SPOTLIGHT LIST since 2026-11-08: "implement per list cutoff"). A Gate 1 decision like
+   * scope itself: persisted per run (held in the tab on the demo), frozen with the gate. Each list's replaces the
+   * payload's threshold everywhere the free search is cut for THAT list's concepts — its cards, the tags and the seeded
+   * scope — and only there: Gate 4's judge works on its own scale. A list with no row of its own reads the run-wide row
+   * a run may already hold, else the payload's own (`listCutoff`). Undefined until there is a dense answer.
    */
   const cutoffs = useGateDecisions(jobId, SCORE_CUTOFF_KIND, { pinned, frozen });
-  const cutoff =
-    suggestionData?.scored ? effectiveCutoff(cutoffs.decisions[SCORE_CUTOFF_SETTING], suggestionData.threshold) : undefined;
-  /** Set (a number) or reset (`null` — the row is deleted and the payload's threshold applies again). */
-  const setCutoff = (next: number | null) => {
-    const setting = { setting: SCORE_CUTOFF_SETTING };
+  const suggestionThreshold = suggestionData?.scored ? suggestionData.threshold : undefined;
+  const cutoffOf = useMemo(
+    () =>
+      suggestionThreshold == null
+        ? undefined
+        : (listName: string): ListCutoff => listCutoff(cutoffs.decisions, listName, suggestionThreshold),
+    [cutoffs.decisions, suggestionThreshold],
+  );
+  /** Set one list's cut-off (a number), or reset it (`null` — that list's row alone is deleted, so it falls back). */
+  const setCutoff = (listName: string, next: number | null) => {
+    const setting = { setting: listCutoffSetting(listName) };
     if (next === null) return void cutoffs.clear(setting);
     // The one alternative is the default it replaces, so the decision log can say "0.55 (default 0.62)".
     const def = suggestionData?.threshold;
@@ -2584,11 +2592,14 @@ export default function Gate1Page() {
       scoreScopeInput(
         latestSpec,
         frozen || latestSpec ? null : suggestionData,
-        cutoff,
+        // Each list's concepts at that list's cut-off: a group two lists reach is suggested if it clears EITHER.
+        cutoffOf ? (scoreName: string) => cutoffOf(scoreName).value : undefined,
       ),
-    [latestSpec, frozen, suggestionData, cutoff],
+    [latestSpec, frozen, suggestionData, cutoffOf],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
+  /** groupId → the cut-off(s) its suggestion was made at — the queue marker's tooltip states them. */
+  const scoreCutoffsByGroup = useMemo(() => suggestionCutoffsByGroup(scoreInput.matches), [scoreInput]);
   const scoreSeed = useMemo(
     () => scoreSeededGroups(scoreInput.matches, scoreInput.threshold),
     [scoreInput],
@@ -3404,7 +3415,7 @@ export default function Gate1Page() {
         suggestionsStatus={!frozen && !latestSpec ? suggestionsStatus : null}
         suggestionsError={suggestionsQuery.error instanceof Error ? suggestionsQuery.error.message : undefined}
         onRetrySuggestions={() => void suggestionsQuery.refetch()}
-        cutoff={cutoff}
+        cutoffOf={cutoffOf}
         onCutoffChange={frozen ? undefined : setCutoff}
         spec={latestSpec}
         matchRefusal={preview ? PREVIEW_MATCH_REFUSAL : matchRefusal}
@@ -3697,7 +3708,7 @@ export default function Gate1Page() {
                   preview={preview}
                   scoreTag={scoreTagByGroup.get(g.groupId)}
                   scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
-                  scoreCutoff={cutoff}
+                  scoreCutoff={scoreCutoffsByGroup.get(g.groupId)}
                   roster={allCohorts}
                   count={memberCount(g)}
                   inScope={isInScope(g.groupId)}
@@ -3775,7 +3786,7 @@ export default function Gate1Page() {
                     preview={preview}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
                     scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
-                  scoreCutoff={cutoff}
+                    scoreCutoff={scoreCutoffsByGroup.get(g.groupId)}
                     roster={allCohorts}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}

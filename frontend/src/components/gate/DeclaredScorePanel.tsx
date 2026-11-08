@@ -10,7 +10,12 @@ import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/c
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
-import { ScoreSuggestionCards, ScoreSuggestionGuide, suggestionCounts } from "@/components/gate/ScoreSuggestionCards";
+import {
+  ScoreCutoffLine,
+  ScoreSuggestionCards,
+  ScoreSuggestionGuide,
+  suggestionCounts,
+} from "@/components/gate/ScoreSuggestionCards";
 import { useGateDecisions, type UseGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
@@ -30,6 +35,7 @@ import {
   type ComponentEvidence,
 } from "@/lib/score-scope";
 import { suggestionCards, type GroupScopeWhy, type SuggestionCard } from "@/lib/score-suggestion-cards";
+import type { ListCutoff } from "@/lib/score-cutoff";
 import type {
   CompositeSpec,
   ComponentCoding,
@@ -136,10 +142,13 @@ export interface DeclaredScorePanelProps {
   suggestionsError?: string;
   /** Ask the free search again after a failure. */
   onRetrySuggestions?: () => void;
-  /** The cut-off the free search is split at — the reviewer's `gate1_score_cutoff`, else the payload's own. */
-  cutoff?: number;
-  /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent on a frozen gate → the control is read-only. */
-  onCutoffChange?: (next: number | null) => void;
+  /**
+   * Each Spotlight LIST's cut-off (2026-11-08, "implement per list cutoff") — its own `gate1_score_cutoff` row, else
+   * the run-wide row a run may already hold, else the payload's own. Absent → every list is split at the payload's.
+   */
+  cutoffOf?: (listName: string) => ListCutoff;
+  /** Set (a number) or reset (`null`) ONE list's cut-off. Absent on a frozen gate → each list's is read-only. */
+  onCutoffChange?: (listName: string, next: number | null) => void;
   /**
    * A composite spec already derived for this run, when one exists. This is the ONLY source of match
    * evidence — the panel never infers a match, because inferring one is what `match_components` is paid
@@ -203,7 +212,7 @@ export function DeclaredScorePanel({
   suggestionsStatus = null,
   suggestionsError,
   onRetrySuggestions,
-  cutoff,
+  cutoffOf,
   onCutoffChange,
   spec,
   matchRefusal,
@@ -327,12 +336,6 @@ export function DeclaredScorePanel({
   /** What was entered, for each declared score whose newest declaration was PASTED — from the persisted rows. */
   const pasted = useMemo(() => pastedRecords(swaps.all), [swaps.all]);
 
-  /** The free search's cards, one per declared component — `[]` keeps the plain list (no dense score, or none asked). */
-  const cards = useMemo(
-    () => (spec ? [] : suggestionCards(declared.map((d) => d.name), suggestions, cutoff)),
-    [spec, declared, suggestions, cutoff],
-  );
-
   const codingFor = (name: string) =>
     spec?.definition.components.find((c) => c.name === name)?.coding;
   const matchByComponent = useMemo(
@@ -342,8 +345,9 @@ export function DeclaredScorePanel({
 
   /**
    * The declared Spotlight LISTS, in declaration order — each with its own concepts, the text that was entered when it
-   * was pasted, and its share of the free search's cards and of the evidence. A list is the reviewer's unit: with
-   * several declared, each one's concepts → groups sits under that list (Bhargav, 2026-11-08).
+   * was pasted, its own cut-off, the free search's cards for its concepts split at THAT cut-off, and its share of the
+   * evidence. A list is the reviewer's unit: with several declared, each one's concepts → groups sits under that list,
+   * with its own cut-off (Bhargav, 2026-11-08).
    */
   const lists: SpotlightListData[] = useMemo(() => {
     const pastedBy = new Map(pasted.map((r) => [r.scoreName.trim(), r.text]));
@@ -359,15 +363,22 @@ export function DeclaredScorePanel({
     }
     return [...byName.values()].map((list) => {
       const own = new Set(list.names.map((n) => n.toLowerCase()));
+      // Only with a dense answer to split: a lexical score is never thresholded, so it has no cut-off to show.
+      const cutoff = suggestions?.scored
+        ? (cutoffOf?.(list.name) ?? { value: suggestions.threshold, own: false, fallback: suggestions.threshold })
+        : null;
       return {
         name: list.name,
         nConcepts: list.names.length,
         pastedText: list.pastedText,
-        cards: cards.filter((c) => own.has(c.component.toLowerCase())),
+        cutoff,
+        // The free search's cards, one per concept — `[]` keeps the plain list (no dense score, or none asked).
+        cards: spec || !cutoff ? [] : suggestionCards(list.names, suggestions, cutoff.value),
         evidence: evidence.filter((e) => own.has(e.name.toLowerCase())),
       };
     });
-  }, [declared, pasted, cards, evidence]);
+  }, [declared, pasted, evidence, spec, suggestions, cutoffOf]);
+  const hasCards = lists.some((l) => l.cards.length > 0);
 
   async function onDocument(file: File) {
     setReading(true);
@@ -685,7 +696,7 @@ export function DeclaredScorePanel({
 
               {/* Only WITHOUT the cards (round 6 repeated-copy): with them, the strip says it is a free search and the
                   verdict is Gate 4's, and each list's fold carries the counts — this note said all three again. */}
-              {suggestionNote && cards.length === 0 && (
+              {suggestionNote && !hasCards && (
                 <p
                   data-testid="score-suggestions-note"
                   className="max-w-[80ch] rounded-inner border border-dashed border-rule-on-raised px-4 py-3 text-xs text-on-raised"
@@ -718,15 +729,8 @@ export function DeclaredScorePanel({
                 </p>
               )}
 
-              {/* SAID ONCE FOR EVERY LIST: how a suggestion is made, and the one cut-off that governs all of them. */}
-              {cards.length > 0 && (
-                <ScoreSuggestionGuide
-                  preview={preview}
-                  threshold={cutoff ?? suggestions!.threshold}
-                  defaultThreshold={suggestions!.threshold}
-                  onThresholdChange={frozen ? undefined : onCutoffChange}
-                />
-              )}
+              {/* SAID ONCE FOR EVERY LIST: how a suggestion is made. Each list's CUT-OFF is its own, in its fold. */}
+              {hasCards && <ScoreSuggestionGuide preview={preview} />}
 
               {/*
                 EACH LIST CARRIES ITS OWN CONCEPTS → GROUPS (Bhargav, 2026-11-08: "should appear under the relevant
@@ -734,23 +738,30 @@ export function DeclaredScorePanel({
                 that is the cards (08-28, option A); without one, the plain declared rows stand.
               */}
               {lists.map((list) => (
-                <SpotlightList
-                  key={`${list.name}\u001f${list.pastedText ?? ""}`}
-                  list={list}
-                                  >
-                  {list.cards.length > 0 ? (
-                    <ScoreSuggestionCards
-                      preview={preview}
-                      cards={list.cards}
-                      threshold={cutoff ?? suggestions!.threshold}
-                      groupsById={groupsById}
-                      cohorts={cohorts}
-                      fieldIndex={fieldIndex}
-                      isGroupInScope={isGroupInScope}
-                      groupScopeWhy={groupScopeWhy}
-                      onGroupScopeChange={frozen ? undefined : onGroupScopeChange}
-                      onOpenGroup={onOpenGroup}
-                    />
+                <SpotlightList key={`${list.name}\u001f${list.pastedText ?? ""}`} list={list}>
+                  {list.cards.length > 0 && list.cutoff ? (
+                    <>
+                      {/* THE LIST'S OWN CUT-OFF, above the table and the concepts it splits (2026-11-08). */}
+                      <ScoreCutoffLine
+                        preview={preview}
+                        listName={list.name}
+                        value={list.cutoff.value}
+                        resetTo={list.cutoff.own ? list.cutoff.fallback : null}
+                        onChange={frozen || !onCutoffChange ? undefined : (next) => onCutoffChange(list.name, next)}
+                      />
+                      <ScoreSuggestionCards
+                        preview={preview}
+                        cards={list.cards}
+                        threshold={list.cutoff.value}
+                        groupsById={groupsById}
+                        cohorts={cohorts}
+                        fieldIndex={fieldIndex}
+                        isGroupInScope={isGroupInScope}
+                        groupScopeWhy={groupScopeWhy}
+                        onGroupScopeChange={frozen ? undefined : onGroupScopeChange}
+                        onOpenGroup={onOpenGroup}
+                      />
+                    </>
                   ) : (
                     <ul className="flex flex-col gap-2">
                       {list.evidence.map((e) => (
@@ -829,6 +840,8 @@ interface SpotlightListData {
   nConcepts: number;
   /** The box exactly as entered, when the list was pasted rather than read from a document. */
   pastedText?: string;
+  /** This list's cut-off, when there is a dense free-search answer to split at it; `null` otherwise. */
+  cutoff: ListCutoff | null;
   cards: SuggestionCard[];
   evidence: ComponentEvidence[];
 }

@@ -265,7 +265,22 @@ export function scoreSeededGroups(
 // --- Gate 1's free SUGGESTIONS: the same rule, fed by the retrieval half (08-28 Decision 6) ---------------------
 
 /** A component's score evidence in the one shape the scope rule reads — a Gate 4 match, or a suggestion. */
-export type ScoreScopeMatch = Parameters<typeof offeredGroups>[0] & { component: string };
+export type ScoreScopeMatch = Parameters<typeof offeredGroups>[0] & {
+  component: string;
+  /** A suggestion only: the cut-off it was cut at — its Spotlight list's own (the queue marker states it). */
+  cutoff?: number;
+};
+
+/**
+ * The free search's cut-off: ONE number for every list, or each Spotlight list's own (`scoreName` → its cut-off, the
+ * reviewer's `gate1_score_cutoff` for that list — 2026-11-08, "implement per list cutoff"). Absent → the payload's own.
+ */
+export type SuggestionCutoff = number | ((scoreName: string) => number);
+
+function cutoffFor(cutoff: SuggestionCutoff | undefined, scoreName: string, payloadThreshold: number): number {
+  if (typeof cutoff === "function") return cutoff(scoreName);
+  return cutoff ?? payloadThreshold;
+}
 
 /**
  * What a suggestion tag says (its title, and the panel's note). Two claims, both load-bearing: it came from a FREE
@@ -276,20 +291,21 @@ export const SUGGESTION_TAG_COPY = "Suggested by your Spotlight list — a free 
 
 /**
  * Gate 1's suggestions as score evidence: one entry per declared component, OFFERING only the groups whose
- * best-member cosine clears the payload's OWN cut-off (`threshold`, core's calibrated value — never a copy kept
- * here, and never the judge's 0.80, which is a different scale).
+ * best-member cosine clears its Spotlight list's cut-off (`cutoff` — the reviewer's for that list, else the payload's
+ * OWN threshold, core's calibrated value; never a copy kept here, and never the judge's 0.80, a different scale).
  *
  * Filtered HERE, so "offered" means "suggested" for a suggestion: the tag map (every offered group) and the seed
- * (`scoreSeededGroups` at the same cut-off) then name exactly the same groups, and a group below the cut-off is
- * neither tagged nor seeded. `scored: false` (no dense encoder) offers nothing — a lexical score is not comparable
- * across components and is never thresholded in its place.
+ * (`scoreSeededGroups`) then name exactly the same groups, and a group below the cut-off is neither tagged nor seeded.
+ * Each list's concepts are cut at THAT list's cut-off, so a group two lists' concepts reach is offered by every concept
+ * whose own list's cut-off it clears — suggested if it clears EITHER. `scored: false` (no dense encoder) offers
+ * nothing — a lexical score is not comparable across components and is never thresholded in its place.
  */
-export function suggestionMatches(s: ScoreSuggestions | null | undefined, cutoff?: number): ScoreScopeMatch[] {
+export function suggestionMatches(s: ScoreSuggestions | null | undefined, cutoff?: SuggestionCutoff): ScoreScopeMatch[] {
   if (!s?.scored) return [];
-  // The reviewer's cut-off (`gate1_score_cutoff`, `lib/score-cutoff.ts`) when they chose one, else the payload's own.
-  const at = cutoff ?? s.threshold;
   const out: ScoreScopeMatch[] = [];
   for (const score of s.scores ?? []) {
+    // The reviewer's cut-off for THIS list (`gate1_score_cutoff`, `lib/score-cutoff.ts`), else the payload's own.
+    const at = cutoffFor(cutoff, score.scoreName, s.threshold);
     for (const c of score.components ?? []) {
       const groups = (c.groups ?? []).filter((g) => g.score >= at);
       if (groups.length === 0) continue;
@@ -298,6 +314,7 @@ export function suggestionMatches(s: ScoreSuggestions | null | undefined, cutoff
         conceptId: null,
         confidence: groups[0]!.score,
         groupCandidates: groups.map((g) => ({ groupId: g.groupId, confidence: g.score })),
+        cutoff: at,
       });
     }
   }
@@ -316,12 +333,17 @@ export function suggestionMatches(s: ScoreSuggestions | null | undefined, cutoff
 export function scoreScopeInput(
   spec: { matches: readonly ScoreScopeMatch[] } | null | undefined,
   suggestions: ScoreSuggestions | null | undefined,
-  cutoff?: number,
+  cutoff?: SuggestionCutoff,
 ): { source: "match" | "suggestion" | "none"; matches: readonly ScoreScopeMatch[]; threshold: number } {
   if (spec) return { source: "match", matches: spec.matches ?? [], threshold: GROUP_SELECT_THRESHOLD };
   // `cutoff` is the free search's only — the judge's match (above) keeps its own scale, untouched by it.
   const matches = suggestionMatches(suggestions, cutoff);
-  if (matches.length > 0) return { source: "suggestion", matches, threshold: cutoff ?? suggestions!.threshold };
+  if (matches.length > 0) {
+    // Each match is already cut at its own list's cut-off, so the seed takes every group offered: the lowest cut-off
+    // in force is at or below every one of them. (One cut-off for every list makes this that cut-off, as before.)
+    const threshold = Math.min(...matches.map((m) => m.cutoff ?? suggestions!.threshold));
+    return { source: "suggestion", matches, threshold };
+  }
   return { source: "none", matches: [], threshold: GROUP_SELECT_THRESHOLD };
 }
 
@@ -337,6 +359,24 @@ export function scoreTaggedGroups(matches: readonly ScoreScopeMatch[]): Map<stri
       const arr = out.get(g.groupId) ?? [];
       if (!arr.includes(m.component)) arr.push(m.component);
       out.set(g.groupId, arr);
+    }
+  }
+  return out;
+}
+
+/**
+ * groupId → the cut-off(s) its suggestion was made at, ascending and distinct — what the queue marker states. One list's
+ * concepts reaching a group give one; concepts from lists with different cut-offs give each. A Gate 4 match carries
+ * none (it is not cut by a cut-off), so its groups are absent.
+ */
+export function suggestionCutoffsByGroup(matches: readonly ScoreScopeMatch[]): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  for (const m of matches) {
+    if (m.cutoff == null) continue;
+    for (const g of offeredGroups(m)) {
+      const arr = out.get(g.groupId) ?? [];
+      if (!arr.includes(m.cutoff)) arr.push(m.cutoff);
+      out.set(g.groupId, arr.sort((a, b) => a - b));
     }
   }
   return out;

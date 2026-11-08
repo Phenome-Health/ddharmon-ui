@@ -67,7 +67,7 @@ export function ScoreSuggestionCards({
   /** A Preview run: the free search alone — no scope, and no later gate named. */
   preview?: boolean;
   cards: SuggestionCard[];
-  /** The cut-off the cards are split at: the reviewer's (`gate1_score_cutoff`), else the payload's own. */
+  /** The cut-off the cards are split at: THIS list's (`gate1_score_cutoff` for the list), else the payload's own. */
   threshold: number;
   groupsById?: Map<string, NamedGroup>;
   /** The run's cohorts (Gate 1's roster) — the reached-by-search table's columns. Absent → the groups' own cohorts. */
@@ -117,9 +117,10 @@ export function ScoreSuggestionCards({
             {closest.length > 0 && (
               <> Closest: {closest.map((c) => `${c.item} ${c.best.toFixed(2)}`).join(", ")}.</>
             )}{" "}
+            {/* The list's own cut-off sits just above this, in the same fold (2026-11-08: one per list). */}
             {preview
-              ? "Lower the cut-off below, or open a concept to see its closest groups."
-              : "Lower the cut-off below, or open a concept to see its closest groups and tick them yourself."}
+              ? "Lower this list’s cut-off above, or open a concept to see its closest groups."
+              : "Lower this list’s cut-off above, or open a concept to see its closest groups and tick them yourself."}
           </p>
         )}
         <Collapsible data-testid="search-coverage" className="border-t border-rule-quiet-on-raised pt-2">
@@ -252,23 +253,10 @@ export function ScoreSuggestionCards({
 }
 
 /**
- * How a Spotlight suggestion is made, and the ONE cut-off every list's suggestions are split at — said once for the
- * panel, above the lists, rather than once per list. The cut-off stays in view outside the fold (review round 7: "outside
- * the collapsible zone"): it is a control, and folding the explanation must not fold it away.
+ * How a Spotlight suggestion is made — said once for the panel, above the lists, rather than once per list. It carries
+ * NO cut-off (2026-11-08, "implement per list cutoff"): each list has its own, in its own fold (`ScoreCutoffLine`).
  */
-export function ScoreSuggestionGuide({
-  preview = false,
-  threshold,
-  defaultThreshold,
-  onThresholdChange,
-}: {
-  preview?: boolean;
-  threshold: number;
-  /** The payload's own cut-off (core's calibrated value) — what reset returns to. */
-  defaultThreshold?: number;
-  /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent → the cut-off is shown, not editable. */
-  onThresholdChange?: (next: number | null) => void;
-}) {
+export function ScoreSuggestionGuide({ preview = false }: { preview?: boolean }) {
   return (
     <div data-testid="score-suggestion-guide" className="flex flex-col gap-2">
       {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
@@ -321,40 +309,70 @@ export function ScoreSuggestionGuide({
               card, so a card says it with its dashed marker alone. */}
           <li>
             <span className="font-semibold text-on-raised">Nothing suggested</span> (a dashed circle). This search
-            reached no group at the cut-off — not a finding about your cohorts.
+            reached no group at its list&rsquo;s cut-off — not a finding about your cohorts.
             {preview ? "" : <> Gate 4&rsquo;s match decides.</>} Open the concept to check the groups under the cut-off.
           </li>
         </ul>
         </CollapsibleContent>
       </Collapsible>
-      {/* THE CUT-OFF STAYS IN VIEW (review round 7: "outside the collapsible zone"): it is a control, and it governs
-          the table and the cards below, so folding the explanation must not fold it away. */}
-      <p data-testid="score-cutoff-line" className="px-1 text-xs text-on-raised-muted">
-        Every group scoring{" "}
-        {onThresholdChange ? (
-          <CutoffInput value={threshold} onCommit={onThresholdChange} />
-        ) : (
-          <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span>
-        )}{" "}
-        {/* A Preview has no scope for a suggestion to start in, and no checks to win (08-31). */}
-        {preview
-          ? "or higher is suggested and marked in the queue — one cut-off for every concept."
-          : "or higher starts in scope, marked as a suggestion in the queue — one cut-off for every concept. Your checks always win."}
-        {onThresholdChange && defaultThreshold != null && Math.abs(threshold - defaultThreshold) > 1e-9 && (
-          <>
-            {" "}
-            <button
-              type="button"
-              data-testid="score-cutoff-reset"
-              onClick={() => onThresholdChange(null)}
-              className="font-semibold text-link-on-raised underline underline-offset-2"
-            >
-              reset to {defaultThreshold.toFixed(2)}
-            </button>
-          </>
-        )}
-      </p>
     </div>
+  );
+}
+
+/**
+ * ONE SPOTLIGHT LIST'S CUT-OFF (2026-11-08, Bhargav on the Lavish review: "implement per list cutoff"), at the head of
+ * that list's fold, above its coverage table and its concepts — the things it splits. It is the list's alone: its
+ * concepts' cards, coverage dots and headline, and the queue tags and scope it seeds, all split at it; another list's
+ * concepts are split at theirs.
+ *
+ * Reset deletes THIS list's row only, so it is offered only when the list has a row of its own that differs from what
+ * the list would read without it — the run-wide cut-off a run may already hold, else core's default — and it names
+ * that value. Absent `onChange` (a passed gate) → the value is shown, not editable.
+ */
+export function ScoreCutoffLine({
+  preview = false,
+  listName,
+  value,
+  resetTo,
+  onChange,
+}: {
+  preview?: boolean;
+  /** The list it belongs to — named to assistive tech, so two lists' fields are told apart. */
+  listName: string;
+  value: number;
+  /** What reset returns this list to, when it has a row of its own to delete; `null` → nothing to reset. */
+  resetTo: number | null;
+  /** Set (a number) or reset (`null`) this list's cut-off. Absent → read-only. */
+  onChange?: (next: number | null) => void;
+}) {
+  return (
+    <p data-testid="score-cutoff-line" className="text-xs text-on-raised-muted">
+      Every group scoring{" "}
+      {onChange ? (
+        <CutoffInput value={value} onCommit={onChange} label={`Suggestion cut-off for ${listName}`} />
+      ) : (
+        <span data-testid="score-cutoff-value" className="font-mono text-on-raised">
+          {value.toFixed(2)}
+        </span>
+      )}{" "}
+      {/* A Preview has no scope for a suggestion to start in, and no checks to win (08-31). */}
+      {preview
+        ? "or higher for this list’s concepts is suggested and marked in the queue."
+        : "or higher for this list’s concepts starts in scope, marked as a suggestion in the queue. Your checks always win."}
+      {onChange && resetTo != null && Math.abs(value - resetTo) > 1e-9 && (
+        <>
+          {" "}
+          <button
+            type="button"
+            data-testid="score-cutoff-reset"
+            onClick={() => onChange(null)}
+            className="font-semibold text-link-on-raised underline underline-offset-2"
+          >
+            reset to {resetTo.toFixed(2)}
+          </button>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -368,7 +386,15 @@ export function ScoreSuggestionGuide({
  * outside [0.30, 0.95] is marked invalid and never applied; leaving the field then puts the applied value back, so the
  * field never shows a cut-off the screen is not using.
  */
-function CutoffInput({ value, onCommit }: { value: number; onCommit: (next: number) => void }) {
+function CutoffInput({
+  value,
+  onCommit,
+  label = "Suggestion cut-off",
+}: {
+  value: number;
+  onCommit: (next: number) => void;
+  label?: string;
+}) {
   const [draft, setDraft] = useState(value.toFixed(2));
   const [invalid, setInvalid] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -395,7 +421,7 @@ function CutoffInput({ value, onCommit }: { value: number; onCommit: (next: numb
     <input
       type="number"
       data-testid="score-cutoff-input"
-      aria-label="Suggestion cut-off"
+      aria-label={label}
       aria-invalid={invalid}
       title={`The similarity a group must reach to be suggested — between ${SCORE_CUTOFF_MIN.toFixed(2)} and ${SCORE_CUTOFF_MAX.toFixed(2)}.`}
       min={SCORE_CUTOFF_MIN}

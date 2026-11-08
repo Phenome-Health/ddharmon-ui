@@ -194,8 +194,12 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await expect(info).toContainText("$0");
     await expect(info).toContainText(/not a judgement/i);
     await expect(info).toContainText(/membership, not a match/i);
-    // The cut-off is the reviewer's to change (round 6), in its own always-visible line below the strip (round 7).
-    await expect(panel.getByTestId("score-cutoff-line").getByTestId("score-cutoff-input")).toHaveValue(TAU.toFixed(2));
+    // The cut-off is the reviewer's to change (round 6), in its own always-visible line outside the strip's fold (round
+    // 7) — since 2026-11-08 one per list, in that list's fold ("implement per list cutoff"), never in the strip.
+    await expect(info.getByTestId("score-cutoff-input")).toHaveCount(0);
+    await expect(
+      panel.getByTestId("spotlight-list").getByTestId("score-cutoff-line").getByTestId("score-cutoff-input"),
+    ).toHaveValue(TAU.toFixed(2));
   });
 
   test("@gate1 opened, a card lists every group reached best-first, the cut-off drawn between, the best match by its question", async ({
