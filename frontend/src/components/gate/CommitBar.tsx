@@ -20,6 +20,13 @@ import { formatUsd } from "@/lib/estimate";
  * single elevation token (UI-SPEC §4).
  */
 
+/**
+ * The bar's two surfaces, shared with `PreviewEndBar` (08-31) so the end of a Preview sits exactly where, and looks
+ * exactly as, the commit bar it stands in for — one definition, so the two cannot drift apart.
+ */
+export const COMMIT_BAR_SURFACE = "flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card";
+export const COMMIT_BAR_PIN = "sticky bottom-0 z-10 -mb-6 -mt-3 bg-surface-field pb-3 pt-3";
+
 export interface CommitBarProps {
   /** The button's words, without the amount — e.g. `Continue to Gate 2`. */
   action: string;
@@ -101,7 +108,7 @@ export function CommitBar({
       data-total={total === undefined || done ? "" : String(total)}
       data-first-charge={String(firstCharge)}
       className={cn(
-        embedded ? "flex flex-col gap-3" : "flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
+        embedded ? "flex flex-col gap-3" : COMMIT_BAR_SURFACE,
         className,
       )}
     >
@@ -170,7 +177,7 @@ export function CommitBar({
     // `-mb-6` gives back the page's own bottom padding (AppShell's `py-6`), so the bar RESTS where it PINS: without it
     // the pinned bar sat 24px lower mid-page than at the end, and the pinned queue — sized to the end of the page —
     // stopped 40px short of the bar instead of the 16px every other panel keeps (review round 6).
-    <div data-testid="commit-bar-pin" className="sticky bottom-0 z-10 -mb-6 -mt-3 bg-surface-field pb-3 pt-3">
+    <div data-testid="commit-bar-pin" className={COMMIT_BAR_PIN}>
       {bar}
     </div>
   );

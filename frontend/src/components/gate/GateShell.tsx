@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult } from "@/types";
 import { StopRunAction } from "@/components/stop-run-action";
 import { GATE_LABELS, GateRail, type GateRailItem } from "@/components/gate/GateRail";
-import { HowToPanel } from "@/components/gate/HowToPanel";
+import { HowToPanel, type HowToStep } from "@/components/gate/HowToPanel";
 import { RunProgress } from "@/components/gate/RunProgress";
 import { RunFailedNotice } from "@/components/gate/RunFailedNotice";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
@@ -77,6 +77,11 @@ export interface GateShellProps {
    * line. Omit it where another element on the screen already says it.
    */
   subhead?: string;
+  /**
+   * The how-to panel's steps, when this run is not the kind the gate's own list describes — a Preview's Gate 1
+   * (08-31). Omit it and the panel shows `HOW_TO[gate]`.
+   */
+  howTo?: HowToStep[];
   /**
    * The five rail columns, for a shell with NO run behind it. With a `job` the shell derives the rail itself
    * (`runRailFor`), because the rail is the RUN's state — what it has spent and how far it has got — and a page
@@ -179,6 +184,7 @@ export function GateShell({
   gate,
   title,
   subhead,
+  howTo,
   rail,
   runName,
   costSoFar = 0,
@@ -325,6 +331,7 @@ export function GateShell({
       <HowToPanel
         gate={gate}
         lead={subhead}
+        steps={howTo}
         note={
           // SAID ONCE (review round 3, Bhargav: "Remove the box from each concept; say it once in the Gate 2 and Gate 3
           // 'How to use this screen' panels"). It used to be a tile on every concept's detail pane. Still stated,

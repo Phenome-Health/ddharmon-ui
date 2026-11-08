@@ -102,6 +102,24 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
 };
 
 /**
+ * GATE 1 ON A PREVIEW RUN (08-31) — its own list, because the paid one would be a confident wrong map there.
+ *
+ * A Preview calls no model: its rows are the clustering's groups, labelled by keywords, and nothing is sent on to Gate
+ * 2. So there is no box to tick, no Continue and no charge — no step is `charge` — and the run ENDS here, in the
+ * export. What it keeps is the paid list's own verbs: search, open, drag, rename. Held to the same orientation budget
+ * (gate1-preview.spec: at most six steps, under 700 characters with the lead).
+ */
+export const HOW_TO_GATE1_PREVIEW: HowToStep[] = [
+  { text: "Search for a concept, or list the items you care about in Concept Spotlight to see which groups hold them." },
+  { text: "Open a group to read its variables side by side." },
+  {
+    text: "Drag a variable onto another group, or onto In no group to pull it out; without a mouse, use the × by its handle. Moves save as you go.",
+  },
+  { text: "Rename a group to note what it is, or make a New group of your own." },
+  { text: "Download the groups as a CSV. A Preview stops here." },
+];
+
+/**
  * OPEN BY DEFAULT (2026-10-06, Bhargav). The masthead's subhead now arrives as `lead`, so this panel is the
  * screen's one statement of what it is for and what to do; folding it away by default hid exactly the text a
  * first-time reviewer needs. It can still be folded for the visit.
@@ -109,11 +127,17 @@ export const HOW_TO: Record<GatePosition, HowToStep[]> = {
 export function HowToPanel({
   gate,
   lead,
+  steps: ownSteps,
   note,
   className,
 }: {
   gate: GatePosition;
   lead?: string;
+  /**
+   * The screen's own steps, when its run is not the kind `HOW_TO[gate]` describes — a Preview's Gate 1 (08-31).
+   * Absent → the gate's list, so every other screen renders exactly as before.
+   */
+  steps?: HowToStep[];
   /**
    * A fact about THIS run that holds for every row on the screen, said once under the steps rather than on every
    * row's detail pane (review round 3) — e.g. that the run left the concept-match check off.
@@ -122,7 +146,7 @@ export function HowToPanel({
   className?: string;
 }) {
   const [open, setOpen] = useState(true);
-  const steps = HOW_TO[gate];
+  const steps = ownSteps ?? HOW_TO[gate];
   return (
     <Collapsible
       open={open}

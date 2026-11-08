@@ -70,3 +70,46 @@ export function asOwnedRun(run: JobResult): JobResult {
   run.config = rest as JobResult["config"];
   return run;
 }
+
+/**
+ * The same run, as a PREVIEW run would deliver it (08-31): no model ran, so its Gate 1 rows are the clustering's own
+ * groups, labelled by keywords — never named, split or judged — and the run COMPLETED rather than parked.
+ *
+ * Built from the real fixture, visibly, because no preview fixture is committed: the GROUPING is the real run's (its
+ * split groups stand in for clusters — the screen cannot tell the difference), and everything a Preview does not
+ * produce is stripped from it. `unassignedFields` is every variable, which is what the backend sends for a run with
+ * no records; the screen must subtract the grouped ones itself. The run stays the shared demo, so edits are held in
+ * the tab (a static build has no server to write them to).
+ */
+export function previewRun(run: JobResult): JobResult {
+  run.status = "complete";
+  run.phase = "complete";
+  run.gatePosition = null;
+  run.config = { ...(run.config ?? {}), run_mode: "preview" } as JobResult["config"];
+  const result = run.result!;
+  result.mode = "preview";
+  result.records = [];
+  delete result.gatePosition;
+  result.conceptGroups = (result.conceptGroups ?? []).map((g) => {
+    const { readjudicatedFrom: _parent, ...rest } = g;
+    return {
+      ...rest,
+      concept: `${g.concept.split(" ").slice(0, 2).join(" ").toLowerCase()} · keywords`,
+      conceptIsGenerated: false,
+      conceptSource: "keywords",
+      idealCde: "",
+      coherence: "not_judged",
+      coherenceSummary: "",
+      coherenceAxis: "",
+      coherenceDistinctValues: [],
+      coherenceOutliers: [],
+      incoherent: false,
+      matrixSuspect: false,
+    };
+  });
+  result.unassignedFields = Object.entries(result.fieldIndex ?? {}).map(([key, detail]) => {
+    const [cohort, ...rest] = key.split(":");
+    return { cohort, variable: rest.join(":"), text: detail.text ?? "" };
+  });
+  return run;
+}
