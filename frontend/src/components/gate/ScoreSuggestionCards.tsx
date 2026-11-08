@@ -126,7 +126,7 @@ export function ScoreSuggestionCards({
         <Collapsible data-testid="search-coverage" className="border-t border-rule-quiet-on-raised pt-2">
           <CollapsibleTrigger data-testid="search-coverage-toggle" className={disclosureRow("raised", "group")}>
             <DisclosureLabel ground="raised">Per-cohort coverage · reached by search</DisclosureLabel>
-            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+            <DisclosureChevron ground="raised" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2">
             <div className="overflow-x-auto">
@@ -266,7 +266,7 @@ export function ScoreSuggestionGuide({ preview = false }: { preview?: boolean })
           className={disclosureRow("raised", "group")}
         >
           <DisclosureLabel ground="raised">Concept Spotlight · how suggestions work</DisclosureLabel>
-          <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          <DisclosureChevron ground="raised" />
         </CollapsibleTrigger>
         <CollapsibleContent className="mt-1.5">
         <ul className="flex flex-col gap-1 text-on-raised-muted">
@@ -726,7 +726,7 @@ function SuggestionRow({
                 <span className="h-px flex-1 bg-border" />
                 {nBelow} group{nBelow === 1 ? "" : "s"} below the cut-off {threshold.toFixed(2)}
                 <span className="h-px flex-1 bg-border" />
-                <DisclosureChevron ground="raised" open={belowOpen} className="h-3.5 w-3.5" />
+                <DisclosureChevron ground="raised" open={belowOpen} size="sm" />
               </button>
             )}
             {belowOpen &&

@@ -10,19 +10,7 @@
 // Metadata-only: the output is a recipe the analyst runs on their own rows. ddharmon never computes it.
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "wouter";
-import {
-  AlertTriangle,
-  ArrowLeft,
-  CheckCircle2,
-  ChevronDown,
-  CircleDashed,
-  Flashlight,
-  FileText,
-  Link2,
-  Loader2,
-  Upload,
-  XCircle,
-} from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, CircleDashed, Flashlight, FileText, Link2, Loader2, Upload, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -607,7 +595,7 @@ export function ScoreCoverageCard({
             {foldLabel}
             {hasDomains && ` · by ${coverageDomains.length} domains`}
           </DisclosureLabel>
-          <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          <DisclosureChevron ground="raised" />
         </CollapsibleTrigger>
         <CollapsibleContent className="mt-2">{body}</CollapsibleContent>
       </Collapsible>
@@ -627,7 +615,7 @@ export function ScoreCoverageCard({
                 </span>
               )}
             </CardTitle>
-            <ChevronDown className="h-4 w-4 shrink-0 text-on-raised-muted transition-transform group-data-[state=open]:rotate-180" />
+            <DisclosureChevron ground="raised" />
           </CollapsibleTrigger>
         </CardHeader>
         <CollapsibleContent>
@@ -733,7 +721,7 @@ export function ScoreComponentsCard({
         <Collapsible defaultOpen data-testid="score-builder-info" className={FOLD_BOX}>
           <CollapsibleTrigger data-testid="score-builder-info-toggle" className={disclosureRow("raised", "group")}>
             <DisclosureLabel ground="raised">Concept Spotlight · how matching works</DisclosureLabel>
-            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+            <DisclosureChevron ground="raised" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-1.5">
           <ul className="flex flex-col gap-1 text-on-raised-muted">
@@ -792,7 +780,7 @@ export function ScoreComponentsCard({
             <DisclosureLabel ground="raised">
               Items · {nFound}/{spec.matches.length} found
             </DisclosureLabel>
-            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+            <DisclosureChevron ground="raised" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2 space-y-2">
             {spec.matches.map(renderRow)}
@@ -1066,10 +1054,7 @@ function MatchRow({
             </span>
           </span>
         )}
-        <ChevronDown
-          aria-hidden="true"
-          className={cn("h-4 w-4 shrink-0 text-on-raised-muted transition-transform", open && "rotate-180")}
-        />
+        <DisclosureChevron ground="raised" open={open} />
       </button>
 
       {/* ALWAYS-VISIBLE summary (moved out of the dropdown per review): review flag, source coding, spread. */}

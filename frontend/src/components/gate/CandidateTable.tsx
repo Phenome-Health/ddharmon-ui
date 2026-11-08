@@ -1,5 +1,6 @@
+import { DisclosureChevron } from "@/components/ui/disclosure";
 import { useState } from "react";
-import { ExternalLink, Check, ChevronRight } from "lucide-react";
+import { ExternalLink, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { candidateLabel, definitionWithoutName } from "@/lib/cde-identity";
@@ -187,10 +188,7 @@ export function CandidateTable({
                 </span>
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5">
-                    <ChevronRight
-                      aria-hidden="true"
-                      className={cn("h-3.5 w-3.5 shrink-0 text-on-raised-muted transition-transform", open && "rotate-90")}
-                    />
+                    <DisclosureChevron ground="raised" open={open} size="sm" />
                     {/* The catalog NAME, with its tinyId beside it when the name repeats (08-28 F13) — never core's minted
                         `Age__2` key, which is unique but says nothing about which element the row is. */}
                     <span data-testid="candidate-name" className="truncate text-sm font-semibold text-on-raised">

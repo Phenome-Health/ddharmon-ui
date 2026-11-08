@@ -287,7 +287,7 @@ export function Gate4ScorePanel({
                     The recipe · {spec.derivation.length} {spec.derivation.length === 1 ? "step" : "steps"} — you run it;
                     ddharmon never computes the score
                   </DisclosureLabel>
-                  <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+                  <DisclosureChevron ground="raised" />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-2">
                 <ol data-authored="core" className="flex flex-col gap-2">

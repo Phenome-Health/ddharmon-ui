@@ -1,18 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import {
-  ChevronDown,
-  ChevronRight,
-  Grid3x3,
-  Pencil,
-  Plus,
-  Quote,
-  Scissors,
-  Search,
-  Trash2,
-  Undo2,
-  UserRound,
-} from "lucide-react";
+import { ChevronRight, Grid3x3, Pencil, Plus, Quote, Scissors, Search, Trash2, Undo2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -675,10 +663,7 @@ function DestinationEntry({
         <span className="flex items-center gap-1 text-xs text-on-inset-muted">
           {count} {count === 1 ? "variable" : "variables"}
           {label.source === "judge" && " · judge's summary"}
-          <ChevronDown
-            aria-hidden="true"
-            className={cn("h-3 w-3", open && "rotate-180")}
-          />
+          <DisclosureChevron ground="raised" open={open} size="sm" />
         </span>
       </button>
       {open && (
@@ -1053,15 +1038,9 @@ function UnassignedPool({
             <CollapsibleTrigger
               // An icon-only control names the ACTION AND ITS OBJECT, exactly as a ledger row's does.
               aria-label={`${open ? "Collapse" : "Expand"} the variables in no group`}
-              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-on-raised-muted"
+              className="ml-auto flex shrink-0 items-center justify-center rounded-full"
             >
-              <ChevronDown
-                aria-hidden="true"
-                className={cn(
-                  "h-4 w-4 transition-transform",
-                  open && "rotate-180",
-                )}
-              />
+              <DisclosureChevron ground="raised" open={open} />
             </CollapsibleTrigger>
           </div>
 
@@ -2318,7 +2297,7 @@ function GroupDetail({
                 membership changed — regenerated at Gate 2
               </span>
             )}
-            <DisclosureChevron ground="raised" className="ml-auto group-open:rotate-180" />
+            <DisclosureChevron ground="raised" className="ml-auto" />
           </summary>
           {stale && (
             <p className="px-4 pt-2 text-xs leading-relaxed text-on-raised-muted">

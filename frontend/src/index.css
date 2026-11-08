@@ -944,3 +944,52 @@
 @media (prefers-reduced-motion: reduce) {
   .ddh-anchor-pulse, .ddh-ring-spin { animation: none !important; }
 }
+
+
+/*
+ * THE DROPDOWN ARROW — option B (Bhargav, Lavish 2026-11-08). One fixed slot per disclosure arrow
+ * (`DisclosureChevron`): soft accent fill + accent ink while CLOSED, no fill + muted ink (turned up) while OPEN; the
+ * slot never resizes, so the arrow never moves. State comes from `data-open` when the caller holds it, else from the
+ * trigger's `aria-expanded` or a native `<details open>`. Unlayered on purpose: it must beat the ground's muted-ink
+ * utility class on the closed state.
+ */
+[data-disclosure-arrow] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  transition: background-color 200ms ease-out, color 200ms ease-out;
+}
+[data-disclosure-arrow][data-size="sm"] { width: 1.25rem; height: 1.25rem; }
+[data-disclosure-arrow] > svg { width: 1rem; height: 1rem; transition: rotate 200ms ease-out; }
+[data-disclosure-arrow][data-size="sm"] > svg { width: 0.875rem; height: 0.875rem; }
+
+[data-disclosure-arrow][data-open="false"],
+[aria-expanded="false"] [data-disclosure-arrow]:not([data-open]),
+details:not([open]) > summary [data-disclosure-arrow]:not([data-open]) {
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+[data-disclosure-arrow][data-open="false"] > svg,
+[aria-expanded="false"] [data-disclosure-arrow]:not([data-open]) > svg,
+details:not([open]) > summary [data-disclosure-arrow]:not([data-open]) > svg {
+  stroke-width: 2.5;
+}
+button:hover [data-disclosure-arrow][data-open="false"],
+[role="button"]:hover [data-disclosure-arrow][data-open="false"],
+[aria-expanded="false"]:hover [data-disclosure-arrow]:not([data-open]),
+details:not([open]) > summary:hover [data-disclosure-arrow]:not([data-open]) {
+  background-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+[data-disclosure-arrow][data-open="true"] > svg,
+[aria-expanded="true"] [data-disclosure-arrow]:not([data-open]) > svg,
+details[open] > summary [data-disclosure-arrow]:not([data-open]) > svg {
+  rotate: 180deg;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-disclosure-arrow],
+  [data-disclosure-arrow] > svg { transition: none; }
+}

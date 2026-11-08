@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, Flashlight, FileText, Loader2 } from "lucide-react";
+import { Flashlight, FileText, Loader2 } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -917,10 +917,7 @@ function SpotlightList({
                   className="flex items-center gap-1 text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
                 >
                   {textOpen ? "Hide what was entered" : "Show what was entered"}
-                  <ChevronDown
-                    aria-hidden="true"
-                    className={cn("h-3.5 w-3.5 shrink-0 transition-transform", textOpen && "rotate-180")}
-                  />
+                  <DisclosureChevron ground="raised" open={textOpen} size="sm" />
                 </button>
               ) : (
                 <span className="text-xs font-semibold text-on-raised">What was entered</span>
@@ -997,13 +994,7 @@ function ScoreComponentRow({
           <span className="text-sm font-semibold text-on-raised">
             {evidence.name}
           </span>
-          <ChevronDown
-            aria-hidden="true"
-            className={cn(
-              "h-4 w-4 shrink-0 text-on-raised-muted transition-transform",
-              open && "rotate-180",
-            )}
-          />
+          <DisclosureChevron ground="raised" open={open} />
         </button>
       ) : (
         <span className="text-sm font-semibold text-on-raised">

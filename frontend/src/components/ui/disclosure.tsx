@@ -69,22 +69,39 @@ export function DisclosureLabel({
 }
 
 /**
- * The trailing chevron. `open` drives it for a controlled fold; a native `<details>` passes
- * `className="group-open:rotate-180"` instead and leaves `open` unset.
+ * THE DROPDOWN ARROW (option B — Bhargav, Lavish 2026-11-08: "it's easy to scroll past this because it's not obvious
+ * that it's expandable. The drop down arrow should be highlighted when collapsed … throughout the UI"; then "ensure
+ * that arrows align vertically whether collapsed or expanded").
+ *
+ * ONE FIXED SLOT (24px, or 20px `sm` for a toggle inside a line of text): CLOSED it is filled with a soft accent and the
+ * arrow is accent ink; OPEN it has no fill and the arrow is the ground's muted ink, turned up. The slot never changes
+ * size, so the arrow's centre never moves between the two states.
+ *
+ * STATE: pass `open` when the caller holds it. Otherwise the slot reads it from its trigger — `aria-expanded` (every
+ * Radix trigger and our own toggles), or a native `<details open>` — in `index.css` (`[data-disclosure-arrow]`), so an
+ * uncontrolled Collapsible needs no wiring. Never add a `rotate-180` class: the turn is the stylesheet's, and a second
+ * one would turn the arrow back down.
  */
 export function DisclosureChevron({
   ground,
   open,
+  size = "md",
   className,
 }: {
   ground: DisclosureGround;
   open?: boolean;
+  size?: "md" | "sm";
   className?: string;
 }) {
   return (
-    <ChevronDown
+    <span
       aria-hidden="true"
-      className={cn("h-4 w-4 shrink-0 transition-transform duration-200", MUTED[ground], open && "rotate-180", className)}
-    />
+      data-disclosure-arrow=""
+      data-size={size}
+      data-open={open === undefined ? undefined : String(open)}
+      className={cn(MUTED[ground], className)}
+    >
+      <ChevronDown />
+    </span>
   );
 }

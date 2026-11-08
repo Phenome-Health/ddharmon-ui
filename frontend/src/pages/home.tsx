@@ -1,10 +1,11 @@
+import { DisclosureChevron } from "@/components/ui/disclosure";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Upload, X } from "lucide-react";
+import { Eye, EyeOff, Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -352,7 +353,7 @@ export default function HomePage() {
                 onClick={() => toggleAdvanced(idx)}
                 className="flex items-center gap-1 text-xs font-semibold text-on-raised-muted hover:text-accent-on-raised"
               >
-                {d.showAdvanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                <DisclosureChevron ground="raised" open={d.showAdvanced} size="sm" />
                 {d.showAdvanced ? "Hide" : "Show"} advanced columns ({ADVANCED_ROLES.length})
               </button>
               {d.showAdvanced && (

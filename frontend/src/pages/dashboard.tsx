@@ -1,24 +1,8 @@
+import { DisclosureChevron } from "@/components/ui/disclosure";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  Ban,
-  Bug,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  CircleStop,
-  Flashlight,
-  Download,
-  FileCode,
-  Info,
-  Loader2,
-  Pencil,
-  X,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Ban, Bug, Check, ChevronRight, CircleStop, Flashlight, Download, FileCode, Info, Loader2, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -974,7 +958,7 @@ function RecordRows({
     <>
       <TableRow className="cursor-pointer" onClick={toggle}>
         <TableCell className="align-top text-on-raised-muted">
-          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          <DisclosureChevron ground="raised" open={open} />
         </TableCell>
         <TableCell className="max-w-xs align-top">
           <div className="font-semibold text-on-raised">{conceptLabel(r)}</div>
