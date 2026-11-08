@@ -273,22 +273,24 @@ test.describe("the score panel — review round 7", () => {
     expect(fits).toBe(true);
   });
 
-  test("@gate1 the list's concepts → groups is ONE outlined fold under the list, the coverage table first inside it, CLOSED", async ({
+  test("@gate1 each list is ONE outlined fold headed by its name; the coverage table first inside it, CLOSED", async ({
     page,
   }) => {
     // Review round 9 (Bhargav): "have this collapsed by default — the 'how suggestions work' refers to the below panel,
     // so better for the user to see that first and expand the coverage table only if they want." Bhargav, 2026-11-08:
     // each list's concepts → groups "should appear under the relevant list … and self contained into a dropdown" — so
-    // the table moved INSIDE that one fold (a top-border divider, no outline of its own), and the how-it-works note and
-    // the cut-off moved OUT of it, above the lists.
+    // the table moved INSIDE that one fold (a top-border divider, no outline of its own), and the how-it-works note
+    // moved OUT of it, above the lists. Round 2 (2026-11-08): "the block should be collapsible at this level" — the
+    // LIST is the fold, headed by its name and its counts; no second fold inside it.
     const panel = await openOwned(page);
     const list = panel.locator(`[data-testid='spotlight-list'][data-score='${SCORE}']`);
     await expect(list.getByTestId("spotlight-list-name")).toHaveText(SCORE);
     const card = list.getByTestId("score-suggestions");
-    const fold = card.getByTestId("score-suggestion-components");
-    await expect(fold).toHaveCount(1);
-    await expect(fold.getByTestId("score-suggestion-components-toggle")).toContainText("Concepts → this run’s groups");
-    await expect(fold.getByTestId("score-suggestion-components-toggle")).toContainText("2/3 with a suggestion · 3 groups suggested");
+    const fold = list;
+    await expect(list.getByTestId("spotlight-list-toggle")).toContainText(SCORE);
+    await expect(list.getByTestId("spotlight-list-toggle")).toContainText("3 concepts · 2/3 with a suggestion · 3 groups suggested");
+    // No second fold inside the list (a dropdown in a dropdown).
+    await expect(list.getByTestId("score-suggestion-components")).toHaveCount(0);
     // The guide is the panel's, above the list — not inside the fold.
     await expect(fold.getByTestId("score-suggestion-info")).toHaveCount(0);
     await expect(fold.getByTestId("score-cutoff-line")).toHaveCount(0);
@@ -304,7 +306,10 @@ test.describe("the score panel — review round 7", () => {
         const s = getComputedStyle(el);
         return { top: [s.borderTopStyle, s.borderTopWidth], rest: [s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth] };
       });
-    const outer = await borders("score-suggestion-components");
+    const outer = await list.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { top: [s.borderTopStyle, s.borderTopWidth], rest: [s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth] };
+    });
     expect(outer.top[0]).toBe("solid");
     expect(outer.top[1]).not.toBe("0px");
     for (const w of outer.rest) expect(w).not.toBe("0px");
@@ -319,7 +324,7 @@ test.describe("the score panel — review round 7", () => {
     expect(order[0]).toBe("search-coverage");
     expect(order.slice(1)).toEqual(DECLARED.map(() => "score-suggestion"));
     // The list's fold starts OPEN; the coverage table inside it starts CLOSED, and opens and closes on its own.
-    const listToggle = card.getByTestId("score-suggestion-components-toggle");
+    const listToggle = list.getByTestId("spotlight-list-toggle");
     const tableToggle = card.getByTestId("search-coverage-toggle");
     await expect(listToggle).toHaveAttribute("aria-expanded", "true");
     await expect(tableToggle).toHaveAttribute("aria-expanded", "false");
@@ -332,8 +337,8 @@ test.describe("the score panel — review round 7", () => {
     // Folding the list folds everything in it — the table with the cards.
     await listToggle.click();
     await expect(listToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(card.getByTestId("search-coverage")).toHaveCount(0);
-    await expect(card.getByTestId("score-suggestion")).toHaveCount(0);
+    await expect(list.getByTestId("search-coverage")).toHaveCount(0);
+    await expect(list.getByTestId("score-suggestion")).toHaveCount(0);
   });
 
   test("@gate1 a concept in the table links to its card: the card opens, and it comes into view", async ({ page }) => {
@@ -342,7 +347,7 @@ test.describe("the score panel — review round 7", () => {
     await openCoverage(panel); // closed by default since round 9
     // The old first step — fold the list, then press the link — cannot be reached any more: since 2026-11-08 the table
     // sits INSIDE the list's fold, so folding the list folds the table (and its links) away with it.
-    await expect(card.getByTestId("score-suggestion-components-toggle")).toHaveAttribute("aria-expanded", "true");
+    await expect(panel.getByTestId("spotlight-list-toggle")).toHaveAttribute("aria-expanded", "true");
     const glaucomaExpand = card.locator("[data-testid='score-suggestion'][data-component='Glaucoma'] [data-testid='score-suggestion-expand']");
     await expect(glaucomaExpand).toHaveAttribute("aria-expanded", "false");
     await card
@@ -402,14 +407,14 @@ test.describe("several Spotlight lists", () => {
       [frailty, DECLARED],
       [ses, SES_CONCEPTS],
     ] as const) {
-      await expect(list.getByTestId("score-suggestion-components")).toHaveCount(1);
+      await expect(list.getByTestId("score-suggestions")).toHaveCount(1);
       expect(
         await list.locator("[data-testid='score-suggestion']").evaluateAll((els) => els.map((el) => el.getAttribute("data-component"))),
       ).toEqual([...own]);
       const table = await openCoverage(list);
       await expect(table.getByTestId("search-coverage-row")).toHaveText(own.map((c) => new RegExp(c)));
     }
-    await expect(ses.getByTestId("score-suggestion-components-toggle")).toContainText("1/1 with a suggestion · 1 group suggested");
+    await expect(ses.getByTestId("spotlight-list-toggle")).toContainText("1 concept · 1/1 with a suggestion · 1 group suggested");
     // Said once for the panel, above the first list — never once per list.
     await expect(panel.getByTestId("score-suggestion-guide")).toHaveCount(1);
     await expect(panel.getByTestId("score-suggestion-info")).toHaveCount(1);

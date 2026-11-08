@@ -313,9 +313,10 @@ test.describe("pasted source record on the static build", () => {
     await expect(record).toBeVisible();
     // Headed by the LIST'S NAME (Bhargav, 2026-11-08), not the old "What was entered — pasted text": the record is the
     // head of its own Spotlight list, which says which list it is.
-    await expect(record.getByTestId("spotlight-list-name")).toHaveText(SCORE);
-    await expect(record).not.toContainText(/What was entered — pasted text/i);
-    await expect(page.locator(`[data-testid='spotlight-list'][data-score='${SCORE}']`).locator(RECORD)).toHaveCount(1);
+    const list = page.locator(`[data-testid='spotlight-list'][data-score='${SCORE}']`);
+    await expect(list.getByTestId("spotlight-list-name")).toHaveText(SCORE);
+    await expect(list).not.toContainText(/What was entered — pasted text/i);
+    await expect(list.locator(RECORD)).toHaveCount(1);
     await expect(record).toContainText("4 lines"); // the blank line the reviewer left counts: it is what was entered
     expect(await exactText(page)).toBe(PASTED);
     // READ-ONLY: a record, not a second place to edit the declaration.
@@ -396,9 +397,9 @@ test.describe("pasted source record on the static build", () => {
     await expect(over).toHaveAttribute("data-long", "true");
     await over.locator(TOGGLE).click();
     expect(await scrolls(over)).toBe(true);
-    // Two records, so each names its score.
-    await expect(fits).toContainText(SCORE);
-    await expect(over).toContainText("SES index");
+    // Two records, each inside the list that names it.
+    await expect(page.locator(`[data-testid='spotlight-list'][data-score='${SCORE}']`).locator(RECORD)).toHaveCount(1);
+    await expect(page.locator("[data-testid='spotlight-list'][data-score='SES index']").locator(RECORD)).toHaveCount(1);
   });
 
   test("@gate1 a declaration made from a read document leaves no pasted record, and stores no document text", async ({

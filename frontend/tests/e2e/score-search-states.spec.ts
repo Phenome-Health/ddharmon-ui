@@ -140,8 +140,8 @@ test.describe("Gate 1 Concept Spotlight — search states (user test 2026-11-03)
     await expect(headline).toContainText(/open a concept to see its closest groups/);
     // Closest first, each with its best similarity.
     await expect(headline).toContainText(/sleep 0\.50.*glucose 0\.48.*activity 0\.39/);
-    // The near misses are one glance away: the list's concepts → groups fold is open.
-    await expect(page.getByTestId("score-suggestion-components")).toHaveAttribute("data-state", "open");
+    // The near misses are one glance away: the list's fold is open.
+    await expect(page.getByTestId("spotlight-list")).toHaveAttribute("data-state", "open");
   });
 
   test("@gate1 a concept that clears the cut-off means no such headline", async ({ page }) => {

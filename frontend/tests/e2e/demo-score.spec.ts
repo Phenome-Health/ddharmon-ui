@@ -327,10 +327,12 @@ test.describe("Concept Spotlight's words — concepts on Gate 1, items on Gate 4
     await page.getByTestId("score-panel-toggle").click();
     const panel = page.getByTestId("score-panel");
     await expect(panel.getByTestId("score-suggestions")).toBeVisible();
-    // The list's fold: "Concepts → this run's groups", where the card title used to read "Items → this run's groups".
-    const fold = panel.getByTestId("score-suggestion-components-toggle");
-    await expect(fold).toContainText("Concepts → this run’s groups");
-    expect(await ownCopy(fold)).not.toMatch(ITEM);
+    // The list's fold, headed by its name and counted in CONCEPTS (round 2, 2026-11-08: the list is the one fold); the
+    // card title that read "Items → this run's groups" is gone.
+    const fold = panel.getByTestId("spotlight-list-toggle");
+    await expect(fold).toContainText("49 concepts");
+    await expect(fold).toContainText("with a suggestion");
+    expect(withoutListName(await ownCopy(fold))).not.toMatch(ITEM);
     // The cards' column header and the coverage table's row header name a CONCEPT, not an item.
     await expect(panel.locator("[data-testid='score-suggestion-columns'] > span").first()).toHaveText("Concept");
     expect(await ownCopy(panel.getByTestId("score-suggestion-columns"))).not.toMatch(ITEM);

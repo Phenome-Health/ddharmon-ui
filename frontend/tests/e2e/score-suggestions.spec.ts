@@ -268,7 +268,7 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     const panel = page.locator("[data-testid='score-panel']");
     await expect(panel.getByTestId("score-suggestion-info")).toContainText(/free search/i);
     await expect(panel.getByTestId("score-suggestion-info")).toContainText(/verdict is Gate 4/i);
-    await expect(panel.getByTestId("score-suggestions")).toContainText(
+    await expect(panel.getByTestId("spotlight-list-toggle")).toContainText(
       `${new Set(reached().filter((x) => x.score >= TAU).map((x) => x.group.groupId)).size} groups suggested`,
     );
     await expect(page.locator("[data-testid='score-suggestions-note']")).toHaveCount(0);

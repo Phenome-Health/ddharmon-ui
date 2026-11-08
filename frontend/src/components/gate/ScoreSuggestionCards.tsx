@@ -16,6 +16,17 @@ import { cn } from "@/lib/utils";
 import type { FieldDetail } from "@/types";
 
 /**
+ * A list's suggestion counts, for its header: how many of its concepts the search suggested a group for, and how many
+ * distinct groups it suggested across them (round 6's count, now on the list that owns it).
+ */
+export function suggestionCounts(cards: SuggestionCard[]): { nWith: number; nGroups: number } {
+  return {
+    nWith: cards.filter((c) => c.nSuggested > 0).length,
+    nGroups: new Set(cards.flatMap((c) => c.groups.filter((g) => g.suggested).map((g) => g.groupId))).size,
+  };
+}
+
+/**
  * The score builder's per-component cards on GATE 1, drawn from the FREE search (08-28, option A).
  *
  * THE OLD LOOK, THE SCOPING HALF. `pages/composite.tsx`'s cards drew from the paid match, which decision Q5 moved to
@@ -70,8 +81,6 @@ export function ScoreSuggestionCards({
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
 }) {
   const nWith = cards.filter((c) => c.nSuggested > 0).length;
-  // Distinct groups suggested across the components — the count the panel's note used to say (round 6).
-  const nGroups = new Set(cards.flatMap((c) => c.groups.filter((g) => g.suggested).map((g) => g.groupId))).size;
   const coverage = searchCoverage(
     cards,
     cohorts ?? cohortRoster(null, [...(groupsById?.values() ?? [])].map((n) => n.group)),
@@ -88,180 +97,156 @@ export function ScoreSuggestionCards({
           .filter((c) => Number.isFinite(c.best))
           .sort((a, b) => b.best - a.best)
       : [];
-  // THE LIST IS CONTROLLED so the table's component links can open it (review round 7): a link into a folded list
-  // opens the list, then the card, then brings the card into view.
-  const [listOpen, setListOpen] = useState(true);
+  // A table link opens its card and brings it into view (review round 7). The table sits inside the list's own fold,
+  // so a link can only be clicked while the list is open.
   const [openRequest, setOpenRequest] = useState<{ component: string; n: number } | null>(null);
-  const goToCard = (component: string) => {
-    setListOpen(true);
-    setOpenRequest((cur) => ({ component, n: (cur?.n ?? 0) + 1 }));
-  };
+  const goToCard = (component: string) => setOpenRequest((cur) => ({ component, n: (cur?.n ?? 0) + 1 }));
   return (
-    <div data-testid="score-suggestions">
-      {/* ONE SELF-CONTAINED FOLD PER LIST (Bhargav, 2026-11-08): the list's concepts → this run's groups, under the list
-          it belongs to. Open until closed; a coverage-table link into a folded list opens it first (review round 7). */}
-      <Collapsible
-        open={listOpen}
-        onOpenChange={setListOpen}
-        data-testid="score-suggestion-components"
-        className={FOLD_BOX}
-      >
-        <CollapsibleTrigger
-          data-testid="score-suggestion-components-toggle"
-          className={disclosureRow("raised", "group")}
-        >
-          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-            <DisclosureLabel ground="raised">Concepts → this run&rsquo;s groups</DisclosureLabel>
-            <span className="text-xs text-on-raised-muted">
-              {nWith}/{cards.length} with a suggestion · {nGroups} group{nGroups === 1 ? "" : "s"} suggested
+    // NO FOLD OF ITS OWN (Bhargav, 2026-11-08 round 2: "the block should be collapsible at this level"): the LIST is
+    // the one fold (`SpotlightList` in DeclaredScorePanel), headed by its name and these counts — a fold inside it
+    // would be a dropdown inside a dropdown.
+    <div data-testid="score-suggestions" className="space-y-2">
+        {nWith === 0 && cards.length > 0 && (
+          <p data-testid="score-suggestions-none-cleared" className="max-w-[80ch] text-sm text-on-raised">
+            <span className="font-semibold">
+              None of your {cards.length} concept{cards.length === 1 ? "" : "s"} reached the {threshold.toFixed(2)}{" "}
+              cut-off
             </span>
-          </span>
-          <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="mt-2 space-y-2">
-            {nWith === 0 && cards.length > 0 && (
-              <p data-testid="score-suggestions-none-cleared" className="max-w-[80ch] text-sm text-on-raised">
-                <span className="font-semibold">
-                  None of your {cards.length} concept{cards.length === 1 ? "" : "s"} reached the {threshold.toFixed(2)}{" "}
-                  cut-off
-                </span>
-                {/* A Preview ticks nothing, so it says only that nothing was suggested (08-31). */}
-                {preview ? ", so nothing was suggested." : ", so nothing was ticked for you."}
-                {closest.length > 0 && (
-                  <> Closest: {closest.map((c) => `${c.item} ${c.best.toFixed(2)}`).join(", ")}.</>
-                )}{" "}
-                {preview
-                  ? "Lower the cut-off below, or open a concept to see its closest groups."
-                  : "Lower the cut-off below, or open a concept to see its closest groups and tick them yourself."}
-              </p>
-            )}
-            <Collapsible data-testid="search-coverage" className="border-t border-rule-quiet-on-raised pt-2">
-              <CollapsibleTrigger data-testid="search-coverage-toggle" className={disclosureRow("raised", "group")}>
-                <DisclosureLabel ground="raised">Per-cohort coverage · reached by search</DisclosureLabel>
-                <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-left text-on-raised-muted">
-                        <th scope="col" className="py-1.5 pr-3 font-semibold">
-                          Concept
-                        </th>
-                        {coverage.cohorts.map((c) => (
-                          <th
-                            key={c}
-                            scope="col"
-                            data-testid="search-coverage-cohort"
-                            className="px-2 py-1.5 text-center font-semibold"
-                          >
-                            {c}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {coverage.rows.map((r) => (
-                        <tr
-                          key={r.component}
-                          data-testid="search-coverage-row"
-                          data-component={r.component}
-                          className="border-b border-border/60 last:border-0"
+            {/* A Preview ticks nothing, so it says only that nothing was suggested (08-31). */}
+            {preview ? ", so nothing was suggested." : ", so nothing was ticked for you."}
+            {closest.length > 0 && (
+              <> Closest: {closest.map((c) => `${c.item} ${c.best.toFixed(2)}`).join(", ")}.</>
+            )}{" "}
+            {preview
+              ? "Lower the cut-off below, or open a concept to see its closest groups."
+              : "Lower the cut-off below, or open a concept to see its closest groups and tick them yourself."}
+          </p>
+        )}
+        <Collapsible data-testid="search-coverage" className="border-t border-rule-quiet-on-raised pt-2">
+          <CollapsibleTrigger data-testid="search-coverage-toggle" className={disclosureRow("raised", "group")}>
+            <DisclosureLabel ground="raised">Per-cohort coverage · reached by search</DisclosureLabel>
+            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-on-raised-muted">
+                    <th scope="col" className="py-1.5 pr-3 font-semibold">
+                      Concept
+                    </th>
+                    {coverage.cohorts.map((c) => (
+                      <th
+                        key={c}
+                        scope="col"
+                        data-testid="search-coverage-cohort"
+                        className="px-2 py-1.5 text-center font-semibold"
+                      >
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.rows.map((r) => (
+                    <tr
+                      key={r.component}
+                      data-testid="search-coverage-row"
+                      data-component={r.component}
+                      className="border-b border-border/60 last:border-0"
+                    >
+                      <th scope="row" className="py-1.5 pr-3 text-left font-normal">
+                        <button
+                          type="button"
+                          data-testid="search-coverage-component"
+                          onClick={() => goToCard(r.component)}
+                          title={`Open the ${r.component} card below`}
+                          className="text-left text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
                         >
-                          <th scope="row" className="py-1.5 pr-3 text-left font-normal">
-                            <button
-                              type="button"
-                              data-testid="search-coverage-component"
-                              onClick={() => goToCard(r.component)}
-                              title={`Open the ${r.component} card below`}
-                              className="text-left text-link-on-raised underline decoration-rule-control-on-raised underline-offset-2"
-                            >
-                              {r.component}
-                            </button>
-                          </th>
-                          {coverage.cohorts.map((c) => {
-                            const hit = r.reached.includes(c);
-                            return (
-                              <td
-                                key={c}
-                                data-testid="search-coverage-cell"
-                                data-cohort={c}
-                                data-reached={String(hit)}
-                                className="px-2 py-1.5 text-center"
-                              >
-                                {hit ? (
-                                  <span role="img" aria-label={`Reached in ${c}`} className="inline-flex">
-                                    <Circle aria-hidden="true" className="h-2.5 w-2.5 fill-current text-on-raised" />
-                                  </span>
-                                ) : (
-                                  <span className="sr-only">Not reached by this search</span>
-                                )}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                      <tr className="border-t border-border font-semibold">
-                        <th scope="row" className="py-1.5 pr-3 text-left text-on-raised">
-                          Reached
-                        </th>
-                        {coverage.cohorts.map((c) => (
+                          {r.component}
+                        </button>
+                      </th>
+                      {coverage.cohorts.map((c) => {
+                        const hit = r.reached.includes(c);
+                        return (
                           <td
                             key={c}
-                            data-testid="search-coverage-total"
-                            className="px-2 py-1.5 text-center font-mono tabular-nums text-on-raised"
+                            data-testid="search-coverage-cell"
+                            data-cohort={c}
+                            data-reached={String(hit)}
+                            className="px-2 py-1.5 text-center"
                           >
-                            {coverage.reachedPerCohort[c]}
+                            {hit ? (
+                              <span role="img" aria-label={`Reached in ${c}`} className="inline-flex">
+                                <Circle aria-hidden="true" className="h-2.5 w-2.5 fill-current text-on-raised" />
+                              </span>
+                            ) : (
+                              <span className="sr-only">Not reached by this search</span>
+                            )}
                           </td>
-                        ))}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <p data-testid="search-coverage-note" className="mt-2 text-[11px] text-on-raised-muted">
-                  {/* A Preview keeps no scope and has no Gate 4 table to point to (08-31). */}
-                  {preview ? (
-                    <>
-                      A dot: one of the concept&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher) holds a
-                      variable from that cohort &mdash; group membership, not a match. A blank is what this search reached,
-                      not a finding about the cohort; lowering the cut-off widens it.
-                    </>
-                  ) : (
-                    <>
-                      A dot: one of the concept&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
-                      scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
-                      search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match
-                      says which variables measure each concept, in its own table.
-                    </>
-                  )}
-                </p>
-              </CollapsibleContent>
-            </Collapsible>
-            {/* SAID ONCE (round 6): the figure's label heads the column instead of riding on every row. */}
-            <div
-              data-testid="score-suggestion-columns"
-              className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-            >
-              <span>Concept</span>
-              <span>Best similarity</span>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  <tr className="border-t border-border font-semibold">
+                    <th scope="row" className="py-1.5 pr-3 text-left text-on-raised">
+                      Reached
+                    </th>
+                    {coverage.cohorts.map((c) => (
+                      <td
+                        key={c}
+                        data-testid="search-coverage-total"
+                        className="px-2 py-1.5 text-center font-mono tabular-nums text-on-raised"
+                      >
+                        {coverage.reachedPerCohort[c]}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            {cards.map((card) => (
-              <SuggestionRow
-                key={card.component}
-                preview={preview}
-                card={card}
-                openRequest={openRequest?.component === card.component ? openRequest.n : 0}
-                threshold={threshold}
-                groupsById={groupsById}
-                fieldIndex={fieldIndex}
-                isGroupInScope={isGroupInScope}
-                groupScopeWhy={groupScopeWhy}
-                onGroupScopeChange={onGroupScopeChange}
-                onOpenGroup={onOpenGroup}
-              />
-            ))}
-        </CollapsibleContent>
-      </Collapsible>
+            <p data-testid="search-coverage-note" className="mt-2 text-[11px] text-on-raised-muted">
+              {/* A Preview keeps no scope and has no Gate 4 table to point to (08-31). */}
+              {preview ? (
+                <>
+                  A dot: one of the concept&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher) holds a
+                  variable from that cohort &mdash; group membership, not a match. A blank is what this search reached,
+                  not a finding about the cohort; lowering the cut-off widens it.
+                </>
+              ) : (
+                <>
+                  A dot: one of the concept&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
+                  scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
+                  search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match
+                  says which variables measure each concept, in its own table.
+                </>
+              )}
+            </p>
+          </CollapsibleContent>
+        </Collapsible>
+        {/* SAID ONCE (round 6): the figure's label heads the column instead of riding on every row. */}
+        <div
+          data-testid="score-suggestion-columns"
+          className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+        >
+          <span>Concept</span>
+          <span>Best similarity</span>
+        </div>
+        {cards.map((card) => (
+          <SuggestionRow
+            key={card.component}
+            preview={preview}
+            card={card}
+            openRequest={openRequest?.component === card.component ? openRequest.n : 0}
+            threshold={threshold}
+            groupsById={groupsById}
+            fieldIndex={fieldIndex}
+            isGroupInScope={isGroupInScope}
+            groupScopeWhy={groupScopeWhy}
+            onGroupScopeChange={onGroupScopeChange}
+            onOpenGroup={onOpenGroup}
+          />
+        ))}
     </div>
   );
 }

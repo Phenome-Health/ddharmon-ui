@@ -6,11 +6,11 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
-import { ScoreSuggestionCards, ScoreSuggestionGuide } from "@/components/gate/ScoreSuggestionCards";
+import { ScoreSuggestionCards, ScoreSuggestionGuide, suggestionCounts } from "@/components/gate/ScoreSuggestionCards";
 import { useGateDecisions, type UseGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
@@ -612,7 +612,7 @@ export function DeclaredScorePanel({
                     <pre
                       data-testid="score-doc-text"
                       aria-label={`The text read from ${document.provenance}`}
-                      className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] text-on-raised-muted"
+                      className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] leading-5 text-on-raised-muted"
                     >
                       {document.text}
                     </pre>
@@ -733,12 +733,11 @@ export function DeclaredScorePanel({
                 list if there are multiple, and self contained into a dropdown"). With the free search's answer in hand
                 that is the cards (08-28, option A); without one, the plain declared rows stand.
               */}
-              {lists.map((list, i) => (
+              {lists.map((list) => (
                 <SpotlightList
                   key={`${list.name}\u001f${list.pastedText ?? ""}`}
                   list={list}
-                  className={i > 0 ? "border-t border-rule-quiet-on-raised pt-4" : undefined}
-                >
+                                  >
                   {list.cards.length > 0 ? (
                     <ScoreSuggestionCards
                       preview={preview}
@@ -835,13 +834,15 @@ interface SpotlightListData {
 }
 
 /**
- * One declared Spotlight list: headed by its NAME (Bhargav, 2026-11-08 — the record said "What was entered — pasted
- * text"; the list's own name, or the name field's placeholder, says which list this is), its size, the text that was
- * entered when it was pasted, and beneath it the list's concepts → groups (`children`).
+ * One declared Spotlight list, as ONE FOLD (Bhargav, 2026-11-08 round 2: "the block should be collapsible at this
+ * level"). The trigger is the list: its NAME (round 1 — not "What was entered — pasted text"; the name field's
+ * placeholder when it has none), how many concepts it holds, and — once the free search has answered — how many of them
+ * reached a group. Inside: the text that was entered, when the list was pasted, and the list's concepts → groups
+ * (`children`). Open until closed. One fold per list, so several declared lists each carry their own.
  *
  * THE ENTERED TEXT FOLDS ONLY WHEN LONG, and then starts CLOSED: a record past what the document box shows unscrolled
- * (`isLongRecord`) would push the list's concepts a screen down. A short one is shown whole, with nothing to open. The
- * toggle is a view control, so it works on a passed gate too.
+ * (`isLongRecord`) would push the list's concepts a screen down. A short one is shown whole, with nothing to open. Both
+ * toggles are view controls, so they work on a passed gate too.
  */
 function SpotlightList({
   list,
@@ -852,55 +853,82 @@ function SpotlightList({
   className?: string;
   children?: React.ReactNode;
 }) {
+  const [listOpen, setListOpen] = useState(true);
   const text = list.pastedText;
   const long = text ? isLongRecord(text) : false;
-  const [open, setOpen] = useState(!long);
+  const [textOpen, setTextOpen] = useState(!long);
   const textId = `score-paste-text-${list.name.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+  const counts = list.cards.length > 0 ? suggestionCounts(list.cards) : null;
   return (
-    <div data-testid="spotlight-list" data-score={list.name} className={cn("flex min-w-0 flex-col gap-2", className)}>
-      <div
-        data-testid={text ? "score-paste-record" : undefined}
-        data-score={text ? list.name : undefined}
-        data-long={text ? String(long) : undefined}
-        className="flex min-w-0 flex-col gap-1"
-      >
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+    <Collapsible
+      open={listOpen}
+      onOpenChange={setListOpen}
+      data-testid="spotlight-list"
+      data-score={list.name}
+      className={cn(FOLD_BOX, className)}
+    >
+      <CollapsibleTrigger data-testid="spotlight-list-toggle" className={disclosureRow("raised", "group")}>
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <span data-testid="spotlight-list-name" className="text-sm font-semibold text-on-raised">
             {list.name}
           </span>
-          <span className="font-mono text-[11px] tabular-nums text-on-raised-muted">
-            {text ? recordSize(text) : `${list.nConcepts} ${list.nConcepts === 1 ? "concept" : "concepts"}`}
+          <span className="text-xs text-on-raised-muted">
+            {list.nConcepts} {list.nConcepts === 1 ? "concept" : "concepts"}
+            {counts && (
+              <>
+                {" "}
+                · {counts.nWith}/{list.cards.length} with a suggestion · {counts.nGroups} group
+                {counts.nGroups === 1 ? "" : "s"} suggested
+              </>
+            )}
           </span>
-          {text && long && (
-            <button
-              type="button"
-              data-testid="score-paste-toggle"
-              aria-expanded={open}
-              aria-controls={open ? textId : undefined}
-              onClick={() => setOpen((o) => !o)}
-              className="flex items-center gap-1 text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
-            >
-              {open ? "Hide what was entered" : "Show what was entered"}
-              <ChevronDown
-                aria-hidden="true"
-                className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
-              />
-            </button>
-          )}
-        </div>
-        {text && open && (
-          <pre
-            id={textId}
-            data-testid="score-paste-text"
-            aria-label={`The text entered for ${list.name}`}
-            className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] text-on-raised-muted"
+        </span>
+        <DisclosureChevron ground="raised" open={listOpen} />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2 flex flex-col gap-2">
+        {text && (
+          <div
+            data-testid="score-paste-record"
+            data-score={list.name}
+            data-long={String(long)}
+            className="flex min-w-0 flex-col gap-1"
           >
-            {text}
-          </pre>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              {long ? (
+                <button
+                  type="button"
+                  data-testid="score-paste-toggle"
+                  aria-expanded={textOpen}
+                  aria-controls={textOpen ? textId : undefined}
+                  onClick={() => setTextOpen((o) => !o)}
+                  className="flex items-center gap-1 text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
+                >
+                  {textOpen ? "Hide what was entered" : "Show what was entered"}
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={cn("h-3.5 w-3.5 shrink-0 transition-transform", textOpen && "rotate-180")}
+                  />
+                </button>
+              ) : (
+                <span className="text-xs font-semibold text-on-raised">What was entered</span>
+              )}
+              <span className="font-mono text-[11px] tabular-nums text-on-raised-muted">{recordSize(text)}</span>
+            </div>
+            {textOpen && (
+              <pre
+                id={textId}
+                data-testid="score-paste-text"
+                aria-label={`The text entered for ${list.name}`}
+                className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] leading-5 text-on-raised-muted"
+              >
+                {text}
+              </pre>
+            )}
+          </div>
         )}
-      </div>
-      {children}
-    </div>
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
