@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { decisionItemKey, optionSetKey, type GateDecision } from "@/lib/gate-decisions";
+import { gate1ExportPath } from "@/lib/gate1-export";
 import { SANDBOX_PREFIX } from "@/lib/sandbox";
 import type { ScoreSuggestions } from "@/types";
 import { PAUSED_JOB, asOwnedRun, gate1Fixture, previewRun, serveRun } from "./gate1-fixture";
@@ -116,6 +117,9 @@ test.describe("Gate 1 on a Preview run", () => {
     await expect(waiting).toBeVisible();
     await expect(waiting).toContainText(/clustering/i);
     await expect(waiting).not.toContainText(/coherence judge|splits/i);
+    // Nothing to download yet: there are no groups, and the route would answer that with an error, not a file.
+    await expect(page.locator("[data-testid='preview-end']")).toBeVisible();
+    await expect(page.locator("[data-testid='gate1-export']")).toHaveCount(0);
   });
 
   test("@gate1 @preview the how-to is the Preview's own — no charge, no Continue, still orientation", async ({ page }) => {
@@ -225,5 +229,34 @@ test.describe("Gate 1 on a Preview run", () => {
     await page.waitForLoadState("networkidle");
     await expect(rowOf(page, target.groupId).locator("[data-testid='queue-score-tag']")).toHaveCount(1);
     await expect(page.locator("[data-testid='queue-scope']")).toHaveCount(0);
+  });
+});
+
+/**
+ * GATE 1'S FREE EXPORT (08-31 task 4): the groups as the reviewer left them, as a CSV, from `GET /jobs/{id}/gate1.csv`.
+ * It is where a Preview ENDS, so its bar carries it; a paid Gate 1 carries it beside Continue. Building the file needs
+ * the server, which this static build does not have — so here the Preview's control says why it is unavailable, the
+ * paid bar (where it is an extra) shows nothing, and the link's shape is proved in node.
+ */
+test.describe("Gate 1 export", () => {
+  test("@gate1 @preview the link is the run's own gate1.csv, carrying the token a download cannot send as a header", () => {
+    expect(gate1ExportPath("/api/harmonize", "7fafc83f")).toBe("/api/harmonize/jobs/7fafc83f/gate1.csv");
+    expect(gate1ExportPath("/api/harmonize", "a b", "t+k")).toBe("/api/harmonize/jobs/a%20b/gate1.csv?token=t%2Bk");
+  });
+
+  test("@gate1 @preview a Preview ends in the download — unavailable here, and saying why", async ({ page }) => {
+    await openPreview(page);
+    const end = page.locator("[data-testid='preview-end']");
+    const download = end.locator("[data-testid='gate1-export']");
+    await expect(download).toHaveText("Download groups (CSV)");
+    await expect(download).toBeDisabled();
+    await expect(end.locator("[data-testid='gate1-export-unavailable']")).toContainText(/server/i);
+  });
+
+  test("@gate1 a paid Gate 1's bar offers no dead download where there is no server to build it", async ({ page }) => {
+    await page.goto(`/run/${PAUSED_JOB}/gate1`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-testid='commit-bar']")).toBeVisible();
+    await expect(page.locator("[data-testid='gate1-export']")).toHaveCount(0);
   });
 });

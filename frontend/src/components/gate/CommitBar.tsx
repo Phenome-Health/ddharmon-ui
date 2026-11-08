@@ -63,6 +63,11 @@ export interface CommitBarProps {
    */
   keyField?: React.ReactNode;
   /**
+   * A free control beside the action — Gate 1's "Download groups (CSV)" (08-31). Rendered only when passed, so no
+   * other bar changes. It buys nothing, so it never carries an amount and the statement above never names it.
+   */
+  secondary?: React.ReactNode;
+  /**
    * The gate is BEHIND the run (a frozen record): what happened here, said in place of the purchase (O2 — see
    * `frozenContinue`). When set, the bar states no price, no "already spent" figure and no amount on the
    * button — every one of those is a present-tense offer, and a past gate can make none. The bar itself stays:
@@ -92,6 +97,7 @@ export function CommitBar({
   recheckNotice,
   assurance,
   keyField,
+  secondary,
   done,
   onCommit,
   busy = false,
@@ -99,6 +105,19 @@ export function CommitBar({
   className,
   embedded = false,
 }: CommitBarProps) {
+  const button = (
+    <Button
+      type="button"
+      data-testid={actionTestId}
+      onClick={onCommit}
+      disabled={disabled || busy}
+      className="min-h-10"
+    >
+      {busy && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
+      {action}
+      {!done && total !== undefined && <span className="ml-2 font-mono tabular-nums">{formatUsd(total)}</span>}
+    </Button>
+  );
   const bar = (
     <div
       data-testid="commit-bar"
@@ -152,19 +171,14 @@ export function CommitBar({
             </p>
           )}
         </div>
-        <Button
-          type="button"
-          data-testid={actionTestId}
-          onClick={onCommit}
-          disabled={disabled || busy}
-          className="min-h-10"
-        >
-          {busy && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
-          {action}
-          {!done && total !== undefined && (
-            <span className="ml-2 font-mono tabular-nums">{formatUsd(total)}</span>
-          )}
-        </Button>
+        {secondary ? (
+          <div className="flex flex-wrap items-center gap-3">
+            {secondary}
+            {button}
+          </div>
+        ) : (
+          button
+        )}
       </div>
     </div>
   );

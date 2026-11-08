@@ -34,6 +34,7 @@ import { CohortCoverage } from "@/components/gate/CohortCoverage";
 import { CommitBar } from "@/components/gate/CommitBar";
 import { HOW_TO_GATE1_PREVIEW } from "@/components/gate/HowToPanel";
 import { PreviewEndBar } from "@/components/gate/PreviewEndBar";
+import { GroupsDownload, groupsDownloadBlocked } from "@/components/gate/GroupsDownload";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CarveProposal } from "@/components/gate/CarveProposal";
 import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
@@ -3257,6 +3258,11 @@ export default function Gate1Page() {
     !!jobState &&
     isTerminal(jobState.status) &&
     jobState.status !== "complete";
+  /**
+   * Whether Gate 1's export has anything to export (08-31): the run's variables have arrived. The route answers a run
+   * without them with an error, and a download link would save that error as a file — so until then no control.
+   */
+  const exportable = Object.keys(jobState?.result?.fieldIndex ?? {}).length > 0;
 
   /**
    * Commit this gate and GO. The second half is the one that was missing (08-16c Task 8).
@@ -3984,7 +3990,9 @@ export default function Gate1Page() {
 
       {/* A Preview ENDS here (D1 = (a)): its own bar, with no Continue and no price — see `PreviewEndBar`. */}
       {preview ? (
-        <PreviewEndBar />
+        <PreviewEndBar
+          download={exportable ? <GroupsDownload jobId={jobId} pinned={pinned} primary /> : undefined}
+        />
       ) : (
       <CommitBar
         action={pastBar ? pastBar.action : "Continue to Gate 2"}
@@ -3992,6 +4000,13 @@ export default function Gate1Page() {
         done={pastBar?.note}
         keyField={
           continueKeyAsk ? <RunKeyField reason={continueKeyAsk} action="Continue to Gate 2" /> : undefined
+        }
+        // The free export beside Continue (08-31) — only where it can work: here it is an extra, and a disabled one
+        // with a reason would crowd the purchase it sits beside. A Preview's bar explains its absence instead.
+        secondary={
+          exportable && groupsDownloadBlocked(jobId, pinned) === null ? (
+            <GroupsDownload jobId={jobId} pinned={pinned} />
+          ) : undefined
         }
         // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
         // cost there would claim a purchase that does not happen.

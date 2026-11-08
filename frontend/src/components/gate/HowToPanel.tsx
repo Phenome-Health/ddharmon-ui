@@ -116,7 +116,8 @@ export const HOW_TO_GATE1_PREVIEW: HowToStep[] = [
     text: "Drag a variable onto another group, or onto In no group to pull it out; without a mouse, use the × by its handle. Moves save as you go.",
   },
   { text: "Rename a group to note what it is, or make a New group of your own." },
-  { text: "Download the groups as a CSV. A Preview stops here." },
+  // "A Preview stops here" is said once, by the end bar this step points at.
+  { text: "Download the groups as a CSV from the bar at the foot of the screen." },
 ];
 
 /**
