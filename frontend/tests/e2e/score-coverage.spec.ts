@@ -109,8 +109,10 @@ function declaration(): GateDecision[] {
   }));
 }
 
-async function openOwned(page: Page): Promise<Locator> {
-  const rows = declaration();
+async function openOwned(
+  page: Page,
+  { rows = declaration(), answer = suggestions() }: { rows?: GateDecision[]; answer?: ScoreSuggestions } = {},
+): Promise<Locator> {
   const gateDecisions = { composite_swap: Object.fromEntries(rows.map((r) => [decisionItemKey("composite_swap", r), r])) };
   await page.addInitScript(
     ([key, state]) => {
@@ -119,7 +121,7 @@ async function openOwned(page: Page): Promise<Locator> {
     [`${SANDBOX_PREFIX}${PAUSED_JOB}`, JSON.stringify({ gateDecisions })] as const,
   );
   await page.route("**/api/harmonize/jobs/*/score/suggestions", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(suggestions()) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer) }),
   );
   await serveRun(page, (run) => {
     asOwnedRun(run);
@@ -271,45 +273,78 @@ test.describe("the score panel — review round 7", () => {
     expect(fits).toBe(true);
   });
 
-  test("@gate1 the coverage table comes first, then the items — each its own outlined fold; coverage starts CLOSED", async ({
+  test("@gate1 the list's concepts → groups is ONE outlined fold under the list, the coverage table first inside it, CLOSED", async ({
     page,
   }) => {
     // Review round 9 (Bhargav): "have this collapsed by default — the 'how suggestions work' refers to the below panel,
-    // so better for the user to see that first and expand the coverage table only if they want."
+    // so better for the user to see that first and expand the coverage table only if they want." Bhargav, 2026-11-08:
+    // each list's concepts → groups "should appear under the relevant list … and self contained into a dropdown" — so
+    // the table moved INSIDE that one fold (a top-border divider, no outline of its own), and the how-it-works note and
+    // the cut-off moved OUT of it, above the lists.
     const panel = await openOwned(page);
-    const card = panel.getByTestId("score-suggestions");
-    const order = await card
-      .locator("[data-testid='search-coverage'], [data-testid='score-suggestion-components']")
-      .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
-    expect(order).toEqual(["search-coverage", "score-suggestion-components"]);
-    for (const id of ["search-coverage", "score-suggestion-components"]) {
-      const box = card.getByTestId(id);
-      const border = await box.evaluate((el) => {
+    const list = panel.locator(`[data-testid='spotlight-list'][data-score='${SCORE}']`);
+    await expect(list.getByTestId("spotlight-list-name")).toHaveText(SCORE);
+    const card = list.getByTestId("score-suggestions");
+    const fold = card.getByTestId("score-suggestion-components");
+    await expect(fold).toHaveCount(1);
+    await expect(fold.getByTestId("score-suggestion-components-toggle")).toContainText("Concepts → this run’s groups");
+    await expect(fold.getByTestId("score-suggestion-components-toggle")).toContainText("2/3 with a suggestion · 3 groups suggested");
+    // The guide is the panel's, above the list — not inside the fold.
+    await expect(fold.getByTestId("score-suggestion-info")).toHaveCount(0);
+    await expect(fold.getByTestId("score-cutoff-line")).toHaveCount(0);
+    const guideFirst = await panel.evaluate((root) => {
+      const guide = root.querySelector("[data-testid='score-suggestion-guide']");
+      const l = root.querySelector("[data-testid='spotlight-list']");
+      return !!guide && !!l && !!(guide.compareDocumentPosition(l) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(guideFirst).toBe(true);
+    // The fold is outlined; the table inside it is not — only a divider along its top.
+    const borders = (id: string) =>
+      card.getByTestId(id).evaluate((el) => {
         const s = getComputedStyle(el);
-        return { style: s.borderTopStyle, width: s.borderTopWidth };
+        return { top: [s.borderTopStyle, s.borderTopWidth], rest: [s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth] };
       });
-      expect(border.style, id).toBe("solid");
-      expect(border.width, id).not.toBe("0px");
-      const toggle = card.getByTestId(`${id}-toggle`);
-      const startsOpen = id !== "search-coverage";
-      await expect(toggle).toHaveAttribute("aria-expanded", String(startsOpen));
-      await toggle.click();
-      await expect(toggle).toHaveAttribute("aria-expanded", String(!startsOpen));
-      if (id === "search-coverage") await toggle.click(); // back to closed, as the rest of the test expects
-    }
+    const outer = await borders("score-suggestion-components");
+    expect(outer.top[0]).toBe("solid");
+    expect(outer.top[1]).not.toBe("0px");
+    for (const w of outer.rest) expect(w).not.toBe("0px");
+    const table = await borders("search-coverage");
+    expect(table.top[0]).toBe("solid");
+    expect(table.top[1]).not.toBe("0px");
+    expect(table.rest).toEqual(["0px", "0px", "0px"]);
+    // Inside the fold, the coverage table leads and the concepts' cards follow.
+    const order = await fold
+      .locator("[data-testid='search-coverage'], [data-testid='score-suggestion']")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+    expect(order[0]).toBe("search-coverage");
+    expect(order.slice(1)).toEqual(DECLARED.map(() => "score-suggestion"));
+    // The list's fold starts OPEN; the coverage table inside it starts CLOSED, and opens and closes on its own.
+    const listToggle = card.getByTestId("score-suggestion-components-toggle");
+    const tableToggle = card.getByTestId("search-coverage-toggle");
+    await expect(listToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(tableToggle).toHaveAttribute("aria-expanded", "false");
     await expect(card.getByTestId("search-coverage-row")).toHaveCount(0);
+    await tableToggle.click();
+    await expect(tableToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(card.getByTestId("search-coverage-row")).toHaveCount(DECLARED.length);
+    await tableToggle.click();
+    await expect(tableToggle).toHaveAttribute("aria-expanded", "false");
+    // Folding the list folds everything in it — the table with the cards.
+    await listToggle.click();
+    await expect(listToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(card.getByTestId("search-coverage")).toHaveCount(0);
     await expect(card.getByTestId("score-suggestion")).toHaveCount(0);
   });
 
-  test("@gate1 a component in the table links to its card: the list opens, the card opens, and it comes into view", async ({
-    page,
-  }) => {
+  test("@gate1 a concept in the table links to its card: the card opens, and it comes into view", async ({ page }) => {
     const panel = await openOwned(page);
     const card = panel.getByTestId("score-suggestions");
     await openCoverage(panel); // closed by default since round 9
-    // Fold the list first: the link must open it, not depend on it being open.
-    await card.getByTestId("score-suggestion-components-toggle").click();
-    await expect(card.getByTestId("score-suggestion")).toHaveCount(0);
+    // The old first step — fold the list, then press the link — cannot be reached any more: since 2026-11-08 the table
+    // sits INSIDE the list's fold, so folding the list folds the table (and its links) away with it.
+    await expect(card.getByTestId("score-suggestion-components-toggle")).toHaveAttribute("aria-expanded", "true");
+    const glaucomaExpand = card.locator("[data-testid='score-suggestion'][data-component='Glaucoma'] [data-testid='score-suggestion-expand']");
+    await expect(glaucomaExpand).toHaveAttribute("aria-expanded", "false");
     await card
       .locator("[data-testid='search-coverage-row'][data-component='Glaucoma'] [data-testid='search-coverage-component']")
       .click();
@@ -317,5 +352,74 @@ test.describe("the score panel — review round 7", () => {
     await expect(glaucoma).toBeVisible();
     await expect(glaucoma.getByTestId("score-suggestion-expand")).toHaveAttribute("aria-expanded", "true");
     await expect(glaucoma).toBeInViewport();
+  });
+});
+
+/**
+ * SEVERAL LISTS (Bhargav, 2026-11-08): each declared Spotlight list is headed by its own name, and its concepts → this
+ * run's groups "should appear under the relevant list if there are multiple, and self contained into a dropdown". How
+ * suggestions work and the one cut-off govern every list, so they are said ONCE, above the lists.
+ */
+test.describe("several Spotlight lists", () => {
+  const SES = "SES index";
+  const SES_CONCEPTS = ["Income"];
+
+  function twoLists(): { rows: GateDecision[]; answer: ScoreSuggestions } {
+    const ses: GateDecision[] = SES_CONCEPTS.map((componentName) => ({
+      scoreName: SES,
+      componentName,
+      chosen: "",
+      alternatives: SES_CONCEPTS,
+      optionSetKey: optionSetKey(SES_CONCEPTS),
+    }));
+    const answer = suggestions();
+    const g = fixtureGroups()[2]!;
+    answer.scores.push({
+      scoreName: SES,
+      nVariablesIndexed: 328,
+      components: [{ component: "Income", groups: [{ groupId: g.groupId, score: 0.8, bestMember: g.memberVariableNames[0] ?? "" }] }],
+    });
+    return { rows: [...declaration(), ...ses], answer };
+  }
+
+  test("@gate1 each list carries its own concepts → groups under its name; how suggestions work is said once, above them", async ({
+    page,
+  }) => {
+    const panel = await openOwned(page, twoLists());
+    const lists = panel.getByTestId("spotlight-list");
+    await expect(lists).toHaveCount(2);
+    expect(await lists.evaluateAll((els) => els.map((el) => el.getAttribute("data-score")))).toEqual([SCORE, SES]);
+    // Headed by its name, then its size — in concepts, as neither list was pasted here.
+    const frailty = lists.nth(0);
+    const ses = lists.nth(1);
+    await expect(frailty.getByTestId("spotlight-list-name")).toHaveText(SCORE);
+    await expect(frailty).toContainText(`${DECLARED.length} concepts`);
+    await expect(ses.getByTestId("spotlight-list-name")).toHaveText(SES);
+    await expect(ses).toContainText("1 concept");
+    await expect(panel.getByText(/What was entered — pasted text/)).toHaveCount(0);
+    // One self-contained fold per list, holding that list's concepts and no other's.
+    for (const [list, own] of [
+      [frailty, DECLARED],
+      [ses, SES_CONCEPTS],
+    ] as const) {
+      await expect(list.getByTestId("score-suggestion-components")).toHaveCount(1);
+      expect(
+        await list.locator("[data-testid='score-suggestion']").evaluateAll((els) => els.map((el) => el.getAttribute("data-component"))),
+      ).toEqual([...own]);
+      const table = await openCoverage(list);
+      await expect(table.getByTestId("search-coverage-row")).toHaveText(own.map((c) => new RegExp(c)));
+    }
+    await expect(ses.getByTestId("score-suggestion-components-toggle")).toContainText("1/1 with a suggestion · 1 group suggested");
+    // Said once for the panel, above the first list — never once per list.
+    await expect(panel.getByTestId("score-suggestion-guide")).toHaveCount(1);
+    await expect(panel.getByTestId("score-suggestion-info")).toHaveCount(1);
+    await expect(panel.getByTestId("score-cutoff-line")).toHaveCount(1);
+    for (const list of [frailty, ses]) await expect(list.getByTestId("score-suggestion-info")).toHaveCount(0);
+    const guideFirst = await panel.evaluate((root) => {
+      const guide = root.querySelector("[data-testid='score-suggestion-guide']");
+      const first = root.querySelector("[data-testid='spotlight-list']");
+      return !!guide && !!first && !!(guide.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(guideFirst).toBe(true);
   });
 });

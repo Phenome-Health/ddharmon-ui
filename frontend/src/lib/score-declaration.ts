@@ -51,13 +51,13 @@ export function stripStatus(
   if (scores.length === 0) {
     if (!spec) return null;
     const name = spec.definition?.name?.trim() || "Declared score";
-    return `${name} · ${plural(spec.matches.length, "item", "items")} · ${matchState(spec)}`;
+    return `${name} · ${plural(spec.matches.length, "concept", "concepts")} · ${matchState(spec)}`;
   }
   const [first, ...rest] = scores;
   const own = spec && (spec.definition?.name ?? "").trim().toLowerCase() === first.scoreName.toLowerCase() ? spec : null;
   const more = rest.length ? ` · and ${plural(rest.length, "more score", "more scores")}` : "";
   const state = preview ? "" : ` · ${matchState(own)}`;
-  return `${first.scoreName} · ${plural(first.components.length, "item", "items")} declared${state}${more}`;
+  return `${first.scoreName} · ${plural(first.components.length, "concept", "concepts")} declared${state}${more}`;
 }
 
 // --- the record of a pasted source ---------------------------------------------------------------------------

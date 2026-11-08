@@ -113,7 +113,7 @@ async function readPaper(page: Page): Promise<void> {
 }
 
 const OK: Answer = { status: 200, body: proposal() };
-const extractButton = (page: Page) => page.getByRole("button", { name: /Extract the items/ });
+const extractButton = (page: Page) => page.getByRole("button", { name: /Extract the concepts/ });
 
 // --- the algebra, in node --------------------------------------------------------------------------------
 
@@ -145,8 +145,9 @@ test.describe("score proposal algebra", () => {
     expect(over?.reason).toMatch(/refused rather than cut short/);
   });
 
-  test("@gate1 a document that claims more items than were read says so", () => {
-    expect(underEnumeratedNote(proposal())).toMatch(/40 items; 3 could be read/);
+  test("@gate1 a document that claims more concepts than were read says so", () => {
+    expect(underEnumeratedNote(proposal())).toMatch(/40 concepts; 3 could be read/);
+    expect(underEnumeratedNote(proposal())).not.toMatch(/\bitems?\b/i);
     expect(underEnumeratedNote(proposal({ statedNItems: 3 }))).toBe("");
   });
 });
@@ -163,6 +164,18 @@ test.describe("gate1 score proposal", () => {
     // The 2026-09-15 finding: raw document text used to be pasted into the components box for the reviewer
     // to prune. It is evidence, not a declaration draft.
     await expect(page.locator("[data-testid='score-components']")).toHaveValue("");
+    // THE ORDER (2026-11-08): the concepts box, then the row of Declare + upload under it, then the document's proposal
+    // and its text side by side, and only then the priced match line.
+    const box = await page.locator("[data-testid='score-components']").boundingBox();
+    const upload = await page.locator("[data-testid='score-upload']").boundingBox();
+    const proposalBox = await page.locator("[data-testid='score-extract']").boundingBox();
+    const text = await page.locator("[data-testid='score-doc-text']").boundingBox();
+    const price = await page.locator("[data-testid='score-match-price']").boundingBox();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(upload!.y);
+    expect(upload!.y + upload!.height).toBeLessThanOrEqual(proposalBox!.y);
+    expect(upload!.y + upload!.height).toBeLessThanOrEqual(text!.y);
+    expect(proposalBox!.x + proposalBox!.width).toBeLessThanOrEqual(text!.x); // the proposal left, the text right
+    expect(Math.max(proposalBox!.y + proposalBox!.height, text!.y + text!.height)).toBeLessThanOrEqual(price!.y);
   });
 
   test("@gate1 all three cost states are stated where the reviewer meets them, and nothing is spent unpressed", async ({
@@ -170,7 +183,12 @@ test.describe("gate1 score proposal", () => {
   }) => {
     const { extracts } = await setup(page, OK);
     await readPaper(page);
-    await expect(page.locator("[data-testid='score-upload']")).toContainText(/costs nothing/i);
+    // Reading is still FREE — no model is called (asserted by `extracts` below) — but the line under the upload that
+    // said so ("Reading the document costs nothing — no model is called…") is gone (Bhargav, 2026-11-08). The free
+    // state is said by the text's own heading and, closed, by the strip.
+    await expect(page.locator("[data-testid='score-upload']")).not.toContainText(/costs nothing/i);
+    await expect(page.getByText(/Reading the document costs nothing/i)).toHaveCount(0);
+    await expect(page.getByText("What was read — free", { exact: true })).toBeVisible();
     const price = page.locator("[data-testid='score-extract-price']");
     await expect(price).toContainText(/costs money/i);
     await expect(price).toContainText(/one model call/i);
@@ -203,7 +221,7 @@ test.describe("gate1 score proposal", () => {
     // The free text is STILL on screen — the evidence the list is checked against.
     await expect(page.locator("[data-testid='score-doc-text']")).toBeVisible();
     // The document's gap is named, not filled.
-    await expect(list).toContainText(/40 items; 3 could be read/);
+    await expect(list).toContainText(/40 concepts; 3 could be read/);
   });
 
   test("@gate1 a name the text does not contain is flagged and unticked; stated coding only where stated", async ({
@@ -234,13 +252,13 @@ test.describe("gate1 score proposal", () => {
       .locator("[data-testid='score-proposal-item'][data-name='Grip strength']")
       .getByRole("checkbox")
       .check();
-    await page.getByRole("button", { name: /Use the 3 ticked items/ }).click();
+    await page.getByRole("button", { name: /Use the 3 ticked concepts/ }).click();
     await expect(page.locator("[data-testid='score-components']")).toHaveValue(
       "Help Bathing\nHelp Dressing\nGrip strength",
     );
     await expect(page.locator("#score-name")).toHaveValue("Frailty index (Searle 2008)");
     // The ordinary declare path — the one typing uses.
-    await page.getByRole("button", { name: "Declare these items" }).click();
+    await page.getByRole("button", { name: "Declare these concepts" }).click();
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(3);
     await page.reload();
     await page.waitForLoadState("networkidle");
@@ -254,7 +272,7 @@ test.describe("gate1 score proposal", () => {
     await page.locator("[data-testid='score-components']").fill("Weak grip");
     await extractButton(page).click();
     await page.locator("[data-testid='score-proposal-item'][data-name='Help Dressing']").getByRole("checkbox").uncheck();
-    await page.getByRole("button", { name: /Use the 1 ticked item\b/ }).click();
+    await page.getByRole("button", { name: /Use the 1 ticked concept\b/ }).click();
     await expect(page.locator("[data-testid='score-components']")).toHaveValue("Weak grip\nHelp Bathing");
 
     await extractButton(page).click();
@@ -272,11 +290,13 @@ test.describe("gate1 score proposal", () => {
     await extractButton(page).click();
     const box = page.locator("[data-testid='score-extract']");
     await expect(box).toHaveAttribute("data-state", "nothing");
-    await expect(box).toContainText(/found no items/i);
+    await expect(box).toContainText(/found no concepts/i);
+    // The box it points to is the concepts box, which now sits ABOVE the document (2026-11-08).
+    await expect(box).toContainText(/type them into the box above/i);
     await expect(page.locator("[data-testid='score-proposal']")).toHaveCount(0);
     await expect(page.locator("[data-testid='score-doc-text']")).toBeVisible();
     await page.locator("[data-testid='score-components']").fill("Help Bathing");
-    await expect(page.getByRole("button", { name: "Declare these items" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Declare these concepts" })).toBeEnabled();
   });
 
   test("@gate1 a failure says it FAILED — distinct from found nothing — and the text stays to read", async ({
@@ -292,7 +312,7 @@ test.describe("gate1 score proposal", () => {
     await expect(box).toHaveAttribute("data-state", "failed");
     await expect(box).toContainText(/did not produce|failed/i);
     await expect(box).toContainText("could not be read as a component list");
-    await expect(box).not.toContainText(/found no items/i);
+    await expect(box).not.toContainText(/found no (concepts|items)/i);
     await expect(page.locator("[data-testid='score-doc-text']")).toBeVisible();
   });
 
@@ -327,6 +347,7 @@ test.describe("gate1 score proposal", () => {
     const na = page.locator("[data-testid='score-extract'] [data-testid='not-available']");
     await expect(na).toContainText(big.length.toLocaleString());
     await expect(na).toContainText(MAX_COMPONENT_EXTRACT_CHARS.toLocaleString());
+    await expect(na).toContainText(/table of concepts instead, or type them into the box above/);
     await expect(extractButton(page)).toHaveCount(0);
     expect(extracts).toEqual([]);
   });
@@ -336,9 +357,10 @@ test.describe("gate1 score proposal", () => {
     await readPaper(page);
     const na = page.locator("[data-testid='score-extract'] [data-testid='not-available']");
     await expect(na).toContainText(/shared demo/i);
+    await expect(na).toContainText(/extract the concepts — or type them into the box above yourself/);
     await expect(extractButton(page)).toHaveCount(0);
     await page.locator("[data-testid='score-components']").fill("Help Bathing");
-    await expect(page.getByRole("button", { name: "Declare these items" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Declare these concepts" })).toBeEnabled();
     expect(extracts).toEqual([]);
   });
 });

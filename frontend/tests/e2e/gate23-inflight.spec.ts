@@ -11,6 +11,13 @@ import { FINISHED_JOB, PAUSED_JOB, serveFinished, servePaused } from "./gate23-f
  * so an empty list is not evidence of an empty scope. The live half of this is `tests/live/inflight.live.spec.ts`
  * (I12); this static half constructs the in-flight state from the paused fixture, visibly.
  *
+ * HOW IT SAYS SO CHANGED ON 2026-11-08 (Bhargav: "while a gate is mid-run, remove the other gate elements on screen
+ * (how to use, etc)"). A gate the run has not reached yet is now its PROGRESS ALONE — the run title, the rail and
+ * `RunProgress` naming the stage — and neither its how-to nor its working surface renders, so the old in-surface
+ * "still running" notice is gone with it. The protection is unchanged: a running leg must never read as an empty
+ * scope, "no specs", or a populated gate — so each test asserts the progress and the stage, and that no empty-state,
+ * no false-empty copy and none of the gate's working surface is on the page.
+ *
  *   run: E2E_PORT=4205 npx playwright test gate23-inflight
  */
 
@@ -34,25 +41,31 @@ async function open(page: Page, gate: "gate2" | "gate3"): Promise<void> {
 
 const FALSE_EMPTY = [/Nothing was passed from Gate 1/i, /tick at least one group/i, /No transform specs to review/i];
 
+/**
+ * The screen of a gate the run is still producing: the run's progress, naming the leg's stage — and nothing that could
+ * read as the gate itself, empty or full: no how-to, no empty state, no false-empty copy, no in-surface notice.
+ */
+async function expectProducing(page: Page, stage: string, runningNotice: string): Promise<void> {
+  await expect(page.getByTestId("run-progress")).toBeVisible();
+  await expect(page.getByTestId("run-progress-stage")).toContainText(stage);
+  await expect(page.getByTestId("gate-rail-pin")).toBeVisible();
+  await expect(page.getByTestId("how-to")).toHaveCount(0);
+  await expect(page.getByTestId("gate-empty-state")).toHaveCount(0);
+  await expect(page.getByTestId(runningNotice)).toHaveCount(0);
+  for (const re of FALSE_EMPTY) await expect(page.locator("body")).not.toContainText(re);
+}
+
 for (const phase of ["pending", "assigning", "specs"]) {
   test(`@gate2 a leg that is ${phase} reads as still running, not as an empty scope`, async ({ page }) => {
     await servePaused(page, running(phase));
     await open(page, "gate2");
-    const empty = page.getByTestId("gate-empty-state");
-    await expect(empty).toBeVisible();
-    await expect(empty).toContainText(/still running/i);
-    await expect(page.getByTestId("gate2-running")).toContainText(phase);
-    for (const re of FALSE_EMPTY) await expect(empty).not.toContainText(re);
+    await expectProducing(page, phase, "gate2-running");
   });
 
   test(`@gate3 a leg that is ${phase} reads as still running, not as "no specs"`, async ({ page }) => {
     await servePaused(page, running(phase));
     await open(page, "gate3");
-    const empty = page.getByTestId("gate-empty-state");
-    await expect(empty).toBeVisible();
-    await expect(empty).toContainText(/still running/i);
-    await expect(page.getByTestId("gate3-running")).toContainText(phase);
-    for (const re of FALSE_EMPTY) await expect(empty).not.toContainText(re);
+    await expectProducing(page, phase, "gate3-running");
   });
 }
 
@@ -86,7 +99,10 @@ test("@gate3 a leg still running toward Gate 3 reads as running even when the ea
   });
   await page.goto(`/run/${FINISHED_JOB}/gate3`);
   await page.waitForLoadState("networkidle");
-  await expect(page.getByTestId("gate3-running")).toContainText("specs");
+  await expectProducing(page, "specs", "gate3-running");
+  // Gate 2's checkpoint carries value-mapping rows, and none of them is drawn as if Gate 3's specs were written.
+  await expect(page.getByTestId("spec-row")).toHaveCount(0);
+  await expect(page.getByTestId("value-mapping")).toHaveCount(0);
 });
 
 test("@gate3 a leg running PAST Gate 3 keeps showing what Gate 3 holds", async ({ page }) => {
@@ -99,4 +115,8 @@ test("@gate3 a leg running PAST Gate 3 keeps showing what Gate 3 holds", async (
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("gate-empty-state")).toHaveCount(0);
   await expect(page.getByTestId("gate3-running")).toHaveCount(0);
+  // A gate the run has REACHED keeps its whole screen while the run works ahead (2026-11-08): not progress alone.
+  await expect(page.getByTestId("run-progress")).toBeVisible();
+  await expect(page.getByTestId("how-to")).toBeVisible();
+  await expect(page.getByTestId("spec-row").first()).toBeVisible();
 });

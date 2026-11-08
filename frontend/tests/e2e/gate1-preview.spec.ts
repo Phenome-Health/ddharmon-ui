@@ -113,12 +113,18 @@ test.describe("Gate 1 on a Preview run", () => {
     });
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.waitForLoadState("networkidle");
-    const waiting = page.locator("[data-testid='gate1-waiting']");
-    await expect(waiting).toBeVisible();
-    await expect(waiting).toContainText(/clustering/i);
-    await expect(waiting).not.toContainText(/coherence judge|splits/i);
+    // A gate the run has not reached yet is its PROGRESS alone (Bhargav, 2026-11-08: "while a gate is mid-run, remove
+    // the other gate elements on screen"), so what it is waiting for is the stage the progress names: the clustering.
+    await expect(page.getByTestId("run-progress")).toBeVisible();
+    await expect(page.getByTestId("run-progress-stage")).toContainText(/clustering/i);
+    // ...and nowhere on the screen the three paid stages a Preview never runs.
+    await expect(page.locator("body")).not.toContainText(/coherence judge|splits/i);
+    // No how-to and no working surface: no in-surface waiting notice, no empty ledger, no Preview end bar.
+    await expect(page.getByTestId("how-to")).toHaveCount(0);
+    await expect(page.locator("[data-testid='gate1-waiting']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='ledger']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='preview-end']")).toHaveCount(0);
     // Nothing to download yet: there are no groups, and the route would answer that with an error, not a file.
-    await expect(page.locator("[data-testid='preview-end']")).toBeVisible();
     await expect(page.locator("[data-testid='gate1-export']")).toHaveCount(0);
   });
 
@@ -211,7 +217,7 @@ test.describe("Gate 1 on a Preview run", () => {
 
     // Closed, the strip names what is declared — and no match still to come.
     const status = page.locator("[data-testid='score-strip-status']");
-    await expect(status).toHaveText("My items · 1 item declared");
+    await expect(status).toHaveText("My items · 1 concept declared");
     await page.locator("[data-testid='score-panel-toggle']").click();
     const panel = page.locator("[data-testid='score-panel']");
     await expect(panel.locator("[data-testid='score-suggestions']")).toBeVisible();
@@ -236,7 +242,9 @@ test.describe("Gate 1 on a Preview run", () => {
   test("@gate1 @preview Concept Spotlight's closed strip does not price a match a Preview cannot make", async ({ page }) => {
     await openPreview(page);
     const strip = page.locator("[data-testid='score-panel-toggle']");
-    await expect(strip).toContainText(/searching this run.s groups for its items (are|is) free/i);
+    await expect(strip).toContainText(/searching this run.s groups for its concepts (are|is) free/i);
+    await expect(strip).toContainText(/extracting its concepts costs one model call/i);
+    await expect(strip).not.toContainText(/\bitems?\b/i);
     await expect(strip).not.toContainText(/match/i);
   });
 

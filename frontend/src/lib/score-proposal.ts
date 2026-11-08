@@ -67,23 +67,18 @@ export interface ReadDocument {
 
 // --- the three cost states, stated where the reviewer meets them -----------------------------------------
 
-/** Step 1 — reading. $0: no model is called. */
-export const READ_IS_FREE =
-  "Reading the document costs nothing — no model is called. It pulls the text out so you can see whether " +
-  "the item table survived extraction before anything is spent on it.";
-
 /** Step 2 — extracting. Paid, priced inline before it runs. */
 export function extractPrice(nChars: number): string {
   return (
-    `Extracting the items costs money: it is one model call that reads the ${nChars.toLocaleString()} ` +
-    "characters above and proposes the item names it finds. Nothing is charged until you press it, and " +
+    `Extracting the concepts costs money: it is one model call that reads the ${nChars.toLocaleString()} ` +
+    "characters above and proposes the concepts it finds. Nothing is charged until you press it, and " +
     "the same text is never charged twice on this run. Nothing it proposes is declared until you accept it."
   );
 }
 
 /** The closed strip's one-line summary — all three states, visible without opening anything. */
 export const STRIP_SUMMARY =
-  "Reading a paper is free; extracting its items and matching them against this run each cost one model call.";
+  "Reading a paper is free; extracting its concepts and matching them against this run each cost one model call.";
 
 /**
  * The same strip on a PREVIEW run (08-31). A Preview cannot match — it stops at Gate 1, and the panel's one refusal
@@ -91,7 +86,7 @@ export const STRIP_SUMMARY =
  * paid step still open to it: a model extracting a paper's items.
  */
 export const STRIP_SUMMARY_PREVIEW =
-  "Reading a paper and searching this run’s groups for its items are free; extracting its items costs one model call.";
+  "Reading a paper and searching this run’s groups for its concepts are free; extracting its concepts costs one model call.";
 
 // --- refusals BEFORE the press ---------------------------------------------------------------------------
 
@@ -114,7 +109,7 @@ export function extractionRefusalFor(opts: {
       claim: "not-enabled",
       reason:
         "This is the shared demo, which never spends money. Clone it into a run of your own to have a model " +
-        "extract the items — or type them yourself below.",
+        "extract the concepts — or type them into the box above yourself.",
     };
   }
   if (opts.frozen) {
@@ -130,7 +125,7 @@ export function extractionRefusalFor(opts: {
         `This document is ${opts.nChars.toLocaleString()} characters; extraction reads at most ` +
         `${MAX_COMPONENT_EXTRACT_CHARS.toLocaleString()}, and a longer one is refused rather than cut short — ` +
         "half a paper gives a plausible but incomplete list. Read the section or supplement that holds the " +
-        "item table instead, or type the items below.",
+        "table of concepts instead, or type them into the box above.",
     };
   }
   return null;
@@ -201,7 +196,7 @@ export function underEnumeratedNote(p: ComponentProposal): string {
   const n = p.statedNItems;
   if (!n || n <= p.components.length) return "";
   return (
-    `The document says the score has ${n} items; ${p.components.length} could be read out of the text. ` +
+    `The document says the score has ${n} concepts; ${p.components.length} could be read out of the text. ` +
     "The rest may be in a table that did not survive extraction, or in a supplement — nothing has been filled in."
   );
 }

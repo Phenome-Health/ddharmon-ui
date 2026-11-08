@@ -82,11 +82,11 @@ export function setupScopeVerdict(nConceptsAvailable: number): ScopeVerdict {
  * beside hundreds of concept groups, and Gate 4 beside the final records. What is missing is the match.
  */
 export const SCOPE_VERDICT_COPY: Record<ScopeVerdict, string> = {
-  full: "Every required item is present in this run.",
-  partial: "Some required items are present in this run; others are not.",
-  infeasible: "Every required item was looked for in this run and none was found.",
+  full: "Every required concept is present in this run.",
+  partial: "Some required concepts are present in this run; others are not.",
+  infeasible: "Every required concept was looked for in this run and none was found.",
   indeterminate:
-    "Cannot be determined yet — these items have not been matched against this run's concepts, so " +
+    "Cannot be determined yet — these concepts have not been matched against this run's groups, so " +
     "there is no evidence either way. It is not a finding that the score cannot be built.",
 };
 
@@ -153,7 +153,7 @@ export function missingReason(e: ComponentEvidence): string {
   if (e.shortlistSize > 0) {
     return `${e.shortlistSize} candidate concept${e.shortlistSize === 1 ? "" : "s"} retrieved in this run and rejected — none fits.`;
   }
-  return "Nothing retrieved for this item in this run.";
+  return "Nothing retrieved for this concept in this run.";
 }
 
 /**
@@ -161,11 +161,11 @@ export function missingReason(e: ComponentEvidence): string {
  * match is, and what it is not. It used to close every unmatched component's own reason.
  */
 export const MISSING_IS_A_RUN_RESULT =
-  "An item with no match is a statement about what this run retrieved — not a finding about your cohorts.";
+  "A concept with no match is a statement about what this run retrieved — not a finding about your cohorts.";
 
 /** The sentence that stops `partial` being read as a qualified yes. */
 export const PARTIAL_IS_NOT_THE_SCORE =
-  "Partial coverage is not the published score. Computing it from the items that are present would " +
+  "Partial coverage is not the published score. Computing it from the concepts that are present would " +
   "produce a different measure with the same name.";
 
 /**
@@ -181,7 +181,7 @@ export const PRESENCE_IS_PER_DICTIONARY =
 
 /** Said where the source document stated no threshold. Never derived, never defaulted. */
 export const CUTOFF_UNSTATED =
-  "The source did not state a cutoff for this item. It is flagged for a human rather than filled in — " +
+  "The source did not state a cutoff for this concept. It is flagged for a human rather than filled in — " +
   "a score's threshold is a clinical claim, and inventing a plausible one is the most consequential thing " +
   "this panel could get wrong.";
 

@@ -1699,7 +1699,7 @@ test.describe("gate1 score", () => {
     await expect(page.locator("[data-testid='score-panel']")).toHaveCount(0);
   });
 
-  test("@gate1 declaring components renders indeterminate, and it survives a reload", async ({
+  test("@gate1 declaring concepts renders no verdict before a match, and it survives a reload", async ({
     page,
   }) => {
     await openGate1(page);
@@ -1711,22 +1711,29 @@ test.describe("gate1 score", () => {
     // now that the panel is a dropdown (08-16c item E), and a loose name in a strict-mode locator is a
     // test that breaks on an unrelated label rather than on a behaviour.
     await page
-      .getByRole("button", { name: "Declare these items" })
+      .getByRole("button", { name: "Declare these concepts" })
       .click();
 
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(
       2,
     );
-    const verdict = page.locator("[data-testid='score-verdict']");
-    await expect(verdict).toHaveAttribute("data-verdict", "indeterminate");
+    // NO VERDICT BOX BEFORE A MATCH (Bhargav, 2026-11-08: "remove"). With nothing matched it could only ever read
+    // "Cannot be determined yet 0/N" — a wait, not a finding; the verdict lives with the match, at Gate 4.
+    const panel = page.locator("[data-testid='score-panel']");
+    await expect(panel.locator("[data-testid='score-verdict']")).toHaveCount(0);
+    await expect(panel).not.toContainText(/Cannot be determined yet/i);
     // Never the negative claim, and never Setup's reason — Gate 1 HAS concepts, so "this run has produced
     // no concepts" would be false here even though it was true there.
-    await expect(verdict).not.toContainText(/not computable/i);
+    await expect(panel).not.toContainText(/not computable|not produced any concepts/i);
     await expect(
       page.locator(
         "[data-testid='score-component'][data-verdict='infeasible']",
       ),
     ).toHaveCount(0);
+    // What the closed strip says instead: declared, and not matched yet.
+    await expect(page.locator("[data-testid='score-strip-status']")).toContainText(
+      "2 concepts declared · not matched yet",
+    );
 
     // Written through the durable gate-decision layer, so it is still declared after a reload.
     await page.reload();
@@ -1735,22 +1742,24 @@ test.describe("gate1 score", () => {
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(
       2,
     );
-    await expect(page.locator("[data-testid='score-verdict']")).toHaveAttribute(
-      "data-verdict",
-      "indeterminate",
+    await expect(page.locator("[data-testid='score-verdict']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='score-strip-status']")).toContainText(
+      "2 concepts declared · not matched yet",
     );
   });
 
-  test("@gate1 reading the document is free and says so, and matching states its price inline", async ({
+  test("@gate1 reading the document is free and the strip says so, and matching states its price inline", async ({
     page,
   }) => {
     await openGate1(page);
     await openScorePanel(page);
     const panel = page.locator("[data-testid='score-panel']");
-    // The 08-11 extract route is $0 and job-independent. Nothing here makes reading cost money.
-    await expect(panel.locator("[data-testid='score-upload']")).toContainText(
-      /costs nothing|free|\$0/i,
-    );
+    // The 08-11 extract route is $0 and job-independent. Nothing here makes reading cost money — but the line under
+    // the upload that said so ("Reading the document costs nothing — no model is called…") was removed on
+    // 2026-11-08, so it is said once, by the strip's own summary.
+    await expect(panel.locator("[data-testid='score-upload']")).not.toContainText(/costs nothing/i);
+    await expect(panel.getByText(/Reading the document costs nothing/i)).toHaveCount(0);
+    await expect(page.locator("[data-testid='score-panel-toggle']")).toContainText(/Reading a paper is free/);
     // The paid boundary is stated INLINE, before it runs — never behind a modal.
     const price = panel.locator("[data-testid='score-match-price']");
     await expect(price).toBeVisible();
@@ -3220,7 +3229,7 @@ test.describe("gate1 frozen", () => {
     await openPastGate1(page);
     await openScorePanel(page);
     await expect(page.locator("[data-testid='score-components']")).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Declare these items" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Declare these concepts" })).toBeDisabled();
   });
 
   test("@gate1 a passed Gate 1 says it is a record and offers the way back", async ({
@@ -4563,14 +4572,36 @@ test.describe("gate1 score panel placement", () => {
   }) => {
     await openGate1(page);
     await page.locator(TRIGGER).click();
-    // Reading the document is $0 and job-independent, and the copy says so.
-    await expect(page.locator("[data-testid='score-upload']")).toContainText(
-      /costs nothing/i,
-    );
+    const panel = page.locator(PANEL);
+    // Reading the document is $0 and job-independent. The line under the upload that said so is gone
+    // (2026-11-08); the strip's summary says it, closed or open.
+    const upload = page.locator("[data-testid='score-upload']");
+    await expect(upload).toContainText("Read a paper or supplement (PDF or Word)");
+    await expect(upload).not.toContainText(/costs nothing/i);
+    await expect(page.locator(TRIGGER)).toContainText(/Reading a paper is free/);
     // Matching is one model call, priced inline and never behind a modal — still immediately above the
     // paid control it prices.
     const price = page.locator("[data-testid='score-match-price']");
     await expect(price).toContainText(/costs money/i);
+
+    // THE ORDER (Bhargav, 2026-11-08: "move upload to below list text box"): the intro, the list's name, its
+    // concepts box, then ONE row of Declare beside the upload — the paper is another way to fill the box — and only
+    // after all of that the priced match line.
+    const intro = panel.getByText(/^List the concepts to look for/);
+    const name = panel.locator("#score-name");
+    const box = panel.locator("[data-testid='score-components']");
+    const declare = panel.getByRole("button", { name: "Declare these concepts" });
+    const [introB, nameB, boxB, declareB, uploadB, priceB] = await Promise.all(
+      [intro, name, box, declare, upload, price].map(async (l) => (await l.boundingBox())!),
+    );
+    expect(introB.y).toBeLessThan(nameB.y);
+    expect(nameB.y).toBeLessThan(boxB.y);
+    expect(boxB.y + boxB.height).toBeLessThanOrEqual(declareB.y);
+    expect(boxB.y + boxB.height).toBeLessThanOrEqual(uploadB.y);
+    // One row: the two share a vertical centre, Declare first.
+    expect(Math.abs(declareB.y + declareB.height / 2 - (uploadB.y + uploadB.height / 2))).toBeLessThanOrEqual(2);
+    expect(declareB.x + declareB.width).toBeLessThanOrEqual(uploadB.x);
+    expect(uploadB.y + uploadB.height).toBeLessThanOrEqual(priceB.y);
 
     /**
      * ON THIS RUN THE PAID CONTROL IS AN HONEST NOT-AVAILABLE, and that is the assertion rather than a

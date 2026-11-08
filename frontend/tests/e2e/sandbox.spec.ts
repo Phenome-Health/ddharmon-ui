@@ -520,7 +520,7 @@ test.describe("guest sandbox — the walk, on screen", () => {
 
     await page.locator("[data-testid='score-panel-toggle']").click();
     await page.locator("[data-testid='score-components']").fill("Weak grip strength\nSlow walking speed");
-    await page.getByRole("button", { name: "Declare these items" }).click();
+    await page.getByRole("button", { name: "Declare these concepts" }).click();
     await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
 
     // --- Gate 2: re-pick a candidate for the renamed concept.

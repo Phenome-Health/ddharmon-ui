@@ -292,8 +292,14 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     // Bhargav 2026-10-05: the same three-line caveat repeated on every unsuggested card (dozens on a 49-item score).
     const panel = await openGate1Panel(page);
     const cards = panel.locator("[data-testid='score-suggestions']");
-    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/not a finding about your cohorts/i);
-    await expect(cards.getByText(/not a finding about your cohorts/i)).toHaveCount(1);
+    // The info strip now sits in the panel's one guide, ABOVE the lists (2026-11-08): said once there, for every list,
+    // and not again inside a list's cards.
+    const guide = panel.getByTestId("score-suggestion-guide");
+    await expect(guide).toHaveCount(1);
+    await expect(panel.getByTestId("score-suggestion-info")).toHaveCount(1);
+    await expect(guide.getByTestId("score-suggestion-info")).toContainText(/not a finding about your cohorts/i);
+    await expect(guide.getByText(/not a finding about your cohorts/i)).toHaveCount(1);
+    await expect(cards.getByText(/not a finding about your cohorts/i)).toHaveCount(0);
     for (const c of ["Tinnitus", "Migraine"]) {
       await expect(cardOf(panel, c)).not.toContainText(/not a finding|Gate 4/i);
     }

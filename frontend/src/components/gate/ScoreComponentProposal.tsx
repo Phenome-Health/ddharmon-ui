@@ -127,7 +127,7 @@ export function ScoreComponentProposal({
       </p>
 
       {refusal ? (
-        <NotAvailable thing="Extracting the items" claim={refusal.claim} slug="score-extract">
+        <NotAvailable thing="Extracting the concepts" claim={refusal.claim} slug="score-extract">
           {refusal.reason}
         </NotAvailable>
       ) : (
@@ -138,16 +138,16 @@ export function ScoreComponentProposal({
             ) : (
               <Sparkles aria-hidden="true" className="mr-2 h-4 w-4" />
             )}
-            Extract the items (one model call)
+            Extract the concepts (one model call)
           </Button>
         </div>
       )}
 
       {phase === "nothing" && (
         <p role="status" className="max-w-[80ch] text-xs text-on-raised">
-          The model read the document and found no items in it, and nothing was invented to fill the
+          The model read the document and found no concepts in it, and nothing was invented to fill the
           gap. If the paper has them in a table that did not survive extraction, read the supplement instead,
-          or type them below.
+          or type them into the box above.
           {message && <span className="block text-on-raised-muted">{message}</span>}
         </p>
       )}
@@ -159,16 +159,16 @@ export function ScoreComponentProposal({
       {phase === "failed" && (
         <p role="alert" className="max-w-[80ch] text-xs font-semibold text-status-danger">
           Extraction did not produce an answer — that is a failure, not a finding that the document has no
-          items. {message} The text you read is still here; retry, or type the items yourself.
+          concepts. {message} The text you read is still here; retry, or type the concepts yourself.
         </p>
       )}
       {/* A key refusal (08-28): the field sits under the message it answers; the retry is the Extract button. */}
       {keyAsk && (phase === "refused" || phase === "failed") && (
-        <RunKeyField reason={keyAsk} action="Extract the items" />
+        <RunKeyField reason={keyAsk} action="Extract the concepts" />
       )}
       {phase === "accepted" && (
         <p role="status" className="max-w-[80ch] text-xs text-on-raised">
-          Added {acceptedCount} {acceptedCount === 1 ? "item" : "items"} to the box below. They are
+          Added {acceptedCount} {acceptedCount === 1 ? "concept" : "concepts"} to the box above. They are
           not declared yet — edit them if you need to, then declare.
         </p>
       )}
@@ -176,7 +176,7 @@ export function ScoreComponentProposal({
       {phase === "found" && proposal && (
         <section
           data-testid="score-proposal"
-          aria-label="Items proposed by a model"
+          aria-label="Concepts proposed by a model"
           className="flex flex-col gap-2 rounded-inner border border-dashed border-rule-control-on-raised px-4 py-3"
         >
           <div className="flex flex-col gap-0.5">
@@ -237,7 +237,7 @@ export function ScoreComponentProposal({
 
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" onClick={accept} disabled={nTicked === 0}>
-              Use the {nTicked} ticked {nTicked === 1 ? "item" : "items"}
+              Use the {nTicked} ticked {nTicked === 1 ? "concept" : "concepts"}
             </Button>
             <Button type="button" variant="outline" onClick={discard}>
               Discard the proposal

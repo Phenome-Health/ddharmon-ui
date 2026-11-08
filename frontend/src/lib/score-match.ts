@@ -80,7 +80,7 @@ export function matchActionLabel(nComponents: number, again = false): string {
  */
 export const GATE1_MATCH_DEFERRED =
   "Matching happens on Gate 4 (Export), against the concepts as you leave this review — after scope, renames, " +
-  "target picks and edits. Declare the items now: it is free and it is saved, and Gate 4 shows this " +
+  "target picks and edits. Declare the concepts now: it is free and it is saved, and Gate 4 shows this " +
   "declaration and matches it for one model call.";
 
 /** Why Gate 4 cannot match here, or null when it can. The declaration is shown either way. */

@@ -1749,8 +1749,8 @@ const STATE_FILTER_ORDER: CoherenceState[] = ["split", "qualify", "not_judged", 
 const PREVIEW_MATCH_REFUSAL = {
   claim: "not-enabled" as const,
   reason:
-    "A Preview calls no model and stops at Gate 1, so it cannot match these items. Matching is part of a paid run: " +
-    "start one from New run, declare the items there, and its Gate 4 matches them.",
+    "A Preview calls no model and stops at Gate 1, so it cannot match these concepts. Matching is part of a paid run: " +
+    "start one from New run, declare the concepts there, and its Gate 4 matches them.",
 };
 
 function stateLabel(state: CoherenceState): string {

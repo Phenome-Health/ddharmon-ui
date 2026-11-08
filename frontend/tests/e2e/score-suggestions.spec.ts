@@ -67,7 +67,7 @@ function suggestions(over: Partial<ScoreSuggestions> = {}): ScoreSuggestions {
   };
 }
 
-/** The rows "Declare these items" writes: one `composite_swap` per component, chosen "" (not matched). */
+/** The rows "Declare these concepts" writes: one `composite_swap` per component, chosen "" (not matched). */
 function declaration(components: string[]): GateDecision[] {
   return components.map((componentName) => ({
     scoreName: SCORE,

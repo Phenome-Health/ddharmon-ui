@@ -1024,3 +1024,44 @@ test.describe("rail navigation and frozen gates", () => {
     await expect(page.getByTestId("gate-frozen")).toBeVisible();
   });
 });
+
+/**
+ * A GATE THE RUN IS STILL PRODUCING IS ONLY ITS PROGRESS (Bhargav, 2026-11-08: "while a gate is mid-run, remove the
+ * other gate elements on screen (how to use, etc)"). Before the run reaches a screen there is nothing on it to use, so
+ * its how-to and working surface (the Concept Spotlight strip among them) only describe a screen that does not exist
+ * yet. A gate the run has already PASSED keeps everything while the run works ahead: it is a record to read.
+ */
+test.describe("a gate the run is still producing", () => {
+  async function inFlight(page: import("@playwright/test").Page, { phase, reached }: { phase: string; reached: boolean }) {
+    await withPayload(page, (p) => {
+      Object.assign(p, { status: phase, phase, stopping: false });
+      if (!reached) {
+        p.gatePosition = null;
+        const result = p.result as Record<string, unknown> | undefined;
+        if (result) result.gatePosition = null;
+      }
+      const config = p.config as Record<string, unknown>;
+      config.run_mode = "sync";
+      config.est_fields = 1000;
+      config.est_cohorts = 5;
+      delete config.demo;
+    });
+  }
+
+  test("@gates while the run works toward this gate, the screen shows its progress and nothing else", async ({ page }) => {
+    await inFlight(page, { phase: "embedding", reached: false });
+    await gotoGate(page);
+    await expect(page.getByTestId("run-progress")).toBeVisible();
+    await expect(page.getByTestId("gate-rail-pin")).toBeVisible();
+    await expect(page.getByTestId("how-to")).toHaveCount(0);
+    await expect(page.getByTestId("score-strip")).toHaveCount(0);
+  });
+
+  test("@gates a gate the run has already reached keeps its screen while the run works ahead", async ({ page }) => {
+    await inFlight(page, { phase: "assigning", reached: true });
+    await gotoGate(page);
+    await expect(page.getByTestId("run-progress")).toBeVisible();
+    await expect(page.getByTestId("how-to")).toBeVisible();
+    await expect(page.getByTestId("score-strip")).toBeVisible();
+  });
+});
