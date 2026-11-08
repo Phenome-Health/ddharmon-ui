@@ -44,7 +44,9 @@ from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, cast, get_args
 
+from backend.engine.cluster_labels import keyword_labels
 from backend.engine.contract import (
+    COHERENCE_NOT_JUDGED,
     CONTRACT_VERSION,
     PHASES_PREVIEW,
     PHASES_RUN,
@@ -663,6 +665,69 @@ def _concept_group_members(leanb_result: Any) -> dict[str, list[str]]:
     return out
 
 
+def _preview_concept_groups(
+    leanb_result: Any, field_index: dict[str, FieldDetail] | None, cde_cohort: str, cap: int = _GROUP_MEMBER_CAP
+) -> tuple[list[UIConceptGroup], dict[str, list[str]]]:
+    """A PREVIEW run's Gate 1 rows: one per cluster of its frozen clustering, labelled by keywords (08-31).
+
+    A Preview calls no model, so nothing names, splits or judges its clusters — and Gate 1 used to show no rows at
+    all, every variable "never placed" (run 7fafc83f: 409 listed where the clustering had made 42 clusters and left
+    8 over). Each row is the cluster itself: content-addressed id (core's ``cluster_content_id`` over the non-CDE
+    member set, the same id the cluster's prompts carry), a c-TF-IDF keyword label, ``not_judged``, no ideal CDE.
+
+    Read off ``substrate`` rather than ``previewClusters`` or the prompts: those cap members at 25 and core builds
+    no prompt for a cluster that retrieved no CDE candidate, and either gap would put a clustered variable back in
+    "no group". A prompt, where the cluster has one, contributes only ``top1_cos``. Catalog rows (a legacy
+    substrate clustered with the catalog) are not variables and never become members; a catalog-only cluster is
+    skipped, as core skips it. Returns the rows and their UNCAPPED membership.
+    """
+    from ddharmon.harmonization.substrate import cluster_content_id
+
+    substrate = getattr(leanb_result, "substrate", None)
+    if substrate is None:
+        return [], {}
+    top1_by_id = {
+        str((pr.context or {}).get("cluster_id", "")): (pr.context or {}).get("top1_cos")
+        for pr in getattr(leanb_result, "ideal_prompts", []) or []
+    }
+    clusters: list[tuple[str, list[str], list[str]]] = []  # (id, member ids, cohorts)
+    for cluster in substrate.clusters:
+        keys = [(str(d), str(v)) for d, v in cluster if d != cde_cohort]
+        if keys:
+            cohorts = sorted({d for d, _ in keys})
+            clusters.append((cluster_content_id(keys), [f"{d}:{v}" for d, v in keys], cohorts))
+    fidx = field_index or {}
+    labels = keyword_labels([[str(fidx.get(m, {}).get("text", "")) for m in ids] for _, ids, _ in clusters])
+    groups: list[UIConceptGroup] = []
+    for (cid, ids, cohorts), label in zip(clusters, labels, strict=True):
+        top1 = top1_by_id.get(cid)
+        groups.append(
+            {
+                "groupId": cid,
+                "clusterId": cid,  # nothing split it: the row IS the cluster
+                "concept": label,
+                "conceptIsGenerated": False,
+                "conceptSource": "keywords",
+                "idealCde": "",
+                "nMembers": len(ids),
+                "cohorts": cohorts,
+                "crossCohort": len(cohorts) >= 2,
+                "top1Cos": float(top1) if top1 is not None else None,
+                "memberVariableNames": ids[:cap],
+                "membersTruncated": len(ids) > cap,
+                "coherence": COHERENCE_NOT_JUDGED,
+                "coherenceSummary": "",
+                "coherenceAxis": "",
+                "coherenceDistinctValues": [],
+                "coherenceOutliers": [],
+                "incoherent": False,
+                "matrixSuspect": False,
+            }
+        )
+    groups.sort(key=lambda g: (-g["nMembers"], g["clusterId"], g["groupId"]))
+    return groups, {cid: ids for cid, ids, _ in clusters}
+
+
 def expand_concept_group(result: UIResult, group_id: str) -> list[str]:
     """The expanded row's members for one group — the FULL membership, never the collapsed sample.
 
@@ -701,8 +766,12 @@ def build_ui_result(
     preprocessing: list[UIPreprocessReport] | None = None,
     cde_index: dict[str, CandidateMeta] | None = None,
     unanswered: list[UIStageGap] | None = None,
+    preview_groups: tuple[list[UIConceptGroup], dict[str, list[str]]] | None = None,
 ) -> UIResult:
     """Map a ``LeanBResult`` to the stable ``UIResult`` contract.
+
+    ``preview_groups`` (from :func:`_preview_concept_groups`) are a Preview run's Gate 1 rows and their uncapped
+    membership; given, they stand in for the post-split concept groups, which a Preview never produces.
 
     ``unanswered`` (from :func:`_unanswered_register`) is emitted whenever given — an empty list included,
     because "every asked prompt was answered" is a checked statement, not an absence. Omitted, the key is too.
@@ -731,7 +800,10 @@ def build_ui_result(
     for rec in records:
         if rec.get("groupId") in regenerated:
             rec["idealRegenerated"] = True
-    groups = _concept_groups_to_ui(leanb_result)
+    groups, group_members = preview_groups or (
+        _concept_groups_to_ui(leanb_result),
+        _concept_group_members(leanb_result),
+    )
     # Derived, not declared: a run has re-adjudication provenance iff some row actually carries it. Asking
     # the caller to tell us would let the register disagree with the payload it describes. Checked on BOTH
     # shapes — a Gate-1 "accept the division" is split-only, so its provenance lands on a GROUP, never a
@@ -760,7 +832,7 @@ def build_ui_result(
         # withholding them would make the same run answer differently depending on how it was launched.
         "conceptGroups": groups,
         # The uncapped membership behind the collapsed rows above (the expanded row's source).
-        "conceptGroupMembers": _concept_group_members(leanb_result),
+        "conceptGroupMembers": group_members,
         # Signals with no value on THIS run, each with a reason and an entry kind. Computed per result
         # rather than hard-coded, so an enabled opt-in drops out of it instead of contradicting the wire.
         "notComputed": _not_computed(concept_gate=concept_gate, readjudicated=readjudicated),
@@ -2994,6 +3066,8 @@ def run_pipeline(
             cost=cast(UICost, ledger.to_dict()),
             preview_clusters=_preview_clusters(result),
             preprocessing=preprocess_reports,
+            # Gate 1's rows (08-31): the clusters themselves, keyword-labelled — a Preview names and splits nothing.
+            preview_groups=_preview_concept_groups(result, field_index, cde_cohort),
         )
 
     # --- which ADVISORY stages this run wants, decided BEFORE any stage is constructed ---

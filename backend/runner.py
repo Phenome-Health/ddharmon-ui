@@ -322,6 +322,11 @@ def _run_leg(
                 fields["analysis_ideas"] = ideas
             store.update(job_id, **fields)
         logger.info("job %s complete: %d records", job_id, len(result["records"]))
+        # A Preview run COMPLETES rather than parks, but its Gate 1 is where the reviewer searches (08-31: its rows
+        # are its clusters), so it gets the same warm-up a Gate 1 park does. A paid run that completes is read on
+        # its results page instead.
+        if payload.get("mode") == "preview":
+            _warm_gate1_search(job_id, payload)
     except RunCancelledError:
         # "Discard" stop: terminal but NOT an error, and NO result — the user chose to throw away in-flight
         # work. Leave error_message unset; the run stays re-runnable from its retained uploads.

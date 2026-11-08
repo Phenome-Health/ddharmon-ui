@@ -3222,8 +3222,11 @@ def test_preview_mode_still_returns_preview_clusters(monkeypatch, tmp_path):
     config["run_mode"] = "preview"
     result = run_pipeline(dict_specs, cde_spec, config, provider=StubProvider())
     assert result["previewClusters"]
-    # and a preview never reaches the Gate 1 boundary, so it has no groups — the two are not substitutes
-    assert result["conceptGroups"] == []
+    # A preview never reaches the paid Gate 1 boundary, so it has no GENERATED groups. Since 08-31 its Gate 1 rows
+    # are its clusters, keyword-labelled — never presented as named, split or judged by a model.
+    assert result["conceptGroups"]
+    assert all(g["conceptSource"] == "keywords" and not g["conceptIsGenerated"] for g in result["conceptGroups"])
+    assert all(g["coherence"] == "not_judged" for g in result["conceptGroups"])
 
 
 # ── 08-09 Task 3: preprocessing RUNS in the product path, and its report reaches the wire ─────
