@@ -2930,6 +2930,51 @@ def run_embedding_workbook(job_id: str, request: Request) -> StreamingResponse:
     )
 
 
+@app.get("/api/harmonize/jobs/{job_id}/gate1.csv")
+def gate1_export(job_id: str, request: Request) -> StreamingResponse:
+    """Gate 1's export: every group's variables as the reviewer left them, then the variables in no group (08-31).
+
+    One row per (group, variable) after the LIVE Gate 1 decisions — moves, New groups, renames, scope — which a
+    Preview never freezes (it has no Continue), so they are applied here: the moves through the same sanitised
+    overrides Concept Spotlight's search uses (:func:`_gate1_overrides`), the rest by ``backend.gate1_export``, which
+    also says what every column means. The same route serves a paid run at Gate 1.
+
+    A GET, and free, like Gate 0's ``prepared.csv``: it reads the run's result and the caller's own decisions, calls no
+    model and touches no run state. Owner-scoped like that route — the decisions are per user, so the file is too.
+    """
+    from backend.gate1_export import GATE1_EXPORT_HEADER, gate1_export_rows
+
+    subject = _subject(request)
+    job = store.get(job_id)
+    if job is None or not _visible_to(job, subject):
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = _export_payload(job)
+    if not payload or not payload.get("fieldIndex"):
+        # Said rather than answered with an empty file: a header and no rows would read as "this run grouped nothing".
+        raise HTTPException(
+            status_code=409, detail="This run has not reached Gate 1 yet, so it has no groups to export"
+        )
+    overrides = _gate1_overrides(job, subject, payload)
+    rows = gate1_export_rows(
+        payload,
+        _gate1_membership(payload, overrides),
+        list((overrides or {}).get("newGroups") or []),
+        store.artifacts_for(job, subject) or {},
+        job.config,
+    )
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(GATE1_EXPORT_HEADER)
+    writer.writerows(rows)
+    # Named for the run, from a safe alphabet, like the run workbook: the id is echoed into a response header.
+    stem = "".join(c if (c.isalnum() or c in "_-") else "_" for c in job_id[:8]) or "run"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="ddharmon_{stem}_gate1_groups.csv"'},
+    )
+
+
 #: The staged-run additions to the EITL TSV, appended AFTER the legacy columns so every legacy column keeps its
 #: index (index-based consumers of the legacy file keep working). Present only on a staged run — a legacy
 #: one-shot run exports exactly the legacy header.

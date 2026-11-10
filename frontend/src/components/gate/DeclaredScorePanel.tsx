@@ -1,55 +1,41 @@
 import { useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  CircleDashed,
-  Flashlight,
-  FileText,
-  Loader2,
-  XCircle,
-} from "lucide-react";
+import { Flashlight, FileText, Loader2 } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { DisclosureChevron, DisclosureLabel, disclosureRow } from "@/components/ui/disclosure";
+import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Textarea } from "@/components/ui/textarea";
 import { NotAvailable } from "@/components/gate/NotAvailable";
 import { ScoreComponentProposal } from "@/components/gate/ScoreComponentProposal";
-import { ScoreSuggestionCards } from "@/components/gate/ScoreSuggestionCards";
+import {
+  ScoreCutoffLine,
+  ScoreSuggestionCards,
+  ScoreSuggestionGuide,
+  suggestionCounts,
+} from "@/components/gate/ScoreSuggestionCards";
 import { useGateDecisions, type UseGateDecisions } from "@/hooks/use-gate-decisions";
 import { extractScoreComponents, extractScoreDocument } from "@/lib/api";
 import { heldRunKey } from "@/lib/run-key";
-import { READ_IS_FREE, STRIP_SUMMARY, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
-import {
-  declarationSource,
-  isLongRecord,
-  pastedRecords,
-  recordSize,
-  stripStatus,
-  type PastedRecord,
-} from "@/lib/score-declaration";
+import { STRIP_SUMMARY, STRIP_SUMMARY_PREVIEW, acceptedDraft, type ReadDocument } from "@/lib/score-proposal";
+import { declarationSource, isLongRecord, pastedRecords, recordSize, stripStatus } from "@/lib/score-declaration";
 import { SpecView } from "@/pages/composite";
 import { cn } from "@/lib/utils";
 import type { NamedGroup } from "@/lib/ledger";
 import {
   MISSING_IS_A_RUN_RESULT,
   CUTOFF_UNSTATED,
-  PARTIAL_IS_NOT_THE_SCORE,
   PRESENCE_IS_PER_DICTIONARY,
-  SCOPE_VERDICT_COPY,
   SUGGESTION_TAG_COPY,
   componentVerdictFor,
   declaredComponents,
   missingReason,
-  scopeVerdictFor,
   type ComponentEvidence,
-  type ScopeVerdict,
 } from "@/lib/score-scope";
-import { suggestionCards, type GroupScopeWhy } from "@/lib/score-suggestion-cards";
+import { suggestionCards, type GroupScopeWhy, type SuggestionCard } from "@/lib/score-suggestion-cards";
+import type { ListCutoff } from "@/lib/score-cutoff";
 import type {
   CompositeSpec,
   ComponentCoding,
@@ -126,35 +112,6 @@ import type {
 /** Used when the reviewer declares components without naming the score. A key needs a non-empty value. */
 const UNNAMED_SCORE = "Declared score";
 
-const VERDICT_STYLE: Record<
-  ScopeVerdict,
-  { label: string; className: string; Icon: typeof CheckCircle2 }
-> = {
-  full: {
-    label: "Every item is present",
-    className: "border-rule-ok bg-surface-ok text-on-ok",
-    Icon: CheckCircle2,
-  },
-  partial: {
-    label: "Some items are present",
-    className: "border-rule-warn bg-surface-warn text-on-warn",
-    Icon: AlertTriangle,
-  },
-  infeasible: {
-    label: "None of the items was found",
-    className: "border-rule-danger bg-surface-danger text-on-danger",
-    Icon: XCircle,
-  },
-  // THE FOURTH VALUE, and it is "we could not tell" rather than "no". Rendered BY FORM — a dashed ring on
-  // the neutral surface — for the same reason the coherence cell renders `not judged` that way: a status
-  // colour would file it as an outcome, and it is the absence of one. Carried over from `composite.tsx`.
-  indeterminate: {
-    label: "Cannot be determined yet",
-    className: "border-rule-on-raised text-on-raised-muted",
-    Icon: CircleDashed,
-  },
-};
-
 export interface DeclaredScorePanelProps {
   jobId: string;
   /** True on the shared demo, which writes to the browser rather than the store. */
@@ -185,10 +142,13 @@ export interface DeclaredScorePanelProps {
   suggestionsError?: string;
   /** Ask the free search again after a failure. */
   onRetrySuggestions?: () => void;
-  /** The cut-off the free search is split at — the reviewer's `gate1_score_cutoff`, else the payload's own. */
-  cutoff?: number;
-  /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent on a frozen gate → the control is read-only. */
-  onCutoffChange?: (next: number | null) => void;
+  /**
+   * Each Spotlight LIST's cut-off (2026-11-08, "implement per list cutoff") — its own `gate1_score_cutoff` row, else
+   * the run-wide row a run may already hold, else the payload's own. Absent → every list is split at the payload's.
+   */
+  cutoffOf?: (listName: string) => ListCutoff;
+  /** Set (a number) or reset (`null`) ONE list's cut-off. Absent on a frozen gate → each list's is read-only. */
+  onCutoffChange?: (listName: string, next: number | null) => void;
   /**
    * A composite spec already derived for this run, when one exists. This is the ONLY source of match
    * evidence — the panel never infers a match, because inferring one is what `match_components` is paid
@@ -232,19 +192,27 @@ export interface DeclaredScorePanelProps {
   onGroupScopeChange?: (groupId: string, inScope: boolean) => void;
   /** Gate 1 has been passed: the panel is a record — nothing here may write (08-27 audit B4). */
   frozen?: boolean;
+  /**
+   * A PREVIEW run (08-31): the panel is the free search over this run's groups and nothing more. A Preview has no
+   * scope (nothing goes on to Gate 2) and no match (it stops at Gate 1), so no scope control, no "in scope" count, no
+   * verdict waiting on a match and no price for one. That it cannot match is said ONCE, by `matchRefusal` — the
+   * Preview's own refusal, which the screen passes in — and nowhere else.
+   */
+  preview?: boolean;
   className?: string;
 }
 
 export function DeclaredScorePanel({
   jobId,
   pinned,
+  preview = false,
   swaps: sharedSwaps,
   suggestionNote = null,
   suggestions = null,
   suggestionsStatus = null,
   suggestionsError,
   onRetrySuggestions,
-  cutoff,
+  cutoffOf,
   onCutoffChange,
   spec,
   matchRefusal,
@@ -364,24 +332,53 @@ export function DeclaredScorePanel({
    * The CLOSED strip's status when a score is declared (H4), else `null` and the invitation stands. Read from the
    * persisted rows (`swaps.all`) and the derived spec — never from the draft — so it is what a reload shows too.
    */
-  const status = stripStatus(swaps.all, spec);
+  const status = stripStatus(swaps.all, spec, { preview });
   /** What was entered, for each declared score whose newest declaration was PASTED — from the persisted rows. */
   const pasted = useMemo(() => pastedRecords(swaps.all), [swaps.all]);
 
-  /** The free search's cards, one per declared component — `[]` keeps the plain list (no dense score, or none asked). */
-  const cards = useMemo(
-    () => (spec ? [] : suggestionCards(declared.map((d) => d.name), suggestions, cutoff)),
-    [spec, declared, suggestions, cutoff],
-  );
-
-  const verdict = scopeVerdictFor(evidence);
-  const style = VERDICT_STYLE[verdict];
   const codingFor = (name: string) =>
     spec?.definition.components.find((c) => c.name === name)?.coding;
   const matchByComponent = useMemo(
     () => new Map((spec?.matches ?? []).map((m) => [m.component, m])),
     [spec],
   );
+
+  /**
+   * The declared Spotlight LISTS, in declaration order — each with its own concepts, the text that was entered when it
+   * was pasted, its own cut-off, the free search's cards for its concepts split at THAT cut-off, and its share of the
+   * evidence. A list is the reviewer's unit: with several declared, each one's concepts → groups sits under that list,
+   * with its own cut-off (Bhargav, 2026-11-08).
+   */
+  const lists: SpotlightListData[] = useMemo(() => {
+    const pastedBy = new Map(pasted.map((r) => [r.scoreName.trim(), r.text]));
+    const byName = new Map<string, { name: string; names: string[]; pastedText?: string }>();
+    for (const d of declared) {
+      const name = d.scoreName.trim() || UNNAMED_SCORE;
+      let list = byName.get(name);
+      if (!list) {
+        list = { name, names: [], pastedText: pastedBy.get(name) };
+        byName.set(name, list);
+      }
+      list.names.push(d.name);
+    }
+    return [...byName.values()].map((list) => {
+      const own = new Set(list.names.map((n) => n.toLowerCase()));
+      // Only with a dense answer to split: a lexical score is never thresholded, so it has no cut-off to show.
+      const cutoff = suggestions?.scored
+        ? (cutoffOf?.(list.name) ?? { value: suggestions.threshold, own: false, fallback: suggestions.threshold })
+        : null;
+      return {
+        name: list.name,
+        nConcepts: list.names.length,
+        pastedText: list.pastedText,
+        cutoff,
+        // The free search's cards, one per concept — `[]` keeps the plain list (no dense score, or none asked).
+        cards: spec || !cutoff ? [] : suggestionCards(list.names, suggestions, cutoff.value),
+        evidence: evidence.filter((e) => own.has(e.name.toLowerCase())),
+      };
+    });
+  }, [declared, pasted, evidence, spec, suggestions, cutoffOf]);
+  const hasCards = lists.some((l) => l.cards.length > 0);
 
   async function onDocument(file: File) {
     setReading(true);
@@ -486,7 +483,8 @@ export function DeclaredScorePanel({
               copy inside is unchanged and still sits immediately above the control it prices.
             */
             <span className="min-w-0 text-xs text-on-field-muted">
-              {STRIP_SUMMARY}
+              {/* A Preview cannot match, so its strip prices no match: it names the free search instead (08-31). */}
+              {preview ? STRIP_SUMMARY_PREVIEW : STRIP_SUMMARY}
             </span>
           )}
         </span>
@@ -516,205 +514,152 @@ export function DeclaredScorePanel({
           )}
           {(!hasScore || showDeclareForm) && (
             <>
-          <div className="flex flex-col gap-1">
-            {/* The TITLE now leads the trigger above, so it is not repeated here; what stays is the sentence
-            the title never carried — including `PRESENCE_IS_PER_DICTIONARY`, which is one of the four
-            rules this panel exists to keep saying. */}
-            <p className="max-w-[80ch] text-sm text-on-raised-muted">
-              List the items to look for — a published score (a frailty index, an
-              intrinsic-capacity score, an SES index) or a list of your own — and this
-              run will say which of them its concepts can supply, and out of which.{" "}
-              {PRESENCE_IS_PER_DICTIONARY}
-            </p>
-          </div>
-
-          {/* THE FREE HALF. Reading a document costs nothing and the copy says so. */}
-          <div data-testid="score-upload" className="flex flex-col gap-2">
-            <label className="flex w-fit cursor-pointer items-center gap-2 rounded-inner border border-rule-control-on-raised px-3 py-2 text-xs font-semibold text-on-raised">
-              {reading ? (
-                <Loader2
-                  aria-hidden="true"
-                  className="h-3.5 w-3.5 animate-spin"
-                />
-              ) : (
-                <FileText aria-hidden="true" className="h-3.5 w-3.5" />
-              )}
-              Read a paper or supplement (PDF or Word)
-              <input
-                type="file"
-                accept=".pdf,.docx"
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void onDocument(file);
-                }}
-              />
-            </label>
-            <p className="max-w-[80ch] text-xs text-on-raised-muted">
-              {READ_IS_FREE}
-            </p>
-            {document && (
-              <p
-                data-testid="score-doc-read"
-                className="text-xs text-on-raised"
-              >
-                Read {document.nChars.toLocaleString()} characters from{" "}
-                {document.provenance}. The text is shown beside the proposal —
-                have a model propose the items from it, or type them
-                yourself.
+              {/* The TITLE leads the trigger above, so it is not repeated here; what stays is the sentence the title
+                  never carried — including `PRESENCE_IS_PER_DICTIONARY`, one of the four rules this panel keeps saying.
+                  ONE NOUN for the list's entries — concepts (Bhargav, 2026-11-08: "items and concepts dual usage is
+                  confusing. stick to concepts"); this run's rows are its groups. */}
+              <p className="max-w-[80ch] text-sm text-on-raised-muted">
+                List the concepts to look for — a published score (a frailty index, an intrinsic-capacity score, an SES
+                index) or a list of your own — and{" "}
+                {/* A Preview's answer is the free search's, never a match (08-31). */}
+                {preview
+                  ? "a free search shows which of this run’s groups hold them."
+                  : "this run will say which of its groups can supply them, and out of which."}{" "}
+                {PRESENCE_IS_PER_DICTIONARY}
               </p>
-            )}
-            {readError && (
-              <p
-                data-testid="score-doc-error"
-                role="alert"
-                className="text-xs font-semibold text-status-danger"
-              >
-                {readError}
-              </p>
-            )}
-          </div>
 
-          {document && (
-            /* STEP 2 BESIDE ITS EVIDENCE. The proposal on the left, the free text it came from on the right —
-               and the text stays whatever the proposal's outcome, because it is the only way to notice
-               something the model missed. */
-            <div className="grid gap-4 lg:grid-cols-2">
-              <ScoreComponentProposal
-                key={document.sha256}
-                document={document}
-                // The tab's held key, read AT THE PRESS (08-28): a key typed into the field is the next one sent.
-                extract={(doc) => extractScoreComponents(jobId, doc, heldRunKey())}
-                pinned={pinned}
-                frozen={frozen}
-                onAccept={(names, proposedName) => {
-                  setDraft((d) => acceptedDraft(d, names));
-                  if (!scoreName.trim() && proposedName) setScoreName(proposedName);
-                }}
-              />
-              <div className="flex min-w-0 flex-col gap-1">
-                <span className="text-sm font-semibold text-on-raised">
-                  What was read — free
-                </span>
-                <pre
-                  data-testid="score-doc-text"
-                  aria-label={`The text read from ${document.provenance}`}
-                  className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] text-on-raised-muted"
+              <div className="flex flex-col gap-2">
+                <label
+                  htmlFor="score-name"
+                  className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
                 >
-                  {document.text}
-                </pre>
+                  List name
+                </label>
+                <input
+                  id="score-name"
+                  value={scoreName}
+                  onChange={(e) => setScoreName(e.target.value)}
+                  placeholder={UNNAMED_SCORE}
+                  className="min-h-8 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-sm text-on-raised"
+                />
+                <label
+                  htmlFor="score-components"
+                  className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
+                >
+                  Its concepts, one per line
+                </label>
+                <Textarea
+                  id="score-components"
+                  data-testid="score-components"
+                  rows={4}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  disabled={frozen}
+                  placeholder={"Weak grip strength\nSlow walking speed\nUnintentional weight loss"}
+                  className="rounded-inner"
+                />
+                {/* THE PAPER IS ANOTHER WAY TO FILL THIS BOX, so it sits under the box beside the declare action
+                    (Bhargav, 2026-11-08: "move upload to below list text box"), not above the form. */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    onClick={() => void onDeclare()}
+                    disabled={frozen || draft.trim().length === 0}
+                  >
+                    Declare these concepts
+                  </Button>
+                  <div data-testid="score-upload">
+                    <label className="flex w-fit cursor-pointer items-center gap-2 rounded-inner border border-rule-control-on-raised px-3 py-2 text-xs font-semibold text-on-raised">
+                      {reading ? (
+                        <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <FileText aria-hidden="true" className="h-3.5 w-3.5" />
+                      )}
+                      Read a paper or supplement (PDF or Word)
+                      <input
+                        type="file"
+                        accept=".pdf,.docx"
+                        className="sr-only"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) void onDocument(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+                {document && (
+                  <p data-testid="score-doc-read" className="text-xs text-on-raised">
+                    Read {document.nChars.toLocaleString()} characters from {document.provenance}. The text is shown
+                    beside the proposal — have a model propose the concepts from it, or type them yourself.
+                  </p>
+                )}
+                {readError && (
+                  <p data-testid="score-doc-error" role="alert" className="text-xs font-semibold text-status-danger">
+                    {readError}
+                  </p>
+                )}
               </div>
-            </div>
-          )}
 
-          <div className="flex flex-col gap-2">
-            <label
-              htmlFor="score-name"
-              className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-            >
-              List name
-            </label>
-            <input
-              id="score-name"
-              value={scoreName}
-              onChange={(e) => setScoreName(e.target.value)}
-              placeholder={UNNAMED_SCORE}
-              className="min-h-8 rounded-inner border border-rule-control-on-raised bg-surface-raised px-2 py-1 text-sm text-on-raised"
-            />
-            <label
-              htmlFor="score-components"
-              className="text-xs font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-            >
-              Its items, one per line
-            </label>
-            <Textarea
-              id="score-components"
-              data-testid="score-components"
-              rows={4}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              disabled={frozen}
-              placeholder={
-                "Weak grip strength\nSlow walking speed\nUnintentional weight loss"
-              }
-              className="rounded-inner"
-            />
-            <div>
-              <Button
-                type="button"
-                onClick={() => void onDeclare()}
-                disabled={frozen || draft.trim().length === 0}
-              >
-                Declare these items
-              </Button>
-            </div>
-          </div>
+              {document && (
+                /* STEP 2 BESIDE ITS EVIDENCE. The proposal on the left, the free text it came from on the right — and the
+                   text stays whatever the proposal's outcome, because it is the only way to notice something the model
+                   missed. */
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <ScoreComponentProposal
+                    key={document.sha256}
+                    document={document}
+                    // The tab's held key, read AT THE PRESS (08-28): a key typed into the field is the next one sent.
+                    extract={(doc) => extractScoreComponents(jobId, doc, heldRunKey())}
+                    pinned={pinned}
+                    frozen={frozen}
+                    onAccept={(names, proposedName) => {
+                      setDraft((d) => acceptedDraft(d, names));
+                      if (!scoreName.trim() && proposedName) setScoreName(proposedName);
+                    }}
+                  />
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="text-sm font-semibold text-on-raised">What was read — free</span>
+                    <pre
+                      data-testid="score-doc-text"
+                      aria-label={`The text read from ${document.provenance}`}
+                      className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] leading-5 text-on-raised-muted"
+                    >
+                      {document.text}
+                    </pre>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
-          {/*
-            THE RECORD OF A PASTED SOURCE (final review round 2). Bhargav: *"if score builder source is pasted text,
-            we should show a record of whatever was entered, same way we would for a doc. make it collapsible if
-            it's long"*. A read document's text is shown read-only above; a declaration typed or pasted into the
-            components box left nothing but the split-up names — and a matched one read only "Source: pasted text".
-            Shown whether or not a match exists, and on a passed gate: it is a record, so nothing in it writes.
-          */}
-          {pasted.map((record) => (
-            <PastedSourceRecord
-              // Keyed on the TEXT too: a re-declaration with a new paste is a new record, and must start open or
-              // closed by ITS length rather than inherit the old one's toggle.
-              key={`${record.scoreName}\u001f${record.text}`}
-              record={record}
-              showScore={pasted.length > 1}
-            />
-          ))}
-
           {spec ? (
-            <SpecView
-              spec={spec}
-              conceptById={{}}
-              records={[]}
-              jobId={jobId}
-              onOpenGroup={onOpenGroup}
-              isGroupInScope={isGroupInScope}
-              onGroupScopeChange={onGroupScopeChange}
-              resolveConcept={resolveConcept}
-              resolveGroupId={resolveGroupId}
-              hideDerivation
-            />
+            <>
+              {/* A matched score: its pasted record(s) above the spec, which carries the per-concept evidence. */}
+              {lists
+                .filter((list) => list.pastedText)
+                .map((list) => (
+                  <SpotlightList key={`${list.name}\u001f${list.pastedText}`} list={list} />
+                ))}
+              <SpecView
+                spec={spec}
+                conceptById={{}}
+                records={[]}
+                jobId={jobId}
+                onOpenGroup={onOpenGroup}
+                isGroupInScope={isGroupInScope}
+                onGroupScopeChange={onGroupScopeChange}
+                resolveConcept={resolveConcept}
+                resolveGroupId={resolveGroupId}
+                hideDerivation
+              />
+            </>
           ) : declared.length > 0 ? (
             <>
-              <div
-                data-testid="score-verdict"
-                data-verdict={verdict}
-                className={cn(
-                  "flex flex-col gap-1 rounded-inner border px-4 py-3",
-                  style.className,
-                )}
-              >
-                <span className="flex items-center gap-2 text-sm font-semibold">
-                  <style.Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
-                  {style.label}
-                  <span className="font-mono text-xs tabular-nums">
-                    {evidence.filter((e) => e.matched).length}/{evidence.length}
-                  </span>
-                </span>
-                <span className="max-w-[80ch] text-xs">
-                  {SCOPE_VERDICT_COPY[verdict]}
-                </span>
-                {/* Rule 3: this is what stops `partial` reading as a qualified yes. */}
-                {verdict === "partial" && (
-                  <span className="max-w-[80ch] text-xs">
-                    {PARTIAL_IS_NOT_THE_SCORE}
-                  </span>
-                )}
-              </div>
+              {/* NO VERDICT BOX BEFORE A MATCH (Bhargav, 2026-11-08: "remove"). Without a spec nothing has been matched,
+                  so the box could only ever read "Cannot be determined yet 0/N" — a wait, not a finding. The verdict
+                  lives with the match (Gate 4's SpecView). */}
 
-              {/*
-                GATE 1'S FREE SUGGESTIONS (08-28 Decision 6). Said here, beside the declaration they come from: what
-                put groups in scope, that it cost nothing, and that it is NOT the verdict. Never phrased as a match —
-                a suggestion is a search result, and only Gate 4's match says a group measures a component.
-              */}
               {/* THE SEARCH SAYS WHERE IT IS (user test 2026-11-03). Running: it can take a minute or two on a run's
                   first search, and a panel showing only the Gate 4 note while it ran sent the tester to the demo.
                   Failed: said, with a way to ask again, rather than dropped. */}
@@ -726,8 +671,8 @@ export function DeclaredScorePanel({
                 >
                   <Loader2 aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin" />
                   <span>
-                    Searching this run&rsquo;s variables for your items — free, no model call. The first search on a run
-                    can take a minute or two; the rest of this screen stays usable meanwhile.
+                    Searching this run&rsquo;s variables for your concepts — free, no model call. The first search on a
+                    run can take a minute or two; the rest of this screen stays usable meanwhile.
                   </span>
                 </p>
               )}
@@ -739,7 +684,7 @@ export function DeclaredScorePanel({
                 >
                   <span>
                     The free search did not come back{suggestionsError ? ` (${suggestionsError})` : ""}. Nothing was
-                    charged, and your items are saved.
+                    charged, and your concepts are saved.
                   </span>
                   {onRetrySuggestions && (
                     <Button type="button" size="sm" variant="outline" data-testid="score-suggestions-retry" onClick={onRetrySuggestions}>
@@ -750,18 +695,28 @@ export function DeclaredScorePanel({
               )}
 
               {/* Only WITHOUT the cards (round 6 repeated-copy): with them, the strip says it is a free search and the
-                  verdict is Gate 4's, and the cards' header carries the counts — this note said all three again. */}
-              {suggestionNote && cards.length === 0 && (
+                  verdict is Gate 4's, and each list's fold carries the counts — this note said all three again. */}
+              {suggestionNote && !hasCards && (
                 <p
                   data-testid="score-suggestions-note"
                   className="max-w-[80ch] rounded-inner border border-dashed border-rule-on-raised px-4 py-3 text-xs text-on-raised"
                 >
                   {suggestionNote.unavailable ? (
                     suggestionNote.unavailable
+                  ) : preview ? (
+                    // A Preview has no scope to start anything in, and no Gate 4 to hand a verdict to (08-31).
+                    suggestionNote.nGroups > 0 ? (
+                      <>
+                        A free search reached {suggestionNote.nGroups} group{suggestionNote.nGroups === 1 ? "" : "s"}{" "}
+                        for {suggestionNote.nComponents} of these concepts; they are marked in the list.
+                      </>
+                    ) : (
+                      "A free search reached no group closely enough to suggest one."
+                    )
                   ) : suggestionNote.nGroups > 0 ? (
                     <>
                       {SUGGESTION_TAG_COPY}. It reached {suggestionNote.nGroups} group
-                      {suggestionNote.nGroups === 1 ? "" : "s"} for {suggestionNote.nComponents} of these items;
+                      {suggestionNote.nGroups === 1 ? "" : "s"} for {suggestionNote.nComponents} of these concepts;
                       they start in scope and are tagged “Suggested” in the list. Uncheck any you do not want — your
                       choice always wins.
                     </>
@@ -774,41 +729,56 @@ export function DeclaredScorePanel({
                 </p>
               )}
 
+              {/* SAID ONCE FOR EVERY LIST: how a suggestion is made. Each list's CUT-OFF is its own, in its fold. */}
+              {hasCards && <ScoreSuggestionGuide preview={preview} />}
+
               {/*
-                THE OLD BUILDER LOOK, FROM THE FREE SEARCH (08-28, option A). Bhargav: *"what happened to the old score
-                builder look?"* — the cards drew only from a paid match, which Q5 moved to Gate 4. With a dense answer in
-                hand they come back as the scoping half: per component, the groups reached, what is in them, which are in
-                scope. Without one, the plain declared list stands.
+                EACH LIST CARRIES ITS OWN CONCEPTS → GROUPS (Bhargav, 2026-11-08: "should appear under the relevant
+                list if there are multiple, and self contained into a dropdown"). With the free search's answer in hand
+                that is the cards (08-28, option A); without one, the plain declared rows stand.
               */}
-              {cards.length > 0 ? (
-                <ScoreSuggestionCards
-                  cards={cards}
-                  threshold={cutoff ?? suggestions!.threshold}
-                  defaultThreshold={suggestions!.threshold}
-                  onThresholdChange={frozen ? undefined : onCutoffChange}
-                  groupsById={groupsById}
-                  cohorts={cohorts}
-                  fieldIndex={fieldIndex}
-                  isGroupInScope={isGroupInScope}
-                  groupScopeWhy={groupScopeWhy}
-                  onGroupScopeChange={frozen ? undefined : onGroupScopeChange}
-                  onOpenGroup={onOpenGroup}
-                />
-              ) : (
-                <ul className="flex flex-col gap-2">
-                  {evidence.map((e) => (
-                    <ScoreComponentRow
-                      key={e.name}
-                      evidence={e}
-                      match={matchByComponent.get(e.name)}
-                      coding={codingFor(e.name)}
-                      groupsById={groupsById}
-                      onOpenGroup={onOpenGroup}
-                    />
-                  ))}
-                </ul>
-              )}
-              {/* Said once for the list (round 5 sweep), when a looked-for component has no match. */}
+              {lists.map((list) => (
+                <SpotlightList key={`${list.name}\u001f${list.pastedText ?? ""}`} list={list}>
+                  {list.cards.length > 0 && list.cutoff ? (
+                    <>
+                      {/* THE LIST'S OWN CUT-OFF, above the table and the concepts it splits (2026-11-08). */}
+                      <ScoreCutoffLine
+                        preview={preview}
+                        listName={list.name}
+                        value={list.cutoff.value}
+                        resetTo={list.cutoff.own ? list.cutoff.fallback : null}
+                        onChange={frozen || !onCutoffChange ? undefined : (next) => onCutoffChange(list.name, next)}
+                      />
+                      <ScoreSuggestionCards
+                        preview={preview}
+                        cards={list.cards}
+                        threshold={list.cutoff.value}
+                        groupsById={groupsById}
+                        cohorts={cohorts}
+                        fieldIndex={fieldIndex}
+                        isGroupInScope={isGroupInScope}
+                        groupScopeWhy={groupScopeWhy}
+                        onGroupScopeChange={frozen ? undefined : onGroupScopeChange}
+                        onOpenGroup={onOpenGroup}
+                      />
+                    </>
+                  ) : (
+                    <ul className="flex flex-col gap-2">
+                      {list.evidence.map((e) => (
+                        <ScoreComponentRow
+                          key={e.name}
+                          evidence={e}
+                          match={matchByComponent.get(e.name)}
+                          coding={codingFor(e.name)}
+                          groupsById={groupsById}
+                          onOpenGroup={onOpenGroup}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </SpotlightList>
+              ))}
+              {/* Said once for the panel (round 5 sweep), when a looked-for concept has no match. */}
               {evidence.some((e) => e.searched && !e.matched) && (
                 <p data-testid="missing-is-a-run-result" className="text-xs text-on-raised-muted">
                   {MISSING_IS_A_RUN_RESULT}
@@ -817,21 +787,24 @@ export function DeclaredScorePanel({
             </>
           ) : null}
 
-          {/* THE PAID BOUNDARY, priced inline and never behind a modal. */}
+          {/* THE PAID BOUNDARY, priced inline and never behind a modal. On a Preview there is nothing to price — it
+              cannot match — so only the refusal stands, and it is the one place the panel says so (08-31). */}
           {!spec && (
           <div className="flex flex-col gap-2 border-t border-rule-quiet-on-raised pt-3">
+            {!preview && (
             <p
               data-testid="score-match-price"
               className="max-w-[80ch] text-xs font-semibold text-on-raised"
             >
-              Matching these items onto this run&rsquo;s concepts costs
+              Matching these concepts onto this run&rsquo;s groups costs
               money: it is one model call over the concepts, and it is what
               turns a declaration into a verdict. Nothing is charged until you
               press it.
             </p>
+            )}
             {matchRefusal ? (
               <NotAvailable
-                thing="Matching the items"
+                thing="Matching the concepts"
                 claim={matchRefusal.claim}
               >
                 {matchRefusal.reason}
@@ -861,59 +834,111 @@ export function DeclaredScorePanel({
   );
 }
 
+/** One declared Spotlight list, as the panel renders it. */
+interface SpotlightListData {
+  name: string;
+  nConcepts: number;
+  /** The box exactly as entered, when the list was pasted rather than read from a document. */
+  pastedText?: string;
+  /** This list's cut-off, when there is a dense free-search answer to split at it; `null` otherwise. */
+  cutoff: ListCutoff | null;
+  cards: SuggestionCard[];
+  evidence: ComponentEvidence[];
+}
+
 /**
- * What was entered for one declared score, when it was pasted text — the pasted-source twin of the document record
- * ("What was read"): the same read-only monospace box, attributed as pasted text and stating its size.
+ * One declared Spotlight list, as ONE FOLD (Bhargav, 2026-11-08 round 2: "the block should be collapsible at this
+ * level"). The trigger is the list: its NAME (round 1 — not "What was entered — pasted text"; the name field's
+ * placeholder when it has none), how many concepts it holds, and — once the free search has answered — how many of them
+ * reached a group. Inside: the text that was entered, when the list was pasted, and the list's concepts → groups
+ * (`children`). Open until closed. One fold per list, so several declared lists each carry their own.
  *
- * COLLAPSIBLE ONLY WHEN LONG, and then CLOSED by default: a record past what the document box shows unscrolled
- * (`isLongRecord`) would otherwise push the declaration's verdict and components a screen down. A short one is
- * shown whole, with nothing to open. The toggle is a view control, so it works on a passed gate too.
+ * THE ENTERED TEXT FOLDS ONLY WHEN LONG, and then starts CLOSED: a record past what the document box shows unscrolled
+ * (`isLongRecord`) would push the list's concepts a screen down. A short one is shown whole, with nothing to open. Both
+ * toggles are view controls, so they work on a passed gate too.
  */
-function PastedSourceRecord({ record, showScore }: { record: PastedRecord; showScore: boolean }) {
-  const long = isLongRecord(record.text);
-  const [open, setOpen] = useState(!long);
-  const textId = `score-paste-text-${record.scoreName.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+function SpotlightList({
+  list,
+  className,
+  children,
+}: {
+  list: SpotlightListData;
+  className?: string;
+  children?: React.ReactNode;
+}) {
+  const [listOpen, setListOpen] = useState(true);
+  const text = list.pastedText;
+  const long = text ? isLongRecord(text) : false;
+  const [textOpen, setTextOpen] = useState(!long);
+  const textId = `score-paste-text-${list.name.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+  const counts = list.cards.length > 0 ? suggestionCounts(list.cards) : null;
   return (
-    <div
-      data-testid="score-paste-record"
-      data-score={record.scoreName}
-      data-long={long ? "true" : "false"}
-      className="flex min-w-0 flex-col gap-1"
+    <Collapsible
+      open={listOpen}
+      onOpenChange={setListOpen}
+      data-testid="spotlight-list"
+      data-score={list.name}
+      className={cn(FOLD_BOX, className)}
     >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-        <span className="text-sm font-semibold text-on-raised">
-          What was entered — pasted text
+      <CollapsibleTrigger data-testid="spotlight-list-toggle" className={disclosureRow("raised", "group")}>
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <span data-testid="spotlight-list-name" className="text-sm font-semibold text-on-raised">
+            {list.name}
+          </span>
+          <span className="text-xs text-on-raised-muted">
+            {list.nConcepts} {list.nConcepts === 1 ? "concept" : "concepts"}
+            {counts && (
+              <>
+                {" "}
+                · {counts.nWith}/{list.cards.length} with a suggestion · {counts.nGroups} group
+                {counts.nGroups === 1 ? "" : "s"} suggested
+              </>
+            )}
+          </span>
         </span>
-        {showScore && <span className="text-xs font-semibold text-on-raised">{record.scoreName}</span>}
-        <span className="font-mono text-[11px] tabular-nums text-on-raised-muted">{recordSize(record.text)}</span>
-        {long && (
-          <button
-            type="button"
-            data-testid="score-paste-toggle"
-            aria-expanded={open}
-            aria-controls={open ? textId : undefined}
-            onClick={() => setOpen((o) => !o)}
-            className="flex items-center gap-1 text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
+        <DisclosureChevron ground="raised" open={listOpen} />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2 flex flex-col gap-2">
+        {text && (
+          <div
+            data-testid="score-paste-record"
+            data-score={list.name}
+            data-long={String(long)}
+            className="flex min-w-0 flex-col gap-1"
           >
-            {open ? "Hide what was entered" : "Show what was entered"}
-            <ChevronDown
-              aria-hidden="true"
-              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
-            />
-          </button>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              {long ? (
+                <button
+                  type="button"
+                  data-testid="score-paste-toggle"
+                  aria-expanded={textOpen}
+                  aria-controls={textOpen ? textId : undefined}
+                  onClick={() => setTextOpen((o) => !o)}
+                  className="flex items-center gap-1 text-xs font-semibold text-on-raised underline decoration-rule-control-on-raised"
+                >
+                  {textOpen ? "Hide what was entered" : "Show what was entered"}
+                  <DisclosureChevron ground="raised" open={textOpen} size="sm" />
+                </button>
+              ) : (
+                <span className="text-xs font-semibold text-on-raised">What was entered</span>
+              )}
+              <span className="font-mono text-[11px] tabular-nums text-on-raised-muted">{recordSize(text)}</span>
+            </div>
+            {textOpen && (
+              <pre
+                id={textId}
+                data-testid="score-paste-text"
+                aria-label={`The text entered for ${list.name}`}
+                className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] leading-5 text-on-raised-muted"
+              >
+                {text}
+              </pre>
+            )}
+          </div>
         )}
-      </div>
-      {open && (
-        <pre
-          id={textId}
-          data-testid="score-paste-text"
-          aria-label={`The text entered for ${record.scoreName}`}
-          className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-inner border border-rule-on-raised px-3 py-2 font-mono text-[11px] text-on-raised-muted"
-        >
-          {record.text}
-        </pre>
-      )}
-    </div>
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -969,13 +994,7 @@ function ScoreComponentRow({
           <span className="text-sm font-semibold text-on-raised">
             {evidence.name}
           </span>
-          <ChevronDown
-            aria-hidden="true"
-            className={cn(
-              "h-4 w-4 shrink-0 text-on-raised-muted transition-transform",
-              open && "rotate-180",
-            )}
-          />
+          <DisclosureChevron ground="raised" open={open} />
         </button>
       ) : (
         <span className="text-sm font-semibold text-on-raised">

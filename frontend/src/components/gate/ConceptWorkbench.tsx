@@ -332,7 +332,7 @@ export function InheritedPanel({
         {detail && (
           <span className="text-xs text-on-inset-muted">{detail}</span>
         )}
-        <DisclosureChevron ground="inset" className="ml-auto group-open:rotate-180" />
+        <DisclosureChevron ground="inset" className="ml-auto" />
       </summary>
       <div className="border-t border-rule-quiet-on-raised px-4 py-3">
         {children}

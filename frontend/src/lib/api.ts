@@ -20,6 +20,7 @@ import type {
 } from "@/types";
 import type { ComponentProposal, ReadDocument } from "@/lib/score-proposal";
 import { withApiOrigin } from "@/lib/api-origin";
+import { gate1ExportPath } from "@/lib/gate1-export";
 
 // Same-origin in every deployed build; a local backend in the Lavish review surface (`lib/api-origin.ts`).
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN as string | undefined;
@@ -696,6 +697,18 @@ export function preparedExportUrl(jobId: string, cohort: string): string | null 
   const base = `${BASE}/jobs/${jobId}/prepared.csv?cohort=${encodeURIComponent(cohort)}`;
   // Same reason as `exportUrl`: a download href cannot carry an Authorization header.
   return _lastToken ? `${base}&token=${encodeURIComponent(_lastToken)}` : base;
+}
+
+/**
+ * Gate 1's export (08-31): every group's variables as the reviewer left them, plus the variables in no group — a free
+ * GET, owner-scoped, for Preview runs and paid runs at Gate 1. `null` in the static preview for the same reason as
+ * `preparedExportUrl`: there is no server to build the file, and a dead link that downloads a 404 page named `.csv` is
+ * worse than a stated absence. The path itself is `gate1ExportPath`, kept importable by the e2e suite.
+ */
+export function gate1ExportUrl(jobId: string): string | null {
+  if (IS_STATIC) return null;
+  // Same reason as `exportUrl`: a download href cannot carry an Authorization header.
+  return gate1ExportPath(BASE, jobId, _lastToken);
 }
 
 /**

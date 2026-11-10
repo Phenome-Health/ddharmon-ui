@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
-import { pathForGate, railReachOf } from "@/lib/gate-routes";
+import { isGateReachable, pathForGate, railReachOf } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult } from "@/types";
 import { StopRunAction } from "@/components/stop-run-action";
 import { GATE_LABELS, GateRail, type GateRailItem } from "@/components/gate/GateRail";
-import { HowToPanel } from "@/components/gate/HowToPanel";
+import { HowToPanel, type HowToStep } from "@/components/gate/HowToPanel";
 import { RunProgress } from "@/components/gate/RunProgress";
 import { RunFailedNotice } from "@/components/gate/RunFailedNotice";
 import { ResumeBanner } from "@/components/gate/ResumeBanner";
@@ -22,6 +22,7 @@ import {
   isGateLocked,
 } from "@/lib/review-mode";
 import { isInFlight } from "@/lib/run-state";
+import { isPreviewJob } from "@/lib/run-key";
 
 /**
  * The universal chrome every gate screen renders inside (UI-SPEC §7.1). One file, so no later screen plan
@@ -78,7 +79,12 @@ export interface GateShellProps {
    */
   subhead?: string;
   /**
-   * The five rail columns, for a shell with NO run behind it. With a `job` the shell derives the rail itself
+   * The how-to panel's steps, when this run is not the kind the gate's own list describes — a Preview's Gate 1
+   * (08-31). Omit it and the panel shows `HOW_TO[gate]`.
+   */
+  howTo?: HowToStep[];
+  /**
+   * The rail columns (five, or a Preview's two), for a shell with NO run behind it. With a `job` the shell derives the rail itself
    * (`runRailFor`), because the rail is the RUN's state — what it has spent and how far it has got — and a page
    * computing it from its own screen is how a finished run's past gates came to read "est. pending" (O1).
    */
@@ -179,6 +185,7 @@ export function GateShell({
   gate,
   title,
   subhead,
+  howTo,
   rail,
   runName,
   costSoFar = 0,
@@ -202,6 +209,13 @@ export function GateShell({
   // it wears its own banner (what was committed, and what can still be reviewed) instead of the frozen notice.
   const autoAccepted = isAutoAccepted(config, gate);
   const pausedReason = job ? autoPausedReason({ ...job, config }) : null;
+  /**
+   * THE RUN IS STILL PRODUCING THIS SCREEN (Bhargav, 2026-11-08: "while a gate is mid-run, remove the other gate
+   * elements on screen (how to use, etc)"). Until the run reaches a gate there is nothing on it to use, so its how-to
+   * and working surface describe a screen that does not exist yet; the screen is its progress alone. A gate the run has
+   * already reached keeps everything while the run works ahead — it is a record to read. Setup is always reached.
+   */
+  const producing = inFlight && gate !== "setup" && !isGateReachable(gate, railReachOf(job));
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
@@ -322,28 +336,34 @@ export function GateShell({
           once for all five screens. `RunProgress` renders nothing for a terminal run, so the two never stack. */}
       {job?.status === "error" && jobId && <RunFailedNotice job={job} jobId={jobId} />}
 
-      <HowToPanel
-        gate={gate}
-        lead={subhead}
-        note={
-          // SAID ONCE (review round 3, Bhargav: "Remove the box from each concept; say it once in the Gate 2 and Gate 3
-          // 'How to use this screen' panels"). It used to be a tile on every concept's detail pane. Still stated,
-          // because a run with no concept-match flags must not read as one whose every match was checked.
-          job && (gate === "gate2" || gate === "gate3") && !(config?.conceptGate ?? config?.concept_gate) ? (
-            <p
-              data-testid="how-to-concept-gate"
-              data-claim="not-enabled"
-              className="mt-3 max-w-[80ch] text-xs text-on-field-muted"
-            >
-              This run left the concept-match check off, so no row is flagged for measuring a different concept than its
-              CDE — a missing flag is not a pass. The check is a Setup option: start a new run with it on to get it.
-            </p>
-          ) : undefined
-        }
-      />
+      {/* Mid-run, the screen is its progress alone (see `producing`). */}
+      {!producing && (
+        <>
+        <HowToPanel
+          gate={gate}
+          lead={subhead}
+          steps={howTo}
+          note={
+            // SAID ONCE (review round 3, Bhargav: "Remove the box from each concept; say it once in the Gate 2 and Gate 3
+            // 'How to use this screen' panels"). It used to be a tile on every concept's detail pane. Still stated,
+            // because a run with no concept-match flags must not read as one whose every match was checked.
+            job && (gate === "gate2" || gate === "gate3") && !(config?.conceptGate ?? config?.concept_gate) ? (
+              <p
+                data-testid="how-to-concept-gate"
+                data-claim="not-enabled"
+                className="mt-3 max-w-[80ch] text-xs text-on-field-muted"
+              >
+                This run left the concept-match check off, so no row is flagged for measuring a different concept than its
+                CDE — a missing flag is not a pass. The check is a Setup option: start a new run with it on to get it.
+              </p>
+            ) : undefined
+          }
+        />
 
-      {/* The working surface. */}
-      <div className={cn("flex flex-col gap-4")}>{children}</div>
+        {/* The working surface. */}
+        <div className={cn("flex flex-col gap-4")}>{children}</div>
+        </>
+      )}
     </div>
   );
 }
@@ -465,9 +485,16 @@ export function railFor(current: GatePosition, args: RailCostArgs = {}): GateRai
   return railCosts(current, args).map(({ gate, cost }) => ({ gate, label: GATE_LABELS[gate], cost }));
 }
 
-/** The rail for a screen with a run behind it: the run's own ledger, and how far the run has got. */
+/**
+ * The rail for a screen with a run behind it: the run's own ledger, how far the run has got — and, for a Preview
+ * (08-31), its own short shape: Set up and Gate 1, because a Preview ends there.
+ */
 export function runRailFor(current: GatePosition, job: JobResult, costSoFar?: number): GateRailItem[] {
-  return railFor(current, { ...realizedRailArgs(job.result?.cost, costSoFar), runPosition: railReachOf(job) });
+  return railFor(current, {
+    ...realizedRailArgs(job.result?.cost, costSoFar),
+    runPosition: railReachOf(job),
+    preview: isPreviewJob(job),
+  });
 }
 
 // Re-exported so the five pages that imported it from here keep resolving; the rule itself lives in lib.

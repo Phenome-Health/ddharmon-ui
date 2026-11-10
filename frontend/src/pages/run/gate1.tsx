@@ -1,18 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import {
-  ChevronDown,
-  ChevronRight,
-  Grid3x3,
-  Pencil,
-  Plus,
-  Quote,
-  Scissors,
-  Search,
-  Trash2,
-  Undo2,
-  UserRound,
-} from "lucide-react";
+import { ChevronRight, Grid3x3, Pencil, Plus, Quote, Scissors, Search, Trash2, Undo2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,6 +20,9 @@ import { COHERENCE_COPY, CoherenceMark } from "@/components/gate/CoherenceMark";
 import { ConceptWorkbench } from "@/components/gate/ConceptWorkbench";
 import { CohortCoverage } from "@/components/gate/CohortCoverage";
 import { CommitBar } from "@/components/gate/CommitBar";
+import { HOW_TO_GATE1_PREVIEW } from "@/components/gate/HowToPanel";
+import { PreviewEndBar } from "@/components/gate/PreviewEndBar";
+import { GroupsDownload, groupsDownloadBlocked } from "@/components/gate/GroupsDownload";
 import { GateEmptyState } from "@/components/gate/GateEmptyState";
 import { CarveProposal } from "@/components/gate/CarveProposal";
 import { DeclaredScorePanel } from "@/components/gate/DeclaredScorePanel";
@@ -66,7 +57,7 @@ import { useRunCostFactor } from "@/hooks/use-run-cost-factor";
 import { getCheckpoint, getScoreSuggestions, readjudicateGroups, resumeRun } from "@/lib/api";
 import { nextRailGate, pathForGate, rerunSetupPathFor } from "@/lib/gate-routes";
 import { frozenContinue, realizedRailArgs } from "@/lib/gate-rail";
-import { heldRunKey, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
+import { heldRunKey, isPreviewJob, isPreviewRun, keyAskFor, type KeyRefusal } from "@/lib/run-key";
 import { estimateRunCostBreakdown, formatUsd, newGroupIdealUsd } from "@/lib/estimate";
 import {
   DEFAULT_BUCKET,
@@ -103,8 +94,8 @@ import {
   resumeTookEffect,
 } from "@/lib/run-state";
 import { toggleSort, type ColumnSort } from "@/lib/column-sort";
-import { scoreScopeInput, scoreSeededGroups, scoreTaggedGroups } from "@/lib/score-scope";
-import { SCORE_CUTOFF_KIND, SCORE_CUTOFF_SETTING, effectiveCutoff } from "@/lib/score-cutoff";
+import { scoreScopeInput, scoreSeededGroups, scoreTaggedGroups, suggestionCutoffsByGroup } from "@/lib/score-scope";
+import { SCORE_CUTOFF_KIND, listCutoff, listCutoffSetting, type ListCutoff } from "@/lib/score-cutoff";
 import type { GroupScopeWhy } from "@/lib/score-suggestion-cards";
 import { GATE1_MATCH_DEFERRED, declaredScores } from "@/lib/score-match";
 import { shippedDeclaration, shippedSuggestions } from "@/lib/demo-score";
@@ -126,6 +117,11 @@ import type {
  * `result.conceptGroups`. Deliberately NOT `previewClusters`: that field is preview run mode's shape — a
  * $0 run that calls no model — and reading it here would render the wrong granularity. A group names its
  * own parent cluster, which is where provenance comes from.
+ *
+ * A PREVIEW RUN HAS ROWS TOO (08-31), still read from `conceptGroups`: the backend builds one per cluster of the
+ * frozen clustering, uncapped, labelled by c-TF-IDF keywords (`conceptSource: "keywords"`), unjudged. The screen then
+ * runs in Preview mode (`preview` below): it keeps search, moves, New groups, renames and Concept Spotlight, withholds
+ * everything that asserts a model ran or money moves, and ends in `PreviewEndBar` instead of a Continue.
  *
  * THE NAME IS GENERATED, AND SAYS SO. `concept` is what `generate(ideal)` produced, already paid for by
  * the time this screen renders. Three nouns stay separate and the copy contract is binding: a **CDE** is
@@ -226,11 +222,17 @@ function TemplateSuspicion({ judged = false }: { judged?: boolean }) {
  * The provenance pill for a name the REVIEWER gave (08-16c Task 3). Same shape and place as the other
  * two, different word: a reviewer must be able to tell at a glance whose name they are reading.
  */
-function RenamedMark() {
+function RenamedMark({ keywords = false }: { keywords?: boolean }) {
   return (
     <span
       data-testid="renamed-mark"
-      title="You renamed this group. The name ddharmon generated for it is kept and is shown beneath — renaming is your annotation, not a change to what the pipeline produced."
+      // A Preview row's label is keywords from its members' text (08-31), never a name ddharmon generated — so its
+      // title says what is kept without claiming ddharmon named the group.
+      title={
+        keywords
+          ? "You renamed this group. Its keyword label is kept — renaming is your annotation, not a change to what the clustering produced."
+          : "You renamed this group. The name ddharmon generated for it is kept and is shown beneath — renaming is your annotation, not a change to what the pipeline produced."
+      }
       className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
     >
       <Pencil aria-hidden="true" className="h-3 w-3" />
@@ -243,11 +245,16 @@ function RenamedMark() {
  * The provenance pill for a group the REVIEWER made (08-28 Wave 2). It replaces the coherence cell on the row:
  * the judge was never asked about a New group, and a "not judged" cell there would read as a finding.
  */
-function NewGroupMark() {
+function NewGroupMark({ preview = false }: { preview?: boolean }) {
   return (
     <span
       data-testid="new-group-mark"
-      title="You made this group. ddharmon did not cluster, split or judge it: it is matched at Gate 2 exactly as you filled it, after writing one ideal description for it."
+      // A Preview sends nothing on to Gate 2 (08-31), so its New group is only what the reviewer put in it.
+      title={
+        preview
+          ? "You made this group. ddharmon did not cluster it: it holds exactly what you put in it."
+          : "You made this group. ddharmon did not cluster, split or judge it: it is matched at Gate 2 exactly as you filled it, after writing one ideal description for it."
+      }
       className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-inset px-2 py-0.5 text-xs font-normal text-on-inset-muted"
     >
       <UserRound aria-hidden="true" className="h-3 w-3" />
@@ -358,9 +365,9 @@ function GroupTitle({
       >
         {label.text}
       </span>
-      {label.source === "reviewer" && <RenamedMark />}
+      {label.source === "reviewer" && <RenamedMark keywords={own.source === "keywords"} />}
       {label.source === "judge" && <BorrowedMark />}
-      {/* `generated`, `leftover` and `none` carry NO mark. `generated` is the default and a pill on every row
+      {/* `generated`, `keywords`, `leftover` and `none` carry NO mark. `generated` is the default and a pill on every row
           says nothing (08-16c review); the two placeholders never had one, because "generated" beside
           "Unnamed group" would claim the pipeline produced that string, which it did not. */}
       {label.source === "reviewer" && (
@@ -368,8 +375,13 @@ function GroupTitle({
           data-testid="generated-name-kept"
           className="truncate text-xs text-on-raised-muted"
         >
-          {/* A leftover was never named, so its placeholder is kept as itself, not as what ddharmon "called it". */}
-          {own.source === "leftover" ? own.text : `ddharmon called it ${own.text}`}
+          {/* A leftover was never named, so its placeholder is kept as itself, not as what ddharmon "called it"; a
+              Preview row's keywords (08-31) were lifted from its members, so they are kept as keywords. */}
+          {own.source === "leftover"
+            ? own.text
+            : own.source === "keywords"
+              ? `keywords: ${own.text}`
+              : `ddharmon called it ${own.text}`}
         </span>
       )}
       {!readOnly && (
@@ -651,10 +663,7 @@ function DestinationEntry({
         <span className="flex items-center gap-1 text-xs text-on-inset-muted">
           {count} {count === 1 ? "variable" : "variables"}
           {label.source === "judge" && " · judge's summary"}
-          <ChevronDown
-            aria-hidden="true"
-            className={cn("h-3 w-3", open && "rotate-180")}
-          />
+          <DisclosureChevron ground="raised" open={open} size="sm" />
         </span>
       </button>
       {open && (
@@ -885,7 +894,10 @@ function UnassignedPool({
   onRestoreMember,
   readOnly = false,
   defaultOpen = false,
+  preview = false,
 }: {
+  /** A Preview run (08-31): nothing goes on to Gate 2, so the count says nothing about what Gate 2 will not match. */
+  preview?: boolean;
   /** Variables the REVIEWER took out of a group — reversible by putting them back. */
   reviewerRemoved: string[];
   /** Variables the CLUSTERING never placed, minus any the reviewer has since placed. */
@@ -1018,24 +1030,17 @@ function UnassignedPool({
               {total}
             </span>
             <span className="text-xs text-on-raised-muted">
-              {total === 1 ? "variable is" : "variables are"} in no group, so
-              nothing will be matched for
-              {total === 1 ? " it" : " them"} at Gate 2. Open this to read
-              {total === 1 ? " it" : " them"} and drag
-              {total === 1 ? " it" : " them"} back onto a group.
+              {/* Whose doing each one is, the two sections below say; this line says only what the pool is for. */}
+              {preview
+                ? `${total === 1 ? "variable is" : "variables are"} in no group. Open this to read ${total === 1 ? "it" : "them"} and drag ${total === 1 ? "it" : "them"} onto a group.`
+                : `${total === 1 ? "variable is" : "variables are"} in no group, so nothing will be matched for ${total === 1 ? "it" : "them"} at Gate 2. Open this to read ${total === 1 ? "it" : "them"} and drag ${total === 1 ? "it" : "them"} back onto a group.`}
             </span>
             <CollapsibleTrigger
               // An icon-only control names the ACTION AND ITS OBJECT, exactly as a ledger row's does.
               aria-label={`${open ? "Collapse" : "Expand"} the variables in no group`}
-              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-on-raised-muted"
+              className="ml-auto flex shrink-0 items-center justify-center rounded-full"
             >
-              <ChevronDown
-                aria-hidden="true"
-                className={cn(
-                  "h-4 w-4 transition-transform",
-                  open && "rotate-180",
-                )}
-              />
+              <DisclosureChevron ground="raised" open={open} />
             </CollapsibleTrigger>
           </div>
 
@@ -1277,8 +1282,14 @@ function ExpandedGroup({
   highlightIds,
   divisionParts = [],
   onUndoDivision,
+  preview = false,
 }: {
   group: ConceptGroup;
+  /**
+   * A PREVIEW run's group (08-31): nothing judged it, so no coherence finding of any kind — not even "too small to
+   * judge", which would imply the judge ran on the others — and an emptied group promises nothing about Gate 2.
+   */
+  preview?: boolean;
   /** The parts this group was divided into when the reviewer accepted its division (08-28 follow-up #1). */
   divisionParts?: ConceptGroup[];
   onUndoDivision?: () => void;
@@ -1393,9 +1404,9 @@ function ExpandedGroup({
               You moved every variable out of this group.
             </p>
             <p className="max-w-[80ch] text-sm text-on-inset-muted">
-              It is empty, so it will not go on to Gate 2 and nothing will be
-              matched for it. The row stays here so you can see the change and
-              undo it.
+              {preview
+                ? "It is empty. The row stays here so you can see the change and undo it."
+                : "It is empty, so it will not go on to Gate 2 and nothing will be matched for it. The row stays here so you can see the change and undo it."}
             </p>
             <div>
               <Button
@@ -1413,7 +1424,7 @@ function ExpandedGroup({
         {/* THE COHERENCE JUDGEMENT — ABOVE the evidence rows (mockup parity). For a flagged group this is the
           judge's carve proposal with its accept / edit / ignore action; for the rest it is the judge's read,
           stated plainly so an unjudged group never reads as one the judge approved. */}
-        {isFlagged(group) && !ignored && !divided && (
+        {!preview && isFlagged(group) && !ignored && !divided && (
           <div className="flex flex-col gap-2">
             <CarveProposal
               state={group.coherence}
@@ -1447,7 +1458,7 @@ function ExpandedGroup({
             />
           </div>
         )}
-        {isFlagged(group) && ignored && (
+        {!preview && isFlagged(group) && ignored && (
           <p className="text-sm text-on-raised-muted">
             Proposal ignored — the grouping is unchanged. The judge&rsquo;s flag
             stays on the row, because ignoring a proposal is not the same as
@@ -1458,7 +1469,7 @@ function ExpandedGroup({
           unshown (the gap Bhargav caught). It gets the SAME finding block, in advisory mode: the blue
           eyebrow, the theme sentence, the "Axis of difference" line and the KIND pills, but none of the
           split's accept/edit/ignore machinery, because there is no proposed division to act on. */}
-        {!isFlagged(group) && group.coherence === "qualify" && (
+        {!preview && !isFlagged(group) && group.coherence === "qualify" && (
           <CarveProposal
             state={group.coherence}
             advisory
@@ -1471,7 +1482,7 @@ function ExpandedGroup({
             readjudicationEnabled={false}
           />
         )}
-        {!isFlagged(group) && group.coherence === "not_judged" && (
+        {!preview && !isFlagged(group) && group.coherence === "not_judged" && (
           <div
             data-testid="coherence-finding"
             className="rounded-inner border-l-4 border-l-rule-on-inset bg-surface-inset px-4 py-3"
@@ -1491,7 +1502,8 @@ function ExpandedGroup({
           coherent ≠ harmonizable — a symptom scale is one concept but many items, and won't collapse to one
           CDE). Show the amber caution instead of the reassuring green, so it is not waved through to Gate 2.
           The copy keeps the judge's verdict honest and marks this as a separate pattern check. */}
-        {!isFlagged(group) &&
+        {!preview &&
+          !isFlagged(group) &&
           group.coherence === "single" &&
           group.matrixSuspect && (
             <div
@@ -1514,7 +1526,8 @@ function ExpandedGroup({
               </p>
             </div>
           )}
-        {!isFlagged(group) &&
+        {!preview &&
+          !isFlagged(group) &&
           group.coherence === "single" &&
           !group.matrixSuspect && (
             <div
@@ -1708,6 +1721,17 @@ function QuoteNote({
  */
 const STATE_FILTER_ORDER: CoherenceState[] = ["split", "qualify", "not_judged", "single"];
 
+/**
+ * Why Concept Spotlight's paid match is not on offer on a PREVIEW run (08-31). The paid run's reason points at Gate 4,
+ * which a Preview never reaches — it stops at Gate 1 — so it would promise a match this run will never make.
+ */
+const PREVIEW_MATCH_REFUSAL = {
+  claim: "not-enabled" as const,
+  reason:
+    "A Preview calls no model and stops at Gate 1, so it cannot match these concepts. Matching is part of a paid run: " +
+    "start one from New run, declare the concepts there, and its Gate 4 matches them.",
+};
+
 function stateLabel(state: CoherenceState): string {
   const label = COHERENCE_COPY[state].label;
   return label[0].toUpperCase() + label.slice(1);
@@ -1733,12 +1757,18 @@ function QueueRow({
   readOnly,
   renamedTo,
   reviewer = false,
+  preview = false,
   query,
   onSelect,
   onScopeChange,
   onDropMember,
 }: {
   group: ConceptGroup;
+  /**
+   * A PREVIEW run's row (08-31): no scope box — nothing is sent on to Gate 2 — and no coherence tag, because nothing
+   * judged it. The name, the cohorts, the count and Concept Spotlight's mark stay.
+   */
+  preview?: boolean;
   /** The queue's search, so the row can highlight what it matched in the name (review round 3). */
   query?: string;
   /** The Concept Spotlight component(s) that reached this group — the marker under the checkbox names them on hover,
@@ -1747,8 +1777,8 @@ function QueueRow({
   /** Where `scoreTag` came from: the Gate 4 MATCH (a verdict), or Gate 1's free SUGGESTION (08-28 Decision 6) —
    *  drawn differently, and saying so, because a suggestion is not a finding that the group measures it. */
   scoreTagSource?: "match" | "suggestion";
-  /** The suggestion cut-off in force, which the marker's tooltip states (a suggestion only). */
-  scoreCutoff?: number;
+  /** The cut-off(s) this group's suggestion was made at — its lists' own — which the marker's tooltip states. */
+  scoreCutoff?: readonly number[];
   /** A New group the reviewer made (08-28 Wave 2): marked as theirs, never with a coherence cell. */
   reviewer?: boolean;
   /** Every cohort in the run, in its fixed order — the strip's columns, under the queue's one legend. */
@@ -1827,18 +1857,23 @@ function QueueRow({
           at the same place on every row. */}
       <div
         data-testid="queue-row-control"
-        className="mt-px flex flex-col items-center gap-1.5"
+        // On a Preview there is no box, so the column is sized to Concept Spotlight's mark instead (`w-5`, the mark's own
+        // width — a box-wide `w-4` let it spill 2px either side): every name still starts at the same place whether or
+        // not the row carries the mark.
+        className={cn("mt-px flex flex-col items-center gap-1.5", preview && "w-5")}
         onClick={(e) => e.stopPropagation()}
       >
-        <Checkbox
-          data-testid="queue-scope"
-          checked={inScope}
-          disabled={readOnly}
-          onCheckedChange={(v) => onScopeChange(v === true)}
-          aria-label={`Send ${label.text} to Gate 2`}
-        />
+        {!preview && (
+          <Checkbox
+            data-testid="queue-scope"
+            checked={inScope}
+            disabled={readOnly}
+            onCheckedChange={(v) => onScopeChange(v === true)}
+            aria-label={`Send ${label.text} to Gate 2`}
+          />
+        )}
         {scoreTag && scoreTag.length > 0 && (
-          <SpotlightMarker components={scoreTag} source={scoreTagSource} cutoff={scoreCutoff} />
+          <SpotlightMarker components={scoreTag} source={scoreTagSource} cutoff={scoreCutoff} preview={preview} />
         )}
       </div>
       {/* THE NAME HAS THE LEFT COLUMN TO ITSELF (08-30b, lab round 5): up to three lines, and a short name makes
@@ -1855,7 +1890,7 @@ function QueueRow({
           <span data-label-source={label.source}>
             <Highlight text={label.text} query={query} mode="word-prefix" />
           </span>
-          {label.source === "reviewer" && <RenamedMark />}
+          {label.source === "reviewer" && <RenamedMark keywords={group.conceptSource === "keywords"} />}
           {label.source === "judge" && <BorrowedMark />}
           {changed && !reviewer && (
             <span className="ml-1 text-xs font-normal text-status-warn">
@@ -1876,9 +1911,15 @@ function QueueRow({
         cohorts={group.cohorts}
         roster={roster}
         vars={count}
-        state={reviewer ? <NewGroupMark /> : <CoherenceMark state={group.coherence} variant="tag" />}
+        state={
+          reviewer ? (
+            <NewGroupMark preview={preview} />
+          ) : preview ? undefined : (
+            <CoherenceMark state={group.coherence} variant="tag" />
+          )
+        }
         pattern={
-          group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single") ? (
+          !preview && group.matrixSuspect && (group.coherence === "not_judged" || group.coherence === "single") ? (
             <TemplateSuspicion judged={group.coherence === "single"} />
           ) : undefined
         }
@@ -1951,12 +1992,15 @@ function ReviewerGroupDetail({
   onDelete,
   onMove,
   dividedFrom,
+  preview = false,
 }: {
   group: ConceptGroup;
   members: string[];
   fieldIndex: Record<string, FieldDetail>;
   movedMembers: Set<string>;
   readOnly: boolean;
+  /** A Preview run's New group (08-31): nothing is sent on to Gate 2, so no scope box and no word of what Gate 2 does. */
+  preview?: boolean;
   inScope: boolean;
   onScopeChange: (inScope: boolean) => void;
   onRename: (next: string) => void;
@@ -1999,7 +2043,7 @@ function ReviewerGroupDetail({
                 <Highlight text={group.concept} />
               </h2>
             )}
-            {!editing && <NewGroupMark />}
+            {!editing && <NewGroupMark preview={preview} />}
             {!editing && group.readjudicatedFrom && <ReSplitMark parent={group.readjudicatedFrom} />}
             {!readOnly && !editing && (
               <button
@@ -2030,16 +2074,18 @@ function ReviewerGroupDetail({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <label className="flex items-center gap-2 text-xs font-semibold text-on-raised-muted">
-            <input
-              type="checkbox"
-              checked={inScope}
-              disabled={readOnly}
-              onChange={(e) => onScopeChange(e.target.checked)}
-              className="h-4 w-4 accent-[var(--accent)]"
-            />
-            Send to Gate 2
-          </label>
+          {!preview && (
+            <label className="flex items-center gap-2 text-xs font-semibold text-on-raised-muted">
+              <input
+                type="checkbox"
+                checked={inScope}
+                disabled={readOnly}
+                onChange={(e) => onScopeChange(e.target.checked)}
+                className="h-4 w-4 accent-[var(--accent)]"
+              />
+              Send to Gate 2
+            </label>
+          )}
           {!readOnly && count === 0 && (
             <Button
               type="button"
@@ -2057,9 +2103,13 @@ function ReviewerGroupDetail({
       </div>
 
       <p className="max-w-[80ch] text-sm text-on-raised-muted">
-        {count === 0
-          ? "It is empty. Drag variables onto its row in the list on the left — from any group, or from “In no group” — to fill it. An empty group does not go on to Gate 2; delete it if you no longer want it."
-          : "Drag more variables onto its row in the list on the left to add them, or drag a row here out of it. At Gate 2 ddharmon writes one ideal description for this group — one model call, included in the price — and matches it against common data elements like any other group."}
+        {preview
+          ? count === 0
+            ? "It is empty. Drag variables onto its row in the list on the left — from any group, or from “In no group” — to fill it, or delete it if you no longer want it."
+            : "Drag more variables onto its row in the list on the left to add them, or drag a row here out of it."
+          : count === 0
+            ? "It is empty. Drag variables onto its row in the list on the left — from any group, or from “In no group” — to fill it. An empty group does not go on to Gate 2; delete it if you no longer want it."
+            : "Drag more variables onto its row in the list on the left to add them, or drag a row here out of it. At Gate 2 ddharmon writes one ideal description for this group — one model call, included in the price — and matches it against common data elements like any other group."}
       </p>
 
       {count > 0 && !gridCarriesMembers && (
@@ -2122,9 +2172,15 @@ function GroupDetail({
   inScope,
   onScopeChange,
   stale,
+  preview = false,
   children,
 }: {
   group: ConceptGroup;
+  /**
+   * A PREVIEW run's group (08-31): no coherence mark (nothing judged it), no Send-to-Gate-2 box (nothing goes on) and
+   * no generated ideal (none was written).
+   */
+  preview?: boolean;
   /** Effective member count after the reviewer's moves (the sidebar row's number). */
   count: number;
   readOnly: boolean;
@@ -2174,7 +2230,7 @@ function GroupDetail({
                 <Highlight text={label.text} />
               </h2>
             )}
-            {label.source === "reviewer" && !editing && <RenamedMark />}
+            {label.source === "reviewer" && !editing && <RenamedMark keywords={group.conceptSource === "keywords"} />}
             {label.source === "judge" && !editing && <BorrowedMark />}
             {!renameReadOnly && !editing && (
               <button
@@ -2191,7 +2247,7 @@ function GroupDetail({
                 <Pencil aria-hidden="true" className="h-4 w-4" />
               </button>
             )}
-            <CoherenceMark state={group.coherence} />
+            {!preview && <CoherenceMark state={group.coherence} />}
           </div>
           <p className="mt-1.5 text-xs text-on-raised-muted">
             <span className="font-semibold text-on-raised">{count}</span>{" "}
@@ -2203,16 +2259,18 @@ function GroupDetail({
             </span>
           </p>
         </div>
-        <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-raised-muted">
-          <input
-            type="checkbox"
-            checked={inScope}
-            disabled={readOnly}
-            onChange={(e) => onScopeChange(e.target.checked)}
-            className="h-4 w-4 accent-[var(--accent)]"
-          />
-          Send to Gate 2
-        </label>
+        {!preview && (
+          <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-on-raised-muted">
+            <input
+              type="checkbox"
+              checked={inScope}
+              disabled={readOnly}
+              onChange={(e) => onScopeChange(e.target.checked)}
+              className="h-4 w-4 accent-[var(--accent)]"
+            />
+            Send to Gate 2
+          </label>
+        )}
       </div>
 
       {/* THE COHERENCE FINDING SITS ABOVE THE ROWS AND THE GENERATED IDEAL BELOW THEM (mockup parity): the
@@ -2220,7 +2278,7 @@ function GroupDetail({
           demoted beneath it. `children` (the ExpandedGroup) leads with the finding and carries the rows. */}
       {children}
 
-      {group.idealCde && (
+      {!preview && group.idealCde && (
         <details
           className="group rounded-inner border border-rule-on-raised"
           open={stale}
@@ -2239,7 +2297,7 @@ function GroupDetail({
                 membership changed — regenerated at Gate 2
               </span>
             )}
-            <DisclosureChevron ground="raised" className="ml-auto group-open:rotate-180" />
+            <DisclosureChevron ground="raised" className="ml-auto" />
           </summary>
           {stale && (
             <p className="px-4 pt-2 text-xs leading-relaxed text-on-raised-muted">
@@ -2360,6 +2418,13 @@ export default function Gate1Page() {
    */
   const runConfig = jobState?.config as Record<string, unknown> | undefined;
   const pinned = resolvePinned(runConfig);
+  /**
+   * A PREVIEW RUN (08-31): it called no model, so its rows are the clustering's own groups labelled by keywords, and
+   * it ENDS here. Read off the config (so a Preview still clustering already says so) or the result's own mode. Every
+   * control and sentence below that asserts something a Preview never did — a coherence reading, a split, a scope sent
+   * on to Gate 2, a price — is withheld on it; moves, New groups, renames and Concept Spotlight work as on a paid run.
+   */
+  const preview = isPreviewJob(jobState);
   const position = (jobState?.gatePosition ?? null) as GatePosition | null;
   /** The run has moved PAST this gate. */
   const past = isGatePast("gate1", position);
@@ -2471,17 +2536,25 @@ export default function Gate1Page() {
         ? "loading"
         : null;
   /**
-   * THE REVIEWER'S SUGGESTION CUT-OFF (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
-   * default 0.62"). A Gate 1 decision like scope itself: persisted per run (held in the tab on the demo), frozen with
-   * the gate. It replaces the payload's threshold everywhere the free search is cut — the cards, the tags and the
-   * seeded scope — and only there: Gate 4's judge works on its own scale. Undefined until there is a dense answer.
+   * THE REVIEWER'S SUGGESTION CUT-OFFS (`gate1_score_cutoff`, review round 6 — Bhargav: "should be user-selectable with
+   * default 0.62" — and ONE PER SPOTLIGHT LIST since 2026-11-08: "implement per list cutoff"). A Gate 1 decision like
+   * scope itself: persisted per run (held in the tab on the demo), frozen with the gate. Each list's replaces the
+   * payload's threshold everywhere the free search is cut for THAT list's concepts — its cards, the tags and the seeded
+   * scope — and only there: Gate 4's judge works on its own scale. A list with no row of its own reads the run-wide row
+   * a run may already hold, else the payload's own (`listCutoff`). Undefined until there is a dense answer.
    */
   const cutoffs = useGateDecisions(jobId, SCORE_CUTOFF_KIND, { pinned, frozen });
-  const cutoff =
-    suggestionData?.scored ? effectiveCutoff(cutoffs.decisions[SCORE_CUTOFF_SETTING], suggestionData.threshold) : undefined;
-  /** Set (a number) or reset (`null` — the row is deleted and the payload's threshold applies again). */
-  const setCutoff = (next: number | null) => {
-    const setting = { setting: SCORE_CUTOFF_SETTING };
+  const suggestionThreshold = suggestionData?.scored ? suggestionData.threshold : undefined;
+  const cutoffOf = useMemo(
+    () =>
+      suggestionThreshold == null
+        ? undefined
+        : (listName: string): ListCutoff => listCutoff(cutoffs.decisions, listName, suggestionThreshold),
+    [cutoffs.decisions, suggestionThreshold],
+  );
+  /** Set one list's cut-off (a number), or reset it (`null` — that list's row alone is deleted, so it falls back). */
+  const setCutoff = (listName: string, next: number | null) => {
+    const setting = { setting: listCutoffSetting(listName) };
     if (next === null) return void cutoffs.clear(setting);
     // The one alternative is the default it replaces, so the decision log can say "0.55 (default 0.62)".
     const def = suggestionData?.threshold;
@@ -2498,11 +2571,14 @@ export default function Gate1Page() {
       scoreScopeInput(
         latestSpec,
         frozen || latestSpec ? null : suggestionData,
-        cutoff,
+        // Each list's concepts at that list's cut-off: a group two lists reach is suggested if it clears EITHER.
+        cutoffOf ? (scoreName: string) => cutoffOf(scoreName).value : undefined,
       ),
-    [latestSpec, frozen, suggestionData, cutoff],
+    [latestSpec, frozen, suggestionData, cutoffOf],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
+  /** groupId → the cut-off(s) its suggestion was made at — the queue marker's tooltip states them. */
+  const scoreCutoffsByGroup = useMemo(() => suggestionCutoffsByGroup(scoreInput.matches), [scoreInput]);
   const scoreSeed = useMemo(
     () => scoreSeededGroups(scoreInput.matches, scoreInput.threshold),
     [scoreInput],
@@ -3173,6 +3249,11 @@ export default function Gate1Page() {
     !!jobState &&
     isTerminal(jobState.status) &&
     jobState.status !== "complete";
+  /**
+   * Whether Gate 1's export has anything to export (08-31): the run's variables have arrived. The route answers a run
+   * without them with an error, and a download link would save that error as a file — so until then no control.
+   */
+  const exportable = Object.keys(jobState?.result?.fieldIndex ?? {}).length > 0;
 
   /**
    * Commit this gate and GO. The second half is the one that was missing (08-16c Task 8).
@@ -3253,7 +3334,12 @@ export default function Gate1Page() {
       gate="gate1"
       // The rail navigates backwards from here (08-16c Task 2); a shell with no jobId renders it inert.
       jobId={jobId}
-      subhead="Each row is a group of variables that mean the same thing, named by ddharmon."
+      subhead={
+        preview
+          ? "Each row is a cluster the clustering formed, labelled by the words that set it apart. No model named, split or judged it, and nothing on this screen costs money."
+          : "Each row is a group of variables that mean the same thing, named by ddharmon."
+      }
+      howTo={preview ? HOW_TO_GATE1_PREVIEW : undefined}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a
@@ -3299,6 +3385,8 @@ export default function Gate1Page() {
       <DeclaredScorePanel
         jobId={jobId}
         pinned={pinned}
+        // A Preview's panel is the free search alone: no scope, no verdict, no price — and one refusal (08-31).
+        preview={preview}
         swaps={swaps}
         suggestionNote={suggestionNote}
         // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
@@ -3306,10 +3394,10 @@ export default function Gate1Page() {
         suggestionsStatus={!frozen && !latestSpec ? suggestionsStatus : null}
         suggestionsError={suggestionsQuery.error instanceof Error ? suggestionsQuery.error.message : undefined}
         onRetrySuggestions={() => void suggestionsQuery.refetch()}
-        cutoff={cutoff}
+        cutoffOf={cutoffOf}
         onCutoffChange={frozen ? undefined : setCutoff}
         spec={latestSpec}
-        matchRefusal={matchRefusal}
+        matchRefusal={preview ? PREVIEW_MATCH_REFUSAL : matchRefusal}
         groupsById={groupsById}
         cohorts={allCohorts}
         groupByVariable={groupByVariable}
@@ -3366,10 +3454,11 @@ export default function Gate1Page() {
             ) : (
               "still working"
             )}
-            . Concept groups are formed after three stages finish: ddharmon
-            describes the ideal element for each cluster, splits clusters that
-            hold more than one concept, and runs the coherence judge over the
-            result. The first rows land here when the third one does.
+            .{" "}
+            {/* A Preview runs no paid stage: its groups ARE the clustering's, so they land the moment it finishes. */}
+            {preview
+              ? "A Preview's groups are the clustering's own, so they appear here as soon as the clustering finishes."
+              : "Concept groups are formed after three stages finish: ddharmon describes the ideal element for each cluster, splits clusters that hold more than one concept, and runs the coherence judge over the result. The first rows land here when the third one does."}
           </span>
         </GateEmptyState>
       ) : stoppedBeforeGate ? (
@@ -3417,7 +3506,8 @@ export default function Gate1Page() {
             heading="Nothing grouped above the threshold"
             nextStep={
               <>
-                Nothing can be scoped until at least one group forms. Go back to{" "}
+                {/* A Preview scopes nothing, so the first sentence is the paid run's alone. */}
+                {!preview && "Nothing can be scoped until at least one group forms. "}Go back to{" "}
                 <Link
                   href={`/run/${jobId}/setup`}
                   className="font-semibold text-link-on-raised underline underline-offset-2"
@@ -3514,6 +3604,8 @@ export default function Gate1Page() {
                         />
                       ))}
                     </FilterSection>
+                    {/* No State on a Preview: every row is unjudged, so the section could only narrow to all or none. */}
+                    {!preview && (
                     <FilterSection title="State">
                       {STATE_FILTER_ORDER.map((st) => (
                         <FilterCheck
@@ -3532,6 +3624,7 @@ export default function Gate1Page() {
                         />
                       ))}
                     </FilterSection>
+                    )}
                   </>
                 }
               />
@@ -3546,6 +3639,8 @@ export default function Gate1Page() {
           }
           tools={
             <>
+              {/* No scope on a Preview — nothing goes on to Gate 2 — so no select-all to send it with. */}
+              {!preview && (
               <SelectAllShown
                 counts={tickedOfShown(
                   shownForScope.map((g) => g.groupId),
@@ -3556,10 +3651,12 @@ export default function Gate1Page() {
                 frozen={frozen}
                 onToggle={(t) => void onBulkScope(t)}
               />
+              )}
               <SegmentedSort<LedgerSortKey>
                 cols={[
                   { k: "concept", label: "Concept" },
-                  { k: "verdict", label: "State" },
+                  // No State sort on a Preview: every row is unjudged, so it would order nothing.
+                  ...(preview ? [] : [{ k: "verdict" as const, label: "State" }]),
                   { k: "cohorts", label: "Cohorts" },
                   { k: "vars", label: "Vars" },
                 ]}
@@ -3587,9 +3684,10 @@ export default function Gate1Page() {
                   query={query}
                   group={g}
                   reviewer
+                  preview={preview}
                   scoreTag={scoreTagByGroup.get(g.groupId)}
                   scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
-                  scoreCutoff={cutoff}
+                  scoreCutoff={scoreCutoffsByGroup.get(g.groupId)}
                   roster={allCohorts}
                   count={memberCount(g)}
                   inScope={isInScope(g.groupId)}
@@ -3664,9 +3762,10 @@ export default function Gate1Page() {
                     key={g.groupId}
                     query={query}
                     group={g}
+                    preview={preview}
                     scoreTag={scoreTagByGroup.get(g.groupId)}
                     scoreTagSource={scoreInput.source === "suggestion" ? "suggestion" : "match"}
-                  scoreCutoff={cutoff}
+                    scoreCutoff={scoreCutoffsByGroup.get(g.groupId)}
                     roster={allCohorts}
                     count={memberCount(g)}
                     inScope={isInScope(g.groupId)}
@@ -3769,6 +3868,7 @@ export default function Gate1Page() {
                   onRestoreMember={(memberId) => void restoreMember(memberId)}
                   readOnly={frozen}
                   defaultOpen
+                  preview={preview}
                 />
               ) : selectedReviewer ? (
                 <ReviewerGroupDetail
@@ -3777,6 +3877,7 @@ export default function Gate1Page() {
                   fieldIndex={fieldIndex}
                   movedMembers={movedMemberIds}
                   readOnly={frozen}
+                  preview={preview}
                   inScope={isInScope(selectedReviewer.groupId)}
                   onScopeChange={(next) => setGroupScope(selectedReviewer.groupId, next)}
                   onRename={(next) => void renameGroup(selectedReviewer.groupId, next)}
@@ -3790,6 +3891,7 @@ export default function Gate1Page() {
               ) : detailGroup ? (
                 <GroupDetail
                   group={detailGroup}
+                  preview={preview}
                   count={memberCount(detailGroup)}
                   readOnly={frozen}
                   renameReadOnly={renameFrozen}
@@ -3810,6 +3912,7 @@ export default function Gate1Page() {
                   <ExpandedGroup
                     highlightIds={scoreHighlight?.groupId === detailGroup.groupId ? scoreHighlight.ids : undefined}
                     group={detailGroup}
+                    preview={preview}
                     otherGroups={[]}
                     membersOf={(id) => membership.byGroup[id] ?? []}
                     sampleOnly={(o) => !hasFullMembership(o)}
@@ -3824,6 +3927,8 @@ export default function Gate1Page() {
                     canRegroup={hasFullMembership(detailGroup)}
                     refusal={refusalFor}
                     carvePrice={
+                      // A Preview never carves (nothing judged a split), and quotes no money anywhere.
+                      preview ? null : (
                       <>
                         This costs money. Re-splitting this group into distinct
                         concepts is paid work — at most about {formatUsd(price * 2)}{" "}
@@ -3835,6 +3940,7 @@ export default function Gate1Page() {
                         quote shows before you commit. Your spend so far updates when
                         the re-split finishes.
                       </>
+                      )
                     }
                     accepting={accepting === detailGroup.groupId}
                     carveKeyField={
@@ -3871,15 +3977,29 @@ export default function Gate1Page() {
           onRestoreMember={(memberId) => void restoreMember(memberId)}
           readOnly={frozen}
           defaultOpen
+          preview={preview}
         />
       )}
 
+      {/* A Preview ENDS here (D1 = (a)): its own bar, with no Continue and no price — see `PreviewEndBar`. */}
+      {preview ? (
+        <PreviewEndBar
+          download={exportable ? <GroupsDownload jobId={jobId} pinned={pinned} primary /> : undefined}
+        />
+      ) : (
       <CommitBar
         action={pastBar ? pastBar.action : "Continue to Gate 2"}
         // A frozen Gate 1 keeps its bar, but says what its Continue did instead of offering it again (O2).
         done={pastBar?.note}
         keyField={
           continueKeyAsk ? <RunKeyField reason={continueKeyAsk} action="Continue to Gate 2" /> : undefined
+        }
+        // The free export beside Continue (08-31) — only where it can work: here it is an extra, and a disabled one
+        // with a reason would crowd the purchase it sits beside. A Preview's bar explains its absence instead.
+        secondary={
+          exportable && groupsDownloadBlocked(jobId, pinned) === null ? (
+            <GroupsDownload jobId={jobId} pinned={pinned} />
+          ) : undefined
         }
         // No amount on the shared demo: its Continue buys nothing (see `onContinue`), and quoting the next gate's
         // cost there would claim a purchase that does not happen.
@@ -3907,6 +4027,7 @@ export default function Gate1Page() {
         // A closed gate buys nothing: the run is already past the charge this bar describes.
         disabled={inScopeGroups.length === 0 || (frozen && pinned !== true)}
       />
+      )}
     </GateShell>
   );
 }

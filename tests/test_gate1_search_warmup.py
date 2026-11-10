@@ -94,3 +94,35 @@ def test_a_full_auto_park_continued_at_once_does_not_warm(monkeypatch, tmp_path)
     warm = _Recorder()
     _park(monkeypatch, tmp_path, "gate1", warm, auto=True)
     assert warm.asked == []
+
+
+def test_a_finished_preview_run_warms_its_free_search(monkeypatch, tmp_path):
+    """A Preview run never parks — it completes — but its Gate 1 is where the reviewer searches (08-31)."""
+    warm = _Recorder()
+    monkeypatch.setattr(runner_module, "WARM_GATE1_SEARCH", True)
+    monkeypatch.setattr("backend.composite.encoder_available", lambda: True)
+    monkeypatch.setattr("backend.composite._embedder", lambda: warm)
+    store = JobStore(work_root=tmp_path / "work")
+    store.create("pv", "Preview", {})
+    result = {**_result(), "mode": "preview"}
+    monkeypatch.setattr(runner_module, "run_pipeline", lambda *a, **k: dict(result))
+    config = {"work_dir": str(tmp_path / "work" / "pv"), "run_mode": "preview"}
+    runner_module.run_harmonization(store, "pv", [], None, config)
+    assert store.get("pv").status == "complete"
+    assert warm.asked, "nothing was embedded when the Preview run finished"
+
+
+def test_a_finished_paid_run_does_not_warm(monkeypatch, tmp_path):
+    """A one-shot paid run that completes is read on its results page, not searched at Gate 1."""
+    warm = _Recorder()
+    monkeypatch.setattr(runner_module, "WARM_GATE1_SEARCH", True)
+    monkeypatch.setattr("backend.composite.encoder_available", lambda: True)
+    monkeypatch.setattr("backend.composite._embedder", lambda: warm)
+    store = JobStore(work_root=tmp_path / "work")
+    store.create("pd", "Paid", {})
+    monkeypatch.setattr(runner_module, "run_pipeline", lambda *a, **k: {**_result(), "mode": "sync"})
+    runner_module.run_harmonization(
+        store, "pd", [], None, {"work_dir": str(tmp_path / "work" / "pd"), "run_mode": "sync"}
+    )
+    assert store.get("pd").status == "complete"
+    assert warm.asked == []

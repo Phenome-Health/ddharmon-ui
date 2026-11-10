@@ -1588,7 +1588,9 @@ export default function SetupPage() {
               // the export and the run mode one by one, so the lead carries only the money claim.
               "Everything on this screen is free — nothing is charged until you press Start run."
       }
-      rail={railFor("setup", realizedRailArgs(jobState?.result?.cost, costSoFar))}
+      // Read only while composing (a started run's shell draws its own rail): choosing Preview gives the strip a
+      // Preview's shape, Set up and Gate 1 — the run will stop there (08-31).
+      rail={railFor("setup", { ...realizedRailArgs(jobState?.result?.cost, costSoFar), preview: isPreview })}
       runName={jobState?.displayName}
       costSoFar={costSoFar}
       // Inherited from the shell (08-14 Task 4): the stop control is placed ONCE in `GateShell`, so a

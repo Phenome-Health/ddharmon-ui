@@ -194,8 +194,12 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     await expect(info).toContainText("$0");
     await expect(info).toContainText(/not a judgement/i);
     await expect(info).toContainText(/membership, not a match/i);
-    // The cut-off is the reviewer's to change (round 6), in its own always-visible line below the strip (round 7).
-    await expect(panel.getByTestId("score-cutoff-line").getByTestId("score-cutoff-input")).toHaveValue(TAU.toFixed(2));
+    // The cut-off is the reviewer's to change (round 6), in its own always-visible line outside the strip's fold (round
+    // 7) — since 2026-11-08 one per list, in that list's fold ("implement per list cutoff"), never in the strip.
+    await expect(info.getByTestId("score-cutoff-input")).toHaveCount(0);
+    await expect(
+      panel.getByTestId("spotlight-list").getByTestId("score-cutoff-line").getByTestId("score-cutoff-input"),
+    ).toHaveValue(TAU.toFixed(2));
   });
 
   test("@gate1 opened, a card lists every group reached best-first, the cut-off drawn between, the best match by its question", async ({
@@ -292,8 +296,14 @@ test.describe("score cards — Gate 1 (the free search)", () => {
     // Bhargav 2026-10-05: the same three-line caveat repeated on every unsuggested card (dozens on a 49-item score).
     const panel = await openGate1Panel(page);
     const cards = panel.locator("[data-testid='score-suggestions']");
-    await expect(panel.getByTestId("score-suggestion-info")).toContainText(/not a finding about your cohorts/i);
-    await expect(cards.getByText(/not a finding about your cohorts/i)).toHaveCount(1);
+    // The info strip now sits in the panel's one guide, ABOVE the lists (2026-11-08): said once there, for every list,
+    // and not again inside a list's cards.
+    const guide = panel.getByTestId("score-suggestion-guide");
+    await expect(guide).toHaveCount(1);
+    await expect(panel.getByTestId("score-suggestion-info")).toHaveCount(1);
+    await expect(guide.getByTestId("score-suggestion-info")).toContainText(/not a finding about your cohorts/i);
+    await expect(guide.getByText(/not a finding about your cohorts/i)).toHaveCount(1);
+    await expect(cards.getByText(/not a finding about your cohorts/i)).toHaveCount(0);
     for (const c of ["Tinnitus", "Migraine"]) {
       await expect(cardOf(panel, c)).not.toContainText(/not a finding|Gate 4/i);
     }

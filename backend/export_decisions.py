@@ -85,6 +85,7 @@ from backend.artifact_kinds import (
     SKOS_RELATIONS,
     VERDICT,
     derive_staleness,
+    score_cutoff_list,
 )
 from backend.artifacts import registry
 from backend.combine_rules import attach_combine_rules
@@ -621,6 +622,15 @@ def _score_rows(grouped: dict[str, Any], stale: set[tuple[str, str]]) -> list[li
     return rows
 
 
+def _cutoff_list(setting: Any) -> str | None:
+    """The Spotlight list a stored cut-off row belongs to, or ``None`` (the run-wide row, or one the log cannot read —
+    the store refuses a malformed setting, so the log never raises over one)."""
+    try:
+        return score_cutoff_list(str(setting or ""))
+    except ValueError:
+        return None
+
+
 def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: dict[str, Any]) -> list[list[str]]:
     """One row per gate decision (plus the frozen scope and any workbench verdicts), in gate order.
 
@@ -662,6 +672,7 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
             continue
         for item, d in _by_key(grouped, kind).items():
             before, after, detail = "", _chosen_label(d.get("chosen")), ""
+            action = ACTION_OF.get(kind, kind)
             note = str(d.get("note") or "")
             if kind == GATE1_RENAME:
                 gid = str(d.get("groupId") or item)
@@ -675,6 +686,10 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                 # The default it replaced (core's calibrated value, carried as the one alternative) -> the reviewer's.
                 default = (d.get("alternatives") or [""])[0]
                 before = f"{default} (default)" if default else ""
+                # A Spotlight list's own cut-off says which list it is; the run-wide row reads as it always has.
+                listed = _cutoff_list(d.get("setting") or item)
+                if listed:
+                    action = f"{action} — {listed}"
             elif kind == GATE1_REGROUP:
                 before = str(d.get("fromGroupId") or "")
                 # Past Gate 1 the regrouping is frozen: a move in it was applied by the pipeline; one outside it was
@@ -731,7 +746,7 @@ def decision_log_rows(result: dict[str, Any], config: dict[str, Any], grouped: d
                 elif member not in (rec.get("members") or []):
                     detail = _j({"notApplied": NOT_APPLIED_MEMBER})
             rows.append(
-                [GATE_OF.get(kind, ""), kind, ACTION_OF.get(kind, kind), item, before, after, note, detail,
+                [GATE_OF.get(kind, ""), kind, action, item, before, after, note, detail,
                  "true" if (kind, item) in stale else "false"]
             )  # fmt: skip
 

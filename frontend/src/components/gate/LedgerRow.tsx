@@ -1,5 +1,6 @@
+import { DisclosureChevron } from "@/components/ui/disclosure";
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -183,10 +184,7 @@ export function LedgerRow({
             aria-label={`${open ? "Collapse" : "Expand"} ${typeof title === "string" ? title : rowId}`}
             className="flex h-6 w-6 items-center justify-center rounded-md text-on-raised-muted"
           >
-            <ChevronDown
-              aria-hidden="true"
-              className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
-            />
+            <DisclosureChevron ground="raised" open={open} />
           </CollapsibleTrigger>
         </div>
         <CollapsibleContent>

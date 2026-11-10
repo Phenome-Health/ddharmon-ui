@@ -1,7 +1,8 @@
+import { DisclosureChevron } from "@/components/ui/disclosure";
 import { useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
-import { Check, ChevronDown } from "lucide-react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CommitBar } from "@/components/gate/CommitBar";
@@ -981,10 +982,7 @@ export default function Gate3Page() {
                         }}
                         className="-mr-1 ml-auto grid h-6 w-6 shrink-0 place-content-center rounded-inner text-on-raised-muted transition-colors hover:bg-surface-inset hover:text-on-raised"
                       >
-                        <ChevronDown
-                          aria-hidden="true"
-                          className={cn("h-4 w-4 transition-transform duration-200", !isFolded && "rotate-180")}
-                        />
+                        <DisclosureChevron ground="raised" open={!isFolded} />
                       </button>
                     </div>
                     {!isFolded && (

@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Circle, CircleDashed } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DisclosureChevron, DisclosureLabel, FOLD_BOX, disclosureRow } from "@/components/ui/disclosure";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cohortRoster, type NamedGroup } from "@/lib/ledger";
@@ -15,6 +14,17 @@ import {
 } from "@/lib/score-suggestion-cards";
 import { cn } from "@/lib/utils";
 import type { FieldDetail } from "@/types";
+
+/**
+ * A list's suggestion counts, for its header: how many of its concepts the search suggested a group for, and how many
+ * distinct groups it suggested across them (round 6's count, now on the list that owns it).
+ */
+export function suggestionCounts(cards: SuggestionCard[]): { nWith: number; nGroups: number } {
+  return {
+    nWith: cards.filter((c) => c.nSuggested > 0).length,
+    nGroups: new Set(cards.flatMap((c) => c.groups.filter((g) => g.suggested).map((g) => g.groupId))).size,
+  };
+}
 
 /**
  * The score builder's per-component cards on GATE 1, drawn from the FREE search (08-28, option A).
@@ -36,12 +46,16 @@ import type { FieldDetail } from "@/types";
  * this component's suggestion: such a row stays checked but is drawn neutral, says why ("In scope for Migraine",
  * "In scope — your choice"), and is not counted in this card's spread (`countsForCard`). A group BELOW the cut-off is listed under a divider so the reviewer can catch a miss
  * (the paid judge picked 8 groups the 0.62 cut-off did not); checking it puts it in scope like any other.
+ *
+ * ON A PREVIEW (08-31) THERE IS NO SCOPE AND NO MATCH. A Preview sends nothing on to Gate 2 and never reaches Gate 4,
+ * so the cards are the free search alone: no checkbox, no "Gate 2 ✓", no "in scope" count or reason, no word of a
+ * verdict to come. A card counts what the search SUGGESTED (above the cut-off) — which groups hold the items listed.
+ * That a Preview cannot match is said once, by the panel's refusal, not here.
  */
 export function ScoreSuggestionCards({
+  preview = false,
   cards,
   threshold,
-  defaultThreshold,
-  onThresholdChange,
   groupsById,
   cohorts,
   fieldIndex,
@@ -50,13 +64,11 @@ export function ScoreSuggestionCards({
   onGroupScopeChange,
   onOpenGroup,
 }: {
+  /** A Preview run: the free search alone — no scope, and no later gate named. */
+  preview?: boolean;
   cards: SuggestionCard[];
-  /** The cut-off the cards are split at: the reviewer's (`gate1_score_cutoff`), else the payload's own. */
+  /** The cut-off the cards are split at: THIS list's (`gate1_score_cutoff` for the list), else the payload's own. */
   threshold: number;
-  /** The payload's own cut-off (core's calibrated value) — what reset returns to. */
-  defaultThreshold?: number;
-  /** Set (a number) or reset (`null`) the reviewer's cut-off. Absent → the cut-off is shown, not editable. */
-  onThresholdChange?: (next: number | null) => void;
   groupsById?: Map<string, NamedGroup>;
   /** The run's cohorts (Gate 1's roster) — the reached-by-search table's columns. Absent → the groups' own cohorts. */
   cohorts?: readonly string[];
@@ -69,13 +81,12 @@ export function ScoreSuggestionCards({
   onOpenGroup?: (groupId: string, matchedIds?: string[]) => void;
 }) {
   const nWith = cards.filter((c) => c.nSuggested > 0).length;
-  // Distinct groups suggested across the components — the count the panel's note used to say (round 6).
-  const nGroups = new Set(cards.flatMap((c) => c.groups.filter((g) => g.suggested).map((g) => g.groupId))).size;
   const coverage = searchCoverage(
     cards,
     cohorts ?? cohortRoster(null, [...(groupsById?.values() ?? [])].map((n) => n.group)),
     (gid) => groupsById?.get(gid)?.group.cohorts,
-    (gid) => isGroupInScope?.(gid) ?? false,
+    // No scope on a Preview: every suggested group counts, which is what the table then shows.
+    preview ? () => true : (gid) => isGroupInScope?.(gid) ?? false,
   );
   // Every item under the cut-off (user test 2026-11-03): nothing is ticked, and counts alone read as "nothing
   // happened" — so the cards lead with it and name the closest items, best first.
@@ -86,112 +97,36 @@ export function ScoreSuggestionCards({
           .filter((c) => Number.isFinite(c.best))
           .sort((a, b) => b.best - a.best)
       : [];
-  // THE LIST IS CONTROLLED so the table's component links can open it (review round 7): a link into a folded list
-  // opens the list, then the card, then brings the card into view.
-  const [listOpen, setListOpen] = useState(true);
+  // A table link opens its card and brings it into view (review round 7). The table sits inside the list's own fold,
+  // so a link can only be clicked while the list is open.
   const [openRequest, setOpenRequest] = useState<{ component: string; n: number } | null>(null);
-  const goToCard = (component: string) => {
-    setListOpen(true);
-    setOpenRequest((cur) => ({ component, n: (cur?.n ?? 0) + 1 }));
-  };
+  const goToCard = (component: string) => setOpenRequest((cur) => ({ component, n: (cur?.n ?? 0) + 1 }));
   return (
-    <Card data-testid="score-suggestions">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Items → this run&rsquo;s groups</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    // NO FOLD OF ITS OWN (Bhargav, 2026-11-08 round 2: "the block should be collapsible at this level"): the LIST is
+    // the one fold (`SpotlightList` in DeclaredScorePanel), headed by its name and these counts — a fold inside it
+    // would be a dropdown inside a dropdown.
+    <div data-testid="score-suggestions" className="space-y-2">
         {nWith === 0 && cards.length > 0 && (
           <p data-testid="score-suggestions-none-cleared" className="max-w-[80ch] text-sm text-on-raised">
             <span className="font-semibold">
-              None of your {cards.length} item{cards.length === 1 ? "" : "s"} reached the {threshold.toFixed(2)}{" "}
+              None of your {cards.length} concept{cards.length === 1 ? "" : "s"} reached the {threshold.toFixed(2)}{" "}
               cut-off
             </span>
-            , so nothing was ticked for you.
+            {/* A Preview ticks nothing, so it says only that nothing was suggested (08-31). */}
+            {preview ? ", so nothing was suggested." : ", so nothing was ticked for you."}
             {closest.length > 0 && (
               <> Closest: {closest.map((c) => `${c.item} ${c.best.toFixed(2)}`).join(", ")}.</>
             )}{" "}
-            Lower the cut-off below, or open an item to see its closest groups and tick them yourself.
+            {/* The list's own cut-off sits just above this, in the same fold (2026-11-08: one per list). */}
+            {preview
+              ? "Lower this list’s cut-off above, or open a concept to see its closest groups."
+              : "Lower this list’s cut-off above, or open a concept to see its closest groups and tick them yourself."}
           </p>
         )}
-        {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
-        <Collapsible defaultOpen data-testid="score-suggestion-info" className={FOLD_BOX}>
-          <CollapsibleTrigger
-            data-testid="score-suggestion-info-toggle"
-            className={disclosureRow("raised", "group")}
-          >
-            <DisclosureLabel ground="raised">Concept Spotlight · how suggestions work</DisclosureLabel>
-            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-1.5">
-          <ul className="flex flex-col gap-1 text-on-raised-muted">
-            <li>
-              <span className="font-semibold text-on-raised">Free search.</span> Each item is searched against
-              this run&rsquo;s variables by meaning — retrieval only, no model call, $0.
-            </li>
-            {/* Named as the column names it (review round 7: "The figure." was ambiguous). */}
-            <li>
-              <span className="font-semibold text-on-raised">Best similarity.</span> How close a group&rsquo;s
-              best-matching variable is to the item (0–1). A search score, not a judgement — the verdict is Gate
-              4&rsquo;s match.
-            </li>
-            <li>
-              <span className="font-semibold text-on-raised">Variables · cohorts.</span> Everything in this
-              item&rsquo;s suggested groups that are in scope — group membership, not a match. Gate 4 says which
-              of them measure it. Other in-scope groups the search reached say why they are in scope.
-            </li>
-            {/* SAID ONCE, HERE (round 5 sweep): "→ continues to Gate 2" sat on every card with a group in scope. */}
-            <li>
-              <span className="font-semibold text-on-raised">In scope.</span> A card&rsquo;s ticked groups continue to
-              Gate 2 with the rest of your scope.
-            </li>
-            {/* SAID ONCE, HERE (Bhargav 2026-10-05, again round 6): the per-card sentence repeated on every unsuggested
-                card, so a card says it with its dashed marker alone. */}
-            <li>
-              <span className="font-semibold text-on-raised">Nothing suggested</span> (a dashed circle). This search
-              reached no group at the cut-off — not a finding about your cohorts. Gate 4&rsquo;s match decides. Open the
-              item to check the groups under the cut-off.
-            </li>
-          </ul>
-          </CollapsibleContent>
-        </Collapsible>
-        {/* THE CUT-OFF STAYS IN VIEW (review round 7: "outside the collapsible zone"): it is a control, and it governs
-            the table and the cards below, so folding the explanation must not fold it away. */}
-        <p data-testid="score-cutoff-line" className="px-1 text-xs text-on-raised-muted">
-          Every group scoring{" "}
-          {onThresholdChange ? (
-            <CutoffInput value={threshold} onCommit={onThresholdChange} />
-          ) : (
-            <span className="font-mono text-on-raised">{threshold.toFixed(2)}</span>
-          )}{" "}
-          or higher starts in scope, marked as a suggestion in the queue — one cut-off for every item. Your checks
-          always win.
-          {onThresholdChange && defaultThreshold != null && Math.abs(threshold - defaultThreshold) > 1e-9 && (
-            <>
-              {" "}
-              <button
-                type="button"
-                data-testid="score-cutoff-reset"
-                onClick={() => onThresholdChange(null)}
-                className="font-semibold text-link-on-raised underline underline-offset-2"
-              >
-                reset to {defaultThreshold.toFixed(2)}
-              </button>
-            </>
-          )}
-        </p>
-        {/*
-          PER-COHORT, REACHED BY SEARCH (review round 6 note L7, "no cohort coverage table?" — option (b), 2026-10-13).
-          Gate 4 carries the full table next to the match; this is the scoping half, from the free search alone. The
-          mark is a neutral dot, never Gate 4's check or cross: it says the search reached the cohort, not that the
-          cohort has the component, and a blank is never "missing". FIRST, in its own outlined fold (round 7): the
-          overview leads, and each component name links down to its card. CLOSED by default (round 9, Bhargav): the
-          how-suggestions-work note speaks about the cards below, so the reader meets those first and opens the table
-          only when they want it.
-        */}
-        <Collapsible data-testid="search-coverage" className={FOLD_BOX}>
+        <Collapsible data-testid="search-coverage" className="border-t border-rule-quiet-on-raised pt-2">
           <CollapsibleTrigger data-testid="search-coverage-toggle" className={disclosureRow("raised", "group")}>
             <DisclosureLabel ground="raised">Per-cohort coverage · reached by search</DisclosureLabel>
-            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
+            <DisclosureChevron ground="raised" />
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2">
             <div className="overflow-x-auto">
@@ -199,7 +134,7 @@ export function ScoreSuggestionCards({
                 <thead>
                   <tr className="border-b border-border text-left text-on-raised-muted">
                     <th scope="col" className="py-1.5 pr-3 font-semibold">
-                      Item
+                      Concept
                     </th>
                     {coverage.cohorts.map((c) => (
                       <th
@@ -272,57 +207,172 @@ export function ScoreSuggestionCards({
               </table>
             </div>
             <p data-testid="search-coverage-note" className="mt-2 text-[11px] text-on-raised-muted">
-              A dot: one of the item&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
-              scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
-              search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match says
-              which variables measure each item, in its own table.
+              {/* A Preview keeps no scope and has no Gate 4 table to point to (08-31). */}
+              {preview ? (
+                <>
+                  A dot: one of the concept&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher) holds a
+                  variable from that cohort &mdash; group membership, not a match. A blank is what this search reached,
+                  not a finding about the cohort; lowering the cut-off widens it.
+                </>
+              ) : (
+                <>
+                  A dot: one of the concept&rsquo;s suggested groups (similarity {threshold.toFixed(2)} or higher, kept in
+                  scope) holds a variable from that cohort &mdash; group membership, not a match. A blank is what this
+                  search reached, not a finding about the cohort; lowering the cut-off widens it. Gate 4&rsquo;s match
+                  says which variables measure each concept, in its own table.
+                </>
+              )}
             </p>
           </CollapsibleContent>
         </Collapsible>
-        {/* The component cards, in their own outlined fold (review round 7). */}
-        <Collapsible
-          open={listOpen}
-          onOpenChange={setListOpen}
-          data-testid="score-suggestion-components"
-          className={FOLD_BOX}
+        {/* SAID ONCE (round 6): the figure's label heads the column instead of riding on every row. */}
+        <div
+          data-testid="score-suggestion-columns"
+          className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
         >
-          <CollapsibleTrigger
-            data-testid="score-suggestion-components-toggle"
-            className={disclosureRow("raised", "group")}
+          <span>Concept</span>
+          <span>Best similarity</span>
+        </div>
+        {cards.map((card) => (
+          <SuggestionRow
+            key={card.component}
+            preview={preview}
+            card={card}
+            openRequest={openRequest?.component === card.component ? openRequest.n : 0}
+            threshold={threshold}
+            groupsById={groupsById}
+            fieldIndex={fieldIndex}
+            isGroupInScope={isGroupInScope}
+            groupScopeWhy={groupScopeWhy}
+            onGroupScopeChange={onGroupScopeChange}
+            onOpenGroup={onOpenGroup}
+          />
+        ))}
+    </div>
+  );
+}
+
+/**
+ * How a Spotlight suggestion is made — said once for the panel, above the lists, rather than once per list. It carries
+ * NO cut-off (2026-11-08, "implement per list cutoff"): each list has its own, in its own fold (`ScoreCutoffLine`).
+ */
+export function ScoreSuggestionGuide({ preview = false }: { preview?: boolean }) {
+  return (
+    <div data-testid="score-suggestion-guide" className="flex flex-col gap-2">
+      {/* A FOLD, open until closed (review round 6, Bhargav: "collapsible"). */}
+      <Collapsible defaultOpen data-testid="score-suggestion-info" className={FOLD_BOX}>
+        <CollapsibleTrigger
+          data-testid="score-suggestion-info-toggle"
+          className={disclosureRow("raised", "group")}
+        >
+          <DisclosureLabel ground="raised">Concept Spotlight · how suggestions work</DisclosureLabel>
+          <DisclosureChevron ground="raised" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-1.5">
+        <ul className="flex flex-col gap-1 text-on-raised-muted">
+          <li>
+            <span className="font-semibold text-on-raised">Free search.</span> Each concept is searched against
+            this run&rsquo;s variables by meaning — retrieval only, no model call, $0.
+          </li>
+          {/* Named as the column names it (review round 7: "The figure." was ambiguous). */}
+          {/* ON A PREVIEW (08-31) each line keeps what the search is and drops what a later gate does with it: there
+              is no Gate 2 to send a scope to and no Gate 4 match — the panel's refusal says that, once. */}
+          <li>
+            <span className="font-semibold text-on-raised">Best similarity.</span> How close a group&rsquo;s
+            best-matching variable is to the concept (0–1).{" "}
+            {preview ? (
+              "A search score, not a judgement."
+            ) : (
+              <>A search score, not a judgement — the verdict is Gate 4&rsquo;s match.</>
+            )}
+          </li>
+          <li>
+            <span className="font-semibold text-on-raised">Variables · cohorts.</span>{" "}
+            {preview ? (
+              <>Everything in this concept&rsquo;s suggested groups — group membership, not a match.</>
+            ) : (
+              <>
+                Everything in this concept&rsquo;s suggested groups that are in scope — group membership, not a match.
+                Gate 4 says which of them measure it. Other in-scope groups the search reached say why they are in
+                scope.
+              </>
+            )}
+          </li>
+          {/* SAID ONCE, HERE (round 5 sweep): "→ continues to Gate 2" sat on every card with a group in scope. */}
+          {!preview && (
+            <li>
+              <span className="font-semibold text-on-raised">In scope.</span> A concept&rsquo;s ticked groups continue
+              to Gate 2 with the rest of your scope.
+            </li>
+          )}
+          {/* SAID ONCE, HERE (Bhargav 2026-10-05, again round 6): the per-card sentence repeated on every unsuggested
+              card, so a card says it with its dashed marker alone. */}
+          <li>
+            <span className="font-semibold text-on-raised">Nothing suggested</span> (a dashed circle). This search
+            reached no group at its list&rsquo;s cut-off — not a finding about your cohorts.
+            {preview ? "" : <> Gate 4&rsquo;s match decides.</>} Open the concept to check the groups under the cut-off.
+          </li>
+        </ul>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+}
+
+/**
+ * ONE SPOTLIGHT LIST'S CUT-OFF (2026-11-08, Bhargav on the Lavish review: "implement per list cutoff"), at the head of
+ * that list's fold, above its coverage table and its concepts — the things it splits. It is the list's alone: its
+ * concepts' cards, coverage dots and headline, and the queue tags and scope it seeds, all split at it; another list's
+ * concepts are split at theirs.
+ *
+ * Reset deletes THIS list's row only, so it is offered only when the list has a row of its own that differs from what
+ * the list would read without it — the run-wide cut-off a run may already hold, else core's default — and it names
+ * that value. Absent `onChange` (a passed gate) → the value is shown, not editable.
+ */
+export function ScoreCutoffLine({
+  preview = false,
+  listName,
+  value,
+  resetTo,
+  onChange,
+}: {
+  preview?: boolean;
+  /** The list it belongs to — named to assistive tech, so two lists' fields are told apart. */
+  listName: string;
+  value: number;
+  /** What reset returns this list to, when it has a row of its own to delete; `null` → nothing to reset. */
+  resetTo: number | null;
+  /** Set (a number) or reset (`null`) this list's cut-off. Absent → read-only. */
+  onChange?: (next: number | null) => void;
+}) {
+  return (
+    <p data-testid="score-cutoff-line" className="text-xs text-on-raised-muted">
+      Every group scoring{" "}
+      {onChange ? (
+        <CutoffInput value={value} onCommit={onChange} label={`Suggestion cut-off for ${listName}`} />
+      ) : (
+        <span data-testid="score-cutoff-value" className="font-mono text-on-raised">
+          {value.toFixed(2)}
+        </span>
+      )}{" "}
+      {/* A Preview has no scope for a suggestion to start in, and no checks to win (08-31). */}
+      {preview
+        ? "or higher for this list’s concepts is suggested and marked in the queue."
+        : "or higher for this list’s concepts starts in scope, marked as a suggestion in the queue. Your checks always win."}
+      {onChange && resetTo != null && Math.abs(value - resetTo) > 1e-9 && (
+        <>
+          {" "}
+          <button
+            type="button"
+            data-testid="score-cutoff-reset"
+            onClick={() => onChange(null)}
+            className="font-semibold text-link-on-raised underline underline-offset-2"
           >
-            <DisclosureLabel ground="raised">
-              Items · {nWith}/{cards.length} with a suggestion · {nGroups} group{nGroups === 1 ? "" : "s"}{" "}
-              suggested
-            </DisclosureLabel>
-            <DisclosureChevron ground="raised" className="group-data-[state=open]:rotate-180" />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2 space-y-2">
-            {/* SAID ONCE (round 6): the figure's label heads the column instead of riding on every row. */}
-            <div
-              data-testid="score-suggestion-columns"
-              className="flex items-center justify-between pl-9 pr-9 text-[10px] font-semibold uppercase tracking-eyebrow text-on-raised-muted"
-            >
-              <span>Item</span>
-              <span>Best similarity</span>
-            </div>
-            {cards.map((card) => (
-              <SuggestionRow
-                key={card.component}
-                card={card}
-                openRequest={openRequest?.component === card.component ? openRequest.n : 0}
-                threshold={threshold}
-                groupsById={groupsById}
-                fieldIndex={fieldIndex}
-                isGroupInScope={isGroupInScope}
-                groupScopeWhy={groupScopeWhy}
-                onGroupScopeChange={onGroupScopeChange}
-                onOpenGroup={onOpenGroup}
-              />
-            ))}
-          </CollapsibleContent>
-        </Collapsible>
-      </CardContent>
-    </Card>
+            reset to {resetTo.toFixed(2)}
+          </button>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -336,7 +386,15 @@ export function ScoreSuggestionCards({
  * outside [0.30, 0.95] is marked invalid and never applied; leaving the field then puts the applied value back, so the
  * field never shows a cut-off the screen is not using.
  */
-function CutoffInput({ value, onCommit }: { value: number; onCommit: (next: number) => void }) {
+function CutoffInput({
+  value,
+  onCommit,
+  label = "Suggestion cut-off",
+}: {
+  value: number;
+  onCommit: (next: number) => void;
+  label?: string;
+}) {
   const [draft, setDraft] = useState(value.toFixed(2));
   const [invalid, setInvalid] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -363,7 +421,7 @@ function CutoffInput({ value, onCommit }: { value: number; onCommit: (next: numb
     <input
       type="number"
       data-testid="score-cutoff-input"
-      aria-label="Suggestion cut-off"
+      aria-label={label}
       aria-invalid={invalid}
       title={`The similarity a group must reach to be suggested — between ${SCORE_CUTOFF_MIN.toFixed(2)} and ${SCORE_CUTOFF_MAX.toFixed(2)}.`}
       min={SCORE_CUTOFF_MIN}
@@ -398,6 +456,7 @@ function variableLabel(id: string, fieldIndex?: Record<string, FieldDetail>): st
 }
 
 function SuggestionRow({
+  preview = false,
   card,
   openRequest = 0,
   threshold,
@@ -408,6 +467,8 @@ function SuggestionRow({
   onGroupScopeChange,
   onOpenGroup,
 }: {
+  /** A Preview run (08-31): no checkbox, no scope count or reason, no Gate 2 — the card counts what was suggested. */
+  preview?: boolean;
   card: SuggestionCard;
   /** A link into this card from the coverage table (review round 7): each new number opens it and brings it into view. */
   openRequest?: number;
@@ -428,7 +489,8 @@ function SuggestionRow({
     // After the list (and this card) have laid out, so the scroll lands on the card's real position.
     requestAnimationFrame(() => rootRef.current?.scrollIntoView({ block: "center" }));
   }, [openRequest]);
-  const inScope = (gid: string) => isGroupInScope?.(gid) ?? false;
+  // No scope on a Preview (08-31): every group is taken as kept, so a card counts exactly what the search suggested.
+  const inScope = (gid: string) => (preview ? true : (isGroupInScope?.(gid) ?? false));
   const counts = (g: SuggestionCardGroup) => countsForCard(g, inScope(g.groupId));
   const scoped = card.groups.filter(counts);
   // What is IN the groups in scope — membership, counted from Gate 1's own groups (never inferred as a match). The
@@ -465,10 +527,11 @@ function SuggestionRow({
     const label = named?.name?.trim() || "Unnamed group";
     const sel = inScope(g.groupId);
     const counted = counts(g);
-    // In scope, but not as THIS component's suggestion: checked, neutral, and saying why.
+    // In scope, but not as THIS component's suggestion: checked, neutral, and saying why. Never on a Preview, which
+    // has no scope for a group to be in (08-31).
     const why = groupScopeWhy?.(g.groupId);
     const scopeReason =
-      sel && !counted
+      !preview && sel && !counted
         ? why?.by === "score"
           ? `In scope for ${why.components.join(", ")}`
           : why?.by === "made"
@@ -484,24 +547,28 @@ function SuggestionRow({
         data-testid="score-suggestion-group"
         data-group={g.groupId}
         data-suggested={g.suggested ? "true" : "false"}
-        data-in-scope={sel ? "true" : "false"}
+        data-in-scope={preview ? undefined : sel ? "true" : "false"}
         data-counted={counted ? "true" : "false"}
         className={cn(
           "rounded-md border",
           counted ? "border-rule-ok bg-surface-ok" : "border-border bg-surface-raised",
-          !sel && "opacity-80",
+          // A Preview dims what the search left below the cut-off, as a paid card dims what is out of scope.
+          (preview ? !counted : !sel) && "opacity-80",
         )}
       >
         <div className="flex items-start gap-2 px-2.5 py-2">
-          <input
-            type="checkbox"
-            data-testid="score-suggestion-group-toggle"
-            checked={sel}
-            disabled={!onGroupScopeChange}
-            onChange={() => onGroupScopeChange?.(g.groupId, !sel)}
-            aria-label={`Include the group ${label} in Gate 1's scope`}
-            className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
-          />
+          {/* The box is Gate 1 scope; a Preview has none, so the row is the search's answer and its link (08-31). */}
+          {!preview && (
+            <input
+              type="checkbox"
+              data-testid="score-suggestion-group-toggle"
+              checked={sel}
+              disabled={!onGroupScopeChange}
+              onChange={() => onGroupScopeChange?.(g.groupId, !sel)}
+              aria-label={`Include the group ${label} in Gate 1's scope`}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer text-status-ok accent-current"
+            />
+          )}
           <div className="min-w-0 flex-1">
             {onOpenGroup ? (
               <button
@@ -553,12 +620,14 @@ function SuggestionRow({
           {scopeReason ? (
             <span
               data-testid="score-suggestion-scope-why"
-              title="In Gate 1's scope, but not as this item's suggestion — so it is not counted on this card. Scope is one set for the gate: unchecking it here takes it out everywhere."
+              title="In Gate 1's scope, but not as this concept's suggestion — so it is not counted for it. Scope is one set for the gate: unchecking it here takes it out everywhere."
               className="shrink-0 rounded-full border border-dashed border-rule-on-raised px-1.5 py-0.5 text-[10px] font-semibold text-on-raised-muted"
             >
               {scopeReason}
             </span>
           ) : (
+            // Nothing goes on to Gate 2 from a Preview (08-31).
+            !preview &&
             sel && (
               <span className="shrink-0 rounded-full border border-rule-info bg-surface-info px-1.5 py-0.5 text-[10px] font-semibold text-link-on-raised">
                 Gate 2 ✓
@@ -604,12 +673,18 @@ function SuggestionRow({
             <span>
               <span className="font-semibold">{card.nSuggested}</span> group{card.nSuggested === 1 ? "" : "s"}{" "}
               suggested
+              {/* A Preview counts what was suggested, so the figures follow straight on (08-31). */}
+              {preview && scoped.length > 0 && ":"}
             </span>
-            <span className="text-on-raised-muted">·</span>
-            <span>
-              <span className="font-semibold">{scoped.length}</span> in scope
-              {scoped.length > 0 && ":"}
-            </span>
+            {!preview && (
+              <>
+                <span className="text-on-raised-muted">·</span>
+                <span>
+                  <span className="font-semibold">{scoped.length}</span> in scope
+                  {scoped.length > 0 && ":"}
+                </span>
+              </>
+            )}
             {scoped.length > 0 && (
               <>
                 <span>
@@ -651,14 +726,17 @@ function SuggestionRow({
                 <span className="h-px flex-1 bg-border" />
                 {nBelow} group{nBelow === 1 ? "" : "s"} below the cut-off {threshold.toFixed(2)}
                 <span className="h-px flex-1 bg-border" />
-                <DisclosureChevron ground="raised" open={belowOpen} className="h-3.5 w-3.5" />
+                <DisclosureChevron ground="raised" open={belowOpen} size="sm" />
               </button>
             )}
             {belowOpen &&
               card.groups.filter((g) => !g.suggested).map((g) => <Fragment key={g.groupId}>{renderGroup(g)}</Fragment>)}
           </div>
           <p className="mt-2 border-t border-rule-quiet-on-raised pt-2 text-[11px] text-on-raised-muted">
-            Checked groups are in Gate 1&rsquo;s scope and continue to Gate 2 — the same checkbox as the list below.
+            {/* No checkbox on a Preview, so only the way into a group is left to say (08-31). */}
+            {!preview && (
+              <>Checked groups are in Gate 1&rsquo;s scope and continue to Gate 2 — the same checkbox as the list below. </>
+            )}
             Refine a group&rsquo;s membership via its <span className="font-semibold">↗</span> link.
           </p>
         </div>

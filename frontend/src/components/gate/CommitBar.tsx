@@ -20,6 +20,13 @@ import { formatUsd } from "@/lib/estimate";
  * single elevation token (UI-SPEC §4).
  */
 
+/**
+ * The bar's two surfaces, shared with `PreviewEndBar` (08-31) so the end of a Preview sits exactly where, and looks
+ * exactly as, the commit bar it stands in for — one definition, so the two cannot drift apart.
+ */
+export const COMMIT_BAR_SURFACE = "flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card";
+export const COMMIT_BAR_PIN = "sticky bottom-0 z-10 -mb-6 -mt-3 bg-surface-field pb-3 pt-3";
+
 export interface CommitBarProps {
   /** The button's words, without the amount — e.g. `Continue to Gate 2`. */
   action: string;
@@ -56,6 +63,11 @@ export interface CommitBarProps {
    */
   keyField?: React.ReactNode;
   /**
+   * A free control beside the action — Gate 1's "Download groups (CSV)" (08-31). Rendered only when passed, so no
+   * other bar changes. It buys nothing, so it never carries an amount and the statement above never names it.
+   */
+  secondary?: React.ReactNode;
+  /**
    * The gate is BEHIND the run (a frozen record): what happened here, said in place of the purchase (O2 — see
    * `frozenContinue`). When set, the bar states no price, no "already spent" figure and no amount on the
    * button — every one of those is a present-tense offer, and a past gate can make none. The bar itself stays:
@@ -85,6 +97,7 @@ export function CommitBar({
   recheckNotice,
   assurance,
   keyField,
+  secondary,
   done,
   onCommit,
   busy = false,
@@ -92,6 +105,19 @@ export function CommitBar({
   className,
   embedded = false,
 }: CommitBarProps) {
+  const button = (
+    <Button
+      type="button"
+      data-testid={actionTestId}
+      onClick={onCommit}
+      disabled={disabled || busy}
+      className="min-h-10"
+    >
+      {busy && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
+      {action}
+      {!done && total !== undefined && <span className="ml-2 font-mono tabular-nums">{formatUsd(total)}</span>}
+    </Button>
+  );
   const bar = (
     <div
       data-testid="commit-bar"
@@ -101,7 +127,7 @@ export function CommitBar({
       data-total={total === undefined || done ? "" : String(total)}
       data-first-charge={String(firstCharge)}
       className={cn(
-        embedded ? "flex flex-col gap-3" : "flex flex-col gap-3 rounded-card bg-surface-raised px-6 py-4 shadow-card",
+        embedded ? "flex flex-col gap-3" : COMMIT_BAR_SURFACE,
         className,
       )}
     >
@@ -145,19 +171,14 @@ export function CommitBar({
             </p>
           )}
         </div>
-        <Button
-          type="button"
-          data-testid={actionTestId}
-          onClick={onCommit}
-          disabled={disabled || busy}
-          className="min-h-10"
-        >
-          {busy && <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" />}
-          {action}
-          {!done && total !== undefined && (
-            <span className="ml-2 font-mono tabular-nums">{formatUsd(total)}</span>
-          )}
-        </Button>
+        {secondary ? (
+          <div className="flex flex-wrap items-center gap-3">
+            {secondary}
+            {button}
+          </div>
+        ) : (
+          button
+        )}
       </div>
     </div>
   );
@@ -170,7 +191,7 @@ export function CommitBar({
     // `-mb-6` gives back the page's own bottom padding (AppShell's `py-6`), so the bar RESTS where it PINS: without it
     // the pinned bar sat 24px lower mid-page than at the end, and the pinned queue — sized to the end of the page —
     // stopped 40px short of the bar instead of the 16px every other panel keeps (review round 6).
-    <div data-testid="commit-bar-pin" className="sticky bottom-0 z-10 -mb-6 -mt-3 bg-surface-field pb-3 pt-3">
+    <div data-testid="commit-bar-pin" className={COMMIT_BAR_PIN}>
       {bar}
     </div>
   );

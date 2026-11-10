@@ -487,17 +487,19 @@ test.describe("Gate 4 declared score", () => {
 });
 
 test.describe("Gate 1 score strip copy", () => {
-  test("@gate1 the declared score's verdict says 'not matched yet' and the match is sent to Gate 4", async ({
+  test("@gate1 the declared score says 'not matched yet' — on the strip, with no verdict box — and the match is sent to Gate 4", async ({
     page,
   }) => {
     await page.goto(`/run/${PAUSED_JOB}/gate1`);
     await page.waitForLoadState("networkidle");
     await page.locator("[data-testid='score-panel-toggle']").click();
     await page.locator("[data-testid='score-components']").fill("Weak grip strength\nSlow walking speed");
-    await page.getByRole("button", { name: "Declare these items" }).click();
-    const verdict = page.locator("[data-testid='score-verdict']");
-    await expect(verdict).toHaveAttribute("data-verdict", "indeterminate");
-    await expect(verdict).not.toContainText(/not produced any concepts/i);
+    await page.getByRole("button", { name: "Declare these concepts" }).click();
+    await expect(page.locator("[data-testid='score-component']")).toHaveCount(2);
+    // No verdict box on Gate 1 before a match (Bhargav, 2026-11-08: "remove") — "not matched yet" is the strip's.
+    await expect(page.locator("[data-testid='score-verdict']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='score-strip-status']")).toContainText("not matched yet");
+    await expect(page.locator("[data-testid='score-panel']")).not.toContainText(/not produced any concepts/i);
     const na = page.locator("[data-testid='score-panel'] [data-testid='not-available']");
     await expect(na).toContainText(/Gate 4/);
     await expect(na).not.toContainText(/fills in once the run has got that far/i);

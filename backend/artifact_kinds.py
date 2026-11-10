@@ -144,13 +144,21 @@ GATE1_RENAME = "gate1_rename"
 
 #: Gate 1: the score panel's SUGGESTION CUT-OFF, chosen by the reviewer (review round 6 — Bhargav: the "0.62" "should
 #: be user-selectable with default 0.62"). The cut-off decides which groups a declared score suggests — tagged in the
-#: queue and seeded into Gate 1's scope — so it is a decision about scope: one per run, keyed on the setting itself
-#: (:data:`SCORE_CUTOFF_SETTING`), frozen with Gate 1. ``chosen`` is the cut-off as a decimal string; ``alternatives``
-#: carries the default it replaced (core's calibrated value, from the suggestions payload). Reset DELETES the row —
-#: the default is then the payload's own, so a stored row always holds a number.
+#: queue and seeded into Gate 1's scope — so it is a decision about scope, keyed on the setting itself, frozen with
+#: Gate 1. ``chosen`` is the cut-off as a decimal string; ``alternatives`` carries the default it replaced (core's
+#: calibrated value, from the suggestions payload). Reset DELETES the row, so a stored row always holds a number.
+#:
+#: ONE PER SPOTLIGHT LIST (2026-11-08: "implement per list cutoff"). A list's own cut-off is keyed
+#: ``suggestion_cutoff::<list name>`` (:func:`score_cutoff_setting`); the bare :data:`SCORE_CUTOFF_SETTING` is the
+#: RUN-WIDE row a run held before lists had their own. The list rides IN the one identity field rather than as a
+#: second one, so the identity table — and the key of every row already stored, on a run or in a demo tab — is
+#: unchanged. The run-wide row stays meaningful: it is where every list without a row of its own starts, and what a
+#: list's reset falls back to before core's default.
 GATE1_SCORE_CUTOFF = "gate1_score_cutoff"
-#: The one item key a ``gate1_score_cutoff`` row has.
+#: The run-wide ``gate1_score_cutoff`` setting (the one a run had before each list got its own).
 SCORE_CUTOFF_SETTING = "suggestion_cutoff"
+#: What joins the setting to a list's name in a list's own setting. Mirrored in ``frontend/src/lib/score-cutoff.ts``.
+SCORE_CUTOFF_LIST_SEPARATOR = "::"
 #: The range a reviewer may set it in. Below 0.30 the free search's cosine stops meaning "about this component";
 #: above 0.95 almost nothing clears it. Mirrored in ``frontend/src/lib/score-cutoff.ts``.
 SCORE_CUTOFF_MIN = 0.30
@@ -386,15 +394,42 @@ def _relation_validate(payload: dict[str, Any]) -> None:
         )
 
 
+def score_cutoff_setting(list_name: str) -> str:
+    """The setting a Spotlight list's own cut-off is keyed on: ``suggestion_cutoff::<list name>`` (name trimmed)."""
+    name = str(list_name or "").strip()
+    if not name:
+        raise ValueError("a list's cut-off needs the list's name")
+    return f"{SCORE_CUTOFF_SETTING}{SCORE_CUTOFF_LIST_SEPARATOR}{name}"
+
+
+def score_cutoff_list(setting: str) -> str | None:
+    """The list a cut-off setting belongs to, or ``None`` for the run-wide row. A malformed setting raises.
+
+    Everything after the first separator is the name, separators included. A name is never empty and never carries
+    surrounding whitespace: a declaration's list name is its trimmed name, and a padded one would key a row no list
+    could ever read back.
+    """
+    setting = str(setting or "")
+    if setting == SCORE_CUTOFF_SETTING:
+        return None
+    prefix = SCORE_CUTOFF_SETTING + SCORE_CUTOFF_LIST_SEPARATOR
+    name = setting[len(prefix) :] if setting.startswith(prefix) else ""
+    if not name or name != name.strip():
+        raise ValueError(
+            f"a {GATE1_SCORE_CUTOFF} row is keyed on setting={SCORE_CUTOFF_SETTING!r} (the run-wide cut-off) or "
+            f"{prefix + '<list name>'!r} (one Spotlight list's) — {setting!r} is neither"
+        )
+    return name
+
+
 def _score_cutoff_validate(payload: dict[str, Any]) -> None:
-    """A cut-off row is the one setting, holding a number in range — or it is refused.
+    """A cut-off row is the run-wide setting or one list's, holding a number in range — or it is refused.
 
     Every reader takes ``chosen`` as the cut-off, so a row holding anything else would silently suggest by a value
-    nobody chose. Clearing it is a DELETE of the row (the payload's default then applies), never ``""``.
+    nobody chose. Clearing it is a DELETE of the row (the list's fallback then applies), never ``""``.
     """
     _decision_validate(payload)
-    if payload.get("setting") != SCORE_CUTOFF_SETTING:
-        raise ValueError(f"a {GATE1_SCORE_CUTOFF} row is keyed on setting={SCORE_CUTOFF_SETTING!r}")
+    score_cutoff_list(str(payload.get("setting") or ""))
     try:
         value = float(payload["chosen"])
     except ValueError:

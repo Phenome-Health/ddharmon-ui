@@ -38,21 +38,26 @@ function matchState(spec: CompositeSpec | null): string {
  * score is not this one's match. It deliberately does not name the gate where matching happens. A spec with no
  * declaration behind it (derived straight from a document) is still a score the panel shows, so it gets a status
  * too, without the word "declared". A second declared score is counted rather than hidden.
+ *
+ * ON A PREVIEW (08-31) there is no match state: a Preview cannot match, so "not matched yet" would promise one that
+ * never comes. The line names the declaration alone; the panel's one refusal says why there is no match.
  */
 export function stripStatus(
   index: DecisionIndex | null | undefined,
   spec: CompositeSpec | null | undefined,
+  { preview = false }: { preview?: boolean } = {},
 ): string | null {
   const scores = declaredScores(index);
   if (scores.length === 0) {
     if (!spec) return null;
     const name = spec.definition?.name?.trim() || "Declared score";
-    return `${name} · ${plural(spec.matches.length, "item", "items")} · ${matchState(spec)}`;
+    return `${name} · ${plural(spec.matches.length, "concept", "concepts")} · ${matchState(spec)}`;
   }
   const [first, ...rest] = scores;
   const own = spec && (spec.definition?.name ?? "").trim().toLowerCase() === first.scoreName.toLowerCase() ? spec : null;
   const more = rest.length ? ` · and ${plural(rest.length, "more score", "more scores")}` : "";
-  return `${first.scoreName} · ${plural(first.components.length, "item", "items")} declared · ${matchState(own)}${more}`;
+  const state = preview ? "" : ` · ${matchState(own)}`;
+  return `${first.scoreName} · ${plural(first.components.length, "concept", "concepts")} declared${state}${more}`;
 }
 
 // --- the record of a pasted source ---------------------------------------------------------------------------

@@ -45,6 +45,10 @@ COHERENCE_NOT_JUDGED = "not_judged"
 #: Core's three verdict strings — the ONLY inputs that may leave ``not_judged``.
 _JUDGE_VERDICTS = frozenset({"single", "qualify", "split"})
 
+#: Where a Gate 1 row's ``concept`` came from (08-31). ``generated`` = ``generate(ideal)`` wrote it (every paid
+#: run); ``keywords`` = a Preview run's cluster, labelled by c-TF-IDF over its members' text because no model ran.
+ConceptSource = Literal["generated", "keywords"]
+
 
 def coherence_state(core_verdict: object) -> CoherenceState:
     """Map core's ``coherence_verdict`` onto the closed four-state cell.
@@ -596,15 +600,23 @@ class UIConceptGroup(TypedDict):
     NOT to be confused with :class:`PreviewCluster`, which is **preview run mode's** shape — a $0 run that
     calls no model at all — and is no longer Gate 1's row source. A group names its own parent cluster in
     ``clusterId``, which is where Gate 1 gets provenance from.
+
+    A PREVIEW RUN'S ROWS (08-31) use this same shape, one per CLUSTER of the frozen clustering — nothing split
+    them — with ``conceptSource: "keywords"``, ``conceptIsGenerated: False``, ``coherence: "not_judged"`` and an
+    empty ``idealCde``: each says what the Preview did and nothing it did not.
     """
 
     groupId: str
     clusterId: str  # the parent cluster this group was split out of — provenance, not identity
-    concept: str  # the GENERATED concept name; marked as generated on screen
-    #: TRUE, always. The positive statement that ``concept`` was authored by ddharmon rather than read off
-    #: a catalog — the same reasoning as :attr:`UIGenCDE.isGenerated`, and the reason this shape carries no
-    #: catalog badge, no external identifier and no endorsement field of any kind.
+    concept: str  # the GENERATED concept name (or a Preview's keyword label); marked on screen as what it is
+    #: TRUE on every paid run: the positive statement that ``concept`` was authored by ddharmon rather than read
+    #: off a catalog — the same reasoning as :attr:`UIGenCDE.isGenerated`, and the reason this shape carries no
+    #: catalog badge, no external identifier and no endorsement field of any kind. FALSE on a Preview's rows,
+    #: whose label is keywords lifted from the members' own text.
     conceptIsGenerated: bool
+    #: Where ``concept`` came from. ABSENT means ``"generated"``, so every payload written before 08-31 — and every
+    #: paid run's — reads unchanged.
+    conceptSource: NotRequired[ConceptSource]
     idealCde: str  # the generated coverage anchor's description (free text)
     nMembers: int  # the TRUE member count, even when memberVariableNames is a capped sample
     cohorts: list[str]
