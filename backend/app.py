@@ -75,7 +75,7 @@ from backend.checkpoint import (
 from backend.db import JobDB
 from backend.demos import demo_job_id, is_staged, list_demos, load_snapshot, seed_demos, seed_snapshot
 from backend.engine import CONTRACT_VERSION
-from backend.engine.adapter import cost_block, load_spec
+from backend.engine.adapter import cost_block, empty_cost, load_spec
 from backend.engine.models import model_catalog, proxy_catalog
 from backend.gate1_membership import effective_members as _effective_members
 from backend.gate1_membership import gate1_membership as _gate1_membership
@@ -1839,6 +1839,9 @@ def clone_job(job_id: str, body: CloneBody, request: Request) -> dict[str, str]:
     # Deep copy: a shallow one leaves the copy sharing the demo's record list, so editing the copy would
     # mutate the canonical demo for everyone — the very thing this design exists to prevent.
     result = deepcopy(source_result)
+    # The copy keeps the source's records but none of its spend: the demo's build cost is not the cloner's, and
+    # carried over it would be the base every later bill on the copy is added to.
+    result["cost"] = empty_cost()
     records = result.get("records") or []
     by_id = {r.get("id"): i for i, r in enumerate(records)}
     for patch in body.recordPatches or []:
