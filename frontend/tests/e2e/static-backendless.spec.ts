@@ -24,7 +24,9 @@ test("@static a static build's preview proxies /api nowhere, and the e2e gate se
   expect(vite.server?.proxy).toHaveProperty("/api");
 
   const { default: pw } = (await import("../../playwright.config.ts")) as {
-    default: { webServer?: { command?: string } };
+    default: { webServer?: { command?: string }[] };
   };
-  expect(pw.webServer?.command).toMatch(/VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve/);
+  // The first server is the static gate's. The second is the `stream` project's live-shaped build, whose specs route
+  // every /api call in the page themselves (`tests/stream/`).
+  expect(pw.webServer?.[0]?.command).toMatch(/VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve/);
 });

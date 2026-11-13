@@ -288,5 +288,14 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
     return { ...streamPayload(payloadQuery.data), ...jobState };
   }, [jobState, payloadQuery.data]);
 
-  return { jobState: merged, done, error, cancel, reconnecting };
+  // The run's payload is ANNOUNCED but has not LANDED. The thin frame arrives first and the separate /result fetch
+  // (multi-megabyte on a large run) lands after it, so for that window `jobState` already says the run is parked or
+  // finished while `jobState.result` is still null. A screen that reads an empty result as a finding ("No groups
+  // formed") makes a false claim about the corpus there — it must show a loading state instead. Keyed to the
+  // announced version, so a new version (a resumed leg parking at the next gate) is pending again until it lands.
+  // A failed fetch is not pending: it settles, and the screen reads what it has. The static build loads its whole
+  // fixture in one shot, so `jobState` stays null until it lands and nothing is ever pending there.
+  const resultPending = !IS_STATIC && !!jobState && resultVersion > 0 && payloadQuery.isPending;
+
+  return { jobState: merged, done, error, cancel, reconnecting, resultPending };
 }

@@ -2322,7 +2322,7 @@ function GroupDetail({
 
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(
+  const { jobState, error, reconnecting, cancel, resultPending } = useHarmonizeStream(
     jobId,
     true,
     true,
@@ -3238,6 +3238,16 @@ export default function Gate1Page() {
   const awaitingRun =
     groups.length === 0 && (!jobState || isInFlight(jobState.status));
   /**
+   * THE RUN IS PARKED OR FINISHED, BUT ITS RESULT HAS NOT ARRIVED YET (2026-11-13).
+   *
+   * The same false claim as `awaitingRun`, from a parked or finished run instead of a running one: the thin stream
+   * frame says where the run stands before the separate result download lands, and on a large run (the shared
+   * demo's is ~7 MB) that window was 1–3 s of "No groups formed" — the first thing a demo guest saw. Until the
+   * result lands the screen knows nothing about the corpus, so it says it is loading. Checked BEFORE `awaitingRun`
+   * because its "This run is <phase>" copy names a phase, and a parked run has none to name.
+   */
+  const loadingResult = groups.length === 0 && resultPending;
+  /**
    * The run ENDED before it produced anything.
    *
    * `complete` is excluded: a finished run with no groups is the genuine corpus finding, and the existing
@@ -3434,7 +3444,17 @@ export default function Gate1Page() {
       />
 
       {/* No groups to lay out — waiting, stopped, or an all-outliers run. Full width, not a pane. */}
-      {awaitingRun ? (
+      {loadingResult ? (
+        <GateEmptyState
+          heading="Loading this run…"
+          nextStep="One moment while the concept groups load — no need to reload."
+        >
+          <span data-testid="gate1-loading">
+            Fetching this run&apos;s result. Its groups appear here as soon as
+            it arrives.
+          </span>
+        </GateEmptyState>
+      ) : awaitingRun ? (
         <GateEmptyState
           heading="Waiting for this run to reach Gate 1"
           nextStep={

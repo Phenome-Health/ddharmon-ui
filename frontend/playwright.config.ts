@@ -34,6 +34,14 @@ import { defineConfig, devices } from "@playwright/test";
  */
 const E2E_PORT = Number(process.env.E2E_PORT) || 4173;
 const E2E_BASE_URL = `http://localhost:${E2E_PORT}`;
+/**
+ * The STREAM project's server: the app built as it SHIPS (no VITE_STATIC), into its own `dist-stream`, so its
+ * screens read a run over the live two channels — the stream frame and the separate `/result` fetch — which the
+ * static build never does. Its specs (`tests/stream/`) answer every `/api` call themselves with `page.route`, so it
+ * needs no backend either. Offset from E2E_PORT by default, so a parallel worktree's E2E_PORT moves both servers.
+ */
+const E2E_STREAM_PORT = Number(process.env.E2E_STREAM_PORT) || E2E_PORT + 2000;
+const E2E_STREAM_URL = `http://localhost:${E2E_STREAM_PORT}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -86,14 +94,28 @@ export default defineConfig({
   // silently baseline every route 160px narrower than the contract.
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
+    {
+      name: "stream",
+      testDir: "./tests/stream",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, baseURL: E2E_STREAM_URL },
+    },
   ],
-  webServer: {
-    // Build in static mode, then serve the dist with vite preview on a fixed port. VITE_STATIC=1 rides the SERVE
-    // too: it is what turns the preview's /api proxy off (vite.config.ts), so an unrouted /api call in a spec can
-    // never reach a backend on :8000 — a developer's live rig included (08-28).
-    command: `VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve -- --port ${E2E_PORT} --strictPort`,
-    url: E2E_BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-  },
+  webServer: [
+    {
+      // Build in static mode, then serve the dist with vite preview on a fixed port. VITE_STATIC=1 rides the SERVE
+      // too: it is what turns the preview's /api proxy off (vite.config.ts), so an unrouted /api call in a spec can
+      // never reach a backend on :8000 — a developer's live rig included (08-28).
+      command: `VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve -- --port ${E2E_PORT} --strictPort`,
+      url: E2E_BASE_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+    {
+      // The stream project's live-shaped build (above). Its own outDir, so it never overwrites the static `dist`.
+      command: `npx vite build --outDir dist-stream && npx vite preview --outDir dist-stream --port ${E2E_STREAM_PORT} --strictPort`,
+      url: E2E_STREAM_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+  ],
 });
