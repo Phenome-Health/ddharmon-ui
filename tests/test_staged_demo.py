@@ -190,6 +190,38 @@ def test_a_staged_demo_can_be_cloned_into_a_run_of_your_own(seeded):
     assert "demo" not in copy.config and copy.config["review_mode"] == "auto"
 
 
+@pytest.fixture
+def priced(built):
+    """The demo as shipped: built for real money, which its snapshot records (the stubbed build cost $0)."""
+    snap, _job_id, _tmp = built
+    cost = {"actualUsd": 5.47, "tokens": {"input": 900, "output": 300}, "perStage": {"assign": {"usd": 5.47}}}
+    for blob in (snap["result"], *snap["checkpoints"].values()):
+        blob["cost"] = cost
+    snap["realizedCost"] = 5.47
+    return snap
+
+
+def test_a_cloned_demos_first_bill_starts_at_zero(priced, seeded):
+    """The demo's build spend is not the cloner's: their copy keeps the records and starts at $0 spent."""
+    from backend import billing
+
+    client, snap, demo_id, _work = seeded
+    assert app_module.store.get(demo_id).cost_so_far == pytest.approx(5.47)  # the demo itself keeps its figure
+    r = client.post(f"/api/harmonize/jobs/{demo_id}/clone", json={"displayName": "Mine"})
+    assert r.status_code == 200, r.text
+    copy_id = r.json()["jobId"]
+    copy = app_module.store.get(copy_id)
+    assert copy.result["records"] == snap["result"]["records"]
+    assert copy.result["cost"]["actualUsd"] == 0.0 and copy.result["cost"]["perStage"] == {}
+    assert copy.cost_so_far == 0.0
+    # The first thing the copy spends is the whole of its bill — the demo's $5.47 is not added to it.
+    billing.record_cost(app_module.store, copy_id, {"actualUsd": 0.12, "perStage": {"composite": {"usd": 0.12}}})
+    billed = app_module.store.get(copy_id)
+    assert billed.result["cost"]["actualUsd"] == pytest.approx(0.12)
+    assert billed.cost_so_far == pytest.approx(0.12)
+    assert app_module.store.get(demo_id).cost_so_far == pytest.approx(5.47)
+
+
 def test_seeding_twice_is_idempotent_and_a_finished_snapshot_still_seeds_as_before(seeded):
     _client, _snap, demo_id, _work = seeded
     store = app_module.store
