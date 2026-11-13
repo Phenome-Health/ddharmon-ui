@@ -88,16 +88,11 @@ export default function RoadmapPage() {
                           Exploring
                         </Badge>
                       )}
-                      {item.preview &&
-                        (item.previewStandalone ? (
-                          <a href={item.preview} className={PREVIEW_TAG}>
-                            <Eye className="h-3 w-3" /> Preview
-                          </a>
-                        ) : (
-                          <Link href={item.preview} className={PREVIEW_TAG}>
-                            <Eye className="h-3 w-3" /> Preview
-                          </Link>
-                        ))}
+                      {item.preview && (
+                        <Link href={item.preview} className={PREVIEW_TAG}>
+                          <Eye className="h-3 w-3" /> Preview
+                        </Link>
+                      )}
                       {item.note && <span className="mt-0.5 block text-xs text-on-raised-muted">{item.note}</span>}
                     </span>
                   </li>

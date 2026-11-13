@@ -261,8 +261,8 @@ _STAGED_SUBJECT = re.compile(
 # Widening the subject list above made a NEGATION guard mandatory. "this gate is cheap,
 # but not free" and "the grouping is charged either way" are the honest statements this
 # gate wants copy to converge ON — flagging them would push a writer back toward silence,
-# which is the failure mode the module header warns about. Two of these sentences are live
-# in the staged-review mockup right now, and both were written as corrections.
+# which is the failure mode the module header warns about. Two of these sentences were live
+# in the retired staged-review mockup, and both were written as corrections.
 _DENIAL = re.compile(r"\b(not|never|isn't|aren't|no longer|rather than)\s*$", re.I)
 # "preview" as the RUN MODE, not the word anywhere in a sentence: a page that merely
 # mentions a preview must not buy itself an exemption from the claim.
@@ -270,12 +270,11 @@ _PREVIEW_SUBJECT = re.compile(r"\bpreview (?:run )?mode\b|\bpreview runs?\b|\bin
 
 # Empty ON PURPOSE, and the emptiness is load-bearing. The one entry that used to sit here
 # (`pages/preview-staged-review.tsx`) was excluded because D-16 planned to retire its ROUTE,
-# so rewording a page nobody could reach was pointless. That file is now DELETED and its
-# content lives in `frontend/public/preview/staged-review/index.html` — which is a standalone
-# static page, outside every `frontend/src` gate. The claim did not get fixed by the move; it
-# got hidden by it, and it came back in five places. Standalone pages are walked below, so the
-# exclusion is no longer needed and must not be re-added: it is the mechanism that let a known
-# false cost claim ship un-gated.
+# so rewording a page nobody could reach was pointless. The page then moved to a standalone
+# static file outside `frontend/src`, where the claim was not fixed but hidden, and came back
+# in five places. That file is now deleted too and its URL redirects to the guest demo. The
+# exclusion must not be re-added: it is the mechanism that let a known false cost claim ship
+# un-gated.
 CLAIM_EXCLUSIONS: tuple[str, ...] = ()
 
 
@@ -420,11 +419,6 @@ def test_no_public_surface_claims_the_staged_flow_is_free() -> None:
         rel = path.relative_to(FRONTEND_SRC).as_posix()
         if rel in CLAIM_EXCLUSIONS:
             continue
-        for claim in _staged_flow_free_claims(path.read_text()):
-            offenders.append(f"{path.relative_to(REPO)}: {claim}")
-    # Standalone static pages are the same public surface reached by the same roadmap link.
-    # Scoping this walk to `frontend/src` is exactly how the claim went un-gated.
-    for path in _standalone_pages():
         for claim in _staged_flow_free_claims(path.read_text()):
             offenders.append(f"{path.relative_to(REPO)}: {claim}")
 
@@ -644,235 +638,6 @@ def test_no_palette_slot_utilities_outside_the_token_layer() -> None:
         f"{len(offenders)} palette-slot utility/utilities across {len(by_file)} file(s) name a step "
         f"on a ramp instead of a surface role, so they cannot be remapped as a (surface, "
         f"foreground) pair. This is 08-07 Part 2's migration work, ranked by file:\n  " + ranked
-    )
-
-
-# ── Standalone static pages get the SAME token discipline as the SPA ──────────────────
-#
-# `frontend/public/**/*.html` is served verbatim, outside the SPA, with no build step and
-# no Tailwind — so every colour/type gate above, all of which are scoped to `frontend/src`,
-# is blind to it. That blindness is not hypothetical: the staged-review mockup arrived
-# carrying a known-false cost claim in five places, one straight drift from the brand's
-# amber, and twelve colour literals in component rules — through a retheme whose whole
-# point was that a colour cannot be spelled out outside the token layer.
-#
-# A standalone page cannot reference the SPA's utilities, so the rule is not "use the
-# tokens" — it is the rule `index.css` itself lives by: **a colour may be spelled out ONLY
-# where the tokens are declared.** A page that declares its own `:root` block then earns
-# the same property the SPA has — a rebrand is a token edit, not a hunt.
-
-FRONTEND_PUBLIC = REPO / "frontend" / "public"
-
-# A token block is a rule whose selector is EXACTLY `:root` or `:root[...]`. A DESCENDANT
-# selector that merely starts with `:root` — `:root[data-theme="deep"] .chip { … }` — is a
-# component rule wearing a token block's prefix, and two literals hid behind precisely that.
-_TOKEN_BLOCK = re.compile(r"(?m)^\s*:root(?:\[[^\]]+\])?\s*\{[^}]*\}", re.S)
-# The DEFAULT theme only: bare `:root` plus the theme the page actually loads with.
-_DEFAULT_THEME_BLOCK = re.compile(r'(?m)^\s*:root(?:\[data-theme="brand"\])?\s*\{([^}]*)\}', re.S)
-_DECL = re.compile(r"(--[a-zA-Z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})")
-
-# An entry here must name a real, still-present divergence with its reason. TWO assertions
-# below keep the register honest in both directions: one drops an entry whose value has left
-# the page, the other drops an entry the brand has since ADOPTED. Neither can be satisfied by
-# leaving a stale line in place, which is what stops this dict widening into blanket cover.
-#
-# THE ADOPTION ASSERTION DID ITS JOB. This dict was populated on 2026-08-20 with eleven entries,
-# because phenomehealth.org republished its identity that morning and the mockup was re-measured
-# against the live site while `index.css` still held the July sample. Five of those were labelled
-# TEMPORARY and the second assertion below was written specifically to kill them when 08-12b
-# re-pointed `--brand-*`. 08-12b re-pointed `--brand-*`, the assertion fired, and they are gone:
-# #FFFFFF, #EBEFFF, #D5E0F6, #000000 and #4B4F6B are `--brand-white` / `--brand-pale` /
-# `--brand-mist` / `--brand-black` / `--brand-slate` in the SPA now, so the mockup and the product
-# no longer diverge on them and nothing is exempt that need not be. The mark's teal (#3AC2CB) and
-# crimson (#E11E53) also left, for a different reason: the SPA now declares them as `--brand-mark-*`
-# primitives, so they are brand values rather than divergences.
-#
-# What remains is genuinely still divergent, in two groups.
-PROPOSED_COLOURS: dict[str, str] = {
-    # ── The DARK THEME the product does not have ───────────────────────────────────────────
-    # The brand publishes no status palette and no dark mode, so these are derived, not sampled,
-    # and they have no `--brand-*` counterpart because the SPA ships ONE theme (08-05 removed the
-    # second one). They stay listed rather than being hidden inside the dark block, because the
-    # page declares them among its tier-1 primitives where the default-theme walk can see them.
-    # They become adoptable the day the product grows a dark theme, and not before.
-    "#3FCFA5": "dark-theme `ok`. #0E7C63 is unreadable on the navy ground.",
-    "#F0C070": "dark-theme `warn` — the coherence flag, the load-bearing signal on Gate 1.",
-    "#FF6E92": "dark-theme destructive. #E21C52 does not clear AA on the navy ground.",
-    # ── PERMANENT: lockup blades the SPA's glyph does not draw ──────────────────────────────
-    # The full horizontal lockup on the mockup has more blades than the SPA's three-arc glyph.
-    # These two paint blades the product never renders, so they will never have a `--brand-*`
-    # counterpart — and that is the point rather than an omission. A brand mark painted from
-    # semantic UI roles gets silently restyled by an unrelated accent decision, which was the live
-    # defect in `components/phenome-mark.tsx` (it drew the Phenome Health logo from
-    # `--accent-2-on-chrome`). 08-12b fixed that by giving the mark `--brand-mark-*` primitives of
-    # its own; the two blades below are the part of the lockup that stayed on the page.
-    "#253B7E": "the lockup's mid-navy blade. PERMANENT — logo-scoped, not drawn by the SPA's glyph.",
-    "#222572": (
-        "the lockup's third blade. PERMANENT — logo-scoped. It used to satisfy the brand check by "
-        "accident, because it was also `--brand-indigo`, the July identity's ink; that primitive is "
-        "gone (the brand's ink is #000000 now) so it is recorded explicitly for what it is."
-    ),
-}
-
-# Values that are logo-scoped by design and must NOT be reported as brand drift even after the
-# SPA adopts the new identity. Kept separate from the reason strings so the adoption assertion
-# can tell "still pending" from "never applicable".
-PERMANENT_PROPOSED: frozenset[str] = frozenset({"#253B7E", "#222572"})
-
-
-def _decomment(src: str) -> str:
-    """Blank out CSS and HTML comments, preserving line numbers.
-
-    The staged-review page documents its sampled palette as prose in a comment. That is a
-    reference, not paint — flagging it would teach the next author to delete the note.
-    """
-    src = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
-    return re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
-
-
-def _standalone_pages() -> list[Path]:
-    if not FRONTEND_PUBLIC.exists():  # pragma: no cover
-        return []
-    return sorted(FRONTEND_PUBLIC.rglob("*.html"))
-
-
-def _token_block_lines(src: str) -> set[int]:
-    lines: set[int] = set()
-    for m in _TOKEN_BLOCK.finditer(src):
-        lines.update(range(src[: m.start()].count("\n"), src[: m.end()].count("\n") + 1))
-    return lines
-
-
-def test_a_standalone_page_exists_to_gate() -> None:
-    """Guard against the walk passing vacuously.
-
-    Every assertion below iterates a glob. If `frontend/public` ever stops holding an HTML
-    page — renamed directory, moved mockup — the two gates would go green by finding nothing,
-    which is the failure this module already met once in another form ("0 of 23 baselines
-    changed" verified file identity, not that the suite passed).
-    """
-    assert _standalone_pages(), (
-        f"no standalone HTML page found under {FRONTEND_PUBLIC.relative_to(REPO)} — if the "
-        f"mockups genuinely moved, re-point FRONTEND_PUBLIC rather than leaving a glob that "
-        f"cannot fail"
-    )
-
-
-@pytest.mark.parametrize("page", _standalone_pages(), ids=lambda p: p.name)
-def test_standalone_pages_keep_colour_literals_in_their_token_block(page: Path) -> None:
-    """A colour spelled out in a component rule is a rebrand that silently does not happen."""
-    src = page.read_text()
-    allowed = _token_block_lines(src)
-    offenders = [
-        f"{page.relative_to(REPO)}:{i + 1}: {literal}"
-        for i, line in enumerate(_decomment(src).splitlines())
-        if i not in allowed
-        for literal in (HEX_LITERAL.findall(line) + NUMERIC_COLOUR_FN.findall(line))
-    ]
-    assert not offenders, (
-        f"{len(offenders)} colour literal(s) sit in component rules on a standalone page "
-        f"instead of its `:root` token block, so a rebrand cannot reach them — re-point each "
-        f"onto a token the page already declares:\n  " + "\n  ".join(offenders)
-    )
-
-
-@pytest.mark.parametrize("page", _standalone_pages(), ids=lambda p: p.name)
-def test_standalone_page_default_theme_matches_the_brand(page: Path) -> None:
-    """A standalone page samples the brand independently, so it drifts independently.
-
-    This is the assertion that actually earns its keep. The page's own token block is only
-    worth having if its values ARE the brand's — otherwise a rebrand updates `index.css`,
-    every gate stays green, and the mockup keeps painting last year's colours on a public
-    route. It caught one real drift on arrival: the page's warn amber was `#A85B00` where
-    `--brand-amber` is `#8F4E00`.
-
-    Scoped to the DEFAULT theme. The page also carries a second `deep` theme, which the SPA
-    deleted in 08-05 — asserting brand parity for a theme the product no longer has would be
-    asserting against nothing. That mismatch is a design question, logged in WINDOWS.md.
-    """
-    brand = {
-        v.upper() for v in re.findall(r"--brand-[a-z0-9-]+\s*:\s*(#[0-9a-fA-F]{3,8})", TOKEN_DEFINITIONS.read_text())
-    }
-    src = page.read_text()
-    declared = {
-        name: val for block in _DEFAULT_THEME_BLOCK.finditer(src) for name, val in _DECL.findall(block.group(1))
-    }
-    if not declared:
-        pytest.skip(f"{page.name} declares no default-theme colour tokens")
-
-    for value, reason in PROPOSED_COLOURS.items():
-        assert value.upper() in {v.upper() for v in declared.values()}, (
-            f"PROPOSED_COLOURS records {value} with a reason, but no default-theme token on "
-            f"{page.name} declares it any more — drop the entry rather than leaving it to "
-            f"cover the next divergence. Recorded reason: {reason}"
-        )
-
-    # The other direction: an entry the brand has since ADOPTED is no longer a divergence, and
-    # leaving it is how this register rots into blanket cover. Without this, the eleven entries
-    # added for the 2026-08-20 rebrand would sit here forever once 08-12b re-points `--brand-*`,
-    # silently exempting those values from every future drift check. The logo-scoped values are
-    # excluded because they are never meant to become brand primitives.
-    adopted = sorted(
-        v for v in PROPOSED_COLOURS if v.upper() in brand and v.upper() not in {p.upper() for p in PERMANENT_PROPOSED}
-    )
-    assert not adopted, (
-        f"{len(adopted)} PROPOSED_COLOURS "
-        f"{'entry now matches' if len(adopted) == 1 else 'entries now match'} a `--brand-*` "
-        f"primitive in {TOKEN_DEFINITIONS.name}, so the divergence they recorded is over — "
-        f"delete them. An exemption that outlives its reason exempts the next drift too:\n  "
-        + "\n  ".join(f"{v} — {PROPOSED_COLOURS[v]}" for v in adopted)
-    )
-
-    proposed = {v.upper() for v in PROPOSED_COLOURS}
-    offenders = [
-        f"{name}: {val}"
-        for name, val in sorted(declared.items())
-        if val.upper() not in brand and val.upper() not in proposed
-    ]
-    assert not offenders, (
-        f"{len(offenders)} default-theme token(s) on {page.name} hold a value that no "
-        f"`--brand-*` primitive in {TOKEN_DEFINITIONS.name} holds, so a rebrand would leave "
-        f"this public page painting the old identity. Re-point each onto the brand's value, "
-        f"or record it in PROPOSED_COLOURS with a reason:\n  " + "\n  ".join(offenders)
-    )
-
-
-def test_every_standalone_route_is_one_of_the_pages_gated_here() -> None:
-    """The exemption and the replacement gate must name the SAME set of pages.
-
-    `routes.ts` marks a route `standalone: true` to exempt it from the three rendered
-    token-architecture suites (typography, surface-pairing, the rebrand drill), on the
-    stated grounds that the two assertions above cover it instead. That trade is only
-    honest if the page really is walked here. Nothing otherwise connects the two files, so
-    a standalone route pointing at a path this module never sees would buy an exemption
-    from three gates and gain none — the precise shape of the hole this whole section
-    exists to close, one level up.
-    """
-    routes_ts = REPO / "frontend" / "tests" / "e2e" / "routes.ts"
-    if not routes_ts.exists():  # pragma: no cover
-        pytest.skip(f"route registry not found at {routes_ts}")
-
-    declared = re.findall(r'\{[^{}]*\bpath:\s*"([^"]+)"[^{}]*\bstandalone:\s*true[^{}]*\}', routes_ts.read_text())
-    assert declared, (
-        f"{routes_ts.relative_to(REPO)} declares no `standalone: true` route, but this module "
-        f"gates standalone pages and TOKEN_LAYER_ROUTES exempts them — if the category is gone, "
-        f"remove the exemption too rather than leaving an unused escape hatch"
-    )
-
-    # A route path maps to the file the static build serves for it: a trailing slash is a
-    # directory index.
-    gated = {p.relative_to(FRONTEND_PUBLIC).as_posix() for p in _standalone_pages()}
-    missing = []
-    for route in declared:
-        rel = route.lstrip("/")
-        candidate = f"{rel}index.html" if route.endswith("/") else rel
-        if candidate not in gated:
-            missing.append(f"{route} -> expected frontend/public/{candidate}")
-    assert not missing, (
-        f"route(s) marked `standalone: true` in {routes_ts.relative_to(REPO)} are exempt from the "
-        f"typography, surface-pairing and rebrand-drill suites, but no page under "
-        f"{FRONTEND_PUBLIC.relative_to(REPO)} backs them — so they are exempt from those three and "
-        f"gated by nothing here either:\n  " + "\n  ".join(missing)
     )
 
 

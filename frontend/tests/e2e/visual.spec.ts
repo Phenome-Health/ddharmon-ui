@@ -149,11 +149,8 @@ test("@visual every route registered in App.tsx has a VISUAL_ROUTES entry", () =
 
   // And the reverse: a VISUAL_ROUTES entry claiming to be registered but absent from App.tsx is a stale
   // baseline that would silently keep passing against a dead route.
-  // `standalone` pages are served from public/ and are absent from App.tsx by design, so they are
-  // exempt from this match — but NOT from the screenshot baseline above, which is the only gate
-  // that still sees them once they leave src/.
   const stale = VISUAL_ROUTES.filter(
-    (r) => r.registered !== false && !r.standalone && !registered.includes(r.path),
+    (r) => r.registered !== false && !registered.includes(r.path),
   ).map((r) => r.path);
   expect(
     stale,

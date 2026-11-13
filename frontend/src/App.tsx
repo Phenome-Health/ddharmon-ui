@@ -62,6 +62,14 @@ function HomeRedirect() {
 }
 
 /**
+ * The old static staged-review mockup's URL. The mockup is deleted (it carried a cost claim the staged flow
+ * no longer makes, and the guest demo superseded it), so an old link lands on the demo rather than a 404.
+ */
+function RetiredStagedReviewPreview() {
+  return <Redirect to="/demo" replace />;
+}
+
+/**
  * A content page this build may leave out (`lib/hidden-pages.ts` — prod hides six). Hidden, its route stays
  * REGISTERED, so the visual gate's route-coverage guard still matches this table, but it sends the visitor home:
  * an old link to it (a slide, a bookmark) should land somewhere useful rather than on a 404.
@@ -101,6 +109,7 @@ export default function App() {
             <Route path="/preview/composite" component={hideable("roadmap", PreviewCompositePage)} />
             <Route path="/preview/reproducibility" component={hideable("roadmap", PreviewReproducibilityPage)} />
             <Route path="/preview/knowledge-graph" component={hideable("roadmap", PreviewKnowledgeGraphPage)} />
+            <Route path="/preview/staged-review" component={RetiredStagedReviewPreview} />
             <Route path="/phenome" component={hideable("phenome", PhenomeHealthPage)} />
             <Route path="/run/:jobId/setup" component={SetupPage} />
             <Route path="/run/:jobId/gate0" component={RetiredGate0Route} />

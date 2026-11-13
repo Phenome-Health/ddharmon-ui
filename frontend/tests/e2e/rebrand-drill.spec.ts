@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { loadManifest, measure, requiredPairs, shortfalls } from "./role-probe";
-import { routeUrl, TOKEN_LAYER_ROUTES } from "./routes";
+import { routeUrl, VISUAL_ROUTES } from "./routes";
 import {
   asCss,
   EXPECTED_TIER_1_ONLY_SHORTFALLS,
@@ -196,7 +196,7 @@ test("@drill 3 — the type stack moves with the brand, not just the colour", as
  */
 test("@drill 4 — no component-level colour survives the swap", async ({ page, baseURL }) => {
   const leaks: string[] = [];
-  for (const route of TOKEN_LAYER_ROUTES) {
+  for (const route of VISUAL_ROUTES) {
     const url = await routeUrl(route, baseURL);
     await page.goto(url);
     await page.evaluate(() => document.fonts.ready);
