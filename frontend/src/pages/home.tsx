@@ -192,7 +192,7 @@ export default function HomePage() {
       return;
     }
     for (const d of dicts) {
-      // The one copy of core's rule (`lib/dictionary.ts`), not a hand list: question_text alone loads nothing.
+      // The one copy of core's rule (`lib/dictionary.ts`), not a hand list.
       const mapped = Object.fromEntries(Object.entries(d.roles).filter(([, col]) => col && col !== NONE));
       const reason = roleRequirementReason(mapped);
       if (reason !== null) {

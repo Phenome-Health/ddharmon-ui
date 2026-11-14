@@ -481,7 +481,7 @@ function initialRoles(headers: string[]): Record<string, string> {
 
 /**
  * Whether core can load any variable from this mapping — `REQUIRED_ROLE_GROUPS`, the one copy of the rule, which
- * the backend suite pins to core's loader. The hand copy here accepted question_text alone (08-28).
+ * the backend suite pins to core's loader. The hand copy that used to live here drifted from core (08-28).
  */
 const hasMeaning = (roles: Record<string, string>): boolean => meetsRoleRequirement(roles);
 

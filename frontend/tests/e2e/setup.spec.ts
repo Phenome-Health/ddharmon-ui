@@ -2730,14 +2730,11 @@ test.describe("Setup — the roles reference comes before the checklist (08-14g)
 //   both unmapped, question_text ONLY, no description rows=6  field_count=0   ← the whole file vanishes
 //   both unmapped, description blank on two rows      rows=6  field_count=4   ← those two rows dropped
 //
-// THE THIRD LINE IS WHY THE PRECONDITION IS NOT "question text or a description". The plan asserted that
-// pairing, reading `to_embedding_text`'s variable_name fallback. But the row never reaches embedding: the
-// parser's DESCRIPTION fallback is description → short_label → variable_name, and it refuses the synthetic
-// `_ROW_` name, so a row with no description is `continue`d away at csv_parser.py:132. question_text is
-// not in that chain and does not save it. `short_label` would, but this screen cannot map it.
-//
-// So the copy has to say DESCRIPTION, on every row, and it has to say DROPPED rather than "embeds its
-// name" — a reviewer told the weaker version would map question_text alone and lose the entire file.
+// CORE 1.4.1 CHANGED THE THIRD LINE (re-measured 2026-11-14 on c8bf291): question_text is now the LAST
+// fallback for a row's description (description → short_label → the row's real name → question_text), so
+// question_text ONLY loads 6 of 6, and blank on two rows loads 4. The precondition is therefore "text on
+// every row — a description or question text", and the copy still has to say DROPPED, because a row with
+// neither is skipped before embedding rather than left unnamed.
 
 test.describe("Setup — the repeated-name escape hatch (08-14g)", () => {
   const openRoles = async (page: import("@playwright/test").Page) => {
@@ -2764,9 +2761,11 @@ test.describe("Setup — the repeated-name escape hatch (08-14g)", () => {
     const hatch = row.getByTestId("role-escape-hatch");
     const text = await hatch.innerText();
 
-    // A DESCRIPTION on every row. Naming question_text as an alternative here is the specific wrong
-    // advice that empties the reviewer's dictionary: measured field_count=0 on a 6-row file.
+    // Text on every row: a description OR question text (core >= 1.4.1 loads a question-only row; it
+    // dropped one up to 1.4.0, which is why this copy used to name description alone).
     expect(text).toMatch(/description/i);
+    expect(text).toMatch(/question.?text/i);
+    expect(text).not.toMatch(/does not stand in/i);
     expect(text).toMatch(/every row|each row|all rows/i);
     // DROPPED, not "embeds its name". The row is gone before embedding, so the honest word is the
     // stronger one.
@@ -2865,13 +2864,13 @@ test.describe("Setup — re-splitting is always available, priced per use", () =
 });
 
 /**
- * THE COLUMN-ROLE REQUIREMENT IS CORE'S (08-28). Setup accepted `question_text` alone; core's loader skips every
- * such row and the run went ahead without that cohort. The rule is now ONE list, `REQUIRED_ROLE_GROUPS` in
- * `lib/dictionary.ts`, which `tests/test_role_requirement.py` pins to the backend's copy and the backend's copy
- * to core's real loader.
+ * THE COLUMN-ROLE REQUIREMENT IS CORE'S (08-28). Setup once accepted `question_text` alone while core (<= 1.4.0)
+ * skipped every such row, so the run went ahead without that cohort. The rule is ONE list, `REQUIRED_ROLE_GROUPS`
+ * in `lib/dictionary.ts`, which `tests/test_role_requirement.py` pins to the backend's copy and the backend's copy
+ * to core's real loader. Core 1.4.1 loads a question-only file, so the rule is now a single group.
  */
 test.describe("Setup — the column-role requirement is core's (08-28)", () => {
-  test("@setup question_text alone is flagged and blocks Start, naming the file and what would fix it", async ({
+  test("@setup question_text alone is enough: no role flag, only the mark-complete step is left", async ({
     page,
   }) => {
     await page.goto(DRAFT);
@@ -2883,44 +2882,41 @@ test.describe("Setup — the column-role requirement is core's (08-28)", () => {
     });
     const select = (column: string) =>
       page.getByTestId("mapping-row").filter({ has: page.locator(`[data-column="${column}"]`) }).getByTestId("role-select");
-    await select("prompt").selectOption("question_text");
     await page.getByTestId("run-mode").selectOption("preview");
-    // Core loads ZERO variables from this mapping, so it is not "meaning mapped" and it is not startable.
+    // Nothing that carries text is mapped: flagged, named in the blockers, and not startable.
+    await select("prompt").selectOption("");
+    await select("kind").selectOption("");
     const flag = page.getByTestId("meaning-requirement");
     await expect(flag).toBeVisible();
-    await expect(flag).toContainText("question_text");
-    await expect(flag).toContainText("description");
+    for (const role of ["variable_name", "description", "question_text"]) await expect(flag).toContainText(role);
     const blocker = page.getByTestId("blocker").filter({ hasText: "questions-only.csv" });
     await expect(blocker).toHaveCount(1);
-    await expect(blocker).toContainText("description");
+    await expect(blocker).toContainText("question_text");
     await expect(page.getByTestId("start-run")).toBeDisabled();
-    // Giving the rows a name is enough (core then describes each row by it), and both warnings clear.
-    await select("kind").selectOption("variable_name");
+    // The question wording alone is enough: core 1.4.1 describes each row by it and generates the row's name.
+    await select("prompt").selectOption("question_text");
     await expect(page.getByTestId("meaning-requirement")).toHaveCount(0);
-    // Round 10: the role blocker is gone; what is left for this file is marking its now-usable mapping complete.
     const forFile = page.getByTestId("blocker").filter({ hasText: "questions-only.csv" });
     await expect(forFile).toHaveCount(1);
     await expect(forFile).toContainText("Mark this mapping complete");
+    await expect(forFile).not.toContainText("loads no variables");
   });
 
-  test("@setup the requirement is core's two groups, and question_text satisfies only the first", () => {
+  test("@setup the requirement is core's one group: any of variable_name, description, question_text", () => {
     // Mirrored from backend/role_requirement.py; tests/test_role_requirement.py pins both to core's loader.
-    expect(REQUIRED_ROLE_GROUPS).toEqual([
-      ["variable_name", "description", "question_text"],
-      ["variable_name", "description", "short_label", "field_id"],
-    ]);
+    expect(REQUIRED_ROLE_GROUPS).toEqual([["variable_name", "description", "question_text"]]);
     const meets = (roles: Record<string, string>) => meetsRoleRequirement(roles);
     expect(meets({})).toBe(false);
-    expect(meets({ question_text: "q" })).toBe(false);
-    expect(unmetRoleGroup({ question_text: "q" })).toEqual(REQUIRED_ROLE_GROUPS[1]);
-    expect(meets({ field_id: "id" })).toBe(false);
-    expect(unmetRoleGroup({ field_id: "id" })).toEqual(REQUIRED_ROLE_GROUPS[0]);
+    for (const textless of [{ field_id: "id" }, { short_label: "s" }, { field_id: "id", short_label: "s" }]) {
+      expect(meets(textless), JSON.stringify(textless)).toBe(false);
+      expect(unmetRoleGroup(textless)).toEqual(REQUIRED_ROLE_GROUPS[0]);
+    }
     for (const ok of [
       { variable_name: "v" },
       { description: "d" },
+      { question_text: "q" },
       { question_text: "q", variable_name: "v" },
       { question_text: "q", field_id: "id" },
-      { question_text: "q", short_label: "s" },
     ]) {
       expect(meets(ok), JSON.stringify(ok)).toBe(true);
     }
