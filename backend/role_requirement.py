@@ -11,11 +11,12 @@ WHAT CORE ACTUALLY REQUIRES (``ddharmon.ingestion.load_dictionary`` + ``GenericC
 
 1. ``load_dictionary`` raises unless one of ``variable_name`` / ``description`` / ``question_text`` is mapped.
 2. The parser keeps a row only if it can give the row a DESCRIPTION: ``description`` -> ``short_label`` -> the
-   row's name, where the name is ``variable_name`` -> ``field_id`` -> a synthetic ``_ROW_nnnnn`` that the chain
-   explicitly refuses. ``question_text`` is not in that chain, so a row with only question text is skipped.
+   row's real name (``variable_name`` -> ``field_id``; never the synthetic ``_ROW_nnnnn``) -> ``question_text``.
 
-Both must hold, so the rule is two any-of groups. ``question_text`` satisfies the first and never the second:
-it is sufficient only alongside a name (``variable_name`` / ``field_id``) or ``short_label``.
+Since core 1.4.1 every role in (1) also satisfies (2) — ``question_text`` joined the end of the chain — so the
+rule is ONE any-of group. Up to 1.4.0 ``question_text`` was not in the chain, a question-only file loaded zero
+variables, and this rule carried a second group to refuse it. A mapping of ``field_id`` / ``short_label`` alone
+still fails (1).
 
 THE RULE IS A PREDICTION; ``zero_variable_error`` CHECKS THE OUTCOME. A mapping can meet the rule and still load
 nothing — the mapped description column is empty on every row — so the door also runs core's own loader (local,
@@ -32,11 +33,13 @@ from pathlib import Path
 #: ``frontend/src/lib/dictionary.ts``; ``tests/test_role_requirement.py`` pins the two to one list and pins this
 #: one to core's real loader.
 REQUIRED_ROLE_GROUPS: tuple[tuple[str, ...], ...] = (
-    # load_dictionary's own guard: some text or name to embed.
+    # load_dictionary's own guard: some text or name to embed. Each of these also describes a row (core >= 1.4.1).
     ("variable_name", "description", "question_text"),
-    # the parser's description chain: something to describe each row with (question_text is NOT in it).
-    ("variable_name", "description", "short_label", "field_id"),
 )
+
+#: The roles core's description chain can take a row's text from — what ``zero_variable_error`` names when every
+#: mapped one came up empty.
+_ROW_TEXT_ROLES: tuple[str, ...] = ("description", "short_label", "variable_name", "field_id", "question_text")
 
 
 def _mapped(roles: dict[str, str]) -> set[str]:
@@ -61,15 +64,9 @@ def role_requirement_error(filename: str, roles: dict[str, str]) -> str | None:
     group = unmet_role_group(roles)
     if group is None:
         return None
-    if group == REQUIRED_ROLE_GROUPS[0]:
-        return (
-            f"{filename!r} has no column mapped to {_one_of(group)} — map at least one, so the pipeline has text "
-            "to match against common data elements."
-        )
     return (
-        f"{filename!r} maps question_text but nothing the loader can describe a row with, so it would load no "
-        f"variables: every row needs {_one_of(group)}, and a row with only question text is skipped. Map "
-        "description (or a variable name) as well."
+        f"{filename!r} has no column mapped to {_one_of(group)} — map at least one, so the pipeline has text "
+        "to match against common data elements."
     )
 
 
@@ -95,9 +92,9 @@ def zero_variable_error(filename: str, path: Path, cohort_name: str, roles: dict
         ingestion_log.setLevel(previous)
     if dd.field_count > 0:
         return None
-    named = tuple(f"{role} ({mapped[role]!r})" for role in REQUIRED_ROLE_GROUPS[1] if role in mapped)
+    named = tuple(f"{role} ({mapped[role]!r})" for role in _ROW_TEXT_ROLES if role in mapped)
     return (
         f"{filename!r} loads no variables with this mapping: no row has text in its "
         f"{_one_of(named) if named else 'mapped'} column, so the loader has nothing to describe any row with and "
-        f"skips them all. Map a column that has text in it to {_one_of(REQUIRED_ROLE_GROUPS[1])}."
+        f"skips them all. Map a column that has text in it to {_one_of(REQUIRED_ROLE_GROUPS[0])}."
     )

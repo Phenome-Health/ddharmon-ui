@@ -39,11 +39,10 @@ import { ROLE_FORMAT } from "@/types";
  *   variable_name + field_id unmapped, question_text    field_count 0 of 6   the file VANISHES
  *   ditto, description blank on two rows                field_count 4 of 6   those two rows dropped
  *
- * The third row is the whole reason this copy names DESCRIPTION rather than "question text or a
- * description". `csv_parser` derives the description as description → short_label → variable_name and
- * REFUSES the synthetic `_ROW_` name, so a row with none of those is `continue`d away (`csv_parser.py:132`)
- * before embedding is reached. `question_text` is not in that chain. `short_label` is, but this screen
- * cannot map it, so on this screen the precondition is exactly "a description on every row".
+ * Core 1.4.1 changed the third row (re-measured 2026-11-14: 6 of 6). `csv_parser` derives the description as
+ * description → short_label → the row's real name → question_text, REFUSING the synthetic `_ROW_` name, so a
+ * row with none of those is skipped before embedding is reached. `short_label` cannot be mapped on this
+ * screen, so here the precondition is "a description or question text on every row".
  *
  * That also means `to_embedding_text`'s variable_name fallback — the mechanism the plan cited — is NOT
  * what a reviewer hits: the row is gone before it could embed its own identifier. "Dropped" is the honest
@@ -91,9 +90,8 @@ const GROUPS: RoleGroup[] = [
         escapeHatch:
           "Names repeat but each row's text is its own? Leave this and field_id unmapped — every row " +
           "gets its own generated identifier (today _ROW_00042) and nothing collapses. Two conditions: " +
-          "a description on every row, since question_text does not stand in here and a row without one " +
-          "is dropped rather than left unnamed; and that identifier is what you see wherever the " +
-          "variable is named, exports included.",
+          "a description or question_text on every row, since a row with neither is dropped rather than " +
+          "left unnamed; and that identifier is what you see wherever the variable is named, exports included.",
       },
       {
         role: "description",

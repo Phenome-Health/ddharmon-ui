@@ -9,7 +9,6 @@ import {
 } from "@/types";
 import { InfoTip } from "@/components/ui/info-tip";
 import {
-  REQUIRED_ROLE_GROUPS,
   assignRole,
   nameCheck,
   roleOf,
@@ -121,8 +120,8 @@ export function DictionaryMappingTable({
   const sample = (column: string): string =>
     (rows ?? []).map((r) => (r[column] ?? "").trim()).find(Boolean) ?? "";
   /**
-   * Core's real floor — `REQUIRED_ROLE_GROUPS`, pinned to core's loader by the backend suite. It used to be
-   * "any semantic role", which let `question_text` alone through; core loads that mapping as zero variables.
+   * Core's real floor — `REQUIRED_ROLE_GROUPS`, pinned to core's loader by the backend suite. Since core 1.4.1
+   * that is any one of description, question_text or variable_name (question_text alone loaded nothing before).
    */
   const unmet = unmetRoleGroup(roles);
 
@@ -204,20 +203,9 @@ export function DictionaryMappingTable({
           data-unmet={unmet.join(" ")}
           className="rounded-inner border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
         >
-          {unmet === REQUIRED_ROLE_GROUPS[0] ? (
-            <>
-              <span className="font-semibold">No meaning-bearing column is mapped.</span> Point one column at
-              description, question_text or variable_name — without one the pipeline has nothing to match
-              against, so this dictionary cannot reach a common data element.
-            </>
-          ) : (
-            <>
-              <span className="font-semibold">question_text alone loads no variables.</span> The loader
-              describes each row from description, variable_name, field_id or short_label and skips a row
-              with none of them, so this file would reach the run empty. Map description (or a variable
-              name) as well.
-            </>
-          )}
+          <span className="font-semibold">No meaning-bearing column is mapped.</span> Point one column at
+          description, question_text or variable_name — without one the pipeline has nothing to match against,
+          so this dictionary cannot reach a common data element.
         </p>
       )}
 
