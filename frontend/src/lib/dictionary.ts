@@ -228,15 +228,14 @@ export function representableRoles(roles: Record<string, string>, headers: strin
  * combination of the text roles. Setup's blocker, the mapping table's flag and the New Run form all read it,
  * where they used to carry three hand copies that each accepted `question_text` alone.
  *
- *  1. core's `load_dictionary` refuses a mapping with none of the first group;
- *  2. its parser describes each row from description → short_label → the row's name (variable_name → field_id
- *     → a synthetic `_ROW_nnnnn` it refuses) and SKIPS a row it cannot describe. `question_text` is not in that
- *     chain — a question-text-only mapping loads zero variables.
+ *  1. core's `load_dictionary` refuses a mapping with none of the group;
+ *  2. its parser describes each row from description → short_label → the row's real name (variable_name →
+ *     field_id; never the synthetic `_ROW_nnnnn`) → question_text, and SKIPS a row it cannot describe.
+ *
+ * Since core 1.4.1 question_text ends that chain, so every role in (1) also satisfies (2) and the rule is ONE
+ * group. Up to 1.4.0 a question-text-only mapping loaded zero variables and this list carried a second group.
  */
-export const REQUIRED_ROLE_GROUPS = [
-  ["variable_name", "description", "question_text"],
-  ["variable_name", "description", "short_label", "field_id"],
-] as const;
+export const REQUIRED_ROLE_GROUPS = [["variable_name", "description", "question_text"]] as const;
 
 /** The first requirement group with no role mapped, or null when the mapping is one core can load. */
 export function unmetRoleGroup(roles: Record<string, string>): readonly string[] | null {
@@ -248,18 +247,8 @@ export function unmetRoleGroup(roles: Record<string, string>): readonly string[]
 
 export const meetsRoleRequirement = (roles: Record<string, string>): boolean => unmetRoleGroup(roles) === null;
 
-/**
- * The reviewer-facing reason a mapping is not enough, or null. One sentence per group, because the fix differs:
- * nothing mapped wants any text at all; question_text alone wants something to describe each row with.
- */
+/** The reviewer-facing reason a mapping is not enough, or null. */
 export function roleRequirementReason(roles: Record<string, string>): string | null {
-  const group = unmetRoleGroup(roles);
-  if (group === null) return null;
-  if (group === REQUIRED_ROLE_GROUPS[0]) {
-    return "map at least one of variable_name, description or question_text, so the pipeline has text to match against common data elements.";
-  }
-  return (
-    "question_text alone loads no variables — the loader describes each row from description, variable_name, " +
-    "field_id or short_label and skips a row with none of them. Map description (or a variable name) as well."
-  );
+  if (unmetRoleGroup(roles) === null) return null;
+  return "map at least one of variable_name, description or question_text, so the pipeline has text to match against common data elements.";
 }

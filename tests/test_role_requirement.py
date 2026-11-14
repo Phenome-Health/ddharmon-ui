@@ -109,16 +109,20 @@ def test_the_rule_predicts_exactly_what_core_loads(tmp_path):
     assert not disagreements, f"rule vs core (roles, +other roles, rule says loads, core loads): {disagreements}"
 
 
-def test_question_text_alone_is_not_enough_and_the_message_says_what_is_missing():
+def test_question_text_alone_is_enough_and_a_textless_mapping_says_what_is_missing():
+    """Core 1.4.1 describes a row from description -> short_label -> its real name -> question_text, so a
+    question-only file loads (it refused one up to 1.4.0). A mapping with no text role at all still cannot."""
     from backend.role_requirement import role_requirement_error
 
-    msg = role_requirement_error("aou.csv", {"question_text": "Field Label"})
-    assert msg is not None
-    assert "aou.csv" in msg
-    # It names the roles that would fix it — the ones core's description chain actually reads.
-    for role in ("description", "variable_name"):
-        assert role in msg
+    assert role_requirement_error("aou.csv", {"question_text": "Field Label"}) is None
     assert role_requirement_error("aou.csv", {"question_text": "Field Label", "variable_name": "Item"}) is None
+    for textless in ({}, {"field_id": "Item"}, {"short_label": "Label"}, {"field_id": "Item", "units": "u"}):
+        msg = role_requirement_error("aou.csv", textless)
+        assert msg is not None, textless
+        assert "aou.csv" in msg
+        # It names the roles that would fix it — any one of the three core's loader accepts on its own.
+        for role in ("variable_name", "description", "question_text"):
+            assert role in msg, (textless, msg)
 
 
 # --- 2. the frontend mirror is the same data --------------------------------------------------------------
@@ -171,15 +175,26 @@ _AOU = b"Item Concept,Field Label,Field Type\nq1,How is your health?,radio\nq2,D
 _UKBB = b"field_name,description,units\nAge,Age at recruitment,years\nHeight,Standing height,cm\n"
 
 
-def test_start_refuses_a_question_text_only_mapping_naming_the_file_and_the_missing_role(door):
+def test_start_accepts_a_question_text_only_mapping(door):
+    """The file a real user brought on 2026-11-03: question wording and nothing else. Core 1.4.1 loads it."""
     resp = door(
         {"aou.csv": _AOU, "ukbb.csv": _UKBB},
         {"aou.csv": {"question_text": "Field Label"}, "ukbb.csv": {"variable_name": "field_name"}},
     )
+    assert resp.status_code == 200, resp.text
+    assert len(door.started) == 1
+
+
+def test_start_refuses_a_mapping_with_no_text_role_naming_the_file_and_the_missing_roles(door):
+    resp = door(
+        {"aou.csv": _AOU, "ukbb.csv": _UKBB},
+        {"aou.csv": {"field_id": "Item Concept"}, "ukbb.csv": {"variable_name": "field_name"}},
+    )
     assert resp.status_code == 400, resp.text
     detail = resp.json()["detail"]
     assert "aou.csv" in detail and "ukbb.csv" not in detail
-    assert "description" in detail and "variable_name" in detail
+    for role in ("variable_name", "description", "question_text"):
+        assert role in detail
     assert door.started == [], "a refused start must not start a run"
 
 
@@ -213,7 +228,7 @@ def test_the_prestart_export_applies_the_same_rule(monkeypatch, tmp_path):
             "config": json.dumps(
                 {
                     "dictionaries": [
-                        {"filename": "aou.csv", "cohortName": "aou", "columnRoles": {"question_text": "Field Label"}}
+                        {"filename": "aou.csv", "cohortName": "aou", "columnRoles": {"field_id": "Item Concept"}}
                     ]
                 }
             )
@@ -230,8 +245,9 @@ def test_a_run_never_continues_without_a_cohort_it_was_given(tmp_path):
 
     good = tmp_path / "good.csv"
     good.write_text("var,desc\nage,Age in years\nsmoke,Do you smoke\n")
+    # The mapped text column is blank on every row, so no core version can load a variable from it.
     empty = tmp_path / "empty.csv"
-    empty.write_text("var,prompt\n,How is your health?\n,Do you smoke?\n")
+    empty.write_text("var,prompt\nq1,\nq2,\n")
     cde = tmp_path / "cde.tsv"
     cde.write_text("designation\tdefinition\nAgeCDE\tAge of participant\n")
     dict_specs = [
@@ -244,5 +260,9 @@ def test_a_run_never_continues_without_a_cohort_it_was_given(tmp_path):
         "column_roles": {"variable_name": "designation", "description": "definition"},
     }
     config = {"run_mode": "preview", "cde_cohort": "NIH_CDE", "work_dir": str(tmp_path), "stop_at_gate": "gate0"}
-    with pytest.raises(ValueError, match="Empty"):
+    with pytest.raises(ValueError, match="Empty") as exc:
         run_pipeline(dict_specs, cde_spec, config, provider=_StubProvider())
+    # The advice names every role that can carry a row on its own, question_text included (core >= 1.4.1).
+    assert "question_text alone" not in str(exc.value)
+    for role in ("variable_name", "description", "question_text"):
+        assert role in str(exc.value)
