@@ -108,7 +108,7 @@ export const ROADMAP: RoadmapGroup[] = [
       {
         label: "Staged review — approve each layer in turn: concept groups → CDEs → transform specs → export",
         status: "planned",
-        note: "See and adjust the concept groups before anything is sent to a model, then choose which ones go on to the paid stages.",
+        note: "The first charge is Start run on Set up, which pays for the concept groups Gate 1 shows. Adjust them there, then choose which ones go on to the later paid stages.",
       },
       {
         label: "Drag-and-drop concept restructuring — move variables between concepts, then re-check with the model",

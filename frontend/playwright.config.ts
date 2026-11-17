@@ -74,11 +74,10 @@ export default defineConfig({
     // viewport, one browser. Pinned here so every baseline shares it.
     viewport: { width: 1440, height: 900 },
     // PINNED, not inherited. Playwright's default happens to be "light", so every baseline has been an
-    // implicitly light capture — harmless while nothing on the page answered the media query. The
-    // staged-review preview now ships a light/dark pair driven by `prefers-color-scheme`, so leaving
-    // this to a default would let a baseline flip theme because of the ENVIRONMENT rather than because
-    // of a change — a screenshot gate that reports the wrong thing. When the SPA itself gains the
-    // theme pair, dark gets its own project rather than replacing this one.
+    // implicitly light capture. Pinning it means any page that comes to answer `prefers-color-scheme`
+    // cannot flip a baseline's theme because of the ENVIRONMENT rather than because of a change — a
+    // screenshot gate that reports the wrong thing. When the SPA gains a theme pair, dark gets its own
+    // project rather than replacing this one.
     colorScheme: "light",
   },
   // The viewport is re-declared AFTER the device spread: `devices["Desktop Chrome"]` carries its own

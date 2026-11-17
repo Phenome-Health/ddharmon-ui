@@ -39,9 +39,8 @@ export interface VisualRoute {
 export const PAUSED_RUN_FIXTURE = "demo-staged-gate1";
 
 /**
- * 22 routes + the 404 fallback = 23 baselines, taken from `src/App.tsx`'s `<Switch>` — NOT from
- * CONTEXT.md's stale 15-route list. 08-UI-SPEC §12 names `/roadmap/staged-review`; on this branch the
- * staged-review preview is registered at `/preview/staged-review`, so that is what is baselined.
+ * One baseline per route in `src/App.tsx`'s `<Switch>` (except the `REDIRECT_ROUTES` below) plus the 404
+ * fallback — NOT CONTEXT.md's stale 15-route list.
  */
 export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "landing", path: "/" },
@@ -61,10 +60,6 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "preview-composite", path: "/preview/composite" },
   { name: "preview-reproducibility", path: "/preview/reproducibility" },
   { name: "preview-knowledge-graph", path: "/preview/knowledge-graph" },
-  // RETIRED: the static staged-review mockup is deleted and this path now redirects to the guest demo,
-  // which superseded it. Like `run-gate0` below, the entry keeps its name, and what it captures is the
-  // post-redirect render, which is the assertion that the old URL still lands somewhere.
-  { name: "preview-staged-review", path: "/preview/staged-review" },
   { name: "phenome", path: "/phenome" },
   // The /job/:jobId/* family baselines against the bundled static demo fixture, so the suite needs no
   // paid harmonization run. The sub-pages pass `instant` to useHarmonizeStream and settle on the full
@@ -96,6 +91,16 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   // Registered nowhere on purpose — this is how the fallback branch of the <Switch> is reached. It must
   // produce a baselined screenshot, not a test error.
   { name: "not-found", path: "/__no_such_route__", registered: false },
+];
+
+/**
+ * Registered routes that render nothing of their own and only redirect. A screenshot of one would be a
+ * second copy of its destination's baseline, so they carry none: the coverage guard in `visual.spec.ts`
+ * accepts an entry here in place of a `VISUAL_ROUTES` one, and `smoke.spec.ts` asserts each lands on `to`.
+ */
+export const REDIRECT_ROUTES: { path: string; to: string }[] = [
+  // The deleted static staged-review mockup; the guest demo superseded it.
+  { path: "/preview/staged-review", to: "/demo" },
 ];
 
 /**

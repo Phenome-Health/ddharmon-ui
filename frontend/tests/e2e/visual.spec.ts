@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, request as playwrightRequest, test } from "@playwright/test";
-import { VISUAL_ROUTES, type VisualRoute } from "./routes";
+import { REDIRECT_ROUTES, VISUAL_ROUTES, type VisualRoute } from "./routes";
 
 /**
  * Visual-regression gate — one full-page screenshot per route at 1440x900 in the single shipped theme.
@@ -136,22 +136,23 @@ test("@visual every route registered in App.tsx has a VISUAL_ROUTES entry", () =
   expect(existsSync(appTsx), `expected the app route table at ${appTsx}`).toBe(true);
 
   // Every `<Route path="…">` in the <Switch>. The bare `<Route>` fallback has no path attribute and is
-  // covered by the VISUAL_ROUTES entry with `registered: false`.
+  // covered by the VISUAL_ROUTES entry with `registered: false`. A redirect-only route is covered by its
+  // REDIRECT_ROUTES entry instead.
   const registered = [...readFileSync(appTsx, "utf8").matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]);
   expect(registered.length, "failed to parse any <Route path=…> out of src/App.tsx").toBeGreaterThan(0);
 
-  const covered = new Set(VISUAL_ROUTES.map((r) => r.path));
+  const covered = new Set([...VISUAL_ROUTES.map((r) => r.path), ...REDIRECT_ROUTES.map((r) => r.path)]);
   const missing = registered.filter((p) => !covered.has(p));
   expect(
     missing,
     `route(s) registered in src/App.tsx with no visual baseline — add them to tests/e2e/routes.ts: ${missing.join(", ")}`,
   ).toEqual([]);
 
-  // And the reverse: a VISUAL_ROUTES entry claiming to be registered but absent from App.tsx is a stale
-  // baseline that would silently keep passing against a dead route.
-  const stale = VISUAL_ROUTES.filter(
-    (r) => r.registered !== false && !registered.includes(r.path),
-  ).map((r) => r.path);
+  // And the reverse: a VISUAL_ROUTES or REDIRECT_ROUTES entry claiming to be registered but absent from
+  // App.tsx is stale coverage that would silently keep passing against a dead route.
+  const stale = [...VISUAL_ROUTES.filter((r) => r.registered !== false), ...REDIRECT_ROUTES]
+    .filter((r) => !registered.includes(r.path))
+    .map((r) => r.path);
   expect(
     stale,
     `tests/e2e/routes.ts lists route(s) that src/App.tsx no longer registers: ${stale.join(", ")}`,

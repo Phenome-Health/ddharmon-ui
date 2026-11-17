@@ -421,6 +421,11 @@ def test_no_public_surface_claims_the_staged_flow_is_free() -> None:
             continue
         for claim in _staged_flow_free_claims(path.read_text()):
             offenders.append(f"{path.relative_to(REPO)}: {claim}")
+    # Static pages under `frontend/public` are the same public surface. Scoping this walk to
+    # `frontend/src` is exactly how the retired mockup's claim went un-gated.
+    for path in sorted((REPO / "frontend" / "public").rglob("*.html")):
+        for claim in _staged_flow_free_claims(path.read_text()):
+            offenders.append(f"{path.relative_to(REPO)}: {claim}")
 
     assert not offenders, (
         "an unauthenticated surface claims the staged flow costs nothing until the "
