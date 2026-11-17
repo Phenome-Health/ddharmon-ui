@@ -255,7 +255,7 @@ _NAMES_THE_CHARGE = re.compile(
 _STAGED_SUBJECT = re.compile(
     r"\b(step 1|step one|first step|this step|this gate|grouping comes first|concept groups?|"
     r"staged (?:flow|review)|gate 0|first gate|gates? 0 and 1|the grouping|"
-    r"gate 1(?:\'s)? grouping)\b",
+    r"gate 1(?:\'s)? grouping|getting this far)\b",
     re.I,
 )
 # Widening the subject list above made a NEGATION guard mandatory. "this gate is cheap,
@@ -345,6 +345,9 @@ def test_the_staged_flow_spend_claim_detector_distinguishes_the_two_claims() -> 
         "Starting costs nothing — gates 0 and 1 are local.",
         "Gate 0 and gate 1's grouping are free either way.",
         "The grouping costs nothing, so scope it however you like.",
+        # The retired static mockup's own headline, verbatim. Without it the
+        # `frontend/public` walk would let that page come back word for word.
+        "Getting this far is free and repeatable",
     ]
     true_about_preview_run_mode = [
         "Preview runs no LLM — free.",
