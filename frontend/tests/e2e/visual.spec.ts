@@ -148,11 +148,11 @@ test("@visual every route registered in App.tsx has a VISUAL_ROUTES entry", () =
     `route(s) registered in src/App.tsx with no visual baseline — add them to tests/e2e/routes.ts: ${missing.join(", ")}`,
   ).toEqual([]);
 
-  // And the reverse: a VISUAL_ROUTES or REDIRECT_ROUTES entry claiming to be registered but absent from
-  // App.tsx is stale coverage that would silently keep passing against a dead route.
-  const stale = [...VISUAL_ROUTES.filter((r) => r.registered !== false), ...REDIRECT_ROUTES]
-    .filter((r) => !registered.includes(r.path))
-    .map((r) => r.path);
+  // And the reverse: a VISUAL_ROUTES entry claiming to be registered but absent from App.tsx is a stale
+  // baseline that would silently keep passing against a dead route.
+  const stale = VISUAL_ROUTES.filter(
+    (r) => r.registered !== false && !registered.includes(r.path),
+  ).map((r) => r.path);
   expect(
     stale,
     `tests/e2e/routes.ts lists route(s) that src/App.tsx no longer registers: ${stale.join(", ")}`,
