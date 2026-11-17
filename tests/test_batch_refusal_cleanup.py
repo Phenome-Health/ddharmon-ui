@@ -155,9 +155,9 @@ def test_a_refused_upload_that_could_not_be_removed_is_reported_not_swallowed(wo
 
     assert resp.status_code == 400, resp.text
     [stuck] = list(work_root.iterdir())  # the premise of the test: the teardown really failed
-    assert any("could not be removed" in r.getMessage() and str(stuck) in r.getMessage() for r in caplog.records), (
-        f"a refused upload left on disk was reported as removed: {[r.getMessage() for r in caplog.records]}"
-    )
+    assert any(
+        "could not be removed" in r.getMessage() and str(stuck) in r.getMessage() for r in caplog.records
+    ), f"a refused upload left on disk was reported as removed: {[r.getMessage() for r in caplog.records]}"
 
 
 def test_an_accepted_start_keeps_its_upload(work_root, monkeypatch):
