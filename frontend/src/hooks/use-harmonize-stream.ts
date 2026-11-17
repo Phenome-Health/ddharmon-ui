@@ -293,9 +293,13 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
   // finished while `jobState.result` is still null. A screen that reads an empty result as a finding ("No groups
   // formed") makes a false claim about the corpus there — it must show a loading state instead. Keyed to the
   // announced version, so a new version (a resumed leg parking at the next gate) is pending again until it lands.
-  // A failed fetch is not pending: it settles, and the screen reads what it has. The static build loads its whole
-  // fixture in one shot, so `jobState` stays null until it lands and nothing is ever pending there.
+  // The static build loads its whole fixture in one shot, so `jobState` stays null until it lands and nothing is
+  // ever pending there.
   const resultPending = !IS_STATIC && !!jobState && resultVersion > 0 && payloadQuery.isPending;
+  // The run's payload FAILED to land — after its retry, so not pending either. An empty result then is no finding
+  // about the corpus, and no longer a wait: the screen says the result didn't load. The static build's one fetch is
+  // its payload, and `error` there is only ever that fetch failing.
+  const resultError: StreamError | null = IS_STATIC ? error : payloadQuery.error;
 
-  return { jobState: merged, done, error, cancel, reconnecting, resultPending };
+  return { jobState: merged, done, error, cancel, reconnecting, resultPending, resultError };
 }

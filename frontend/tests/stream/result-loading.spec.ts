@@ -12,7 +12,7 @@ import type { JobResult } from "@/types";
  * groups" as a run that genuinely formed nothing and said "No groups formed — Every variable was left unassigned…"
  * until the payload landed: ~1 s on prod for a cold guest opening the shared demo (its `/result` is ~7 MB), ~2.8 s on
  * a hard load, longer on a conference network. It was the first thing a demo guest saw. Gate 3 made the same claim
- * ("No transform specs to review") for the same window.
+ * ("No transform specs to review") for the same window — and before the frame itself, and after a failed download.
  *
  * WHY THIS IS ITS OWN PROJECT, ON A NON-STATIC BUILD. The static build — every other e2e spec's — has no stream: it
  * loads the whole fixture in one fetch, so it never holds a frame without its payload and cannot show this defect at
@@ -51,11 +51,27 @@ function thinFrame(run: JobResult): Record<string, unknown> {
   return frame;
 }
 
+interface Hold {
+  /** Re-state the run before it is served. */
+  mutate?: (run: JobResult) => void;
+  /** Hold the stream as well, so until the release the page has no frame at all. */
+  holdStream?: boolean;
+  /** Answer `/result` with a server error once released — a dropped download. */
+  failResult?: boolean;
+}
+
+/** What a failed `/result` answers; the screen repeats the server's sentence. */
+const RESULT_FAILURE = "The result download was dropped.";
+
 /**
  * Serve `jobId` the way a live server does, with its `/result` held. Returns the release: until it is called, the
  * page has the frame and not the payload — the window the defect lived in.
  */
-async function serveHeld(page: Page, jobId: string, mutate?: (run: JobResult) => void): Promise<() => void> {
+async function serveHeld(
+  page: Page,
+  jobId: string,
+  { mutate, holdStream = false, failResult = false }: Hold = {},
+): Promise<() => void> {
   const run = fixture(jobId);
   mutate?.(run);
   let release!: () => void;
@@ -71,16 +87,21 @@ async function serveHeld(page: Page, jobId: string, mutate?: (run: JobResult) =>
   await page.route("**/api/harmonize/models", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: readFileSync(resolve(STATIC, "models.json"), "utf8") }),
   );
-  await page.route(`**/api/harmonize/stream/${jobId}*`, (route) =>
-    route.fulfill({
+  await page.route(`**/api/harmonize/stream/${jobId}*`, async (route) => {
+    if (holdStream) await released;
+    await route.fulfill({
       status: 200,
       headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
       body: `event: progress\ndata: ${JSON.stringify(thinFrame(run))}\n\n`,
-    }),
-  );
+    });
+  });
   await page.route(`**/api/harmonize/result/${jobId}*`, async (route) => {
     await released;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(run) });
+    await route.fulfill(
+      failResult
+        ? { status: 500, contentType: "application/json", body: JSON.stringify({ detail: RESULT_FAILURE }) }
+        : { status: 200, contentType: "application/json", body: JSON.stringify(run) },
+    );
   });
   return release;
 }
@@ -100,7 +121,7 @@ for (const [label, mutate] of [
   ["finished", finished],
 ] as const) {
   test(`@gate1 a run ${label} shows a loading state, not "No groups formed", until its result lands`, async ({ page }) => {
-    const release = await serveHeld(page, PARKED_JOB, mutate);
+    const release = await serveHeld(page, PARKED_JOB, { mutate });
     await page.goto(`/run/${PARKED_JOB}/gate1`);
 
     const loading = page.getByTestId("gate1-loading");
@@ -148,3 +169,42 @@ test('@gate3 a finished run shows a loading state, not "No transform specs to re
   await expect(loading).toHaveCount(0);
   await expectNoFalseEmpty(page);
 });
+
+test('@gate3 a run whose stream frame has not arrived shows a loading state, not "No transform specs to review"', async ({
+  page,
+}) => {
+  const release = await serveHeld(page, FINISHED_JOB, { holdStream: true });
+  await page.goto(`/run/${FINISHED_JOB}/gate3`);
+
+  const loading = page.getByTestId("gate3-loading");
+  await expect(loading).toBeVisible();
+  await page.waitForTimeout(HOLD_MS);
+  await expect(loading).toBeVisible();
+  await expectNoFalseEmpty(page);
+
+  release();
+  await expect(page.locator("[data-testid='spec-row']").first()).toBeVisible();
+  await expect(loading).toHaveCount(0);
+  await expectNoFalseEmpty(page);
+});
+
+for (const [gate, jobId, testId] of [
+  ["gate1", PARKED_JOB, "gate1-result-failed"],
+  ["gate2", FINISHED_JOB, null],
+  ["gate3", FINISHED_JOB, "gate3-result-failed"],
+] as const) {
+  test(`@${gate} a run whose result fails to download says it didn't load, not that the run is empty`, async ({
+    page,
+  }) => {
+    const release = await serveHeld(page, jobId, { failResult: true });
+    release();
+    await page.goto(`/run/${jobId}/${gate}`);
+
+    const emptyState = page.getByTestId("gate-empty-state");
+    await expect(emptyState).toContainText("This run's result didn't load");
+    await expect(emptyState).toContainText(RESULT_FAILURE);
+    if (testId) await expect(page.getByTestId(testId)).toBeVisible();
+    await expect(emptyState).not.toContainText("Loading this run");
+    await expectNoFalseEmpty(page);
+  });
+}

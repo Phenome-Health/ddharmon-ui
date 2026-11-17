@@ -111,7 +111,7 @@ interface AnchorDraft {
 
 export default function Gate2Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, cancel, error } = useHarmonizeStream(jobId, true, true);
+  const { jobState, cancel, error, resultError } = useHarmonizeStream(jobId, true, true);
   const costSoFar = jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
   const allRecords: UIRecord[] = useMemo(() => jobState?.result?.records ?? [], [jobState?.result?.records]);
@@ -272,18 +272,19 @@ export default function Gate2Page() {
   // too, but for the opposite reason. Distinguish them by whether the result actually loaded.
   const resultLoaded = jobState?.result != null;
   if (!resultLoaded) {
+    const loadError = resultError ?? error;
     return (
       <Shell jobId={jobId} jobState={jobState} cancel={cancel} costSoFar={costSoFar}>
         <GateEmptyState
-          heading={error ? "This run's result didn't load" : "Loading this run…"}
+          heading={loadError ? "This run's result didn't load" : "Loading this run…"}
           nextStep={
-            error
+            loadError
               ? "Reload the page — your gate state is saved. If your API key cleared on reload, re-enter it and press Continue."
               : "One moment while the Gate 2 result loads."
           }
         >
-          {error
-            ? error.message
+          {loadError
+            ? loadError.message
             : "Fetching the assignment result. If this persists, reload — nothing here is lost."}
         </GateEmptyState>
       </Shell>

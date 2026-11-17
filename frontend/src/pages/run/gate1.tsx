@@ -2322,7 +2322,7 @@ function GroupDetail({
 
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting, cancel, resultPending } = useHarmonizeStream(
+  const { jobState, error, reconnecting, cancel, resultPending, resultError } = useHarmonizeStream(
     jobId,
     true,
     true,
@@ -3248,6 +3248,11 @@ export default function Gate1Page() {
    */
   const loadingResult = groups.length === 0 && resultPending;
   /**
+   * THE RESULT FAILED TO ARRIVE. Not a wait any more, and still no finding: a dropped download says nothing about
+   * the corpus, so the screen says the result didn't load rather than "No groups formed" — Gate 2's own wording.
+   */
+  const resultFailed = groups.length === 0 && !!resultError;
+  /**
    * The run ENDED before it produced anything.
    *
    * `complete` is excluded: a finished run with no groups is the genuine corpus finding, and the existing
@@ -3372,7 +3377,7 @@ export default function Gate1Page() {
       )}
       {/* A run that FAILED is said once, by the shell's failure notice at the top (round 10); this alert is left for
           a STREAM failure, which is about the connection rather than the run. */}
-      {error && jobState?.status !== "error" && (
+      {error && error !== resultError && jobState?.status !== "error" && (
         <p role="alert" className="text-sm font-semibold text-status-danger">
           {error.message}
         </p>
@@ -3444,7 +3449,14 @@ export default function Gate1Page() {
       />
 
       {/* No groups to lay out — waiting, stopped, or an all-outliers run. Full width, not a pane. */}
-      {loadingResult ? (
+      {resultFailed ? (
+        <GateEmptyState
+          heading="This run's result didn't load"
+          nextStep="Reload the page — your gate state is saved."
+        >
+          <span data-testid="gate1-result-failed">{resultError?.message}</span>
+        </GateEmptyState>
+      ) : loadingResult ? (
         <GateEmptyState
           heading="Loading this run…"
           nextStep="One moment while the concept groups load — no need to reload."

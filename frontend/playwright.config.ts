@@ -37,10 +37,11 @@ const E2E_BASE_URL = `http://localhost:${E2E_PORT}`;
 /**
  * The STREAM project's server: the app built as it SHIPS (no VITE_STATIC), into its own `dist-stream`, so its
  * screens read a run over the live two channels — the stream frame and the separate `/result` fetch — which the
- * static build never does. Its specs (`tests/stream/`) answer every `/api` call themselves with `page.route`, so it
- * needs no backend either. Offset from E2E_PORT by default, so a parallel worktree's E2E_PORT moves both servers.
+ * static build never does. Its specs (`tests/stream/`) answer `/api` themselves with `page.route`, and its preview
+ * proxies `/api` to a port nothing serves (its webServer's `env`), so it needs no backend either and can never reach
+ * one. Offset from E2E_PORT, so a parallel worktree's E2E_PORT moves both servers.
  */
-const E2E_STREAM_PORT = Number(process.env.E2E_STREAM_PORT) || E2E_PORT + 2000;
+const E2E_STREAM_PORT = E2E_PORT + 2000;
 const E2E_STREAM_URL = `http://localhost:${E2E_STREAM_PORT}`;
 
 export default defineConfig({
@@ -111,8 +112,11 @@ export default defineConfig({
       timeout: 180_000,
     },
     {
-      // The stream project's live-shaped build (above). Its own outDir, so it never overwrites the static `dist`.
+      // The stream project's live-shaped build (above). Its own outDir, so it never overwrites the static `dist`. A
+      // live build's preview keeps vite's /api proxy, so the proxy's target is pinned to the discard port (RFC 863):
+      // an unrouted /api call in a spec fails there instead of reaching a backend on :8000 (08-28).
       command: `npx vite build --outDir dist-stream && npx vite preview --outDir dist-stream --port ${E2E_STREAM_PORT} --strictPort`,
+      env: { API_PROXY_TARGET: "http://127.0.0.1:9" },
       url: E2E_STREAM_URL,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

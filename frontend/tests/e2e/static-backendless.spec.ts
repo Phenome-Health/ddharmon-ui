@@ -7,14 +7,16 @@ import { expect, test } from "@playwright/test";
  * one leaves the page. Vite's `preview.proxy` defaults to `server.proxy`, which forwards /api to :8000 — on a
  * developer machine, possibly a live rig with a server key. Found when Continue gained the seam: a spec that did
  * not route it reached :8000 instead of reporting the static preview. With VITE_STATIC=1 the preview proxies
- * nothing, and the gate's webServer passes VITE_STATIC=1 to the serve step as well as the build.
+ * nothing, and the gate's webServer passes VITE_STATIC=1 to the serve step as well as the build. The `stream`
+ * project's server builds the app as it ships, so its preview keeps the proxy: its webServer aims it at the discard
+ * port instead of the backend.
  *
  * Asserted on the CONFIG in node, not by sending a request: a guard whose failure mode is contacting that port is
  * the wrong guard.
  *
  *   run: E2E_PORT=4213 npx playwright test static-backendless
  */
-test("@static a static build's preview proxies /api nowhere, and the e2e gate serves it as static", async () => {
+test("@static a static build's preview proxies /api nowhere, and no e2e server proxies /api to a backend", async () => {
   process.env.VITE_STATIC = "1";
   const { default: vite } = (await import("../../vite.config.ts")) as {
     default: { preview?: { proxy?: unknown }; server?: { proxy?: unknown } };
@@ -24,9 +26,10 @@ test("@static a static build's preview proxies /api nowhere, and the e2e gate se
   expect(vite.server?.proxy).toHaveProperty("/api");
 
   const { default: pw } = (await import("../../playwright.config.ts")) as {
-    default: { webServer?: { command?: string }[] };
+    default: { webServer?: { command?: string; env?: Record<string, string> }[] };
   };
-  // The first server is the static gate's. The second is the `stream` project's live-shaped build, whose specs route
-  // every /api call in the page themselves (`tests/stream/`).
-  expect(pw.webServer?.[0]?.command).toMatch(/VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve/);
+  const [staticServer, streamServer] = pw.webServer ?? [];
+  expect(staticServer?.command).toMatch(/VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve/);
+  // Unset, vite.config.ts proxies to http://localhost:8000 — the backend this gate must never reach.
+  expect(streamServer?.env?.API_PROXY_TARGET).toBe("http://127.0.0.1:9");
 });
