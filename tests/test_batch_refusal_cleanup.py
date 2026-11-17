@@ -9,6 +9,9 @@ kept. Every refusal path must leave ``<work_root>`` exactly as it found it.
 from __future__ import annotations
 
 import json
+import logging
+import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -130,6 +133,31 @@ def test_an_unexpected_failure_before_the_run_exists_leaves_no_upload_on_disk(wo
 
     assert resp.status_code == 500
     assert list(work_root.iterdir()) == []
+
+
+def test_a_refused_upload_that_could_not_be_removed_is_reported_not_swallowed(work_root, monkeypatch, caplog):
+    """T-08-54: ``rmtree(..., ignore_errors=True)`` reports success for a teardown it did not achieve. A refused
+    participant-level file left on the host with no run row and no log line is the leak, made invisible."""
+    stuck_uploads: list[Path] = []
+
+    def lock_then_refuse(path):
+        stuck_uploads.append(path.parent)
+        os.chmod(path.parent, 0o500)  # read+execute only: the upload cannot be unlinked
+        return "participant_id"
+
+    monkeypatch.setattr(app_module, "_participant_level_column", lock_then_refuse)
+    try:
+        with caplog.at_level(logging.WARNING, logger="backend.jobs"):
+            resp = _post({"dictionaries": [_dictionary_entry()]}, body=_PARTICIPANT_ROWS)
+    finally:
+        for uploads in stuck_uploads:
+            os.chmod(uploads, 0o700)
+
+    assert resp.status_code == 400, resp.text
+    [stuck] = list(work_root.iterdir())  # the premise of the test: the teardown really failed
+    assert any("could not be removed" in r.getMessage() and str(stuck) in r.getMessage() for r in caplog.records), (
+        f"a refused upload left on disk was reported as removed: {[r.getMessage() for r in caplog.records]}"
+    )
 
 
 def test_an_accepted_start_keeps_its_upload(work_root, monkeypatch):

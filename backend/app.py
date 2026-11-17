@@ -93,6 +93,7 @@ from backend.jobs import (
     auto_accepted,
     is_auto,
     principal_of,
+    remove_work_dir,
     store,
 )
 from backend.llm_errors import CodedHTTPException, coded_http_error, key_required
@@ -697,7 +698,7 @@ async def start_batch(
         # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
         store.create(job_id, display, run_config, owner_subject=_subject(request), dict_specs=dict_specs)
     except BaseException:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        remove_work_dir(work_dir, job_id)
         raise
     # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted. A
     # Full-auto leg is also handed the continue function, which carries that same in-memory key to the next leg.
