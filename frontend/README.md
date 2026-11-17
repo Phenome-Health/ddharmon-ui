@@ -30,7 +30,7 @@ way to review those diffs deliberately.
 
 | Property | Value |
 |---|---|
-| Coverage | 23 baselines — the 22 routes registered in `src/App.tsx` plus the 404 fallback |
+| Coverage | one baseline per route registered in `src/App.tsx`, plus the 404 fallback. Redirect-only routes (`REDIRECT_ROUTES`) carry none |
 | Route list | `tests/e2e/routes.ts` (`VISUAL_ROUTES`) — the single list the spec iterates |
 | Viewport | **1440** wide × 900 layout height, one viewport (the app is desktop-only, ≥1280px) |
 | Theme | **one** screenshot per route — the app ships a single theme, so there is no light/dark pair |
@@ -41,7 +41,8 @@ way to review those diffs deliberately.
 
 A guard test in the same file parses `<Route path="…">` out of `src/App.tsx` and **fails naming any
 route that has no baseline**, so a new route cannot silently escape coverage. Add the route to
-`tests/e2e/routes.ts` and regenerate.
+`VISUAL_ROUTES` in `tests/e2e/routes.ts` and regenerate. A route that only redirects goes in
+`REDIRECT_ROUTES` instead: it gets no screenshot, and `smoke.spec.ts` checks where it lands.
 
 **Updating baselines**
 
