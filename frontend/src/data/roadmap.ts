@@ -10,15 +10,15 @@
 
 import type { ContentProvenance } from "./content-provenance";
 
-/** See ./content-provenance. NOT yet baselined — item statuses have not been re-checked against what
- *  actually shipped. This is the manifest most prone to quiet drift: "planned" items go out without
- *  anyone crossing them off, so the roadmap under-claims. First pass should reconcile every status
- *  against the pipeline, then set a real coreCommit. */
+/** See ./content-provenance. NOT yet baselined — items have not been re-checked against what actually
+ *  shipped. This is the manifest most prone to quiet drift: an item ships and nobody strikes it, so the
+ *  roadmap lists shipped work as forthcoming. First pass should reconcile every item against the
+ *  pipeline, then set a real coreCommit. */
 export const VERIFIED_AGAINST: ContentProvenance = {
   coreCommit: "unverified",
   contractVersion: "unverified",
   checkedOn: "never",
-  scope: "Baseline not established — item statuses unreconciled against what has shipped.",
+  scope: "Baseline not established — items unreconciled against what has shipped.",
 };
 
 export type RoadmapStatus = "in-progress" | "planned" | "exploring";
@@ -90,12 +90,12 @@ export const ROADMAP: RoadmapGroup[] = [
       },
       { label: "Richer cluster and atlas visualizations", status: "planned" },
       {
-        label: "Drag-and-drop concept restructuring — move variables between concepts, then re-check with the model",
+        label: "Re-check a group with the model after you move variables between groups",
         status: "planned",
         preview: "/preview/restructure",
       },
       {
-        label: "Flag a concept as incoherent and have the model re-adjudicate it",
+        label: "Flag a group as incoherent yourself and have the model re-split it",
         status: "planned",
       },
     ],
