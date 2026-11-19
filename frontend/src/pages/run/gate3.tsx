@@ -125,7 +125,7 @@ const VERDICTS = ["adopt", "refine", "novel"] as const;
 
 export default function Gate3Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, cancel } = useHarmonizeStream(jobId, true, true);
+  const { jobState, cancel, resultPending, resultError } = useHarmonizeStream(jobId, true, true);
   const costSoFar =
     jobState?.costSoFar ?? jobState?.result?.cost?.actualUsd ?? 0;
 
@@ -362,6 +362,40 @@ export default function Gate3Page() {
             no reload needed.
           </span>
         </GateEmptyState>
+      </Shell>
+    );
+  }
+
+  // A parked or finished run whose result has not ARRIVED yet is not "no specs" either (2026-11-13): the thin stream
+  // frame lands before the separate result download, and for that window the list is empty for want of the result,
+  // not for want of specs. Nor is a run with no frame yet (the static build's whole fixture download), or one whose
+  // result failed to arrive. Gate 2 says the same (`resultLoaded`).
+  if (!anyRow && (resultPending || resultError)) {
+    return (
+      <Shell
+        jobId={jobId}
+        jobState={jobState}
+        cancel={cancel}
+        costSoFar={costSoFar}
+      >
+        {resultError ? (
+          <GateEmptyState
+            heading="This run's result didn't load"
+            nextStep="Reload the page — your gate state is saved."
+          >
+            <span data-testid="gate3-result-failed">{resultError.message}</span>
+          </GateEmptyState>
+        ) : (
+          <GateEmptyState
+            heading="Loading this run…"
+            nextStep="One moment while the Gate 3 result loads."
+          >
+            <span data-testid="gate3-loading">
+              Fetching this run&apos;s result. Its transform specs appear here
+              as soon as it arrives.
+            </span>
+          </GateEmptyState>
+        )}
       </Shell>
     );
   }

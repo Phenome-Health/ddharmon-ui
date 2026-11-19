@@ -9,6 +9,7 @@ import { defineConfig, devices } from "@playwright/test";
  * harmonization run. It exercises the real render path end to end against the
  * shipped demo fixtures, which is exactly what makes it cheap enough to run on
  * every UI change (the trust gate that lets a change go build → green → review).
+ * The `stream` project is the one exception to the static build (see E2E_STREAM_PORT below).
  *
  * Local:  npm run test:e2e
  * CI:     set CI=1 (uses the github reporter, no server reuse).
@@ -34,6 +35,15 @@ import { defineConfig, devices } from "@playwright/test";
  */
 const E2E_PORT = Number(process.env.E2E_PORT) || 4173;
 const E2E_BASE_URL = `http://localhost:${E2E_PORT}`;
+/**
+ * The STREAM project's server: the app built as it SHIPS (no VITE_STATIC), into its own `dist-stream`, so its
+ * screens read a run over the live two channels — the stream frame and the separate `/result` fetch — which the
+ * static build never does. Its specs (`tests/stream/`) answer `/api` themselves with `page.route`, and its preview
+ * proxies `/api` to a port nothing serves (its webServer's `env`), so it needs no backend either and can never reach
+ * one. Offset from E2E_PORT, so a parallel worktree's E2E_PORT moves both servers.
+ */
+const E2E_STREAM_PORT = E2E_PORT + 2000;
+const E2E_STREAM_URL = `http://localhost:${E2E_STREAM_PORT}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -85,14 +95,31 @@ export default defineConfig({
   // silently baseline every route 160px narrower than the contract.
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
+    {
+      name: "stream",
+      testDir: "./tests/stream",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, baseURL: E2E_STREAM_URL },
+    },
   ],
-  webServer: {
-    // Build in static mode, then serve the dist with vite preview on a fixed port. VITE_STATIC=1 rides the SERVE
-    // too: it is what turns the preview's /api proxy off (vite.config.ts), so an unrouted /api call in a spec can
-    // never reach a backend on :8000 — a developer's live rig included (08-28).
-    command: `VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve -- --port ${E2E_PORT} --strictPort`,
-    url: E2E_BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-  },
+  webServer: [
+    {
+      // Build in static mode, then serve the dist with vite preview on a fixed port. VITE_STATIC=1 rides the SERVE
+      // too: it is what turns the preview's /api proxy off (vite.config.ts), so an unrouted /api call in a spec can
+      // never reach a backend on :8000 — a developer's live rig included (08-28).
+      command: `VITE_STATIC=1 npm run build && VITE_STATIC=1 npm run serve -- --port ${E2E_PORT} --strictPort`,
+      url: E2E_BASE_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+    {
+      // The stream project's live-shaped build (above). Its own outDir, so it never overwrites the static `dist`. A
+      // live build's preview keeps vite's /api proxy, so the proxy's target is pinned to the discard port (RFC 863):
+      // an unrouted /api call in a spec fails there instead of reaching a backend on :8000 (08-28).
+      command: `npx vite build --outDir dist-stream && npx vite preview --outDir dist-stream --port ${E2E_STREAM_PORT} --strictPort`,
+      env: { API_PROXY_TARGET: "http://127.0.0.1:9" },
+      url: E2E_STREAM_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+  ],
 });

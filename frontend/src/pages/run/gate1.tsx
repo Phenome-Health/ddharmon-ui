@@ -2322,7 +2322,7 @@ function GroupDetail({
 
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(
+  const { jobState, error, reconnecting, cancel, resultPending, resultError } = useHarmonizeStream(
     jobId,
     true,
     true,
@@ -3231,12 +3231,27 @@ export default function Gate1Page() {
    * changes these go false and the rows appear with no reload. A `useState` seeded on first render would
    * strand the reviewer on a waiting screen over a run that had already arrived.
    *
-   * AN ABSENT `jobState` COUNTS AS WAITING, deliberately. The run's payload has not landed, so the screen
-   * knows nothing about the corpus — and "No groups formed" is exactly as false then as it is mid-run.
-   * A stream failure is reported by the `error` alert above rather than by this branch.
+   * AN ABSENT `jobState` IS NOT WAITING but LOADING (`loadingResult`, checked first): before the first frame the
+   * screen does not know the run is running at all, and on a parked or finished run "This run is still working" is
+   * as false as "No groups formed". A stream failure is reported by the `error` alert above.
    */
-  const awaitingRun =
-    groups.length === 0 && (!jobState || isInFlight(jobState.status));
+  const awaitingRun = groups.length === 0 && !!jobState && isInFlight(jobState.status);
+  /**
+   * THE RUN'S RESULT HAS NOT ARRIVED YET (2026-11-13).
+   *
+   * The same false claim as `awaitingRun`, from a parked or finished run instead of a running one: the thin stream
+   * frame says where the run stands before the separate result download lands, and on a large run (the shared
+   * demo's is ~7 MB) that window was 1–3 s of "No groups formed" — the first thing a demo guest saw. Before the
+   * frame itself, the screen does not even know where the run stands. Until the result lands the screen knows
+   * nothing about the corpus, so it says it is loading. Checked BEFORE `awaitingRun` because its "This run is
+   * <phase>" copy names a phase, and a parked run has none to name.
+   */
+  const loadingResult = groups.length === 0 && resultPending;
+  /**
+   * THE RESULT FAILED TO ARRIVE. Not a wait any more, and still no finding: a dropped download says nothing about
+   * the corpus, so the screen says the result didn't load rather than "No groups formed" — Gate 2's own wording.
+   */
+  const resultFailed = groups.length === 0 && !!resultError;
   /**
    * The run ENDED before it produced anything.
    *
@@ -3362,7 +3377,7 @@ export default function Gate1Page() {
       )}
       {/* A run that FAILED is said once, by the shell's failure notice at the top (round 10); this alert is left for
           a STREAM failure, which is about the connection rather than the run. */}
-      {error && jobState?.status !== "error" && (
+      {error && error !== resultError && jobState?.status !== "error" && (
         <p role="alert" className="text-sm font-semibold text-status-danger">
           {error.message}
         </p>
@@ -3434,7 +3449,24 @@ export default function Gate1Page() {
       />
 
       {/* No groups to lay out — waiting, stopped, or an all-outliers run. Full width, not a pane. */}
-      {awaitingRun ? (
+      {resultFailed ? (
+        <GateEmptyState
+          heading="This run's result didn't load"
+          nextStep="Reload the page — your gate state is saved."
+        >
+          <span data-testid="gate1-result-failed">{resultError?.message}</span>
+        </GateEmptyState>
+      ) : loadingResult ? (
+        <GateEmptyState
+          heading="Loading this run…"
+          nextStep="One moment while the concept groups load — no need to reload."
+        >
+          <span data-testid="gate1-loading">
+            Fetching this run&apos;s result. Its groups appear here as soon as
+            it arrives.
+          </span>
+        </GateEmptyState>
+      ) : awaitingRun ? (
         <GateEmptyState
           heading="Waiting for this run to reach Gate 1"
           nextStep={
