@@ -370,7 +370,7 @@ export default function Gate3Page() {
   // frame lands before the separate result download, and for that window the list is empty for want of the result,
   // not for want of specs. Nor is a run with no frame yet (the static build's whole fixture download), or one whose
   // result failed to arrive. Gate 2 says the same (`resultLoaded`).
-  if (!anyRow && (!jobState || resultPending || resultError)) {
+  if (!anyRow && (resultPending || resultError)) {
     return (
       <Shell
         jobId={jobId}

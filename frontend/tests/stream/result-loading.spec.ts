@@ -110,7 +110,13 @@ async function serveHeld(
 const HOLD_MS = 1500;
 
 /** What each gate wrongly claimed about the run while its result was downloading. */
-const FALSE_EMPTY = [/No groups formed/i, /Nothing grouped above the threshold/i, /Nothing was passed from Gate 1/i, /No transform specs to review/i];
+const FALSE_EMPTY = [
+  /No groups formed/i,
+  /Nothing grouped above the threshold/i,
+  /Waiting for this run to reach Gate 1/i,
+  /Nothing was passed from Gate 1/i,
+  /No transform specs to review/i,
+];
 
 async function expectNoFalseEmpty(page: Page): Promise<void> {
   for (const re of FALSE_EMPTY) await expect(page.locator("body")).not.toContainText(re);
@@ -166,6 +172,24 @@ test('@gate3 a finished run shows a loading state, not "No transform specs to re
 
   release();
   await expect(page.locator("[data-testid='spec-row']").first()).toBeVisible();
+  await expect(loading).toHaveCount(0);
+  await expectNoFalseEmpty(page);
+});
+
+test('@gate1 a run whose stream frame has not arrived shows a loading state, not "Waiting for this run"', async ({
+  page,
+}) => {
+  const release = await serveHeld(page, PARKED_JOB, { holdStream: true });
+  await page.goto(`/run/${PARKED_JOB}/gate1`);
+
+  const loading = page.getByTestId("gate1-loading");
+  await expect(loading).toBeVisible();
+  await page.waitForTimeout(HOLD_MS);
+  await expect(loading).toBeVisible();
+  await expectNoFalseEmpty(page);
+
+  release();
+  await expect(page.locator("[data-testid='ledger-row']").first()).toBeVisible();
   await expect(loading).toHaveCount(0);
   await expectNoFalseEmpty(page);
 });

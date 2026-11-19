@@ -288,18 +288,18 @@ export function useHarmonizeStream(jobId: string, enabled = true, instant = fals
     return { ...streamPayload(payloadQuery.data), ...jobState };
   }, [jobState, payloadQuery.data]);
 
-  // The run's payload is ANNOUNCED but has not LANDED. The thin frame arrives first and the separate /result fetch
-  // (multi-megabyte on a large run) lands after it, so for that window `jobState` already says the run is parked or
-  // finished while `jobState.result` is still null. A screen that reads an empty result as a finding ("No groups
-  // formed") makes a false claim about the corpus there — it must show a loading state instead. Keyed to the
-  // announced version, so a new version (a resumed leg parking at the next gate) is pending again until it lands.
-  // The static build loads its whole fixture in one shot, so `jobState` stays null until it lands and nothing is
-  // ever pending there.
-  const resultPending = !IS_STATIC && !!jobState && resultVersion > 0 && payloadQuery.isPending;
-  // The run's payload FAILED to land — after its retry, so not pending either. An empty result then is no finding
-  // about the corpus, and no longer a wait: the screen says the result didn't load. The static build's one fetch is
-  // its payload, and `error` there is only ever that fetch failing.
+  // The run's payload FAILED to land — after its retry, so not pending. An empty result then is no finding about the
+  // corpus, and no longer a wait: the screen says the result didn't load. The static build's one fetch is its
+  // payload, and `error` there is only ever that fetch failing.
   const resultError: StreamError | null = IS_STATIC ? error : payloadQuery.error;
+  // The run's result has not ARRIVED. Before the first frame the screen knows nothing about the run at all — the
+  // static build's whole fixture download, a live stream's first round trip. After it, the thin frame can say the
+  // run is parked or finished while the separate /result fetch (multi-megabyte on a large run) has not landed, so
+  // `jobState.result` is still null. A screen that reads an empty result as a finding ("No groups formed") makes a
+  // false claim about the corpus in either window — it must show a loading state instead. Keyed to the announced
+  // version, so a new version (a resumed leg parking at the next gate) is pending again until it lands.
+  const resultPending =
+    !resultError && (!jobState || (!IS_STATIC && resultVersion > 0 && payloadQuery.isPending));
 
   return { jobState: merged, done, error, cancel, reconnecting, resultPending, resultError };
 }

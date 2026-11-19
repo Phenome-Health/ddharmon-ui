@@ -3231,20 +3231,20 @@ export default function Gate1Page() {
    * changes these go false and the rows appear with no reload. A `useState` seeded on first render would
    * strand the reviewer on a waiting screen over a run that had already arrived.
    *
-   * AN ABSENT `jobState` COUNTS AS WAITING, deliberately. The run's payload has not landed, so the screen
-   * knows nothing about the corpus — and "No groups formed" is exactly as false then as it is mid-run.
-   * A stream failure is reported by the `error` alert above rather than by this branch.
+   * AN ABSENT `jobState` IS NOT WAITING but LOADING (`loadingResult`, checked first): before the first frame the
+   * screen does not know the run is running at all, and on a parked or finished run "This run is still working" is
+   * as false as "No groups formed". A stream failure is reported by the `error` alert above.
    */
-  const awaitingRun =
-    groups.length === 0 && (!jobState || isInFlight(jobState.status));
+  const awaitingRun = groups.length === 0 && !!jobState && isInFlight(jobState.status);
   /**
-   * THE RUN IS PARKED OR FINISHED, BUT ITS RESULT HAS NOT ARRIVED YET (2026-11-13).
+   * THE RUN'S RESULT HAS NOT ARRIVED YET (2026-11-13).
    *
    * The same false claim as `awaitingRun`, from a parked or finished run instead of a running one: the thin stream
    * frame says where the run stands before the separate result download lands, and on a large run (the shared
-   * demo's is ~7 MB) that window was 1–3 s of "No groups formed" — the first thing a demo guest saw. Until the
-   * result lands the screen knows nothing about the corpus, so it says it is loading. Checked BEFORE `awaitingRun`
-   * because its "This run is <phase>" copy names a phase, and a parked run has none to name.
+   * demo's is ~7 MB) that window was 1–3 s of "No groups formed" — the first thing a demo guest saw. Before the
+   * frame itself, the screen does not even know where the run stands. Until the result lands the screen knows
+   * nothing about the corpus, so it says it is loading. Checked BEFORE `awaitingRun` because its "This run is
+   * <phase>" copy names a phase, and a parked run has none to name.
    */
   const loadingResult = groups.length === 0 && resultPending;
   /**
