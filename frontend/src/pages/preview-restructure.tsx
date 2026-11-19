@@ -1,7 +1,8 @@
-// PREVIEW / MOCKUP — a design sketch of the planned "Restructuring workbench" (roadmap: Interface &
-// transparency). NOT a real feature: the board is seeded with sample data, the drag-and-drop is local
-// state only, and "Re-check with the model" is a canned simulation — no run, no backend, no LLM call.
-// It exists so we can feel out the interaction before building it for real. Linked from /roadmap.
+// PREVIEW / MOCKUP — a design sketch of the planned model re-check of a group after you move variables
+// (roadmap: Interface & transparency). Moving variables between groups is already live at Gate 1; the
+// re-check is what is planned. NOT a real feature: the board is seeded with sample data, the drag-and-drop
+// is local state only, and "Re-check with the model" is a canned simulation — no run, no backend, no LLM
+// call. It exists so we can feel out the re-check before building it for real. Linked from /roadmap.
 import { useState } from "react";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowLeft, Check, FlaskConical, GripVertical, Loader2, Pencil, Plus, RefreshCw, Sparkles } from "lucide-react";
@@ -162,9 +163,9 @@ export default function PreviewRestructurePage() {
           </Badge>
         </h1>
         <p className="mt-1 text-sm text-on-field-muted">
-          A design preview of a planned feature — hand the reviewer direct, drag-and-drop control over the
-          harmonization structure, then let the model sanity-check the edits. The board below is seeded with
-          sample data; drag chips between concepts to get a feel for it.
+          Moving variables between groups is already live at Gate 1. This previews the planned next step:
+          after you move them, the model re-checks the group. The board below is seeded with sample data;
+          drag chips between concepts, then re-check, to get a feel for it.
         </p>
       </div>
 
@@ -174,7 +175,7 @@ export default function PreviewRestructurePage() {
         <span>
           <span className="font-semibold">This is a mockup, not a live tool.</span> Drag-and-drop and “Re-check
           with the model” run entirely in your browser on sample data — no run, no data upload, no LLM call.
-          The real feature would start from your run&apos;s output and persist edits as a user-owned layer.
+          The real re-check would run on your own run&apos;s groups, after the moves you make at Gate 1.
         </span>
       </div>
 
@@ -302,9 +303,9 @@ export default function PreviewRestructurePage() {
       </div>
 
       <p className="text-xs text-on-field-muted">
-        In the real feature, edits would layer over ddharmon&apos;s output (never destroying the original run),
-        the CDE “change” control would open the ranked candidate list, and “Re-check with the model” would run
-        the coherence/assign pass over your edited structure and surface accept/ignore recommendations.
+        In the real feature, “Re-check with the model” would run the coherence/assign pass over your edited
+        groups and surface accept/ignore recommendations. Picking a different CDE from the ranked candidate
+        list is already live at Gate 2.
       </p>
     </div>
   );
