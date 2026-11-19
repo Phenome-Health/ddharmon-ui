@@ -5,8 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ROADMAP, type RoadmapStatus } from "@/data/roadmap";
 
-// Shared by both link forms below so the tag looks identical whether it points at an in-app route or
-// at a standalone static page.
+// The "Preview" tag an item with a design preview carries, linking to that preview's in-app route.
 const PREVIEW_TAG =
   "ml-2 inline-flex items-center gap-1 rounded border border-rule-info px-1.5 py-0.5 align-middle text-xs font-semibold text-accent-on-raised hover:bg-surface-info";
 
@@ -88,16 +87,11 @@ export default function RoadmapPage() {
                           Exploring
                         </Badge>
                       )}
-                      {item.preview &&
-                        (item.previewStandalone ? (
-                          <a href={item.preview} className={PREVIEW_TAG}>
-                            <Eye className="h-3 w-3" /> Preview
-                          </a>
-                        ) : (
-                          <Link href={item.preview} className={PREVIEW_TAG}>
-                            <Eye className="h-3 w-3" /> Preview
-                          </Link>
-                        ))}
+                      {item.preview && (
+                        <Link href={item.preview} className={PREVIEW_TAG}>
+                          <Eye className="h-3 w-3" /> Preview
+                        </Link>
+                      )}
                       {item.note && <span className="mt-0.5 block text-xs text-on-raised-muted">{item.note}</span>}
                     </span>
                   </li>

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, request as playwrightRequest, test } from "@playwright/test";
-import { VISUAL_ROUTES, type VisualRoute } from "./routes";
+import { REDIRECT_ROUTES, VISUAL_ROUTES, type VisualRoute } from "./routes";
 
 /**
  * Visual-regression gate — one full-page screenshot per route at 1440x900 in the single shipped theme.
@@ -136,11 +136,12 @@ test("@visual every route registered in App.tsx has a VISUAL_ROUTES entry", () =
   expect(existsSync(appTsx), `expected the app route table at ${appTsx}`).toBe(true);
 
   // Every `<Route path="…">` in the <Switch>. The bare `<Route>` fallback has no path attribute and is
-  // covered by the VISUAL_ROUTES entry with `registered: false`.
+  // covered by the VISUAL_ROUTES entry with `registered: false`. A redirect-only route is covered by its
+  // REDIRECT_ROUTES entry instead.
   const registered = [...readFileSync(appTsx, "utf8").matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]);
   expect(registered.length, "failed to parse any <Route path=…> out of src/App.tsx").toBeGreaterThan(0);
 
-  const covered = new Set(VISUAL_ROUTES.map((r) => r.path));
+  const covered = new Set([...VISUAL_ROUTES.map((r) => r.path), ...REDIRECT_ROUTES.map((r) => r.path)]);
   const missing = registered.filter((p) => !covered.has(p));
   expect(
     missing,
@@ -149,11 +150,8 @@ test("@visual every route registered in App.tsx has a VISUAL_ROUTES entry", () =
 
   // And the reverse: a VISUAL_ROUTES entry claiming to be registered but absent from App.tsx is a stale
   // baseline that would silently keep passing against a dead route.
-  // `standalone` pages are served from public/ and are absent from App.tsx by design, so they are
-  // exempt from this match — but NOT from the screenshot baseline above, which is the only gate
-  // that still sees them once they leave src/.
   const stale = VISUAL_ROUTES.filter(
-    (r) => r.registered !== false && !r.standalone && !registered.includes(r.path),
+    (r) => r.registered !== false && !registered.includes(r.path),
   ).map((r) => r.path);
   expect(
     stale,
