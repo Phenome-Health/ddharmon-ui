@@ -9,6 +9,11 @@ Both gates run against a **static build** (`VITE_STATIC=1`), which reads the bun
 `public/static-data/*.json` demo fixtures instead of `/api`. That means **no backend, no Clerk keys and
 no paid harmonization run** — which is what makes them cheap enough to run on every UI change.
 
+The one exception is the smoke run's `stream` project (`tests/stream/`). It builds the app as it ships,
+into `dist-stream/`, because only a live build reads a run over two channels — the stream frame and the
+separate `/result` fetch. Its specs answer `/api` themselves with `page.route`, so it needs no backend
+either.
+
 ```bash
 npm run typecheck                          # tsc --noEmit
 npm run test:e2e                           # everything: smoke + visual regression
@@ -16,8 +21,8 @@ npm run test:e2e -- --grep "@visual"       # visual regression only
 npm run test:e2e -- --grep-invert "@visual" # smoke only (what CI runs)
 ```
 
-Playwright builds and serves the bundle itself (`playwright.config.ts` → `webServer`), so there is
-nothing to start first. The first run takes ~3 minutes because it builds.
+Playwright builds and serves both bundles itself (`playwright.config.ts` → `webServer`), so there is
+nothing to start first. The first run takes a few minutes because it builds.
 
 ## Visual regression
 

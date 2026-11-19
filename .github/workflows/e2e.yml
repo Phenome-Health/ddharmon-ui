@@ -1,8 +1,7 @@
 name: e2e-smoke
 
-# End-to-end smoke gate for the UI. Runs against a STATIC build (VITE_STATIC=1)
-# that reads bundled demo fixtures — no backend, no Clerk keys, no paid run — so
-# it's cheap enough to gate every frontend change. See frontend/playwright.config.ts.
+# End-to-end smoke gate for the UI. Needs no backend, no Clerk keys and no paid run,
+# so it's cheap enough to gate every frontend change. See frontend/playwright.config.ts.
 
 on:
   pull_request:

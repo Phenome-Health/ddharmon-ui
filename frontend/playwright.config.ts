@@ -9,6 +9,7 @@ import { defineConfig, devices } from "@playwright/test";
  * harmonization run. It exercises the real render path end to end against the
  * shipped demo fixtures, which is exactly what makes it cheap enough to run on
  * every UI change (the trust gate that lets a change go build → green → review).
+ * The `stream` project is the one exception to the static build (see E2E_STREAM_PORT below).
  *
  * Local:  npm run test:e2e
  * CI:     set CI=1 (uses the github reporter, no server reuse).
