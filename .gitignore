@@ -11,6 +11,7 @@ venv/
 frontend/node_modules/
 frontend/dist/
 frontend/dist-lean/
+frontend/dist-stream/
 # Playwright e2e smoke-gate output (reports, traces, screenshots)
 frontend/test-results/
 frontend/playwright-report/
