@@ -57,7 +57,6 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "architecture", path: "/architecture" },
   { name: "preview-restructure", path: "/preview/restructure" },
   { name: "preview-payoff", path: "/preview/payoff" },
-  { name: "preview-composite", path: "/preview/composite" },
   { name: "preview-reproducibility", path: "/preview/reproducibility" },
   { name: "preview-knowledge-graph", path: "/preview/knowledge-graph" },
   { name: "phenome", path: "/phenome" },

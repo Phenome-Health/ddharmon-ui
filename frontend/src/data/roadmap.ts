@@ -57,10 +57,6 @@ export const ROADMAP: RoadmapGroup[] = [
         status: "planned",
       },
       {
-        label: "Propose cross-cohort concepts only — suppress single-cohort elements on demand",
-        status: "planned",
-      },
-      {
         label: "Local / on-prem LLM support — run inside your own compliance boundary",
         status: "planned",
       },
@@ -116,11 +112,6 @@ export const ROADMAP: RoadmapGroup[] = [
         label: "Quantify the payoff of harmonization — effective sample size and statistical power gained",
         status: "exploring",
         preview: "/preview/payoff",
-      },
-      {
-        label: "Composite / derived-variable builder — assemble scores (e.g. frailty) from harmonized inputs",
-        status: "exploring",
-        preview: "/preview/composite",
       },
     ],
   },
