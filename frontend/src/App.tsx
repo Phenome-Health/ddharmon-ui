@@ -24,7 +24,6 @@ import RoadmapPage from "@/pages/roadmap";
 import DeploymentArchitecturePage from "@/pages/deployment-architecture";
 import PreviewRestructurePage from "@/pages/preview-restructure";
 import PreviewPayoffPage from "@/pages/preview-payoff";
-import PreviewCompositePage from "@/pages/preview-composite";
 import PreviewReproducibilityPage from "@/pages/preview-reproducibility";
 import PreviewKnowledgeGraphPage from "@/pages/preview-knowledge-graph";
 // The staged review flow: one page file per gate, so no later screen plan has to touch this router.
@@ -106,7 +105,6 @@ export default function App() {
             {/* The roadmap's design previews go with the roadmap: it is their only way in, and each links back to it. */}
             <Route path="/preview/restructure" component={hideable("roadmap", PreviewRestructurePage)} />
             <Route path="/preview/payoff" component={hideable("roadmap", PreviewPayoffPage)} />
-            <Route path="/preview/composite" component={hideable("roadmap", PreviewCompositePage)} />
             <Route path="/preview/reproducibility" component={hideable("roadmap", PreviewReproducibilityPage)} />
             <Route path="/preview/knowledge-graph" component={hideable("roadmap", PreviewKnowledgeGraphPage)} />
             <Route path="/preview/staged-review" component={RetiredStagedReviewPreview} />
