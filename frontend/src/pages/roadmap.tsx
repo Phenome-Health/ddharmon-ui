@@ -10,8 +10,8 @@ const PREVIEW_TAG =
   "ml-2 inline-flex items-center gap-1 rounded border border-rule-info px-1.5 py-0.5 align-middle text-xs font-semibold text-accent-on-raised hover:bg-surface-info";
 
 // Per-status presentation. Planned = an empty circle; in-progress sits beside it, with a badge so it
-// isn't mistaken for it. Exploring = an open research direction (a
-// flask), badged like in-progress so it reads as a live bet, not a committed plan.
+// isn't mistaken for it. Exploring = an open research direction (a flask), badged like in-progress so
+// it reads as a live bet, not a committed plan.
 const STATUS: Record<RoadmapStatus, { Icon: typeof Circle; cls: string; label: string }> = {
   "in-progress": { Icon: CircleDot, cls: "text-accent-on-raised", label: "In progress" },
   planned: { Icon: Circle, cls: "text-on-raised-muted", label: "Planned" },
