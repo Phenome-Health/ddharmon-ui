@@ -10,8 +10,11 @@ import {
   elapsedSeconds,
   etaSeconds,
   isAwaitingProviderQueue,
+  isReplayedPhase,
   legStartedAt,
   phasePercent,
+  RESTORING_STEP,
+  stageLabel,
   syncSwitchState,
   timelineSegments,
   type SyncSwitchState,
@@ -43,24 +46,27 @@ export function RunTimeline({
   phaseStartedAt,
   currentPhase,
   now,
+  resumedFrom = null,
 }: {
   phaseStartedAt?: Record<string, number>;
   currentPhase: string;
   now: number;
+  /** The gate a resumed leg left (the run's gate position while it runs): earlier gates' replay shows as one step. */
+  resumedFrom?: string | null;
 }) {
-  const segments = timelineSegments({ phaseStartedAt, currentPhase, now });
+  const segments = timelineSegments({ phaseStartedAt, currentPhase, now, resumedFrom });
   if (!segments.length) return null;
   return (
     <div data-testid="run-timeline" className="space-y-1 border-t border-rule-on-raised pt-2 text-xs">
       {segments.map((s) => (
         <div key={s.phase} className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5 capitalize text-on-raised">
+          <span className={cn("flex items-center gap-1.5 text-on-raised", s.phase !== "restoring" && "capitalize")}>
             {s.active ? (
               <Loader2 className="h-3 w-3 animate-spin text-accent-on-raised" />
             ) : (
               <Check className="h-3 w-3 text-success" />
             )}
-            {s.phase}
+            {s.phase === "restoring" ? RESTORING_STEP : s.phase}
           </span>
           <span className="tabular-nums text-on-raised-muted">{formatDuration(s.seconds)}</span>
         </div>
@@ -136,10 +142,10 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
             heard of still displays. Only the percentage uses the known ordering. */}
         <p data-testid="run-progress-stage" className="flex items-center gap-2 text-sm text-on-raised">
           <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-accent-on-raised" />
-          <span className="font-semibold capitalize">
+          <span className={cn("font-semibold", !advancing && !isReplayedPhase(job.phase, job.gatePosition) && "capitalize")}>
             {advancing
               ? `Accepting ${job.gatePosition ? gateLabel(job.gatePosition) : "this gate"} and starting the next step`
-              : job.phase}
+              : stageLabel(job.phase, job.gatePosition)}
           </span>
           {!advancing && job.total > 0 && (
             <span className="font-mono text-xs tabular-nums text-on-raised-muted">
@@ -214,7 +220,7 @@ export function RunProgress({ job, className }: { job?: JobResult | null; classN
           spinning. The SAME component the legacy dashboard renders; wired in here so the staged flow gets
           the verbose progress too. It hides itself when the run carries no timings, so a hydrated
           historical run stays clean, and it reuses the tick this section already owns. */}
-      <RunTimeline phaseStartedAt={job.phaseStartedAt} currentPhase={job.phase} now={now} />
+      <RunTimeline phaseStartedAt={job.phaseStartedAt} currentPhase={job.phase} now={now} resumedFrom={job.gatePosition} />
 
       <AutoProgress job={job} />
     </section>

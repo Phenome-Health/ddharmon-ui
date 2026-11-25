@@ -128,14 +128,57 @@ export interface TimelineSegment {
  * Returns an EMPTY ARRAY when no timings were streamed (a DB-hydrated historical run), which is the
  * caller's cue to render nothing at all rather than a heading over an empty list.
  */
+/**
+ * WHICH GATE'S WORK EACH STREAMED PHASE IS (user test 2026-11-25: "each gate should show its actual steps not
+ * boilerplate from gate 1"). A resumed leg replays every earlier gate's phases from the frozen substrate and the
+ * checkpoint ($0) before doing its own, and the server streams those replays under their usual names. Gate 2 parks
+ * "stop after GenCDE" (backend `_GATE_STOP_MECHANISM`), so assign + GenCDE are Gate 2's; specs and refine run after it.
+ */
+export const PHASE_GATE: Record<string, string> = {
+  loading: "gate1",
+  embedding: "gate1",
+  clustering: "gate1",
+  generating: "gate1",
+  splitting: "gate1",
+  assigning: "gate2",
+  gencde: "gate2",
+  specs: "gate3",
+  refine: "gate3",
+};
+
+/** The one step a resumed leg's replay of earlier gates is shown as. */
+export const RESTORING_STEP = "Restoring your earlier review (no charge)";
+const RESTORING = "restoring";
+const GATE_ORDER = ["gate0", "gate1", "gate2", "gate3", "gate4"];
+
+/**
+ * Whether `phase` is a REPLAY on this leg: its gate is one the run has already passed. `resumedFrom` is the run's gate
+ * position while the leg runs (the resume endpoint does not move it until the leg parks), so it is the gate the leg
+ * left. A first leg has none, and an unknown phase is never a replay, so both read exactly as before.
+ */
+export function isReplayedPhase(phase: string, resumedFrom?: string | null): boolean {
+  const gate = PHASE_GATE[phase];
+  if (!gate || !resumedFrom) return false;
+  const passed = GATE_ORDER.indexOf(resumedFrom);
+  return passed >= 0 && GATE_ORDER.indexOf(gate) <= passed;
+}
+
+/** What the progress panel calls the current phase: the restoring step for a replay, else the phase verbatim. */
+export function stageLabel(phase: string, resumedFrom?: string | null): string {
+  return isReplayedPhase(phase, resumedFrom) ? RESTORING_STEP : phase;
+}
+
 export function timelineSegments({
   phaseStartedAt,
   currentPhase,
   now,
+  resumedFrom = null,
 }: {
   phaseStartedAt?: Record<string, number>;
   currentPhase: string;
   now: number;
+  /** The gate this leg resumed from (the run's gate position while it runs); its replayed phases fold into one step. */
+  resumedFrom?: string | null;
 }): TimelineSegment[] {
   const timings = phaseStartedAt ?? {};
   // Only the CURRENT leg's stages (#5): on a resume, the first leg's stamps are not this leg's work.
@@ -150,12 +193,21 @@ export function timelineSegments({
   // and runs to `now` only when nothing has been stamped after it.
   const stamps = Object.values(timings).sort((a, b) => a - b);
   const endOf = (start: number): number => stamps.find((t) => t > start) ?? terminalAt ?? now;
-  return seq.map((phase) => ({
+  const segments = seq.map((phase) => ({
     phase,
     seconds: Math.max(0, endOf(timings[phase]) - timings[phase]),
     // Nothing is active once the run has ended: the stage it stopped in is finished, not running.
     active: phase === currentPhase && terminalAt === null,
   }));
+  // Fold the replayed phases into ONE restoring step, placed where the replay began (it always runs first).
+  const replayed = segments.filter((seg) => isReplayedPhase(seg.phase, resumedFrom));
+  if (!replayed.length) return segments;
+  const restoring: TimelineSegment = {
+    phase: RESTORING,
+    seconds: replayed.reduce((sum, seg) => sum + seg.seconds, 0),
+    active: replayed.some((seg) => seg.active),
+  };
+  return [restoring, ...segments.filter((seg) => !isReplayedPhase(seg.phase, resumedFrom))];
 }
 
 // --- what the run is actually waiting on, and what may honestly be projected from it -------------------

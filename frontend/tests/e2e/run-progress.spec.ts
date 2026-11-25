@@ -9,6 +9,8 @@ import {
   isAwaitingProviderQueue,
   legStartedAt,
   phasePercent,
+  RESTORING_STEP,
+  stageLabel,
   syncSwitchState,
   timelineSegments,
 } from "@/lib/run-progress";
@@ -370,5 +372,51 @@ test.describe("the queue after a switch", () => {
         pct: 25,
       }),
     ).toBe(300);
+  });
+});
+
+/**
+ * USER TEST 2026-11-25: "each gate should show its actual steps not boilerplate from gate 1". A resumed leg replays the
+ * earlier gates' phases first (frozen substrate + checkpoint, $0), and the panel listed them under Gate 1's names, so a
+ * Gate 2 leg read "Loading / Embedding / Clustering" for most of its run. The replay is now ONE restoring step and the
+ * leg's own phases follow. `resumedFrom` is the run's gate position while the leg runs: the gate it resumed FROM.
+ */
+test.describe("a resumed leg shows its own gate's steps", () => {
+  // The 08-26 server: each leg starts a fresh map with `pending`, then replays from loading.
+  const gate2Leg = { pending: 0, loading: 1, embedding: 13, clustering: 17, generating: 60, splitting: 70, assigning: 150 };
+
+  test("@runprogress a Gate 2 leg shows the replay as one restoring step, then its own steps", () => {
+    const segs = timelineSegments({ phaseStartedAt: gate2Leg, currentPhase: "assigning", now: 200, resumedFrom: "gate1" });
+    expect(segs.map((s) => s.phase)).toEqual(["restoring", "assigning"]);
+    expect(segs[0].seconds).toBe(149);
+    expect(segs[0].active).toBe(false);
+    expect(segs[1]).toMatchObject({ seconds: 50, active: true });
+  });
+
+  test("@runprogress while it is still replaying, the restoring step is the active one", () => {
+    const { assigning: _a, ...replaying } = gate2Leg;
+    const segs = timelineSegments({ phaseStartedAt: replaying, currentPhase: "clustering", now: 40, resumedFrom: "gate1" });
+    expect(segs.map((s) => s.phase)).toEqual(["restoring"]);
+    expect(segs[0].active).toBe(true);
+    expect(stageLabel("clustering", "gate1")).toBe(RESTORING_STEP);
+  });
+
+  test("@runprogress a Gate 3 leg restores Gates 1 and 2, and shows specs as its own", () => {
+    const segs = timelineSegments({
+      phaseStartedAt: { ...gate2Leg, gencde: 160, specs: 170 },
+      currentPhase: "specs",
+      now: 180,
+      resumedFrom: "gate2",
+    });
+    expect(segs.map((s) => s.phase)).toEqual(["restoring", "specs"]);
+    expect(stageLabel("assigning", "gate2")).toBe(RESTORING_STEP);
+    expect(stageLabel("specs", "gate2")).toBe("specs");
+  });
+
+  test("@runprogress a first leg (no gate passed yet) lists every stage, as before", () => {
+    const segs = timelineSegments({ phaseStartedAt: gate2Leg, currentPhase: "assigning", now: 200, resumedFrom: null });
+    expect(segs.map((s) => s.phase)).toEqual(["loading", "embedding", "clustering", "generating", "splitting", "assigning"]);
+    expect(stageLabel("clustering", null)).toBe("clustering");
+    expect(stageLabel("some_new_phase", "gate1")).toBe("some_new_phase"); // unknown phases still read verbatim
   });
 });
