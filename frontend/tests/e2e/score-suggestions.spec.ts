@@ -333,7 +333,16 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     await expect(items).toHaveText(["Glaucoma", "Hearing difficulty"]);
   });
 
-  test("@gate1 a PASSED Gate 1 shows exactly the scope it sent — no suggestion is fetched or drawn", async ({ page }) => {
+  /**
+   * A PASSED GATE 1 KEEPS ITS SPOTLIGHT (user test 2026-11-25: "Concept Spotlight queries don't seem to persist when I
+   * come back to gate 1 after moving on. This applies to the flashlight tags as well."). The free search is asked again
+   * on the record — a $0 read — so the lists still say what they found and the rows still carry their flashlights.
+   * What it may NOT do is the reason it was switched off (final review round 1, item 3): re-derive the scope. The
+   * ticks are exactly what Continue sent; the suggestions only tag.
+   */
+  test("@gate1 a PASSED Gate 1 shows exactly the scope it sent, and still draws its Spotlight tags and lists", async ({
+    page,
+  }) => {
     const r = reached();
     const sent = r[4]!.group.groupId; // below the cut-off, but the reviewer had put it in scope
     await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
@@ -345,13 +354,17 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     });
     await openGate1(page);
     await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();
+    // The scope is the record: only what was sent, though three groups clear the cut-off.
     await expect(scopeOf(page, sent)).toHaveAttribute("aria-checked", "true");
     for (const { group } of r.slice(0, 4)) {
       await expect(scopeOf(page, group.groupId)).toHaveAttribute("aria-checked", "false");
     }
-    await expect(page.locator("[data-testid='queue-score-tag']")).toHaveCount(0);
     await expect(page.getByTestId("bulk-count-groups")).toContainText(/^1\//);
-    expect(requests).toEqual([]);
+    // …and the Spotlight is still there: every group that clears the cut-off carries its flashlight.
+    for (const { group, score } of r) {
+      await expect(tagsOf(page, group.groupId), `${score}`).toHaveCount(score >= TAU ? 1 : 0);
+    }
+    expect(new Set(requests)).toEqual(new Set(["GET"]));
   });
 
   test("@gate1 a run that carries a Gate 4 match uses the match, never the suggestions", async ({ page }) => {
