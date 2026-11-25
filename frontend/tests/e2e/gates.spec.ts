@@ -914,6 +914,30 @@ test.describe("app chrome — no top bar, a hover-to-expand rail", () => {
     expect(topmostIsPanel).toBe(true);
   });
 
+  /**
+   * THE FOOTER IS NEVER CUT OFF (user test 2026-11-25: the dev build stamp at the foot of the open rail was clipped). The
+   * panel is a fixed-height column that hides overflow, and the nav list could not shrink — so on a window too short for
+   * every link, the LAST lines (account, links, build stamp) fell off the bottom. The list now scrolls instead, and the
+   * footer keeps its whole height.
+   */
+  test("@gates on a short window the open rail's footer stays whole — the link list scrolls instead", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 560 });
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    await page.locator(NAV).hover();
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "true");
+    const panel = page.locator("[data-testid='app-nav-panel']");
+    const last = panel.getByText("Built with Claude Code", { exact: true });
+    await expect(last).toBeVisible();
+    const p = (await panel.boundingBox())!;
+    const l = (await last.boundingBox())!;
+    expect(l.y + l.height, "the footer's last line ends inside the panel").toBeLessThanOrEqual(p.y + p.height);
+    // …and every nav link is still reachable, by scrolling the list.
+    const runs = page.locator(`${NAV} nav`).getByText("Runs", { exact: true });
+    await runs.scrollIntoViewIfNeeded();
+    await expect(runs).toBeInViewport();
+  });
+
   test("@gates keyboard focus in the rail expands it, and tabbing out collapses it", async ({ page }) => {
     await page.goto("/jobs");
     await page.waitForLoadState("networkidle");
