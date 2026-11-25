@@ -37,7 +37,8 @@ import {
 import { NEW_RUN_ID, RERUN_PARAM, RETIRED_GATE, pathForGate, startedPathFor } from "@/lib/gate-routes";
 import { costFactor, isSelectable, pickModel, validatedByProvider, validatedModelNames } from "@/lib/model-catalog";
 import { estimateRunCostBreakdown, formatUsd } from "@/lib/estimate";
-import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, type ReviewMode } from "@/lib/review-mode";
+import { DEFAULT_REVIEW_MODE, REVIEW_MODES, REVIEW_MODE_COPY, fullAutoCharge, reviewModeOf, type ReviewMode } from "@/lib/review-mode";
+import { cn } from "@/lib/utils";
 import { GUEST_RUN_ACTION, guestRunBlocker } from "@/lib/sandbox";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { GuestAuthNotice } from "@/components/gate/SandboxBanner";
@@ -664,8 +665,25 @@ export default function SetupPage() {
       ? "preflight"
       : "past";
 
+  // PAST SETUP IS A READ-BACK (user test 2026-11-25: "'how this run should work' options are still selectable which
+  // should not be the case for a run that has already passed setup"). Each control shows what the RUN recorded
+  // (`app.py` persists these keys) and is disabled; a key the run never recorded falls back to the screen default.
+  // Composing and the pre-flight are unchanged. The API key stays live: a later gate may need it after a reload.
+  const frozen = stage === "past";
+  const runConfig = (jobState?.config ?? {}) as Record<string, unknown>;
+  const recorded = (key: string): string | undefined => {
+    const v = runConfig[key];
+    return frozen && typeof v === "string" && v ? v : undefined;
+  };
+  const shownCdeSet = (recorded("cde_set") as CdeSet | undefined) ?? cdeSet;
+  const shownRunMode = (recorded("run_mode") as RunMode | undefined) ?? runMode;
+  const shownModel = recorded("model_tag") ?? model;
+  const shownReviewMode: ReviewMode = frozen ? reviewModeOf(runConfig) : reviewMode;
+  const shownName = frozen ? (jobState?.displayName ?? displayName) : displayName;
+
   /**
-   * WHY A PAST SETUP'S CONTROLS ARE STILL INTERACTIVE — investigated under 08-16c Task 2, left as found.
+   * PAST SETUP'S CONTROLS: live until 2026-11-25, now a disabled read-back of the run (`frozen` above; user test).
+   * What follows is why 08-16c Task 2 had left them live:
    *
    * The rail now links BACK here, so a reviewer reaches this screen on purpose and the question "can a
    * record still be edited?" became live. It cannot: in the `past` stage this screen offers NO submit
@@ -767,7 +785,7 @@ export default function SetupPage() {
    * read here: reinterpreting one key as another is how a figure comes to describe the wrong thing.
    */
   const effectiveRunMode: RunMode = useMemo(() => {
-    if (stage !== "preflight") return runMode;
+    if (stage === "compose") return runMode;
     const declared = ((jobState?.config ?? {}) as Record<string, unknown>).run_mode;
     return typeof declared === "string" ? (declared as RunMode) : runMode;
   }, [stage, runMode, jobState?.config]);
@@ -1844,9 +1862,10 @@ export default function SetupPage() {
             <select
               id="cde-set"
               data-testid="cde-set"
-              value={cdeSet}
+              value={shownCdeSet}
               onChange={(e) => setCdeSet(e.target.value as CdeSet)}
-              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised"
+              disabled={frozen}
+              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
             >
               <option value="endorsed">NIH-Endorsed CDEs (~174)</option>
               <option value="full">Full NIH CDE Repository (~22.7k)</option>
@@ -1897,9 +1916,10 @@ export default function SetupPage() {
             <select
               id="run-mode"
               data-testid="run-mode"
-              value={runMode}
+              value={shownRunMode}
               onChange={(e) => setRunMode(e.target.value as RunMode)}
-              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised"
+              disabled={frozen}
+              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
             >
               <option value="batch">Batch — about half the cost, can take hours</option>
               <option value="sync">Synchronous — minutes, about twice the cost</option>
@@ -1932,14 +1952,18 @@ export default function SetupPage() {
               <label
                 key={mode}
                 data-testid={`review-mode-${mode}`}
-                className="flex cursor-pointer items-start gap-2 rounded border border-rule-control-on-raised px-2 py-1.5"
+                className={cn(
+                  "flex items-start gap-2 rounded border border-rule-control-on-raised px-2 py-1.5",
+                  frozen ? "cursor-not-allowed bg-surface-inset" : "cursor-pointer",
+                )}
               >
                 <input
                   type="radio"
                   name="review-mode"
                   value={mode}
-                  checked={reviewMode === mode}
+                  checked={shownReviewMode === mode}
                   onChange={() => setReviewMode(mode)}
+                  disabled={frozen}
                   className="mt-0.5 h-3.5 w-3.5 accent-[var(--accent)]"
                 />
                 <span className="flex flex-col gap-0.5">
@@ -1959,9 +1983,10 @@ export default function SetupPage() {
             <input
               id="run-name"
               data-testid="run-name"
-              value={displayName}
+              value={shownName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-sm text-on-raised"
+              disabled={frozen}
+              className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-sm text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
             />
           </div>
           {/* PROVIDER + MODEL, drawn from the shipped New Run form (08-13 review). Setup originally fixed
@@ -1969,7 +1994,7 @@ export default function SetupPage() {
               form already solved that by OFFERING every option and DISABLING the ones not validated, which
               is more honest than hiding them: the gap stays visible and stays unselectable. Both are hidden
               in preview mode, which calls no provider at all. */}
-          {runMode !== "preview" && (
+          {shownRunMode !== "preview" && (
             <div className="flex flex-col gap-1.5">
               <label htmlFor="provider" className="flex items-center gap-1 text-xs font-semibold text-on-raised">
                 Provider
@@ -1983,7 +2008,7 @@ export default function SetupPage() {
                 data-testid="provider"
                 value={provider}
                 onChange={(e) => setProvider(e.target.value)}
-                disabled={!providers.length}
+                disabled={frozen || !providers.length}
                 className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
               >
                 {providers.length === 0 && <option value="anthropic">Anthropic</option>}
@@ -2011,9 +2036,9 @@ export default function SetupPage() {
               <select
                 id="model"
                 data-testid="model"
-                value={model}
+                value={shownModel}
                 onChange={(e) => setModel(e.target.value)}
-                disabled={!modelsForProvider.length}
+                disabled={frozen || !modelsForProvider.length}
                 className="h-8 w-full rounded border border-rule-control-on-raised bg-surface-raised px-2 text-xs text-on-raised disabled:cursor-not-allowed disabled:bg-surface-inset disabled:text-on-raised-muted"
               >
                 {modelsForProvider.length === 0 && <option value="">No models available</option>}

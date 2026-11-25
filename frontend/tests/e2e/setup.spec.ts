@@ -91,6 +91,21 @@ function dictionaryCsv(n: number, { repeat = false }: { repeat?: boolean } = {})
   return csv([header, ...body]);
 }
 
+/**
+ * A COMPOSING Setup holding one sized dictionary, so the estimate has something to quote. Tests that steer the run
+ * mode to watch the quote move live here: since 2026-11-25 a past run's Setup is a frozen read-back of the run.
+ */
+async function composingWithDictionary(page: Page, n = 500): Promise<void> {
+  await page.goto(DRAFT);
+  await page.waitForLoadState("networkidle");
+  await page.getByTestId("dict-upload").setInputFiles({
+    name: "sized.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(dictionaryCsv(n)),
+  });
+  await expect(page.getByTestId("estimate-duration")).toBeVisible();
+}
+
 /** Participant records: one row per PERSON, with a per-row-unique identifier. */
 function participantCsv(n: number): string {
   const header = ["participant_id", "age", "bmi"];
@@ -706,8 +721,7 @@ test.describe("Setup — the honest estimate", () => {
   });
 
   test("@setup the run mode is selectable and changes what the run is quoted at", async ({ page }) => {
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
+    await composingWithDictionary(page); // a past run's Setup is a frozen read-back (2026-11-25)
     const before = Number(await page.getByTestId("estimate-total").getAttribute("data-mid"));
     // Synchronous is roughly twice batch. The figure must MOVE — a control that does not reach the quote
     // is a control that misleads about what is being bought.
@@ -1152,8 +1166,7 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
   test("@setup the run is quoted a duration RANGE beside its price, hedged as an estimate", async ({
     page,
   }) => {
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
+    await composingWithDictionary(page); // a past run's Setup is a frozen read-back (2026-11-25)
     const dur = page.getByTestId("estimate-duration");
     await expect(dur).toBeVisible();
 
@@ -1185,8 +1198,7 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
   test("@setup batch's duration is the WIDE, queue-caveated one — sync's is the narrow one", async ({
     page,
   }) => {
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
+    await composingWithDictionary(page); // a past run's Setup is a frozen read-back (2026-11-25)
     const dur = page.getByTestId("estimate-duration");
 
     await expect(dur).toHaveAttribute("data-mode", "batch");
@@ -1221,8 +1233,7 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
   test("@setup preview quotes its OWN duration rather than blanking or borrowing a paid mode's", async ({
     page,
   }) => {
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
+    await composingWithDictionary(page); // a past run's Setup is a frozen read-back (2026-11-25)
     const dur = page.getByTestId("estimate-duration");
     const batchMid = Number(await dur.getAttribute("data-mid"));
 
@@ -1520,8 +1531,7 @@ test.describe("Setup — the batch duration is modelled on the queue, and itemis
   test("@setup batch's WORST case always exceeds sync's, so it never reads as the quicker option", async ({
     page,
   }) => {
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
+    await composingWithDictionary(page); // a past run's Setup is a frozen read-back (2026-11-25)
     const dur = page.getByTestId("estimate-duration");
 
     await expect(dur).toHaveAttribute("data-mode", "batch");
@@ -1597,8 +1607,7 @@ test.describe("Setup — the batch duration is modelled on the queue, and itemis
   test("@setup sync and preview carry no queue line — they have no queue to wait in", async ({
     page,
   }) => {
-    await page.goto(SETUP);
-    await page.waitForLoadState("networkidle");
+    await composingWithDictionary(page); // a past run's Setup is a frozen read-back (2026-11-25)
     const dur = page.getByTestId("estimate-duration");
 
     for (const mode of ["sync", "preview"] as const) {
@@ -3301,5 +3310,46 @@ test.describe("Setup — every mapping marked complete before Start (round 10)",
     await expect(page.getByTestId("blocker").filter({ hasText: "beta.csv" })).toHaveCount(1);
     await expect(page.getByTestId("blocker").filter({ hasText: "mark" })).toHaveCount(0);
     await expect(page.getByTestId("start-run")).toBeDisabled();
+  });
+});
+
+/**
+ * USER TEST 2026-11-25: "check if set up gate is freezing properly. I'm not sure 'how this run should work' options
+ * are still selectable which should not be the case for a run that has already passed setup". They were: a past
+ * Setup's controls were LOCAL state, never seeded from the run (08-16c left them live as estimate calculators), so
+ * they could show values the run did not use and change nothing. Past Setup, they now show the run's own settings
+ * and are disabled.
+ */
+test.describe("Setup — a run past Setup is read back, not editable", () => {
+  async function pastRunWith(page: import("@playwright/test").Page, config: Record<string, unknown>) {
+    const res = await page.request.get(`/static-data/result-${PAUSED_RUN_FIXTURE}.json`);
+    const payload = (await res.json()) as Record<string, unknown>;
+    payload.config = { ...((payload.config as Record<string, unknown>) ?? {}), ...config };
+    await page.route("**/static-data/result-*.json", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) }),
+    );
+    await page.goto(SETUP);
+    await page.waitForLoadState("networkidle");
+  }
+
+  test("@setup a past run shows its own settings, and none of them can be changed", async ({ page }) => {
+    await pastRunWith(page, { cde_set: "endorsed", run_mode: "sync", review_mode: "auto", model_tag: "claude-haiku-5-5" });
+    await expect(page.getByTestId("cde-set")).toHaveValue("endorsed");
+    await expect(page.getByTestId("cde-set")).toBeDisabled();
+    await expect(page.getByTestId("run-mode")).toHaveValue("sync");
+    await expect(page.getByTestId("run-mode")).toBeDisabled();
+    await expect(page.getByTestId("review-mode-auto").locator("input[type='radio']")).toBeChecked();
+    for (const mode of ["guided", "auto"]) {
+      await expect(page.getByTestId(`review-mode-${mode}`).locator("input[type='radio']")).toBeDisabled();
+    }
+    await expect(page.getByTestId("run-name")).toBeDisabled();
+    await expect(page.getByTestId("model")).toHaveValue("claude-haiku-5-5");
+    await expect(page.getByTestId("model")).toBeDisabled();
+  });
+
+  test("@setup a new run's settings stay editable", async ({ page }) => {
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    for (const id of ["cde-set", "run-mode", "run-name"]) await expect(page.getByTestId(id)).toBeEnabled();
   });
 });
