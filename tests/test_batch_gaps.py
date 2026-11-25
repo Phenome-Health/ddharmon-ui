@@ -333,6 +333,33 @@ def test_a_resumed_leg_whose_assign_stays_short_stays_parked_and_the_next_contin
 
 
 @pytest.mark.usefixtures("_one_cluster")
+def test_a_continue_that_recovers_a_failed_leg_clears_the_failure_it_left(tmp_path, monkeypatch, no_provider):
+    """User test 2026-11-25: after a failed Continue, the retry succeeded and the run moved on, but the old
+    "A required step (assign) failed on the last continue" note stayed on the run — and on screen — because a
+    successful leg never cleared it. A leg that parks cleanly ends the failure it was retrying."""
+    failing = {"on": False}
+    store, wd, base, dict_specs, cde_spec = _batch_run(
+        tmp_path, monkeypatch, lambda pid, nth: failing["on"] and pid.startswith("leanb:groupassign:"), []
+    )
+    _leg(store, base, dict_specs, cde_spec, gate="gate1")
+    g1 = read_checkpoint(wd, "gate1")
+
+    failing["on"] = True
+    store.update("j", status="pending", phase="pending", phase_timings={})
+    _leg(store, base, dict_specs, cde_spec, gate="gate2", replay_responses=g1.responses, prior_cost=g1.result["cost"])
+    assert "A required step (assign)" in (store.get("j").error_message or ""), "the fixture no longer fails the leg"
+
+    failing["on"] = False
+    store.update("j", status="pending", phase="pending", phase_timings={})
+    _leg(store, base, dict_specs, cde_spec, gate="gate2", replay_responses=g1.responses, prior_cost=g1.result["cost"])
+    job = store.get("j")
+    assert job.status == AWAITING_REVIEW and job.gate_position == "gate2", job.error_message
+    assert job.error_message is None, f"a recovered run still carries its old failure: {job.error_message!r}"
+    assert job.failed_phase is None, f"a recovered run still names a failed stage: {job.failed_phase!r}"
+    assert job.progress_dict()["errorMessage"] is None and job.to_dict()["errorMessage"] is None
+
+
+@pytest.mark.usefixtures("_one_cluster")
 def test_an_unanswered_judge_prompt_is_recorded_as_not_judged_and_carried_to_the_next_gate(
     tmp_path, monkeypatch, no_provider
 ):
