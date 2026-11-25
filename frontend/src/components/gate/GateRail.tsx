@@ -91,6 +91,7 @@ function Inner({
   linkable,
   unreachable,
   ahead = false,
+  running = false,
   href,
   label,
   gate,
@@ -100,6 +101,8 @@ function Inner({
   unreachable: boolean;
   /** The gate is AFTER the current screen — reachable on a finished run, so its link says "Go to", not "Back to". */
   ahead?: boolean;
+  /** The gate a leg is producing right now: its link says so, so "Go to Gate 3" is not heard as a finished screen. */
+  running?: boolean;
   href: string;
   label: string;
   gate: GatePosition;
@@ -111,7 +114,7 @@ function Inner({
       <Link
         href={href}
         data-testid={`rail-link-${gate}`}
-        aria-label={`${ahead ? "Go to" : "Back to"} ${name}`}
+        aria-label={`${ahead ? "Go to" : "Back to"} ${name}${running ? " (in progress)" : ""}`}
         className="flex flex-col rounded-inner focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
       >
         {children}
@@ -139,6 +142,7 @@ export function GateRail({
   className,
   jobId,
   runPosition,
+  running = null,
   total,
   compact = false,
 }: {
@@ -156,6 +160,12 @@ export function GateRail({
   jobId?: string;
   /** Where the run actually is. Gates at or behind it are reachable; gates ahead of it are not. */
   runPosition?: GatePosition | null;
+  /**
+   * The gate a running leg is producing (`runningGateOf`; user test 2026-11-25). The run has not REACHED it, but it is
+   * where the run's progress is shown, so it is a link like a reached gate — Bhargav: "I want to be able to click on
+   * the cell for the gate itself that's running". Its column says "in progress" (`railCosts`).
+   */
+  running?: GatePosition | null;
   /**
    * THE RUN'S TOTAL, after Gate 4 (2026-10-08, Bhargav's pick C of the rail mockups). The run line used to be a row
    * of its own above the gates — a whole row of rail height for one chip — so the run's name moved to a title on the
@@ -193,14 +203,17 @@ export function GateRail({
          * parked at Gate 3, and Gates 2 and 3 must stay reachable so the reviewer is not stranded in the
          * past with only a one-way trip. That is why this asks the RUN's position, not `currentIndex`.
          */
-        const linkable = !!jobId && !isCurrent && isGateReachable(item.gate, runPosition);
-        const unreachable = !!jobId && !isCurrent && !isGateReachable(item.gate, runPosition);
+        const isRunning = item.gate === running;
+        const reachable = isGateReachable(item.gate, runPosition) || isRunning;
+        const linkable = !!jobId && !isCurrent && reachable;
+        const unreachable = !!jobId && !isCurrent && !reachable;
         return (
           <li
             key={item.gate}
             data-gate={item.gate}
             data-reachable={jobId ? String(!unreachable) : undefined}
             data-state={isCurrent ? "current" : isDone ? "done" : "ahead"}
+            data-running={isRunning ? "true" : undefined}
             // `aria-current="step"` on the CURRENT gate only. Without it the rail is five links and a
             // screen-reader user has no way to tell which screen they are on.
             aria-current={isCurrent ? "step" : undefined}
@@ -218,6 +231,7 @@ export function GateRail({
               linkable={linkable}
               unreachable={unreachable}
               ahead={i > currentIndex}
+              running={isRunning}
               href={jobId ? pathForGate(jobId, item.gate) : ""}
               label={item.label}
               gate={item.gate}

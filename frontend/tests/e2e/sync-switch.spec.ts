@@ -27,7 +27,11 @@ const IN_PROGRESS = { tag: "generate", nItems: 330, status: "in_progress", switc
 async function batchLeg(page: Page, over: Record<string, unknown> = {}, mode = "batch"): Promise<void> {
   const res = await page.request.get(`/static-data/result-${JOB}.json`);
   const payload = (await res.json()) as Record<string, unknown>;
-  Object.assign(payload, { status: "generating", phase: "generating", stopping: false, transport: "batch" }, over);
+  // A FIRST leg (generating is Gate 1's work): the server sets gatePosition only when a leg parks, so it has none —
+  // the fixture's parked `gate1` would make this Gate 2's leg, whose progress is on Gate 2's screen (2026-11-25).
+  Object.assign(payload, { status: "generating", phase: "generating", stopping: false, transport: "batch", gatePosition: null }, over);
+  const result = payload.result as Record<string, unknown> | undefined;
+  if (result) result.gatePosition = (over.gatePosition as string | undefined) ?? null;
   if (!("batch" in over)) payload.batch = IN_PROGRESS;
   const config = payload.config as Record<string, unknown>;
   config.run_mode = mode;
@@ -71,7 +75,7 @@ test.describe("finish now with sync", () => {
       ["ending on its own", { batch: { ...IN_PROGRESS, status: "canceling", switchable: false } }],
       ["no batch in flight", { batch: null }],
       ["a sync run", { transport: "sync", batch: null }, "sync"],
-      ["parked at the gate", { status: "awaiting_review", phase: "awaiting_review" }],
+      ["parked at the gate", { status: "awaiting_review", phase: "awaiting_review", gatePosition: "gate1" }],
     ];
     for (const [name, over, mode] of cases) {
       await page.unrouteAll();

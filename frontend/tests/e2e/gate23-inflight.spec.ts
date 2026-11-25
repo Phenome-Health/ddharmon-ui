@@ -115,8 +115,10 @@ test("@gate3 a leg running PAST Gate 3 keeps showing what Gate 3 holds", async (
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("gate-empty-state")).toHaveCount(0);
   await expect(page.getByTestId("gate3-running")).toHaveCount(0);
-  // A gate the run has REACHED keeps its whole screen while the run works ahead (2026-11-08): not progress alone.
-  await expect(page.getByTestId("run-progress")).toBeVisible();
+  // A gate the run has REACHED keeps its whole screen while the run works ahead (2026-11-08): not progress alone —
+  // and no progress at all since 2026-11-25: that is on the gate the leg is producing, which the rail links to.
+  await expect(page.getByTestId("run-progress")).toHaveCount(0);
+  await expect(page.getByTestId("rail-link-gate4")).toContainText("in progress");
   await expect(page.getByTestId("how-to")).toBeVisible();
   await expect(page.getByTestId("spec-row").first()).toBeVisible();
 });

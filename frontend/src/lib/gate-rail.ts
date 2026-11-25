@@ -36,6 +36,11 @@ export interface RailCostArgs {
    * `PREVIEW_RAIL_SEQUENCE` — Set up and Gate 1, nothing after. Absent → the five columns, exactly as before.
    */
   preview?: boolean;
+  /**
+   * The gate a running leg is producing (`runningGateOf`), or null when no worker runs (user test 2026-11-25). Its
+   * column says "in progress" — not an estimate for work already bought, and not a spend figure for work unfinished.
+   */
+  running?: GatePosition | null;
 }
 
 /**
@@ -59,8 +64,9 @@ export const PREVIEW_RAIL_SEQUENCE: GatePosition[] = ["setup", "gate1"];
  * being viewed, so on a run parked at Gate 4 the reviewer who clicked back to Gate 1 saw Gates 2 and 3 read
  * "est. pending" — money the run had already spent, quoted as an estimate, while the header said the whole run
  * was paid for; from Gate 2, Gate 3 did the same. The rail is the run's identity, so the split is now at the
- * FURTHER of the two: the run's own position, or the screen (a screen ahead of the run — the shared demo's walk,
- * a leg still running toward this gate — is still where the money lands, exactly as before).
+ * FURTHER of the two: the run's own position, or the screen (a screen ahead of the run — the shared demo's walk —
+ * is still where the money lands, exactly as before). A leg still running toward a gate is the exception: that gate
+ * says "in progress" and the run's own position is the frontier (`running`).
  *
  * THE SUM STILL EQUALS THE HEADER. With a per-gate ledger every column reads its own figure. Without one, the
  * whole total lands on ONE column — and that column is now the run's furthest gate rather than whichever screen
@@ -68,8 +74,18 @@ export const PREVIEW_RAIL_SEQUENCE: GatePosition[] = ["setup", "gate1"];
  */
 export function railCosts(
   current: GatePosition,
-  { realizedByGate = {}, forecastByGate = {}, totalRealized = 0, runPosition = null, preview = false }: RailCostArgs = {},
+  {
+    realizedByGate = {},
+    forecastByGate = {},
+    totalRealized = 0,
+    runPosition = null,
+    preview = false,
+    running = null,
+  }: RailCostArgs = {},
 ): { gate: GatePosition; cost: RailCost }[] {
+  // THE RUNNING GATE SAYS SO (user test 2026-11-25, Bhargav: "instead of 'est. pending' can instead say 'in
+  // progress'"). A state, not a figure: the leg's spend so far is in the rail's TOTAL until the gate is reached.
+  const inProgress = { kind: "state" as const, text: "in progress" };
   if (preview) {
     // A PREVIEW (08-31). Setup is `local` as on any run. Gate 1 is the run's last column, so whatever the run has
     // spent lands there — a Preview's one paid action is Concept Spotlight extracting a score's items — and with
@@ -79,18 +95,24 @@ export function railCosts(
     return PREVIEW_RAIL_SEQUENCE.map((gate) =>
       gate === "setup"
         ? { gate, cost: { kind: "state" as const, text: "local" } }
-        : realized > 0
-          ? { gate, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } }
-          : { gate, cost: { kind: "state" as const, text: "no charge" } },
+        : gate === running
+          ? { gate, cost: inProgress }
+          : realized > 0
+            ? { gate, cost: { kind: "realized" as const, text: `spent ${formatUsd(realized)}` } }
+            : { gate, cost: { kind: "state" as const, text: "no charge" } },
     );
   }
   // A retired or off-rail position indexes -1, which the max simply ignores: the screen's own position stands.
-  const frontier = Math.max(RAIL_SEQUENCE.indexOf(current), runPosition ? RAIL_SEQUENCE.indexOf(runPosition) : -1);
+  // WHILE A LEG RUNS THE SCREEN IS NOT A FRONTIER: standing on the gate it is producing made that gate the frontier,
+  // so an unledgered total landed on a column that has not finished. The run's own position is where it has got.
+  const screen = running ? -1 : RAIL_SEQUENCE.indexOf(current);
+  const frontier = Math.max(screen, runPosition ? RAIL_SEQUENCE.indexOf(runPosition) : -1);
   return RAIL_SEQUENCE.map((gate, i) => {
     // Setup is `local` because everything it carries — loading, preparing, embedding and the free pre-flight
     // over the result — calls no model. The run's first charge is attributed to Gate 1, because that is the work
     // it buys — a reviewer who saw the amount twice would think they had been billed twice.
     if (gate === "setup") return { gate, cost: { kind: "state" as const, text: "local" } };
+    if (gate === running) return { gate, cost: inProgress };
     // Gate 4 runs no pipeline stage, but it hosts two paid ACTIONS (score Match, analysis ideas — 08-28 1a/1f).
     // Once either has billed, the column shows it like any other realized spend, or the rail stops summing to
     // the run's total; until then it is honestly "no charge".
