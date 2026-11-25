@@ -367,6 +367,45 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     expect(new Set(requests)).toEqual(new Set(["GET"]));
   });
 
+  /**
+   * SPOTLIGHT GROUPS ONLY (user test 2026-11-25: "want to be able to filter to spotlight groups only in gate 1
+   * sidebar"). A box in the filter menu, beside the others, that keeps the rows carrying a flashlight; it says how many,
+   * shows as a removable chip, and clears with the rest. It is offered only when the Spotlight has tagged something.
+   */
+  test("@gate1 the filter menu narrows the queue to the Spotlight's groups, and the chip takes it off", async ({ page }) => {
+    await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
+    await serveSuggestions(page, suggestions());
+    await serveOwned(page);
+    await openGate1(page);
+    const nTagged = reached().filter((x) => x.score >= TAU).length;
+    await expect(page.locator("[data-testid='queue-score-tag']")).toHaveCount(nTagged);
+    const all = await page.locator("[data-testid='ledger-row']").count();
+    expect(all).toBeGreaterThan(nTagged);
+
+    await page.locator("[data-testid='filter-open']").click();
+    const menu = page.locator("[data-testid='filter-menu']");
+    await expect(menu.getByTestId("filter-spotlight-only-count")).toHaveText(String(nTagged));
+    await menu.getByTestId("filter-spotlight-only").click();
+    await page.keyboard.press("Escape");
+
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(nTagged);
+    for (const { group, score } of reached()) {
+      await expect(rowOf(page, group.groupId)).toHaveCount(score >= TAU ? 1 : 0);
+    }
+    const chip = page.getByRole("button", { name: "Remove Spotlight groups only" });
+    await expect(chip).toBeVisible();
+    await chip.click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(all);
+  });
+
+  test("@gate1 with nothing in the Spotlight, the filter menu offers no Spotlight box", async ({ page }) => {
+    await serveOwned(page);
+    await openGate1(page);
+    await page.locator("[data-testid='filter-open']").click();
+    await expect(page.locator("[data-testid='filter-menu']")).toBeVisible();
+    await expect(page.getByTestId("filter-spotlight-only")).toHaveCount(0);
+  });
+
   test("@gate1 a run that carries a Gate 4 match uses the match, never the suggestions", async ({ page }) => {
     await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
     const requests = await serveSuggestions(page, suggestions());

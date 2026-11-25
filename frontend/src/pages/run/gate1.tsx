@@ -2341,6 +2341,12 @@ export default function Gate1Page() {
 
   // Cross-cohort-only replaces the bucket partition: on = the harmonization subset, off = every group.
   const [xcOnly, setXcOnly] = useState(false);
+  /**
+   * Only the groups the Concept Spotlight tagged (user test 2026-11-25: "want to be able to filter to spotlight groups
+   * only in gate 1 sidebar"). Read through `spotlightFilterOn`, so a Spotlight that stops tagging cannot leave a
+   * filter on that hides every row.
+   */
+  const [spotlightOnly, setSpotlightOnly] = useState(false);
   // Master-detail selection. `selectedId` names the group in the detail pane; `poolSelected` swaps the
   // pane to the "In no group" holding area instead.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -2580,6 +2586,7 @@ export default function Gate1Page() {
     [latestSpec, suggestionData, cutoffOf],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
+  const spotlightFilterOn = spotlightOnly && scoreTagByGroup.size > 0;
   /** groupId → the cut-off(s) its suggestion was made at — the queue marker's tooltip states them. */
   const scoreCutoffsByGroup = useMemo(() => suggestionCutoffsByGroup(scoreInput.matches), [scoreInput]);
   /**
@@ -3128,6 +3135,7 @@ export default function Gate1Page() {
 
   const visible = useMemo(() => {
     let rows = xcOnly ? buckets["cross-cohort"] : groups;
+    if (spotlightFilterOn) rows = rows.filter((g) => scoreTagByGroup.has(g.groupId));
     if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
     rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
     const sorted = sortGroupsByColumn(rows, colSort, renamedOf);
@@ -3142,6 +3150,7 @@ export default function Gate1Page() {
   }, [
     buckets,
     xcOnly,
+    spotlightFilterOn,
     groups,
     search,
     filters,
@@ -3165,6 +3174,9 @@ export default function Gate1Page() {
   // Every filter that is on, as a removable chip under the search (08-30b) — Cross-cohort only first, then the
   // cohorts, then the states, in the order the menu lists them.
   const filterChips: FilterChip[] = [
+    ...(spotlightFilterOn
+      ? [{ key: "spot", label: "Spotlight groups only", onRemove: () => setSpotlightOnly(false) }]
+      : []),
     ...(xcOnly ? [{ key: "xc", label: "Cross-cohort only", onRemove: () => setXcOnly(false) }] : []),
     ...filters.cohorts.map((c) => ({
       key: `co:${c}`,
@@ -3640,8 +3652,22 @@ export default function Gate1Page() {
                 activeFilters={filterChips.length}
                 filters={
                   <>
+                    {/* Offered only once the Spotlight has tagged something — a box that could only empty the queue is
+                        not a filter (user test 2026-11-25). */}
+                    {scoreTagByGroup.size > 0 && (
+                      <FilterSection first title="Concept Spotlight">
+                        <FilterCheck
+                          testid="filter-spotlight-only"
+                          checked={spotlightFilterOn}
+                          onChange={setSpotlightOnly}
+                          label="Spotlight groups only"
+                          count={scoreTagByGroup.size}
+                          countTestid="filter-spotlight-only-count"
+                        />
+                      </FilterSection>
+                    )}
                     <FilterSection
-                      first
+                      first={scoreTagByGroup.size === 0}
                       title="Cohorts"
                       columns={2}
                       lead={
@@ -3700,6 +3726,7 @@ export default function Gate1Page() {
                 chips={filterChips}
                 onClear={() => {
                   setXcOnly(false);
+                  setSpotlightOnly(false);
                   setFilters(NO_FILTERS);
                 }}
               />
