@@ -23,20 +23,24 @@ export interface NameCheck {
   uniqueNameCount: number | null;
   /** Rows whose name cell is empty. Counted separately: they are unkeyable, not "one repeated name". */
   unnamed: number;
-  /** How many rows a repeated name would cost, i.e. rows − distinct names − unnamed. */
-  dropped: number;
+  /**
+   * Rows the loader RENAMES because their name already appeared, i.e. rows − distinct names − unnamed. Core
+   * >=1.4.1 keeps every one of them as its own variable (`bmi`, `bmi__2`, …); none is lost.
+   */
+  renamed: number;
   fired: boolean;
   /** The names that repeat, so the message can point at them rather than at a number. */
   repeated: string[];
 }
 
 /**
- * Rows against distinct variable names — the project's longest-standing silent data loss.
+ * Rows against distinct variable names — a heads-up to check the repeats, not a loss report.
  *
- * `load_dictionary` keys on the variable-name column and LAST-WINS on a repeat, so a dictionary with a
- * duplicated name loses rows with no warning anywhere: the run completes, the counts look plausible, and
- * the missing variables are only discovered by someone counting by hand. That has cost real debugging time
- * (see CLAUDE.md §Cohorts), which is why this is surfaced BEFORE the run rather than reported after it.
+ * Up to core 1.4.0 `load_dictionary` keyed on the variable-name column and LAST-WON on a repeat, so a
+ * duplicated name silently lost rows. Since 1.4.1 the loader DISAMBIGUATES instead (`disambiguate_variable_names`:
+ * the first row keeps the name, later ones become `name__2`, `name__3`, with the source name kept for display),
+ * so every row is kept. What remains worth saying before the run is that two rows sharing a name may be one
+ * variable listed twice — the reviewer is the only one who can tell.
  *
  * THREE OUTCOMES, kept distinct on purpose:
  *  - not checkable — no variable-name column is mapped, so the unique count is `null`. Reporting it as
@@ -45,8 +49,8 @@ export interface NameCheck {
  *    from a check that was never run.
  *  - fired — the names that repeat are named, because "some name repeats" is not actionable.
  *
- * An EMPTY name is not a repeat. Two blank cells are two rows the loader cannot key at all; folding them
- * into a single repeated `""` would report one lost row where there are two.
+ * An EMPTY name is not a repeat. Two blank cells are two rows with no name of the reviewer's (the loader
+ * generates one each); folding them into a single repeated `""` would miscount both figures.
  */
 export function nameCheck(rows: DictRow[], variableNameColumn: string | undefined): NameCheck {
   const rowCount = rows.length;
@@ -56,7 +60,7 @@ export function nameCheck(rows: DictRow[], variableNameColumn: string | undefine
       rowCount,
       uniqueNameCount: null,
       unnamed: 0,
-      dropped: 0,
+      renamed: 0,
       fired: false,
       repeated: [],
     };
@@ -73,13 +77,13 @@ export function nameCheck(rows: DictRow[], variableNameColumn: string | undefine
   }
   const repeated = [...seen.entries()].filter(([, n]) => n > 1).map(([name]) => name);
   const uniqueNameCount = seen.size;
-  const dropped = rowCount - uniqueNameCount - unnamed;
+  const renamed = rowCount - uniqueNameCount - unnamed;
   return {
     checkable: true,
     rowCount,
     uniqueNameCount,
     unnamed,
-    dropped: Math.max(0, dropped),
+    renamed: Math.max(0, renamed),
     fired: repeated.length > 0,
     repeated,
   };

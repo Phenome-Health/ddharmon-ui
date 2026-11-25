@@ -454,7 +454,7 @@ export interface PreprocessDiff {
 export interface PreprocessReport {
   cohort: string;
   nVariables: number;
-  /** Lower than `nVariables` means variable names collided and rows were dropped SILENTLY, last-wins. */
+  /** Distinct SOURCE names. Lower than `nVariables` means names repeat; core >=1.4.1 KEEPS those rows (`name__2`). */
   nUniqueVariableNames: number;
   nDuplicateVariableNames: number;
   nNothingToEmbed: number;

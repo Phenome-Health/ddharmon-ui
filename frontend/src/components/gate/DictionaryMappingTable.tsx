@@ -128,7 +128,10 @@ export function DictionaryMappingTable({
   return (
     <div className="flex flex-col gap-3">
       {/* The row-count against the unique-name-count check. ALWAYS rendered when it can be run — a check
-          that only appears when it fires is indistinguishable from a check that was never run. */}
+          that only appears when it fires is indistinguishable from a check that was never run.
+          A HEADS-UP, NOT AN ALARM (user test 2026-11-25). Core >=1.4.1 keeps every row of a repeated name (the
+          later ones as `name__2`, `name__3`), so nothing is lost and the warn styling it once carried overstated
+          it. What is left to say is that two rows sharing a name may be one variable listed twice. */}
       {check === null && nameCheckSaidAbove ? null : check === null ? (
         <p
           data-testid="name-check-unavailable"
@@ -146,11 +149,7 @@ export function DictionaryMappingTable({
           data-fired={String(check.fired)}
           data-rows={String(check.rowCount)}
           data-unique={check.uniqueNameCount === null ? "" : String(check.uniqueNameCount)}
-          className={
-            check.fired
-              ? "rounded-inner border border-rule-warn bg-surface-warn px-3 py-2 text-xs text-on-warn"
-              : "rounded-inner border border-rule-on-raised px-3 py-2 text-xs text-on-raised-muted"
-          }
+          className="rounded-inner border border-rule-on-raised px-3 py-2 text-xs text-on-raised-muted"
         >
           {check.checkable ? (
             <>
@@ -161,16 +160,15 @@ export function DictionaryMappingTable({
               {check.fired ? (
                 <>
                   {" "}
-                  — {check.dropped.toLocaleString()}{" "}
-                  {check.dropped === 1 ? "variable would be" : "variables would be"} dropped{" "}
-                  <span className="font-semibold">silently</span>: the loader keys on the variable name and
-                  the last row with a repeated name wins, so the earlier ones disappear with no warning.
-                  Repeated: {check.repeated.slice(0, 6).join(", ")}
-                  {check.repeated.length > 6 ? ` and ${check.repeated.length - 6} more` : ""}. Map a column
-                  that is unique per row, or fix the file.
+                  — {check.repeated.length.toLocaleString()}{" "}
+                  {check.repeated.length === 1 ? "name repeats" : "names repeat"}. Every row is kept as its own
+                  variable: the later {check.renamed === 1 ? "one is" : `${check.renamed.toLocaleString()} are`}{" "}
+                  renamed with a suffix (<code className="font-mono">{check.repeated[0]}__2</code>), so check they
+                  really are different variables. Repeated: {check.repeated.slice(0, 6).join(", ")}
+                  {check.repeated.length > 6 ? ` and ${check.repeated.length - 6} more` : ""}.
                 </>
               ) : (
-                <> — every row has its own name, so nothing is dropped silently.</>
+                <> — every row has its own name.</>
               )}
               {check.unnamed > 0 && (
                 <>

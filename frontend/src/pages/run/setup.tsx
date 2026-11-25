@@ -201,10 +201,9 @@ function modelHelp(models: ModelInfo[]): string {
  *
  * TWO HAZARDS ARE SURFACED RATHER THAN SWALLOWED:
  *
- *  1. **A repeated variable name is a silent last-wins drop.** `load_dictionary` keys on the variable-name
- *     column and the last row with a repeated name wins, so the earlier ones vanish with no warning — the
- *     run completes and the counts look plausible. It has cost real debugging time in this project, so the
- *     row count and the unique-name count are both shown, per file, before the run starts.
+ *  1. **A repeated variable name.** Up to core 1.4.0 the loader kept only the last row with a repeated name;
+ *     since 1.4.1 it keeps every row (later ones as `name__2`, …), so the risk is now one variable listed twice.
+ *     The row count and the unique-name count are both shown, per file, before the run starts.
  *  2. **One dictionary is CDE-mapping, not harmonization.** Harmonization is cross-dictionary pooling; a
  *     single dictionary against the CDE backbone is a different, narrower job. Saying so beats proceeding
  *     as though the two were the same thing.
