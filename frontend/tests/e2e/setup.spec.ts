@@ -1162,6 +1162,50 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
     expect(JSON.stringify(stored)).not.toContain("describes v_0");
   });
 
+  test("@setup a column headed Question maps itself to question_text, and an exact role name still wins", async ({
+    page,
+  }) => {
+    // User test 2026-11-25: a header literally named "Question" was left unmapped, because the identity rule
+    // matched only the exact role spelling `question_text`. Spelling variants of a role name ("Variable Name",
+    // "question-text") are the same identity; "Question" is the one alias, since a dictionary's question column
+    // is called that far more often than anything else.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate((k) => localStorage.removeItem(k), CACHE_KEY);
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "question-header.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(
+        csv([
+          ["Variable Name", "Question", "Notes"],
+          ...Array.from({ length: 4 }, (_, i) => [`v_${i}`, `What is ${i}?`, "n"]),
+        ]),
+      ),
+    });
+    const selects = page.getByTestId("role-select");
+    await expect(selects).toHaveCount(3);
+    await expect(selects.nth(0)).toHaveValue("variable_name");
+    await expect(selects.nth(1)).toHaveValue("question_text");
+    await expect(selects.nth(2)).toHaveValue("");
+
+    // The exact role name keeps the role; the alias does not steal it or double it up.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "both.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(
+        csv([["Question", "question_text"], ...Array.from({ length: 4 }, (_, i) => [`q${i}`, `What is ${i}?`])]),
+      ),
+    });
+    const both = page.getByTestId("role-select");
+    await expect(both).toHaveCount(2);
+    await expect(both.nth(0)).toHaveValue("");
+    await expect(both.nth(1)).toHaveValue("question_text");
+  });
+
   test("@setup the cache is written at RUN START and from nowhere else on Setup", () => {
     // The call site, asserted structurally: the round-trip above proves the module works, and this proves
     // Setup actually calls it — and calls it in the one place production does. See the describe-block note

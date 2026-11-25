@@ -126,6 +126,38 @@ export function normalizeHeader(name: string): string {
 }
 
 /**
+ * Header spellings that ARE a role beyond the role's own name — one entry, on purpose (user test 2026-11-25).
+ * A dictionary's question column is headed plain "Question" far more often than anything else; widening this
+ * into a synonym list would turn an identity rule into a guess about meaning.
+ */
+export const ROLE_HEADER_ALIASES: Readonly<Record<string, string>> = { question: "question_text" };
+
+/**
+ * The columns whose header IS a role, as role -> column — the fallback when no remembered mapping fits.
+ *
+ * A header matches a role when it folds (`normalizeHeader`) to the role's name, so "Variable Name" and
+ * "question-text" are the identity they spell; then `ROLE_HEADER_ALIASES` fill any role still open. Exact
+ * names go FIRST, so a file with both `question_text` and `Question` keeps the role on `question_text`, and no
+ * column is given two roles.
+ */
+export function identityRoles(headers: string[], roles: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const used = new Set<string>();
+  const take = (role: string, folded: string) => {
+    const column = headers.find((h) => !used.has(h) && normalizeHeader(h) === folded);
+    if (column) {
+      out[role] = column;
+      used.add(column);
+    }
+  };
+  for (const role of roles) take(role, role);
+  for (const [alias, role] of Object.entries(ROLE_HEADER_ALIASES)) {
+    if (roles.includes(role) && !out[role]) take(role, alias);
+  }
+  return out;
+}
+
+/**
  * The column that makes this file look like participant records, or null.
  *
  * TWO conditions must BOTH hold, and the reason is that either one alone has a real false positive:
