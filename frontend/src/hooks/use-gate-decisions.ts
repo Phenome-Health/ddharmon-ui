@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { IS_STATIC, deleteArtifact, listArtifacts, putArtifact } from "@/lib/api";
+import { IS_STATIC, batchArtifacts, deleteArtifact, listArtifacts, putArtifact } from "@/lib/api";
 import {
   UNIT_SEPARATOR,
   contentKey,
@@ -102,6 +102,15 @@ export interface UseGateDecisions {
   write(fields: Record<string, unknown>, options: WriteOptions): Promise<boolean>;
   /** Resolves TRUE once the row is gone (store or sandbox), FALSE when the delete failed and was rolled back. */
   clear(fields: Record<string, unknown>): Promise<boolean>;
+  /**
+   * Many writes and clears of this kind as ONE save — one request, one read-back, one render (user test 2026-11-25:
+   * select-all was one PUT and one full re-read per group). All or nothing: TRUE once every item is recorded, FALSE
+   * when the save failed and every item was rolled back (the failure is already toasted).
+   */
+  applyMany(changes: {
+    write?: { fields: Record<string, unknown>; options: WriteOptions }[];
+    clear?: Record<string, unknown>[];
+  }): Promise<boolean>;
   /**
    * Show rows the SERVER stored for this reviewer (an accepted division's parts and moves), with their versions,
    * without a reload — see `absorbServedRows`. No write is made: the rows are already stored.
@@ -293,6 +302,75 @@ export function useGateDecisions(
     [index, kind, persist, frozen],
   );
 
+  const applyMany = useCallback(
+    async ({
+      write: writes = [],
+      clear: clears = [],
+    }: {
+      write?: { fields: Record<string, unknown>; options: WriteOptions }[];
+      clear?: Record<string, unknown>[];
+    }): Promise<boolean> => {
+      if (frozen) throw new Error(FROZEN_GATE_MESSAGE);
+      if (writes.length === 0 && clears.length === 0) return true;
+      // Upstream links are a single-decision affair (a pick made downstream of another); a bulk change carries none.
+      const written = writes.map(({ fields, options: { chosen, alternatives, extra } }) => ({
+        itemKey: decisionItemKey(kind, fields),
+        payload: { ...fields, ...extra, chosen, alternatives, optionSetKey: optionSetKey(alternatives) } as GateDecision,
+      }));
+      const cleared = clears.map((fields) => decisionItemKey(kind, fields));
+      const before = index[kind] ?? {};
+      // ONE optimistic render for the whole press, not one per item.
+      setIndex((prev) => {
+        const byItem = { ...(prev[kind] ?? {}) };
+        for (const key of cleared) delete byItem[key];
+        for (const { itemKey, payload } of written) byItem[itemKey] = payload;
+        return { ...prev, [kind]: byItem };
+      });
+      if (local) {
+        let sandbox = readSandbox(jobId);
+        for (const key of cleared) sandbox = withGateDecision(sandbox, kind, key, null);
+        for (const { itemKey, payload } of written) sandbox = withGateDecision(sandbox, kind, itemKey, payload);
+        writeSandbox(jobId, sandbox);
+        return true;
+      }
+      try {
+        const res = await batchArtifacts(
+          jobId,
+          kind,
+          written.map(({ itemKey, payload }) => ({ payload, base: baseRef.current[itemKey] })),
+          cleared,
+        );
+        for (const key of cleared) delete baseRef.current[key];
+        let first: GateDecisionConflict | null = null;
+        res.written.forEach((row, i) => {
+          const itemKey = written[i]!.itemKey;
+          const sentBase = baseRef.current[itemKey];
+          baseRef.current[itemKey] = row.updatedAt;
+          if (row.conflict && !first) first = { ...row.conflict, sentBase: sentBase !== undefined, kind, itemKey };
+        });
+        if (first) {
+          setConflict(first);
+          announceConflict(jobId, first);
+        }
+        await refetch();
+        return true;
+      } catch (e) {
+        // Roll every item back to what the screen showed before the press.
+        setIndex((prev) => {
+          const byItem = { ...(prev[kind] ?? {}) };
+          for (const key of [...cleared, ...written.map((w) => w.itemKey)]) {
+            if (key in before) byItem[key] = before[key]!;
+            else delete byItem[key];
+          }
+          return { ...prev, [kind]: byItem };
+        });
+        toast.error(e instanceof Error ? e.message : "Could not save those decisions");
+        return false;
+      }
+    },
+    [frozen, index, kind, local, jobId, refetch],
+  );
+
   const absorb = useCallback(
     (rows: readonly unknown[] | null | undefined) => {
       const { payloads, versions } = absorbServedRows(kind, rows);
@@ -319,6 +397,7 @@ export function useGateDecisions(
     frozen,
     write,
     clear,
+    applyMany,
     absorb,
     conflict,
     dismissConflict: () => setConflict(null),

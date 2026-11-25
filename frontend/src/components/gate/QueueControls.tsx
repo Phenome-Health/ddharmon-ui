@@ -296,8 +296,12 @@ export function SegmentedSort<K extends string>({
  *
  * It replaced a sentence plus two full buttons, one always disabled. What survives of that control's contract:
  * it acts on the SHOWN rows only and its counts say so ("5/6 groups" over "40/47 vars", ticked of shown — two
- * lines, because one overflows the 384px panel); the tri-state is real; and it locks while it saves, because
- * there is no bulk endpoint and a second press mid-flight is a half-succeeded burst with no story.
+ * lines, because one overflows the 384px panel); the tri-state is real; and it locks while its one batch save is in
+ * flight, so a second press cannot race it.
+ *
+ * THE MINUS CLEARS (user test 2026-11-25: "when I clicked the minus sign, it started adding all groups rather than
+ * deselecting"). A partly-ticked box says some rows are selected, and pressing it takes them back out, as a mail
+ * client's does. Only an empty box selects.
  */
 export function SelectAllShown({
   counts,
@@ -317,8 +321,8 @@ export function SelectAllShown({
         data-testid="bulk-scope-toggle"
         checked={state === "all" ? true : state === "some" ? "indeterminate" : false}
         disabled={busy || frozen || groups.shown === 0}
-        onCheckedChange={() => onToggle(state === "all" ? "out" : "in")}
-        aria-label={state === "all" ? `Deselect all ${groups.shown} shown` : `Select all ${groups.shown} shown`}
+        onCheckedChange={() => onToggle(state === "none" ? "in" : "out")}
+        aria-label={state === "none" ? `Select all ${groups.shown} shown` : `Deselect all ${groups.shown} shown`}
       />
       <span className="flex flex-col whitespace-nowrap text-xs leading-tight text-on-raised-muted">
         <span data-testid="bulk-count-groups">

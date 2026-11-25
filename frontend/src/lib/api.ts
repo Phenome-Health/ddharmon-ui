@@ -597,6 +597,34 @@ export async function putArtifact(
   );
 }
 
+/** What the batch route answers: each written row as the single PUT would, and the item keys it removed. */
+export interface ArtifactBatchResponse {
+  written: ArtifactWriteResponse[];
+  deleted: string[];
+}
+
+/**
+ * Many gate decisions of ONE kind in one request (user test 2026-11-25: select-all was "very slow" — one PUT and one
+ * full re-read per group). Per item it is the single routes exactly: the same validation, refusals and per-item
+ * `base` conflict rule; a malformed item refuses the whole batch before anything is written.
+ */
+export async function batchArtifacts(
+  jobId: string,
+  kind: string,
+  puts: { payload: Record<string, unknown>; base?: number }[],
+  deletes: string[],
+): Promise<ArtifactBatchResponse> {
+  if (IS_STATIC) throw new Error(STATIC_MSG);
+  if (AUTH_ENABLED && !_tokenGetter) throw new Error("Sign in to save decisions.");
+  return json(
+    await fetch(`${BASE}/jobs/${jobId}/artifacts/${encodeURIComponent(kind)}/batch`, {
+      method: "POST",
+      headers: await authed({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ put: puts, delete: deletes }),
+    }),
+  );
+}
+
 /** Remove one artifact — the "I have no decision here" state, distinct from a decision of "none of these". */
 export async function deleteArtifact(jobId: string, kind: string, itemKey: string): Promise<void> {
   if (IS_STATIC) return;

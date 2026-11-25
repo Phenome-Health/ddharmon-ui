@@ -1204,3 +1204,94 @@ def test_pinned_run_rejects_deletes_of_every_gate_decision_kind(tmp_path, monkey
             r = c.delete(f"/api/harmonize/jobs/demo-1/artifacts/{kind}/anything")
             assert r.status_code == 403, f"{kind} was deletable on the shared demo ({r.status_code})"
             assert "clone" in r.json()["detail"].lower()
+
+
+# --- one request for a bulk scope change (user test 2026-11-25: "select/deselect all is very slow") ------------
+#
+# Select-all on Gate 1 wrote each group with its own PUT and re-read every artifact the run holds after each one, so a
+# few hundred groups cost a few hundred round trips and a quadratic amount of reading. The batch route takes the
+# whole press in one request, with the same per-item semantics as the single routes.
+
+
+def _scope_payload(group_id, chosen="in"):
+    options = ("in", "out")
+    return {"groupId": group_id, "chosen": chosen, "alternatives": list(options), "optionSetKey": option_set_key(options)}
+
+
+def _parked_job(job_id="j1", gate="gate1"):
+    app_module.store.create(job_id, "A run", {}, owner_subject=None)
+    app_module.store.update(
+        job_id,
+        status="awaiting_review",
+        gate_position=gate,
+        result={"records": [], "conceptGroups": [{"groupId": f"g{i}"} for i in range(5)]},
+    )
+
+
+def test_a_batch_writes_and_deletes_many_decisions_in_one_request(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _parked_job()
+        c.put("/api/harmonize/jobs/j1/artifacts/gate1_group_scope", json=_scope_payload("g0"))
+        r = c.post(
+            "/api/harmonize/jobs/j1/artifacts/gate1_group_scope/batch",
+            json={
+                "put": [{"payload": _scope_payload(f"g{i}", "out")} for i in range(1, 5)],
+                "delete": ["g0"],
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert [w["itemKey"] for w in body["written"]] == ["g1", "g2", "g3", "g4"]
+        assert all(isinstance(w["updatedAt"], float) and w["conflict"] is None for w in body["written"])
+        assert body["deleted"] == ["g0"]
+        stored = c.get("/api/harmonize/jobs/j1/artifacts").json()["artifacts"][GATE1_GROUP_SCOPE]
+    assert sorted((d["groupId"], d["chosen"]) for d in stored) == [(f"g{i}", "out") for i in range(1, 5)]
+
+
+def test_a_batch_with_one_malformed_payload_writes_nothing(tmp_path, monkeypatch):
+    """All or nothing: a half-applied select-all is the state the screen has no way to report."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _parked_job()
+        bad = {"groupId": "g2", "chosen": "in"}  # no alternatives / optionSetKey
+        r = c.post(
+            "/api/harmonize/jobs/j1/artifacts/gate1_group_scope/batch",
+            json={"put": [{"payload": _scope_payload("g1")}, {"payload": bad}], "delete": []},
+        )
+        assert r.status_code == 400
+        assert c.get("/api/harmonize/jobs/j1/artifacts").json()["artifacts"] == {}
+
+
+def test_a_batch_on_a_passed_gate_is_refused_like_a_single_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _parked_job(gate="gate2")
+        r = c.post(
+            "/api/harmonize/jobs/j1/artifacts/gate1_group_scope/batch",
+            json={"put": [{"payload": _scope_payload("g1")}], "delete": []},
+        )
+    assert r.status_code == 409
+
+
+def test_a_batch_reports_a_blind_overwrite_per_item(tmp_path, monkeypatch):
+    """The single route's conflict rule, per item: a write with no base over an existing row is reported, one that
+    names the version it replaced is quiet."""
+    monkeypatch.setattr(app_module, "_DB_PATH", tmp_path / "jobs.db")
+    with TestClient(app_module.app) as c:
+        _parked_job()
+        held = c.put("/api/harmonize/jobs/j1/artifacts/gate1_group_scope", json=_scope_payload("g1")).json()
+        c.put("/api/harmonize/jobs/j1/artifacts/gate1_group_scope", json=_scope_payload("g2"))
+        r = c.post(
+            "/api/harmonize/jobs/j1/artifacts/gate1_group_scope/batch",
+            json={
+                "put": [
+                    {"payload": _scope_payload("g1", "out"), "base": held["updatedAt"]},
+                    {"payload": _scope_payload("g2", "out")},
+                ],
+                "delete": [],
+            },
+        ).json()
+    by_key = {w["itemKey"]: w["conflict"] for w in r["written"]}
+    assert by_key["g1"] is None
+    assert by_key["g2"] is not None and "reload" in by_key["g2"]["message"].lower()

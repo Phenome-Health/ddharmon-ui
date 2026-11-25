@@ -3169,13 +3169,13 @@ export default function Gate1Page() {
   ];
 
   /**
-   * Apply a bulk scope change to the VISIBLE rows, one request at a time.
+   * Apply a bulk scope change to the VISIBLE rows as ONE save (user test 2026-11-25: "select/deselect all is very
+   * slow").
    *
-   * SEQUENTIAL, NOT PARALLEL, and deliberately. N is the row count, `write`/`clear` are per-item promises,
-   * and `use-gate-decisions`' conflict surface is written for a single decision — so an unbounded burst
-   * that half-succeeds is precisely the state it has no way to report. A failure part-way through stops
-   * the run and leaves the PERSISTED decisions as the only source of truth; nothing here paints a
-   * checkbox optimistically, because `isInScope` reads `scope.decisions` and always has.
+   * It used to go one request at a time, each followed by a re-read of every decision the run holds — a few hundred
+   * groups were a few hundred round trips and a quadratic amount of reading. `applyMany` sends the whole press to the
+   * batch route, all or nothing, so the half-succeeded burst the sequential loop guarded against cannot happen: a
+   * refused batch rolls every row back and says so.
    */
   async function onBulkScope(target: "in" | "out") {
     const ids = shownForScope.map((g) => g.groupId);
@@ -3184,13 +3184,13 @@ export default function Gate1Page() {
     const value = target === "in" ? IN_SCOPE : OUT_OF_SCOPE;
     setBulkBusy(true);
     try {
-      for (const id of plan.clear) await scope.clear({ groupId: id });
-      for (const id of plan.write) {
-        await scope.write(
-          { groupId: id },
-          { chosen: value, alternatives: SCOPE_OPTIONS },
-        );
-      }
+      await scope.applyMany({
+        clear: plan.clear.map((groupId) => ({ groupId })),
+        write: plan.write.map((groupId) => ({
+          fields: { groupId },
+          options: { chosen: value, alternatives: SCOPE_OPTIONS },
+        })),
+      });
     } catch (e) {
       toast.error(
         e instanceof Error

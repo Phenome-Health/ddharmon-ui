@@ -3025,6 +3025,25 @@ test.describe("gate1 bulk scope", () => {
     );
   });
 
+  /**
+   * THE MINUS CLEARS (user test 2026-11-25). Bhargav: "when I clicked the minus sign, it started adding all groups
+   * rather than deselecting, which is unintuitive." A partly-ticked box is a statement that some rows are selected; its
+   * press takes them back out, the way a mail client's does. Only an empty box selects.
+   */
+  test("@gate1 a partly-ticked box (the minus) deselects every shown row; only an empty box selects", async ({ page }) => {
+    await openGate1(page);
+    const bulk = page.locator("[data-testid='bulk-scope']");
+    const box = bulk.locator("[data-testid='bulk-scope-toggle']");
+    const rows = await page.locator("[data-testid='ledger-row']").count();
+    await page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']").click();
+    await expect(bulk).toHaveAttribute("data-state", "some");
+    await expect(box).toHaveAttribute("aria-label", `Deselect all ${rows} shown`);
+    await box.click();
+    await expect(bulk).toHaveAttribute("data-state", "none");
+    await expect(bulk.locator("[data-testid='bulk-count-groups']")).toHaveText(`0/${rows} groups`);
+    await expect(box).toHaveAttribute("aria-label", `Select all ${rows} shown`);
+  });
+
   test("@gate1 once everything shown is selected, the box offers the way back out, never a no-op select", async ({
     page,
   }) => {

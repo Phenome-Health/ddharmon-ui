@@ -231,6 +231,16 @@ class ArtifactStore:
             grouped = redact_unpublished(grouped)
         return grouped
 
+    def check(self, *, kind: str, payload: dict[str, Any]) -> str:
+        """Validate a payload exactly as :meth:`put` would, WITHOUT writing it; returns its identity.
+
+        Lets a batch refuse the whole request before writing any of it: a half-applied bulk change is the state the
+        screen has no way to report. Raises what :meth:`put` raises for a bad kind or payload.
+        """
+        spec = self._registry.get(kind)
+        spec.check(payload)
+        return spec.key_for(payload)
+
     def item_key_for(self, *, kind: str, payload: dict[str, Any]) -> str:
         """The identity this payload would be stored under. Lets a write path look up what it will replace."""
         return self._registry.get(kind).key_for(payload)
