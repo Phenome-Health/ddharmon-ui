@@ -129,8 +129,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               </span>
             )}
             <ActiveRunsIndicator compact={collapsed} />
-            {/* A deployment may leave content pages out (VITE_HIDDEN_PAGES — prod does; `lib/hidden-pages.ts`). */}
-            <nav id="app-nav-list" className="space-y-1">
+            {/* A deployment may leave content pages out (VITE_HIDDEN_PAGES — prod does; `lib/hidden-pages.ts`).
+                THE LIST IS WHAT GIVES WAY on a short window (user test 2026-11-25: the build stamp at the foot of the open
+                rail was cut off): it may shrink and scroll (`min-h-0`), so the footer below keeps its whole height. */}
+            <nav id="app-nav-list" className="min-h-0 space-y-1 overflow-y-auto overflow-x-hidden">
               <NavLink href="/guide" icon={<BookOpen className="h-4 w-4 shrink-0" />} label="Guide" collapsed={collapsed} />
               {!isPageHidden("methods") && <NavLink href="/methods" icon={<Workflow className="h-4 w-4 shrink-0" />} label="Methods" collapsed={collapsed} />}
               {!isPageHidden("benchmarks") && <NavLink href="/benchmarks" icon={<Gauge className="h-4 w-4 shrink-0" />} label="Benchmarks" collapsed={collapsed} />}
@@ -143,7 +145,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               {!isPageHidden("architecture") && <NavLink href="/architecture" icon={<Network className="h-4 w-4 shrink-0" />} label="Architecture" collapsed={collapsed} />}
               {!isPageHidden("phenome") && <NavLink href="/phenome" icon={<Building2 className="h-4 w-4 shrink-0" />} label="Phenome Health" collapsed={collapsed} />}
             </nav>
-            <div className="mt-auto space-y-1 border-t border-rule-on-chrome pt-3 text-xs">
+            <div className="mt-auto shrink-0 space-y-1 border-t border-rule-on-chrome pt-3 text-xs">
               {/* THE ACCOUNT, moved from the top bar (round 7). Only when the SSO gate is active. Guests get a sign-in
                   affordance; signed-in users get Clerk's UserButton (inside the ClerkProvider AuthProvider mounts). */}
               {AUTH_ENABLED &&
