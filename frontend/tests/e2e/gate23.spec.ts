@@ -1719,11 +1719,12 @@ test.describe("gate2 candidate table — no key, the columns say it", () => {
     return rows;
   }
 
-  test("@gate2 no key strip; one header — #, CDE, Values, Metadata, Similarity", async ({ page }) => {
+  test("@gate2 no key strip; one header — Retrieved, CDE, Values, Metadata, Similarity", async ({ page }) => {
     await openOne(page);
     await expect(page.locator("[data-testid='candidate-legend']")).toHaveCount(0);
     const head = page.getByTestId("candidate-columns");
-    await expect(head.locator(":scope > *")).toHaveText(["#", "CDE", "Values", "Metadata", "Similarity"]);
+    // "#" became "Retrieved" (user test 2026-11-25): the number is retrieval order, not a similarity rank.
+    await expect(head.locator(":scope > *")).toHaveText(["Retrieved", "CDE", "Values", "Metadata", "Similarity"]);
   });
 
   test("@gate2 Values, Metadata and Similarity each explain themselves on hover", async ({ page }) => {
