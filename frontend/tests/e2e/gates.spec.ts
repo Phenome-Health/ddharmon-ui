@@ -674,7 +674,9 @@ test.describe("the run-progress readout", () => {
     { phase, mode }: { phase: string; mode: string },
   ) {
     await withPayload(page, (p) => {
-      Object.assign(p, { status: phase, phase, stopping: false });
+      // A FIRST leg: the server sets gatePosition only when a leg parks, so a run on its way to Gate 1 has none
+      // (the parked fixture's `gate1` would make this a resumed leg, whose replayed phases fold into one step).
+      Object.assign(p, { status: phase, phase, stopping: false, gatePosition: null });
       const config = p.config as Record<string, unknown>;
       config.run_mode = mode;
       config.est_fields = 1000;
@@ -690,7 +692,9 @@ test.describe("the run-progress readout", () => {
     // exists and renders on the legacy dashboard; this asserts it is now wired into the STAGED gate chrome.
     // Timestamps anchored near `now` so the active phase's live duration is sane, not epoch-huge.
     await withPayload(page, (p) => {
-      Object.assign(p, { status: "clustering", phase: "clustering", stopping: false });
+      // A FIRST leg: the server sets gatePosition only when a leg parks, so a run on its way to Gate 1 has none
+      // (the parked fixture's `gate1` would make this a resumed leg, whose replayed phases fold into one step).
+      Object.assign(p, { status: "clustering", phase: "clustering", stopping: false, gatePosition: null });
       const config = p.config as Record<string, unknown>;
       config.run_mode = "sync";
       config.est_fields = 1000;
