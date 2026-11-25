@@ -734,9 +734,9 @@ class UIPreprocessReport(TypedDict):
 
     cohort: str
     nVariables: int  # rows the dictionary loaded with — the denominator for every rule
-    #: Unique variable names after preprocessing. LOWER than ``nVariables`` means names collided and
-    #: ``load_dictionary``'s dict keying dropped variables SILENTLY, last-wins — a known and expensive
-    #: debugging cost in this project. Surfaced rather than swallowed.
+    #: Distinct SOURCE variable names after preprocessing. LOWER than ``nVariables`` means names repeat. Up to
+    #: core 1.4.0 the loader then dropped rows silently (last-wins); since 1.4.1 it KEEPS them as ``name__2``…,
+    #: so this is a "check these rows" count, not a loss count. Variables loaded = ``nVariables``.
     nUniqueVariableNames: int
     nDuplicateVariableNames: int  # nVariables - nUniqueVariableNames, precomputed for the screen
     #: Variables whose embedding text came out EMPTY (no question, no description, and the variable name

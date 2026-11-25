@@ -15,6 +15,8 @@ import {
 import { SCOPE_VERDICT_COPY, declaredComponents } from "@/lib/score-scope";
 import { PROVIDER_KEY_INFO, keyPlaceholderFor } from "@/lib/provider-keys";
 import { PAUSED_RUN_FIXTURE } from "./routes";
+import { preparationProgress } from "@/lib/run-state";
+import type { JobResult, PreprocessReport } from "@/types";
 import { RETIRED_GATE, setupPathFor, startedPathFor } from "@/lib/gate-routes";
 
 /**
@@ -125,7 +127,9 @@ test.describe("Setup — the file decisions, as functions", () => {
     const report = nameCheck(rows, "variable_name");
     expect(report.rowCount).toBe(3);
     expect(report.uniqueNameCount).toBe(2);
-    expect(report.dropped).toBe(1);
+    // KEPT, NOT DROPPED (user test 2026-11-25). Core >=1.4.1 disambiguates a repeated name — the later row
+    // becomes `bmi__2` — so the figure is rows the loader RENAMES, never rows it loses.
+    expect(report.renamed).toBe(1);
     expect(report.fired).toBe(true);
     expect(report.repeated).toEqual(["bmi"]);
 
@@ -135,7 +139,7 @@ test.describe("Setup — the file decisions, as functions", () => {
     expect(clean.rowCount).toBe(2);
     expect(clean.uniqueNameCount).toBe(2);
     expect(clean.fired).toBe(false);
-    expect(clean.dropped).toBe(0);
+    expect(clean.renamed).toBe(0);
   });
 
   test("@setup with no variable-name column mapped there is nothing to check, and that is not a pass", () => {
@@ -269,10 +273,45 @@ test.describe("Setup — the screen", () => {
     await expect(check).toHaveAttribute("data-fired", "true");
     await expect(check).toHaveAttribute("data-rows", "10");
     await expect(check).toHaveAttribute("data-unique", "5");
-    // BOTH figures on screen, not merely in an attribute, and named as the silent drop it is.
+    // BOTH figures on screen, not merely in an attribute — and said as what core >=1.4.1 actually does with
+    // them (user test 2026-11-25: "still seeing this boilerplate"). Every repeated row is KEPT, the later ones
+    // renamed with a `__2` suffix, so the line is a heads-up to check them, never a claim that rows are lost.
     await expect(check).toContainText("10");
     await expect(check).toContainText("5");
-    await expect(check).toContainText(/silently/i);
+    await expect(check).toContainText(/kept/i);
+    await expect(check).toContainText("__2");
+    await expect(check).not.toContainText(/silently|dropped|disappear|last row|wins/i);
+  });
+
+  test("@setup no Setup copy claims a repeated variable name is dropped", async ({ page }) => {
+    // The how-to step and the checklist's first example both said a repeat is lost. Core >=1.4.1 keeps it.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("how-to")).toBeVisible();
+    await expect(page.getByTestId("how-to")).not.toContainText(/dropped|silently/i);
+    await page.getByTestId("dictionary-tips").getByRole("button").first().click();
+    const first = page.getByTestId("dictionary-tip").first();
+    await expect(first).toContainText(/__2/);
+    await expect(first).not.toContainText(/survives|gone|silently|dropped/i);
+  });
+
+  test("@setup the pre-flight quote counts every loaded variable, not the unique names", () => {
+    // A repeated name is KEPT as its own variable, so the run is charged for every row. Summing the unique
+    // names would under-quote by exactly the repeats — the one thing the quote must never do (R8).
+    const report = {
+      cohort: "A",
+      nVariables: 10,
+      nUniqueVariableNames: 6,
+      nDuplicateVariableNames: 4,
+      nNothingToEmbed: 0,
+    } as unknown as PreprocessReport;
+    const run = {
+      phase: "awaiting_review",
+      result: { preprocessing: [report], summary: { cohorts: ["A"] } },
+    } as unknown as JobResult;
+    const progress = preparationProgress(run);
+    expect(progress.allPrepared).toBe(true);
+    expect(progress.variables).toBe(10);
   });
 
   test("@setup a clean file still shows the row count against the unique-name count", async ({ page }) => {
@@ -1121,6 +1160,50 @@ test.describe("Setup — the two functional lifts (08-13b)", () => {
     }
     // The cell values are on screen but NOT in the cache.
     expect(JSON.stringify(stored)).not.toContain("describes v_0");
+  });
+
+  test("@setup a column headed Question maps itself to question_text, and an exact role name still wins", async ({
+    page,
+  }) => {
+    // User test 2026-11-25: a header literally named "Question" was left unmapped, because the identity rule
+    // matched only the exact role spelling `question_text`. Spelling variants of a role name ("Variable Name",
+    // "question-text") are the same identity; "Question" is the one alias, since a dictionary's question column
+    // is called that far more often than anything else.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate((k) => localStorage.removeItem(k), CACHE_KEY);
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "question-header.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(
+        csv([
+          ["Variable Name", "Question", "Notes"],
+          ...Array.from({ length: 4 }, (_, i) => [`v_${i}`, `What is ${i}?`, "n"]),
+        ]),
+      ),
+    });
+    const selects = page.getByTestId("role-select");
+    await expect(selects).toHaveCount(3);
+    await expect(selects.nth(0)).toHaveValue("variable_name");
+    await expect(selects.nth(1)).toHaveValue("question_text");
+    await expect(selects.nth(2)).toHaveValue("");
+
+    // The exact role name keeps the role; the alias does not steal it or double it up.
+    await page.goto(DRAFT);
+    await page.waitForLoadState("networkidle");
+    await page.getByTestId("dict-upload").setInputFiles({
+      name: "both.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(
+        csv([["Question", "question_text"], ...Array.from({ length: 4 }, (_, i) => [`q${i}`, `What is ${i}?`])]),
+      ),
+    });
+    const both = page.getByTestId("role-select");
+    await expect(both).toHaveCount(2);
+    await expect(both.nth(0)).toHaveValue("");
+    await expect(both.nth(1)).toHaveValue("question_text");
   });
 
   test("@setup the cache is written at RUN START and from nowhere else on Setup", () => {
@@ -2139,11 +2222,13 @@ test.describe("Setup — the dictionary-hygiene tips", () => {
     await page.waitForLoadState("networkidle");
     await page.getByTestId("dictionary-tips").getByRole("button").first().click();
     const first = page.getByTestId("dictionary-tip").first();
-    // IT IS FIRST because it is the only one here the product cannot fix for the reviewer: the loader
-    // keys on the variable name and the last row wins, so the earlier ones are gone before any rule runs.
+    // IT IS FIRST because it is the only one here the product cannot settle for the reviewer: two rows sharing a
+    // name may be one variable listed twice. Core >=1.4.1 KEEPS both (the second as `__2`), so the example says
+    // that — never the pre-1.4.1 "only the last survives" (user test 2026-11-25).
     await expect(first).toContainText(/variable name/i);
     const text = await first.innerText();
-    expect(text).toMatch(/(last|only the last|silently|vanish|dropped)/i);
+    expect(text).toMatch(/kept/i);
+    expect(text).not.toMatch(/(only the last|silently|vanish|dropped|survives)/i);
     // AND IT CROSS-REFERENCES the check already on this screen rather than duplicating it. The tips
     // explain the class; `nameCheck` reports the reviewer's actual file, live, as the mapping changes.
     // Read from the PANEL rather than the bullet: 08-14f made every bullet a one-line directive, so the

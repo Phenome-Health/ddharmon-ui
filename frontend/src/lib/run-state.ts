@@ -146,7 +146,9 @@ export function preparationProgress(run: JobResult | null): PreparationProgress 
     prepared,
     allPrepared:
       cohorts.length > 0 && prepared === cohorts.length && !PRE_PREPARE_PHASES.has(run?.phase ?? ""),
-    variables: reports.reduce((n, r) => n + r.nUniqueVariableNames, 0),
+    // EVERY LOADED VARIABLE, not the unique names (user test 2026-11-25): core >=1.4.1 keeps a repeated name's
+    // rows as `name__2`…, so each is grouped and charged; summing unique names under-quoted by the repeats (R8).
+    variables: reports.reduce((n, r) => n + r.nVariables, 0),
   };
 }
 

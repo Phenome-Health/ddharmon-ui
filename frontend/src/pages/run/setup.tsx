@@ -43,6 +43,7 @@ import { GUEST_RUN_ACTION, guestRunBlocker } from "@/lib/sandbox";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { GuestAuthNotice } from "@/components/gate/SandboxBanner";
 import {
+  identityRoles,
   meetsRoleRequirement,
   participantLevelColumn,
   representableRoles,
@@ -201,10 +202,9 @@ function modelHelp(models: ModelInfo[]): string {
  *
  * TWO HAZARDS ARE SURFACED RATHER THAN SWALLOWED:
  *
- *  1. **A repeated variable name is a silent last-wins drop.** `load_dictionary` keys on the variable-name
- *     column and the last row with a repeated name wins, so the earlier ones vanish with no warning — the
- *     run completes and the counts look plausible. It has cost real debugging time in this project, so the
- *     row count and the unique-name count are both shown, per file, before the run starts.
+ *  1. **A repeated variable name.** Up to core 1.4.0 the loader kept only the last row with a repeated name;
+ *     since 1.4.1 it keeps every row (later ones as `name__2`, …), so the risk is now one variable listed twice.
+ *     The row count and the unique-name count are both shown, per file, before the run starts.
  *  2. **One dictionary is CDE-mapping, not harmonization.** Harmonization is cross-dictionary pooling; a
  *     single dictionary against the CDE backbone is a different, narrower job. Saying so beats proceeding
  *     as though the two were the same thing.
@@ -458,8 +458,9 @@ function dictionariesFromRun(job: JobResult | null): SetupDict[] {
  *
  *  1. The shipped/remembered mapping for a file with exactly these columns (`lookupPrefill` — the demo
  *     manifest, or this browser's own last-used assignment for the same header set).
- *  2. Failing that, columns whose name IS a role name, case-insensitively. `variable_name` -> the variable
- *     name is an identity, not an inference, and it is the same identity the demo manifest encodes.
+ *  2. Failing that, columns whose name IS a role name, folded (`identityRoles`: "Variable Name" is
+ *     `variable_name`), plus the one alias "Question" -> question_text. An identity, not an inference, and it
+ *     is the same identity the demo manifest encodes.
  *
  * This matters more than convenience: the row-count against unique-name-count check cannot run until a
  * variable-name column is mapped, and a hazard check that must be configured before it works is one the
@@ -471,13 +472,7 @@ function initialRoles(headers: string[]): Record<string, string> {
   // does not use, or put two roles on one column; the table then showed part of it and Start POSTed all of
   // it. What the reviewer sees here must be the whole of what the run is sent.
   if (prefilled) return representableRoles(prefilled.roles, headers);
-  const byFolded = new Map(headers.map((h) => [h.trim().toLowerCase(), h]));
-  const roles: Record<string, string> = {};
-  for (const role of COLUMN_ROLES) {
-    const column = byFolded.get(role);
-    if (column) roles[role] = column;
-  }
-  return roles;
+  return identityRoles(headers, COLUMN_ROLES);
 }
 
 /**

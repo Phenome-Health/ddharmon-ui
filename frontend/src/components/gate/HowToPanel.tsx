@@ -49,7 +49,7 @@ export interface HowToStep {
 export const HOW_TO: Record<GatePosition, HowToStep[]> = {
   setup: [
     { text: "Add one data dictionary per cohort, then map each file's columns." },
-    { text: "Check the row count against the unique-name count — a repeated variable name is dropped silently." },
+    { text: "Check the row count against the unique-name count — a repeated name is kept as name__2, so check those rows." },
     {
       text: "Mark each mapping complete — Start needs them all, and \"Mark all\" does it at once. Download any to read the exact text that will be clustered.",
     },

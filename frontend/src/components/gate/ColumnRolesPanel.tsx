@@ -39,7 +39,9 @@ import { ROLE_FORMAT } from "@/types";
  *   variable_name + field_id unmapped, question_text    field_count 0 of 6   the file VANISHES
  *   ditto, description blank on two rows                field_count 4 of 6   those two rows dropped
  *
- * Core 1.4.1 changed the third row (re-measured 2026-11-14: 6 of 6). `csv_parser` derives the description as
+ * Core 1.4.1 also changed the FIRST row: the loader now keeps every repeated name (`Q1`, `Q1__2`, …), so mapping
+ * the repeating column no longer collapses anything and the hatch is a preference, not a rescue (copy reworded
+ * 2026-11-25). Core 1.4.1 changed the third row (re-measured 2026-11-14: 6 of 6). `csv_parser` derives the description as
  * description → short_label → the row's real name → question_text, REFUSING the synthetic `_ROW_` name, so a
  * row with none of those is skipped before embedding is reached. `short_label` cannot be mapped on this
  * screen, so here the precondition is "a description or question text on every row".
@@ -88,8 +90,8 @@ const GROUPS: RoleGroup[] = [
         clustered: true,
         example: "bmi, age_at_enrollment",
         escapeHatch:
-          "Names repeat but each row's text is its own? Leave this and field_id unmapped — every row " +
-          "gets its own generated identifier (today _ROW_00042) and nothing collapses. Two conditions: " +
+          "Names repeat? Every row is kept either way (later ones as name__2). For a generated identifier " +
+          "instead, leave this and field_id unmapped — every row gets one (today _ROW_00042). Two conditions: " +
           "a description or question_text on every row, since a row with neither is dropped rather than " +
           "left unnamed; and that identifier is what you see wherever the variable is named, exports included.",
       },

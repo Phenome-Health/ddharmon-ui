@@ -205,7 +205,7 @@ export default function GuidePage() {
             title="Add your dictionaries and choose how to run"
           >
             Add one dictionary per cohort and map each file's columns to roles. Check the row count against the
-            unique-name count (a repeated variable name is dropped), and download the prepared text to read exactly what
+            unique-name count (a repeated name is kept as name__2 — check those rows), and download the prepared text to read exactly what
             will be grouped. Then pick a run mode, a review mode and a model, and paste your Anthropic key. Everything
             before Start run is free.
           </Step>
