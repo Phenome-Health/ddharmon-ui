@@ -499,13 +499,13 @@ test.describe("gate23 algebra", () => {
     expect(needsRepickConfirmation(1)).toBe(true);
   });
 
-  test("@gate2 #3 a rationale's candidate ordinals are cited by NAME, keyed to the model's rank", () => {
+  test("@gate2 #3 a rationale's candidate ordinals are cited by NAME, keyed to the number the model was SHOWN", () => {
+    // `number` is the candidate's retrieval number (the order the model saw them in) — what "Candidate N" means.
     const cands = [
-      { rank: 1, cdeId: "Age" },
-      { rank: 2, cdeId: "Current Pregnancy Indicator" },
-      { rank: 3, cdeId: "Marital Status" },
+      { number: 1, cdeId: "Age" },
+      { number: 2, cdeId: "Current Pregnancy Indicator" },
+      { number: 3, cdeId: "Marital Status" },
     ];
-    // the ordinal the model wrote is its RANK (the order it saw them in), never the displayed row index
     expect(citeCandidateOrdinals("Candidate 2 is the best fit; candidate #3 is too broad.", cands)).toBe(
       "Candidate 2 (Current Pregnancy Indicator) is the best fit; candidate #3 (Marital Status) is too broad.",
     );
@@ -514,6 +514,9 @@ test.describe("gate23 algebra", () => {
     // idempotent: an already-named citation is not named twice
     const once = citeCandidateOrdinals("Candidate 2 fits.", cands);
     expect(citeCandidateOrdinals(once, cands)).toBe(once);
+    // a candidate whose number is UNKNOWN (an older run whose ranking was read) is never named — a guess would be
+    // the wrong element
+    expect(citeCandidateOrdinals("Candidate 2 fits.", [{ number: null, cdeId: "Age" }])).toBe("Candidate 2 fits.");
   });
 
   test("@gate2 the shipped demo really does carry the shapes these screens are built on", () => {
@@ -671,14 +674,14 @@ test.describe("gate2 screen", () => {
     await expect(rationale).toContainText("Candidate 3 (Age when first started smoking cigarettes fairly regularly)");
     const pick = page.locator("[data-testid='candidate-row'][data-model-pick='true']");
     await expect(pick).toHaveCount(1);
-    await expect(pick.locator("[data-testid='candidate-ordinal']")).toHaveText("3");
+    await expect(pick.locator("[data-testid='candidate-ordinal']")).toHaveText("#3");
     await expect(pick).toHaveAttribute("data-cde-id", "Age when first started smoking cigarettes fairly regularly");
     // every row's number is its rank, so the list reads the same numbering the model used
     const ordinals = await page
       .locator("[data-testid='candidate-ordinal']")
       .allTextContents();
     expect(new Set(ordinals).size).toBe(ordinals.length);
-    expect(ordinals).toContain("1");
+    expect(ordinals).toContain("#1");
   });
 
   test("@gate2 a re-pick moves the chosen marker and survives a reload", async ({
@@ -1794,18 +1797,19 @@ test.describe("gate2 candidate table — no key, the columns say it", () => {
  */
 test.describe("gate2 candidate table — by similarity", () => {
   /** One adopt concept with enough candidates that the list scrolls; `mutate` adjusts its candidates. */
-  function longConcept(mutate?: (cands: UICandidate[]) => void) {
+  function longConcept(mutate?: (cands: UICandidate[]) => void, rationale?: string) {
     return (run: JobResult): void => {
       const r = (run.result?.records ?? []).find((x) => x.verdict === "adopt" && x.candidates.length >= 10);
       if (!r || !run.result) throw new Error("fixture: no adopt record with >= 10 candidates");
       mutate?.(r.candidates);
+      if (rationale !== undefined) r.rationale = rationale;
       run.result.records = [r];
     };
   }
 
-  async function open(page: Page, mutate?: (cands: UICandidate[]) => void): Promise<Locator> {
+  async function open(page: Page, mutate?: (cands: UICandidate[]) => void, rationale?: string): Promise<Locator> {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await serveFinished(page, longConcept(mutate));
+    await serveFinished(page, longConcept(mutate, rationale));
     await openGate2(page);
     const rows = candidateRows(page);
     await expect(rows.first()).toBeVisible();
@@ -1819,7 +1823,22 @@ test.describe("gate2 candidate table — by similarity", () => {
     expect(sims, "similarity must not increase down the list").toEqual([...sims].sort((a, b) => b - a));
   });
 
-  test("@gate2 # is the number the model's rationale cites, not the row position", async ({ page }) => {
+  /**
+   * USER TEST 2026-11-25, second pass: "CDE retrieval order still doesn't make sense to me. What do the numbers mean
+   * if not similarity rank?" Bhargav chose to KEEP the retrieval order and LABEL it: the column is "Retrieved", each
+   * cell "#N", and its tooltip says retrieval fuses keyword matching with embedding similarity — which is why it can
+   * disagree with the Similarity order the list is sorted by.
+   */
+  test("@gate2 the number column is labelled 'Retrieved' and says what retrieval order is", async ({ page }) => {
+    await open(page);
+    const head = page.getByTestId("candidate-columns");
+    await expect(head.getByText("Retrieved", { exact: true })).toBeVisible();
+    await head.getByText("Retrieved", { exact: true }).hover();
+    await expect(page.getByRole("tooltip")).toContainText(/keyword/i);
+    await expect(page.getByRole("tooltip")).toContainText(/similarity/i);
+  });
+
+  test("@gate2 Retrieved is the number the model was shown (#N), not the row position", async ({ page }) => {
     const numberOf = new Map<string, number>();
     await open(page, (cands) => {
       // Prompt numbers that agree with neither the row order nor the ranked order.
@@ -1832,16 +1851,52 @@ test.describe("gate2 candidate table — by similarity", () => {
     for (let i = 0; i < (await rows.count()); i++) {
       const row = rows.nth(i);
       const id = (await row.getAttribute("data-cde-id")) ?? "";
-      await expect(row.getByTestId("candidate-ordinal")).toHaveText(String(numberOf.get(id)));
+      await expect(row.getByTestId("candidate-ordinal")).toHaveText(`#${numberOf.get(id)}`);
     }
   });
 
-  test("@gate2 a run from an older core shows the rank in #", async ({ page }) => {
-    await open(page, (cands) => cands.forEach((c) => delete c.candidateNumber));
+  test("@gate2 the rationale names the candidate by the number the model was shown, not by its rank", async ({ page }) => {
+    let cited = "";
+    await open(
+      page,
+      (cands) => {
+        // The model reordered: rank 1 was shown to it as Candidate 4, so rank 2 is not Candidate 2.
+        cands.forEach((c, i) => {
+          c.candidateNumber = ((i + 3) % cands.length) + 1;
+        });
+        cited = cands.find((c) => c.candidateNumber === 2)!.cdeId;
+      },
+      "Candidate 2 is the best fit.",
+    );
+    await expect(page.locator("[data-testid='model-rationale']")).toContainText(`Candidate 2 (${cited})`);
+  });
+
+  test("@gate2 an older run whose ranking was never read shows its rank as the retrieval number", async ({ page }) => {
+    await open(page, (cands) =>
+      cands.forEach((c) => {
+        delete c.candidateNumber;
+        c.llmSuggested = false;
+      }),
+    );
     const row = candidateRows(page).first();
-    const id = (await row.getAttribute("data-cde-id")) ?? "";
-    expect(await row.getAttribute("data-rank")).toBe(await row.getByTestId("candidate-ordinal").textContent());
-    expect(id).not.toBe("");
+    expect(`#${await row.getAttribute("data-rank")}`).toBe(await row.getByTestId("candidate-ordinal").textContent());
+  });
+
+  test("@gate2 an older run whose ranking WAS read has no retrieval number to show — a dash, and no named citation", async ({
+    page,
+  }) => {
+    await open(
+      page,
+      (cands) =>
+        cands.forEach((c, i) => {
+          delete c.candidateNumber;
+          c.llmSuggested = i === 0;
+        }),
+      "Candidate 2 is the best fit.",
+    );
+    const ordinals = await page.getByTestId("candidate-ordinal").allTextContents();
+    expect(new Set(ordinals)).toEqual(new Set(["—"]));
+    await expect(page.locator("[data-testid='model-rationale']")).not.toContainText(/Candidate \d+ \(/);
   });
 
   test("@gate2 the chosen candidate is scrolled into view even when it is the least similar", async ({ page }) => {

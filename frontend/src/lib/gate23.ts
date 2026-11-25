@@ -62,24 +62,41 @@ export function candidateAlternatives(candidates: UICandidate[]): string[] {
 }
 
 /**
+ * A candidate's RETRIEVAL NUMBER — its place in the list hybrid retrieval handed the model (keyword matching fused
+ * with embedding similarity), which is the number the model's rationale cites ("Candidate 3"). Null when unknown.
+ *
+ * Core 1.4.2 sends it (`candidateNumber`). An older run sends only `rank`, the position after the model's ranking:
+ * when that ranking was never read (no candidate is `llmSuggested`) the rank IS the retrieval order; when it was read,
+ * the retrieval order is gone, and a guess would name the wrong element — so it is unknown (user test 2026-11-25).
+ */
+export function retrievalNumber(
+  c: Pick<UICandidate, "rank" | "candidateNumber">,
+  all: readonly Pick<UICandidate, "llmSuggested">[],
+): number | null {
+  if (c.candidateNumber != null) return c.candidateNumber;
+  return all.some((x) => x.llmSuggested) ? null : c.rank;
+}
+
+/**
  * Name every "Candidate N" the model's rationale cites (08-26, live-test-2 #3).
  *
- * THE MODEL'S ORDINAL IS THE CANDIDATE'S RANK — the order it was shown them in — not any position on the
- * screen. The ranked table floats the chosen candidate to the top, so "Candidate 3" and a pick on the first
- * displayed row are the SAME element; read against display positions they disagree. Citing the element by
- * name removes the ambiguity whatever the table's order, and the table numbers each row by its rank so the
- * two numberings are one. An ordinal no candidate carries is left untouched rather than pinned to a guess,
- * and a citation already followed by its name is not named twice.
+ * THE MODEL'S ORDINAL IS THE CANDIDATE'S RETRIEVAL NUMBER — the order it was shown them in (`retrievalNumber`) — not
+ * its rank after the model reordered, and not any position on the screen. Keying on rank named the wrong element as
+ * soon as core 1.4.2 began reading the model's ranking (user test 2026-11-25). Citing the element by name removes the
+ * ambiguity whatever the table's order. An ordinal no candidate carries — or one whose number is unknown — is left
+ * untouched rather than pinned to a guess, and a citation already followed by its name is not named twice.
  */
 export function citeCandidateOrdinals(
   rationale: string,
-  candidates: Pick<UICandidate, "rank" | "cdeId">[],
+  candidates: { number: number | null; cdeId: string }[],
 ): string {
-  const byRank = new Map(candidates.map((c) => [c.rank, c.cdeId]));
+  const byNumber = new Map(
+    candidates.filter((c): c is { number: number; cdeId: string } => c.number != null).map((c) => [c.number, c.cdeId]),
+  );
   return rationale.replace(
     /\b(candidate\s*#?\s*)(\d+)\b(?!\s*\()/gi,
     (whole, _lead: string, n: string) => {
-      const name = byRank.get(Number(n));
+      const name = byNumber.get(Number(n));
       return name ? `${whole} (${name})` : whole;
     },
   );
