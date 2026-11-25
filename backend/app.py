@@ -93,6 +93,7 @@ from backend.jobs import (
     auto_accepted,
     is_auto,
     principal_of,
+    remove_work_dir,
     store,
 )
 from backend.llm_errors import CodedHTTPException, coded_http_error, key_required
@@ -569,11 +570,14 @@ async def start_batch(
     review_mode = cfg.get("reviewMode", GUIDED_REVIEW)
     if review_mode not in REVIEW_MODES:
         raise HTTPException(status_code=400, detail=f"reviewMode must be one of {'|'.join(REVIEW_MODES)}")
+    run_mode = cfg.get("runMode", "batch")
+    if run_mode not in ("batch", "sync", "preview"):
+        raise HTTPException(status_code=400, detail="runMode must be batch|sync|preview")
     # Pre-flight the provider key AT THE DOOR, like Continue does (08-28 1a, live verify 3 F8). A run started
     # without one used to be accepted, uploaded and embedded, and then errored in its first paid stage. Refused
     # here, before anything is created: no run row, no work dir, nothing embedded, nothing charged. A preview
     # makes no model call and is exempt; a non-Anthropic model does not use this key.
-    if _resume_needs_a_key({"run_mode": cfg.get("runMode", "batch"), "model_tag": cfg.get("modelTag")}, effective_key):
+    if _resume_needs_a_key({"run_mode": run_mode, "model_tag": cfg.get("modelTag")}, effective_key):
         raise key_required(
             "Enter your Anthropic API key to start this run — its first step is a paid model call and the "
             "key clears on reload. Nothing was created or charged; re-enter the key and press Start again."
@@ -586,107 +590,116 @@ async def start_batch(
     cde_path = _catalog_path_or_refuse(cde_set, starting=True)
     job_id = str(uuid.uuid4())
     work_dir = _WORK_ROOT / job_id
-    uploads = work_dir / "uploads"
-    uploads.mkdir(parents=True, exist_ok=True)
+    # The uploads are written before they are checked, so from the first write until the run row exists a refusal
+    # (or any failure) would strand them: no run to delete, nothing to age out. The worst case was the
+    # participant-level refusal keeping the one kind of file we promise never to accept. Once `store.create`
+    # succeeds the run owns the dir and `JobStore.delete` / TTL purge reap it.
+    try:
+        uploads = work_dir / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
 
-    saved: dict[str, Path] = {}
-    for up in files:
-        dest = uploads / Path(up.filename or "upload.csv").name
-        with open(dest, "wb") as fh:
-            shutil.copyfileobj(up.file, fh)
-        saved[dest.name] = dest
+        saved: dict[str, Path] = {}
+        for up in files:
+            dest = uploads / Path(up.filename or "upload.csv").name
+            with open(dest, "wb") as fh:
+                shutil.copyfileobj(up.file, fh)
+            saved[dest.name] = dest
 
-    dict_specs: list[dict[str, Any]] = []
-    for d in cfg.get("dictionaries", []):
-        fname = Path(d["filename"]).name
-        if fname not in saved:
-            raise HTTPException(status_code=400, detail=f"Uploaded file missing for {fname!r}")
-        roles = {k: v for k, v in d.get("columnRoles", {}).items() if v}
-        # Core's requirement, from the one place it is written down (`backend/role_requirement.py`, pinned to
-        # core's loader and to the frontend's copy). It used to be a hand copy here that took question_text
-        # alone, which core loads as ZERO variables — the cohort was then dropped mid-run and the rest billed.
-        role_error = role_requirement_error(fname, roles)
-        if role_error is not None:
-            raise HTTPException(status_code=400, detail=role_error)
-        # Refused BEFORE anything is harmonized, embedded or sent anywhere: this is a standing product
-        # prohibition (we accept metadata, never participant-level data), so the check belongs at the door.
-        offender = _participant_level_column(saved[fname])
-        if offender is not None:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"{fname!r} looks like participant-level data: the column {offender!r} holds a unique "
-                    "value on every row. Upload a data DICTIONARY — one row per variable, describing the "
-                    "fields — not the participant records themselves. ddharmon harmonizes metadata and "
-                    "never accepts participant data."
-                ),
-            )
-        # The OUTCOME, not just the rule: core's own loader, run on the upload (local, free). A mapping that
-        # meets the rule can still load nothing — its text column empty on every row — and a cohort that
-        # loads nothing is refused here, by name, rather than silently missing from a run that bills.
-        empty_error = zero_variable_error(fname, saved[fname], str(d["cohortName"]), roles)
-        if empty_error is not None:
-            raise HTTPException(status_code=400, detail=empty_error)
-        dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
+        dict_specs: list[dict[str, Any]] = []
+        for d in cfg.get("dictionaries", []):
+            fname = Path(d["filename"]).name
+            if fname not in saved:
+                raise HTTPException(status_code=400, detail=f"Uploaded file missing for {fname!r}")
+            roles = {k: v for k, v in d.get("columnRoles", {}).items() if v}
+            # Core's requirement, from the one place it is written down (`backend/role_requirement.py`, pinned to
+            # core's loader and to the frontend's copy). It used to be a hand copy here that took question_text
+            # alone, which core loads as ZERO variables — the cohort was then dropped mid-run and the rest billed.
+            role_error = role_requirement_error(fname, roles)
+            if role_error is not None:
+                raise HTTPException(status_code=400, detail=role_error)
+            # Refused BEFORE anything is harmonized, embedded or sent anywhere: this is a standing product
+            # prohibition (we accept metadata, never participant-level data), so the check belongs at the door.
+            offender = _participant_level_column(saved[fname])
+            if offender is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{fname!r} looks like participant-level data: the column {offender!r} holds a unique "
+                        "value on every row. Upload a data DICTIONARY — one row per variable, describing the "
+                        "fields — not the participant records themselves. ddharmon harmonizes metadata and "
+                        "never accepts participant data."
+                    ),
+                )
+            # The OUTCOME, not just the rule: core's own loader, run on the upload (local, free). A mapping that
+            # meets the rule can still load nothing — its text column empty on every row — and a cohort that
+            # loads nothing is refused here, by name, rather than silently missing from a run that bills.
+            empty_error = zero_variable_error(fname, saved[fname], str(d["cohortName"]), roles)
+            if empty_error is not None:
+                raise HTTPException(status_code=400, detail=empty_error)
+            dict_specs.append({"path": str(saved[fname]), "cohort_name": d["cohortName"], "column_roles": roles})
 
-    cde_spec = cde_spec_for(cde_path)
+        cde_spec = cde_spec_for(cde_path)
 
-    run_mode = cfg.get("runMode", "batch")
-    if run_mode not in ("batch", "sync", "preview"):
-        raise HTTPException(status_code=400, detail="runMode must be batch|sync|preview")
-    run_config: dict[str, Any] = {
-        "run_mode": run_mode,
-        "gen_transform_specs": bool(cfg.get("genTransformSpecs", True)),
-        # "Suggest analysis ideas" toggle — generate them during the run (same model/provider/key) so the
-        # results page has them ready. No-op in preview (no LLM). The runner reads this.
-        "gen_analysis_ideas": bool(cfg.get("suggestAnalysisIdeas", True)),
-        "cde_cohort": CDE_COHORT,
-        "work_dir": str(work_dir),
-        "cde_set": cde_set,
-        # Corpus size the New-Run form estimated (variables / cohorts). Display-only — persisted so the run
-        # view's Stop dialog can show a committed-vs-avoided cost estimate (run_config keeps no dictionaries).
-        "est_fields": int(cfg["estFields"]) if cfg.get("estFields") is not None else None,
-        "est_cohorts": int(cfg["estCohorts"]) if cfg.get("estCohorts") is not None else None,
-        # STGD-16's two switches, recorded at CREATION and never flipped afterwards: a run resumed with a
-        # different answer would stop matching the cost it was quoted (T-08-69). `concept_gate` is the M7
-        # advisory stage — opt-in, default off, so a run only pays for a stage it asked for.
-        "concept_gate": bool(cfg.get("conceptGate", False)),
-        # `readjudication` is permission for the re-adjudication endpoint to spend on a re-split the reviewer
-        # names at Gate 1. ALWAYS ON for a new run (final review round 1): no run ever buys a re-split by
-        # itself — the reviewer buys one group at a time by pressing a priced "Accept this division", so a
-        # blind opt-in at Setup only made that informed decision unreachable. Setup's quote carries it as a
-        # per-use line. The create payload's `allowReadjudication` is no longer read. A run created before this
-        # recorded its own answer and keeps it (`/readjudicate` still refuses one that recorded off).
-        "readjudication": True,
-        # 08-14e: whether this run prepares its dictionaries before embedding, recorded so every later leg and a
-        # re-run embed the text the first leg embedded even if the product default moves again (`run_prepares`).
-        "preprocess": PREPARE_BEFORE_EMBED_DEFAULT,
-    }
-    # Recorded only when it is not the default, so a guided run's config is byte-for-byte what it always was (an
-    # absent key reads as guided — see backend/jobs.py `review_mode_of`).
-    if review_mode != GUIDED_REVIEW:
-        run_config[REVIEW_MODE_CONFIG_KEY] = review_mode
-    # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
-    # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from
-    # an advanced/API caller still wins. Adding a new knob here needs no frontend change.
-    for cfg_key, run_key in (
-        ("minClusterSize", "min_cluster_size"),
-        ("topK", "top_k"),
-        ("retrievalFloor", "retrieval_floor"),
-        ("modelTag", "model_tag"),
-    ):
-        if cfg.get(cfg_key) is not None:
-            run_config[run_key] = int(cfg[cfg_key]) if cfg_key in ("minClusterSize", "topK") else cfg[cfg_key]
-    # Non-Anthropic providers have no Anthropic-style Batch API, so they run SYNCHRONOUSLY regardless of the
-    # requested runMode. Anthropic keeps the (default) cost-bounded batch path. Provider is derived from the
-    # selected model tag; the picker also sends x-provider as a hint (used only for logging/telemetry here).
-    selected_model = run_config.get("model_tag")
-    if run_config["run_mode"] == "batch" and selected_model and _provider_for_model(str(selected_model)) != "anthropic":
-        run_config["run_mode"] = "sync"
-    display = cfg.get("displayName") or f"Run {job_id[:8]}"
-    # Own the run (verified Clerk subject) and persist dict_specs so it can be re-run from its retained
-    # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
-    store.create(job_id, display, run_config, owner_subject=_subject(request), dict_specs=dict_specs)
+        run_config: dict[str, Any] = {
+            "run_mode": run_mode,
+            "gen_transform_specs": bool(cfg.get("genTransformSpecs", True)),
+            # "Suggest analysis ideas" toggle — generate them during the run (same model/provider/key) so the
+            # results page has them ready. No-op in preview (no LLM). The runner reads this.
+            "gen_analysis_ideas": bool(cfg.get("suggestAnalysisIdeas", True)),
+            "cde_cohort": CDE_COHORT,
+            "work_dir": str(work_dir),
+            "cde_set": cde_set,
+            # Corpus size the New-Run form estimated (variables / cohorts). Display-only — persisted so the run
+            # view's Stop dialog can show a committed-vs-avoided cost estimate (run_config keeps no dictionaries).
+            "est_fields": int(cfg["estFields"]) if cfg.get("estFields") is not None else None,
+            "est_cohorts": int(cfg["estCohorts"]) if cfg.get("estCohorts") is not None else None,
+            # STGD-16's two switches, recorded at CREATION and never flipped afterwards: a run resumed with a
+            # different answer would stop matching the cost it was quoted (T-08-69). `concept_gate` is the M7
+            # advisory stage — opt-in, default off, so a run only pays for a stage it asked for.
+            "concept_gate": bool(cfg.get("conceptGate", False)),
+            # `readjudication` is permission for the re-adjudication endpoint to spend on a re-split the reviewer
+            # names at Gate 1. ALWAYS ON for a new run (final review round 1): no run ever buys a re-split by
+            # itself — the reviewer buys one group at a time by pressing a priced "Accept this division", so a
+            # blind opt-in at Setup only made that informed decision unreachable. Setup's quote carries it as a
+            # per-use line. The create payload's `allowReadjudication` is no longer read. A run created before this
+            # recorded its own answer and keeps it (`/readjudicate` still refuses one that recorded off).
+            "readjudication": True,
+            # 08-14e: whether this run prepares its dictionaries before embedding, recorded so every later leg and a
+            # re-run embed the text the first leg embedded even if the product default moves again (`run_prepares`).
+            "preprocess": PREPARE_BEFORE_EMBED_DEFAULT,
+        }
+        # Recorded only when it is not the default, so a guided run's config is byte-for-byte what it always was (an
+        # absent key reads as guided — see backend/jobs.py `review_mode_of`).
+        if review_mode != GUIDED_REVIEW:
+            run_config[REVIEW_MODE_CONFIG_KEY] = review_mode
+        # Optional advanced knobs — passed through only when set (else the engine's defaults apply). min_cluster_size
+        # is auto-scaled from corpus size by the engine when omitted (no longer a GUI knob); an explicit value from
+        # an advanced/API caller still wins. Adding a new knob here needs no frontend change.
+        for cfg_key, run_key in (
+            ("minClusterSize", "min_cluster_size"),
+            ("topK", "top_k"),
+            ("retrievalFloor", "retrieval_floor"),
+            ("modelTag", "model_tag"),
+        ):
+            if cfg.get(cfg_key) is not None:
+                run_config[run_key] = int(cfg[cfg_key]) if cfg_key in ("minClusterSize", "topK") else cfg[cfg_key]
+        # Non-Anthropic providers have no Anthropic-style Batch API, so they run SYNCHRONOUSLY regardless of the
+        # requested runMode. Anthropic keeps the (default) cost-bounded batch path. Provider is derived from the
+        # selected model tag; the picker also sends x-provider as a hint (used only for logging/telemetry here).
+        selected_model = run_config.get("model_tag")
+        if (
+            run_config["run_mode"] == "batch"
+            and selected_model
+            and _provider_for_model(str(selected_model)) != "anthropic"
+        ):
+            run_config["run_mode"] = "sync"
+        display = cfg.get("displayName") or f"Run {job_id[:8]}"
+        # Own the run (verified Clerk subject) and persist dict_specs so it can be re-run from its retained
+        # uploads. dict_specs paths point into this job's work_dir/uploads, which now survives until delete.
+        store.create(job_id, display, run_config, owner_subject=_subject(request), dict_specs=dict_specs)
+    except BaseException:
+        remove_work_dir(work_dir, job_id)
+        raise
     # api_key rides as a thread kwarg (in-memory, this job only) — never in run_config, which is persisted. A
     # Full-auto leg is also handed the continue function, which carries that same in-memory key to the next leg.
     threading.Thread(

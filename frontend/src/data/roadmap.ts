@@ -3,38 +3,33 @@
 //
 // PUBLIC surface: curate, don't dump. Every item is user-legible and public-safe — NO internal
 // terminology, run IDs, competitor names, proprietary cohort specifics, or research-run notes.
-// "Shipped" = live in this app today; "in-progress" = actively being built; "planned" = intended
-// next; "exploring" = an open research direction we're actively thinking about, not a commitment.
-// Cross items off (shipped) as they ship.
+// Forthcoming work only: "in-progress" = actively being built; "planned" = intended next;
+// "exploring" = an open research direction we're actively thinking about, not a commitment.
+// Strike an item entirely once it ships — shipped work does not belong here.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import type { ContentProvenance } from "./content-provenance";
 
-/** See ./content-provenance. NOT yet baselined — item statuses have not been re-checked against what
- *  actually shipped. This is the manifest most prone to quiet drift: "planned" items go out without
- *  anyone crossing them off, so the roadmap under-claims. First pass should reconcile every status
- *  against the pipeline, then set a real coreCommit. */
+/** See ./content-provenance. NOT yet baselined — items have not been re-checked against what actually
+ *  shipped. This is the manifest most prone to quiet drift: an item ships and nobody strikes it, so the
+ *  roadmap lists shipped work as forthcoming. First pass should reconcile every item against the
+ *  pipeline, then set a real coreCommit. */
 export const VERIFIED_AGAINST: ContentProvenance = {
   coreCommit: "unverified",
   contractVersion: "unverified",
   checkedOn: "never",
-  scope: "Baseline not established — item statuses unreconciled against what has shipped.",
+  scope: "Baseline not established — items unreconciled against what has shipped.",
 };
 
-export type RoadmapStatus = "shipped" | "in-progress" | "planned" | "exploring";
+export type RoadmapStatus = "in-progress" | "planned" | "exploring";
 
 export interface RoadmapItem {
   label: string;
   status: RoadmapStatus;
   /** Optional one-line clarification, public-safe. */
   note?: string;
-  /** Optional design preview / mockup of this item (renders a "Preview" tag). Normally an in-app
-   *  route. */
+  /** Optional design preview / mockup of this item (an in-app route; renders a "Preview" tag). */
   preview?: string;
-  /** Set when `preview` is a self-contained static page served outside the SPA rather than an in-app
-   *  route. Such a page is only ever returned by a real request, so its link must be a plain anchor —
-   *  client-side routing would swallow the navigation and find no matching route. */
-  previewStandalone?: boolean;
 }
 
 export interface RoadmapGroup {
@@ -49,14 +44,6 @@ export const ROADMAP: RoadmapGroup[] = [
     blurb: "How ddharmon maps variables to a shared standard.",
     items: [
       {
-        label: "Split-aware assignment to Common Data Elements (adopt · refine · propose novel)",
-        status: "shipped",
-      },
-      {
-        label: "Transform-spec generation — value recodes, unit and arithmetic conversions",
-        status: "shipped",
-      },
-      {
         label: "Choose your LLM provider and model",
         status: "in-progress",
         note: "Provider/model picker is live; more models are being validated end-to-end.",
@@ -67,10 +54,6 @@ export const ROADMAP: RoadmapGroup[] = [
       },
       {
         label: "Direct variable → ontology annotation (LOINC, SNOMED, …), beyond CDE mapping",
-        status: "planned",
-      },
-      {
-        label: "Propose cross-cohort concepts only — suppress single-cohort elements on demand",
         status: "planned",
       },
       {
@@ -98,33 +81,17 @@ export const ROADMAP: RoadmapGroup[] = [
     blurb: "Seeing what the pipeline does and why.",
     items: [
       {
-        label: "Cross-cohort run dashboard — mapping-verdict Sankey + embedding atlas",
-        status: "shipped",
-      },
-      { label: "Live run progress — elapsed, ETA, and a per-stage timeline", status: "shipped" },
-      { label: "Suggested downstream analyses unlocked by a run", status: "shipped" },
-      { label: "Inspect the raw source-dictionary rows behind every concept", status: "shipped" },
-      { label: "Methods, Design-rationale, and external-Benchmarks pages", status: "shipped" },
-      {
         label: "Inline inspection of the prompt behind each pipeline stage",
         status: "planned",
       },
       { label: "Richer cluster and atlas visualizations", status: "planned" },
       {
-        label: "Staged review — approve each layer in turn: concept groups → CDEs → transform specs → export",
-        status: "planned",
-        note: "See and adjust the concept groups before anything is sent to a model, then choose which ones go on to the paid stages.",
-        // Trailing slash = the page's canonical URL (a directory index), so the click skips a redirect.
-        preview: "/preview/staged-review/",
-        previewStandalone: true,
-      },
-      {
-        label: "Drag-and-drop concept restructuring — move variables between concepts, then re-check with the model",
+        label: "Re-check a group with the model after you move variables between groups",
         status: "planned",
         preview: "/preview/restructure",
       },
       {
-        label: "Flag a concept as incoherent and have the model re-adjudicate it",
+        label: "Flag a group as incoherent yourself and have the model re-split it",
         status: "planned",
       },
     ],
@@ -146,18 +113,12 @@ export const ROADMAP: RoadmapGroup[] = [
         status: "exploring",
         preview: "/preview/payoff",
       },
-      {
-        label: "Composite / derived-variable builder — assemble scores (e.g. frailty) from harmonized inputs",
-        status: "exploring",
-        preview: "/preview/composite",
-      },
     ],
   },
   {
     theme: "Interoperability",
     blurb: "Playing well with existing standards and tooling.",
     items: [
-      { label: "Assignment to NIH Common Data Elements", status: "shipped" },
       { label: "SSSOM crosswalk export for mappings", status: "planned" },
       { label: "LinkML schema export of the data model", status: "planned" },
       { label: "GenCDE / CDE-curator submission handoff for proposed new elements", status: "planned" },
@@ -174,11 +135,6 @@ export const ROADMAP: RoadmapGroup[] = [
     blurb: "The dictionaries ddharmon can harmonize.",
     items: [
       {
-        label: "Public example cohorts — All of Us · CLSA · UK Biobank · MESA · AI-READI",
-        status: "shipped",
-      },
-      { label: "Bring your own data dictionary (upload + column mapping)", status: "shipped" },
-      {
         label: "A growing library of public source dictionaries",
         status: "in-progress",
       },
@@ -193,11 +149,6 @@ export const ROADMAP: RoadmapGroup[] = [
     theme: "Evaluation & review",
     blurb: "How we measure quality and keep humans in the loop.",
     items: [
-      {
-        label: "External gold benchmarks — CDEMapper · PhenX · AI-READI · ATHLOS",
-        status: "shipped",
-      },
-      { label: "Expert-in-the-loop review queue and workbench", status: "shipped" },
       {
         label: "Reproducibility metrics — run-to-run and cross-model agreement",
         status: "planned",

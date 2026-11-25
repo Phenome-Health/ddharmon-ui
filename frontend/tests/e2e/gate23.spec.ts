@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import type { JobResult, UIRecord } from "@/types";
+import type { JobResult, UICandidate, UIRecord } from "@/types";
 import { gate1BillableGroups, gate1ScopePayload, inheritedGate1Scope } from "@/lib/gate-decisions";
 import { mergeSpecEdit } from "@/lib/gate23";
 import { optionSetKey } from "@/lib/gate-decisions";
@@ -1764,19 +1764,108 @@ test.describe("gate2 candidate table — no key, the columns say it", () => {
     await expect(page.locator("[data-testid='cos-bar-fill']")).toHaveCount(0);
   });
 
-  test("@gate2 the marks are words: 'your target', and 'model's pick' only when it is not your target", async ({ page }) => {
+  test("@gate2 the marks are words: the delivered pick says 'model's pick'; 'your target' marks only your own choice", async ({ page }) => {
+    // User test 2026-11-25: "the 'your target' flag is a little misleading, instead call it 'model's pick' like it
+    // says when the user picks something else". As delivered the chosen row IS the model's pick, so it says so.
     const rows = await openOne(page);
     await expect(page.locator("[data-testid='pick-star'], [data-testid='candidate-chosen-mark']")).toHaveCount(0);
     const chosen = page.locator("[data-testid='candidate-row'][data-chosen='true']");
-    await expect(chosen.getByTestId("candidate-tag")).toHaveText("your target");
-    // As delivered the model's pick IS the target, so it says nothing more.
-    await expect(page.getByText("model's pick", { exact: true })).toHaveCount(0);
+    await expect(chosen).toHaveAttribute("data-model-pick", "true");
+    await expect(chosen.getByTestId("candidate-tag")).toHaveText("model's pick");
+    await expect(page.getByText("your target", { exact: true })).toHaveCount(0);
+    // Once the reviewer chooses another row, that row is theirs and the model's row keeps its own mark.
     await pickCandidate(page, page.locator("[data-testid='candidate-row']:not([data-chosen='true'])").first());
-    const pick = page.locator("[data-testid='candidate-row'][data-model-pick='true']");
-    await expect(pick.getByTestId("candidate-tag")).toHaveText("model's pick");
     await expect(page.locator("[data-testid='candidate-row'][data-chosen='true']").getByTestId("candidate-tag")).toHaveText(
       "your target",
     );
+    await expect(
+      page.locator("[data-testid='candidate-row'][data-model-pick='true']").getByTestId("candidate-tag"),
+    ).toHaveText("model's pick");
     expect(await rows.count()).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * USER TEST 2026-11-25: "The order of the retrieved CDEs is not intuitive - what is the default order? I would expect
+ * descending by similarity." It was: the chosen row pinned first, then `rank`, which on a Claude 5.5 run was the
+ * retrieval order (core dropped the model's ranking when it came back as text; fixed in core 1.4.2). So the list
+ * now reads by similarity, high to low; `#` stays the number the model's rationale cites; and the chosen row, which
+ * is no longer pinned, is scrolled into view instead.
+ */
+test.describe("gate2 candidate table — by similarity", () => {
+  /** One adopt concept with enough candidates that the list scrolls; `mutate` adjusts its candidates. */
+  function longConcept(mutate?: (cands: UICandidate[]) => void) {
+    return (run: JobResult): void => {
+      const r = (run.result?.records ?? []).find((x) => x.verdict === "adopt" && x.candidates.length >= 10);
+      if (!r || !run.result) throw new Error("fixture: no adopt record with >= 10 candidates");
+      mutate?.(r.candidates);
+      run.result.records = [r];
+    };
+  }
+
+  async function open(page: Page, mutate?: (cands: UICandidate[]) => void): Promise<Locator> {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await serveFinished(page, longConcept(mutate));
+    await openGate2(page);
+    const rows = candidateRows(page);
+    await expect(rows.first()).toBeVisible();
+    return rows;
+  }
+
+  test("@gate2 candidates are listed by similarity, highest first", async ({ page }) => {
+    await open(page);
+    const sims = (await page.getByTestId("candidate-similarity").allTextContents()).map(Number);
+    expect(sims.length).toBeGreaterThanOrEqual(10);
+    expect(sims, "similarity must not increase down the list").toEqual([...sims].sort((a, b) => b - a));
+  });
+
+  test("@gate2 # is the number the model's rationale cites, not the row position", async ({ page }) => {
+    const numberOf = new Map<string, number>();
+    await open(page, (cands) => {
+      // Prompt numbers that agree with neither the row order nor the ranked order.
+      cands.forEach((c, i) => {
+        c.candidateNumber = cands.length - i;
+        numberOf.set(c.cdeId, c.candidateNumber);
+      });
+    });
+    const rows = candidateRows(page);
+    for (let i = 0; i < (await rows.count()); i++) {
+      const row = rows.nth(i);
+      const id = (await row.getAttribute("data-cde-id")) ?? "";
+      await expect(row.getByTestId("candidate-ordinal")).toHaveText(String(numberOf.get(id)));
+    }
+  });
+
+  test("@gate2 a run from an older core shows the rank in #", async ({ page }) => {
+    await open(page, (cands) => cands.forEach((c) => delete c.candidateNumber));
+    const row = candidateRows(page).first();
+    const id = (await row.getAttribute("data-cde-id")) ?? "";
+    expect(await row.getAttribute("data-rank")).toBe(await row.getByTestId("candidate-ordinal").textContent());
+    expect(id).not.toBe("");
+  });
+
+  test("@gate2 the chosen candidate is scrolled into view even when it is the least similar", async ({ page }) => {
+    await open(page, (cands) => {
+      const floor = Math.min(...cands.map((c) => c.cosine));
+      for (const c of cands) if (c.isChosen) c.cosine = Math.round((floor - 0.01) * 1000) / 1000;
+    });
+    const sims = (await page.getByTestId("candidate-similarity").allTextContents()).map(Number);
+    const chosen = page.locator("[data-testid='candidate-row'][data-chosen='true']");
+    // It sorts LAST, below the fold of the list's own scroll box...
+    expect(await candidateRows(page).last().getAttribute("data-chosen")).toBe("true");
+    const box = page.getByTestId("candidate-scroll");
+    expect(await box.evaluate((el) => el.scrollHeight > el.clientHeight), "the list must actually scroll").toBe(true);
+    expect(sims.length).toBeGreaterThanOrEqual(10);
+    // ...and is brought into view anyway — inside the list's OWN scroll box. (Not the page viewport: at 1440x900 the
+    // list itself starts below the fold, and the page scroll is the reviewer's, not this component's.)
+    const inBox = await box.evaluate((el) => {
+      const row = el.querySelector<HTMLElement>("[data-testid='candidate-row'][data-chosen='true']");
+      if (!row) return false;
+      const b = el.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      return el.scrollTop > 0 && r.top >= b.top - 1 && r.bottom <= b.bottom + 1;
+    });
+    expect(inBox, "the chosen row must be scrolled fully into the list's view").toBe(true);
+    await expect(chosen).toBeVisible();
   });
 });

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { REDIRECT_ROUTES } from "./routes";
 
 /**
  * Smoke gate — the app boots and its core user-facing surfaces render from the
@@ -21,6 +22,19 @@ test("the New run nav routes into the staged gated flow, not the legacy form", a
   await page.getByRole("link", { name: "New run", exact: true }).click();
   await expect(page).toHaveURL(/\/run\/new\/setup$/);
 });
+
+/**
+ * A redirect-only route carries no visual baseline (`REDIRECT_ROUTES` in routes.ts), so this is what proves an
+ * old link to it still lands. Both forms of the old URL are tried, since a link may carry a trailing slash.
+ */
+for (const { path, to } of REDIRECT_ROUTES) {
+  test(`${path} redirects to ${to}`, async ({ page }) => {
+    for (const from of [path, `${path}/`]) {
+      await page.goto(from);
+      await expect(page, `${from} should land on ${to}`).toHaveURL(new RegExp(`${to}$`));
+    }
+  });
+}
 
 test("demo page lists the shipped cohorts", async ({ page }) => {
   await page.goto("/demo");

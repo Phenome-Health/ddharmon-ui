@@ -115,6 +115,25 @@ def principal_of(subject: str | None, job: Job | None = None) -> str:
     return subject or (job.owner_subject if job is not None else None) or LOCAL_PRINCIPAL
 
 
+def remove_work_dir(target: Path, job_id: str) -> bool:
+    """Remove a job's on-disk scratch dir ``target``. A no-op if it is already gone.
+
+    Returns whether the directory is gone AFTERWARDS, and warns when it is not.
+    ``shutil.rmtree(..., ignore_errors=True)`` reports success for a teardown it did not achieve — a
+    permission on the host, a file another process still holds — and under the checkpoint model that
+    silence IS the unbounded-growth failure (T-08-54): the bytes stay on the disk forever and nothing
+    anywhere says so. Every automatic teardown in the backend goes through here (a deleted or purged run,
+    and a ``/batch`` start refused before its run existed), so none of them can fail without a signal.
+    """
+    shutil.rmtree(target, ignore_errors=True)
+    if target.exists():
+        logger.warning(
+            "work dir for run %s could not be removed (%s still on disk) — it will not be retried", job_id, target
+        )
+        return False
+    return True
+
+
 @dataclass
 class Job:
     """A single harmonization run."""
@@ -461,23 +480,13 @@ class JobStore:
     def _teardown_work_dir(self, job_id: str) -> bool:
         """Remove a job's on-disk scratch dir. No-op without a ``work_root`` or if the dir is already gone.
 
-        Returns whether the directory is gone AFTERWARDS, and warns when it is not.
-        ``shutil.rmtree(..., ignore_errors=True)`` reports success for a teardown it did not achieve — a
-        permission on the host, a file another process still holds — and under the checkpoint model that
-        silence IS the unbounded-growth failure (T-08-54): the run disappears from the UI, its stage output
-        stays on the disk forever, and nothing anywhere says so. This is the only automatic teardown in the
-        backend, so if it lies there is no second chance and no signal.
+        Returns whether the directory is gone AFTERWARDS, and warns when it is not (:func:`remove_work_dir`):
+        a deleted run disappears from the UI, so a teardown that silently failed would leave its stage output
+        on the disk with no second chance and no signal.
         """
         if self.work_root is None:
             return True
-        target = self.work_root / job_id
-        shutil.rmtree(target, ignore_errors=True)
-        if target.exists():
-            logger.warning(
-                "work dir for run %s could not be removed (%s still on disk) — it will not be retried", job_id, target
-            )
-            return False
-        return True
+        return remove_work_dir(self.work_root / job_id, job_id)
 
     def _persist(self, job: Job) -> None:
         """Write a job through to the durable store — unless it's pinned (demos/samples aren't persisted)."""

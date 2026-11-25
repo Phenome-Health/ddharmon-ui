@@ -1,5 +1,5 @@
 import { DisclosureChevron } from "@/components/ui/disclosure";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ExternalLink, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -39,6 +39,11 @@ const RICHNESS_FIELDS: { label: string; has: (c: UICandidate) => boolean }[] = [
   { label: "permissible values", has: (c) => !!c.permissibleValues && c.permissibleValues.length > 0 },
   { label: "steward", has: (c) => !!c.stewardOrg },
 ];
+
+/** The number the model saw this candidate under (what its rationale cites); a pre-1.4.2 run has only its rank. */
+function candidateNumber(c: UICandidate): number {
+  return c.candidateNumber ?? c.rank;
+}
 
 function cos(x: number | null | undefined): string {
   return x == null ? "—" : x.toFixed(3);
@@ -117,6 +122,20 @@ export function CandidateTable({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const effectiveExpanded = expandedId ?? chosenId;
 
+  // The chosen row is no longer pinned to the top, so bring it into view inside the list's OWN scroll box (never the
+  // page) whenever the choice or the record changes — but only when it is out of view, so a reviewer scrolling the
+  // list is not yanked back. The sticky header covers the box's top edge, so it is subtracted.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const box = scrollRef.current;
+    const row = box?.querySelector<HTMLElement>("[data-testid='candidate-row'][data-chosen='true']");
+    if (!box || !row) return;
+    const head = box.querySelector<HTMLElement>("[data-testid='candidate-columns']")?.offsetHeight ?? 0;
+    const top = row.offsetTop - head;
+    const bottom = row.offsetTop + Math.min(row.offsetHeight, box.clientHeight - head);
+    if (top < box.scrollTop || bottom > box.scrollTop + box.clientHeight) box.scrollTop = Math.max(0, top - 4);
+  }, [chosenId, candidates]);
+
   if (candidates.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-on-raised-muted">
@@ -124,15 +143,22 @@ export function CandidateTable({
       </p>
     );
   }
+  // BY SIMILARITY, HIGH TO LOW (user test 2026-11-25: "I would expect descending by similarity"). Nothing is pinned:
+  // the chosen row keeps its similarity position and is scrolled into view below. Ties fall back to the number the
+  // model saw the candidate under, so equal cosines still read in a stable order.
   const ordered = [...candidates].sort(
-    (a, b) => (b.isChosen ? 1 : 0) - (a.isChosen ? 1 : 0) || a.rank - b.rank,
+    (a, b) => b.cosine - a.cosine || candidateNumber(a) - candidateNumber(b),
   );
 
   return (
     <div className="flex flex-col gap-1.5">
       {/* NO KEY STRIP (review round 3, legend option A). The columns are named for what they hold, the three that
           need it explain themselves on hover, and the row marks are words — so there is nothing to look up. */}
-      <div className="max-h-[30rem] overflow-y-auto rounded-inner border border-rule-quiet-on-raised divide-y divide-rule-quiet-on-raised">
+      <div
+        ref={scrollRef}
+        data-testid="candidate-scroll"
+        className="relative max-h-[30rem] overflow-y-auto rounded-inner border border-rule-quiet-on-raised divide-y divide-rule-quiet-on-raised"
+      >
         <div
           data-testid="candidate-columns"
           className={cn(
@@ -140,7 +166,10 @@ export function CandidateTable({
             COLUMNS,
           )}
         >
-          <span>#</span>
+          <HeadTip
+            label="#"
+            tip="The candidate's number as the model was shown it — the number its rationale cites (\u201cCandidate 2 \u2026\u201d)."
+          />
           <span>CDE</span>
           <HeadTip
             label="Values"
@@ -152,7 +181,7 @@ export function CandidateTable({
           />
           <HeadTip
             label="Similarity"
-            tip="Embedding similarity between the group and the CDE — the retrieval signal. It can disagree with the model's pick, which ranks on concept fit (the # column)."
+            tip="Embedding similarity between the group and the CDE — the retrieval signal, and the order of this list. The model's pick can sit lower: it weighs concept fit, which its rationale explains."
           />
         </div>
         {ordered.map((c) => {
@@ -181,10 +210,10 @@ export function CandidateTable({
                   chosen ? "bg-surface-ok/40" : "hover:bg-surface-inset",
                 )}
               >
-                {/* The RANK, not the row position (#3): the chosen candidate floats to the top, and the model's
-                    rationale numbers candidates in the order it saw them — so the row number must be that. */}
+                {/* The number the model SAW the candidate under — what its rationale cites ("Candidate 2 …") — never the
+                    row position (#3), which is now similarity order. Older runs carry no such number: their rank. */}
                 <span data-testid="candidate-ordinal" className="tabular-nums text-xs text-on-raised-muted">
-                  {c.rank}
+                  {candidateNumber(c)}
                 </span>
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5">
@@ -194,15 +223,16 @@ export function CandidateTable({
                     <span data-testid="candidate-name" className="truncate text-sm font-semibold text-on-raised">
                       {candidateLabel(c, candidates)}
                     </span>
-                    {/* The marks are WORDS, so no key is needed: your target, and the model's pick only when it is
-                        not your target (as delivered they are the same row, and saying both would say nothing). */}
+                    {/* The marks are WORDS, so no key is needed. As delivered the chosen row IS the model's pick, and it
+                        says so (user test 2026-11-25: "your target" read as the reviewer's own choice). "your target"
+                        marks only a row the reviewer chose instead, and the model's row then keeps its own mark. */}
                     {chosen && (
                       <span
                         data-testid="candidate-tag"
-                        data-tag="target"
+                        data-tag={c.isChosen ? "model-pick" : "target"}
                         className="shrink-0 rounded-pill bg-surface-ok px-2 py-0.5 text-xs font-semibold text-on-ok"
                       >
-                        your target
+                        {c.isChosen ? "model's pick" : "your target"}
                       </span>
                     )}
                     {c.isChosen && !chosen && (

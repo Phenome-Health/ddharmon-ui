@@ -9,6 +9,11 @@ Both gates run against a **static build** (`VITE_STATIC=1`), which reads the bun
 `public/static-data/*.json` demo fixtures instead of `/api`. That means **no backend, no Clerk keys and
 no paid harmonization run** — which is what makes them cheap enough to run on every UI change.
 
+The one exception is the smoke run's `stream` project (`tests/stream/`). It builds the app as it ships,
+into `dist-stream/`, because only a live build reads a run over two channels — the stream frame and the
+separate `/result` fetch. Its specs answer `/api` themselves with `page.route`, so it needs no backend
+either.
+
 ```bash
 npm run typecheck                          # tsc --noEmit
 npm run test:e2e                           # everything: smoke + visual regression
@@ -16,8 +21,8 @@ npm run test:e2e -- --grep "@visual"       # visual regression only
 npm run test:e2e -- --grep-invert "@visual" # smoke only (what CI runs)
 ```
 
-Playwright builds and serves the bundle itself (`playwright.config.ts` → `webServer`), so there is
-nothing to start first. The first run takes ~3 minutes because it builds.
+Playwright builds and serves both bundles itself (`playwright.config.ts` → `webServer`), so there is
+nothing to start first. The first run takes a few minutes because it builds.
 
 ## Visual regression
 
@@ -30,7 +35,7 @@ way to review those diffs deliberately.
 
 | Property | Value |
 |---|---|
-| Coverage | 23 baselines — the 22 routes registered in `src/App.tsx` plus the 404 fallback |
+| Coverage | one baseline per route registered in `src/App.tsx`, plus the 404 fallback. Redirect-only routes (`REDIRECT_ROUTES`) carry none |
 | Route list | `tests/e2e/routes.ts` (`VISUAL_ROUTES`) — the single list the spec iterates |
 | Viewport | **1440** wide × 900 layout height, one viewport (the app is desktop-only, ≥1280px) |
 | Theme | **one** screenshot per route — the app ships a single theme, so there is no light/dark pair |
@@ -41,7 +46,8 @@ way to review those diffs deliberately.
 
 A guard test in the same file parses `<Route path="…">` out of `src/App.tsx` and **fails naming any
 route that has no baseline**, so a new route cannot silently escape coverage. Add the route to
-`tests/e2e/routes.ts` and regenerate.
+`VISUAL_ROUTES` in `tests/e2e/routes.ts` and regenerate. A route that only redirects goes in
+`REDIRECT_ROUTES` instead: it gets no screenshot, and `smoke.spec.ts` checks where it lands.
 
 **Updating baselines**
 

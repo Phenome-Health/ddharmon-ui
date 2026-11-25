@@ -76,6 +76,7 @@ import {
   reshapedGroupIds,
   reviewerGroupRows,
   matchTerms,
+  matchTermsIn,
   namedGroupsById,
   partitionByBreadth,
   pricePerGroup,
@@ -2322,7 +2323,7 @@ function GroupDetail({
 
 export default function Gate1Page() {
   const { jobId = "" } = useParams<{ jobId: string }>();
-  const { jobState, error, reconnecting, cancel } = useHarmonizeStream(
+  const { jobState, error, reconnecting, cancel, resultPending, resultError } = useHarmonizeStream(
     jobId,
     true,
     true,
@@ -2982,6 +2983,30 @@ export default function Gate1Page() {
     [unassigned, moves, groups, reviewerIds],
   );
   const poolCount = membership.unassigned.length + poolFromPipeline.length;
+  /**
+   * DOES THE QUEUE'S SEARCH HIT A VARIABLE IN NO GROUP? (user test 2026-11-25). Bhargav: *"unless I'm already
+   * looking in 'in no group' there's no indication that my search term has a hit in 'in no group'"* — the queue
+   * filters and marks concept groups only, so a hit in the pool was invisible until the reviewer opened it. When this
+   * is true the sidebar's "In no group" entry wears an outline in the search highlight's own colour; that outline is
+   * the one signal.
+   *
+   * THE QUEUE'S OWN RULE, not a second matcher: `matchTermsIn` is `matchTerms` over each pooled variable's text — the
+   * text the pool's grid shows and marks for it (its name, the run's text, its description and its question), so a
+   * box outlined here holds a variable the open pool highlights.
+   */
+  const poolSearchHit = useMemo(() => {
+    if (!terms || terms.length === 0 || poolCount === 0) return false;
+    const entry = (id: string, runText?: string) => {
+      const fd = fieldIndex[id];
+      const text = [memberParts(id, fieldIndex).variable, runText, fd?.text, fd?.description, fd?.questionText];
+      return { id, text: text.filter(Boolean).join(" ") };
+    };
+    const entries = [
+      ...membership.unassigned.map((id) => entry(id)),
+      ...poolFromPipeline.map((f) => entry(`${f.cohort}:${f.variable}`, f.text)),
+    ];
+    return matchTermsIn(entries, terms).ids.size > 0;
+  }, [terms, poolCount, membership.unassigned, poolFromPipeline, fieldIndex]);
 
   /** Member ids the reviewer has moved — what makes a chip render in the you-changed-it register. */
   const movedMemberIds = useMemo(() => new Set(Object.keys(moves)), [moves]);
@@ -3231,12 +3256,27 @@ export default function Gate1Page() {
    * changes these go false and the rows appear with no reload. A `useState` seeded on first render would
    * strand the reviewer on a waiting screen over a run that had already arrived.
    *
-   * AN ABSENT `jobState` COUNTS AS WAITING, deliberately. The run's payload has not landed, so the screen
-   * knows nothing about the corpus — and "No groups formed" is exactly as false then as it is mid-run.
-   * A stream failure is reported by the `error` alert above rather than by this branch.
+   * AN ABSENT `jobState` IS NOT WAITING but LOADING (`loadingResult`, checked first): before the first frame the
+   * screen does not know the run is running at all, and on a parked or finished run "This run is still working" is
+   * as false as "No groups formed". A stream failure is reported by the `error` alert above.
    */
-  const awaitingRun =
-    groups.length === 0 && (!jobState || isInFlight(jobState.status));
+  const awaitingRun = groups.length === 0 && !!jobState && isInFlight(jobState.status);
+  /**
+   * THE RUN'S RESULT HAS NOT ARRIVED YET (2026-11-13).
+   *
+   * The same false claim as `awaitingRun`, from a parked or finished run instead of a running one: the thin stream
+   * frame says where the run stands before the separate result download lands, and on a large run (the shared
+   * demo's is ~7 MB) that window was 1–3 s of "No groups formed" — the first thing a demo guest saw. Before the
+   * frame itself, the screen does not even know where the run stands. Until the result lands the screen knows
+   * nothing about the corpus, so it says it is loading. Checked BEFORE `awaitingRun` because its "This run is
+   * <phase>" copy names a phase, and a parked run has none to name.
+   */
+  const loadingResult = groups.length === 0 && resultPending;
+  /**
+   * THE RESULT FAILED TO ARRIVE. Not a wait any more, and still no finding: a dropped download says nothing about
+   * the corpus, so the screen says the result didn't load rather than "No groups formed" — Gate 2's own wording.
+   */
+  const resultFailed = groups.length === 0 && !!resultError;
   /**
    * The run ENDED before it produced anything.
    *
@@ -3362,7 +3402,7 @@ export default function Gate1Page() {
       )}
       {/* A run that FAILED is said once, by the shell's failure notice at the top (round 10); this alert is left for
           a STREAM failure, which is about the connection rather than the run. */}
-      {error && jobState?.status !== "error" && (
+      {error && error !== resultError && jobState?.status !== "error" && (
         <p role="alert" className="text-sm font-semibold text-status-danger">
           {error.message}
         </p>
@@ -3434,7 +3474,24 @@ export default function Gate1Page() {
       />
 
       {/* No groups to lay out — waiting, stopped, or an all-outliers run. Full width, not a pane. */}
-      {awaitingRun ? (
+      {resultFailed ? (
+        <GateEmptyState
+          heading="This run's result didn't load"
+          nextStep="Reload the page — your gate state is saved."
+        >
+          <span data-testid="gate1-result-failed">{resultError?.message}</span>
+        </GateEmptyState>
+      ) : loadingResult ? (
+        <GateEmptyState
+          heading="Loading this run…"
+          nextStep="One moment while the concept groups load — no need to reload."
+        >
+          <span data-testid="gate1-loading">
+            Fetching this run&apos;s result. Its groups appear here as soon as
+            it arrives.
+          </span>
+        </GateEmptyState>
+      ) : awaitingRun ? (
         <GateEmptyState
           heading="Waiting for this run to reach Gate 1"
           nextStep={
@@ -3797,6 +3854,7 @@ export default function Gate1Page() {
               aria-current={poolSelected}
               onClick={() => setPoolSelected(true)}
               data-drop-over={poolOver ? "true" : undefined}
+              data-search-hit={poolSearchHit ? "true" : undefined}
               onDragOver={
                 frozen
                   ? undefined
@@ -3831,6 +3889,10 @@ export default function Gate1Page() {
                 poolSelected
                   ? "border-rule-info bg-surface-info text-accent-on-raised"
                   : "border-rule-on-raised bg-surface-inset text-on-raised hover:border-rule-info hover:bg-surface-info",
+                // THE QUEUE'S SEARCH HAS A HIT IN HERE (user test 2026-11-25): an outline in the search highlight's
+                // own colour (`--surface-highlight`, the token `Highlight`'s marks paint), so the reviewer knows to look
+                // here as well. A drag over the box outranks it — that dashed outline is the drop cue.
+                poolSearchHit && !poolOver && "outline-2 outline-offset-2 outline-surface-highlight",
                 poolOver &&
                   "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
               )}

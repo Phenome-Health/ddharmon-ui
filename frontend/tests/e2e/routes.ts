@@ -24,14 +24,6 @@ export interface VisualRoute {
    */
   registered?: boolean;
   /**
-   * A self-contained page served from `frontend/public/`, outside the SPA's `<Switch>`. It is a real
-   * public URL reached by a real request — unlike `registered: false`, which means a path served by
-   * nothing. It is exempt from the App.tsx coverage match and from it ALONE: it still carries a
-   * screenshot baseline, because moving a page out of `src/` is exactly how one stopped being
-   * covered by every colour, type and visual gate at once.
-   */
-  standalone?: boolean;
-  /**
    * A LITERAL job id to substitute for `:jobId`, instead of the first complete demo job.
    *
    * The staged-review gate routes need it: `needsJobFixture` resolves a FINISHED run, and a finished run
@@ -47,9 +39,8 @@ export interface VisualRoute {
 export const PAUSED_RUN_FIXTURE = "demo-staged-gate1";
 
 /**
- * 22 routes + the 404 fallback = 23 baselines, taken from `src/App.tsx`'s `<Switch>` — NOT from
- * CONTEXT.md's stale 15-route list. 08-UI-SPEC §12 names `/roadmap/staged-review`; on this branch the
- * staged-review preview is registered at `/preview/staged-review`, so that is what is baselined.
+ * One baseline per route in `src/App.tsx`'s `<Switch>` (except the `REDIRECT_ROUTES` below) plus the 404
+ * fallback — NOT CONTEXT.md's stale 15-route list.
  */
 export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "landing", path: "/" },
@@ -66,12 +57,8 @@ export const VISUAL_ROUTES: VisualRoute[] = [
   { name: "architecture", path: "/architecture" },
   { name: "preview-restructure", path: "/preview/restructure" },
   { name: "preview-payoff", path: "/preview/payoff" },
-  { name: "preview-composite", path: "/preview/composite" },
   { name: "preview-reproducibility", path: "/preview/reproducibility" },
   { name: "preview-knowledge-graph", path: "/preview/knowledge-graph" },
-  // Moved out of the SPA (App.tsx no longer registers it) and into
-  // `public/preview/staged-review/index.html`. Baselined at the URL /roadmap links to.
-  { name: "preview-staged-review", path: "/preview/staged-review/", standalone: true },
   { name: "phenome", path: "/phenome" },
   // The /job/:jobId/* family baselines against the bundled static demo fixture, so the suite needs no
   // paid harmonization run. The sub-pages pass `instant` to useHarmonizeStream and settle on the full
@@ -106,23 +93,14 @@ export const VISUAL_ROUTES: VisualRoute[] = [
 ];
 
 /**
- * The subset of routes built ON the SPA's token layer — everything except standalone static pages.
- *
- * The typography, surface-pairing and rebrand-drill suites assert properties OF THAT LAYER: four type
- * sizes and two weights, every text run measured against its role-paired surface, and no component-level
- * colour surviving a tier-1 swap in `src/index.css`. A page served straight out of `public/` with no build
- * step shares none of that machinery — it declares its own `:root` block — so walking it with these three
- * asserts the SPA's architecture against a page that deliberately does not implement it. That produces
- * three red gates whose only available fix is to mute them, which is how a gate dies.
- *
- * Standalone pages are NOT unpoliced. They carry:
- *   - the same screenshot baseline (`visual.spec.ts` walks the FULL list, deliberately),
- *   - `tests/test_content_drift.py::test_standalone_pages_keep_colour_literals_in_their_token_block`
- *     — the `index.css` rule, applied to the page's own token block, and
- *   - `::test_standalone_page_default_theme_matches_the_brand` — which is the rebrand drill's guarantee
- *     obtained statically: if `--brand-*` moves and the page's tokens do not, that gate goes red.
+ * Registered routes that render nothing of their own and only redirect. A screenshot of one would be a
+ * second copy of its destination's baseline, so they carry none: the coverage guard in `visual.spec.ts`
+ * accepts an entry here in place of a `VISUAL_ROUTES` one, and `smoke.spec.ts` asserts each lands on `to`.
  */
-export const TOKEN_LAYER_ROUTES: VisualRoute[] = VISUAL_ROUTES.filter((r) => !r.standalone);
+export const REDIRECT_ROUTES: { path: string; to: string }[] = [
+  // The deleted static staged-review mockup; the guest demo superseded it.
+  { path: "/preview/staged-review", to: "/demo" },
+];
 
 /**
  * Resolve a route template to a navigable URL, substituting the `:jobId` of the first complete
