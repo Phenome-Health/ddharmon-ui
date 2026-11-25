@@ -21,7 +21,7 @@
 // a second for Gate 1 is the duplication the audit exists to catch.
 import { Flashlight, GripVertical, Undo2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Highlight } from "@/components/ui/highlight";
+import { Highlight, hasSearchHit, useSearchHighlight } from "@/components/ui/highlight";
 import { cn } from "@/lib/utils";
 import { MEMBER_DRAG_TYPE } from "@/components/gate/MemberChip";
 import { useDropHighlight } from "@/hooks/use-drop-highlight";
@@ -221,11 +221,37 @@ export function SourceRows({
   // BEFORE THE EARLY RETURN, because a hook cannot be called conditionally. `over` is read only where
   // `drag` is present; the workbench's call site passes none and is unchanged.
   const { over, cue } = useDropHighlight();
+  const search = useSearchHighlight();
   const built = buildRows(memberIds, memberDetails, fieldIndex);
-  const rows =
-    highlightIds && highlightIds.size > 0
-      ? [...built.filter((r) => highlightIds.has(r.id)), ...built.filter((r) => !highlightIds.has(r.id))]
-      : built;
+  // The embedded text is a column (and so searched) only where it differs from what the source said.
+  const embeddedShown = built.some((r) => !!r.text && r.text !== r.description && r.text !== r.questionText);
+  /**
+   * THE ROWS THE GATE'S SEARCH MARKS (user test 2026-11-25: "sometimes the text is buried somewhere deep in the
+   * response options … I want the vars that have search hits to move to the top … and the whole var row to have a
+   * slight yellow hue"). Exactly the cells `Highlight` marks — the name, description, question, response options and a
+   * shown embedded text — so a tinted row always holds a mark to find.
+   */
+  const searchHits = new Set(
+    built
+      .filter((r) =>
+        hasSearchHit(
+          [r.synthetic ? undefined : r.name, r.description, r.questionText, r.valueEncoding, embeddedShown ? r.text : undefined],
+          search.query,
+          search.mode,
+        ),
+      )
+      .map((r) => r.id),
+  );
+  /**
+   * LEAD WITH WHAT THE REVIEWER IS LOOKING FOR. A group's variable order means nothing, so the rows the score builder
+   * matched come first, then the search's hits, then the rest — each block in the pipeline's own order, and ahead of
+   * the row cap, so neither can be hidden by it.
+   */
+  const lead = (r: SourceRow) => (highlightIds?.has(r.id) ? 2 : 0) + (searchHits.has(r.id) ? 1 : 0);
+  const rows = built
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => lead(b.r) - lead(a.r) || a.i - b.i)
+    .map(({ r }) => r);
   if (!hasSourceRows(memberIds, memberDetails, fieldIndex)) return null;
 
   const shown = rows.slice(0, ROW_CAP);
@@ -330,6 +356,7 @@ export function SourceRows({
                 data-testid={drag ? "member-row" : undefined}
                 data-member-id={drag ? r.id : undefined}
                 data-highlighted={highlightIds?.has(r.id) ? "true" : undefined}
+                data-search-hit={searchHits.has(r.id) ? "true" : undefined}
                 // The moved state as DATA as well as as a colour: it is derived from a persisted
                 // decision, so a gate asserting "this correction survived a reload" has to READ it
                 // rather than eyeball a hue. Same contract `MemberChip` carries.
@@ -366,6 +393,9 @@ export function SourceRows({
                   // UNMISTAKABLE (review round 8): the tint alone was too faint to see, so a lit row also carries an
                   // accent bar down its left edge and the module's tag in its cohort cell.
                   highlightIds?.has(r.id) && "bg-surface-info shadow-[inset_3px_0_0_var(--accent)]",
+                  // A search hit: the search mark's own colour, faint, across the row — the Spotlight keeps its accent
+                  // bar and tag, so a row that is both still says both.
+                  searchHits.has(r.id) && "bg-surface-highlight/35 hover:bg-surface-highlight/50",
                 )}
               >
                 {drag && (
