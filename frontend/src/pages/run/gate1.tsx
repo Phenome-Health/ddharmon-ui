@@ -76,6 +76,7 @@ import {
   reshapedGroupIds,
   reviewerGroupRows,
   matchTerms,
+  matchTermsIn,
   namedGroupsById,
   partitionByBreadth,
   pricePerGroup,
@@ -2982,6 +2983,30 @@ export default function Gate1Page() {
     [unassigned, moves, groups, reviewerIds],
   );
   const poolCount = membership.unassigned.length + poolFromPipeline.length;
+  /**
+   * DOES THE QUEUE'S SEARCH HIT A VARIABLE IN NO GROUP? (user test 2026-11-25). Bhargav: *"unless I'm already
+   * looking in 'in no group' there's no indication that my search term has a hit in 'in no group'"* — the queue
+   * filters and marks concept groups only, so a hit in the pool was invisible until the reviewer opened it. When this
+   * is true the sidebar's "In no group" entry wears an outline in the search highlight's own colour; that outline is
+   * the one signal.
+   *
+   * THE QUEUE'S OWN RULE, not a second matcher: `matchTermsIn` is `matchTerms` over each pooled variable's text — the
+   * text the pool's grid shows and marks for it (its name, the run's text, its description and its question), so a
+   * box outlined here holds a variable the open pool highlights.
+   */
+  const poolSearchHit = useMemo(() => {
+    if (!terms || terms.length === 0 || poolCount === 0) return false;
+    const entry = (id: string, runText?: string) => {
+      const fd = fieldIndex[id];
+      const text = [memberParts(id, fieldIndex).variable, runText, fd?.text, fd?.description, fd?.questionText];
+      return { id, text: text.filter(Boolean).join(" ") };
+    };
+    const entries = [
+      ...membership.unassigned.map((id) => entry(id)),
+      ...poolFromPipeline.map((f) => entry(`${f.cohort}:${f.variable}`, f.text)),
+    ];
+    return matchTermsIn(entries, terms).ids.size > 0;
+  }, [terms, poolCount, membership.unassigned, poolFromPipeline, fieldIndex]);
 
   /** Member ids the reviewer has moved — what makes a chip render in the you-changed-it register. */
   const movedMemberIds = useMemo(() => new Set(Object.keys(moves)), [moves]);
@@ -3829,6 +3854,7 @@ export default function Gate1Page() {
               aria-current={poolSelected}
               onClick={() => setPoolSelected(true)}
               data-drop-over={poolOver ? "true" : undefined}
+              data-search-hit={poolSearchHit ? "true" : undefined}
               onDragOver={
                 frozen
                   ? undefined
@@ -3863,6 +3889,10 @@ export default function Gate1Page() {
                 poolSelected
                   ? "border-rule-info bg-surface-info text-accent-on-raised"
                   : "border-rule-on-raised bg-surface-inset text-on-raised hover:border-rule-info hover:bg-surface-info",
+                // THE QUEUE'S SEARCH HAS A HIT IN HERE (user test 2026-11-25): an outline in the search highlight's
+                // own colour (`--surface-highlight`, the token `Highlight`'s marks paint), so the reviewer knows to look
+                // here as well. A drag over the box outranks it — that dashed outline is the drop cue.
+                poolSearchHit && !poolOver && "outline-2 outline-offset-2 outline-surface-highlight",
                 poolOver &&
                   "bg-surface-info [outline:2px_dashed_var(--accent)] [outline-offset:-2px]",
               )}

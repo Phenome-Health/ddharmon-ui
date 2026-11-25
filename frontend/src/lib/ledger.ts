@@ -282,10 +282,24 @@ export function matchTerms(
   /** The reviewer's name for a group, so a renamed group is findable by the name they gave it. */
   renamedOf?: (groupId: string) => string | undefined,
 ): TermMatches {
+  return matchTermsIn(
+    groups.map((g) => ({ id: g.groupId, text: searchableText(g, renamedOf?.(g.groupId)) })),
+    terms,
+  );
+}
+
+/**
+ * THE SAME RULE AS `matchTerms`, over any `{ id, text }` entries rather than concept groups.
+ *
+ * Extracted (user test 2026-11-25) so the variables in no group are matched by the queue's OWN search rule —
+ * "In no group" outlines itself when the queue's search hits a variable in it, and a second matcher there could
+ * outline a box whose contents the queue's search would not have found, or miss one it would.
+ */
+export function matchTermsIn(entries: readonly { id: string; text: string }[], terms: readonly string[]): TermMatches {
   // Both forms kept: the Set answers an exact hit in one step, and the list is what a prefix scan needs.
-  const haystacks = groups.map((g) => {
-    const list = tokens(searchableText(g, renamedOf?.(g.groupId)));
-    return { id: g.groupId, exact: new Set(list), list };
+  const haystacks = entries.map((e) => {
+    const list = tokens(e.text);
+    return { id: e.id, exact: new Set(list), list };
   });
   /** Does any word in this group BEGIN with `w`? */
   const present = (h: (typeof haystacks)[number], w: string): boolean =>
