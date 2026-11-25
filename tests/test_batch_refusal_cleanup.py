@@ -71,7 +71,9 @@ def _post(cfg, upload_name="cohortA.csv", body=_DICTIONARY):
             id="declared-file-not-uploaded",
         ),
         pytest.param(
-            {"dictionaries": [_dictionary_entry(roles={"question_text": "desc"})]},
+            # No text role at all. (question_text alone is ACCEPTED since core 1.4.1 + the 2026-11-14 rule change,
+            # so it no longer exercises the refusal; a field_id-only mapping still does.)
+            {"dictionaries": [_dictionary_entry(roles={"field_id": "desc"})]},
             "cohortA.csv",
             _DICTIONARY,
             id="role-requirement",
