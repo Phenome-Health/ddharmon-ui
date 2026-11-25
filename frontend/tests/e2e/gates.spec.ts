@@ -927,7 +927,7 @@ test.describe("app chrome — no top bar, a hover-to-expand rail", () => {
     await page.locator(NAV).hover();
     await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "true");
     const panel = page.locator("[data-testid='app-nav-panel']");
-    const last = panel.getByText("Built with Claude Code", { exact: true });
+    const last = panel.getByText("Report an issue", { exact: true });
     await expect(last).toBeVisible();
     const p = (await panel.boundingBox())!;
     const l = (await last.boundingBox())!;
@@ -936,6 +936,17 @@ test.describe("app chrome — no top bar, a hover-to-expand rail", () => {
     const runs = page.locator(`${NAV} nav`).getByText("Runs", { exact: true });
     await runs.scrollIntoViewIfNeeded();
     await expect(runs).toBeInViewport();
+  });
+
+  test("@gates the open rail's footer carries no source or tooling links (user test 2026-11-25)", async ({ page }) => {
+    await page.goto("/jobs");
+    await page.waitForLoadState("networkidle");
+    await page.locator(NAV).hover();
+    await expect(page.locator(NAV)).toHaveAttribute("data-expanded", "true");
+    const panel = page.locator("[data-testid='app-nav-panel']");
+    await expect(panel.getByText("Report an issue", { exact: true })).toBeVisible();
+    await expect(panel.getByText("View source on GitHub")).toHaveCount(0);
+    await expect(panel.getByText("Built with Claude Code")).toHaveCount(0);
   });
 
   test("@gates keyboard focus in the rail expands it, and tabbing out collapses it", async ({ page }) => {
