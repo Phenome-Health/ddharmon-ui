@@ -248,6 +248,9 @@ def _candidate_to_ui(c: Any, cde_index: dict[str, CandidateMeta] | None = None) 
         "isChosen": c.is_chosen,
         "llmSuggested": c.llm_suggested,
     }
+    number = getattr(c, "candidate_number", None)  # core >= 1.4.2; absent rather than guessed on an older core
+    if number is not None:
+        ui["candidateNumber"] = int(number)
     if cde_index:
         # The dictionary key first (unique, what core ranked); the catalog id only as a fallback.
         meta = cde_index.get(c.cde_id) or (cde_index.get(c.cde_external_id) if c.cde_external_id else None)

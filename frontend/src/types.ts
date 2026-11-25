@@ -77,6 +77,9 @@ export interface UICandidate {
   cosine: number;
   isChosen: boolean;
   llmSuggested: boolean;
+  // Core 1.4.2: the candidate's number as the model saw it (prompt / retrieval order), which the rationale cites.
+  // `rank` is the ranked position. Absent on runs from earlier cores, which show `rank` instead. Mirrors contract.py.
+  candidateNumber?: number;
   // Catalog metadata (08-16g) — OPTIONAL because older runs / the current core contract do not emit it.
   // Populated by the candidate-enrichment join (tinyId -> CDE catalog). Absent fields render as "view on
   // the repo", present ones render inline so richness + harmonizability are judgeable without leaving the app.

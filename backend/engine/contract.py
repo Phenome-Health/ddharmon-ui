@@ -89,6 +89,9 @@ class UICandidate(TypedDict):
     cosine: float
     isChosen: bool
     llmSuggested: bool
+    # Core 1.4.2: the 1-based number the candidate had in the assign prompt (retrieval order), which the model's
+    # rationale cites ("Candidate 2 ..."). ``rank`` is the RANKED position. Absent when core predates the field.
+    candidateNumber: NotRequired[int]
     # ── additive (08-26): the chosen-target metadata Gate 2/3 key off, joined from the run's CDE catalog ──
     # Core's candidate carries none of it, so before this the wire was bare on every real run and Gate 3 read
     # "no type, no values" as a NUMBER (live-test-2 #7). Present only when the catalog knows the candidate
