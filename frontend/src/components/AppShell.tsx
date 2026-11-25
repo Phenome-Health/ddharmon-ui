@@ -8,7 +8,7 @@ import { UserButton } from "@clerk/react";
 import { cn } from "@/lib/utils";
 import { AUTH_ENABLED, useAuthState } from "@/auth";
 import { IS_STATIC } from "@/lib/api";
-import { ISSUES_URL, PH, REPO_URL } from "@/lib/links";
+import { ISSUES_URL, PH } from "@/lib/links";
 import { PhMark } from "@/components/ph-logo";
 import { ActiveRunsIndicator } from "@/components/active-runs-indicator";
 import { GlobalStatusBanner } from "@/components/global-status-banner";
@@ -194,22 +194,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   >
                     <Github className="h-3.5 w-3.5" /> Report an issue
                   </a>
-                  <a
-                    href={REPO_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block whitespace-nowrap px-3 text-xs text-on-chrome-muted transition-colors hover:text-on-chrome"
-                  >
-                    View source on GitHub
-                  </a>
-                  <a
-                    href="https://claude.com/claude-code"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block whitespace-nowrap px-3 text-xs text-on-chrome-muted transition-colors hover:text-on-chrome"
-                  >
-                    Built with Claude Code
-                  </a>
+                  {/* No "View source on GitHub" / "Built with Claude Code" (Bhargav, user test 2026-11-25). */}
                 </>
               )}
               {/* The build stamp stays in the DOM on the rail (screen-reader text) so a parity check can always read
