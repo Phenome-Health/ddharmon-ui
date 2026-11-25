@@ -235,6 +235,29 @@ export function inFlightGateOf(gatePosition: GatePosition | string | null | unde
 }
 
 /**
+ * The gate a run's worker is producing RIGHT NOW, or null when no worker is running (user test 2026-11-25).
+ *
+ * The rail marks it "in progress" and makes it a link, and its screen is where the progress lives — Bhargav, with
+ * Gate 3's leg running: "the progress bar appears on the previous gate. I want to be able to click on the cell for the
+ * gate itself that's running". A parked, finished, failed or stopped run is producing nothing.
+ *
+ * FULL AUTO'S HAND-OFF COUNTS AS RUNNING (08-30): parked only while the server commits that gate and starts the next
+ * leg (`autoAdvancing`), the run is already moving on — `RunProgress` reads it the same way — so the next gate is
+ * the one it is working on.
+ */
+export function runningGateOf(
+  job:
+    | { status?: string | null; gatePosition?: GatePosition | string | null; autoAdvancing?: boolean | null }
+    | null
+    | undefined,
+): GatePosition | null {
+  if (!job) return null;
+  const advancing = job.status === "awaiting_review" && !!job.autoAdvancing;
+  if (!isInFlight(job.status) && !advancing) return null;
+  return inFlightGateOf(job.gatePosition);
+}
+
+/**
  * Where a link to THIS RUN should go — the one answer every surface that lists runs reads (08-28).
  *
  * Every real run is a staged run now (Start and the API re-run both park at Gate 1), so a run that is not

@@ -737,7 +737,9 @@ test.describe("the run-progress readout", () => {
         specs: t - 15,
       };
     });
-    await gotoGate(page);
+    // On the gate this leg is producing — the fixture left Gate 1 — which is where the progress is (2026-11-25).
+    await page.goto(`/run/${PAUSED_JOB}/gate2`);
+    await page.waitForLoadState("networkidle");
     const timeline = page.locator("[data-testid='run-timeline']");
     await expect(timeline).toBeVisible();
     await expect(timeline).toContainText(/specs/i);
@@ -1064,8 +1066,11 @@ test.describe("a gate the run is still producing", () => {
   test("@gates a gate the run has already reached keeps its screen while the run works ahead", async ({ page }) => {
     await inFlight(page, { phase: "assigning", reached: true });
     await gotoGate(page);
-    await expect(page.getByTestId("run-progress")).toBeVisible();
     await expect(page.getByTestId("how-to")).toBeVisible();
     await expect(page.getByTestId("score-strip")).toBeVisible();
+    // Its progress is on the gate the leg is producing, not here (user test 2026-11-25: "the progress bar appears on
+    // the previous gate"); the rail says so once, as a link.
+    await expect(page.getByTestId("run-progress")).toHaveCount(0);
+    await expect(page.getByTestId("rail-link-gate2")).toContainText("in progress");
   });
 });

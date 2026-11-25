@@ -271,7 +271,10 @@ test.describe("Full auto — the gates", () => {
 
   test("@full-auto in flight, the run is seen moving through the gates without stopping", async ({ page }) => {
     await serveAutoRun(page, { gate: "gate1", status: "assigning", decided: ["gate1"] });
+    // On the gate the run is working on (2026-11-25); from Gate 1 the rail says so and links there.
     await open(page, "gate1");
+    await expect(page.getByTestId("rail-link-gate2")).toContainText("in progress");
+    await open(page, "gate2");
     const strip = page.getByTestId("auto-progress");
     await expect(strip).toBeVisible();
     await expect(strip.locator("[data-auto-gate='gate1']")).toHaveAttribute("data-state", "accepted");
@@ -282,7 +285,12 @@ test.describe("Full auto — the gates", () => {
 
   test("@full-auto the moment between a park and the next step still reads as a run moving on", async ({ page }) => {
     await serveAutoRun(page, { gate: "gate2", status: "awaiting_review", decided: ["gate1"], autoAdvancing: true });
+    // Parked at Gate 2 only while the server starts Gate 3's leg: the rail already reads Gate 3 as in progress…
     await open(page, "gate2");
+    await expect(page.getByTestId("rail-link-gate3")).toContainText("in progress");
+    await expect(page.getByTestId("auto-paused")).toHaveCount(0);
+    // …and Gate 3's screen is where the run is seen moving on.
+    await open(page, "gate3");
     await expect(page.getByTestId("run-progress")).toBeVisible();
     await expect(page.getByTestId("auto-progress").locator("[data-auto-gate='gate3']")).toHaveAttribute(
       "data-state",
