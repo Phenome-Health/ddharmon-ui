@@ -171,7 +171,8 @@ def test_the_export_route_is_not_a_new_post_surface(monkeypatch, tmp_path):
     per-dictionary CSV and the whole-set workbook). Those must be POSTs: it runs before a run exists, so the file it describes is in the request body rather
     than on the server. This route's own shape is what is being pinned here, not the total. 17 after 08-16e
     added the paid component-proposal route (`/jobs/{id}/score/components`); 18 after 08-28 0e added the
-    owner-scoped batch -> sync switch (`/jobs/{id}/switch-to-sync`).
+    owner-scoped batch -> sync switch (`/jobs/{id}/switch-to-sync`); 19 after the 2026-11-25 user test added
+    Gate 1's one-request select-all (`/jobs/{id}/artifacts/{kind}/batch`).
     """
     posts = len([1 for r in app_module.app.routes if "POST" in (getattr(r, "methods", None) or set())])
-    assert posts == 18, f"the POST surface changed ({posts} != 18)"
+    assert posts == 19, f"the POST surface changed ({posts} != 19)"

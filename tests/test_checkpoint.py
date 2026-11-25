@@ -1166,7 +1166,9 @@ def test_no_reconcile_http_route_was_added():
     # `/jobs/{id}/score/components` — the paid, job-scoped component PROPOSAL (a model call, so a POST).
     # 18 after 08-28 0e added `/jobs/{id}/switch-to-sync` — the owner-scoped batch -> sync switch, which
     # raises a flag the run's own batch stage acts on (it makes no provider call itself).
-    assert posts == 18, f"the POST surface changed ({posts} != 18)"
+    # 19 after the 2026-11-25 user test added `/jobs/{id}/artifacts/{kind}/batch` — Gate 1's select-all as ONE save
+    # (it was one PUT and one full re-read per group); owner-scoped, gate decisions only, spends nothing.
+    assert posts == 19, f"the POST surface changed ({posts} != 19)"
 
 
 # ── Gate 0: the boundary that lets a run ENTER the staged flow ───────────────────────────────

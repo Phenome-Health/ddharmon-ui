@@ -1215,7 +1215,12 @@ def test_pinned_run_rejects_deletes_of_every_gate_decision_kind(tmp_path, monkey
 
 def _scope_payload(group_id, chosen="in"):
     options = ("in", "out")
-    return {"groupId": group_id, "chosen": chosen, "alternatives": list(options), "optionSetKey": option_set_key(options)}
+    return {
+        "groupId": group_id,
+        "chosen": chosen,
+        "alternatives": list(options),
+        "optionSetKey": option_set_key(options),
+    }
 
 
 def _parked_job(job_id="j1", gate="gate1"):
