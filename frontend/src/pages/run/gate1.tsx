@@ -2341,6 +2341,12 @@ export default function Gate1Page() {
 
   // Cross-cohort-only replaces the bucket partition: on = the harmonization subset, off = every group.
   const [xcOnly, setXcOnly] = useState(false);
+  /**
+   * Only the groups the Concept Spotlight tagged (user test 2026-11-25: "want to be able to filter to spotlight groups
+   * only in gate 1 sidebar"). Read through `spotlightFilterOn`, so a Spotlight that stops tagging cannot leave a
+   * filter on that hides every row.
+   */
+  const [spotlightOnly, setSpotlightOnly] = useState(false);
   // Master-detail selection. `selectedId` names the group in the detail pane; `poolSelected` swaps the
   // pane to the "In no group" holding area instead.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -2512,9 +2518,11 @@ export default function Gate1Page() {
     // `result` first: until the run's payload has landed, neither "is there a Gate 4 match?" nor "is this gate
     // passed?" has an answer, and asking early would fetch for a screen that then never uses the reply. And only
     // on a run that is DEFINITELY the reviewer's own (`pinned === false`): the shared demo keeps its declaration in
-    // this browser, which the server never sees, and nothing a guest does there leaves the browser.
-    enabled:
-      !!jobId && !!jobState?.result && pinned === false && !frozen && !latestSpec && declared.length > 0,
+    // this browser, which the server never sees, and nothing a guest does there leaves the browser. ASKED ON A PASSED
+    // GATE 1 TOO (user test 2026-11-25: "Concept Spotlight queries don't seem to persist when I come back to gate 1 …
+    // this applies to the flashlight tags as well"): a $0 read, and there it only TAGS — `scoreSeed` keeps it out of
+    // the scope, which stays exactly what Continue sent.
+    enabled: !!jobId && !!jobState?.result && pinned === false && !latestSpec && declared.length > 0,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     retry: false,
@@ -2571,22 +2579,31 @@ export default function Gate1Page() {
     () =>
       scoreScopeInput(
         latestSpec,
-        frozen || latestSpec ? null : suggestionData,
+        latestSpec ? null : suggestionData,
         // Each list's concepts at that list's cut-off: a group two lists reach is suggested if it clears EITHER.
         cutoffOf ? (scoreName: string) => cutoffOf(scoreName).value : undefined,
       ),
-    [latestSpec, frozen, suggestionData, cutoffOf],
+    [latestSpec, suggestionData, cutoffOf],
   );
   const scoreTagByGroup = useMemo(() => scoreTaggedGroups(scoreInput.matches), [scoreInput]);
+  const spotlightFilterOn = spotlightOnly && scoreTagByGroup.size > 0;
   /** groupId → the cut-off(s) its suggestion was made at — the queue marker's tooltip states them. */
   const scoreCutoffsByGroup = useMemo(() => suggestionCutoffsByGroup(scoreInput.matches), [scoreInput]);
+  /**
+   * The groups the score puts in scope by default. NOT on a PASSED Gate 1 from the free suggestions: there they only
+   * tag (user test 2026-11-25), and a scope re-derived from them would print groups as "in scope" that Continue never
+   * sent (final review round 1, item 3). A passed run that carries its sent list reads that list anyway.
+   */
   const scoreSeed = useMemo(
-    () => scoreSeededGroups(scoreInput.matches, scoreInput.threshold),
-    [scoreInput],
+    () =>
+      frozen && scoreInput.source === "suggestion"
+        ? scoreSeededGroups([], scoreInput.threshold)
+        : scoreSeededGroups(scoreInput.matches, scoreInput.threshold),
+    [scoreInput, frozen],
   );
   /** What the score panel says about the suggestions, when they are the input (or could not be made). */
   const suggestionNote = useMemo(() => {
-    const s = !frozen && !latestSpec ? suggestionData : undefined;
+    const s = !latestSpec ? suggestionData : undefined;
     // No score searched for: the server holds no declaration for this run (the shared demo keeps its declaration in
     // this browser, which the server never sees) — so there is nothing to say, not "nothing was found".
     if (!s || s.scores.length === 0) return null;
@@ -2596,7 +2613,7 @@ export default function Gate1Page() {
       nComponents: scoreInput.source === "suggestion" ? scoreInput.matches.length : 0,
       unavailable: "",
     };
-  }, [frozen, latestSpec, suggestionData, scoreSeed, scoreInput]);
+  }, [latestSpec, suggestionData, scoreSeed, scoreInput]);
   /** The reviewer's own name for a group, or undefined. Read straight off the persisted decisions. */
   const renamedOf = (groupId: string): string | undefined => {
     const chosen = renames.decisions[groupId]?.chosen;
@@ -3118,6 +3135,7 @@ export default function Gate1Page() {
 
   const visible = useMemo(() => {
     let rows = xcOnly ? buckets["cross-cohort"] : groups;
+    if (spotlightFilterOn) rows = rows.filter((g) => scoreTagByGroup.has(g.groupId));
     if (search) rows = rows.filter((g) => search.ids.has(g.groupId));
     rows = applyFilters(rows, filters, { isTouched: isChanged, isInScope });
     const sorted = sortGroupsByColumn(rows, colSort, renamedOf);
@@ -3132,6 +3150,7 @@ export default function Gate1Page() {
   }, [
     buckets,
     xcOnly,
+    spotlightFilterOn,
     groups,
     search,
     filters,
@@ -3155,6 +3174,9 @@ export default function Gate1Page() {
   // Every filter that is on, as a removable chip under the search (08-30b) — Cross-cohort only first, then the
   // cohorts, then the states, in the order the menu lists them.
   const filterChips: FilterChip[] = [
+    ...(spotlightFilterOn
+      ? [{ key: "spot", label: "Spotlight groups only", onRemove: () => setSpotlightOnly(false) }]
+      : []),
     ...(xcOnly ? [{ key: "xc", label: "Cross-cohort only", onRemove: () => setXcOnly(false) }] : []),
     ...filters.cohorts.map((c) => ({
       key: `co:${c}`,
@@ -3169,13 +3191,13 @@ export default function Gate1Page() {
   ];
 
   /**
-   * Apply a bulk scope change to the VISIBLE rows, one request at a time.
+   * Apply a bulk scope change to the VISIBLE rows as ONE save (user test 2026-11-25: "select/deselect all is very
+   * slow").
    *
-   * SEQUENTIAL, NOT PARALLEL, and deliberately. N is the row count, `write`/`clear` are per-item promises,
-   * and `use-gate-decisions`' conflict surface is written for a single decision — so an unbounded burst
-   * that half-succeeds is precisely the state it has no way to report. A failure part-way through stops
-   * the run and leaves the PERSISTED decisions as the only source of truth; nothing here paints a
-   * checkbox optimistically, because `isInScope` reads `scope.decisions` and always has.
+   * It used to go one request at a time, each followed by a re-read of every decision the run holds — a few hundred
+   * groups were a few hundred round trips and a quadratic amount of reading. `applyMany` sends the whole press to the
+   * batch route, all or nothing, so the half-succeeded burst the sequential loop guarded against cannot happen: a
+   * refused batch rolls every row back and says so.
    */
   async function onBulkScope(target: "in" | "out") {
     const ids = shownForScope.map((g) => g.groupId);
@@ -3184,13 +3206,13 @@ export default function Gate1Page() {
     const value = target === "in" ? IN_SCOPE : OUT_OF_SCOPE;
     setBulkBusy(true);
     try {
-      for (const id of plan.clear) await scope.clear({ groupId: id });
-      for (const id of plan.write) {
-        await scope.write(
-          { groupId: id },
-          { chosen: value, alternatives: SCOPE_OPTIONS },
-        );
-      }
+      await scope.applyMany({
+        clear: plan.clear.map((groupId) => ({ groupId })),
+        write: plan.write.map((groupId) => ({
+          fields: { groupId },
+          options: { chosen: value, alternatives: SCOPE_OPTIONS },
+        })),
+      });
     } catch (e) {
       toast.error(
         e instanceof Error
@@ -3429,9 +3451,10 @@ export default function Gate1Page() {
         preview={preview}
         swaps={swaps}
         suggestionNote={suggestionNote}
-        // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match, gate open.
-        suggestions={!frozen && !latestSpec ? (suggestionData ?? null) : null}
-        suggestionsStatus={!frozen && !latestSpec ? suggestionsStatus : null}
+        // The free search's answer, only while it IS the score input (`scoreInput`): no Gate 4 match. On a passed gate
+        // too (user test 2026-11-25), read-only — its scope and cut-offs are frozen below.
+        suggestions={!latestSpec ? (suggestionData ?? null) : null}
+        suggestionsStatus={!latestSpec ? suggestionsStatus : null}
         suggestionsError={suggestionsQuery.error instanceof Error ? suggestionsQuery.error.message : undefined}
         onRetrySuggestions={() => void suggestionsQuery.refetch()}
         cutoffOf={cutoffOf}
@@ -3629,8 +3652,22 @@ export default function Gate1Page() {
                 activeFilters={filterChips.length}
                 filters={
                   <>
+                    {/* Offered only once the Spotlight has tagged something — a box that could only empty the queue is
+                        not a filter (user test 2026-11-25). */}
+                    {scoreTagByGroup.size > 0 && (
+                      <FilterSection first title="Concept Spotlight">
+                        <FilterCheck
+                          testid="filter-spotlight-only"
+                          checked={spotlightFilterOn}
+                          onChange={setSpotlightOnly}
+                          label="Spotlight groups only"
+                          count={scoreTagByGroup.size}
+                          countTestid="filter-spotlight-only-count"
+                        />
+                      </FilterSection>
+                    )}
                     <FilterSection
-                      first
+                      first={scoreTagByGroup.size === 0}
                       title="Cohorts"
                       columns={2}
                       lead={
@@ -3689,6 +3726,7 @@ export default function Gate1Page() {
                 chips={filterChips}
                 onClear={() => {
                   setXcOnly(false);
+                  setSpotlightOnly(false);
                   setFilters(NO_FILTERS);
                 }}
               />

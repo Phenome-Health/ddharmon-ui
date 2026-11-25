@@ -23,6 +23,36 @@ export function SearchHighlightProvider({
   return <SearchHighlight.Provider value={{ query, mode }}>{children}</SearchHighlight.Provider>;
 }
 
+/** The surrounding gate's live search, for a component that has to know WHETHER text is marked, not only mark it. */
+export function useSearchHighlight(): { query?: string; mode: HighlightMode } {
+  return useContext(SearchHighlight);
+}
+
+/**
+ * THE ONE PATTERN `Highlight` marks with, so "does this text carry a mark?" (`hasSearchHit`) can never disagree with
+ * what is actually marked. Null when there is nothing to search for.
+ */
+export function searchPattern(query: string | undefined, mode: HighlightMode, flags: string): RegExp | null {
+  const q = query?.trim();
+  if (!q) return null;
+  if (mode === "word-prefix") {
+    const words = (q.toLowerCase().match(/[a-z0-9]+/g) ?? []).sort((a, b) => b.length - a.length);
+    if (words.length === 0) return null;
+    return new RegExp(`(?<![a-z0-9])(${words.map(escape).join("|")})`, flags);
+  }
+  return new RegExp(`(${escape(q)})`, flags);
+}
+
+/** Whether any of `texts` would carry a search mark — a row the reviewer should look into (user test 2026-11-25). */
+export function hasSearchHit(
+  texts: readonly (string | undefined)[],
+  query: string | undefined,
+  mode: HighlightMode,
+): boolean {
+  const pattern = searchPattern(query, mode, "i");
+  return !!pattern && texts.some((t) => !!t && pattern.test(t));
+}
+
 /**
  * The queue's search hits (review round 3, Bhargav: "when i search something here, i want the matched text to be
  * highlighted like gmail does"). With no query the text renders as it is.
@@ -43,17 +73,8 @@ export function Highlight({
   mode?: HighlightMode;
 }) {
   const ctx = useContext(SearchHighlight);
-  const q = (query ?? ctx.query)?.trim();
-  mode = mode ?? ctx.mode;
-  if (!q) return <>{text}</>;
-  let pattern: RegExp;
-  if (mode === "word-prefix") {
-    const words = (q.toLowerCase().match(/[a-z0-9]+/g) ?? []).sort((a, b) => b.length - a.length);
-    if (words.length === 0) return <>{text}</>;
-    pattern = new RegExp(`(?<![a-z0-9])(${words.map(escape).join("|")})`, "gi");
-  } else {
-    pattern = new RegExp(`(${escape(q)})`, "gi");
-  }
+  const pattern = searchPattern(query ?? ctx.query, mode ?? ctx.mode, "gi");
+  if (!pattern) return <>{text}</>;
   const parts = text.split(pattern);
   return (
     <>

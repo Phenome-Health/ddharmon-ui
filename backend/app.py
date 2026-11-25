@@ -2057,6 +2057,55 @@ def put_artifact(
     }
 
 
+class ArtifactBatchPut(BaseModel):
+    payload: dict[str, Any]
+    base: float | None = None
+
+
+class ArtifactBatchBody(BaseModel):
+    put: list[ArtifactBatchPut] = []
+    delete: list[str] = []
+
+
+@app.post("/api/harmonize/jobs/{job_id}/artifacts/{kind}/batch")
+def batch_artifacts(job_id: str, kind: str, body: ArtifactBatchBody, request: Request) -> dict[str, Any]:
+    """Many gate decisions of ONE kind in one request — a bulk scope change (user test 2026-11-25).
+
+    Select-all on Gate 1 used to write each group with its own PUT and re-read every artifact after each, so a few
+    hundred groups cost a few hundred round trips. Per item this is exactly the single routes: the past-gate refusal,
+    the demo refusal, the kind's validation and the blind-overwrite conflict rule (``base`` per item). The whole body
+    is validated before anything is written, so a malformed item refuses the batch rather than half-applying it.
+    """
+    if kind not in GATE_DECISION_KINDS:
+        raise HTTPException(status_code=400, detail=f"batch writes take gate decisions only, not {kind!r}")
+    job, owner = _artifact_target(job_id, request)
+    _refuse_past_gate(job, kind)
+    artifacts = store.artifacts
+    if artifacts is None:
+        raise HTTPException(status_code=503, detail="Persistence is not configured on this server")
+    if _is_pinned(job):
+        raise ReadOnlyRunError(f"{job_id} is the shared demo and cannot be modified — clone it to keep your work")
+    puts = [({k: v for k, v in item.payload.items() if k != UPDATED_AT}, item.base) for item in body.put]
+    try:
+        for payload, _ in puts:
+            artifacts.check(kind=kind, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    written: list[dict[str, Any]] = []
+    deleted: list[str] = []
+    with _writable_run():
+        for payload, base in puts:
+            conflict = _conflict_for(artifacts, owner=owner, job_id=job_id, kind=kind, payload=payload, base=base)
+            stored = artifacts.put(owner=owner, job_id=job_id, kind=kind, payload=payload)
+            written.append(
+                {"kind": stored.kind, "itemKey": stored.item_key, "updatedAt": stored.updated_at, "conflict": conflict}
+            )
+        for item_key in body.delete:
+            artifacts.delete(owner=owner, job_id=job_id, kind=kind, item_key=item_key)
+            deleted.append(item_key)
+    return {"written": written, "deleted": deleted}
+
+
 @app.delete("/api/harmonize/jobs/{job_id}/artifacts/{kind}/{item_key:path}", status_code=204)
 def delete_artifact(job_id: str, kind: str, item_key: str, request: Request) -> None:
     job, owner = _artifact_target(job_id, request)

@@ -48,6 +48,7 @@ import {
   candidateAlternatives,
   candidateListState,
   citeCandidateOrdinals,
+  retrievalNumber,
   needsRepickConfirmation,
   repickConfirmation,
   targetSearchName,
@@ -575,8 +576,12 @@ export default function Gate2Page() {
                 <p className="border-l-2 border-rule-control-on-raised pl-3 text-sm italic text-on-raised">
                   {citeCandidateOrdinals(
                     record.rationale,
-                    // cited by the name the rows show — a repeated catalog name with its tinyId (08-28 F13)
-                    record.candidates.map((c) => ({ rank: c.rank, cdeId: candidateLabel(c, record.candidates) })),
+                    // cited by the name the rows show — a repeated catalog name with its tinyId (08-28 F13) — keyed on
+                    // the number the model was SHOWN the candidate under, never its rank after the model reordered
+                    record.candidates.map((c) => ({
+                      number: retrievalNumber(c, record.candidates),
+                      cdeId: candidateLabel(c, record.candidates),
+                    })),
                   )}
                 </p>
               </div>

@@ -4,6 +4,7 @@ import { ExternalLink, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { candidateLabel, definitionWithoutName } from "@/lib/cde-identity";
+import { retrievalNumber } from "@/lib/gate23";
 import { cdeDetailUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import type { UICandidate } from "@/types";
@@ -40,9 +41,9 @@ const RICHNESS_FIELDS: { label: string; has: (c: UICandidate) => boolean }[] = [
   { label: "steward", has: (c) => !!c.stewardOrg },
 ];
 
-/** The number the model saw this candidate under (what its rationale cites); a pre-1.4.2 run has only its rank. */
-function candidateNumber(c: UICandidate): number {
-  return c.candidateNumber ?? c.rank;
+/** A similarity tie-break that never throws on an unknown retrieval number (it sorts last). */
+function tieBreak(c: UICandidate, all: UICandidate[]): number {
+  return retrievalNumber(c, all) ?? Number.MAX_SAFE_INTEGER;
 }
 
 function cos(x: number | null | undefined): string {
@@ -54,7 +55,7 @@ function cos(x: number | null | undefined): string {
  * two grids whose last two columns were `auto`, so each sized them to its own content and FIELDS / COS sat over the
  * wrong cells. The header now also lives INSIDE the scroll box (sticky), so a scrollbar narrows both alike.
  */
-const COLUMNS = "grid-cols-[1.75rem_minmax(0,1fr)_4.5rem_5.5rem_6rem]";
+const COLUMNS = "grid-cols-[4.75rem_minmax(0,1fr)_4.5rem_5.5rem_6rem]";
 
 /**
  * A column header that explains itself on hover (Bhargav: "add hover tooltips for values, metadata similarity") —
@@ -147,7 +148,7 @@ export function CandidateTable({
   // the chosen row keeps its similarity position and is scrolled into view below. Ties fall back to the number the
   // model saw the candidate under, so equal cosines still read in a stable order.
   const ordered = [...candidates].sort(
-    (a, b) => b.cosine - a.cosine || candidateNumber(a) - candidateNumber(b),
+    (a, b) => b.cosine - a.cosine || tieBreak(a, candidates) - tieBreak(b, candidates),
   );
 
   return (
@@ -166,9 +167,12 @@ export function CandidateTable({
             COLUMNS,
           )}
         >
+          {/* RETRIEVED, NOT A SIMILARITY RANK (user test 2026-11-25: "what do the numbers mean if not similarity rank?";
+              Bhargav chose to keep the retrieval order and label it). Retrieval fuses keyword matching with embedding
+              similarity, so it can disagree with the Similarity column this list is sorted by — the tooltip says so. */}
           <HeadTip
-            label="#"
-            tip="The candidate's number as the model was shown it — the number its rationale cites (\u201cCandidate 2 \u2026\u201d)."
+            label="Retrieved"
+            tip="Where retrieval placed this CDE. Retrieval combines keyword matching with embedding similarity, so this order can differ from the Similarity column, which sorts the list. The model was shown the candidates in this order, so its rationale’s “Candidate 3” means #3 here."
           />
           <span>CDE</span>
           <HeadTip
@@ -210,10 +214,14 @@ export function CandidateTable({
                   chosen ? "bg-surface-ok/40" : "hover:bg-surface-inset",
                 )}
               >
-                {/* The number the model SAW the candidate under — what its rationale cites ("Candidate 2 …") — never the
-                    row position (#3), which is now similarity order. Older runs carry no such number: their rank. */}
+                {/* The RETRIEVAL number — the order the model was shown the candidates in, what its rationale cites
+                    ("Candidate 2 …") — never the row position, which is similarity order. Unknown on an older run whose
+                    ranking was read: a dash, not a guess (`retrievalNumber`). */}
                 <span data-testid="candidate-ordinal" className="tabular-nums text-xs text-on-raised-muted">
-                  {candidateNumber(c)}
+                  {(() => {
+                    const n = retrievalNumber(c, candidates);
+                    return n == null ? "—" : `#${n}`;
+                  })()}
                 </span>
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5">

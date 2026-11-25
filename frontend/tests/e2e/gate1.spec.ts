@@ -770,6 +770,43 @@ const FLAGGED = "c45aa294f30f6#g1";
 /** A large, unflagged cross-cohort group — the one with the most members to drag. */
 const BIG = "c8331409f61e1#g0";
 
+/**
+ * A SEARCH HIT BURIED IN A ROW IS BROUGHT TO THE TOP (user test 2026-11-25). Bhargav: "sometimes the text is buried
+ * somewhere deep in the response options. When I click into a group, I want the vars that have search hits to move
+ * to the top (since var order within a group doesn't mean anything) and I want the whole var row to have a slight
+ * yellow hue so user knows to look at it and find where the relevant text is buried."
+ */
+test.describe("gate1 search hits in the open group", () => {
+  const LAST = "MESA:racegrp"; // the BIG group's last member in pipeline order
+
+  test("@gate1 a variable whose text holds the search term leads the group, tinted; the rest keep their order", async ({
+    page,
+  }) => {
+    await serveRun(page, (run) => {
+      const r = run.result!;
+      // Plant the term deep in the LAST member's response options, and once in the group's own text so it matches.
+      r.fieldIndex![LAST] = { ...r.fieldIndex![LAST]!, valueEncoding: "1=White | 2=Chinese | 3=Zebrafinch descent | 4=Other" };
+      const g = r.conceptGroups!.find((x) => x.groupId === BIG)!;
+      g.idealCde = `${g.idealCde} zebrafinch`;
+    });
+    await openGate1(page);
+    await page.locator("[data-testid='term-search']").fill("zebrafinch");
+    const detail = await expandRow(page, BIG);
+    const rows = detail.locator("[data-testid='member-row']");
+    await expect(rows.first()).toHaveAttribute("data-member-id", LAST);
+    await expect(rows.first()).toHaveAttribute("data-search-hit", "true");
+    await expect(detail.locator("[data-testid='member-row'][data-search-hit='true']")).toHaveCount(1);
+    // The tint is on the ROW, not only on the marked word, so a reviewer scanning the grid sees which row to read.
+    const bg = await rows.first().evaluate((el) => getComputedStyle(el).backgroundColor);
+    const plain = await rows.nth(1).evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg).not.toBe(plain);
+    // Clearing the search puts the pipeline's order back.
+    await page.locator("[data-testid='term-search']").fill("");
+    await expect(detail.locator("[data-testid='member-row'][data-search-hit='true']")).toHaveCount(0);
+    await expect(rows.last()).toHaveAttribute("data-member-id", LAST);
+  });
+});
+
 test.describe("gate1 expanded row", () => {
   test("@gate1 the expanded row renders the FULL membership, not the collapsed sample", async ({
     page,
@@ -3023,6 +3060,25 @@ test.describe("gate1 bulk scope", () => {
       "data-state",
       "none",
     );
+  });
+
+  /**
+   * THE MINUS CLEARS (user test 2026-11-25). Bhargav: "when I clicked the minus sign, it started adding all groups
+   * rather than deselecting, which is unintuitive." A partly-ticked box is a statement that some rows are selected; its
+   * press takes them back out, the way a mail client's does. Only an empty box selects.
+   */
+  test("@gate1 a partly-ticked box (the minus) deselects every shown row; only an empty box selects", async ({ page }) => {
+    await openGate1(page);
+    const bulk = page.locator("[data-testid='bulk-scope']");
+    const box = bulk.locator("[data-testid='bulk-scope-toggle']");
+    const rows = await page.locator("[data-testid='ledger-row']").count();
+    await page.locator("[data-testid='ledger-row']").first().locator("[data-testid='queue-scope']").click();
+    await expect(bulk).toHaveAttribute("data-state", "some");
+    await expect(box).toHaveAttribute("aria-label", `Deselect all ${rows} shown`);
+    await box.click();
+    await expect(bulk).toHaveAttribute("data-state", "none");
+    await expect(bulk.locator("[data-testid='bulk-count-groups']")).toHaveText(`0/${rows} groups`);
+    await expect(box).toHaveAttribute("aria-label", `Select all ${rows} shown`);
   });
 
   test("@gate1 once everything shown is selected, the box offers the way back out, never a no-op select", async ({

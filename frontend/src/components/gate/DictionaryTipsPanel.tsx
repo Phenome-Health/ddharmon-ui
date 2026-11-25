@@ -22,9 +22,10 @@ import { cn } from "@/lib/utils";
  * generate one per row — lives on the roles panel, which Task 2 moved directly above this one. The bullet
  * names the direction and stops; the caveats that ride with that advice are stated once, there.
  *
- * IT LEADS WITH THE ONE NOTHING CAN FIX FOR THEM. `load_dictionary` keys fields on the variable name and
- * the last row bearing a repeat wins, so the earlier rows are gone before any rule runs — 658 of them
- * across two public catalogues in the D-1 measurement. It CROSS-REFERENCES the live check rather than
+ * IT LEADS WITH THE ONE NOTHING CAN FIX FOR THEM. Up to core 1.4.0 `load_dictionary` keyed fields on the
+ * variable name and the last row bearing a repeat won, so the earlier rows were gone before any rule ran — 658
+ * of them across two public catalogues in the D-1 measurement. Since 1.4.1 the loader keeps them as `name__2`
+ * etc., so the hazard is now a row that may be one variable listed twice. It CROSS-REFERENCES the live check rather than
  * restating it: this list names the class, and the mapping table on this same screen reports the
  * reviewer's actual file as the mapping changes. Two surfaces stating one finding differently is how both
  * become untrustworthy (08-DECISION-GATE0 D-4).
@@ -53,7 +54,7 @@ const CHECKS: Check[] = [
     // follow. Writing the caveats twice would mean editing them twice, and they are the kind of caveat
     // that goes stale in exactly one of the two places (08-DECISION-GATE0 D-4).
     do: "Give every row a variable name that appears only once — or map none, and see the roles reference above.",
-    example: "two rows named bmi — only the last survives loading, and the first is gone silently",
+    example: "two rows named bmi — both are kept, the second as bmi__2, so check they are really two variables",
   },
   {
     do: "Strip the instrument wrapper and leave the question the participant was asked.",

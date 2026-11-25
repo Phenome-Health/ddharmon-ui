@@ -289,6 +289,10 @@ def _run_leg(
                     # keeps the flag down (see JobStore.checkpoint), so the run stays parked as a guided one would.
                     **({"auto_advance": True} if advance_after_park else {}),
                 )
+                # A CLEAN PARK ENDS THE FAILURE IT WAS RETRYING (user test 2026-11-25). A failed continue leaves the
+                # run parked with `error_message` set ("A required step … failed on the last continue"); the retry
+                # that gets through must take it down, or the moved-on run keeps showing the old failure.
+                store.update(job_id, error_message=None, failed_phase=None)
                 if ideas is not None:
                     store.update(job_id, analysis_ideas=ideas)
                 parked_for_advance = bool(advance_after_park and getattr(store.get(job_id), "auto_advance", False))
@@ -317,6 +321,9 @@ def _run_leg(
                 "phase": "complete",
                 "result": payload,
                 "cost_so_far": _total(payload),
+                # A run that finishes has no failure left to report (see the park branch above).
+                "error_message": None,
+                "failed_phase": None,
             }
             if ideas is not None:
                 fields["analysis_ideas"] = ideas

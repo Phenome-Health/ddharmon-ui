@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Loader2 } from "lucide-react";
 import { Link } from "wouter";
-import { isGateReachable, pathForGate, railReachOf } from "@/lib/gate-routes";
+import { isGateReachable, pathForGate, railReachOf, runningGateOf } from "@/lib/gate-routes";
 import { cn } from "@/lib/utils";
 import { formatUsd, type GatePosition, type JobResult } from "@/types";
 import { StopRunAction } from "@/components/stop-run-action";
@@ -215,7 +215,9 @@ export function GateShell({
    * and working surface describe a screen that does not exist yet; the screen is its progress alone. A gate the run has
    * already reached keeps everything while the run works ahead — it is a record to read. Setup is always reached.
    */
-  const producing = inFlight && gate !== "setup" && !isGateReachable(gate, railReachOf(job));
+  // Whatever the leg is producing — including Full auto's hand-off between a park and its next leg (`runningGateOf`).
+  const running = runningGateOf(job);
+  const producing = running !== null && gate !== "setup" && !isGateReachable(gate, railReachOf(job));
   // The shared demo is a client-side replay with no backend to cancel, so a live-looking control there
   // would do nothing. Say so instead.
   const isDemo = !!(job?.config as { demo?: boolean } | undefined)?.demo;
@@ -309,6 +311,7 @@ export function GateShell({
           items={job ? runRailFor(gate, job, costSoFar) : (rail ?? railFor(gate))}
           jobId={jobId}
           runPosition={railReachOf(job)}
+          running={running}
           total={
             job ? { amount: formatUsd(costSoFar), note: costSoFar > 0 ? "charged so far" : "nothing charged" } : undefined
           }
@@ -330,8 +333,13 @@ export function GateShell({
           so on a parked or finished gate the rail and the how-to panel simply sit adjacent as before.
 
           ONE PLACEMENT, FIVE SCREENS. No gate page implements its own, and `gates.spec.ts` asserts that
-          single call site — the same rule and the same reason as the stop control above. */}
-      <RunProgress job={job} />
+          single call site — the same rule and the same reason as the stop control above.
+
+          ONLY ON THE GATE THE LEG IS PRODUCING (user test 2026-11-25). With Gate 3's leg running, the panel also sat on
+          Gate 2's screen — the gate the run LEFT — and Bhargav read it as Gate 2 still working: "the progress bar appears
+          on the previous gate". A reached gate is a read-back; the rail's "in progress" column says the run is working,
+          once, and is the link to the screen that shows how far it has got. */}
+      {producing && <RunProgress job={job} />}
       {/* A FAILED run's state, in the same slot (round 10): where the progress bar was, above the how-to panel, said
           once for all five screens. `RunProgress` renders nothing for a terminal run, so the two never stack. */}
       {job?.status === "error" && jobId && <RunFailedNotice job={job} jobId={jobId} />}
@@ -493,6 +501,7 @@ export function runRailFor(current: GatePosition, job: JobResult, costSoFar?: nu
   return railFor(current, {
     ...realizedRailArgs(job.result?.cost, costSoFar),
     runPosition: railReachOf(job),
+    running: runningGateOf(job),
     preview: isPreviewJob(job),
   });
 }

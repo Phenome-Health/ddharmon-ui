@@ -297,7 +297,10 @@ test.describe("controls gate1 panel", () => {
     await expect(box).toHaveAttribute("data-state", "indeterminate");
     await expect(bulk.locator("[data-testid='bulk-count-groups']")).toHaveText(`1/${groups.length} groups`);
 
-    // Pressing it from "some" selects every shown row; pressing it again clears them.
+    // Pressing the minus CLEARS (user test 2026-11-25: "when I clicked the minus sign, it started adding all groups
+    // rather than deselecting"); from empty it selects every shown row; pressing it again clears them.
+    await box.click();
+    await expect(bulk).toHaveAttribute("data-state", "none", { timeout: 30_000 });
     await box.click();
     await expect(bulk).toHaveAttribute("data-state", "all", { timeout: 30_000 });
     await expect(bulk.locator("[data-testid='bulk-count-vars']")).toHaveText(`${vars}/${vars} vars`);

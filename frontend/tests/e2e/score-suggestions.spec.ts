@@ -333,7 +333,16 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     await expect(items).toHaveText(["Glaucoma", "Hearing difficulty"]);
   });
 
-  test("@gate1 a PASSED Gate 1 shows exactly the scope it sent — no suggestion is fetched or drawn", async ({ page }) => {
+  /**
+   * A PASSED GATE 1 KEEPS ITS SPOTLIGHT (user test 2026-11-25: "Concept Spotlight queries don't seem to persist when I
+   * come back to gate 1 after moving on. This applies to the flashlight tags as well."). The free search is asked again
+   * on the record — a $0 read — so the lists still say what they found and the rows still carry their flashlights.
+   * What it may NOT do is the reason it was switched off (final review round 1, item 3): re-derive the scope. The
+   * ticks are exactly what Continue sent; the suggestions only tag.
+   */
+  test("@gate1 a PASSED Gate 1 shows exactly the scope it sent, and still draws its Spotlight tags and lists", async ({
+    page,
+  }) => {
     const r = reached();
     const sent = r[4]!.group.groupId; // below the cut-off, but the reviewer had put it in scope
     await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
@@ -345,13 +354,56 @@ test.describe("Gate 1 score suggestions — the screen", () => {
     });
     await openGate1(page);
     await expect(page.locator("[data-testid='gate-frozen']")).toBeVisible();
+    // The scope is the record: only what was sent, though three groups clear the cut-off.
     await expect(scopeOf(page, sent)).toHaveAttribute("aria-checked", "true");
     for (const { group } of r.slice(0, 4)) {
       await expect(scopeOf(page, group.groupId)).toHaveAttribute("aria-checked", "false");
     }
-    await expect(page.locator("[data-testid='queue-score-tag']")).toHaveCount(0);
     await expect(page.getByTestId("bulk-count-groups")).toContainText(/^1\//);
-    expect(requests).toEqual([]);
+    // …and the Spotlight is still there: every group that clears the cut-off carries its flashlight.
+    for (const { group, score } of r) {
+      await expect(tagsOf(page, group.groupId), `${score}`).toHaveCount(score >= TAU ? 1 : 0);
+    }
+    expect(new Set(requests)).toEqual(new Set(["GET"]));
+  });
+
+  /**
+   * SPOTLIGHT GROUPS ONLY (user test 2026-11-25: "want to be able to filter to spotlight groups only in gate 1
+   * sidebar"). A box in the filter menu, beside the others, that keeps the rows carrying a flashlight; it says how many,
+   * shows as a removable chip, and clears with the rest. It is offered only when the Spotlight has tagged something.
+   */
+  test("@gate1 the filter menu narrows the queue to the Spotlight's groups, and the chip takes it off", async ({ page }) => {
+    await seedSandbox(page, { composite_swap: declaration(["Glaucoma", "Hearing difficulty"]) });
+    await serveSuggestions(page, suggestions());
+    await serveOwned(page);
+    await openGate1(page);
+    const nTagged = reached().filter((x) => x.score >= TAU).length;
+    await expect(page.locator("[data-testid='queue-score-tag']")).toHaveCount(nTagged);
+    const all = await page.locator("[data-testid='ledger-row']").count();
+    expect(all).toBeGreaterThan(nTagged);
+
+    await page.locator("[data-testid='filter-open']").click();
+    const menu = page.locator("[data-testid='filter-menu']");
+    await expect(menu.getByTestId("filter-spotlight-only-count")).toHaveText(String(nTagged));
+    await menu.getByTestId("filter-spotlight-only").click();
+    await page.keyboard.press("Escape");
+
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(nTagged);
+    for (const { group, score } of reached()) {
+      await expect(rowOf(page, group.groupId)).toHaveCount(score >= TAU ? 1 : 0);
+    }
+    const chip = page.getByRole("button", { name: "Remove Spotlight groups only" });
+    await expect(chip).toBeVisible();
+    await chip.click();
+    await expect(page.locator("[data-testid='ledger-row']")).toHaveCount(all);
+  });
+
+  test("@gate1 with nothing in the Spotlight, the filter menu offers no Spotlight box", async ({ page }) => {
+    await serveOwned(page);
+    await openGate1(page);
+    await page.locator("[data-testid='filter-open']").click();
+    await expect(page.locator("[data-testid='filter-menu']")).toBeVisible();
+    await expect(page.getByTestId("filter-spotlight-only")).toHaveCount(0);
   });
 
   test("@gate1 a run that carries a Gate 4 match uses the match, never the suggestions", async ({ page }) => {
